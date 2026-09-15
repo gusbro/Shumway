@@ -94,6 +94,10 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
                   $"the corpus calls functor {calleeFunctorId}, which it does not define");
     int IWasmCompileEnv.EncodeAddress(int address) => address;
 
+    // The real id: the harness runs in this process, so nothing is relocated.
+    int IWasmCompileEnv.MqualFunctorId { get; } = Shumway.Core.FunctorTable.Intern(
+        Shumway.Core.AtomTable.Intern("$mqual", permanent: true).Id, 2);
+
     bool IWasmCompileEnv.TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
 

@@ -124,6 +124,19 @@ public interface IWasmCompileEnv
     /// where the builtin's errors and corner cases stay the engine's.</para>
     /// </summary>
     bool IsInlineGetAttr(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>call/1</c>, whose goal the module
+    /// can dispatch itself through the call-marker table instead of stepping
+    /// aside. Every other meta-call shape (call/N with extra arguments,
+    /// '$call'/2) still steps aside: they rebuild the goal term first, which
+    /// is work the module has no business doing.</summary>
+    bool IsInlineMetaCall(int builtinId) => false;
+
+    /// <summary>The functor id of <c>'$mqual'/2</c>, the wrapper a meta-call
+    /// carries so its bare goal functor resolves against the meta-caller's
+    /// module first. The module has to see THROUGH it: the goal in X0 is the
+    /// wrapper, not the goal.</summary>
+    int MqualFunctorId { get; }
 }
 
 /// <summary>The one-argument type tests the module open-codes. Each is a

@@ -55,7 +55,7 @@ public sealed record WasmRelocation(
 public sealed record WasmBuiltinEvidence(
     string Name, int Arity, bool Found, bool Direct, bool InlineUnify,
     bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None,
-    bool InlineGetAttr = false);
+    bool InlineGetAttr = false, bool InlineMetaCall = false);
 
 /// <summary>A compile env that bakes a unique SENTINEL for every immediate
 /// the code names outside itself and records what each one stands for, so
@@ -194,7 +194,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         {
             var (n, a) = NameOf(calleeFunctorId);
             bool direct = false, unify = false, compare = false, negated = false;
-            bool getAttr = false;
+            bool getAttr = false, metaCall = false;
             var test = WasmTypeTest.None;
             if (found)
             {
@@ -203,10 +203,11 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
                 compare = _inner.IsInlineCompare(builtinId, out negated);
                 _inner.TryGetInlineTypeTest(builtinId, out test);
                 getAttr = _inner.IsInlineGetAttr(builtinId);
+                metaCall = _inner.IsInlineMetaCall(builtinId);
             }
             _evidence[calleeFunctorId] =
                 new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated,
-                                        test, getAttr);
+                                        test, getAttr, metaCall);
         }
         return found;
     }
@@ -223,7 +224,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         _evidence[fid] = new WasmBuiltinEvidence(entry.Name, entry.Arity, true,
             _inner.IsDirectBuiltin(builtinId), _inner.IsInlineUnify(builtinId),
             _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest,
-            _inner.IsInlineGetAttr(builtinId));
+            _inner.IsInlineGetAttr(builtinId), _inner.IsInlineMetaCall(builtinId));
     }
 
     public bool IsDirectBuiltin(int builtinId)
@@ -249,6 +250,18 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         Note(builtinId);
         return _inner.IsInlineGetAttr(builtinId);
     }
+
+    public bool IsInlineMetaCall(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineMetaCall(builtinId);
+    }
+
+    // Handed through as the LIVE id, and only ever used as the input to
+    // FunctorCell, which relocates by (name, arity). Baking the id itself
+    // would be a cross-process bug: functor ids are handed out in intern
+    // ORDER, so the same predicate is a different id in another process.
+    public int MqualFunctorId => _inner.MqualFunctorId;
 
     // Every form decision has to be DELEGATED here, not inherited: the
     // interface's default answers "no", so a hook added upstream and not

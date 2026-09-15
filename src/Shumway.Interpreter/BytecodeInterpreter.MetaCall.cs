@@ -704,7 +704,11 @@ public sealed partial class BytecodeInterpreter
         {
             int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+            {
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, functorId, mangledFid);
                 return JumpToUserGoal(code, pc, mangledAddr);
+            }
             // ADR-038 — the module's import table: a bare goal it doesn't define
             // locally resolves to Source$name before the bare-global namespace.
             var importMap = _engine.CurrentImportMap;
@@ -712,7 +716,11 @@ public sealed partial class BytecodeInterpreter
                 && importMap.TryGetValue(
                     ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
                 && addresses.TryGetValue(importedFid, out int importedAddr))
+            {
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, functorId, importedFid);
                 return JumpToUserGoal(code, pc, importedAddr);
+            }
         }
 
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
@@ -739,6 +747,26 @@ public sealed partial class BytecodeInterpreter
 
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
         {
+            // A module-tagged goal whose functor is ALREADY qualified lands
+            // here, not in the mangled branch above: mangling it again would
+            // ask for clpfd$clpfd$pneq/2. Measured, this is where every one
+            // of clpfd's meta-calls resolves -- 2,728 of them against 0 in
+            // the two branches that look like they should have it.
+            //
+            // It resolves to ITSELF, and that is worth caching all the same:
+            // what the reader of the cache needs is permission to jump, and
+            // the pair (module, functor) is what it has to ask under.
+            // ONLY a plain jump. By here functorId may have been REWRITTEN:
+            // a control construct (`,`, `;`, `->`, `*->`) is dispatched to a
+            // helper WITH THE CUT BARRIER IN X2, which is dispatcher
+            // knowledge a compiled module does not have -- it copies the
+            // goal's own arguments and jumps. Publishing one of those would
+            // send the module into the helper without a barrier and with the
+            // wrong register layout, and $call_conj re-dispatches the
+            // conjunction forever. That hang is how this was found.
+            if (resolutionModule >= 0 && userKind == Shumway.Core.MetaRouteKind.Jump)
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, functorId, functorId);
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(userKind, address);
             return JumpToUserGoal(code, pc, address);

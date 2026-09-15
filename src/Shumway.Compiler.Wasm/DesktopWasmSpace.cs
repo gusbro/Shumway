@@ -30,6 +30,13 @@ public sealed class DesktopWasmSpace : IDisposable
     // where it sits, and how many ids the image already holds.
     internal int FunctorAt = -1;
     internal int FunctorSynced;
+    // Same idea for the call-marker table: where it sits, and the version of
+    // the table the image already holds. It changes only on install/evict,
+    // so most stagings copy nothing.
+    internal int CallMarkerAt = -1;
+    internal int CallMarkerCopied = -1;
+    internal int MetaCacheAt = -1;
+    internal int MetaCacheCopied = -1;
 
     public DesktopWasmSpace() => Modules = new(ResumeTable);
 

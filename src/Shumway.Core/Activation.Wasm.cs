@@ -26,7 +26,15 @@ public sealed partial class Activation
         /// <summary>Base and mask of the attribute table's image. A zero base
         /// means there is none and get_attr/3 exits to the host.</summary>
         long AttrTableBase = 0,
-        int AttrTableMask = 0);
+        int AttrTableMask = 0,
+        /// <summary>Base and length of the call-marker table. A zero base
+        /// means a meta-call steps aside.</summary>
+        long CallMarkerBase = 0,
+        int CallMarkerLength = 0,
+        /// <summary>Base and mask of the meta-call inline cache. A zero base
+        /// means a module-tagged meta-call steps aside.</summary>
+        long MetaCacheBase = 0,
+        int MetaCacheMask = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -55,6 +63,25 @@ public sealed partial class Activation
     /// <summary>Stack counterpart of <see cref="GrowWasmBindingTrail"/>.</summary>
     public void GrowWasmStack()
         => EnsureStackCapacity(_stack.Length - _stackTop + 1);
+
+    /// <summary>Told (module atom, goal functor, RESOLVED functor) every time
+    /// the meta-call dispatch resolves a module-tagged goal.
+    ///
+    /// <para>A compiled module cannot do this resolution: it is a lookup
+    /// through the module's locals and imports, and the goal arrives wrapped
+    /// as '$mqual'(Module, Goal) precisely because the bare functor is not
+    /// the answer. So the HOST publishes what it resolved and the module
+    /// reads it -- an inline cache, filled on the slow path it was already
+    /// taking.</para>
+    ///
+    /// <para>The first argument is the ADDRESS MAP the resolution was made
+    /// against. A cache of these is only valid for one map -- a new query
+    /// links a new one -- which is the same lifetime the engine's own
+    /// meta-route cache is stamped with.</para>
+    ///
+    /// <para>Null unless a wasm world is attached, and called only on the
+    /// resolution path, which is already the slow one.</para></summary>
+    public System.Action<object?, int, int, int>? MetaResolutionObserver;
 
     /// <summary>False when the activation is in a mode the compiled code does
     /// not honour (trail-everything, occurs_check) -- the tier delegate then
@@ -102,6 +129,10 @@ public sealed partial class Activation
         m[WasmAbi.FunctorTableBase] = bases.FunctorTableBase;
         m[WasmAbi.AttrTableBase] = bases.AttrTableBase;
         m[WasmAbi.AttrTableMask] = bases.AttrTableMask;
+        m[WasmAbi.CallMarkerBase] = bases.CallMarkerBase;
+        m[WasmAbi.CallMarkerLength] = bases.CallMarkerLength;
+        m[WasmAbi.MetaCacheBase] = bases.MetaCacheBase;
+        m[WasmAbi.MetaCacheMask] = bases.MetaCacheMask;
         return true;
     }
 

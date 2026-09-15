@@ -44,6 +44,15 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Arity == 2 && entry.Name is "==" or "\\==";
     }
 
+    public int MqualFunctorId { get; } =
+        FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
+
+    public bool IsInlineMetaCall(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "call" && entry.Arity == 1;
+    }
+
     public bool IsInlineGetAttr(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

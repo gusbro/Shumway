@@ -66,18 +66,41 @@ public sealed class WasmTierDelegate
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinTally = new();
-    /// <summary>TEMP probe: exits per builtin that ended in FAILURE.</summary>
+    /// <summary>Exits per builtin that ended in FAILURE. The share that
+    /// fails decides the design before it is written: a builtin that mostly
+    /// fails can have its failing path open-coded without the module ever
+    /// needing what the succeeding path reads. get_attr/3 was the case that
+    /// earned this -- 9% failing, so the cheap path bought nothing and the
+    /// image was the only way.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinFailTally = new();
     /// <summary>Deopt PCs with a HIT COUNT each, for attribution: knowing
     /// where a storm falls is only half of it, the ranking is what says
-    /// which instruction to open-code next. Parallel arrays scanned
-    /// linearly -- this runs on the deopt path, which already pays a full
-    /// image staging, so a probe over a few dozen longs is free by
-    /// comparison. -1 = unused slot; PCs past the table land in
+    /// which instruction to open-code next.
+    ///
+    /// <para>Sized for a FLAT distribution, which is the case that matters:
+    /// if the deopts spread over hundreds of sites there is no single
+    /// instruction to fix, and a table that overflowed would report that as
+    /// a handful of sites plus an anonymous remainder -- the shape of the
+    /// answer would be lost exactly when it is the answer. So the table is
+    /// wide, and open-addressed rather than scanned, because a linear walk
+    /// over this many slots on every deopt is no longer free.</para>
+    ///
+    /// <para>-1 = unused slot; PCs past a full table land in
     /// <see cref="DiagDeoptOverflow"/>.</summary>
+    /// <summary>Slots in each site table. A field cannot be
+    /// <c>[Conditional]</c>, so the arrays below exist in every build and the
+    /// only way to stop a stock one paying for them is to size them to
+    /// nothing. Wide enough to hold a FLAT distribution when the diagnostics
+    /// are compiled in, empty when they are not: the methods that index them
+    /// are all Conditional, so nothing reads an empty table.</summary>
+#if SHUMWAY_DIAG
+    public const int DeoptSiteSlots = 1024;
+#else
+    public const int DeoptSiteSlots = 0;
+#endif
     public static readonly long[] DiagDeoptPcs = FreshPcTable();
-    public static readonly long[] DiagDeoptHits = new long[64];
+    public static readonly long[] DiagDeoptHits = new long[DeoptSiteSlots];
 
     // -1, not 0: pc 0 is a legal address, and a table left at its default
     // would make every slot look OCCUPIED by it -- no site is ever claimed
@@ -85,7 +108,7 @@ public sealed class WasmTierDelegate
     // browser session never calls it.
     private static long[] FreshPcTable()
     {
-        var a = new long[64];
+        var a = new long[DeoptSiteSlots];
         for (int i = 0; i < a.Length; i++) a[i] = -1;
         return a;
     }
@@ -95,10 +118,18 @@ public sealed class WasmTierDelegate
     /// hop did NOT take, which is what tells where a hop is missing. Same
     /// bounded shape as the deopt sites. Diagnostic.</summary>
     public static readonly long[] DiagSwitchKeys = FreshPcTable();
-    public static readonly long[] DiagSwitchHits = new long[64];
-    /// <summary>Key slots at the FIRST deopt: flags, TR, trail limit, H,
+    public static readonly long[] DiagSwitchHits = new long[DeoptSiteSlots];
+    /// <summary>Key slots at the FIRST deopt: DiagA (which guard sent it
+    /// aside, when the site writes one), flags, TR, trail limit, H,
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
+
+    /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
+    /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
+    /// with twelve deopt sites need not be the interesting one -- a guard
+    /// reading zero there says nothing. The last is the one that was still
+    /// happening when the run gave up.</summary>
+    public static long DiagLastGuard, DiagLastGuardFid;
 
     /// <summary>Diagnostic tripwire: scan the heap for an AttVar cell with
     /// no attr-table record after every delegate return. Off by default.</summary>
@@ -183,11 +214,20 @@ public sealed class WasmTierDelegate
     private static void CountHops(long hops) => DiagInWasmHops += hops;
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CaptureLastGuard(IWasmChainContext cx)
+    {
+        DiagLastGuard = cx.ReadSlot(WasmAbi.DiagA);
+        DiagLastGuardFid = cx.ReadSlot(WasmAbi.DiagB);
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CaptureFirstDeoptSlots(IWasmChainContext cx)
     {
         if (DiagFirstDeoptSlots is not null) return;
         DiagFirstDeoptSlots = new[]
         {
+            cx.ReadSlot(WasmAbi.DiagA),
+            cx.ReadSlot(WasmAbi.DiagB),
             cx.ReadSlot(WasmAbi.Flags),
             cx.ReadSlot(WasmAbi.TrailTop),
             cx.ReadSlot(WasmAbi.TrailLimit),
@@ -209,21 +249,30 @@ public sealed class WasmTierDelegate
     {
         DiagSwitches++;
         long key = ((long)fid << 32) | (uint)address;
-        for (int i = 0; i < DiagSwitchKeys.Length; i++)
+        NoteSite(DiagSwitchKeys, DiagSwitchHits, key);
+    }
+
+    /// <summary>Counts one hit for a key in a bounded site table, open-addressed
+    /// on the key. Linear scanning a table this wide would cost more than the
+    /// event it measures, and a diagnostic that changes what it measures is
+    /// worthless. Returns false when the table is full.</summary>
+    private static bool NoteSite(long[] keys, long[] hits, long key)
+    {
+        uint h = (uint)(key * 2654435761u);
+        h ^= h >> 15;
+        int slot = (int)(h & (DeoptSiteSlots - 1));
+        for (int probe = 0; probe < DeoptSiteSlots; probe++)
         {
-            if (DiagSwitchKeys[i] == key) { DiagSwitchHits[i]++; break; }
-            if (DiagSwitchKeys[i] == -1) { DiagSwitchKeys[i] = key; DiagSwitchHits[i] = 1; break; }
+            if (keys[slot] == key) { hits[slot]++; return true; }
+            if (keys[slot] == -1) { keys[slot] = key; hits[slot] = 1; return true; }
+            slot = (slot + 1) & (DeoptSiteSlots - 1);
         }
+        return false;
     }
 
     private static void NoteDeoptPc(long pc)
     {
-        for (int i = 0; i < DiagDeoptPcs.Length; i++)
-        {
-            if (DiagDeoptPcs[i] == pc) { DiagDeoptHits[i]++; return; }
-            if (DiagDeoptPcs[i] == -1) { DiagDeoptPcs[i] = pc; DiagDeoptHits[i] = 1; return; }
-        }
-        DiagDeoptOverflow++;
+        if (!NoteSite(DiagDeoptPcs, DiagDeoptHits, pc)) DiagDeoptOverflow++;
     }
 
     /// <summary>The host-switch sites, heaviest first: (functor, address,
@@ -370,6 +419,7 @@ public sealed class WasmTierDelegate
                     growTrail = cx.ReadSlot(WasmAbi.TrailTop) >= cx.ReadSlot(WasmAbi.TrailLimit);
                     growStack = cx.ReadSlot(WasmAbi.StackTop) >= cx.ReadSlot(WasmAbi.StackLimit);
                     CaptureFirstDeoptSlots(cx);
+                    CaptureLastGuard(cx);
                     if (DiagGuardPc != 0 && pendingPc == DiagGuardPc)
                         CaptureRestoreGuard(engine, cx);
                     result = true;
@@ -382,7 +432,13 @@ public sealed class WasmTierDelegate
                 }
                 if (v != WasmVerdict.BuiltinRequest)
                     throw new System.InvalidOperationException(
-                        $"wasm verdict {v} for functor {currentFid}");
+                        $"wasm verdict {v} for functor {currentFid}"
+                        // Verdict 99 is DebugLoopGuard: say WHERE it span.
+                        + $" (guardCursor={cx.ReadSlot(WasmAbi.DebugGuardCursor)}"
+                        + $" guardCount={cx.ReadSlot(WasmAbi.DebugGuardCount)}"
+                        + $" metaGuard={cx.ReadSlot(WasmAbi.DiagA)}"
+                        + $" metaFid={cx.ReadSlot(WasmAbi.DiagB)}"
+                        + $" pc={cx.ReadSlot(WasmAbi.Pc)})");
 
                 long req = cx.ReadSlot(WasmAbi.BuiltinId);
                 int builtinId = (int)(uint)req;

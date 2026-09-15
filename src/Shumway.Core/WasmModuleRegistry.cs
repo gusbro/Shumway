@@ -130,7 +130,11 @@ public sealed class WasmModuleRegistry
         // in. Rows are keyed by the OWNER's functor -- the host must decode a
         // build address to that same functor before it can look one up.
         foreach (var (fid, cursor) in entryCursorByFid)
-            Table.Set(Activation.EncodeResumeMarker(fid, 0), id, cursor);
+        {
+            int marker = Activation.EncodeResumeMarker(fid, 0);
+            Table.Set(marker, id, cursor);
+            Table.SetCallMarker(fid, marker);
+        }
         foreach (var (address, cursor) in cursorByAddress)
         {
             int fid = m.AddrIndex.OwnerFunctorOf(address);
@@ -168,6 +172,7 @@ public sealed class WasmModuleRegistry
             if (!_byFid.TryGetValue(fid, out var owner) || owner != m) continue;
             _byFid.Remove(fid);
             Table.ClearFunctor(fid);
+            Table.ClearCallMarker(fid);
             gone.Add(fid);
             if (m.BakedCallersOf.TryGetValue(fid, out var callers))
                 foreach (int caller in callers) work.Push(caller);

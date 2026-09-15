@@ -188,7 +188,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
-        private int _attrAt;
+        private int _attrAt, _callMarkerAt, _metaCacheAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -218,6 +218,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // Turn the image on before reading its rows: an engine that never
             // meets a wasm world keeps paying nothing for it.
             _engine.AttrMirrorEnable();
+            _engine.MetaResolutionObserver = _w.ResumeTable.NoteMetaResolution;
             Cell[] heap = _engine.WasmHeapView;
             Cell[] stack = _engine.WasmStackView;
             Cell[] regs = _engine.WasmRegistersView;
@@ -233,11 +234,15 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _moduleIndexAt = _resumeAt + resumeRows.Length * 8;
             int moduleCount = _w.ResumeTable.ModuleCount;
             long[] attrRows = _engine.AttrMirrorRows;
+            int[] callMarkers = _w.ResumeTable.CallMarkers;
+            long[] metaCache = _w.ResumeTable.MetaCache;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
             // may be unaligned (the align immediate is a hint), so no test
             // can fail on dropping this -- do not go looking for one.
             _attrAt = (_moduleIndexAt + moduleCount * 4 + 7) & ~7;
-            if (_attrAt + attrRows.Length * 8 > (long)Pages * 65536)
+            _callMarkerAt = _attrAt + attrRows.Length * 8;
+            _metaCacheAt = (_callMarkerAt + callMarkers.Length * 4 + 7) & ~7;
+            if (_metaCacheAt + metaCache.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -252,7 +257,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ResumeTableRows: resumeRows.Length,
                 ModuleIndexBase: _moduleIndexAt,
                 AttrTableBase: attrRows.Length > 0 ? _attrAt : 0,
-                AttrTableMask: _engine.AttrMirrorMask);
+                AttrTableMask: _engine.AttrMirrorMask,
+                CallMarkerBase: _callMarkerAt,
+                CallMarkerLength: callMarkers.Length,
+                MetaCacheBase: _metaCacheAt,
+                MetaCacheMask: _w.ResumeTable.MetaCacheMask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -298,6 +307,31 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             fixed (long* p = attrRows)
                 Buffer.MemoryCopy(p, mem + _attrAt, attrRows.Length * 8L,
                                   attrRows.Length * 8L);
+            // Copied only when it actually changed: install and eviction are
+            // the only writers, so a run that promotes nothing copies this
+            // once. Without the check queens re-copies 8 KB on each of its
+            // 38,000 chains, which is the copy world inventing a cost the
+            // browser does not have.
+            if (_callMarkerAt != _w._space.CallMarkerAt
+                || _w.ResumeTable.CallMarkerVersion != _w._space.CallMarkerCopied)
+            {
+                fixed (int* p = callMarkers)
+                    Buffer.MemoryCopy(p, mem + _callMarkerAt, callMarkers.Length * 4L,
+                                      callMarkers.Length * 4L);
+                _w._space.CallMarkerAt = _callMarkerAt;
+                _w._space.CallMarkerCopied = _w.ResumeTable.CallMarkerVersion;
+            }
+            // The meta cache settles once the working set is in, so this
+            // copies a handful of times and then never again.
+            if (_metaCacheAt != _w._space.MetaCacheAt
+                || _w.ResumeTable.MetaCacheVersion != _w._space.MetaCacheCopied)
+            {
+                fixed (long* p = metaCache)
+                    Buffer.MemoryCopy(p, mem + _metaCacheAt, metaCache.Length * 8L,
+                                      metaCache.Length * 8L);
+                _w._space.MetaCacheAt = _metaCacheAt;
+                _w._space.MetaCacheCopied = _w.ResumeTable.MetaCacheVersion;
+            }
             _engineAuthoritative = false;
         }
 

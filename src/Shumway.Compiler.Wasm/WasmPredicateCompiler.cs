@@ -68,6 +68,18 @@ public static class WasmPredicateCompiler
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
 
+    /// <summary>Emit the meta-call's guard stamps (which guard declined, and
+    /// the functor id it saw) into DiagA/DiagB. OFF: unlike the host-side
+    /// tallies, this one puts real instructions in every compiled module, so
+    /// it cannot ride on SHUMWAY_DIAG -- a stock module would carry a store
+    /// per guard. Turned on by hand when a decline has to be explained.
+    ///
+    /// <para>It earned its keep once already: the inline meta-call declined
+    /// every time and the counters said so, but only these stamps said WHY --
+    /// the goal arrives wrapped in '$mqual'(Module, Goal), so the functor the
+    /// module reads is the wrapper's, not the goal's.</para></summary>
+    public static bool DebugMetaGuards;
+
     // ---- locals (after the two i32 params: 0 mailbox, 1 entry cursor) ----
     private const uint LCur = 2;      // current cursor
     private const uint LHeapB = 3;    // byte base of the heap
@@ -693,6 +705,10 @@ public static class WasmPredicateCompiler
             // rule: appended after the kind bank, never before it.
             new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
+            // The meta-call cache probe's base, its bound, and the goal's
+            // own arity. Appended after the attribute probe's, same rule:
+            // only at the end.
+            new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -1248,8 +1264,19 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Emits one instruction; true when it transferred control.</summary>
+        /// <summary>Resume addresses at which an inline meta-call left a
+        /// frame of its OWN to pop. Reached only by that meta-call's return:
+        /// the site never exits to the host (its fallback is a step-aside,
+        /// which continues in the interpreter and does not re-enter here), so
+        /// there is no second path arriving without a frame.</summary>
+        private readonly HashSet<int> _metaFrameResume = new();
+
         private bool EmitInstr(Instr ins)
         {
+            // The meta-call's frame is popped where control comes BACK, which
+            // is a dispatch case of its own -- CP and E are restored from it
+            // before the clause continues.
+            if (_metaFrameResume.Contains(ins.Pc)) EmitDeallocate();
             switch (ins.Op)
             {
                 case Opcode.SwitchOnTerm:
@@ -1447,6 +1474,11 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineMetaCall(ins.I0))
+                    {
+                        EmitInlineMetaCall(ins.Pc, SelfFid(ins));
+                        return true;
+                    }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
@@ -1490,6 +1522,11 @@ public static class WasmPredicateCompiler
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         });
                         EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineMetaCall(ins.I0))
+                    {
+                        EmitInlineMetaCall(ins.Pc, 0, tail: true);
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
@@ -1745,6 +1782,444 @@ public static class WasmPredicateCompiler
             CloseNested();
             StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(marker)));
             EmitReturn(WasmVerdict.SuccessTailCall);
+        }
+
+        /// <summary>Whether the clause holding <paramref name="pc"/> has an
+        /// ENVIRONMENT FRAME, scanning back to the clause's start.
+        ///
+        /// <para>It decides whether an inline meta-call may write CP. A
+        /// normal non-tail call writes CP freely BECAUSE the frame holds the
+        /// clause's own continuation and Deallocate restores it. A clause
+        /// whose only call is a BUILTIN has no frame, and needs none: a
+        /// builtin never touches CP, execution just falls through to the next
+        /// instruction. Turning such a site into a predicate call and writing
+        /// CP there leaves nothing to restore -- the clause's Proceed then
+        /// reads the marker it was handed and jumps back to itself, forever.
+        /// That is not hypothetical: it is $wake_call/1, whose whole body is
+        /// call(G), spinning 10,000,001 dispatches on its own resume.</para>
+        ///
+        /// <para>Answers FALSE when unsure. The caller's response to false is
+        /// to build a frame of its own, which is correct either way and only
+        /// costs two instructions -- so the conservative direction is the one
+        /// that over-allocates, never the one that writes CP into thin
+        /// air.</para></summary>
+        private bool ClauseHasFrame(int pc)
+        {
+            if (!_byPc.TryGetValue(pc, out int i)) return false;
+            int section = _instrs[i].Section;
+            for (int k = i - 1; k >= 0 && _instrs[k].Section == section; k--)
+            {
+                switch (_instrs[k].Op)
+                {
+                    case Opcode.Allocate:
+                    case Opcode.AllocateGetLevel:
+                        return true;
+                    // A clause boundary: anything before it belongs to
+                    // another clause and says nothing about this one.
+                    case Opcode.TryMeElse:
+                    case Opcode.RetryMeElse:
+                    case Opcode.TrustMe:
+                    case Opcode.Try:
+                    case Opcode.Retry:
+                    case Opcode.Trust:
+                        return false;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>The widest meta-call the module takes. The callee's
+        /// arguments are copied into X registers, and the bank is staged from
+        /// a demand computed at COMPILE time, so a runtime arity past this
+        /// has nowhere to land: it steps aside instead. Eight covers every
+        /// propagator clpfd and clpr post.</summary>
+        private const int MaxMetaCallArity = 8;
+
+        /// <summary>call/1 of a goal known only at RUN time, dispatched inside
+        /// the module.
+        ///
+        /// <para>This is the one thing a module could not do. Every call the
+        /// emitter bakes names its callee by a MARKER, and a marker is
+        /// interned by the host from a (functor, address) pair -- it cannot be
+        /// computed from a functor -- so a meta-call had no target to jump to
+        /// and stepped aside, always. The call-marker table closes exactly
+        /// that gap: functor id in, fresh-entry marker out, and from there the
+        /// ordinary resume probe takes over unchanged.</para>
+        ///
+        /// <para>Measured, this is where the deopts were. clpfd's propagation
+        /// loop is `clpfd_run([P|Ps]) :- call(P), clpfd_run(Ps)`, one step
+        /// aside per propagator: 16,378 in a single queens 12 run, 86% of
+        /// every deopt in it, and half of all its chains -- because a deopt
+        /// closes the chain and the re-entry pays a fresh staging. clpr's
+        /// wakeup drain is the same shape.</para>
+        ///
+        /// <para>Only a COMPOUND goal is taken. An atom goal would need the
+        /// functor id of (atom, 0) and the module can read the functor table
+        /// but not search it, so those step aside. So does an unmirrored
+        /// functor, which reads as arity zero -- impossible for a compound,
+        /// and the safe direction.</para></summary>
+        /// <param name="tail">A meta-call in TAIL position inherits our
+        /// continuation, so CP is left alone and the goal simply takes our
+        /// place. The cut barrier is refreshed either way: a tail call still
+        /// enters a new procedure, and a neck_cut there must see B as of this
+        /// dispatch.</param>
+        /// <summary>Stamps WHICH guard sent a meta-call aside into DiagA, so
+        /// a decline can be told apart from the other ways to reach the same
+        /// deopt. The ABI keeps DiagA for exactly this.</summary>
+        private void MetaGuard(int code)
+        {
+            if (!DebugMetaGuards) return;
+            StoreSlot64(WasmAbi.DiagA, () => Op(new Int64Constant(code)));
+        }
+
+        private void EmitInlineMetaCall(int pc, int selfFid, bool tail = false)
+        {
+            if (MaxMetaCallArity - 1 > _maxRegister) _maxRegister = MaxMetaCallArity - 1;
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            LoadSlot32(WasmAbi.CallMarkerBase);
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            MetaGuard(1);
+            Op(new BranchIf(0));                            // no table -> $slow
+
+            // The goal must be a compound: an atom carries no functor id.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32NotEqual());
+            MetaGuard(2);
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT2));                          // the structure's index
+            CellLoadDyn(LHeapB, LT2);
+            Op(new LocalSet(LC1));                          // its functor cell
+
+            // '$mqual'(Module, Goal): the goal carries the module of the
+            // clause that meta-called it, because a bare functor has to
+            // resolve against that module's locals first. The module cannot
+            // do that resolution -- it is a walk through a module's locals
+            // and imports -- so it reads what the HOST resolved, out of the
+            // inline cache the host fills on the path it was taking anyway.
+            //
+            // Compared as a CELL, never as a baked id: FunctorCell relocates
+            // by (name, arity), and a functor id is only valid in the process
+            // that interned it.
+            Op(new LocalGet(LC1));
+            Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
+            Op(new Int64Equal());
+            OpenIf();
+            {
+                // Module must be a bound atom.
+                CellLoadDyn(LHeapB, LT2, 1);
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Atom));
+                Op(new Int32NotEqual());
+                MetaGuard(6);
+                Op(new BranchIf(1));                        // -> $slow
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT0));                      // module atom
+
+                // The goal inside must itself be a compound.
+                CellLoadDyn(LHeapB, LT2, 2);
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32NotEqual());
+                MetaGuard(7);
+                Op(new BranchIf(1));                        // -> $slow
+                Op(new LocalGet(LC0));
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT2));                      // the GOAL's index
+                CellLoadDyn(LHeapB, LT2);
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));                      // the goal's functor
+
+                // The goal's own arity, kept for the cross-check below: the
+                // args are copied out of the GOAL, but their count comes from
+                // the RESOLVED functor, and those two have to agree.
+                LoadSlot32(WasmAbi.FunctorTableBase);
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LMetaArity));               // goal arity
+
+                LoadSlot32(WasmAbi.MetaCacheBase);
+                Op(new LocalSet(LMetaBase));
+                Op(new LocalGet(LMetaBase));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                MetaGuard(8);
+                Op(new BranchIf(1));                        // no cache -> $slow
+
+                // key = ((module + 1) << 32) | goalFunctor
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Signed());
+                Op(new Int64Constant(32));
+                Op(new Int64ShiftLeft());
+                Op(new LocalGet(LT1));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+                Op(new LocalSet(LAtKey));
+
+                // slot = hash(module, goalFunctor) & mask
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(unchecked((int)2654435761u)));
+                Op(new Int32Multiply());
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(unchecked((int)2246822519u)));
+                Op(new Int32Multiply());
+                Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                Op(new LocalGet(LAtSlot));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(15));
+                Op(new Int32ShiftRightUnsigned());
+                Op(new Int32ExclusiveOr());
+                LoadSlot32(WasmAbi.MetaCacheMask);
+                Op(new LocalSet(LT0));                      // mask, module spent
+                Op(new LocalGet(LT0));
+                Op(new Int32And());
+                Op(new LocalSet(LAtSlot));
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LMetaGuard));               // one pass, no more
+
+                OpenBlock();                                // $resolved
+                OpenLoop();                                 // $probe
+                {
+                    Op(new LocalGet(LMetaBase));
+                    Op(new LocalGet(LAtSlot));
+                    Op(new Int32Constant(4));
+                    Op(new Int32ShiftLeft());
+                    Op(new Int32Add());
+                    Op(new LocalSet(LT1));                  // the row
+                    Op(new LocalGet(LT1));
+                    Op(new Int64Load());
+                    Op(new LocalSet(LC1));
+
+                    // An empty slot: the host has not resolved this pair yet.
+                    // Step aside, and it will -- and fill the cache doing it.
+                    Op(new LocalGet(LC1));
+                    Op(new Int64Constant(0));
+                    Op(new Int64Equal());
+                    MetaGuard(9);
+                    Op(new BranchIf(3));                    // -> $slow
+
+                    Op(new LocalGet(LC1));
+                    Op(new LocalGet(LAtKey));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LT1));
+                        Op(new Int64Load { Offset = 8 });
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LT1));              // the RESOLVED functor
+                        Op(new Branch(2));                  // -> $resolved
+                    }
+                    CloseNested();
+
+                    Op(new LocalGet(LAtSlot));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    LoadSlot32(WasmAbi.MetaCacheMask);
+                    Op(new Int32And());
+                    Op(new LocalSet(LAtSlot));
+                    Op(new LocalGet(LMetaGuard));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Subtract());
+                    Op(new LocalSet(LMetaGuard));
+                    Op(new LocalGet(LMetaGuard));
+                    Op(new Int32Constant(0));
+                    Op(new Int32Equal());
+                    MetaGuard(10);
+                    Op(new BranchIf(3));                    // exhausted -> $slow
+                    Op(new Branch(0));                      // -> $probe
+                }
+                CloseNested();                              // $probe
+                CloseNested();                              // $resolved
+            }
+            OpenElse();
+            {
+                // Not wrapped: the callee IS the goal, so there are not two
+                // arities to reconcile.
+                Op(new Int32Constant(-1));
+                Op(new LocalSet(LMetaArity));
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));                      // fid
+            }
+            CloseNested();
+
+            Op(new LocalGet(LT1));
+            LoadSlot32(WasmAbi.CallMarkerLength);
+            Op(new Int32GreaterThanOrEqualUnsigned());
+            MetaGuard(3);
+            Op(new BranchIf(0));                            // past the table -> $slow
+
+            if (DebugMetaGuards)
+                StoreSlot64(WasmAbi.DiagB, () =>
+                {
+                    Op(new LocalGet(LT1));
+                    Op(new Int64ExtendInt32Unsigned());
+                });
+
+            // marker = callMarkers[fid]; zero means no module covers it.
+            // The base is re-read rather than held: LT0 was spent inside the
+            // $mqual branch, and a mailbox load is cheaper than a local more.
+            LoadSlot32(WasmAbi.CallMarkerBase);
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(2));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int32Load());
+            Op(new LocalSet(LAtVal));                       // marker, to the probe
+            Op(new LocalGet(LAtVal));
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            MetaGuard(4);
+            Op(new BranchIf(0));                            // -> $slow
+
+            // arity, from the functor table's mirror. An id the host has not
+            // mirrored reads as zero, which no compound can be.
+            LoadSlot32(WasmAbi.FunctorTableBase);
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int64Load());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // arity, fid spent
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(1));
+            Op(new Int32Subtract());
+            Op(new Int32Constant(MaxMetaCallArity - 1));
+            Op(new Int32GreaterThanUnsigned());
+            MetaGuard(5);
+            Op(new BranchIf(0));                            // 0, or too wide -> $slow
+
+            // The resolved functor must have the GOAL's arity. Mangling
+            // preserves it, so this only ever fires on a cache that is
+            // telling the truth about the wrong pair -- but without it the
+            // copy below would read past the goal's arguments and call
+            // another predicate with whatever followed them on the heap.
+            // Degrading safely should not depend on the wrong answer
+            // happening to name a predicate no module covers.
+            Op(new LocalGet(LMetaArity));
+            Op(new Int32Constant(0));
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            {
+                Op(new LocalGet(LMetaArity));
+                Op(new LocalGet(LT1));
+                Op(new Int32NotEqual());
+                MetaGuard(11);
+                Op(new BranchIf(1));                        // -> $slow
+            }
+            CloseNested();
+
+            // The goal's arguments become X0..Xn-1.
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LAtSlot));
+            OpenBlock();                                    // $copied
+            OpenLoop();                                     // $copy
+            {
+                Op(new LocalGet(LAtSlot));
+                Op(new LocalGet(LT1));
+                Op(new Int32GreaterThanOrEqualUnsigned());
+                Op(new BranchIf(1));                        // -> $copied
+
+                Op(new LocalGet(LRegsB));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalGet(LHeapB));
+                Op(new LocalGet(LT2));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Add());
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int64Store());
+
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                Op(new Branch(0));                          // -> $copy
+            }
+            CloseNested();                                  // $copy
+            CloseNested();                                  // $copied
+
+            // From here it is an ordinary call: the callee enters a new
+            // procedure, so its cut barrier is refreshed, and CP is the marker
+            // that brings it back to the instruction after this one.
+            // A non-tail meta-call WRITES CP, and that is only recoverable
+            // when a frame holds the clause's own continuation. A clause
+            // whose only call was a builtin has no frame and needs none --
+            // so build one here, exactly the shape Allocate/Deallocate
+            // already agree on, rather than decline the site. Zero Y slots:
+            // its whole job is the saved CP and E.
+            //
+            // The tail form writes no CP at all -- it inherits ours -- so it
+            // needs nothing.
+            bool ownFrame = !tail && !ClauseHasFrame(pc);
+            if (ownFrame)
+            {
+                EmitAllocateFrame(0, pc);
+                _metaFrameResume.Add(pc + 9);
+            }
+            StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
+            if (!tail)
+            {
+                Op(new Int32Constant(_env.EncodeReturnMarker(selfFid, pc + 9)));
+                Op(new LocalSet(LCP));
+            }
+
+            // The watermark guard first, for the same reason every other call
+            // has one: at or past it the host owes a collection, and staying
+            // inside wasm would skip the boundary where it happens.
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitResumeProbe(LAtVal);
+            CloseNested();
+            StoreSlot64(WasmAbi.Pc, () =>
+            {
+                Op(new LocalGet(LAtVal));
+                Op(new Int64ExtendInt32Unsigned());
+            });
+            EmitReturn(WasmVerdict.SuccessTailCall);
+
+            CloseNested();                                  // $slow
+            EmitDeopt(pc);
+            CloseNested();                                  // $done
         }
 
         /// <summary>=/2 open-coded: X0 against X1 through the same two-cell
@@ -2578,9 +3053,10 @@ public static class WasmPredicateCompiler
 
         // ---- frames ----
 
-        private void EmitAllocate(Instr ins)
+        private void EmitAllocate(Instr ins) => EmitAllocateFrame(ins.I0, ins.Pc);
+
+        private void EmitAllocateFrame(int n, int pc)
         {
-            int n = ins.I0;
             int size = 3 + n;
             Op(new LocalGet(LST));
             Op(new Int32Constant(size));
@@ -2588,7 +3064,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.StackLimit);
             Op(new Int32GreaterThanSigned());
             OpenIf();
-            EmitDeopt(ins.Pc);
+            EmitDeopt(pc);
             CloseNested();
 
             CellStoreDyn(LStackB, LST, 0, () => RawInt(() => Op(new LocalGet(LE))));
@@ -3740,6 +4216,9 @@ public static class WasmPredicateCompiler
         private const uint LAtSlot = 41;    // i32: the slot being probed
         private const uint LAtVal = 42;     // i32: the attribute's heap index
         private const uint LAtKey = 43;     // i64: ((home + 1) << 32) | module
+        private const uint LMetaBase = 44;  // i32: the meta cache's base
+        private const uint LMetaGuard = 45; // i32: the probe's bound
+        private const uint LMetaArity = 46; // i32: the GOAL's arity, or -1
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it

@@ -215,13 +215,39 @@ public static class WasmAbi
     /// slow, and no answer-comparing test can tell.</summary>
     public const int HopCount = 38;
 
+    /// <summary>Base of the CALL MARKER table: one i32 per functor id, the
+    /// resume marker of that functor's fresh entry, 0 for a functor no module
+    /// covers. Zero base means no table, and a meta-call steps aside exactly
+    /// as it did before there was one.
+    ///
+    /// <para>What it buys is the only thing a module could not do: call a
+    /// goal whose functor it learns at RUN time. A marker is interned by the
+    /// host, so it cannot be computed from a functor; with the marker in hand
+    /// the module takes the ordinary resume probe.</para></summary>
+    public const int CallMarkerBase = 39;
+    /// <summary>Entries in the call-marker table. A functor id at or past
+    /// this is newer than the table and steps aside.</summary>
+    public const int CallMarkerLength = 40;
+
+    /// <summary>Base of the META-CALL INLINE CACHE: two i64 per slot, key
+    /// <c>((moduleAtom + 1) &lt;&lt; 32) | goalFunctor</c> then the RESOLVED
+    /// functor. Zero base means no cache and a module-tagged meta-call steps
+    /// aside, as it always did.
+    ///
+    /// <para>The resolved functor, not a marker: the module reads the marker
+    /// from <see cref="CallMarkerBase"/> afterwards, so an eviction that
+    /// zeroes that row invalidates this cache for free.</para></summary>
+    public const int MetaCacheBase = 41;
+    /// <summary>Slots minus one. Read only when the base is non-zero.</summary>
+    public const int MetaCacheMask = 42;
+
     /// <summary>The thread's function table, as emscripten names it. Every
     /// module a thread registers lands in this one, which is what lets a
     /// module reach another without going out to the host.</summary>
     public const string TableModule = "env";
     public const string TableField = "__indirect_function_table";
 
-    public const int SlotCount = 40;
+    public const int SlotCount = 43;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

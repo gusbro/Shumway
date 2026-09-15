@@ -179,6 +179,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private readonly int _mailboxAt;
         private GCHandle _heapPin, _stackPin, _regsPin, _trailPin, _attrPin;
         private long[]? _attrRows;
+        private GCHandle _callPin;
+        private int[]? _callMarkers;
+        private GCHandle _metaPin;
+        private long[]? _metaCache;
         private Cell[] _heap = null!, _stack = null!, _regs = null!;
         private int[] _trail = null!;
         private bool _engineAuthoritative;
@@ -203,6 +207,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             long t0 = Stopwatch.GetTimestamp();
             _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
             _engine.AttrMirrorEnable();
+            _engine.MetaResolutionObserver = _w._table.NoteMetaResolution;
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
@@ -229,12 +234,45 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ResumeTableRows: _w._table.Length,
                 ModuleIndexBase: _w.ModuleIndexAddress(),
                 AttrTableBase: AttrMirrorAddress(),
-                AttrTableMask: _engine.AttrMirrorMask);
+                AttrTableMask: _engine.AttrMirrorMask,
+                CallMarkerBase: CallMarkerAddress(),
+                CallMarkerLength: _w._table.CallMarkers.Length,
+                MetaCacheBase: MetaCacheAddress(),
+                MetaCacheMask: _w._table.MetaCacheMask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
             _engineAuthoritative = false;
             DiagStageTicks += Stopwatch.GetTimestamp() - t0;
+        }
+
+        /// <summary>The meta cache's address. It is never replaced once
+        /// allocated, so this pins once.</summary>
+        private long MetaCacheAddress()
+        {
+            long[] rows = _w._table.MetaCache;
+            if (!ReferenceEquals(_metaCache, rows))
+            {
+                if (_metaPin.IsAllocated) _metaPin.Free();
+                _metaPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
+                _metaCache = rows;
+            }
+            return (long)_metaPin.AddrOfPinnedObject();
+        }
+
+        /// <summary>The call-marker table's address, repinning when the host
+        /// grew it. Same rule as the rows: the array is replaced on growth, so
+        /// the address cannot be cached across a staging.</summary>
+        private long CallMarkerAddress()
+        {
+            int[] markers = _w._table.CallMarkers;
+            if (!ReferenceEquals(_callMarkers, markers))
+            {
+                if (_callPin.IsAllocated) _callPin.Free();
+                _callPin = GCHandle.Alloc(markers, GCHandleType.Pinned);
+                _callMarkers = markers;
+            }
+            return (long)_callPin.AddrOfPinnedObject();
         }
 
         /// <summary>The attribute image's address, repinning when the host
@@ -361,7 +399,7 @@ internal static class BrowserWasmTier
         var sb = new System.Text.StringBuilder();
         sb.Append("%   builtin exits (of ").Append(total).Append(", ")
           .Append(rank.Count).Append(" distinct):\n");
-        for (int i = 0; i < rank.Count && i < 8; i++)
+        for (int i = 0; i < rank.Count && i < 24; i++)
         {
             var (name, arity, hits) = rank[i];
             double pct = total > 0 ? hits * 100.0 / total : 0;
@@ -380,8 +418,12 @@ internal static class BrowserWasmTier
 
         var sb = new System.Text.StringBuilder();
         long total = WasmTierDelegate.DiagDeopts;
-        sb.Append("%   deopt sites (of ").Append(total).Append("):\n");
-        for (int i = 0; i < rank.Count && i < 8; i++)
+        // The DISTINCT count leads: a flat spread over hundreds of sites and a
+        // storm at three are different problems, and only this number tells
+        // them apart. A truncated list looks the same either way.
+        sb.Append("%   deopt sites (of ").Append(total).Append(", ")
+          .Append(rank.Count).Append(" distinct):\n");
+        for (int i = 0; i < rank.Count && i < 24; i++)
         {
             var (pc, hits) = rank[i];
             string where = $"0x{pc:X}";
@@ -438,6 +480,8 @@ internal static class BrowserWasmTier
     private static BrowserWasmWorld? _world;
 
     internal static int ModuleCount() => _world?.ModuleCount ?? 0;
+
+
     internal static int ResumeRows() => _world?.ResumeRows ?? 0;
     internal static long ModuleBytes() => _world?.ModuleBytes ?? 0;
 
@@ -1055,12 +1099,20 @@ internal static partial class WebShumwayApp
                               + $" builtinExits={WasmTierDelegate.DiagBuiltins}"
                               + $" tailExits={WasmTierDelegate.DiagTailExits}"
                               + $"\n    builtins: " + string.Join(" ",
-                                  WasmTierDelegate.BuiltinFailRanking().Take(8)
+                                  WasmTierDelegate.BuiltinFailRanking().Take(20)
                                       .Select(r => $"{r.Name}/{r.Arity}={r.Hits}(fail {r.Fails})"))
                               + $"\n    time split: inWasm="
                               + $"{BrowserWasmWorld.DiagCallTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
                               + $" stage={BrowserWasmWorld.DiagStageTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
-                              + $" (over {rounds} rounds)";
+                              + $" (over {rounds} rounds)"
+                              // The two buckets above account for about a
+                              // THIRD of the wall time; the rest is the host,
+                              // and the deopts are the half of it nothing has
+                              // ever attributed. Queens 12 takes 19,029 of
+                              // them per run, against 23,594 builtin exits,
+                              // and each hands control to the interpreter
+                              // rather than just running C# and returning.
+                              + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n');
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
