@@ -17,8 +17,27 @@ public abstract class WasmRunExports
 /// engine); a chain copies the engine areas into that image once, runs any
 /// number of in-image hops, and copies back at the end. Everything in a cell
 /// is an INDEX into its area, never an address, which is what makes the copy
-/// model sound. This is the differential-testing world -- the browser pins
-/// the real arrays and pays no copies. Engine-thread only.</summary>
+/// model sound -- and what lets the SAME emitted code run under both
+/// staging models. Engine-thread only.
+///
+/// <para><b>Why this copies and the browser does not, structurally.</b> In
+/// the browser the .NET runtime is itself compiled to wasm, so the engine's
+/// Cell[] arrays already live INSIDE the linear memory the module imports:
+/// pinning one and handing over its address gives the module the engine's
+/// real array, and there is nothing to copy because there is only one
+/// memory. Here the module runs against a private UnmanagedMemory block
+/// (DesktopWasmSpace) while the engine's arrays are managed objects in the
+/// CLR heap -- two address spaces -- and wasm code can only address offsets
+/// into its own linear memory. Pinning would stop the GC moving an array; it
+/// would not move the array inside the block, so it buys nothing here. The
+/// copy is not a shortcut this world took, it is the only way across.</para>
+///
+/// <para>Closing the gap would mean allocating the engine's areas in
+/// unmanaged memory inside that block -- surgery on the engine's core (the
+/// interpreter and the ADR-016 heap GC both walk those arrays), for the
+/// benefit of a test harness. So this world is for CORRECTNESS and for
+/// COUNTS, which are identical in both; a TIME taken here measures the
+/// copying (see CONTRIBUTING.md, "Measuring the WebAssembly tier").</para></summary>
 public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 {
     private const int MailboxAt = DesktopWasmSpace.MailboxAt;
