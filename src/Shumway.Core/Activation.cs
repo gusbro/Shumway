@@ -79,7 +79,13 @@ public sealed partial class Activation
     // Backtracking reverts the ATTVAR cell to a plain REF (via the
     // ValueChange trail); the orphaned record is left in place and is
     // overwritten outright if the heap slot is later reused.
-    private readonly Dictionary<int, Dictionary<int, int>> _attrTable = new();
+    // Written ONLY through the AttrStore funnel below (Activation.Attrs.cs).
+    // Named with the underscore-store suffix so a direct use reads as the
+    // exception it is: the funnel exists so a derived view -- today the
+    // GC's scan, tomorrow a linear-memory mirror the wasm tier can read --
+    // can be kept in step from ONE place per mutation. Handing out the inner
+    // record would defeat that, so the funnel never returns it.
+    private readonly Dictionary<int, Dictionary<int, int>> _attrStore = new();
     // Side log for AttrModify trail entries: each records (attvar home
     // index, module id, previous value heap index — or -1 when the
     // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.

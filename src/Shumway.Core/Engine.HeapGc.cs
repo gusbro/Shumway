@@ -532,11 +532,10 @@ public sealed partial class Activation
     /// is collected and backtracking restores a dangling index.</para></summary>
     private void MarkExternalHolders(int oldTop)
     {
-        foreach (var kv in _attrTable)
+        foreach (var (home, _, attrValueIdx) in AttrAll())
         {
-            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
-            foreach (var (_, attrValueIdx) in kv.Value)
-                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+            if ((uint)home < (uint)oldTop) GcMarkCell(home);
+            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
         }
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
@@ -560,21 +559,7 @@ public sealed partial class Activation
     {
         // The attribute table is rebuilt: its KEYS are heap indices, so this is
         // a re-key, not an in-place edit.
-        if (_attrTable.Count > 0)
-        {
-            var moved = new System.Collections.Generic.List<(int Home,
-                System.Collections.Generic.Dictionary<int, int> Record)>(_attrTable.Count);
-            foreach (var kv in _attrTable)
-            {
-                var record = kv.Value;
-                foreach (int module in
-                    new System.Collections.Generic.List<int>(record.Keys))
-                    record[module] = RelocIndex(record[module], forward);
-                moved.Add((RelocIndex(kv.Key, forward), record));
-            }
-            _attrTable.Clear();
-            foreach (var (home, record) in moved) _attrTable[home] = record;
-        }
+        AttrRekeyAll(idx => RelocIndex(idx, forward));
 
         for (int i = 0; i < _attrTrailLog.Count; i++)
         {
@@ -681,11 +666,10 @@ public sealed partial class Activation
         Drain();
         int cCatch = _gcMarkCount - c0; c0 = _gcMarkCount;
         int h0 = _gcMarkCount;
-        foreach (var kv in _attrTable)
+        foreach (var (home, _, attrValueIdx) in AttrAll())
         {
-            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
-            foreach (var (_, attrValueIdx) in kv.Value)
-                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+            if ((uint)home < (uint)oldTop) GcMarkCell(home);
+            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
         }
         Drain();
         int hTable = _gcMarkCount - h0; h0 = _gcMarkCount;
@@ -710,7 +694,7 @@ public sealed partial class Activation
         int hClean = _gcMarkCount - h0;
         int cHolders = _gcMarkCount - c0; c0 = _gcMarkCount;
         System.Console.Error.WriteLine(
-            $"[gc-roots] holders breakdown: attrTable={hTable} (n={_attrTable.Count})"
+            $"[gc-roots] holders breakdown: attrTable={hTable} (n={AttrRecordTotal})"
             + $" attrTrailLog={hLog} (n={_attrTrailLog.Count}) wakeups={hWake} (n={_pendingWakeups.Count})"
             + $" cleanups={hClean}");
         MarkExternalTrailRoots(GcMarkReferents);

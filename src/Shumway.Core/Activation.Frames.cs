@@ -105,7 +105,7 @@ public sealed partial class Activation
         // Still an attributed variable — the binding was undone, or this entry
         // was about something else at the same address. Nothing to drop.
         if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return;
-        _attrTable.Remove(home);
+        AttrDropRecord(home);
     }
 
     private static void Validate(ActivationConfig c)
@@ -474,15 +474,13 @@ public sealed partial class Activation
     /// logs is the truncation that lost the restore.</summary>
     public void DebugSweepAttrTable(string site)
     {
-        foreach (var kv in _attrTable)
+        foreach (var (home, module, value) in AttrAll())
         {
-            int home = kv.Key;
             if (home >= _heapTop || _heap[home].Tag != Tag.AttVar) continue;
-            foreach (var rec in kv.Value)
-                if (rec.Value >= _heapTop)
-                    System.Console.Error.WriteLine(
-                        $"[ATTR-SWEEP] {site}: var@{home} module={AtomTable.GetById(rec.Key)?.Name}"
-                        + $" attr->heap[{rec.Value}] >= heapTop={_heapTop}");
+            if (value >= _heapTop)
+                System.Console.Error.WriteLine(
+                    $"[ATTR-SWEEP] {site}: var@{home} module={AtomTable.GetById(module)?.Name}"
+                    + $" attr->heap[{value}] >= heapTop={_heapTop}");
         }
     }
 
@@ -1202,7 +1200,7 @@ public sealed partial class Activation
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
             }
-            else if (_attrTable.Count > 0 && entry.Type == TrailType.ValueChange)
+            else if (AttrRecordTotal > 0 && entry.Type == TrailType.ValueChange)
             {
                 DropDeadAttrRecord(entry.HeapIdx);
             }
