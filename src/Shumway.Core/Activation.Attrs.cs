@@ -19,8 +19,9 @@ namespace Shumway.Core;
 /// <see cref="AttrCreateRecord"/>, <see cref="AttrSet"/>,
 /// <see cref="AttrRemove"/>, <see cref="AttrDropRecord"/> and
 /// <see cref="AttrRekeyAll"/>. A derived view -- the heap GC's scan today, a
-/// linear-memory mirror the wasm tier can read tomorrow -- is maintained
-/// from those five and nowhere else.</para>
+/// linear-memory mirror the wasm tier reads -- is maintained from those five
+/// and nowhere else. Activation.AttrMirror.cs is that mirror, and every
+/// writer below ends by telling it what changed.</para>
 ///
 /// <para>Trailing is NOT here. A mutation's undo record belongs to the
 /// caller that knows the semantics (PutAttr promotes and trails a
@@ -32,12 +33,23 @@ public sealed partial class Activation
 
     /// <summary>Installs a fresh, empty record for <paramref name="home"/>,
     /// overwriting any orphan a backtracked-then-reused slot left behind.</summary>
-    private void AttrCreateRecord(int home) => _attrStore[home] = new Dictionary<int, int>();
+    private void AttrCreateRecord(int home)
+    {
+        // An orphan record's rows have to go with it: the slot is being
+        // reused, so a leftover row would answer for the NEW variable.
+        if (_attrMirror is not null && _attrStore.TryGetValue(home, out var orphan))
+            foreach (int moduleId in new List<int>(orphan.Keys))
+                AttrMirrorDelete(home, moduleId);
+        _attrStore[home] = new Dictionary<int, int>();
+    }
 
     /// <summary>Sets <paramref name="moduleId"/>'s attribute value. The
     /// record must exist.</summary>
     private void AttrSet(int home, int moduleId, int valueHeapIdx)
-        => _attrStore[home][moduleId] = valueHeapIdx;
+    {
+        _attrStore[home][moduleId] = valueHeapIdx;
+        AttrMirrorPut(home, moduleId, valueHeapIdx);
+    }
 
     /// <summary>Removes <paramref name="moduleId"/>'s attribute; returns the
     /// number of attributes left on that variable, or -1 when it had no
@@ -47,12 +59,19 @@ public sealed partial class Activation
     {
         if (!_attrStore.TryGetValue(home, out var record)) return -1;
         record.Remove(moduleId);
+        AttrMirrorDelete(home, moduleId);
         return record.Count;
     }
 
     /// <summary>Drops the whole record: the cell at <paramref name="home"/>
     /// is no longer a live attributed variable.</summary>
-    private void AttrDropRecord(int home) => _attrStore.Remove(home);
+    private void AttrDropRecord(int home)
+    {
+        if (_attrMirror is not null && _attrStore.TryGetValue(home, out var record))
+            foreach (int moduleId in new List<int>(record.Keys))
+                AttrMirrorDelete(home, moduleId);
+        _attrStore.Remove(home);
+    }
 
     /// <summary>Re-keys the whole store after the heap collector moved
     /// cells: both the homes (the keys) and the attribute values (the
@@ -70,6 +89,9 @@ public sealed partial class Activation
         }
         _attrStore.Clear();
         foreach (var (home, record) in moved) _attrStore[home] = record;
+        // Every key moved at once, so the image is rebuilt rather than
+        // re-keyed: relocated rows would otherwise probe past each other.
+        if (_attrMirror is not null) AttrMirrorRebuild(_attrMirror.Length);
     }
 
     // ----- readers -----
@@ -82,6 +104,8 @@ public sealed partial class Activation
             && record.TryGetValue(moduleId, out int value) ? value : -1;
 
     private bool AttrHasRecord(int home) => _attrStore.ContainsKey(home);
+
+    internal bool AttrHasRecordForTesting(int home) => AttrHasRecord(home);
 
     /// <summary>The module ids carrying an attribute on <paramref
     /// name="home"/>. A snapshot: the caller may mutate the store while
