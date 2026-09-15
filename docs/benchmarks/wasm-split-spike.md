@@ -289,8 +289,29 @@ Staging is ~70% of the accounted time even where it pins instead of
 copying, and it is paid per crossing: 216 chain entries per iteration of a
 program whose body is four constraints. That is what makes open-coding a
 builtin worth doing -- not the work of the builtin, which is trivial, but
-the crossing it avoids. `get_attr/3` tops both libraries' exit rankings
-(41-43%) and is the next one.
+the crossing it avoids.
+
+**And the browser is where you find out whether it applied.** The
+one-argument type tests were open-coded, measured on the desktop and
+committed; the browser's ranking still read `var/1` and `number/1` at the
+top afterwards. The decision was being lost in the RELOCATING compile env,
+which the bake uses and which had not been taught the new hook, so it
+inherited the interface's default answer of no. Every baked module kept
+its exits, and baked modules are what the browser's libraries run from:
+the live path had the open-coding and the baked path did not.
+
+With that delegated, on clpr x200 in the browser:
+
+```
+                exits (top three)                        lazy
+before     var/1 23,400  number/1 14,994  get_attr 12,600   518.7 ms  1.3x
+after      get_attr 12,600  append 6,000  ==/2 3,000        326.7 ms  2.2x
+```
+
+40,794 of 72,594 exits gone, and the tier goes from 1.3x to 2.2x of
+Tier-0. The work had been committed for a day and was worth nothing in
+production until the env delegated. `get_attr/3` now genuinely tops the
+ranking, and is the next one.
 
 Reproducing needs one caveat: the `#wasmgrain` hook closes its window the
 moment the report is posted, so read `/collect` (or suppress `window.close`

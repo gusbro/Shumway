@@ -54,7 +54,7 @@ public sealed record WasmRelocation(
 /// decision (say, an inlined <c>=/2</c>) is wrong under another.</summary>
 public sealed record WasmBuiltinEvidence(
     string Name, int Arity, bool Found, bool Direct, bool InlineUnify,
-    bool InlineCompare, bool Negated);
+    bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None);
 
 /// <summary>A compile env that bakes a unique SENTINEL for every immediate
 /// the code names outside itself and records what each one stands for, so
@@ -193,14 +193,16 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         {
             var (n, a) = NameOf(calleeFunctorId);
             bool direct = false, unify = false, compare = false, negated = false;
+            var test = WasmTypeTest.None;
             if (found)
             {
                 direct = _inner.IsDirectBuiltin(builtinId);
                 unify = _inner.IsInlineUnify(builtinId);
                 compare = _inner.IsInlineCompare(builtinId, out negated);
+                _inner.TryGetInlineTypeTest(builtinId, out test);
             }
             _evidence[calleeFunctorId] =
-                new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated);
+                new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated, test);
         }
         return found;
     }
@@ -213,9 +215,10 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         int fid = FunctorTable.Intern(AtomTable.Intern(entry.Name).Id, entry.Arity);
         if (_evidence.ContainsKey(fid)) return;
+        _inner.TryGetInlineTypeTest(builtinId, out var noteTest);
         _evidence[fid] = new WasmBuiltinEvidence(entry.Name, entry.Arity, true,
             _inner.IsDirectBuiltin(builtinId), _inner.IsInlineUnify(builtinId),
-            _inner.IsInlineCompare(builtinId, out bool neg), neg);
+            _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest);
     }
 
     public bool IsDirectBuiltin(int builtinId)
@@ -234,5 +237,18 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineCompare(builtinId, out negated);
+    }
+
+    // Every form decision has to be DELEGATED here, not inherited: the
+    // interface's default answers "no", so a hook added upstream and not
+    // added here silently stops applying to every baked module while the
+    // live path keeps it. That is how the type tests came to be open-coded
+    // on the desktop and not in the browser, where the libraries run from
+    // baked modules -- var/1 and number/1 still topped the browser's exit
+    // ranking after the change landed.
+    public bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)
+    {
+        Note(builtinId);
+        return _inner.TryGetInlineTypeTest(builtinId, out test);
     }
 }

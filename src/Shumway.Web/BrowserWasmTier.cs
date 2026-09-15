@@ -1028,6 +1028,12 @@ internal static partial class WebShumwayApp
                               + $" deopts={WasmTierDelegate.DiagDeopts}"
                               + $" builtinExits={WasmTierDelegate.DiagBuiltins}"
                               + $" tailExits={WasmTierDelegate.DiagTailExits}"
+                              + $"\n    builtins: " + string.Join(" ",
+                                  WasmTierDelegate.BuiltinRanking().Take(6)
+                                      .Select(r => $"{r.Name}/{r.Arity}={r.Hits}"))
+                              + $"\n    builtins: " + string.Join(" ",
+                                  WasmTierDelegate.BuiltinRanking().Take(6)
+                                      .Select(r => $"{r.Name}/{r.Arity}={r.Hits}"))
                               + $"\n    time split: inWasm="
                               + $"{BrowserWasmWorld.DiagCallTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
                               + $" stage={BrowserWasmWorld.DiagStageTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
