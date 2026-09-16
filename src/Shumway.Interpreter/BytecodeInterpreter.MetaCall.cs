@@ -310,8 +310,7 @@ public sealed partial class BytecodeInterpreter
                 int fIdx = c.AsHeapIndex;
                 var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
                     _engine.GetHeap(fIdx).AsFunctorId);
-                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
-                        is "," or ";" or "->" or "*->")
+                if (IsControlConstruct(aid, ar))
                     return IsBodyConvertible(_engine.GetHeap(fIdx + 1))
                         && IsBodyConvertible(_engine.GetHeap(fIdx + 2));
                 return true;
@@ -337,8 +336,7 @@ public sealed partial class BytecodeInterpreter
                 int fIdx = c.AsHeapIndex;
                 var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
                     _engine.GetHeap(fIdx).AsFunctorId);
-                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
-                        is "," or ";" or "->" or "*->")
+                if (IsControlConstruct(aid, ar))
                 {
                     CheckBodyConvertible(_engine.GetHeap(fIdx + 1), whole);
                     CheckBodyConvertible(_engine.GetHeap(fIdx + 2), whole);
@@ -586,8 +584,7 @@ public sealed partial class BytecodeInterpreter
         // are both type_error(callable, (fail,3)), and `fail` must not
         // execute first. Checked here (not after the route cache) so the
         // cached path is covered too.
-        if (totalArity == 2 && Shumway.Core.AtomTable.GetById(atomId)?.Name
-                is "," or ";" or "->" or "*->")
+        if (IsControlConstruct(atomId, totalArity))
             Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
                 _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
@@ -702,7 +699,7 @@ public sealed partial class BytecodeInterpreter
         // defines no such local (nor imports one) falls through to the builtin.
         if (resolutionModule >= 0 && addresses is not null)
         {
-            int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+            int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
             {
                 _engine.MetaResolutionObserver?.Invoke(
@@ -946,13 +943,6 @@ public sealed partial class BytecodeInterpreter
 
     /// <summary>Builds the mangled <c>module$name/arity</c> functor id used to
     /// resolve a bare meta-goal against its meta-caller's module locals.</summary>
-    private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
-    {
-        string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
-        string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
-        int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
-        return FunctorTable.Intern(mangledAtom, arity);
-    }
 
     /// <summary>Dereferences a cell, following REF chains to the term it
     /// names (or to an unbound REF / ATTVAR).</summary>

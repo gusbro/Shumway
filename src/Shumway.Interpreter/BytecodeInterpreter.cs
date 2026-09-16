@@ -151,6 +151,28 @@ public sealed partial class BytecodeInterpreter
     // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the
     // module of the clause that meta-called it (ModuleRewrite). Unwrapped in the
     // meta-dispatch so Goal's bare functor resolves against Module's locals first.
+    // The four cut-transparent control constructs, by ATOM. The tests that
+    // use these ask about an atom and an ARITY, not a functor, because the
+    // effective goal of a call/N is name/(goalArity + extras): the functor
+    // sitting in the term is not the one being judged, so comparing against
+    // ,/2 would answer wrongly whenever a meta-call carries extra arguments.
+    //
+    // Interned once. This was a table read plus up to four STRING compares
+    // at three sites, one of them the meta-call dispatch itself.
+    private static readonly int ConjAtomId = AtomTable.Intern(",", permanent: true).Id;
+    private static readonly int DisjAtomId = AtomTable.Intern(";", permanent: true).Id;
+    private static readonly int ArrowAtomId = AtomTable.Intern("->", permanent: true).Id;
+    private static readonly int SoftArrowAtomId =
+        AtomTable.Intern("*->", permanent: true).Id;
+
+    /// <summary>Whether (atom, arity) names a cut-transparent control
+    /// construct: <c>,/2</c>, <c>;/2</c>, <c>-&gt;/2</c>, <c>*-&gt;/2</c>.
+    /// </summary>
+    private static bool IsControlConstruct(int atomId, int arity)
+        => arity == 2
+           && (atomId == ConjAtomId || atomId == DisjAtomId
+               || atomId == ArrowAtomId || atomId == SoftArrowAtomId);
+
     private static readonly int MqualFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
     // The ISO module-qualified goal `Module:Goal` — the same (Module, Goal)

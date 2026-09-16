@@ -378,7 +378,7 @@ public sealed partial class IlPredicateCompiler
             // (nor import) falls through to the builtin.
             if (resolutionModule >= 0 && addresses is not null)
             {
-                int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+                int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 {
                     engine.SetB0(cutBarrier);
@@ -565,14 +565,6 @@ public sealed partial class IlPredicateCompiler
             if (arity > 0) engine.SetHeap(f + 1, w0);
             if (arity > 1) engine.SetHeap(f + 2, w1);
             return Cell.Str(f);
-        }
-
-        private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
-        {
-            string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
-            string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
-            int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
-            return FunctorTable.Intern(mangledAtom, arity);
         }
 
         private static Cell DerefCell(Activation engine, Cell c) =>
