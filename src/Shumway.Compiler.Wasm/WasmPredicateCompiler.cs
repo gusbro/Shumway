@@ -1660,9 +1660,14 @@ public static class WasmPredicateCompiler
         /// attributed variable has attributes and no value -- and the
         /// libraries that call var/1 hardest are exactly the ones that make
         /// attributed variables.</para></summary>
-        private void EmitInlineTypeTest(WasmTypeTest test, int pc)
+        /// <param name="load0">Where the argument comes from. Null means X0,
+        /// which is where a static call site left it. A META-CALLED goal
+        /// passes a heap load instead, and must: this form hands the
+        /// instruction back to the host on the paths it cannot decide, and
+        /// the host re-reads the goal out of X0.</param>
+        private void EmitInlineTypeTest(WasmTypeTest test, int pc, Action? load0 = null)
         {
-            RegLoad(0);
+            (load0 ?? (() => RegLoad(0)))();
             Op(new LocalSet(LC0));
             Deref();
             TagOfC0();
@@ -2653,12 +2658,25 @@ public static class WasmPredicateCompiler
         /// pair: a variable against a compound now decides instead of leaving.
         /// Floats, bignums, rationals, two compounds, and anything touching a
         /// PSTR still go to <paramref name="emitBuiltinExit"/>.</para></summary>
-        private void EmitInlineCompare(int pc, bool negated, Action emitBuiltinExit)
+        /// <param name="load0">Where argument 0 comes from. Null means the
+        /// register a static call site would have put it in. A META-CALLED
+        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// step aside, and both hand the instruction back to the host, which
+        /// re-reads the goal out of X0. Writing the arguments into the
+        /// registers first would have destroyed it.</param>
+        /// <param name="load1">Where argument 1 comes from. Null means the
+        /// register a static call site would have put it in. A META-CALLED
+        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// step aside, and both hand the instruction back to the host, which
+        /// re-reads the goal out of X0. Writing the arguments into the
+        /// registers first would have destroyed it.</param>
+        private void EmitInlineCompare(int pc, bool negated, Action emitBuiltinExit,
+                                      Action? load0 = null, Action? load1 = null)
         {
             EmitFlagsCheck(pc);
-            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
             Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
-            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
 
             // (mask >>> tag) & 1: one shift and one and, against four compares,
             // and the tags are not adjacent so a range test is out.
@@ -2733,7 +2751,27 @@ public static class WasmPredicateCompiler
         /// keeps this a speed change and not a semantic one. A MISS, though,
         /// is answered here: no attribute means fail, and that needs nothing
         /// the module does not have.</para></summary>
-        private void EmitInlineGetAttr(int pc, Action emitBuiltinExit)
+        /// <param name="load0">Where argument 0 comes from. Null means the
+        /// register a static call site would have put it in. A META-CALLED
+        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// step aside, and both hand the instruction back to the host, which
+        /// re-reads the goal out of X0. Writing the arguments into the
+        /// registers first would have destroyed it.</param>
+        /// <param name="load1">Where argument 1 comes from. Null means the
+        /// register a static call site would have put it in. A META-CALLED
+        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// step aside, and both hand the instruction back to the host, which
+        /// re-reads the goal out of X0. Writing the arguments into the
+        /// registers first would have destroyed it.</param>
+        /// <param name="load2">Where argument 2 comes from. Null means the
+        /// register a static call site would have put it in. A META-CALLED
+        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// step aside, and both hand the instruction back to the host, which
+        /// re-reads the goal out of X0. Writing the arguments into the
+        /// registers first would have destroyed it.</param>
+        private void EmitInlineGetAttr(int pc, Action emitBuiltinExit,
+                                      Action? load0 = null, Action? load1 = null,
+                                      Action? load2 = null)
         {
             EmitFlagsCheck(pc);
             OpenBlock();                                    // $done
@@ -2748,7 +2786,7 @@ public static class WasmPredicateCompiler
             Op(new BranchIf(0));                            // -> $slow
 
             // A0 must be an attributed variable. Its payload IS its home.
-            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.AttVar));
             Op(new Int32NotEqual());
@@ -2761,7 +2799,7 @@ public static class WasmPredicateCompiler
 
             // A1 must be a bound atom: an unbound or non-atom module is an
             // ERROR, and errors are the host's.
-            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.Atom));
             Op(new Int32NotEqual());
@@ -2872,7 +2910,7 @@ public static class WasmPredicateCompiler
             // Value in hand: unify A2 with the attribute term, exactly as
             // UnifyRegisterWithHeapAt does. The general shapes inside step
             // aside on their own, so semantics stay the engine's.
-            EmitUnifyTwo(() => RegLoad(2),
+            EmitUnifyTwo(load2 ?? (() => RegLoad(2)),
                          () => CellLoadDyn(LHeapB, LAtVal), pc);
             Op(new Branch(1));                              // -> $done
 
