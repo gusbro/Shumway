@@ -1083,6 +1083,7 @@ internal static partial class WebShumwayApp
                         int promoted = engine.IlPromotion.PromotedFunctorIds().Count();
 
                         WasmTierDelegate.ResetDiag();
+                        Shumway.Interpreter.BytecodeInterpreter.ResetRunTicks();
                         BrowserWasmWorld.DiagCallTicks = 0;
                         BrowserWasmWorld.DiagStageTicks = 0;
                         double best = BenchMedian(engine, prog.Goal, rounds);
@@ -1107,9 +1108,14 @@ internal static partial class WebShumwayApp
                               + $"\n    builtins: " + string.Join(" ",
                                   WasmTierDelegate.BuiltinFailRanking().Take(20)
                                       .Select(r => $"{r.Name}/{r.Arity}={r.Hits}(fail {r.Fails})"))
-                              + $"\n    time split: inWasm="
-                              + $"{BrowserWasmWorld.DiagCallTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
-                              + $" stage={BrowserWasmWorld.DiagStageTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
+                              + $"\n    time: wall={best:F0} ms"
+                              + $" delegate={WasmTierDelegate.DiagDelegateTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                              + $" (inWasm={BrowserWasmWorld.DiagCallTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                              + $" stage={BrowserWasmWorld.DiagStageTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                              + $" builtins={WasmTierDelegate.DiagBuiltinTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                              + $" glue={(WasmTierDelegate.DiagDelegateTicks - BrowserWasmWorld.DiagCallTicks - BrowserWasmWorld.DiagStageTicks - WasmTierDelegate.DiagBuiltinTicks) * 1000.0 / Stopwatch.Frequency:F0})"
+                              + $" interp={Shumway.Interpreter.BytecodeInterpreter.DiagRunTicks * 1000.0 / Stopwatch.Frequency - WasmTierDelegate.DiagDelegateTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                              + $" setup+answer={best - Shumway.Interpreter.BytecodeInterpreter.DiagRunTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
                               + $" (over {rounds} rounds)"
                               // The two buckets above account for about a
                               // THIRD of the wall time; the rest is the host,

@@ -47,6 +47,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public int MqualFunctorId { get; } =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
+    public bool IsInlineAppend(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "append" && entry.Arity == 3;
+    }
+
     public bool IsInlineMetaCall(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

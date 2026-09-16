@@ -1474,6 +1474,18 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineAppend(ins.I0))
+                    {
+                        EmitInlineAppend(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineMetaCall(ins.I0))
                     {
                         EmitInlineMetaCall(ins.Pc, SelfFid(ins));
@@ -1515,6 +1527,18 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineCompare(ins.I0, out bool ebNeg))
                     {
                         EmitInlineCompare(ins.Pc, ebNeg, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineAppend(ins.I0))
+                    {
+                        EmitInlineAppend(ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -1826,6 +1850,178 @@ public static class WasmPredicateCompiler
                 }
             }
             return false;
+        }
+
+        /// <summary>append/3's DETERMINISTIC mode, built in the module.
+        ///
+        /// <para>It is the largest single source of builtin exits measured:
+        /// 2,000 of clpr's 5,000, twice the next one. And the exit is what
+        /// costs -- the builtins of a whole run do 63 ms of work while
+        /// getting to them and back costs 271 ms, so a builtin that leaves
+        /// the module pays about four times its own weight.</para>
+        ///
+        /// <para>Two passes, exactly as the host does it: walk the spine to
+        /// count, claim 2N+1 cells in one go, walk again writing the pairs.
+        /// The layout is the host's too -- pair i's LIS cell at start + 2i
+        /// points at its head at start + 2i + 1, and the cell after a head is
+        /// the next pair's LIS slot (ADR-017) -- because the result is an
+        /// ordinary list that everything else reads.</para>
+        ///
+        /// <para>Anything that is not a plain spine ending in [] steps out
+        /// rather than being decided here: an unbound tail is append/3's
+        /// other mode, which enumerates splits off a choice point; a PSTR is
+        /// a list this walk cannot follow; an improper tail is a failure the
+        /// host already knows how to produce. Declining is always correct,
+        /// and it is what the measured clpr corpus never needs -- every one
+        /// of its calls is (+, +, -).</para></summary>
+        private void EmitInlineAppend(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // ---- pass one: how long is L1, and what ends it ----
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtSlot));     // count
+            OpenBlock();                                    // $counted
+            OpenLoop();                                     // $count
+            {
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Lis));
+                Op(new Int32NotEqual());
+                Op(new BranchIf(1));                        // -> $counted
+                // A LIS cell's payload is its HEAD index; the tail is the
+                // cell right after the head.
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT0));
+                CellLoadDyn(LHeapB, LT0, 1);
+                Op(new LocalSet(LC0));
+                Deref();
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                Op(new Branch(0));                          // -> $count
+            }
+            CloseNested();                                  // $count
+            CloseNested();                                  // $counted
+
+            // Only a spine ending in [] is ours. Everything else -- an
+            // unbound tail, a PSTR, an improper end -- goes to the host.
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId)));
+            Op(new Int64NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // Empty L1: the answer IS L2.
+            Op(new LocalGet(LAtSlot));
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                EmitUnifyTwo(() => RegLoad(2), () => RegLoad(1), pc);
+                Op(new Branch(2));                          // -> $done
+            }
+            CloseNested();
+
+            // ---- room for 2N + 1 cells, or step aside ----
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LAtSlot));
+            Op(new Int32Constant(1));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            EmitDeopt(pc);
+            CloseNested();
+
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LMetaBase));                    // start
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LAtSlot));
+            Op(new Int32Constant(1));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            // ---- pass two: write the pairs ----
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            Op(new Int32Constant(0)); Op(new LocalSet(LMetaGuard));  // i
+            OpenBlock();                                    // $built
+            OpenLoop();                                     // $build
+            {
+                Op(new LocalGet(LMetaGuard));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $built
+
+                // lisIdx = start + 2i
+                Op(new LocalGet(LMetaBase));
+                Op(new LocalGet(LMetaGuard));
+                Op(new Int32Constant(1));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LT1));
+
+                // heap[lisIdx] = Lis(lisIdx + 1)
+                CellStoreDyn(LHeapB, LT1, 0, () =>
+                {
+                    Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                    Op(new LocalGet(LT1));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new Int64ExtendInt32Unsigned());
+                    Op(new Int64Or());
+                });
+
+                // heap[lisIdx + 1] = head, where head = heap[cursor.payload]
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT0));
+                CellStoreDyn(LHeapB, LT1, 1, () => CellLoadDyn(LHeapB, LT0));
+
+                // cursor = deref(heap[cursor.payload + 1])
+                CellLoadDyn(LHeapB, LT0, 1);
+                Op(new LocalSet(LC0));
+                Deref();
+
+                Op(new LocalGet(LMetaGuard));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LMetaGuard));
+                Op(new Branch(0));                          // -> $build
+            }
+            CloseNested();                                  // $build
+            CloseNested();                                  // $built
+
+            // The last tail is L2 itself.
+            Op(new LocalGet(LMetaBase));
+            Op(new LocalGet(LAtSlot));
+            Op(new Int32Constant(1));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new LocalSet(LT1));
+            CellStoreDyn(LHeapB, LT1, 0, () => RegLoad(1));
+
+            // L3 is the cell AT start -- which is already the first pair's
+            // LIS -- not Lis(start). Lis() takes a HEAD index, so building
+            // one over start wraps the answer in itself: the list came out
+            // as [[a,b,c]|a], correct and one level too deep.
+            EmitUnifyTwo(() => RegLoad(2),
+                         () => CellLoadDyn(LHeapB, LMetaBase), pc);
+            Op(new Branch(1));                              // -> $done
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
         }
 
         /// <summary>The widest meta-call the module takes. The callee's

@@ -124,6 +124,29 @@ public sealed class WasmTierDelegate
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
 
+    /// <summary>Ticks spent INSIDE the tier delegate, counted only at the
+    /// outermost entry so a nested chain (a findall re-entering the engine
+    /// from a builtin) is not added twice.
+    ///
+    /// <para>What this is for: the world's own inWasm and stage counters
+    /// accounted for about a THIRD of a browser run's wall time, and the
+    /// other two thirds had no name. Naming them is the difference between
+    /// optimising a fifth of the clock and guessing. Everything below sums:
+    /// delegate = inWasm + stage + builtins + the C# glue of the verdict
+    /// loop, and wall - delegate is the interpreter, the query setup and the
+    /// answer.</para></summary>
+    public static long DiagDelegateTicks;
+    /// <summary>Ticks inside builtin implementations, at every depth. A
+    /// builtin that re-enters the engine carries the nested chain's time with
+    /// it, which is why the glue is computed as a REMAINDER rather than
+    /// measured on its own.</summary>
+    public static long DiagBuiltinTicks;
+#if SHUMWAY_DIAG
+    // Only the depth counter is conditional: the two tick fields are public
+    // surface the report reads, and a field cannot be [Conditional].
+    private static int _delegateDepth;
+#endif
+
     /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
@@ -151,6 +174,7 @@ public sealed class WasmTierDelegate
         for (int i = 0; i < DiagSwitchKeys.Length; i++) { DiagSwitchKeys[i] = -1; DiagSwitchHits[i] = 0; }
         DiagFirstDeoptSlots = null;
         DiagFirstRestoreGuard = null;
+        DiagDelegateTicks = DiagBuiltinTicks = 0;
     }
 
 
@@ -237,6 +261,19 @@ public sealed class WasmTierDelegate
             cx.ReadSlot(WasmAbi.StackLimit),
         };
     }
+
+    private static long BuiltinClockStart()
+    {
+#if SHUMWAY_DIAG
+        return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+        return 0;
+#endif
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void BuiltinClockStop(long t0)
+        => DiagBuiltinTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountForeignExit() => DiagForeignExits++;
@@ -346,6 +383,33 @@ public sealed class WasmTierDelegate
     /// payload: 0 for a fresh call, a biased bytecode address for a resume
     /// or a retry.</summary>
     public bool Invoke(Activation engine, int address)
+    {
+        long t0 = EnterDelegate();
+        try { return InvokeCore(engine, address); }
+        finally { ExitDelegate(t0); }
+    }
+
+    private static long EnterDelegate()
+    {
+        long t = 0;
+#if SHUMWAY_DIAG
+        if (_delegateDepth == 0) t = System.Diagnostics.Stopwatch.GetTimestamp();
+        _delegateDepth++;
+#endif
+        return t;
+    }
+
+    private static void ExitDelegate(long t0)
+    {
+#if SHUMWAY_DIAG
+        _delegateDepth--;
+        if (_delegateDepth == 0)
+            DiagDelegateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+#endif
+        _ = t0;
+    }
+
+    private bool InvokeCore(Activation engine, int address)
     {
         if (!engine.WasmModeCompatible || engine.HasPendingWakeups)
         {
@@ -466,13 +530,14 @@ public sealed class WasmTierDelegate
                     : engine.Cp;
                 bool ok;
                 Profiler.BuiltinEnter(builtinId);
+                long tb = BuiltinClockStart();
                 try { ok = entry.Impl(engine); }
                 catch (PrologRuntimeException re)
                 {
                     re.StampBuiltin(entry.Name, entry.Arity);
                     throw;
                 }
-                finally { Profiler.BuiltinExit(builtinId); }
+                finally { Profiler.BuiltinExit(builtinId); BuiltinClockStop(tb); }
                 if (!ok) { CountBuiltinFail(builtinId); result = false; break; }
                 if (ret < 0)
                 {

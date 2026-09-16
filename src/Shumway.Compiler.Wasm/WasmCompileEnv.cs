@@ -132,6 +132,20 @@ public interface IWasmCompileEnv
     /// is work the module has no business doing.</summary>
     bool IsInlineMetaCall(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>append/3</c>, whose DETERMINISTIC
+    /// mode the module builds itself.
+    ///
+    /// <para>It is the single largest source of builtin exits measured: 2,000
+    /// of clpr's 5,000, twice the next one. And the cost is not the work --
+    /// measured, getting to a builtin and back costs about four times what
+    /// the builtin does.</para>
+    ///
+    /// <para>Only (+, ?, -): a proper list in the first argument. An unbound
+    /// tail is append/3's OTHER mode, which enumerates splits off a choice
+    /// point, and a packed string is a list the module cannot walk. Both step
+    /// out, as does anything else.</para></summary>
+    bool IsInlineAppend(int builtinId) => false;
+
     /// <summary>The functor id of <c>'$mqual'/2</c>, the wrapper a meta-call
     /// carries so its bare goal functor resolves against the meta-caller's
     /// module first. The module has to see THROUGH it: the goal in X0 is the

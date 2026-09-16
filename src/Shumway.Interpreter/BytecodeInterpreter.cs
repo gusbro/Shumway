@@ -284,7 +284,46 @@ public sealed partial class BytecodeInterpreter
     /// dispatch loop terminates. The engine's <c>P</c> is overwritten with the start PC
     /// and then advanced according to each instruction's semantics.
     /// </summary>
+    /// <summary>Ticks spent inside the dispatch loop, counted only at the
+    /// OUTERMOST entry: Run re-enters itself (a catch frame's recovery goal,
+    /// a sub-engine), and nesting would add the same time twice.
+    ///
+    /// <para>Splits what a browser measurement could otherwise only call
+    /// "outside the tier": with this, interpreter = thisRun - delegate, and
+    /// what is left of the wall clock is the query's setup and its answer.
+    /// The biggest bucket of a run had no name until it was split, and an
+    /// unnamed bucket is where optimisation goes to be guessed at.</para>
+    /// </summary>
+    public static long DiagRunTicks;
+#if SHUMWAY_DIAG
+    private static int _runDepth;
+#endif
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void ResetRunTicks() => DiagRunTicks = 0;
+
     public InterpreterResult Run(ProgramView code, int startPc)
+    {
+#if SHUMWAY_DIAG
+        long runT0 = _runDepth == 0
+            ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        _runDepth++;
+        try
+        {
+#endif
+        return RunCore(code, startPc);
+#if SHUMWAY_DIAG
+        }
+        finally
+        {
+            _runDepth--;
+            if (_runDepth == 0)
+                DiagRunTicks += System.Diagnostics.Stopwatch.GetTimestamp() - runT0;
+        }
+#endif
+    }
+
+    private InterpreterResult RunCore(ProgramView code, int startPc)
     {
         ArgumentNullException.ThrowIfNull(code.Primary);
         // A resume-marker start PC is legal: a --strip-wam predicate has no WAM
