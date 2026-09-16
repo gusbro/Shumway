@@ -78,7 +78,35 @@ public static class WasmPredicateCompiler
     /// every time and the counters said so, but only these stamps said WHY --
     /// the goal arrives wrapped in '$mqual'(Module, Goal), so the functor the
     /// module reads is the wrapper's, not the goal's.</para></summary>
-    public static bool DebugMetaGuards;
+    public static bool DebugMetaGuards
+#if SHUMWAY_DIAG
+        = true
+#endif
+        ;
+
+    /// <summary>What a guard code means, kept beside the codes so the two
+    /// cannot drift. A number in a histogram says a meta-call declined; only
+    /// the name says whether that is a limit of the design, a table the host
+    /// never staged, or a resolution it never published.</summary>
+    public static string MetaGuardName(int code) => code switch
+    {
+        1 => "no call-marker table staged",
+        2 => "goal is neither a compound nor an atom",
+        4 => "no module covers the goal's functor",
+        5 => "goal arity is zero, or wider than the module takes",
+        6 => "$mqual module is not a bound atom",
+        7 => "$mqual goal is not a compound",
+        8 => "no meta cache staged",
+        9 => "meta cache has no row for this (module, goal)",
+        10 => "meta cache probe found no row in a full pass",
+        11 => "resolved arity disagrees with the goal's",
+        12 => "the carried cut barrier is not an integer cell",
+        13 => "no atom-marker table staged",
+        14 => "atom id past the marker table",
+        15 => "no module covers this zero-arity goal",
+        16 => "setup_call_cleanup handlers are live, so the cut declines",
+        _ => "unnamed",
+    };
 
     // ---- locals (after the two i32 params: 0 mailbox, 1 entry cursor) ----
     private const uint LCur = 2;      // current cursor

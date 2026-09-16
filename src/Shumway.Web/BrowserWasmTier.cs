@@ -459,6 +459,24 @@ internal static class BrowserWasmTier
         }
         if (WasmTierDelegate.DiagDeoptOverflow > 0)
             sb.Append($"%     {WasmTierDelegate.DiagDeoptOverflow} at sites past the table\n");
+
+        // WHY a meta-call declined, not just where. A site named
+        // "$wake_call/1@+28 CallBuiltin" says a meta-call went to the host
+        // and nothing more: the goal could be a builtin no marker can name,
+        // a pair the host never published, or a shape this path does not
+        // handle, and those want three different fixes.
+        var hist = WasmTierDelegate.DiagMetaGuardHist;
+        long guards = 0;
+        for (int g = 0; g < hist.Length; g++) guards += hist[g];
+        if (guards > 0)
+        {
+            sb.Append("%   meta-call declines (of ").Append(guards).Append("):\n");
+            for (int g = 0; g < hist.Length; g++)
+                if (hist[g] != 0)
+                    sb.Append($"%     {hist[g]} guard {g}: ")
+                      .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.MetaGuardName(g))
+                      .Append('\n');
+        }
         return sb.ToString();
     }
 

@@ -430,10 +430,57 @@ the unifier is the one number that got worse, and the browser compiles all of
 it at load. Sharing those functions through imports, or grouping a few
 predicates per module, is the obvious answer and neither has been tried.
 
+## The baseline everything after this is measured against
+
+`#wasmgrain=1`, Release publish with both flags, one desktop machine. Taken
+once the meta-call forms landed, as the reference point for the work that
+follows. Times are one round and swing; the COUNTS do not, and they are what
+this table is for.
+
+| program | tier0 | best tier | inWasm | stage | builtins | interp+glue |
+|---|---:|---:|---:|---:|---:|---:|
+| nrev 200 x5 | 631 ms | 13 ms | 3 | 0 | 0 | 1 |
+| tak 18,12,6 | 767 ms | 8 ms | 3 | 0 | 0 | 0 |
+| zebra x10 | 1565 ms | 29 ms | 26 | 0 | 0 | 0 |
+| clpr x200 | 928 ms | 279 ms | 23 | 79 | 21 | 135 |
+| clpr x400 | 1178 ms | 602 ms | 56 | 171 | 38 | 313 |
+| queens 12 | 5574 ms | 849 ms | 61 | 153 | 403 | 189 |
+
+The two shapes this splits into:
+
+**Deopt-bound, and the deopts are meta-calls.** clpr steps aside 804 times per
+200 solves at five distinct sites, and two of them are half each:
+
+```
+401 (50%)  $wake_call/1@+28        CallBuiltin
+400 (50%)  clpr$$disj_42/3@+111    CallBuiltin
+```
+
+**Builtin-exit bound.** queens deopts 462 times and leaves for a builtin
+**23,594** times, which is 403 ms of its 849 -- more than the module spends
+executing. Three functions are most of it:
+
+```
+$dom_same/2=7923   $dom_del/3=7314   $dom_new/3=3671   put_attr/3=1045
+```
+
+Those are clpfd's native domain layer, and in the browser they are
+Mono-interpreted C#. That is the same fact this whole arc started from: a
+crossing cost 4-15 us because the code on the other side is interpreted, not
+because crossing wasm is expensive. Per exit here it works out around 17 us.
+
+A third of the builtin exits in clpr are calls that always fail --
+`$cyclic_spine/1` 400 of 400, `get_attr/3` 400 of 400 -- one host round trip
+each to be told no.
+
+**Read the counts, not the ratios.** Over one round the batch/eager/lazy
+ordering contradicts itself between clpr x200 and x400, so it says nothing
+about grain.
+
 ## Reproducing
 
 ```
-dotnet publish src/Shumway.Web/ -c Release -p:ShumwayWasmTier=true
+dotnet publish src/Shumway.Web/ -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
 powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 8099 -Collect out.txt
 msedge --headless=new --user-data-dir=<scratch> \
        "http://localhost:8099/index.html#wasmsplit=10000000x5"
