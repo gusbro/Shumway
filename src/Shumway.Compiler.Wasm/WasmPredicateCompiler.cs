@@ -2893,20 +2893,14 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             Op(new BranchIf(0));                            // -> $slow
 
-            // A0 must be an attributed variable. Its payload IS its home.
-            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
-            TagOfC0();
-            Op(new Int32Constant((int)Tag.AttVar));
-            Op(new Int32NotEqual());
-            Op(new BranchIf(0));                            // -> $slow
-            Op(new LocalGet(LC0));
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
-            Op(new LocalSet(LAtVal));                       // home, for now
-
-            // A1 must be a bound atom: an unbound or non-atom module is an
-            // ERROR, and errors are the host's.
+            // A1 FIRST, and the order is the contract, not a preference.
+            // The builtin resolves the module before it ever looks the
+            // attribute up, so get_attr(Var, NotAnAtom, V) RAISES whatever
+            // A0 is. Deciding A0 first would let the fail arm below answer
+            // "no" to a call that owes an error.
+            //
+            // A bound atom, then: an unbound or non-atom module is an ERROR,
+            // and errors are the host's.
             (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.Atom));
@@ -2917,6 +2911,38 @@ public static class WasmPredicateCompiler
             Op(new Int64And());
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // module atom id
+
+            // A0 must be an attributed variable. Its payload IS its home.
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.AttVar));
+            Op(new Int32NotEqual());
+            OpenIf();
+            {
+                // A PLAIN unbound variable carries no attributes at all --
+                // carrying one is what makes a variable an ATTVAR -- so
+                // get_attr on it fails, in every module, and answering that
+                // needs nothing the module does not already have. Measured
+                // in the browser: clpr left the module 400 times for this
+                // and failed all 400, one host round trip each to be told
+                // no.
+                //
+                // Anything else is still the host's: a BOUND first argument
+                // is the builtin's own business, error or fail.
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Ref));
+                Op(new Int32Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+                Op(new Branch(1));                          // -> $slow
+            }
+            CloseNested();
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LAtVal));                       // home, for now
 
             // key = ((home + 1) << 32) | (uint)module
             Op(new LocalGet(LAtVal));

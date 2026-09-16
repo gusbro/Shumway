@@ -78,10 +78,16 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
         Assert.Equal(0L, ExitsFor("get_attr", 3));
     }
 
-    /// <summary>The shapes the module does not cover still reach the host, and
-    /// the host still decides them.</summary>
+    /// <summary>A PLAIN unbound variable fails inside the module. Carrying an
+    /// attribute is what makes a variable an attributed one, so a variable
+    /// that is not attributed has no attribute in any module -- a fact the
+    /// module holds without consulting anything.
+    ///
+    /// <para>Measured in the browser before this: clpr left the module 400
+    /// times for get_attr/3 and failed all 400, one host round trip each to
+    /// be told no.</para></summary>
     [DiagFact]
-    public void ANonAttvarStillReachesTheHost()
+    public void APlainVariableFailsInsideTheModule()
     {
         var (engine, _) = TieredEngine.Build("""
             probe(0, _, _).
@@ -90,15 +96,73 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
                               N1 is N - 1, probe(N1, X, M).
             """);
         WasmTierDelegate.ResetDiag();
-
-        // A plain variable is not an attributed variable, so the inline path
-        // declines and the host fails it.
         Assert.True(engine.Query("probe(20, _, m).").Success);
         Report("plain var");
 
         Assert.True(ExitsFor("atom_length", 2) >= 20, "never ran on the tier");
+        Assert.Equal(0L, ExitsFor("get_attr", 3));
+    }
+
+    /// <summary>A BOUND first argument still reaches the host: what get_attr
+    /// does with one is the builtin's own business, and the module has no
+    /// opinion. The shortcut above is only for an unbound plain variable.
+    /// </summary>
+    [DiagFact]
+    public void ABoundNonAttvarStillReachesTheHost()
+    {
+        var (engine, _) = TieredEngine.Build("""
+            probe(0, _, _).
+            probe(N, X, M) :- N > 0, atom_length(ab, _),
+                              ( get_attr(X, M, _) -> true ; true ),
+                              N1 is N - 1, probe(N1, X, M).
+            """);
+        WasmTierDelegate.ResetDiag();
+        Assert.True(engine.Query("probe(20, foo, m).").Success);
+        Report("bound non-attvar");
+
+        Assert.True(ExitsFor("atom_length", 2) >= 20, "never ran on the tier");
         Assert.True(ExitsFor("get_attr", 3) >= 20,
-            "a non-attvar was answered inside the module");
+            "a bound first argument was decided inside the module");
+    }
+
+    /// <summary>And the answers match the interpreter's, which is the half a
+    /// counter cannot check: a shortcut that fails where the host would have
+    /// raised, or raises where it would have failed, moves no counter.
+    ///
+    /// <para>The goals run THROUGH a promoted predicate. A query asked at the
+    /// top level runs in the interpreter, so asking these directly would
+    /// compare the interpreter with itself -- and pass, whatever the module
+    /// does. The atom_length/2 exits are the guard that says it did not.</para>
+    ///
+    /// <para>The module ERROR cases carry the order this form depends on: the
+    /// builtin resolves the module before it looks anything up, so
+    /// get_attr(PlainVar, NotAnAtom, V) raises rather than failing, and the
+    /// plain-variable shortcut must not answer first.</para></summary>
+    [DiagTheory]
+    [InlineData("ask(get_attr(_, m, _))")]
+    [InlineData("ask(get_attr(foo, m, _))")]
+    [InlineData("ask(get_attr(f(1), m, _))")]
+    [InlineData("put_attr(X, m, v), ask(get_attr(X, m, V)), V == v")]
+    [InlineData("put_attr(X, m, v), ask(get_attr(X, other, _))")]
+    [InlineData("catch(ask(get_attr(_, _, _)), E, true), nonvar(E)")]
+    [InlineData("catch(ask(get_attr(_, 42, _)), E, true), nonvar(E)")]
+    [InlineData("catch(ask(get_attr(foo, 42, _)), E, true), nonvar(E)")]
+    public void TheTierAgreesWithTheInterpreter(string goal)
+    {
+        const string Corpus = "ask(G) :- atom_length(ab, _), call(G).";
+        var plain = new PrologEngine();
+        plain.ConsultString(Corpus);
+        var (tiered, _) = TieredEngine.Build(Corpus);
+
+        bool expected = plain.Query($"{goal}.").Success;
+        WasmTierDelegate.ResetDiag();
+        bool got = tiered.Query($"{goal}.").Success;
+        o.WriteLine($"{goal} -> {expected} (atom_length/2={ExitsFor("atom_length", 2)})");
+
+        Assert.True(ExitsFor("atom_length", 2) >= 1,
+            "the goal never reached the module: this compared the interpreter "
+            + "with itself");
+        Assert.Equal(expected, got);
     }
 
     /// <summary>An unbound module is an ERROR, not a failure, and the inline
