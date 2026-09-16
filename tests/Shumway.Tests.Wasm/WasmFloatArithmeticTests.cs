@@ -23,7 +23,19 @@ namespace Shumway.Tests.Wasm;
 /// <para>These are differential: the tier must answer exactly what the
 /// interpreter answers. Arithmetic is where "fast and almost right" is
 /// worst, so the assertions are equality of ANSWERS, not of speed.</para></summary>
-public sealed class WasmFloatArithmeticTests(ITestOutputHelper o)
+/// <summary>The corpus, built ONCE for the whole class: 50 cases asking
+/// different goals of the same program, where building the program was the
+/// cost. See <see cref="WasmTypeTestCorpus"/> for when sharing is safe --
+/// these cases only ask.</summary>
+public sealed class WasmFloatArithmeticCorpus
+{
+    public PrologEngine Plain { get; } = WasmFloatArithmeticTests.BuildPlain();
+    public PrologEngine Tiered { get; } = WasmFloatArithmeticTests.BuildTiered().Engine;
+}
+
+public sealed class WasmFloatArithmeticTests(
+    ITestOutputHelper o, WasmFloatArithmeticCorpus shared)
+    : IClassFixture<WasmFloatArithmeticCorpus>
 {
     private const string Corpus = """
         fcmp(A, B, lt) :- A < B, !.
@@ -55,14 +67,14 @@ public sealed class WasmFloatArithmeticTests(ITestOutputHelper o)
                            ( var(E) -> R = X ; R = err(E) ).
         """;
 
-    private static PrologEngine Plain()
+    internal static PrologEngine BuildPlain()
     {
         var e = new PrologEngine();
         e.ConsultString(Corpus);
         return e;
     }
 
-    private static (PrologEngine Engine, WasmPromotionStore Wasm) Tiered()
+    internal static (PrologEngine Engine, WasmPromotionStore Wasm) BuildTiered()
     {
         var engine = new PrologEngine();
         engine.ConsultString(Corpus);
@@ -180,9 +192,8 @@ public sealed class WasmFloatArithmeticTests(ITestOutputHelper o)
     [MemberData(nameof(Goals))]
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
-        bool plain = Plain().Query(goal).Success;
-        var (e, _) = Tiered();
-        bool tiered = e.Query(goal).Success;
+        bool plain = shared.Plain.Query(goal).Success;
+        bool tiered = shared.Tiered.Query(goal).Success;
         Assert.True(plain == tiered,
             $"tier {tiered} != interpreter {plain} for: {goal}");
         Assert.True(plain, $"the goal itself is wrong: {goal}");
@@ -193,7 +204,7 @@ public sealed class WasmFloatArithmeticTests(ITestOutputHelper o)
     [DiagFact]
     public void AFloatComparisonLoopStaysInTheModule()
     {
-        var (e, _) = Tiered();
+        var (e, _) = BuildTiered();
         WasmTierDelegate.ResetDiag();
         Assert.True(e.Query("chain(2000, 1, R), R == 7.").Success);
         long entries = WasmTierDelegate.DiagEntries;
@@ -213,7 +224,7 @@ public sealed class WasmFloatArithmeticTests(ITestOutputHelper o)
     [DiagFact]
     public void AFloatProducingLoopStaysInTheModule()
     {
-        var (e, _) = Tiered();
+        var (e, _) = BuildTiered();
         WasmTierDelegate.ResetDiag();
         Assert.True(e.Query("fsum(2000, 0.0, S), S > 0.0.").Success);
         long entries = WasmTierDelegate.DiagEntries;

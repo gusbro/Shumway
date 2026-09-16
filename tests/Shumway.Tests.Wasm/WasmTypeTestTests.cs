@@ -20,7 +20,27 @@ namespace Shumway.Tests.Wasm;
 /// getting this wrong would answer wrongly exactly where it matters.
 /// integer/1 takes BigInt beside Int, number/1 takes Rational too, and
 /// compound/1 takes a packed string (ADR-047: a PSTR is a list).</para></summary>
-public sealed class WasmTypeTestTests(ITestOutputHelper o)
+/// <summary>The corpus, built ONCE for the whole class.
+///
+/// <para>Every case here asks a different goal of the SAME program, and
+/// building it is what the time went to: two engines, each loading clpfd,
+/// and the tiered one compiling every reached predicate to its own wasm
+/// module and then to IL. Measured, 38 cases cost 200 s that way and the
+/// work they share is all of it.</para>
+///
+/// <para>Safe to share because these cases only ASK: no case asserts,
+/// retracts or consults, and each Query gets its own activation. A case
+/// that mutated the database would make its neighbours order-dependent,
+/// so one that needs to must build its own engine -- as the counter below
+/// does, for the counters rather than the database.</para></summary>
+public sealed class WasmTypeTestCorpus
+{
+    public PrologEngine Plain { get; } = WasmTypeTestTests.BuildPlain();
+    public PrologEngine Tiered { get; } = WasmTypeTestTests.BuildTiered().Engine;
+}
+
+public sealed class WasmTypeTestTests(ITestOutputHelper o, WasmTypeTestCorpus shared)
+    : IClassFixture<WasmTypeTestCorpus>
 {
     private const string Corpus = """
         t(G, yes) :- call(G), !.
@@ -40,7 +60,7 @@ public sealed class WasmTypeTestTests(ITestOutputHelper o)
                                    countvars(Xs, A1, N).
         """;
 
-    private static PrologEngine Plain()
+    internal static PrologEngine BuildPlain()
     {
         var e = new PrologEngine();
         e.ConsultString(":- use_module(library(clpfd)).");
@@ -48,7 +68,7 @@ public sealed class WasmTypeTestTests(ITestOutputHelper o)
         return e;
     }
 
-    private static (PrologEngine Engine, WasmPromotionStore Wasm) Tiered()
+    internal static (PrologEngine Engine, WasmPromotionStore Wasm) BuildTiered()
     {
         var engine = new PrologEngine();
         engine.ConsultString(":- use_module(library(clpfd)).");
@@ -144,9 +164,8 @@ public sealed class WasmTypeTestTests(ITestOutputHelper o)
     [MemberData(nameof(Goals))]
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
-        bool plain = Plain().Query(goal).Success;
-        var (e, _) = Tiered();
-        bool tiered = e.Query(goal).Success;
+        bool plain = shared.Plain.Query(goal).Success;
+        bool tiered = shared.Tiered.Query(goal).Success;
         Assert.True(plain == tiered,
             $"tier {tiered} != interpreter {plain} for: {goal}");
         Assert.True(plain, $"the goal itself is wrong: {goal}");
@@ -156,7 +175,7 @@ public sealed class WasmTypeTestTests(ITestOutputHelper o)
     [DiagFact]
     public void ALoopOfTypeTestsMakesNoBuiltinExit()
     {
-        var (e, _) = Tiered();
+        var (e, _) = BuildTiered();
         e.Query("numlist(1, 50, L), countvars(L, 0, _).");     // warm
         WasmTierDelegate.ResetDiag();
         Assert.True(e.Query("numlist(1, 400, L), countvars(L, 0, N), N == 0.").Success);
