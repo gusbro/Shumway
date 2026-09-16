@@ -1012,6 +1012,12 @@ internal static partial class WebShumwayApp
         => await Task.Run(() =>
         {
             var report = new StringBuilder();
+            // Leads the report, because everything below is read wrongly
+            // without it: a bundle that did not install leaves every
+            // predicate to compile LIVE, which shows as a consult an order
+            // of magnitude slower and as figures that look like a
+            // regression in whatever was changed last.
+            report.Append("bundle: ").AppendLine(BrowserWasmTier.BundleInstallNote);
             rounds = Math.Max(1, rounds);
             try
             {

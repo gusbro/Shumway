@@ -109,6 +109,149 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "backtracking through a meta-call lost solutions");
     }
 
+    /// <summary>Backtracking INTO a goal reached through a meta-call in a
+    /// clause that has no environment frame of its own.
+    ///
+    /// <para>This is the pairing the frame fix has to survive. A clause whose
+    /// only call is a builtin gets no Allocate, so the module builds a frame
+    /// around the meta-call to hold CP -- and pops it when control returns.
+    /// If the goal left a choice point, that pop happens while the frame is
+    /// still reachable: redoing the goal restores an environment the module
+    /// already deallocated. Deallocate only reclaims when no choice point
+    /// protects the frame, which is exactly the case being leaned on here,
+    /// and leaning on it is not the same as having tested it.</para>
+    ///
+    /// <para>The deterministic version of this passes either way. Only the
+    /// solutions AFTER the first say whether the frame survived.</para>
+    /// </summary>
+    [DiagFact]
+    public void BacktrackingIntoAFramelessMetaCall()
+    {
+        const string Program = """
+            pick(a).
+            pick(b).
+            pick(c).
+            bare(G) :- call(G).
+            drive(L) :- findall(X, bare(pick(X)), L).
+            """;
+        var plain = new PrologEngine();
+        plain.ConsultString(Program);
+        Assert.True(plain.Query("drive(L), L == [a, b, c].").Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Program);
+        // Warm: the first call of the pair is a cache miss by construction,
+        // so a measured run has to come after one.
+        Assert.True(tiered.Query("drive(_).").Success);
+        WasmTierDelegate.ResetDiag();
+
+        Assert.True(tiered.Query("drive(L), L == [a, b, c].").Success,
+            "backtracking through a frameless meta-call lost solutions");
+        o.WriteLine($"frameless redo: deopts={WasmTierDelegate.DiagDeopts} "
+            + $"chains={WasmTierDelegate.DiagEntries}");
+        // The point of the test is the INLINE path. A run that stepped aside
+        // would prove the interpreter right and say nothing about the frame.
+        Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
+    }
+
+    /// <summary>The frame the module built must survive being written OVER.
+    ///
+    /// <para>The plain redo tests do not discriminate, and the reason is worth
+    /// stating: reclaiming a frame only lowers the stack top, so a frame
+    /// popped too eagerly still HOLDS its contents and a redo reads them back
+    /// intact. The fault only surfaces when something allocates over that
+    /// space first. So this one calls a predicate with an environment of its
+    /// own between the meta-call and the redo -- which is what lands on the
+    /// reclaimed slot -- and only then backtracks in.</para></summary>
+    [DiagFact]
+    public void AFramelessMetaCallsFrameSurvivesAnAllocationOverIt()
+    {
+        const string Program = """
+            pick(a).
+            pick(b).
+            pick(c).
+            deep(0, []).
+            deep(N, [N|T]) :- N > 0, N1 is N - 1, deep(N1, T).
+            bare(G) :- call(G).
+            one(X) :- bare(pick(X)), deep(12, L), length(L, 12).
+            drive(Xs) :- findall(X, one(X), Xs).
+            """;
+        var plain = new PrologEngine();
+        plain.ConsultString(Program);
+        Assert.True(plain.Query("drive(L), L == [a, b, c].").Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Program);
+        Assert.True(tiered.Query("drive(_).").Success);
+        WasmTierDelegate.ResetDiag();
+
+        Assert.True(tiered.Query("drive(L), L == [a, b, c].").Success,
+            "a frame the module built was clobbered before the redo");
+        o.WriteLine($"overwritten: deopts={WasmTierDelegate.DiagDeopts} "
+            + $"chains={WasmTierDelegate.DiagEntries}");
+    }
+
+    /// <summary>The same, one level deeper and with a binding to undo: the
+    /// goal binds, fails, and the next solution must see the binding gone.
+    /// A frame popped too eagerly shows up here as a stale binding rather
+    /// than as a missing solution.</summary>
+    [DiagFact]
+    public void BacktrackingUndoesBindingsAcrossAFramelessMetaCall()
+    {
+        const string Program = """
+            val(1).
+            val(2).
+            val(3).
+            bare(G) :- call(G).
+            check(X, Y) :- bare(val(X)), Y is X * 10, Y > 15.
+            drive(L) :- findall(X-Y, check(X, Y), L).
+            """;
+        var plain = new PrologEngine();
+        plain.ConsultString(Program);
+        Assert.True(plain.Query("drive(L), L == [2-20, 3-30].").Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Program);
+        Assert.True(tiered.Query("drive(_).").Success);
+        WasmTierDelegate.ResetDiag();
+
+        Assert.True(tiered.Query("drive(L), L == [2-20, 3-30].").Success,
+            "a binding survived backtracking through a frameless meta-call");
+        o.WriteLine($"frameless undo: deopts={WasmTierDelegate.DiagDeopts}");
+        Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
+    }
+
+    /// <summary>Two frameless meta-calls nested, each leaving choice points:
+    /// the frames stack, and the inner redo has to find the outer one still
+    /// standing.</summary>
+    [DiagFact]
+    public void NestedFramelessMetaCallsBacktrackTogether()
+    {
+        const string Program = """
+            a(1).
+            a(2).
+            b(x).
+            b(y).
+            bare(G) :- call(G).
+            both(I, J) :- bare(a(I)), bare(b(J)).
+            drive(L) :- findall(I-J, both(I, J), L).
+            """;
+        var plain = new PrologEngine();
+        plain.ConsultString(Program);
+        Assert.True(plain.Query(
+            "drive(L), L == [1-x, 1-y, 2-x, 2-y].").Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Program);
+        Assert.True(tiered.Query("drive(_).").Success);
+        WasmTierDelegate.ResetDiag();
+
+        Assert.True(tiered.Query(
+            "drive(L), L == [1-x, 1-y, 2-x, 2-y].").Success,
+            "nested frameless meta-calls lost the cross product");
+        o.WriteLine($"nested: deopts={WasmTierDelegate.DiagDeopts}");
+    }
+
     /// <summary>A cut inside the meta-called goal cuts the GOAL, not the
     /// caller: call/1 is opaque to cut. If the barrier were inherited instead
     /// of refreshed, the cut would prune the caller's choice points too.
