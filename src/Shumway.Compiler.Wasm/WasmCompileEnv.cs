@@ -168,6 +168,14 @@ public interface IWasmCompileEnv
     /// module first. The module has to see THROUGH it: the goal in X0 is the
     /// wrapper, not the goal.</summary>
     int MqualFunctorId { get; }
+
+    /// <summary>Every (goal functor, builtin) pair a meta-call may meet as
+    /// a GOAL. The compiler asks the SAME form questions of these that it
+    /// asks of a static callee -- IsInlineUnify, IsInlineCompare,
+    /// TryGetInlineTypeTest, IsInlineGetAttr -- so the two cannot drift: a
+    /// form added for static code is one the meta-call gains, and a form
+    /// removed is one it loses.</summary>
+    IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins { get; }
 }
 
 /// <summary>The one-argument type tests the module open-codes. Each is a

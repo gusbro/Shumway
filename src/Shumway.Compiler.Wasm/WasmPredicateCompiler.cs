@@ -2100,8 +2100,97 @@ public static class WasmPredicateCompiler
             // never pushed, leaving CP and E holding whatever was on the
             // stack. That is not a failing test, it is a wrong answer.
             bool ownFrame = !tail && !ClauseHasFrame(pc);
+
+            // A goal the module already open-codes, run on the GOAL's own
+            // arguments rather than on registers.
+            //
+            // The meta-call knows one trick -- jump to a predicate -- so a
+            // goal that is not one leaves the module even when the form is
+            // already sitting in this file. =/2 is the case that proves it:
+            // written in a body it is not a call at all (the WAM lowers it to
+            // get/unify, and what survives goes through EmitInlineUnify), but
+            // arriving through call/1 it is a TERM, compiled by nobody, and
+            // the host dispatches it by functor. No marker names it and none
+            // ever will.
+            //
+            // A LAST RESORT, never a precondition. Tried only where the
+            // meta-call has just established that no module covers this goal
+            // -- the marker is zero, or the $mqual cache has no row -- which
+            // is the path that deopted until now. Putting the chain in front
+            // of the marker probe, which is the obvious place, taxes the
+            // common case (a goal that IS a predicate) with a dozen compares
+            // it will never use, to speed up the case that was leaving
+            // anyway. The two are exclusive by construction: a form is a
+            // builtin, a marker names a predicate, and where a user
+            // predicate shadows a builtin name the marker exists and must
+            // win.
+            //
+            // Emitted at both give-up points -- the bare goal's and the one
+            // inside $mqual -- because a wrapped goal gives up at the cache
+            // probe, and a builtin is never in that cache: the host
+            // publishes only the resolutions that end in a jump.
+            void EmitInlineGoalForm()
+            {
+                // The goal's heap index and its functor cell, parked where no
+                // form body can reach: the bodies spend LC0-LC2, LT0-LT2 and
+                // LDa, and Deref spends LC1 on the way. LAt* are dead at both
+                // call sites -- the $mqual cache probe uses them AFTER this.
+                Op(new LocalGet(LT2));
+                Op(new LocalSet(LAtSlot));
+                CellLoadDyn(LHeapB, LT2);
+                Op(new LocalSet(LAtKey));
+
+                // Argument i of the goal, straight off the heap. NOT copied
+                // into X0..Xn-1 first, which is the obvious shape and is
+                // wrong: X0 holds THE GOAL, and every form here can hand the
+                // instruction back to the host -- by declining to $slow, or
+                // by stepping aside from inside -- whereupon the host
+                // re-reads the goal out of X0 and finds the goal's first
+                // argument instead. The jump path may overwrite those
+                // registers precisely because it never comes back.
+                Action Arg(int i) => () => CellLoadDyn(LHeapB, LAtSlot, i + 1);
+
+                foreach (var (goalFid, builtinId) in _env.MetaCallableBuiltins)
+                {
+                    Action body;
+                    if (_env.IsInlineUnify(builtinId))
+                        body = () => EmitUnifyTwo(Arg(0), Arg(1), pc);
+                    else if (_env.IsInlineCompare(builtinId, out bool negated))
+                        body = () => EmitInlineCompare(pc, negated, GoSlow, Arg(0), Arg(1));
+                    else if (_env.TryGetInlineTypeTest(builtinId, out var test)
+                             && test != WasmTypeTest.None)
+                        body = () => EmitInlineTypeTest(test, pc, Arg(0));
+                    else if (_env.IsInlineGetAttr(builtinId))
+                        body = () => EmitInlineGetAttr(pc, GoSlow, Arg(0), Arg(1), Arg(2));
+                    else
+                        continue;
+
+                    Op(new LocalGet(LAtKey));
+                    Op(new Int64Constant(_env.FunctorCell(goalFid)));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        body();
+                        // Only now: a form that fails, declines or steps
+                        // aside leaves BEFORE this point, and the host has to
+                        // find the frame exactly as it was.
+                        if (ownFrame)
+                        {
+                            EmitAllocateFrame(0, pc);
+                            _metaFrameResume.Add(pc + 9);
+                        }
+                        GoTo(pc + 9);
+                    }
+                    CloseNested();
+                }
+            }
+
             OpenBlock();                                    // $done
             OpenBlock();                                    // $slow
+            // $slow from any depth: a form that cannot decide falls back to
+            // exactly what the goal did before there were forms.
+            int slowDepth = _extraDepth;
+            void GoSlow() => Op(new Branch((uint)(_extraDepth - slowDepth)));
 
             LoadSlot32(WasmAbi.CallMarkerBase);
             Op(new LocalSet(LT0));
@@ -2362,8 +2451,13 @@ public static class WasmPredicateCompiler
                     Op(new LocalGet(LC1));
                     Op(new Int64Constant(0));
                     Op(new Int64Equal());
-                    MetaGuard(9);
-                    Op(new BranchIf(3));                    // -> $slow
+                    OpenIf();
+                    {
+                        EmitInlineGoalForm();
+                        MetaGuard(9);
+                        GoSlow();
+                    }
+                    CloseNested();
 
                     Op(new LocalGet(LC1));
                     Op(new LocalGet(LAtKey));
@@ -2412,12 +2506,6 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
 
-            Op(new LocalGet(LT1));
-            LoadSlot32(WasmAbi.CallMarkerLength);
-            Op(new Int32GreaterThanOrEqualUnsigned());
-            MetaGuard(3);
-            Op(new BranchIf(0));                            // past the table -> $slow
-
             if (DebugMetaGuards)
                 StoreSlot64(WasmAbi.DiagB, () =>
                 {
@@ -2425,21 +2513,41 @@ public static class WasmPredicateCompiler
                     Op(new Int64ExtendInt32Unsigned());
                 });
 
-            // marker = callMarkers[fid]; zero means no module covers it.
+            // marker = callMarkers[fid]; zero means no module covers it, and
+            // an id past the table reads as zero for the same reason -- both
+            // mean "not a predicate this world compiled", which is the ONE
+            // question that decides between jumping and everything else.
             // The base is re-read rather than held: LT0 was spent inside the
             // $mqual branch, and a mailbox load is cheaper than a local more.
-            LoadSlot32(WasmAbi.CallMarkerBase);
             Op(new LocalGet(LT1));
-            Op(new Int32Constant(2));
-            Op(new Int32ShiftLeft());
-            Op(new Int32Add());
-            Op(new Int32Load());
-            Op(new LocalSet(LAtVal));                       // marker, to the probe
+            LoadSlot32(WasmAbi.CallMarkerLength);
+            Op(new Int32GreaterThanOrEqualUnsigned());
+            OpenIf();
+            {
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LAtVal));
+            }
+            OpenElse();
+            {
+                LoadSlot32(WasmAbi.CallMarkerBase);
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalSet(LAtVal));                   // marker, to the probe
+            }
+            CloseNested();
             Op(new LocalGet(LAtVal));
             Op(new Int32Constant(0));
             Op(new Int32Equal());
-            MetaGuard(4);
-            Op(new BranchIf(0));                            // -> $slow
+            OpenIf();
+            {
+                EmitInlineGoalForm();
+                MetaGuard(4);
+                GoSlow();
+            }
+            CloseNested();
 
             // arity, from the functor table's mirror. An id the host has not
             // mirrored reads as zero, which no compound can be.

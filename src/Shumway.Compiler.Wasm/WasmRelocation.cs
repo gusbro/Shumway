@@ -279,6 +279,9 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     // ORDER, so the same predicate is a different id in another process.
     public int MqualFunctorId => _inner.MqualFunctorId;
 
+    public IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins
+        => _inner.MetaCallableBuiltins;
+
     // Every form decision has to be DELEGATED here, not inherited: the
     // interface's default answers "no", so a hook added upstream and not
     // added here silently stops applying to every baked module while the
