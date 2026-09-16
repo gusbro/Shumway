@@ -241,13 +241,36 @@ public static class WasmAbi
     /// <summary>Slots minus one. Read only when the base is non-zero.</summary>
     public const int MetaCacheMask = 42;
 
+    /// <summary>Base of the ATOM marker table: one i32 per atom id, the
+    /// fresh-entry marker of the zero-arity predicate of that name. Zero
+    /// base means none is staged and an atom goal steps aside.
+    ///
+    /// <para>It exists because a module can index but not search: a bare
+    /// atom goal gives it an atom id, and (atom, 0) -&gt; functor is a
+    /// lookup only the host can do.</para></summary>
+    public const int AtomMarkerBase = 43;
+    /// <summary>Entries in the atom marker table.</summary>
+    public const int AtomMarkerLength = 44;
+
+    /// <summary>Non-zero while setup_call_cleanup/3 has live handlers.
+    ///
+    /// <para>A cut may FIRE them, and running a cleanup is meta-calling a
+    /// goal from inside the cut -- host work. So the module's inline cut
+    /// declines whenever any is live, which is the common case being
+    /// nothing.</para>
+    ///
+    /// <para>A slot of its own rather than a Flags bit: Flags makes the code
+    /// bail at the next safe point, and this must stop ONE emitted form, not
+    /// the whole chain.</para></summary>
+    public const int CleanupsPending = 45;
+
     /// <summary>The thread's function table, as emscripten names it. Every
     /// module a thread registers lands in this one, which is what lets a
     /// module reach another without going out to the host.</summary>
     public const string TableModule = "env";
     public const string TableField = "__indirect_function_table";
 
-    public const int SlotCount = 43;
+    public const int SlotCount = 46;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

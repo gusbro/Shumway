@@ -302,7 +302,8 @@ public sealed class WasmRelocatableModule
                 same = liveTest == ev.TypeTest
                     && env.IsInlineGetAttr(id) == ev.InlineGetAttr
                     && env.IsInlineMetaCall(id) == ev.InlineMetaCall
-                    && env.IsInlineAppend(id) == ev.InlineAppend;
+                    && env.IsInlineAppend(id) == ev.InlineAppend
+                    && env.IsInlineBarrierCall(id) == ev.InlineBarrierCall;
             }
             if (!same) { reason = $"builtin {ev.Name}/{ev.Arity} changed form"; return false; }
         }
@@ -419,6 +420,7 @@ public sealed class WasmRelocatableModule
             w.Write(b.InlineUnify); w.Write(b.InlineCompare); w.Write(b.Negated);
             w.Write((byte)b.TypeTest); w.Write(b.InlineGetAttr);
             w.Write(b.InlineMetaCall); w.Write(b.InlineAppend);
+            w.Write(b.InlineBarrierCall);
         }
         w.Write(CallSites.Count);
         foreach (var (cn, ca, en, ea) in CallSites)
@@ -469,7 +471,7 @@ public sealed class WasmRelocatableModule
             builtins.Add(new WasmBuiltinEvidence(r.ReadString(), r.ReadInt32(), r.ReadBoolean(),
                 r.ReadBoolean(), r.ReadBoolean(), r.ReadBoolean(), r.ReadBoolean(),
                 (WasmTypeTest)r.ReadByte(), r.ReadBoolean(), r.ReadBoolean(),
-                r.ReadBoolean()));
+                r.ReadBoolean(), r.ReadBoolean()));
         m.Builtins = builtins;
         n = r.ReadInt32();
         var sites2 = new List<(string, int, string, int)>(n);

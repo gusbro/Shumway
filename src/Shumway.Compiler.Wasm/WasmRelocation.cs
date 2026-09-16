@@ -56,7 +56,7 @@ public sealed record WasmBuiltinEvidence(
     string Name, int Arity, bool Found, bool Direct, bool InlineUnify,
     bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None,
     bool InlineGetAttr = false, bool InlineMetaCall = false,
-    bool InlineAppend = false);
+    bool InlineAppend = false, bool InlineBarrierCall = false);
 
 /// <summary>A compile env that bakes a unique SENTINEL for every immediate
 /// the code names outside itself and records what each one stands for, so
@@ -195,7 +195,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         {
             var (n, a) = NameOf(calleeFunctorId);
             bool direct = false, unify = false, compare = false, negated = false;
-            bool getAttr = false, metaCall = false, appnd = false;
+            bool getAttr = false, metaCall = false, appnd = false, barrierCall = false;
             var test = WasmTypeTest.None;
             if (found)
             {
@@ -206,10 +206,11 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
                 getAttr = _inner.IsInlineGetAttr(builtinId);
                 metaCall = _inner.IsInlineMetaCall(builtinId);
                 appnd = _inner.IsInlineAppend(builtinId);
+                barrierCall = _inner.IsInlineBarrierCall(builtinId);
             }
             _evidence[calleeFunctorId] =
                 new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated,
-                                        test, getAttr, metaCall, appnd);
+                                        test, getAttr, metaCall, appnd, barrierCall);
         }
         return found;
     }
@@ -227,7 +228,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
             _inner.IsDirectBuiltin(builtinId), _inner.IsInlineUnify(builtinId),
             _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest,
             _inner.IsInlineGetAttr(builtinId), _inner.IsInlineMetaCall(builtinId),
-            _inner.IsInlineAppend(builtinId));
+            _inner.IsInlineAppend(builtinId), _inner.IsInlineBarrierCall(builtinId));
     }
 
     public bool IsDirectBuiltin(int builtinId)
@@ -264,6 +265,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineAppend(builtinId);
+    }
+
+    public bool IsInlineBarrierCall(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineBarrierCall(builtinId);
     }
 
     // Handed through as the LIVE id, and only ever used as the input to

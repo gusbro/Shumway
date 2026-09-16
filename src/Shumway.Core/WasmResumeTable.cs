@@ -77,6 +77,45 @@ public sealed class WasmResumeTable
 
     private int[] _callMarkers = new int[1024];
 
+    /// <summary>Atom id -> the fresh-entry marker of the ZERO-ARITY
+    /// predicate of that name, 0 when none is covered.
+    ///
+    /// <para>A second table and not a lookup, because the module cannot do
+    /// the lookup: it reads a goal that is a bare ATOM and has its atom id,
+    /// but turning (atom, 0) into a functor id means searching the functor
+    /// table, and the module can only index. Measured, this is a third of
+    /// clpr's remaining deopts -- the control helpers the prelude expands
+    /// disjunctions into reach their branches through '$call'/2, and those
+    /// branches are atoms.</para></summary>
+    public int[] AtomCallMarkers => _atomCallMarkers;
+
+    private int[] _atomCallMarkers = new int[1024];
+
+    /// <summary>Records the fresh-entry marker of a zero-arity predicate by
+    /// its atom, alongside the by-functor record.</summary>
+    public void SetAtomCallMarker(int atomId, int marker)
+    {
+        if (atomId < 0) return;
+        if (atomId >= _atomCallMarkers.Length)
+        {
+            int grown = _atomCallMarkers.Length;
+            while (grown <= atomId) grown *= 2;
+            System.Array.Resize(ref _atomCallMarkers, grown);
+        }
+        _atomCallMarkers[atomId] = marker;
+        CallMarkerVersion++;
+    }
+
+    public void ClearAtomCallMarker(int atomId)
+    {
+        if (atomId >= 0 && atomId < _atomCallMarkers.Length
+            && _atomCallMarkers[atomId] != 0)
+        {
+            _atomCallMarkers[atomId] = 0;
+            CallMarkerVersion++;
+        }
+    }
+
     /// <summary>Records the fresh-entry marker of a functor. Grows to fit:
     /// functor ids are dense and global, so the table is indexed directly
     /// rather than hashed.</summary>

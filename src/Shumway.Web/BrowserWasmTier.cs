@@ -183,6 +183,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private int[]? _callMarkers;
         private GCHandle _metaPin;
         private long[]? _metaCache;
+        private GCHandle _atomPin;
+        private int[]? _atomMarkers;
         private Cell[] _heap = null!, _stack = null!, _regs = null!;
         private int[] _trail = null!;
         private bool _engineAuthoritative;
@@ -238,12 +240,28 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 CallMarkerBase: CallMarkerAddress(),
                 CallMarkerLength: _w._table.CallMarkers.Length,
                 MetaCacheBase: MetaCacheAddress(),
-                MetaCacheMask: _w._table.MetaCacheMask);
+                MetaCacheMask: _w._table.MetaCacheMask,
+                AtomMarkerBase: AtomMarkerAddress(),
+                AtomMarkerLength: _w._table.AtomCallMarkers.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
             _engineAuthoritative = false;
             DiagStageTicks += Stopwatch.GetTimestamp() - t0;
+        }
+
+        /// <summary>The atom marker table's address, repinning when the host
+        /// grew it -- same rule as the call markers.</summary>
+        private long AtomMarkerAddress()
+        {
+            int[] markers = _w._table.AtomCallMarkers;
+            if (!ReferenceEquals(_atomMarkers, markers))
+            {
+                if (_atomPin.IsAllocated) _atomPin.Free();
+                _atomPin = GCHandle.Alloc(markers, GCHandleType.Pinned);
+                _atomMarkers = markers;
+            }
+            return (long)_atomPin.AddrOfPinnedObject();
         }
 
         /// <summary>The meta cache's address. It is never replaced once

@@ -188,7 +188,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
-        private int _attrAt, _callMarkerAt, _metaCacheAt;
+        private int _attrAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -236,13 +236,15 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             long[] attrRows = _engine.AttrMirrorRows;
             int[] callMarkers = _w.ResumeTable.CallMarkers;
             long[] metaCache = _w.ResumeTable.MetaCache;
+            int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
             // may be unaligned (the align immediate is a hint), so no test
             // can fail on dropping this -- do not go looking for one.
             _attrAt = (_moduleIndexAt + moduleCount * 4 + 7) & ~7;
             _callMarkerAt = _attrAt + attrRows.Length * 8;
             _metaCacheAt = (_callMarkerAt + callMarkers.Length * 4 + 7) & ~7;
-            if (_metaCacheAt + metaCache.Length * 8 > (long)Pages * 65536)
+            _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
+            if (_atomMarkerAt + atomMarkers.Length * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -261,7 +263,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 CallMarkerBase: _callMarkerAt,
                 CallMarkerLength: callMarkers.Length,
                 MetaCacheBase: _metaCacheAt,
-                MetaCacheMask: _w.ResumeTable.MetaCacheMask);
+                MetaCacheMask: _w.ResumeTable.MetaCacheMask,
+                AtomMarkerBase: _atomMarkerAt,
+                AtomMarkerLength: atomMarkers.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -318,6 +322,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = callMarkers)
                     Buffer.MemoryCopy(p, mem + _callMarkerAt, callMarkers.Length * 4L,
                                       callMarkers.Length * 4L);
+                fixed (int* p = atomMarkers)
+                    Buffer.MemoryCopy(p, mem + _atomMarkerAt, atomMarkers.Length * 4L,
+                                      atomMarkers.Length * 4L);
                 _w._space.CallMarkerAt = _callMarkerAt;
                 _w._space.CallMarkerCopied = _w.ResumeTable.CallMarkerVersion;
             }

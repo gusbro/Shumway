@@ -134,6 +134,8 @@ public sealed class WasmModuleRegistry
             int marker = Activation.EncodeResumeMarker(fid, 0);
             Table.Set(marker, id, cursor);
             Table.SetCallMarker(fid, marker);
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            if (arity == 0) Table.SetAtomCallMarker(atomId, marker);
         }
         foreach (var (address, cursor) in cursorByAddress)
         {
@@ -173,6 +175,8 @@ public sealed class WasmModuleRegistry
             _byFid.Remove(fid);
             Table.ClearFunctor(fid);
             Table.ClearCallMarker(fid);
+            var (clearedAtom, clearedArity) = FunctorTable.Lookup(fid);
+            if (clearedArity == 0) Table.ClearAtomCallMarker(clearedAtom);
             gone.Add(fid);
             if (m.BakedCallersOf.TryGetValue(fid, out var callers))
                 foreach (int caller in callers) work.Push(caller);

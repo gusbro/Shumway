@@ -1491,6 +1491,11 @@ public static class WasmPredicateCompiler
                         EmitInlineMetaCall(ins.Pc, SelfFid(ins));
                         return true;
                     }
+                    if (_env.IsInlineBarrierCall(ins.I0))
+                    {
+                        EmitInlineMetaCall(ins.Pc, SelfFid(ins), barrierFromX1: true);
+                        return true;
+                    }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
@@ -1551,6 +1556,11 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineMetaCall(ins.I0))
                     {
                         EmitInlineMetaCall(ins.Pc, 0, tail: true);
+                        return true;
+                    }
+                    if (_env.IsInlineBarrierCall(ins.I0))
+                    {
+                        EmitInlineMetaCall(ins.Pc, 0, tail: true, barrierFromX1: true);
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
@@ -2059,6 +2069,11 @@ public static class WasmPredicateCompiler
         /// place. The cut barrier is refreshed either way: a tail call still
         /// enters a new procedure, and a neck_cut there must see B as of this
         /// dispatch.</param>
+        /// <param name="barrierFromX1">'$call'/2: the barrier is
+        /// CARRIED, in X1, rather than being B as of this dispatch. It is the
+        /// barrier the enclosing call established, so a cut inside the goal
+        /// commits no further than that call -- taking B here instead would let
+        /// it prune choice points the caller still owns.</param>
         /// <summary>Stamps WHICH guard sent a meta-call aside into DiagA, so
         /// a decline can be told apart from the other ways to reach the same
         /// deopt. The ABI keeps DiagA for exactly this.</summary>
@@ -2068,10 +2083,18 @@ public static class WasmPredicateCompiler
             StoreSlot64(WasmAbi.DiagA, () => Op(new Int64Constant(code)));
         }
 
-        private void EmitInlineMetaCall(int pc, int selfFid, bool tail = false)
+        private void EmitInlineMetaCall(int pc, int selfFid, bool tail = false,
+                                        bool barrierFromX1 = false)
         {
             if (MaxMetaCallArity - 1 > _maxRegister) _maxRegister = MaxMetaCallArity - 1;
             EmitFlagsCheck(pc);
+            // Decided once, for BOTH arms. The resume cursor at pc + 9 pops
+            // the frame this call built, so every path that reaches it must
+            // have built one -- the inline cut below jumps straight there,
+            // and without its own Allocate it would pop a frame that was
+            // never pushed, leaving CP and E holding whatever was on the
+            // stack. That is not a failing test, it is a wrong answer.
+            bool ownFrame = !tail && !ClauseHasFrame(pc);
             OpenBlock();                                    // $done
             OpenBlock();                                    // $slow
 
@@ -2085,6 +2108,122 @@ public static class WasmPredicateCompiler
 
             // The goal must be a compound: an atom carries no functor id.
             RegLoad(0); Op(new LocalSet(LC0)); Deref();
+
+            // A bare ATOM goal is a zero-arity predicate. The module has its
+            // atom id and cannot turn (atom, 0) into a functor -- that is a
+            // SEARCH of the functor table and it can only index -- so the
+            // host publishes the marker by atom instead. Measured, this is a
+            // third of clpr's remaining deopts: the prelude's disjunction
+            // helpers reach their branches through '$call'/2, and those
+            // branches are atoms.
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                // The goal is `!`. Measured, this is what '$call'/2 carries
+                // in clpr: the prelude expands a disjunction into helpers
+                // that run each branch through it, and a branch is often the
+                // cut itself. It has no marker and never will -- a cut is not
+                // a predicate to jump to -- which is why the atom table alone
+                // left the deopts where they were.
+                //
+                // The barrier is the one X1 carries, which is the whole point
+                // of '$call'/2: the cut commits no further than the call that
+                // established it.
+                if (barrierFromX1)
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int64Constant(_env.AtomCell(CutAtomId)));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        // A live setup_call_cleanup handler makes a cut run
+                        // cleanups, and running one is meta-calling a goal
+                        // from inside the cut. That is host work.
+                        LoadSlot32(WasmAbi.CleanupsPending);
+                        Op(new Int32Constant(0));
+                        Op(new Int32NotEqual());
+                        MetaGuard(16);
+                        Op(new BranchIf(2));                // -> $slow
+                        // X1 is a cell, and a cell can be a REF chain: the
+                        // host reads this barrier through a deref. Taking the
+                        // payload raw yields a HEAP INDEX, which is a small
+                        // positive number and therefore a plausible-looking
+                        // barrier -- it cuts, just to the wrong place, and
+                        // takes the caller's choice points with it.
+                        //
+                        // Deref works on LC0 and clobbers it. Safe here only
+                        // because both ways out of this arm are exits: the
+                        // $slow branch re-reads the registers in the host.
+                        RegLoad(1);
+                        Op(new LocalSet(LC0));
+                        Deref();
+                        EmitCut(() =>
+                        {
+                            Op(new LocalGet(LC0));
+                            Op(new Int32WrapInt64());
+                        });
+                        // Symmetry with the calling path: pc + 9 pops a frame.
+                        if (ownFrame)
+                        {
+                            EmitAllocateFrame(0, pc);
+                            _metaFrameResume.Add(pc + 9);
+                        }
+                        // A cut SUCCEEDS and execution carries on at the next
+                        // instruction, exactly as the host's does.
+                        GoTo(pc + 9);
+                    }
+                    CloseNested();
+                }
+
+                LoadSlot32(WasmAbi.AtomMarkerBase);
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                MetaGuard(13);
+                Op(new BranchIf(1));                        // no table -> $slow
+
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));                      // atom id
+                Op(new LocalGet(LT1));
+                LoadSlot32(WasmAbi.AtomMarkerLength);
+                Op(new Int32GreaterThanOrEqualUnsigned());
+                MetaGuard(14);
+                Op(new BranchIf(1));                        // past it -> $slow
+
+                Op(new LocalGet(LT0));
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalSet(LAtVal));                   // marker
+                Op(new LocalGet(LAtVal));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                MetaGuard(15);
+                if (DebugMetaGuards)
+                    StoreSlot64(WasmAbi.DiagB, () =>
+                    {
+                        Op(new LocalGet(LT1));
+                        Op(new Int64ExtendInt32Unsigned());
+                    });
+                Op(new BranchIf(1));                        // uncovered -> $slow
+
+                // No arguments to move, and no two arities to reconcile.
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LT1));                      // arity
+                Op(new Int32Constant(-1));
+                Op(new LocalSet(LMetaArity));
+                EmitMetaTail();
+            }
+            CloseNested();
+
             TagOfC0();
             Op(new Int32Constant((int)Tag.Str));
             Op(new Int32NotEqual());
@@ -2384,34 +2523,69 @@ public static class WasmPredicateCompiler
             //
             // The tail form writes no CP at all -- it inherits ours -- so it
             // needs nothing.
-            bool ownFrame = !tail && !ClauseHasFrame(pc);
-            if (ownFrame)
+            // The shared tail. A local function and not a copy: both
+            // arms -- an atom goal and a compound one -- reach the call
+            // the same way, and the frame, the barrier, the CP and the
+            // probe are exactly what must not drift between them.
+            //
+            // Called from inside the atom arm and again at the end, so
+            // each arm emits its own copy INTO ITS OWN BRANCH. That is
+            // what keeps the compound path at the block depth it was
+            // written for: wrapping it to share one copy would shift
+            // every branch target in it, and a wrong one there is a
+            // hang, not a failed test.
+            void EmitMetaTail()
             {
-                EmitAllocateFrame(0, pc);
-                _metaFrameResume.Add(pc + 9);
-            }
-            StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-            if (!tail)
-            {
-                Op(new Int32Constant(_env.EncodeReturnMarker(selfFid, pc + 9)));
-                Op(new LocalSet(LCP));
+                    if (ownFrame)
+                {
+                    EmitAllocateFrame(0, pc);
+                    _metaFrameResume.Add(pc + 9);
+                }
+                if (barrierFromX1)
+                {
+                    // The carried barrier is an INTEGER cell. Anything else is a
+                    // shape this path does not know, so it goes to the host.
+                    RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.Int));
+                    Op(new Int32NotEqual());
+                    MetaGuard(12);
+                    Op(new BranchIf(0));                        // -> $slow
+                    StoreSlot64(WasmAbi.CutBarrier, () =>
+                    {
+                        Op(new LocalGet(LC0));
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                    });
+                }
+                else
+                {
+                    StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
+                }
+                if (!tail)
+                {
+                    Op(new Int32Constant(_env.EncodeReturnMarker(selfFid, pc + 9)));
+                    Op(new LocalSet(LCP));
+                }
+
+                // The watermark guard first, for the same reason every other call
+                // has one: at or past it the host owes a collection, and staying
+                // inside wasm would skip the boundary where it happens.
+                Op(new LocalGet(LH));
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                EmitResumeProbe(LAtVal);
+                CloseNested();
+                StoreSlot64(WasmAbi.Pc, () =>
+                {
+                    Op(new LocalGet(LAtVal));
+                    Op(new Int64ExtendInt32Unsigned());
+                });
+                EmitReturn(WasmVerdict.SuccessTailCall);
             }
 
-            // The watermark guard first, for the same reason every other call
-            // has one: at or past it the host owes a collection, and staying
-            // inside wasm would skip the boundary where it happens.
-            Op(new LocalGet(LH));
-            LoadSlot32(WasmAbi.HeapWatermark);
-            Op(new Int32LessThanSigned());
-            OpenIf();
-            EmitResumeProbe(LAtVal);
-            CloseNested();
-            StoreSlot64(WasmAbi.Pc, () =>
-            {
-                Op(new LocalGet(LAtVal));
-                Op(new Int64ExtendInt32Unsigned());
-            });
-            EmitReturn(WasmVerdict.SuccessTailCall);
+            EmitMetaTail();
 
             CloseNested();                                  // $slow
             EmitDeopt(pc);
@@ -4415,6 +4589,11 @@ public static class WasmPredicateCompiler
         private const uint LMetaBase = 44;  // i32: the meta cache's base
         private const uint LMetaGuard = 45; // i32: the probe's bound
         private const uint LMetaArity = 46; // i32: the GOAL's arity, or -1
+
+        // `!` as an atom. Compared as a relocatable atom CELL, never as a
+        // baked id: atom ids are per process.
+        private static readonly int CutAtomId =
+            Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it

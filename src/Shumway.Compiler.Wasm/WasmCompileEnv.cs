@@ -132,6 +132,23 @@ public interface IWasmCompileEnv
     /// is work the module has no business doing.</summary>
     bool IsInlineMetaCall(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>'$call'/2</c>, the meta-call that
+    /// CARRIES its cut barrier: X0 is the goal and X1 is the barrier the
+    /// enclosing call established, as an integer.
+    ///
+    /// <para>Same dispatch as call/1 in every other respect, so the module
+    /// takes it the same way and only reads the barrier from the argument
+    /// instead of from B. Measured in clpr, it is a third of the deopts that
+    /// remain: the control helpers the prelude expands disjunctions into
+    /// reach their branches through it.</para>
+    ///
+    /// <para>The body conversion call/1 does (SS7.6.2, wrapping variable
+    /// sub-goals) is skipped here by the host, and the module skips it for
+    /// call/1 too -- soundly, because only a CONTROL CONSTRUCT can need it
+    /// and one never reaches the module's cache: the host rewrites those to
+    /// barrier helpers, which are deliberately not published.</para></summary>
+    bool IsInlineBarrierCall(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>append/3</c>, whose DETERMINISTIC
     /// mode the module builds itself.
     ///

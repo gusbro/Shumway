@@ -34,7 +34,10 @@ public sealed partial class Activation
         /// <summary>Base and mask of the meta-call inline cache. A zero base
         /// means a module-tagged meta-call steps aside.</summary>
         long MetaCacheBase = 0,
-        int MetaCacheMask = 0);
+        int MetaCacheMask = 0,
+        /// <summary>Base and length of the atom marker table.</summary>
+        long AtomMarkerBase = 0,
+        int AtomMarkerLength = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -133,6 +136,9 @@ public sealed partial class Activation
         m[WasmAbi.CallMarkerLength] = bases.CallMarkerLength;
         m[WasmAbi.MetaCacheBase] = bases.MetaCacheBase;
         m[WasmAbi.MetaCacheMask] = bases.MetaCacheMask;
+        m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
+        m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
+        m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
         return true;
     }
 

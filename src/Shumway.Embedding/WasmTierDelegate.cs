@@ -147,6 +147,19 @@ public sealed class WasmTierDelegate
     private static int _delegateDepth;
 #endif
 
+    /// <summary>How often each meta-call guard sent a call aside, indexed by
+    /// the code the emitter stamps into DiagA.
+    ///
+    /// <para>The last deopt's guard names ONE sample, and a run with several
+    /// declining sites needs the distribution: "which guard, how often" is
+    /// the question, and answering it with a single sample is how a site that
+    /// declines 400 times hides behind one that declines once.</para>
+    ///
+    /// <para>Only meaningful with WasmPredicateCompiler.DebugMetaGuards on,
+    /// which is what puts the stamps in the emitted code; without it every
+    /// deopt reads guard 0.</para></summary>
+    public static readonly long[] DiagMetaGuardHist = new long[16];
+
     /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
@@ -175,6 +188,7 @@ public sealed class WasmTierDelegate
         DiagFirstDeoptSlots = null;
         DiagFirstRestoreGuard = null;
         DiagDelegateTicks = DiagBuiltinTicks = 0;
+        System.Array.Clear(DiagMetaGuardHist, 0, DiagMetaGuardHist.Length);
     }
 
 
@@ -242,6 +256,8 @@ public sealed class WasmTierDelegate
     {
         DiagLastGuard = cx.ReadSlot(WasmAbi.DiagA);
         DiagLastGuardFid = cx.ReadSlot(WasmAbi.DiagB);
+        if ((ulong)DiagLastGuard < (ulong)DiagMetaGuardHist.Length)
+            DiagMetaGuardHist[DiagLastGuard]++;
     }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]

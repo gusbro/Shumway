@@ -53,6 +53,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "append" && entry.Arity == 3;
     }
 
+    public bool IsInlineBarrierCall(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$call" && entry.Arity == 2;
+    }
+
     public bool IsInlineMetaCall(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
