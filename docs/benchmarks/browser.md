@@ -27,10 +27,18 @@ out 5x slower on the desktop and 1.1-2.2x faster in the browser. Counts
 ### Publish and serve
 
 ```bash
-# The wasm tier is OPT-IN. Without the flag a published WebShumway is
-# Tier-0, every hook below still runs, and the numbers are silently
-# meaningless -- which is worse than an error.
-dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true
+# TWO flags, and leaving out either one fails quietly.
+#
+#   ShumwayWasmTier: the tier is OPT-IN. Without it a published
+#   WebShumway is Tier-0, every hook below still runs, and the times
+#   measure the interpreter.
+#
+#   ShumwayDiag: the counters are [Conditional("SHUMWAY_DIAG")]. Without
+#   it they compile to nothing and read ZERO -- chains, hops, switches,
+#   deopts, builtin exits and BOTH rankings. A page reporting "deopts=0"
+#   then means "not counted", not "none", and the output cannot tell the
+#   two apart.
+dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
 
 # Serves that publish with the cross-origin-isolation headers (COOP/COEP)
 # sent for real, so there is no service-worker synthesis and no
@@ -39,7 +47,16 @@ powershell -File src/Shumway.Web/WebShumwayServe.ps1               # port 8080
 powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 9000 -Collect out.txt
 ```
 
-The flag needs the `wasm-tools` workload, and the build FAILS without it
+The tell for a missing ShumwayDiag is the time line: `delegate=0` and a
+NEGATIVE `glue`, since glue is what remains after subtracting a delegate
+figure nothing ever counted. `inWasm` and `stage` are plain stopwatches in
+`BrowserWasmWorld` and survive a stock build, so a page can show a credible
+time split beside a table of zeroed counters.
+
+Ship neither flag in anything a user runs: a diagnostic build is not a
+release.
+
+The tier flag needs the `wasm-tools` workload, and the build FAILS without it
 rather than shipping a runtime with no shim -- which used to die later at
 `DllNotFoundException` the first time a module registered.
 `Shumway.Web` is not in the solution, so `dotnet build` never builds it.
