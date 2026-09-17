@@ -477,6 +477,40 @@ each to be told no.
 ordering contradicts itself between clpr x200 and x400, so it says nothing
 about grain.
 
+### RunAOTCompilation: measured and rejected
+
+The obvious lever against the interpreted-C# cost was tried back to back
+against the baseline above: the same publish plus `-p:RunAOTCompilation=true`,
+same machine, same session, `#wasmgrain=1` headless.
+
+It splits Tier-0 down the middle:
+
+| tier0 | interpreted | AOT | ratio |
+|---|---:|---:|---:|
+| nrev 200 x5 | 494 ms | 112 ms | 0.23 |
+| zebra x10 | 1623 ms | 306 ms | 0.19 |
+| tak 18,12,6 | 1626 ms | 8668 ms | 5.3x SLOWER |
+| clpr x400 | 1332 ms | 11939 ms | 9.0x SLOWER |
+| queens 12 | 4151 ms | 29166 ms | 7.0x SLOWER |
+
+Pure unification and search get 4-5x faster; everything arithmetic gets 5-9x
+slower, first runs included, so it is not warmup. The working hypothesis:
+some method on the arithmetic path falls back to Mono's interpreter under
+AOT, and interp-to-AOT transitions inside the hot loop cost more than AOT
+returns everywhere else. tak is the minimal reproducer -- nothing in it but
+is/2 and comparisons.
+
+Where the wasm tier does the running and the host only serves, AOT helped
+about 2x (clpr batch 841 to 440 ms; queens' builtins component 464 to
+251 ms) -- not the order of magnitude that interpreted-vs-compiled suggests,
+consistent with part of the domain layer falling back too.
+
+So the flag is rejected as shipped. The conceivable follow-up is MIXED AOT,
+an explicit method list keeping the fallback out of hot paths; judged not
+worth the mechanism's complexity while the split above is not understood.
+Anyone reopening this starts by profiling tak under AOT, not by tuning
+flags.
+
 ## Reproducing
 
 ```
