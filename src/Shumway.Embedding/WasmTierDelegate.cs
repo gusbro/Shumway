@@ -600,6 +600,14 @@ public sealed class WasmTierDelegate
             }
             CountHops(cx.ReadSlot(WasmAbi.HopCount));
         }
+        // The chain owns the memory-side choice-point stack and lowered _b
+        // over it (cut, trust, backtracking between members) without touching
+        // the managed IL-CP stack. Reconcile it now, or a later backtrack to
+        // a real IL choice point the wasm buried under a stale entry reads
+        // the entry's sentinel bp as a code address -- SetPc(-1), a silent
+        // false success. (Found via tabled fib on the tier: the query
+        // answered "true" with the variable unbound.)
+        engine.ReconcileIlChoicePointsToB();
         // After the chain closed (the engine is authoritative again): give
         // the area the room the wasm ran out of, so the next chain stages a
         // bigger image instead of deopting at the same spot.

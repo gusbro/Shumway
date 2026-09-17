@@ -1161,6 +1161,27 @@ public sealed partial class Activation
     public bool TopChoicePointIsIl =>
         _b >= 0 && _ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key == _b;
 
+    /// <summary>Drop IL choice-point entries the current <c>_b</c> has moved
+    /// below. The wasm tier owns the memory-side choice-point stack and cuts,
+    /// trusts and backtracks over it WITHOUT touching this managed parallel
+    /// stack -- so after a chain runs, an entry can name a B the wasm has
+    /// already buried, and TopChoicePointIsIl would then miss the real IL CP
+    /// under it and read its sentinel bp as a bytecode address (SetPc(-1), a
+    /// silent false success). Cut prunes these the same way when it lowers
+    /// _b; a wasm chain needs the equivalent on return. Entries are pushed in
+    /// monotonic _b order, so the stale ones sit on top.</summary>
+    public void ReconcileIlChoicePointsToB()
+    {
+        while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > _b)
+        {
+            var onPrune = _ilCpStack[_ilCpTop - 1].OnPrune;
+            if (onPrune is not null) onPrune();
+            _ilCpStack[_ilCpTop - 1].Del = null!;
+            _ilCpStack[_ilCpTop - 1].OnPrune = null;
+            _ilCpTop--;
+        }
+    }
+
     /// <summary>Pops the topmost IL choice point, restoring engine state
     /// (heap top, trails, registers, …) the same way <c>TrustMe</c> would
     /// for a bytecode CP, and returns the delegate + cursor that should
