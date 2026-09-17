@@ -158,7 +158,9 @@ public sealed class WasmTierDelegate
     /// <para>Only meaningful with WasmPredicateCompiler.DebugMetaGuards on,
     /// which is what puts the stamps in the emitted code; without it every
     /// deopt reads guard 0.</para></summary>
-    public static readonly long[] DiagMetaGuardHist = new long[16];
+    // 32, not 16: the codes run past 16 and an index at or over the length
+    // was dropped silently, so the cut's own decline never appeared.
+    public static readonly long[] DiagMetaGuardHist = new long[32];
 
     /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run

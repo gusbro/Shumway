@@ -98,6 +98,9 @@ public static class WasmPredicateCompiler
         // non-diag build looks like. Cross-check against the deopt sites:
         // a meta-call site reporting this is the second case.
         0 => "no stamp: not a meta-call, or a module baked without stamps",
+        17 => "the host set a flag (a wakeup, an interrupt, a cancellation) "
+              + "and the module came out at the next boundary",
+        18 => "the callee is a builtin the module cannot request directly",
         1 => "no call-marker table staged",
         2 => "goal is neither a compound nor an atom",
         4 => "no module covers the goal's functor",
@@ -1533,7 +1536,7 @@ public static class WasmPredicateCompiler
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
-                    if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
+                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
                         _env.EncodeBuiltinId(ins.I0, ins.I1))));
                     StoreSlot64(WasmAbi.Cursor,
@@ -1600,7 +1603,7 @@ public static class WasmPredicateCompiler
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
-                    if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
+                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
@@ -1643,6 +1646,12 @@ public static class WasmPredicateCompiler
             Op(new Int64Constant(0));
             Op(new Int64NotEqual());
             OpenIf();
+            // Stamped like a guard although it is not one: this is the FIRST
+            // thing a meta-call emits, so a meta-call that bails here leaves
+            // no code and reads as anonymous. Measured, that is what half of
+            // clpr's deopt sites were, and reading them as meta-call
+            // declines would have sent the work to the wrong place.
+            MetaGuard(17);
             EmitDeopt(pc);
             CloseNested();
         }
