@@ -477,6 +477,26 @@ each to be told no.
 ordering contradicts itself between clpr x200 and x400, so it says nothing
 about grain.
 
+### Progress against the baseline
+
+Measured with the same run after the meta-call arc's follow-ups. Counts, not
+times.
+
+| program | deopts | what changed |
+|---|---:|---|
+| clpr x200 | 804 -> 403 | the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to. $wake_call/1 left the site ranking entirely; its 401 round trips became in-wasm hops (2,399 -> 2,800). |
+| queens 12 | 462 -> 262 | same migration (196 at guard 4, 4 at guard 9). |
+
+get_attr/3 on a plain variable also left the builtin rankings (400 exits in
+clpr, 12 in queens), answered inside the module.
+
+What remains is fully attributed and is the wakeup machinery itself: guard 25
+(binding an attributed variable through a meta-called =/2 -- the wakeup is
+the host's by design), guard 23 (a restore that would unwind the extra
+trail), and a few trail growths. Irreducible in COUNT; the open lever is the
+cost per exit -- a meta-call that must hand its goal to the host still leaves
+by full deopt rather than by the cheaper builtin-request exit.
+
 ### RunAOTCompilation: measured and rejected
 
 The obvious lever against the interpreted-C# cost was tried back to back
