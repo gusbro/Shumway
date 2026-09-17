@@ -11,15 +11,18 @@
 % and retried whenever a variable it mentions is determined; once linear it
 % is posted for real. Variables determined to one value are bound to it.
 %
-% The verify_attributes/4 hook is :- multifile and dispatches on the
-% attribute module, so clpr shares an engine with clpfd and coroutining;
-% a variable carrying BOTH clpfd and clpr attributes is not supported.
+% The verify_attributes/4 hook is MODULE-LOCAL (ADR-040): the engine
+% resolves clpr$verify_attributes/4 for a wakeup whose attribute module
+% is clpr, so each constraint library owns its hook and they share an
+% engine. Not :- public and not :- multifile, deliberately -- multifile
+% registers the predicate as dynamic (clauses accumulate across
+% consults), and a dynamic hook runs on Tier-0 forever and can never be
+% promoted. A variable carrying BOTH clpfd and clpr attributes is not
+% supported.
 
 :- module(clpr).
 
 :- public '{}'/1.
-:- public verify_attributes/4.
-:- multifile verify_attributes/4.
 :- public '$clpr_dep_eq'/2.
 :- public clpr_attr_goals/3.
 

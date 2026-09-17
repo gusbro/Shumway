@@ -5,8 +5,9 @@
 % freeze/2 delays a goal until its variable is bound; frozen/2 reads the
 % delayed goals back; dif/2 is a sound disequality: it fails as soon as its
 % arguments become identical, succeeds outright once they cannot unify and
-% stays suspended in between. Built on the same :- multifile
-% verify_attributes/4 hook as clpfd and clpr, so all three share an engine.
+% stays suspended in between. Built on the same MODULE-LOCAL
+% verify_attributes/4 hook (ADR-040) as clpfd and clpr, so all three own
+% their hooks and share an engine.
 
 :- module(coroutining).
 
@@ -20,8 +21,6 @@
 % be wrapped for its calling context before handing it over.
 :- meta_predicate(freeze(*, 0)).
 :- meta_predicate(when(*, 0)).
-:- public verify_attributes/4.
-:- multifile verify_attributes/4.
 :- public coroutining_attr_goals/3.
 % public because the hook (a dynamic clause, body not module-mangled)
 % references it in its residual Goals — like clpfd's '$fd_set'/3.

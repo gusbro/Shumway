@@ -155,7 +155,21 @@ public class WasmRelinkEvictionTests
         engine.Query("true.");
         Assert.True(wasm.PromoteAllStatics(engine) > 100);
 
-        engine.ConsultString(":- use_module(library(clpfd)).");
+        // The hole is provoked DELIBERATELY now. It used to be a gift of
+        // clpfd's own load: its verify_attributes hook was multifile, hence
+        // dynamic, and the load's directives running it minted anonymous
+        // $disj_N helpers mid-consult, with the library's block landing on
+        // top of them. The hook went module-local and static (ADR-040) and
+        // stopped leaving anything behind -- so the same shape is built
+        // here: a dynamic predicate with a disjunction body, run by a
+        // directive, in the same consult that then loads the library above
+        // it. The next consult drops the helper and the block slides.
+        engine.ConsultString("""
+            :- dynamic(h/1).
+            h(X) :- ( X = 1 ; X = 2 ).
+            :- ( h(_) -> true ; true ).
+            :- use_module(library(clpfd)).
+            """);
         wasm.CompileAllTick(engine);
         Assert.Equal(0, wasm.RelinkEvictions);
         Snapshot(engine);

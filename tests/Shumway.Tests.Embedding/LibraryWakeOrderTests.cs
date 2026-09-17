@@ -35,14 +35,24 @@ public sealed class LibraryWakeOrderTests
 
     private static void BothHooksDispatch(PrologEngine e)
     {
-        // The wake driver's shape: module BOUND. This is the call that used
-        // to miss the second library's clause.
-        Assert.True(e.Query(
-            "verify_attributes(clpfd, fd(a, b), _W, _G).").Success,
-            "clpfd's hook is not dispatchable with the module bound");
-        Assert.True(e.Query(
-            "verify_attributes(coroutining, frozen(foo), 1, G), G == [foo].").Success,
-            "coroutining's hook is not dispatchable with the module bound");
+        // Through the REAL mechanism -- an attributed variable of each
+        // library's module gets bound and its hook has to fire. The probe
+        // used to call the bare verify_attributes/4 with the module bound,
+        // because the hook was one shared multifile predicate and a bound-
+        // module call was the shape that missed the second library's clause.
+        // The hooks are module-local now (ADR-040): each library owns
+        // Module$verify_attributes/4, the wake driver resolves it per
+        // module, and the bare global name no longer exists to call --
+        // asking for it is an existence_error like any other undefined
+        // predicate. The class of bug the old probe pinned (one shared
+        // predicate accumulating clauses across loads, and a load path
+        // dropping a contributor) cannot recur when there is no shared
+        // predicate; what CAN still break is a library whose hook does not
+        // fire, and that is what these ask.
+        Assert.True(e.Query("X in 1..2, X #> 1, X == 2.").Success,
+            "clpfd's hook did not fire on binding its variable");
+        Assert.True(e.Query("freeze(F, W = woke), F = 1, W == woke.").Success,
+            "coroutining's hook did not fire on binding its variable");
     }
 
     [Theory]

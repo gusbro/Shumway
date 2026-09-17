@@ -10,8 +10,11 @@
 % the watchers to a fixpoint; binding an FD variable fires
 % verify_attributes/4, which checks membership and re-runs the propagators.
 %
-% The hook is :- multifile and dispatches on the attribute module, so clpfd,
-% clpr and coroutining share an engine. A variable carrying BOTH clpfd and
+% The hook is MODULE-LOCAL (ADR-040): the engine resolves
+% clpfd$verify_attributes/4 for the clpfd attribute module, so clpfd,
+% clpr and coroutining each own their hook and share an engine. Not
+% multifile, deliberately: multifile registers the predicate as dynamic,
+% and a dynamic hook can never be promoted. A variable carrying BOTH clpfd and
 % clpr attributes is not supported.
 
 :- module(clpfd).
@@ -62,8 +65,6 @@
 :- public '$fd_alldiff'/1.
 :- public sum/3.
 :- public scalar_product/4.
-:- public verify_attributes/4.
-:- multifile verify_attributes/4.
 :- public clpfd_attr_goals/3.
 :- public label/1.
 :- public labeling/2.
