@@ -580,6 +580,19 @@ public sealed class WasmTierDelegate
                     result = true;
                     break;
                 }
+                if (engine.HasPendingWakeups)
+                {
+                    // The builtin bound an attributed variable (the meta-call
+                    // hands =/2 through here). ADR-049: the wakeup fires at
+                    // the next goal boundary, and boundaries inside the chain
+                    // read a Flags word staged at entry -- so the chain
+                    // closes HERE and the interpreter, whose every boundary
+                    // checks live state, carries on at the return address.
+                    // One exit per wakeup, same as the deopt it replaces.
+                    pendingPc = (int)cx.TranslatePcToLive(ret);
+                    result = true;
+                    break;
+                }
                 cx.RefreshFromEngine();
                 if (!cx.TryResolve(currentFid, ret, out target))
                     throw new System.InvalidOperationException(

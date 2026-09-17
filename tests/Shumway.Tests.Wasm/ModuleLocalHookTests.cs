@@ -36,12 +36,16 @@ public sealed class ModuleLocalHookTests(ITestOutputHelper o)
         WasmTierDelegate.ResetDiag();
         Assert.True(engine.Query("csolve(10).").Success);
 
+        long eq = 0;
+        foreach (var (n, a, hits) in WasmTierDelegate.BuiltinRanking())
+            if (n == "=" && a == 2) eq = hits;
         o.WriteLine($"deopts={WasmTierDelegate.DiagDeopts} "
-            + $"guard4={WasmTierDelegate.DiagMetaGuardHist[4]}");
-        // Anti-vacuity: the wakeup path still runs and still steps aside for
-        // the attvar bind itself (guard 25) -- that one is the wakeup, not a
-        // resolution failure, and it is the proof the corpus still wakes.
-        Assert.True(WasmTierDelegate.DiagMetaGuardHist[25] >= 10,
+            + $"guard4={WasmTierDelegate.DiagMetaGuardHist[4]} =/2={eq}");
+        // Anti-vacuity: the wakeup path still runs. The attvar bind that
+        // wakes the hook used to step aside at guard 25; it leaves as a
+        // leaf =/2 builtin request now, so the ranking is where the wake
+        // count shows.
+        Assert.True(WasmTierDelegate.DiagMetaGuardHist[25] + eq >= 10,
             "the corpus stopped waking hooks: it no longer exercises the path");
         Assert.Equal(0L, WasmTierDelegate.DiagMetaGuardHist[4]);
     }

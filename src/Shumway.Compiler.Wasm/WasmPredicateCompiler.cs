@@ -1503,7 +1503,28 @@ public static class WasmPredicateCompiler
                     // resolves builtins when the registry is loaded, exactly
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
-                    if (_env.IsInlineUnify(ins.I0)) { EmitInlineUnify(ins.Pc); return false; }
+                    if (_env.IsInlineUnify(ins.I0))
+                    {
+                        // The escape is the site's own non-inline exit: a
+                        // pair only the engine's unifier can decide -- an
+                        // attributed variable above all -- runs as a leaf
+                        // builtin request with the chain OPEN, where the
+                        // deopt it replaces closed the chain and left the
+                        // rest of the clause to the interpreter. Measured
+                        // after the hook migration, these sites WERE the
+                        // remaining guard-25 population: the woken hook
+                        // jumps now, and the bind that wakes it is clpr's
+                        // own static V = C.
+                        EmitInlineUnify(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                                _env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.TryGetInlineTypeTest(ins.I0, out var cbTest))
                     {
                         EmitInlineTypeTest(cbTest, ins.Pc);
@@ -1547,12 +1568,13 @@ public static class WasmPredicateCompiler
                     }
                     if (_env.IsInlineMetaCall(ins.I0))
                     {
-                        EmitInlineMetaCall(ins.Pc, SelfFid(ins));
+                        EmitInlineMetaCall(ins.Pc, SelfFid(ins), envTrim: ins.I1);
                         return true;
                     }
                     if (_env.IsInlineBarrierCall(ins.I0))
                     {
-                        EmitInlineMetaCall(ins.Pc, SelfFid(ins), barrierFromX1: true);
+                        EmitInlineMetaCall(ins.Pc, SelfFid(ins), barrierFromX1: true,
+                                           envTrim: ins.I1);
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
@@ -1566,7 +1588,14 @@ public static class WasmPredicateCompiler
                 case Opcode.ExecuteBuiltin:
                     if (_env.IsInlineUnify(ins.I0))
                     {
-                        EmitInlineUnify(ins.Pc);
+                        // Same escape, tail form: cursor -1, no trim.
+                        EmitInlineUnify(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
                         EmitProceedReturn();
                         return true;
                     }
@@ -2154,7 +2183,7 @@ public static class WasmPredicateCompiler
         }
 
         private void EmitInlineMetaCall(int pc, int selfFid, bool tail = false,
-                                        bool barrierFromX1 = false)
+                                        bool barrierFromX1 = false, int envTrim = 0)
         {
             if (MaxMetaCallArity - 1 > _maxRegister) _maxRegister = MaxMetaCallArity - 1;
             EmitFlagsCheck(pc);
@@ -2215,18 +2244,53 @@ public static class WasmPredicateCompiler
                 // registers precisely because it never comes back.
                 Action Arg(int i) => () => CellLoadDyn(LHeapB, LAtSlot, i + 1);
 
+                // A form that cannot decide hands the GOAL to the host as an
+                // ordinary builtin request -- the goal here IS a builtin, its
+                // registry impl is the real one, and a leaf request keeps the
+                // chain open where a deopt closes it and leaves the rest of
+                // the clause to the interpreter. The arguments go into the
+                // registers only NOW: this exit runs the goal and resumes at
+                // pc + 9, so the instruction is never re-dispatched and X0
+                // is not needed again.
+                //
+                // Only without an own frame. The wasm resume at pc + 9 pops
+                // whatever frame the site built, but a builtin that queues a
+                // WAKEUP makes the host close the chain and continue in
+                // BYTECODE at pc + 9 -- where no Deallocate exists, and a
+                // frame only the wasm emission knows about would be left
+                // under E for the caller to read Y slots out of. A site with
+                // a real frame (or in tail position) has no such asymmetry.
+                Action? DeclineTo(int builtinId, int arity) => ownFrame
+                    ? null
+                    : () =>
+                    {
+                        for (int i = 0; i < arity; i++)
+                        {
+                            int k = i;
+                            RegStore(k, Arg(k));
+                        }
+                        StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                            _env.EncodeBuiltinId(builtinId, tail ? 0 : envTrim))));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                            tail ? -1 : _env.EncodeAddress(pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    };
+
                 foreach (var (goalFid, builtinId) in _env.MetaCallableBuiltins)
                 {
                     Action body;
                     if (_env.IsInlineUnify(builtinId))
-                        body = () => EmitUnifyTwo(Arg(0), Arg(1), pc);
+                        body = () => EmitUnifyTwo(Arg(0), Arg(1), pc,
+                                                  DeclineTo(builtinId, 2));
                     else if (_env.IsInlineCompare(builtinId, out bool negated))
-                        body = () => EmitInlineCompare(pc, negated, GoSlow, Arg(0), Arg(1));
+                        body = () => EmitInlineCompare(pc, negated,
+                            DeclineTo(builtinId, 2) ?? GoSlow, Arg(0), Arg(1));
                     else if (_env.TryGetInlineTypeTest(builtinId, out var test)
                              && test != WasmTypeTest.None)
                         body = () => EmitInlineTypeTest(test, pc, Arg(0));
                     else if (_env.IsInlineGetAttr(builtinId))
-                        body = () => EmitInlineGetAttr(pc, GoSlow, Arg(0), Arg(1), Arg(2));
+                        body = () => EmitInlineGetAttr(pc,
+                            DeclineTo(builtinId, 3) ?? GoSlow, Arg(0), Arg(1), Arg(2));
                     else
                         continue;
 
@@ -2773,10 +2837,10 @@ public static class WasmPredicateCompiler
         /// <summary>=/2 open-coded: X0 against X1 through the same two-cell
         /// unify every get_value uses (immediates inline, compounds through
         /// the general unifier, attvars deopt). No host round-trip.</summary>
-        private void EmitInlineUnify(int pc)
+        private void EmitInlineUnify(int pc, Action? emitEscape = null)
         {
             EmitFlagsCheck(pc);
-            EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc);
+            EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc, emitEscape);
         }
 
         /// <summary>Tags for which term identity IS cell identity, so a pair
@@ -3760,7 +3824,13 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LC1));
         }
 
-        private void EmitUnifyTwo(Action loadLeft, Action loadRight, int pc)
+        /// <param name="emitEscape">What to do with a pair only the
+        /// engine's unifier can decide. Null steps aside at this pc; the
+        /// meta-call passes a builtin-request exit instead, because there
+        /// the goal IS =/2 and the host can be asked to run it without
+        /// abandoning the chain.</param>
+        private void EmitUnifyTwo(Action loadLeft, Action loadRight, int pc,
+                                  Action? emitEscape = null)
         {
             // Unifies two cells (get_value_y / get_value_x). Both sides
             // derefed; the general shapes step aside.
@@ -3876,7 +3946,8 @@ public static class WasmPredicateCompiler
                         CloseNested();
                         Op(new LocalGet(LT0)); Op(new Int32Constant(2)); Op(new Int32Equal());
                         OpenIf();
-                        EmitDeopt(ins.Pc, 25);
+                        if (emitEscape is null) EmitDeopt(ins.Pc, 25);
+                        else emitEscape();
                         CloseNested();
                     }
                     CloseNested();
