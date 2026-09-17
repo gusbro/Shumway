@@ -474,10 +474,23 @@ internal static class BrowserWasmTier
         {
             sb.Append("%   deopt reasons (of ").Append(guards).Append("):\n");
             for (int g = 0; g < hist.Length; g++)
-                if (hist[g] != 0)
-                    sb.Append($"%     {hist[g]} guard {g}: ")
-                      .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g))
-                      .Append('\n');
+            {
+                if (hist[g] == 0) continue;
+                sb.Append($"%     {hist[g]} guard {g}: ")
+                  .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g));
+                // The functor LAST seen at this code, where the site stamped
+                // one: a row saying 400 meta-calls found no marker only
+                // becomes actionable when it says 400 of WHAT.
+                long gfid = WasmTierDelegate.DiagGuardFids[g];
+                if (gfid > 0)
+                {
+                    var (gaid, gar) = Shumway.Core.FunctorTable.Lookup((int)gfid);
+                    sb.Append("  [last: ")
+                      .Append(Shumway.Core.AtomTable.GetById(gaid)?.Name)
+                      .Append('/').Append(gar).Append(']');
+                }
+                sb.Append('\n');
+            }
         }
         return sb.ToString();
     }

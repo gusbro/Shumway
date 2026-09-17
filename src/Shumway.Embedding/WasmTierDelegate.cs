@@ -162,6 +162,12 @@ public sealed class WasmTierDelegate
     // was dropped silently, so the cut's own decline never appeared.
     public static readonly long[] DiagMetaGuardHist = new long[32];
 
+    /// <summary>The goal functor LAST seen at each reason code, where the
+    /// site stamped one (DiagB). A histogram row says 400 meta-calls found
+    /// no marker; only this says 400 of WHAT -- and a reason whose functor
+    /// cannot be named in the current tables is itself a finding.</summary>
+    public static readonly long[] DiagGuardFids = new long[32];
+
     /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
@@ -191,6 +197,7 @@ public sealed class WasmTierDelegate
         DiagFirstRestoreGuard = null;
         DiagDelegateTicks = DiagBuiltinTicks = 0;
         System.Array.Clear(DiagMetaGuardHist, 0, DiagMetaGuardHist.Length);
+        System.Array.Clear(DiagGuardFids, 0, DiagGuardFids.Length);
     }
 
 
@@ -259,7 +266,10 @@ public sealed class WasmTierDelegate
         DiagLastGuard = cx.ReadSlot(WasmAbi.DiagA);
         DiagLastGuardFid = cx.ReadSlot(WasmAbi.DiagB);
         if ((ulong)DiagLastGuard < (ulong)DiagMetaGuardHist.Length)
+        {
             DiagMetaGuardHist[DiagLastGuard]++;
+            DiagGuardFids[DiagLastGuard] = DiagLastGuardFid;
+        }
         // Cleared, because this runs on EVERY deopt and only a meta-call
         // decline writes the slot. Left standing, the code from one decline
         // would be read again by the next deopt from anywhere, and the
