@@ -340,6 +340,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         public long ReadSlot(int slot) => _mailbox[slot];
 
+        public void WriteSlot(int slot, long value) => _mailbox[slot] = value;
+
         // Here an address IS a runtime address: the module's memory and the
         // host's are the same one, which is the whole reason this world pins
         // instead of copying.
@@ -1054,6 +1056,22 @@ internal static partial class WebShumwayApp
             // of magnitude slower and as figures that look like a
             // regression in whatever was changed last.
             report.Append("bundle: ").AppendLine(BrowserWasmTier.BundleInstallNote);
+            // And this leads it for the same reason, only worse: without the
+            // counters every tally below reads ZERO, and a report of zeros is
+            // indistinguishable from a run that never left the module. The
+            // only other tell is that `glue` comes out NEGATIVE, since it is
+            // what remains after subtracting a delegate figure nothing
+            // counted -- which asks the reader to notice a minus sign.
+            //
+            // Twice now a page was published with the tier flag and not this
+            // one, and read as a clean run both times.
+            if (!WasmTierDelegate.DiagCompiledIn)
+                report.AppendLine(
+                    "COUNTERS OFF: this build did not compile them, so every "
+                    + "tally below is zero because nobody counted, not because "
+                    + "nothing happened. No deopt ranking and no guard "
+                    + "histogram. Republish with -p:ShumwayDiag=true beside "
+                    + "-p:ShumwayWasmTier=true. The times are real.");
             rounds = Math.Max(1, rounds);
             try
             {

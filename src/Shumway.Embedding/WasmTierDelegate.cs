@@ -258,6 +258,11 @@ public sealed class WasmTierDelegate
         DiagLastGuardFid = cx.ReadSlot(WasmAbi.DiagB);
         if ((ulong)DiagLastGuard < (ulong)DiagMetaGuardHist.Length)
             DiagMetaGuardHist[DiagLastGuard]++;
+        // Cleared, because this runs on EVERY deopt and only a meta-call
+        // decline writes the slot. Left standing, the code from one decline
+        // would be read again by the next deopt from anywhere, and the
+        // histogram would report a cause that instruction never had.
+        cx.WriteSlot(WasmAbi.DiagA, 0);
     }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]

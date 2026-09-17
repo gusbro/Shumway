@@ -90,6 +90,14 @@ public static class WasmPredicateCompiler
     /// never staged, or a resolution it never published.</summary>
     public static string MetaGuardName(int code) => code switch
     {
+        // Not a guard: nothing wrote the slot. Two ways to get here, and
+        // they want opposite reactions. Either the deopt was not a
+        // meta-call at all -- any other instruction stepping aside lands
+        // in the same tally -- or it was, from a module carrying no
+        // stamps, which is what a bundle BAKED AT BUILD TIME by a
+        // non-diag build looks like. Cross-check against the deopt sites:
+        // a meta-call site reporting this is the second case.
+        0 => "no stamp: not a meta-call, or a module baked without stamps",
         1 => "no call-marker table staged",
         2 => "goal is neither a compound nor an atom",
         4 => "no module covers the goal's functor",

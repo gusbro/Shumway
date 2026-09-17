@@ -115,6 +115,11 @@ public interface IWasmChainContext : System.IDisposable
 
     long ReadSlot(int slot);
 
+    /// <summary>Sets one mailbox slot. For DIAGNOSTIC slots the module
+    /// stamps and the host consumes: a stamp left standing is read again by
+    /// whatever steps aside next, and attributed to it.</summary>
+    void WriteSlot(int slot, long value);
+
     /// <summary>One i64 of linear memory at an ABSOLUTE address, the way a
     /// module's i64.load would see it. For VERIFICATION: an image the host
     /// stages and only compiled code ever reads is otherwise unfalsifiable

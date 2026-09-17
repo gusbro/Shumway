@@ -360,6 +360,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         public long ReadSlot(int slot)
             => Marshal.ReadInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize);
 
+        public void WriteSlot(int slot, long value)
+            => Marshal.WriteInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize, value);
+
         // An address in this world is an offset into the private image.
         public long ReadWord(long address)
             => Marshal.ReadInt64(_w._memory.Start, (int)address);
