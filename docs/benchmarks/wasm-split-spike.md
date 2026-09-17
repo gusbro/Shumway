@@ -484,8 +484,8 @@ times.
 
 | program | deopts | what changed |
 |---|---:|---|
-| clpr x200 | 804 -> 403 | the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to. $wake_call/1 left the site ranking entirely; its 401 round trips became in-wasm hops (2,399 -> 2,800). |
-| queens 12 | 462 -> 262 | same migration (196 at guard 4, 4 at guard 9). |
+| clpr x200 | 804 -> 403 -> **4** | first the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to -- $wake_call/1 left the ranking, its 401 round trips became in-wasm hops. Then the inline =/2's step-aside became a leaf builtin request, chain open: the 400 attvar binds show as =/2 exits now. The 4 left are one-off trail growths. |
+| queens 12 | 462 -> 262 -> **133** | same two changes. What remains is named and stays: 60 at a Trust whose restore would unwind the extra trail, 67 at get_value ops meeting attvars -- those cannot take the leaf escape, because it needs the goal's arguments in X0/X1 and a get_value pair lives in registers the clause still reads. |
 
 get_attr/3 on a plain variable also left the builtin rankings (400 exits in
 clpr, 12 in queens), answered inside the module.
