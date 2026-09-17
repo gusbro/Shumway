@@ -84,23 +84,31 @@ public static class WasmPredicateCompiler
 #endif
         ;
 
-    /// <summary>What a guard code means, kept beside the codes so the two
-    /// cannot drift. A number in a histogram says a meta-call declined; only
-    /// the name says whether that is a limit of the design, a table the host
-    /// never staged, or a resolution it never published.</summary>
-    public static string MetaGuardName(int code) => code switch
+    /// <summary>What a stamp means, kept beside the codes so the two
+    /// cannot drift. 1-16 are the meta-call guards; 17 up are the deopt
+    /// reasons every other step-aside site names. A number in a histogram
+    /// says the module came out; only the name says whether that is a limit
+    /// of the design, a table the host never staged, or work that belongs
+    /// to the engine.</summary>
+    public static string DeoptReasonName(int code) => code switch
     {
-        // Not a guard: nothing wrote the slot. Two ways to get here, and
-        // they want opposite reactions. Either the deopt was not a
-        // meta-call at all -- any other instruction stepping aside lands
-        // in the same tally -- or it was, from a module carrying no
-        // stamps, which is what a bundle BAKED AT BUILD TIME by a
-        // non-diag build looks like. Cross-check against the deopt sites:
-        // a meta-call site reporting this is the second case.
-        0 => "no stamp: not a meta-call, or a module baked without stamps",
+        // Every deopt site stamps a reason or declares that a guard
+        // already did, so nothing this compiler emits reads zero. A zero
+        // therefore means the MODULE has no stamps at all: it was compiled
+        // with DebugMetaGuards off, which is what a bundle baked at build
+        // time by a non-diag build looks like.
+        0 => "no stamp: a module compiled without stamps (a non-diag bake)",
         17 => "the host set a flag (a wakeup, an interrupt, a cancellation) "
               + "and the module came out at the next boundary",
         18 => "the callee is a builtin the module cannot request directly",
+        19 => "the heap reached its watermark: the engine must collect",
+        20 => "a packed string reached a dispatch the module hands back",
+        21 => "a frame or choice point would cross the stack limit",
+        22 => "the binding trail is full",
+        23 => "a restore would have to unwind the extra trail",
+        24 => "binding an attributed variable: the wakeup is the host's",
+        25 => "a general unification only the engine's unifier can do",
+        26 => "arithmetic: a shape or an error the evaluator hands to the host",
         1 => "no call-marker table staged",
         2 => "goal is neither a compound nor an atom",
         4 => "no module covers the goal's functor",
@@ -1016,8 +1024,20 @@ public static class WasmPredicateCompiler
             Op(new ReturnCall(0));
         }
 
-        private void EmitDeopt(int bytecodePc)
+        /// <summary>A deopt site that follows a MetaGuard: DiagA already
+        /// carries the guard's code, and stamping here would overwrite the
+        /// specific cause with a general one.</summary>
+        private const int DeoptStamped = -1;
+
+        /// <summary>The reason is REQUIRED, and that is the point: every
+        /// step-aside says why, in the same histogram the meta-call guards
+        /// feed, or names <see cref="DeoptStamped"/> to say a guard already
+        /// did. Half of clpr's deopts read as anonymous because sites were
+        /// stamped one by one as each was suspected -- a parameter the
+        /// compiler enforces cannot leave one out.</summary>
+        private void EmitDeopt(int bytecodePc, int reason)
         {
+            if (reason != DeoptStamped) MetaGuard(reason);
             StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(_env.EncodeAddress(bytecodePc))));
             EmitReturn(WasmVerdict.Deopt);
         }
@@ -1161,7 +1181,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
                     OpenIf();
-                    EmitDeopt(pcForDeopt);
+                    EmitDeopt(pcForDeopt, 24);
                     CloseNested();
                     GoFail();
                 }
@@ -1177,7 +1197,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.TrailLimit);
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
-            EmitDeopt(pcForDeopt);
+            EmitDeopt(pcForDeopt, 22);
             CloseNested();
             // trail[TR] = da (a 4-byte entry); TR++
             Op(new LocalGet(LTrailB));
@@ -1536,7 +1556,7 @@ public static class WasmPredicateCompiler
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
-                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc); return true; }
+                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc, DeoptStamped); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
                         _env.EncodeBuiltinId(ins.I0, ins.I1))));
                     StoreSlot64(WasmAbi.Cursor,
@@ -1603,7 +1623,7 @@ public static class WasmPredicateCompiler
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
-                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc); return true; }
+                    if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc, DeoptStamped); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
@@ -1652,7 +1672,7 @@ public static class WasmPredicateCompiler
             // clpr's deopt sites were, and reading them as meta-call
             // declines would have sent the work to the wrong place.
             MetaGuard(17);
-            EmitDeopt(pc);
+            EmitDeopt(pc, DeoptStamped);
             CloseNested();
         }
 
@@ -1829,7 +1849,7 @@ public static class WasmPredicateCompiler
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
                 OpenIf();
-                EmitDeopt(ins.Pc);
+                EmitDeopt(ins.Pc, 19);
                 CloseNested();
                 GoTo(calleeEntry);
                 return true;
@@ -1996,7 +2016,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 19);
             CloseNested();
 
             Op(new LocalGet(LH));
@@ -2746,7 +2766,7 @@ public static class WasmPredicateCompiler
             EmitMetaTail();
 
             CloseNested();                                  // $slow
-            EmitDeopt(pc);
+            EmitDeopt(pc, DeoptStamped);
             CloseNested();                                  // $done
         }
 
@@ -3165,7 +3185,7 @@ public static class WasmPredicateCompiler
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
                 OpenIf();
-                EmitDeopt(pc);
+                EmitDeopt(pc, 19);
                 CloseNested();
                 // A tail call still enters a new procedure: the next
                 // iteration's neck_cut must see B as of THIS dispatch, not
@@ -3207,7 +3227,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant((int)Tag.Pstr));
             Op(new Int32Equal());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 20);
             CloseNested();
             GoTo(varA);
         }
@@ -3309,7 +3329,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant((int)Tag.Pstr));
             Op(new Int32Equal());
             OpenIf();
-            EmitDeopt(pcForDeopt);
+            EmitDeopt(pcForDeopt, 20);
             CloseNested();
 
             Op(new LocalGet(LT0));
@@ -3468,7 +3488,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.StackLimit);
             Op(new Int32GreaterThanSigned());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 21);
             CloseNested();
 
             // newB = ST; the CP words exactly as PushChoicePoint writes them.
@@ -3561,7 +3581,7 @@ public static class WasmPredicateCompiler
             { Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 }); });
             StoreSlot64(WasmAbi.DiagB, () =>
             { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
-            EmitDeopt(pcForDeopt);
+            EmitDeopt(pcForDeopt, 23);
             CloseNested();
 
             // Unwind the binding trail to the saved top.
@@ -3651,7 +3671,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.StackLimit);
             Op(new Int32GreaterThanSigned());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 21);
             CloseNested();
 
             CellStoreDyn(LStackB, LST, 0, () => RawInt(() => Op(new LocalGet(LE))));
@@ -3856,7 +3876,7 @@ public static class WasmPredicateCompiler
                         CloseNested();
                         Op(new LocalGet(LT0)); Op(new Int32Constant(2)); Op(new Int32Equal());
                         OpenIf();
-                        EmitDeopt(ins.Pc);
+                        EmitDeopt(ins.Pc, 25);
                         CloseNested();
                     }
                     CloseNested();
@@ -3889,7 +3909,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 19);
             CloseNested();
             Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
             Op(new LocalSet(LC0));
@@ -3913,7 +3933,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant((int)Tag.Int));
             Op(new Int32NotEqual());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 26);
             CloseNested();
             Op(new LocalGet(LC0));
             Op(new Int64Constant(4));
@@ -3995,7 +4015,7 @@ public static class WasmPredicateCompiler
                     Op(new Float64Constant(0.0));
                     Op(new Float64Equal());
                     OpenIf();
-                    EmitDeopt(ins.Pc);      // ISO: evaluation_error, not inf
+                    EmitDeopt(ins.Pc, 26);      // ISO: evaluation_error, not inf
                     CloseNested();
                 }
                 if (binOp is 0 or 1 or 2 or 3)
@@ -4015,7 +4035,7 @@ public static class WasmPredicateCompiler
                 else
                 {
                     // mod, shifts, bit ops: integer-only, the host's error.
-                    EmitDeopt(ins.Pc);
+                    EmitDeopt(ins.Pc, 26);
                 }
             }
             OpenElse();
@@ -4042,7 +4062,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64GreaterThanSigned());
                 Op(new Int32Or());
                 OpenIf();
-                EmitDeopt(pc);
+                EmitDeopt(pc, 26);
                 CloseNested();
             }
 
@@ -4069,7 +4089,7 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LC0)); Op(new LocalGet(LC2)); Op(new Int64DivideSigned());
                         Op(new LocalGet(LC1)); Op(new Int64NotEqual());
                         OpenIf();
-                        EmitDeopt(pcDeopt);
+                        EmitDeopt(pcDeopt, 26);
                         CloseNested();
                     }
                     CloseNested();
@@ -4078,7 +4098,7 @@ public static class WasmPredicateCompiler
                 case 4:     // IntDiv (truncating)
                     Op(new LocalGet(LC1)); Op(new Int64Constant(0)); Op(new Int64Equal());
                     OpenIf();
-                    EmitDeopt(pcDeopt);
+                    EmitDeopt(pcDeopt, 26);
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64DivideSigned());
                     Op(new LocalSet(LC0));
@@ -4086,7 +4106,7 @@ public static class WasmPredicateCompiler
                 case 5:     // Mod (sign of the divisor)
                     Op(new LocalGet(LC1)); Op(new Int64Constant(0)); Op(new Int64Equal());
                     OpenIf();
-                    EmitDeopt(pcDeopt);
+                    EmitDeopt(pcDeopt, 26);
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64RemainderSigned());
                     Op(new LocalSet(LC0));
@@ -4100,7 +4120,7 @@ public static class WasmPredicateCompiler
                     CloseNested();
                     break;
                 default:
-                    EmitDeopt(pcDeopt);
+                    EmitDeopt(pcDeopt, 26);
                     Op(new Int64Constant(0)); Op(new LocalSet(LC0));    // unreachable
                     break;
             }
@@ -4174,7 +4194,7 @@ public static class WasmPredicateCompiler
                     OpenIf();
                     EmitBindDa(pcDeopt, RefToHeader);
                     OpenElse();
-                    EmitDeopt(pcDeopt);
+                    EmitDeopt(pcDeopt, 26);
                     CloseNested();
                     break;
             }
@@ -4218,7 +4238,7 @@ public static class WasmPredicateCompiler
                             OpenIf();
                             GoFail();
                             CloseNested();
-                            EmitDeopt(pcDeopt);
+                            EmitDeopt(pcDeopt, 26);
                         }
                         CloseNested();
                     }
@@ -4238,7 +4258,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
-            EmitDeopt(pc);
+            EmitDeopt(pc, 19);
             CloseNested();
         }
 
@@ -4315,7 +4335,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
                     OpenIf();
-                    EmitDeopt(pc);
+                    EmitDeopt(pc, 24);
                     CloseNested();
                     GoFail();
                 }
@@ -4364,7 +4384,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Equal());
                     Op(new Int32Or());
                     OpenIf();
-                    EmitDeopt(pc);
+                    EmitDeopt(pc, 24);
                     CloseNested();
                     GoFail();
                 }
@@ -4559,7 +4579,7 @@ public static class WasmPredicateCompiler
                         Op(new Int32Constant((int)Tag.AttVar));
                         Op(new Int32Equal());
                         OpenIf();
-                        EmitDeopt(pc);
+                        EmitDeopt(pc, 24);
                         CloseNested();
                         GoFail();
                     }
@@ -4619,7 +4639,7 @@ public static class WasmPredicateCompiler
                         Op(new Int32Equal());
                         Op(new Int32Or());
                         OpenIf();
-                        EmitDeopt(pc);
+                        EmitDeopt(pc, 24);
                         CloseNested();
                         GoFail();
                     }
@@ -4758,7 +4778,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
                     OpenIf();
-                    EmitDeopt(pc);
+                    EmitDeopt(pc, 25);
                     CloseNested();
                     GoFail();
                 }
@@ -4894,7 +4914,7 @@ public static class WasmPredicateCompiler
                     break;
                 default:
                     // bigint / rational literal: the sequence still escalates.
-                    EmitDeopt(_aevalStart);
+                    EmitDeopt(_aevalStart, 26);
                     Op(new Int64Constant(0));                       // unreachable
                     Op(new LocalSet(LA(_aevalDepth)));
                     Op(new Int32Constant(0));
@@ -4957,7 +4977,7 @@ public static class WasmPredicateCompiler
                 OpenElse();
                 {
                     // var, bigint, rational, anything else: the interpreter's.
-                    EmitDeopt(pc);
+                    EmitDeopt(pc, 26);
                     Op(new Int64Constant(0));
                     Op(new LocalSet(LA(slot)));
                     Op(new Int32Constant(0));
@@ -4985,7 +5005,7 @@ public static class WasmPredicateCompiler
                     Op(new Float64Constant(0.0));
                     Op(new Float64Equal());
                     OpenIf();
-                    EmitDeopt(_aevalStart);
+                    EmitDeopt(_aevalStart, 26);
                     CloseNested();
                 }
                 if (ins.I0 is 0 or 1 or 2 or 3)
@@ -5005,7 +5025,7 @@ public static class WasmPredicateCompiler
                 {
                     // Integer-only operators (mod, shifts, bit ops) on a
                     // float are a type error the host reports.
-                    EmitDeopt(_aevalStart);
+                    EmitDeopt(_aevalStart, 26);
                 }
             }
             OpenElse();
@@ -5065,7 +5085,7 @@ public static class WasmPredicateCompiler
                         AEvalStoreF64(slot);
                         break;
                     default:    // bit ops and the transcendentals: the host's
-                        EmitDeopt(_aevalStart);
+                        EmitDeopt(_aevalStart, 26);
                         break;
                 }
             }
@@ -5080,7 +5100,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64GreaterThanSigned());
                 Op(new Int32Or());
                 OpenIf();
-                EmitDeopt(_aevalStart);
+                EmitDeopt(_aevalStart, 26);
                 CloseNested();
             }
 
@@ -5117,7 +5137,7 @@ public static class WasmPredicateCompiler
                     FitsCheck();
                     break;
                 default:    // transcendental / float-producing: escalate
-                    EmitDeopt(_aevalStart);
+                    EmitDeopt(_aevalStart, 26);
                     break;
             }
             }

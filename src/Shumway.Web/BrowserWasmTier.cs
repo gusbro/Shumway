@@ -472,11 +472,11 @@ internal static class BrowserWasmTier
         for (int g = 0; g < hist.Length; g++) guards += hist[g];
         if (guards > 0)
         {
-            sb.Append("%   meta-call declines (of ").Append(guards).Append("):\n");
+            sb.Append("%   deopt reasons (of ").Append(guards).Append("):\n");
             for (int g = 0; g < hist.Length; g++)
                 if (hist[g] != 0)
                     sb.Append($"%     {hist[g]} guard {g}: ")
-                      .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.MetaGuardName(g))
+                      .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g))
                       .Append('\n');
         }
         return sb.ToString();
