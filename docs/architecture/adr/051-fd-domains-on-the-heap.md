@@ -238,4 +238,14 @@ What was audited, each with a test:
    $dom_del 8,807 -> 1,226, $dom_contains 519 -> 0, $dom_singleton
    1,233 -> 0, chains 3,587 -> 2,692. Against the 23,262 the arc started
    from, that is -78%.
-4. Whatever the counts then say is next.
+4. PARTLY DONE. $dom_same compares CONTENTS when the cells differ, bound
+   for bound as cells, which needs no knowledge of what a bound means and
+   so covers inf and sup as well as integers. Desktop counts on
+   queens_fd(7): builtin exits 5,115 -> 3,882, $dom_same 1,233 -> 0,
+   chains 2,692 -> 1,459. Against the 23,262 the arc started from, -83%.
+5. What is left of the domain exits is $dom_del where the value IS
+   present (1,226), which has to build a domain. The module can allocate
+   on the heap, but a domain's functor depends on the resulting interval
+   count and the module cannot intern one, so this needs a small table of
+   '$fd_dom' functors by arity in the mailbox. That is new ABI, which is
+   why it is its own step rather than part of phase 3.

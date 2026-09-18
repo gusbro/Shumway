@@ -768,6 +768,9 @@ public static class WasmPredicateCompiler
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
             // And its second. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
+            // The second domain's heap index, for the contents comparison.
+            // Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2000,21 +2003,22 @@ public static class WasmPredicateCompiler
             return LT0;
         }
 
-        /// <summary>$dom_same/2 where a comparison settles it: two cells that
-        /// are IDENTICAL name one domain, and a domain is the same as itself.
+        /// <summary>$dom_same/2, by identity and then by contents.
         ///
-        /// <para>That is the common case because $dom_del hands back the cell
-        /// it was given when it removes nothing, and clpfd_narrow asks
-        /// '$dom_same'(New, Old) precisely to learn whether anything was
-        /// removed. Measured in a browser on queens_fd(9), the pair was 82% of
-        /// every builtin exit in the run.</para>
+        /// <para>Identical cells name one domain and settle it at once, which
+        /// is the common case: $dom_del hands back the cell it was given when
+        /// it removes nothing, and clpfd_narrow asks '$dom_same'(New, Old)
+        /// precisely to learn whether anything was removed.</para>
         ///
-        /// <para>Two DIFFERENT cells may still hold equal intervals. Deciding
-        /// that needs a walk, which is phase 2's next step and not this one,
-        /// so they step aside. Both operands are checked to BE domains first:
-        /// a reserved functor is a term anyone can write, and answering about
-        /// f(1) would be answering a call that owes a type error.</para>
-        /// </summary>
+        /// <para>Two different domains are compared bound for bound, as
+        /// CELLS. That needs no knowledge of what a bound means, so it works
+        /// for inf and sup as well as for integers: equal bounds are equal
+        /// cells, and a domain is canonical (ascending, disjoint,
+        /// non-adjacent), so equal contents and equal arity is equality.
+        /// </para>
+        ///
+        /// <para>Branch depths inside the loop: 0 the loop, 1 $differ,
+        /// 2 $slow, 3 $done.</para></summary>
         private void EmitInlineDomSame(int pc, Action emitBuiltinExit,
                                        Action? load0 = null, Action? load1 = null)
         {
@@ -2027,25 +2031,146 @@ public static class WasmPredicateCompiler
             (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
             Op(new LocalGet(LC0)); Op(new LocalSet(LDomB));
 
-            // Different cells: this form has nothing to say.
+            // One domain, asked about itself.
             Op(new LocalGet(LDomA));
             Op(new LocalGet(LDomB));
-            Op(new Int64NotEqual());
-            Op(new BranchIf(0));                            // -> $slow
-
-            // Identical, so one of them being a domain settles both.
-            EmitIsDomainStr(LDomA);
-            OpenIf();
-            Op(new Branch(2));                              // -> $done, true
-            CloseNested();
-
-            // The empty domain is an atom, and identical atoms are equal.
-            Op(new LocalGet(LDomA));
-            Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
             Op(new Int64Equal());
             OpenIf();
-            Op(new Branch(2));                              // -> $done, true
+            {
+                // Still has to BE a domain: a reserved functor is a term
+                // anyone can write, and f(1) owes a type error.
+                EmitIsDomainStr(LDomA);
+                OpenIf();
+                Op(new Branch(3));                          // -> $done, true
+                CloseNested();
+                Op(new LocalGet(LDomA));
+                Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
+                Op(new Int64Equal());
+                OpenIf();
+                Op(new Branch(3));                          // -> $done, true
+                CloseNested();
+                Op(new Branch(1));                          // -> $slow
+            }
             CloseNested();
+
+            // Different cells. Both must be domains for anything to be said,
+            // and the empty one is an atom, so "one empty, one not" is a
+            // difference this can see.
+            EmitIsDomainStr(LDomA);
+            Op(new LocalSet(LT2));
+            EmitIsDomainStr(LDomB);
+            Op(new LocalSet(LT1));
+
+            // Neither a domain nor the empty atom: the host's.
+            void NotDomainGoesSlow(uint cell, uint isDom)
+            {
+                Op(new LocalGet(isDom));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    // Not a structure domain, so it has to be the empty
+                    // atom. Inside the if, $slow is one block further out.
+                    Op(new LocalGet(cell));
+                    Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
+                    Op(new Int64NotEqual());
+                    Op(new BranchIf(1));                    // -> $slow
+                }
+                CloseNested();
+            }
+            NotDomainGoesSlow(LDomA, LT2);
+            NotDomainGoesSlow(LDomB, LT1);
+
+            // Exactly one of them empty: different, and no walk needed.
+            Op(new LocalGet(LT2));
+            Op(new LocalGet(LT1));
+            Op(new Int32NotEqual());
+            OpenIf();
+            GoFail();
+            CloseNested();
+
+            // Both empty was the identical case above, so both are
+            // structures here. Arity first.
+            Op(new LocalGet(LDomA));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LDomB));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LDomBase2));
+
+            CellLoadDyn(LHeapB, LT0);
+            Op(new LocalSet(LC1));
+            CellLoadDyn(LHeapB, LDomBase2);
+            Op(new LocalSet(LC2));
+            Op(new LocalGet(LC1));
+            Op(new LocalGet(LC2));
+            Op(new Int64NotEqual());
+            OpenIf();
+            GoFail();                                       // different functor
+            CloseNested();
+
+            // Same functor means the same arity; read it once.
+            Op(new LocalGet(LC1));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));
+            LoadSlot32(WasmAbi.FunctorTableBase);
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int64Load());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // arity
+
+            Op(new Int32Constant(1));
+            Op(new LocalSet(LT2));                          // argument index
+
+            OpenBlock();                                    // $differ
+            OpenLoop();                                     // $cmp
+            {
+                Op(new LocalGet(LT2));
+                Op(new LocalGet(LT1));
+                Op(new Int32GreaterThanSigned());
+                Op(new BranchIf(3));                        // all equal -> $done
+
+                // Offset 1: the bases point AT the functor cell, and the
+                // arguments start after it. Loading at the base compares the
+                // functors (already equal) and walks off the end one short,
+                // so two domains differing only in their last bound would
+                // read as equal.
+                CellLoadDyn(LHeapB, LT0, 1);
+                Op(new LocalSet(LC1));
+                CellLoadDyn(LHeapB, LDomBase2, 1);
+                Op(new LocalSet(LC2));
+                Op(new LocalGet(LC1));
+                Op(new LocalGet(LC2));
+                Op(new Int64NotEqual());
+                Op(new BranchIf(1));                        // -> $differ
+
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LT2));
+                // The bases move with the cursor so CellLoadDyn stays put.
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LDomBase2));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LDomBase2));
+                Op(new Branch(0));                          // -> $cmp
+            }
+            CloseNested();                                  // $cmp
+            CloseNested();                                  // $differ
+            GoFail();
 
             CloseNested();                                  // $slow
             emitBuiltinExit();
@@ -5525,6 +5650,7 @@ public static class WasmPredicateCompiler
         private const uint LGoalCell = 49;  // i64: that goal's functor cell
         private const uint LDomA = 50;      // i64: $dom_same's first cell
         private const uint LDomB = 51;      // i64: $dom_same's second cell
+        private const uint LDomBase2 = 52;  // i32: the second domain's heap index
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

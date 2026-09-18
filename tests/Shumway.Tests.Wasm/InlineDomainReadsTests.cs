@@ -31,10 +31,29 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
         empty_yes_loop(N, D) :- '$dom_empty'(D), N1 is N - 1, empty_yes_loop(N1, D).
         run_empty(N) :- '$dom_new'(5, 1, D), empty_yes_loop(N, D).
 
-        % Different cells holding different domains: the module has nothing
-        % to say and the host answers.
+        % Different cells holding different domains.
         changed(R) :- '$dom_new'(1, 9, D), '$dom_del'(D, 5, D2),
                       ( '$dom_same'(D2, D) -> R = same ; R = changed ).
+
+        % Where the contents comparison walks. These must be PREDICATES: a
+        % goal typed into a query is not promoted, runs on Tier-0, and says
+        % nothing about the module. (Written as queries first, they passed
+        % with the walk broken.)
+        cmp(A, B, R) :- ( '$dom_same'(A, B) -> R = same ; R = differ ).
+
+        first_bound(R)  :- '$dom_new'(1, 9, A), '$dom_new'(2, 9, B), cmp(A, B, R).
+        last_bound(R)   :- '$dom_new'(1, 9, A), '$dom_new'(1, 8, B), cmp(A, B, R).
+        both_equal(R)   :- '$dom_new'(1, 9, A), '$dom_new'(1, 9, B), cmp(A, B, R).
+        mid_bound(R)    :- '$dom_new'(1, 9, A), '$dom_del'(A, 5, A2),
+                           '$dom_new'(1, 9, B), '$dom_del'(B, 6, B2),
+                           cmp(A2, B2, R).
+        two_gaps_same(R):- '$dom_new'(1, 9, A), '$dom_del'(A, 5, A2),
+                           '$dom_new'(1, 9, B), '$dom_del'(B, 5, B2),
+                           cmp(A2, B2, R).
+        arity_differs(R):- '$dom_new'(1, 9, A), '$dom_del'(A, 5, A2), cmp(A2, A, R).
+        open_equal(R)   :- '$dom_new'(1, sup, A), '$dom_new'(1, sup, B), cmp(A, B, R).
+        open_differs(R) :- '$dom_new'(1, sup, A), '$dom_new'(inf, sup, B),
+                           cmp(A, B, R).
         """;
 
     private static PrologEngine Plain()
@@ -63,6 +82,20 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
     [InlineData("run_nonempty(50)")]
     [InlineData("run_empty(50)")]
     [InlineData("changed(changed)")]
+    // Where the contents comparison walks: a difference in the FIRST bound,
+    // in the LAST, and in the middle. The last one is what a walk gets wrong
+    // by starting at the functor and stopping one short, which reads as
+    // "equal" and is invisible in the answers of the smaller cases.
+    [InlineData("first_bound(differ)")]
+    [InlineData("last_bound(differ)")]
+    [InlineData("both_equal(same)")]
+    [InlineData("mid_bound(differ)")]
+    [InlineData("two_gaps_same(same)")]
+    [InlineData("arity_differs(differ)")]
+    // Unbounded bounds are atoms, and equal cells compare equal without the
+    // comparison knowing what a bound means.
+    [InlineData("open_equal(same)")]
+    [InlineData("open_differs(differ)")]
     public void TheAnswerIsTheEnginesEitherWay(string goal)
     {
         Assert.True(Plain().Query($"{goal}.").Success, $"Tier-0: {goal}");
@@ -103,18 +136,26 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
         Assert.Equal(0, exits2("$dom_empty"));
     }
 
-    /// <summary>A domain that really changed is a different cell, and the
-    /// module steps aside: the answer is the host's. Anti-vacuity for the
-    /// zeros above -- the forms are deciding, not disabled.</summary>
+    /// <summary>A domain that really changed is a DIFFERENT cell, and phase
+    /// 4 compares those bound for bound rather than stepping aside. The
+    /// answer is still the engine's answer; what moved is where it is
+    /// computed.
+    ///
+    /// <para>This test used to assert the opposite -- that such a call
+    /// reached the host -- which was true of phase 2 and is the limitation
+    /// phase 4 lifted. Anti-vacuity now lives where the module still cannot
+    /// decide: a forged domain, and a removal that has to build one.</para>
+    /// </summary>
     [DiagFact]
-    public void ADifferentDomainStepsAside()
+    public void ADifferentDomainIsComparedInTheModule()
     {
         var (tier, exits) = Tier();
         tier.Query("changed(_).");
         WasmTierDelegate.ResetDiag();
         Assert.True(tier.Query("changed(changed).").Success);
-        Assert.True(exits("$dom_same") >= 1,
-            "two different domains were decided without the host");
+        o.WriteLine($"$dom_same exits comparing two different domains: "
+                    + $"{exits("$dom_same")}");
+        Assert.Equal(0, exits("$dom_same"));
     }
 
     /// <summary>The reserved functor is writable by anyone, so the forms
