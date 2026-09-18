@@ -26,6 +26,18 @@ public sealed class ClpfdDomain
 
     private ClpfdDomain(long[] iv) => _iv = iv;
 
+    /// <summary>The flattened bounds, for the code that reads and writes the
+    /// HEAP form of a domain (ADR-051). Not to be mutated: a domain is
+    /// immutable and shared, and the array is the domain.</summary>
+    internal long[] Bounds => _iv;
+
+    /// <summary>A domain from bounds that already hold the invariant: sorted,
+    /// disjoint, non-adjacent, even length. For reading back a domain this
+    /// code wrote. Going through Interval and Union instead would re-derive
+    /// what is already known and merge what is already merged.</summary>
+    internal static ClpfdDomain FromBounds(long[] iv) =>
+        iv.Length == 0 ? Empty : new ClpfdDomain(iv);
+
     public static readonly ClpfdDomain Empty = new(Array.Empty<long>());
     public static readonly ClpfdDomain Universal = new(new[] { Inf, Sup });
 
