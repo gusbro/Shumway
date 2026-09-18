@@ -24,6 +24,7 @@
 
 :- public '{}'/1.
 :- public '$clpr_dep_eq'/2.
+:- public '$clpr_par_bound'/1.
 :- public clpr_attr_goals/3.
 
 % ===== linear forms: lin(Constant, [Var-Coeff, ...]) =====
@@ -178,12 +179,22 @@ clpr_post_eq(E1, E2, Orig) :-
 
 clpr_post_iq(Expr, Strict, Orig) :-
     ( clpr_norm(Expr, lin(C, Terms)) ->
-        Iq = iq(lin(C, Terms), Strict),
-        clpr_attach(Terms, Iq),
-        clpr_term_vars(Terms, Vars),
-        clpr_check(Vars)
+        ( Terms == [] -> clpr_iq_holds(C, Strict)
+        ; Iq = iq(lin(C, Terms), Strict),
+          clpr_attach(Terms, Iq),
+          clpr_term_vars(Terms, Vars),
+          clpr_check(Vars)
+        )
     ; clpr_delay(Orig)
     ).
+
+% An inequality with no variables left is a NUMBER to decide, not a row
+% for the simplex: '$lp_feasible' over zero variables has nothing to
+% refute and says yes. Strict rows must also clear the tolerance, or
+% 0 > 0 passes on rounding. clpr_post_dq and clpr_check_dq always had
+% this case; the inequalities did not, and {1 > 3} succeeded.
+clpr_iq_holds(C, 0) :- ( C >= 0 -> true ; clpr_zero(C) ).
+clpr_iq_holds(C, 1) :- C > 0, \+ clpr_zero(C).
 
 clpr_post_dq(Expr, Orig) :-
     ( clpr_norm(Expr, lin(C, Terms)) ->
@@ -234,11 +245,28 @@ clpr_term_vars([V-_|R], [V|Rest]) :- clpr_term_vars(R, Rest).
 clpr_check(Seed) :-
     clpr_gather(Seed, [], [], Raw),
     clpr_dedup(Raw, Cons),
+    clpr_check_cons(Cons).
+
+% The check proper, over a constraint list that is already gathered. The
+% wakeup below enters here with the bound variable's own constraints,
+% which is the case a seed of variables cannot reach: once the variable
+% is a number it is no longer a seed.
+clpr_check_cons(Cons) :-
     clpr_split(Cons, Iqs, Dqs, Nls),
-    clpr_reexpand_iqs(Iqs, EIqs),
+    clpr_reexpand_iqs(Iqs, EIqs0),
+    clpr_ground_iqs(EIqs0, EIqs),
     clpr_lp_sat(EIqs),
     clpr_check_dqs(Dqs, EIqs),
     clpr_retry_nls(Nls).
+
+% Decides the rows a binding left without variables and passes on the
+% rest. Failing here is the point: {X > 3} then X = 1 re-expands to
+% 1 - 3 > 0, which the simplex cannot see because it has no columns.
+clpr_ground_iqs([], []).
+clpr_ground_iqs([iq(lin(C, []), S)|R], Rest) :- !,
+    clpr_iq_holds(C, S),
+    clpr_ground_iqs(R, Rest).
+clpr_ground_iqs([Iq|R], [Iq|Rest]) :- clpr_ground_iqs(R, Rest).
 
 clpr_gather([], _, Acc, Acc).
 clpr_gather([V|Vs], Seen, Acc, Out) :-
@@ -399,11 +427,26 @@ clpr_bind_one([V|Vs]) :-
     ).
 
 % ===== the verify_attributes hook =====
+% A dep(Form, _) variable is one an equation already solved, so binding
+% it is an equation to re-solve. A par(Cons) variable is FREE, and its
+% inequalities and disequalities are exactly what says which values it
+% may take -- dropping them let {X > 3}, X = 1 succeed. The store is
+% consulted by waking a goal, not inside the hook, because the check
+% posts and can fail.
 verify_attributes(clpr, AttrValue, Value, Goals) :-
     ( number(Value) -> true ; var(Value) ),
     ( AttrValue = dep(Form, _) -> Goals = ['$clpr_dep_eq'(Form, Value)]
+    ; AttrValue = par(Cons), Cons \== [] -> Goals = ['$clpr_par_bound'(Cons)]
     ; Goals = []
     ).
+
+% The bound variable's constraints, re-checked together with whatever
+% component the variables still in them reach.
+'$clpr_par_bound'(Cons) :-
+    clpr_cons_vars(Cons, Vs),
+    clpr_gather(Vs, [], Cons, Raw),
+    clpr_dedup(Raw, All),
+    clpr_check_cons(All).
 '$clpr_dep_eq'(Form, Value) :-
     clpr_expand(Form, FLF),
     clpr_norm(Value, VLF),
