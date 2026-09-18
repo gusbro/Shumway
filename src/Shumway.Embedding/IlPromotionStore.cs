@@ -278,6 +278,69 @@ public sealed class IlPromotionStore
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
 
+    /// <summary>jit_compile/1's implementation: sets the promotion threshold
+    /// of THE tier this build has, and reports whether there was one to set.
+    ///
+    /// <para>A build has exactly one Tier-1. When a wasm store is attached it
+    /// is that one (WebShumway, and the desktop differential tests, where
+    /// wasm is what is under test); otherwise Tier-1 is the IL compiler, which
+    /// needs runtime codegen and so does not exist under Native AOT.</para>
+    ///
+    /// <para>0 stops further promotion at once -- safe, since no live
+    /// delegate is touched -- and QUEUES the return of what already promoted.
+    /// Dropping those here would strand a choice point created inside Tier-1
+    /// code with nowhere to redo, so the eviction waits for the next query
+    /// setup: "off" governs the goals AFTER it.</para></summary>
+    public bool SetJitThreshold(int threshold)
+    {
+        // A host whose tier needs more than a threshold supplies its own
+        // policy: WebShumway attaches its world lazily and, for "all",
+        // compiles the whole program up front rather than billing the user's
+        // first real query for it. Kept on the STORE and not on the
+        // activation, which query setup rebinds.
+        if (JitPolicy is { } policy) return policy(threshold);
+        if (_wasm is not null)
+        {
+            // An attached store that can promote is proof enough that this
+            // build can: RuntimeCaps describes the browser's capability, and
+            // the desktop differential tests attach a world without it.
+            if (threshold > 0 && _wasm.Promoter is null && _wasm.BatchPromoter is null)
+                return false;
+            _wasm.Threshold = threshold;
+        }
+        else
+        {
+            if (threshold > 0 && !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen) return false;
+            Threshold = threshold;
+        }
+        if (threshold == 0) _jitOffPending = true;
+        return true;
+    }
+
+    /// <summary>The host's own jit_compile/1 implementation, when attaching
+    /// or configuring the tier is more than setting a threshold. It owns the
+    /// whole decision, including whether the mode could be established at
+    /// all; <see cref="QueueJitOff"/> is how it asks for the eviction.
+    /// </summary>
+    public Func<int, bool>? JitPolicy { get; set; }
+
+    /// <summary>Queues the return of every promoted predicate to its
+    /// bytecode, for a host policy that turned the tier off.</summary>
+    public void QueueJitOff() => _jitOffPending = true;
+
+    private bool _jitOffPending;
+
+    /// <summary>Applies a queued jit_compile(off): every promoted predicate
+    /// goes back to its bytecode. Called at query setup, where no choice
+    /// point holds a position inside Tier-1 code.</summary>
+    public void ApplyPendingJitChange()
+    {
+        if (!_jitOffPending) return;
+        _jitOffPending = false;
+        foreach (int fid in PromotedFunctorIds().ToList()) EvictDelegate(fid);
+        PromotabilityChanged?.Invoke();
+    }
+
     /// <summary>The wasm tier's promotion state, when a world wired one
     /// (browser boot; desktop differential tests). Its delegates install into
     /// THIS store's table, so dispatch and eviction are shared.</summary>

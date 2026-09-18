@@ -569,6 +569,13 @@ public sealed partial class PrologEngine
         // the next real query's setup does the deferred work.
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
+        // A queued jit_compile(off) returns the promoted predicates to their
+        // bytecode. Here for the same reason as the compaction above: nothing
+        // in flight holds a position inside the code being dropped. A debug
+        // evaluation is NOT such a point -- the outer query is suspended
+        // mid-flight -- so it waits for the next real query, exactly as the
+        // compaction does.
+        if (_debugEvalDepth == 0) IlPromotion.ApplyPendingJitChange();
         // Retract leaves tombstones so no clause position moves mid-query;
         // readers compact the slot they touch and the proportional trigger
         // bounds the rest, and this tidies up whatever is left at a point
@@ -1734,6 +1741,7 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.JitControl = IlPromotion.SetJitThreshold;
         engine.ResolveModuleLocalFallback = fid => ResolveDirectConsultLocal(engine, fid);
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads

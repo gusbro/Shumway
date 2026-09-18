@@ -509,6 +509,24 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>jit_compile/1's control over Tier-1 promotion, supplied by the
+    /// host because the promotion store lives above this assembly. The
+    /// argument is the threshold in calls: 0 turns promotion off and returns
+    /// what already promoted to Tier-0, 1 promotes a predicate on its first
+    /// call, N waits for N. Returns whether the mode was established.
+    ///
+    /// <para>WHICH tier this is depends on the product, and there is only ever
+    /// one: Tier-1 is the IL compiler in Shumway and the WebAssembly backend in
+    /// WebShumway. A build with no Tier-1 at all leaves this null, where only
+    /// "off" can be honoured -- it already holds.</para>
+    ///
+    /// <para>Turning it off cannot take effect where it is called from: a
+    /// choice point created inside Tier-1 code has to be able to redo there,
+    /// so the host defers the eviction to the next query setup, which is the
+    /// safe point. "the goals after this one run on Tier-0", not "this
+    /// one".</para></summary>
+    public Func<int, bool>? JitControl { get; set; }
+
     /// <summary>The consult-direct bare-call fallback: a bare goal no other
     /// route resolved is resolved to a DIRECTLY-consulted explicit module's
     /// local when exactly ONE such module defines the name — consulting a
