@@ -424,6 +424,9 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.IlTailCallPending)
                     {
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
                         if (Activation.CpPushRing is { } r1)
                             r1[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
                                 = ((long)-3 << 32) | (uint)_engine.P;

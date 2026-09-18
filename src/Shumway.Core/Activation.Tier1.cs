@@ -777,6 +777,33 @@ public sealed partial class Activation
     // observes it.
     public bool IlTailCallPending { get; set; }
 
+    // A DEOPT rides the same two signals as a tail call (Pc + the flag
+    // above) and means the opposite: a tail call says "continue at this
+    // target, and trying the tier there is right", while a deopt says "the
+    // module could not run this instruction, so the interpreter must".
+    // Telling them apart matters in exactly one place -- the Call/Execute
+    // helper, which re-dispatches the target through the tier. A deopt whose
+    // pc lands on the deopting predicate's own entry (an early instruction,
+    // or an arithmetic step that escalates out of the 60-bit lane) would be
+    // handed straight back to the module that just refused it, and the two
+    // spin: measured at 300k deopts a second, a hang with no stack growth
+    // and no exception to catch.
+    private bool _ilDeoptPending;
+
+    /// <summary>Marks the pending resume as a deopt rather than a tail
+    /// call.</summary>
+    public void SignalIlDeopt() => _ilDeoptPending = true;
+
+    /// <summary>Reads the deopt marking and clears it. Every consumer of
+    /// <see cref="IlTailCallPending"/> calls this, so the flag cannot
+    /// outlive the resume it describes.</summary>
+    public bool TakeIlDeopt()
+    {
+        bool d = _ilDeoptPending;
+        _ilDeoptPending = false;
+        return d;
+    }
+
     // ----- IL choice points (Tier-1) -----
     //
     // A side table mapping a choice-point frame's stack index to the IL

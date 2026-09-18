@@ -641,9 +641,16 @@ public sealed partial class BytecodeInterpreter
                                     continue;
                                 }
                                 if (_engine.IlTailCallPending)
+                                {
                                     _engine.IlTailCallPending = false;
+                                    // The resume is bytecode either way here; clear
+                                    // the deopt marking so it cannot outlive this one.
+                                    _engine.TakeIlDeopt();
+                                }
                                 else
+                                {
                                     _engine.SetPc(_engine.Cp);
+                                }
                                 continue;
                             }
                             _engine.SetPc(addr);   // run the callee's bytecode
@@ -693,6 +700,9 @@ public sealed partial class BytecodeInterpreter
                 if (_engine.IlTailCallPending)
                 {
                     _engine.IlTailCallPending = false;
+                    // The resume is bytecode either way here; clear the
+                    // deopt marking so it cannot outlive this one.
+                    _engine.TakeIlDeopt();
                 }
                 else
                 {
@@ -1016,6 +1026,9 @@ public sealed partial class BytecodeInterpreter
                         // IL set Pc to its tail-call target; the outer
                         // dispatch loop picks it up next iteration.
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
                     }
                     else
                     {
@@ -1114,6 +1127,9 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.IlTailCallPending)
                     {
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
                     }
                     else
                     {
@@ -1228,9 +1244,16 @@ public sealed partial class BytecodeInterpreter
                     // that set IlTailCallPending + Pc has already
                     // chosen the resume address; honour it.
                     if (_engine.IlTailCallPending)
+                    {
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
+                    }
                     else
+                    {
                         _engine.SetPc(_engine.Cp);
+                    }
                     break;
                 }
 
@@ -3032,9 +3055,17 @@ public sealed partial class BytecodeInterpreter
             }
             if (_engine.IlTailCallPending)
             {
+                _engine.IlTailCallPending = false;
+                if (_engine.TakeIlDeopt())
+                {
+                    // Not a tail call: the module stepped aside and Pc names
+                    // the instruction the INTERPRETER has to run. Re-entering
+                    // the loop with it as a dispatch target would hand it back
+                    // to the module that just refused it, forever.
+                    return;
+                }
                 // The IL set Pc to its tail-call target. Try IL on
                 // *that* target too.
-                _engine.IlTailCallPending = false;
                 target = _engine.P;
                 continue;
             }

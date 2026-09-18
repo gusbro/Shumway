@@ -460,6 +460,7 @@ public sealed class WasmTierDelegate
         bool result;
         int pendingPc = int.MinValue;
         bool growTrail = false, growStack = false;
+        bool deopted = false;
         using (var cx = _world.BeginChain(engine))
         {
             if (!cx.TryResolve(currentFid, address, out WasmTarget target))
@@ -505,6 +506,7 @@ public sealed class WasmTierDelegate
                     // the code (a stale pc here was the "bytecode
                     // corruption" crash). Translate to the live space.
                     pendingPc = (int)cx.TranslatePcToLive(cx.ReadSlot(WasmAbi.Pc));
+                    deopted = true;
                     CountDeopt(pendingPc);
                     // A deopt AT an area's limit is a capacity signal, not a
                     // semantic one. The wasm limit sits a margin below the
@@ -621,6 +623,11 @@ public sealed class WasmTierDelegate
         {
             engine.SetPc(pendingPc);
             engine.IlTailCallPending = true;
+            // A deopt resumes at an instruction the INTERPRETER must run.
+            // Without this the Call/Execute helper re-dispatches that pc
+            // through the tier, and when it is the deopting predicate's own
+            // entry the two spin forever.
+            if (deopted) engine.SignalIlDeopt();
         }
         return result;
     }
