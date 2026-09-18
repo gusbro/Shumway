@@ -756,6 +756,9 @@ public static class WasmPredicateCompiler
             // own arity. Appended after the attribute probe's, same rule:
             // only at the end.
             new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
+            // The cut barrier '$call'/2 carries, read out of X1 BEFORE the
+            // goal's arguments overwrite it. Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2443,6 +2446,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalSet(LT1));                      // arity
                 Op(new Int32Constant(-1));
                 Op(new LocalSet(LMetaArity));
+                EmitReadBarrier();
                 EmitMetaTail();
             }
             CloseNested();
@@ -2716,6 +2720,9 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
 
+            // LAST chance: the copy below overwrites X1.
+            EmitReadBarrier();
+
             // The goal's arguments become X0..Xn-1.
             Op(new Int32Constant(0));
             Op(new LocalSet(LAtSlot));
@@ -2776,6 +2783,29 @@ public static class WasmPredicateCompiler
             // written for: wrapping it to share one copy would shift
             // every branch target in it, and a wrong one there is a
             // hang, not a failed test.
+            // X1 carries the barrier ONLY until the goal's arguments are
+            // copied over the registers. Read it, check it and park it BEFORE
+            // that -- and the check has to happen here too, because a barrier
+            // this path cannot use sends the instruction back to the host,
+            // which re-reads '$call'(Goal, Barrier) out of X0 and X1. Doing
+            // either after the copy hands the host the GOAL'S arguments
+            // instead: measured, X0 came back a plain Ref and the goal itself
+            // turned up in X1.
+            void EmitReadBarrier()
+            {
+                if (!barrierFromX1) return;
+                RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Int));
+                Op(new Int32NotEqual());
+                MetaGuard(12);
+                GoSlow();
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new LocalSet(LMetaBarrier));
+            }
+
             void EmitMetaTail()
             {
                     if (ownFrame)
@@ -2785,20 +2815,10 @@ public static class WasmPredicateCompiler
                 }
                 if (barrierFromX1)
                 {
-                    // The carried barrier is an INTEGER cell. Anything else is a
-                    // shape this path does not know, so it goes to the host.
-                    RegLoad(1); Op(new LocalSet(LC0)); Deref();
-                    TagOfC0();
-                    Op(new Int32Constant((int)Tag.Int));
-                    Op(new Int32NotEqual());
-                    MetaGuard(12);
-                    Op(new BranchIf(0));                        // -> $slow
-                    StoreSlot64(WasmAbi.CutBarrier, () =>
-                    {
-                        Op(new LocalGet(LC0));
-                        Op(new Int64Constant(Cell.PayloadMask));
-                        Op(new Int64And());
-                    });
+                    // Already read, checked and parked by EmitReadBarrier,
+                    // back when X1 still held it.
+                    StoreSlot64(WasmAbi.CutBarrier,
+                                () => Op(new LocalGet(LMetaBarrier)));
                 }
                 else
                 {
@@ -4897,6 +4917,7 @@ public static class WasmPredicateCompiler
         private const uint LMetaBase = 44;  // i32: the meta cache's base
         private const uint LMetaGuard = 45; // i32: the probe's bound
         private const uint LMetaArity = 46; // i32: the GOAL's arity, or -1
+        private const uint LMetaBarrier = 47;  // i64: '$call'/2's carried barrier
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.
