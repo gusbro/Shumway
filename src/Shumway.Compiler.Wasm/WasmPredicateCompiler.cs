@@ -759,6 +759,10 @@ public static class WasmPredicateCompiler
             // The cut barrier '$call'/2 carries, read out of X1 BEFORE the
             // goal's arguments overwrite it. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
+            // The meta-called goal's heap base and its functor cell, in that
+            // order. Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2228,14 +2232,19 @@ public static class WasmPredicateCompiler
             // publishes only the resolutions that end in a jump.
             void EmitInlineGoalForm()
             {
-                // The goal's heap index and its functor cell, parked where no
-                // form body can reach: the bodies spend LC0-LC2, LT0-LT2 and
-                // LDa, and Deref spends LC1 on the way. LAt* are dead at both
-                // call sites -- the $mqual cache probe uses them AFTER this.
+                // The goal's heap index and its functor cell, in locals of
+                // this path's OWN: the bodies spend LC0-LC2, LT0-LT2 and LDa,
+                // Deref spends LC1 on the way, and a body may spend anything
+                // else it likes. Borrowing LAt* here was wrong -- get_attr/3's
+                // form overwrites LAtSlot with the hash slot it is probing,
+                // and Arg(2), which is loaded only AFTER the probe, then read
+                // a heap cell picked by a hash. Measured: get_attr answered
+                // with a cell from nowhere, and the comparison after it
+                // failed. A form body owes this path nothing.
                 Op(new LocalGet(LT2));
-                Op(new LocalSet(LAtSlot));
+                Op(new LocalSet(LGoalBase));
                 CellLoadDyn(LHeapB, LT2);
-                Op(new LocalSet(LAtKey));
+                Op(new LocalSet(LGoalCell));
 
                 // Argument i of the goal, straight off the heap. NOT copied
                 // into X0..Xn-1 first, which is the obvious shape and is
@@ -2245,7 +2254,7 @@ public static class WasmPredicateCompiler
                 // re-reads the goal out of X0 and finds the goal's first
                 // argument instead. The jump path may overwrite those
                 // registers precisely because it never comes back.
-                Action Arg(int i) => () => CellLoadDyn(LHeapB, LAtSlot, i + 1);
+                Action Arg(int i) => () => CellLoadDyn(LHeapB, LGoalBase, i + 1);
 
                 // A form that cannot decide hands the GOAL to the host as an
                 // ordinary builtin request -- the goal here IS a builtin, its
@@ -2297,7 +2306,7 @@ public static class WasmPredicateCompiler
                     else
                         continue;
 
-                    Op(new LocalGet(LAtKey));
+                    Op(new LocalGet(LGoalCell));
                     Op(new Int64Constant(_env.FunctorCell(goalFid)));
                     Op(new Int64Equal());
                     OpenIf();
@@ -4918,6 +4927,8 @@ public static class WasmPredicateCompiler
         private const uint LMetaGuard = 45; // i32: the probe's bound
         private const uint LMetaArity = 46; // i32: the GOAL's arity, or -1
         private const uint LMetaBarrier = 47;  // i64: '$call'/2's carried barrier
+        private const uint LGoalBase = 48;  // i32: the meta-called goal's heap index
+        private const uint LGoalCell = 49;  // i64: that goal's functor cell
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.
