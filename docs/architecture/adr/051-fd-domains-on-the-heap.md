@@ -145,12 +145,20 @@ that is worth is not predicted here: the counts say 82% of the exits in
 `queens_fd` are the two operations D4 attacks first, and the browser is where
 the time is measured (CONTRIBUTING.md).
 
-Domains become heap cells and so become the collector's business. A domain of
-k intervals costs 2k + 1 cells where it used to cost none, and `queens_fd(7)`
-already runs at 416,920 heap cells. Against that, domains are now reclaimed:
-by backtracking, immediately, and by the collector when unreachable. The
-exchange is a bounded live set for a larger one, and unbounded growth for
-none. This is the point of the ADR and not a cost to be minimised away.
+Domains become heap cells and so become the collector's business. Reported on
+its own that reads as a cost -- `queens_fd(7)` goes from 416,920 heap cells to
+422,645, and a run whose domains fragment into 200 intervals goes up by 11.5%
+-- but it is the same memory in a different place, and the comparison has to
+include what leaves. A domain of k intervals cost a list entry, an object
+header and a `long[]` in the foreign table, about 56 + 16k bytes, retained for
+the life of the activation. As a term it is 8 + 16k bytes, reclaimable. It is
+SMALLER the moment it is built, by roughly the object overhead, and then it
+goes away. The 5,725 extra heap cells in `queens_fd(7)` are a transient peak;
+the 1,247 domains that run built are what stops being retained.
+
+And the reclamation is real, not theoretical: 100 and 400 successively
+abandoned domains retain the same 40 bytes after a collection (phase 1's
+`AbandonedDomainsAreReclaimed`).
 
 Tier-0 domain operations become C# over `Cell[]` instead of C# over `long[]`.
 The expectation is that they are comparable; the requirement is only that they
@@ -167,11 +175,24 @@ the range is an error rather than a silently widened domain. That is not a
 consequence of this change -- the limit is already there -- but the change is
 when it gets written down.
 
-What has to be audited before this is correct, not assumed:
+Phase 1 ran the audit and it came out clean for this arc, with one finding
+that belongs to someone else. The attribute table is a STRONG GC root, so an
+attributed variable nothing can reach after a cut keeps its propagator list
+alive: thirty rounds of 200 propagators retain 27,570 heap cells that no
+`garbage_collect` recovers. That is not this change -- the same program
+retained 27,480 cells before it, the 90-cell difference being the collapsed
+final domains -- and it is recorded separately. It is worth knowing here
+because it is what a naive measurement of "does the heap stay flat after a
+cut" actually measures.
 
-- **The collector.** A domain is an ordinary structure, so tracing is already
-  right, but `queens_fd` will allocate them by the thousand and the
-  collector's behaviour under that load is unmeasured.
+What was audited, each with a test:
+
+- **The collector**, on a live domain: it survives a collection and still
+  says what it said, fragmented or not.
+- **The trail as a root**: a domain the current attribute no longer points at
+  is still restorable while a choice point exists, and a collection taken
+  mid-search must not take it. Two narrowings deep, so what comes back is an
+  intermediate domain rather than the original.
 - **The attribute store.** A variable's attribute is `fd(Domain, Props)` and
   those terms are already heap terms, so the domain is reachable from a root
   that the collector knows. Worth confirming rather than assuming, because the
@@ -195,11 +216,11 @@ What has to be audited before this is correct, not assumed:
 
 ## Phases
 
-0. The representation and D2's boundary, Tier-0 only: `ClpfdDomain`'s
+0. DONE. The representation and D2's boundary, Tier-0 only: `ClpfdDomain`'s
    operations over heap cells, builtins unchanged, clpfd.pl untouched. The
    existing clpfd and clpz suites are the oracle, and they are large. Nothing
    about wasm yet.
-1. The audit list above, each item with a test that fails without it.
+1. DONE. The audit above, each item with a test.
 2. The reads of D4 open-coded in wasm, counted in the browser.
 3. `$dom_del` open-coded, including the allocating path.
 4. Whatever the counts then say is next.
