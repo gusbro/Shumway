@@ -763,6 +763,9 @@ public static class WasmPredicateCompiler
             // order. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
+            // $dom_same's first cell, held across the second argument's
+            // deref. Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -1549,6 +1552,18 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineDomSame(ins.I0))
+                    {
+                        EmitInlineDomSame(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
                     {
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
@@ -1615,6 +1630,18 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineGetAttr(ins.I0))
                     {
                         EmitInlineGetAttr(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineDomSame(ins.I0))
+                    {
+                        EmitInlineDomSame(ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -1812,6 +1839,54 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
+        /// <summary>$dom_same/2 answered where the answer is a comparison:
+        /// two IDENTICAL Foreign cells name one domain object, and a domain
+        /// is the same as itself. Two different cells may still hold equal
+        /// interval lists, and only the host can see that, so those step
+        /// aside.
+        ///
+        /// <para>The cheap half is the common half because $dom_del hands
+        /// back its incoming cell when it removes nothing, and clpfd_narrow
+        /// asks '$dom_same'(New, Old) precisely to learn whether anything
+        /// was removed. Measured in a browser on queens_fd(9): the pair was
+        /// 82% of every builtin exit in the run.</para>
+        ///
+        /// <para>Both cells must be FOREIGN. Identical cells of any other tag
+        /// are a type error the builtin owes, and answering "true" to a call
+        /// that owes an error would make this a semantic change rather than a
+        /// speed one.</para></summary>
+        private void EmitInlineDomSame(int pc, Action emitBuiltinExit,
+                                       Action? load0 = null, Action? load1 = null)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Foreign));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new LocalSet(LDomA));                        // cell A, whole
+
+            (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Foreign));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+
+            Op(new LocalGet(LDomA));
+            Op(new LocalGet(LC0));
+            Op(new Int64NotEqual());
+            Op(new BranchIf(0));                            // different -> $slow
+            Op(new Branch(1));                              // identical -> $done
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
         private bool EmitCall(Instr ins)
         {
             if (!_callee.TryGetValue(ins.Pc, out int callee))
@@ -1831,6 +1906,18 @@ public static class WasmPredicateCompiler
                 if (_env.IsInlineGetAttr(builtinId))
                 {
                     EmitInlineGetAttr(ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
+                    return false;
+                }
+                if (_env.IsInlineDomSame(builtinId))
+                {
+                    EmitInlineDomSame(ins.Pc, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
                             () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
@@ -4929,6 +5016,7 @@ public static class WasmPredicateCompiler
         private const uint LMetaBarrier = 47;  // i64: '$call'/2's carried barrier
         private const uint LGoalBase = 48;  // i32: the meta-called goal's heap index
         private const uint LGoalCell = 49;  // i64: that goal's functor cell
+        private const uint LDomA = 50;      // i64: $dom_same's first cell
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

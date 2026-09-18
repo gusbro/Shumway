@@ -255,6 +255,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         return _inner.IsInlineGetAttr(builtinId);
     }
 
+    public bool IsInlineDomSame(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineDomSame(builtinId);
+    }
+
     public bool IsInlineMetaCall(int builtinId)
     {
         Note(builtinId);

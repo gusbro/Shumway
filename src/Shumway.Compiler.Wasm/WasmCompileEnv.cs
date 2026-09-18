@@ -125,6 +125,19 @@ public interface IWasmCompileEnv
     /// </summary>
     bool IsInlineGetAttr(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
+    /// answer a module can give without leaving: two IDENTICAL cells name one
+    /// domain, and one domain is the same as itself. Anything else steps
+    /// aside, because equal interval lists in different objects are still
+    /// equal and only the host can see that.
+    ///
+    /// <para>What makes the cheap half the common half is $dom_del returning
+    /// its incoming cell when it removes nothing: clpfd_narrow asks
+    /// '$dom_same'(New, Old) precisely to find out whether anything was
+    /// removed. In a browser on queens_fd(9) the pair was 82% of every
+    /// builtin exit in the run.</para></summary>
+    bool IsInlineDomSame(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>call/1</c>, whose goal the module
     /// can dispatch itself through the call-marker table instead of stepping
     /// aside. Every other meta-call shape (call/N with extra arguments,

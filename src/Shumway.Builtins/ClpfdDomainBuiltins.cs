@@ -100,9 +100,29 @@ public static class ClpfdDomainBuiltins
     public static bool Union(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Union(Dom(engine, 1)));
 
-    /// <summary>$dom_del(+Dom, +V, -Dom2): remove the integer value V.</summary>
-    public static bool Del(Activation engine) =>
-        WriteDom(engine, 2, Dom(engine, 0).Without(ReadInt(engine, 1)));
+    /// <summary>$dom_del(+Dom, +V, -Dom2): remove the integer value V.
+    ///
+    /// <para>When V was not in Dom the domain is UNCHANGED, and then Dom2 is
+    /// the incoming CELL and not a fresh one naming the same object. The two
+    /// are equivalent to Prolog, and the difference is what makes the pair
+    /// this is half of decidable without leaving a wasm module:
+    /// clpfd_narrow's first test is '$dom_same'(New, Old), which holds
+    /// exactly when nothing was removed, and identical cells can be compared
+    /// where interval lists cannot. Measured in a browser on
+    /// queens_fd(9): 190,026 $dom_del and 190,035 $dom_same, 82% of all the
+    /// builtin exits in the run.</para>
+    ///
+    /// <para>It also stops the foreign table growing an entry per no-op.
+    /// </para></summary>
+    public static bool Del(Activation engine)
+    {
+        Cell incoming = Arg(engine, 0);
+        var d = Dom(engine, 0);
+        var without = d.Without(ReadInt(engine, 1));
+        return ReferenceEquals(without, d)
+            ? engine.UnifyRegisterWithCell(2, incoming)
+            : WriteDom(engine, 2, without);
+    }
 
     /// <summary>$dom_size(+Dom, -N): value count (or a big sentinel if infinite).</summary>
     public static bool Size(Activation engine) =>

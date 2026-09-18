@@ -83,6 +83,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "get_attr" && entry.Arity == 3;
     }
 
+    public bool IsInlineDomSame(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_same" && entry.Arity == 2;
+    }
+
     public bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
