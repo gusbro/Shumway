@@ -243,7 +243,14 @@ What was audited, each with a test:
    so covers inf and sup as well as integers. Desktop counts on
    queens_fd(7): builtin exits 5,115 -> 3,882, $dom_same 1,233 -> 0,
    chains 2,692 -> 1,459. Against the 23,262 the arc started from, -83%.
-5. What is left of the domain exits is $dom_del where the value IS
+5. PARTLY DONE. $dom_del rebuilds the domain in the module when the
+   value is a BOUND of an interval wider than one: the interval narrows,
+   the interval count does not change, and the rebuild reuses the functor
+   already on the heap. Measured as the largest of the removals that
+   remove: 503 of 1,226 on queens_fd(7), 63% on send+more=money. Desktop
+   counts: builtin exits 3,882 -> 3,379, $dom_del 1,226 -> 723. Against
+   the 23,262 the arc started from, -85%.
+6. What is left of the domain exits is $dom_del where the value IS
    present (1,226), which has to build a domain. The module can allocate
    on the heap, but a domain's functor depends on the resulting interval
    count and the module cannot intern one, so this needs a small table of

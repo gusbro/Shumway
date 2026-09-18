@@ -771,6 +771,9 @@ public static class WasmPredicateCompiler
             // The second domain's heap index, for the contents comparison.
             // Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
+            // The copy cursor when a domain is rebuilt. Appended last, same
+            // rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2484,16 +2487,25 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
-        /// <summary>$dom_del(+Dom, +V, -Out) for the case that removes
-        /// NOTHING: Out is the incoming domain, the same cell, no allocation.
+        /// <summary>$dom_del(+Dom, +V, -Out), answered in the module when it
+        /// can be.
         ///
-        /// <para>That is most of them. clpfd posts a disequality by removing
-        /// a value and asking whether the domain changed, and by the time a
-        /// propagator re-fires the value is usually already gone. Measured on
-        /// queens_fd(7): of 8,807 removals, about 7,600 remove nothing.</para>
+        /// <para>The value is not there: Out is the domain that came in, the
+        /// same cell, no allocation. Most removals are this, because clpfd
+        /// posts a disequality by removing a value and asking whether the
+        /// domain changed, and by the time a propagator re-fires the value is
+        /// usually gone already. Measured on queens_fd(7), 7,581 of
+        /// 8,807.</para>
         ///
-        /// <para>A removal that DOES remove has to build a domain, which the
-        /// module could do and does not yet: it steps aside.</para></summary>
+        /// <para>The value is a bound of an interval wider than one: the
+        /// interval narrows, the interval COUNT does not change, and the
+        /// rebuilt domain reuses the functor that is already on the heap.
+        /// That is the largest of the removals that do remove (503 of 1,226
+        /// on queens_fd(7), 63% on send+more=money).</para>
+        ///
+        /// <para>The value splits an interval or empties one: the count
+        /// changes, so the functor changes, and the module cannot intern a
+        /// functor. Those step aside.</para></summary>
         private void EmitInlineDomDel(int pc, Action emitBuiltinExit,
                                       Action? load0 = null, Action? load1 = null,
                                       Action? load2 = null)
@@ -2503,13 +2515,162 @@ public static class WasmPredicateCompiler
             OpenBlock();                                    // $slow
             EmitDomAndIntSetup(load0 ?? (() => RegLoad(0)),
                                load1 ?? (() => RegLoad(1)));
+
+            // The scan moves LT0 along, so the structure's own index is kept
+            // here for the copy.
+            Op(new LocalGet(LT0));
+            Op(new LocalSet(LDomBase2));
+
             EmitDomIntervalScan(
-                onFound: () => Op(new Branch(1)),           // removes -> $slow
+                onFound: () =>
+                {
+                    // The interval that holds it. LT0 points at its pair and
+                    // LT2 is the offset of its low bound among the bounds.
+                    CellLoadDyn(LHeapB, LT0, 1);
+                    Op(new LocalSet(LC1));                  // lo cell
+                    CellLoadDyn(LHeapB, LT0, 2);
+                    Op(new LocalSet(LC2));                  // hi cell
+
+                    // A one-value interval disappears, which changes the
+                    // interval count: the host's.
+                    Op(new LocalGet(LC1));
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Equal());
+                    Op(new BranchIf(1));                    // -> $slow
+
+                    // Strictly inside: the interval splits in two. Also the
+                    // host's.
+                    Op(new LocalGet(LDomB));
+                    Op(new LocalGet(LC1));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    EmitSignExtend60();
+                    Op(new Int64NotEqual());
+                    Op(new LocalGet(LDomB));
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    EmitSignExtend60();
+                    Op(new Int64NotEqual());
+                    Op(new Int32And());
+                    Op(new BranchIf(1));                    // both -> $slow
+
+                    // A bound moves in. Room for the functor and the bounds,
+                    // checked before anything is written: the count is a
+                    // runtime value, so this is the dynamic form of the
+                    // guard EmitHeapGuard does for a constant.
+                    Op(new LocalGet(LH));
+                    Op(new LocalGet(LT1));
+                    Op(new Int32Add());
+                    LoadSlot32(WasmAbi.HeapWatermark);
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    OpenIf();
+                    EmitDeopt(pc, 19);
+                    CloseNested();
+
+                    // Copy the structure whole, functor included, and then
+                    // correct the one bound. Simpler than copying around the
+                    // hole, and the same number of stores.
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LDomI));
+                    OpenBlock();                            // $copied
+                    OpenLoop();                             // $copy
+                    {
+                        Op(new LocalGet(LDomI));
+                        Op(new LocalGet(LT1));
+                        Op(new Int32GreaterThanSigned());
+                        Op(new BranchIf(1));                // -> $copied
+
+                        CellLoadDyn(LHeapB, LDomBase2);
+                        Op(new LocalSet(LC0));
+                        CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+
+                        Op(new LocalGet(LDomBase2));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LDomBase2));
+                        Op(new LocalGet(LH));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LH));
+                        Op(new LocalGet(LDomI));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LDomI));
+                        Op(new Branch(0));                  // -> $copy
+                    }
+                    CloseNested();                          // $copy
+                    CloseNested();                          // $copied
+
+                    // LH now points past the copy; the structure starts
+                    // arity + 1 cells back.
+                    Op(new LocalGet(LH));
+                    Op(new LocalGet(LT1));
+                    Op(new Int32Subtract());
+                    Op(new Int32Constant(1));
+                    Op(new Int32Subtract());
+                    Op(new LocalSet(LDomI));                // the new structure
+
+                    // V == lo: the low bound becomes V + 1. Otherwise V == hi
+                    // and the high bound becomes V - 1.
+                    Op(new LocalGet(LDomB));
+                    Op(new LocalGet(LC1));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    EmitSignExtend60();
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LT2));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new LocalGet(LDomI));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LDa));
+                        CellStoreDyn(LHeapB, LDa, 0, () =>
+                        {
+                            Op(new LocalGet(LDomB));
+                            Op(new Int64Constant(1));
+                            Op(new Int64Add());
+                            Op(new Int64Constant(Cell.PayloadMask));
+                            Op(new Int64And());
+                            Op(new Int64Constant((long)Tag.Int << 60));
+                            Op(new Int64Or());
+                        });
+                    }
+                    OpenElse();
+                    {
+                        Op(new LocalGet(LT2));
+                        Op(new Int32Constant(2));
+                        Op(new Int32Add());
+                        Op(new LocalGet(LDomI));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LDa));
+                        CellStoreDyn(LHeapB, LDa, 0, () =>
+                        {
+                            Op(new LocalGet(LDomB));
+                            Op(new Int64Constant(1));
+                            Op(new Int64Subtract());
+                            Op(new Int64Constant(Cell.PayloadMask));
+                            Op(new Int64And());
+                            Op(new Int64Constant((long)Tag.Int << 60));
+                            Op(new Int64Or());
+                        });
+                    }
+                    CloseNested();
+
+                    EmitUnifyTwo(load2 ?? (() => RegLoad(2)), () =>
+                    {
+                        Op(new LocalGet(LDomI));
+                        Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Constant((long)Tag.Str << 60));
+                        Op(new Int64Or());
+                    }, pc);
+                    Op(new Branch(2));                      // -> $done
+                },
                 onAbsent: () =>
                 {
-                    // Out = the domain that came in, cell for cell. The
-                    // general shapes inside EmitUnifyTwo step aside on their
-                    // own, so semantics stay the engine's.
+                    // Out is the domain that came in, cell for cell.
                     EmitUnifyTwo(load2 ?? (() => RegLoad(2)),
                                  () => Op(new LocalGet(LDomA)), pc);
                     Op(new Branch(1));                      // -> $done
@@ -5651,6 +5812,7 @@ public static class WasmPredicateCompiler
         private const uint LDomA = 50;      // i64: $dom_same's first cell
         private const uint LDomB = 51;      // i64: $dom_same's second cell
         private const uint LDomBase2 = 52;  // i32: the second domain's heap index
+        private const uint LDomI = 53;      // i32: the copy cursor
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

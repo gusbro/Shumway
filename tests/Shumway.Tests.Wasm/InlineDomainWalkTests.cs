@@ -46,6 +46,25 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
         % These two must reach the host, so they live in predicates that get
         % promoted like the rest: a goal typed straight into a query is not.
         del_present(D2) :- '$dom_new'(1, 9, D), '$dom_del'(D, 5, D2).
+
+        % A bound moves in: the interval narrows, the interval COUNT does
+        % not, and the module rebuilds the domain on the heap reusing the
+        % functor that is already there. This is the first thing in the arc
+        % that WRITES, so the result is checked term for term.
+        del_lo(Out)  :- '$dom_new'(1, 9, D), '$dom_del'(D, 1, Out).
+        del_hi(Out)  :- '$dom_new'(1, 9, D), '$dom_del'(D, 9, Out).
+        del_neg(Out) :- '$dom_new'(-9, -1, D), '$dom_del'(D, -9, Out).
+        % Two intervals, and the value is the low bound of the second.
+        del_second(Out) :- '$dom_new'(1, 9, D), '$dom_del'(D, 5, D2),
+                           '$dom_del'(D2, 6, Out).
+        % In a loop, so the rebuild runs often enough to outgrow anything it
+        % might be corrupting.
+        % The value ADVANCES, or after the first removal it is no longer a
+        % bound and the loop stops narrowing anything.
+        del_lo_loop(I, N, D, D) :- I > N, !.
+        del_lo_loop(I, N, D, Out) :- '$dom_del'(D, I, D2), I1 is I + 1,
+                                     del_lo_loop(I1, N, D2, Out).
+        run_del_lo(N, Out) :- '$dom_new'(1, 900, D), del_lo_loop(1, N, D, Out).
         unbounded(V) :- '$dom_new'(1, sup, D), '$dom_contains'(D, V).
         """;
 
@@ -93,6 +112,14 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
     [InlineData(@"'$dom_new'(-9, -1, D), \+ '$dom_contains'(D, 0)")]
     [InlineData(@"'$dom_new'(-9, -1, D), \+ '$dom_contains'(D, -10)")]
     [InlineData("'$dom_new'(-3, 3, D), '$dom_del'(D, 0, D2), '$dom_contains'(D2, -1)")]
+    // The rebuild: the result is a domain, with the bound moved and nothing
+    // else touched.
+    [InlineData("del_lo(Out), Out == '$fd_dom'(2, 9)")]
+    [InlineData("del_hi(Out), Out == '$fd_dom'(1, 8)")]
+    [InlineData("del_neg(Out), Out == '$fd_dom'(-8, -1)")]
+    [InlineData("del_second(Out), Out == '$fd_dom'(1, 4, 7, 9)")]
+    [InlineData("run_del_lo(100, Out), Out == '$fd_dom'(101, 900)")]
+    [InlineData("run_del_lo(1, Out), Out == '$fd_dom'(2, 900)")]
     public void TheAnswerIsTheEnginesEitherWay(string goal)
     {
         Assert.True(Plain().Query($"{goal}.").Success, $"Tier-0: {goal}");
@@ -128,18 +155,33 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
         Assert.Equal(0, exits("$dom_same"));
     }
 
-    /// <summary>A removal that DOES remove has to build a domain, so it steps
-    /// aside. Anti-vacuity for the zero above.</summary>
+    /// <summary>A removal that narrows an interval is rebuilt in the
+    /// module: no host, and the answer is the same term.</summary>
     [DiagFact]
-    public void ARemovalThatRemovesStepsAside()
+    public void ARemovalAtABoundIsRebuiltInTheModule()
+    {
+        var (tier, exits) = Tier();
+        tier.Query("run_del_lo(10, _).");
+        WasmTierDelegate.ResetDiag();
+        Assert.True(tier.Query(
+            "run_del_lo(500, Out), Out == '$fd_dom'(501, 900).").Success);
+        o.WriteLine($"$dom_del exits for 500 rebuilds: {exits("$dom_del")}");
+        Assert.Equal(0, exits("$dom_del"));
+    }
+
+    /// <summary>A removal that SPLITS an interval changes the interval count,
+    /// so it needs a functor the module cannot intern, and steps aside.
+    /// Anti-vacuity for the zero above.</summary>
+    [DiagFact]
+    public void ARemovalThatSplitsStepsAside()
     {
         var (tier, exits) = Tier();
         tier.Query("del_present(_).");                  // warm: promotes it
         WasmTierDelegate.ResetDiag();
         Assert.True(tier.Query("del_present(_).").Success);
         Assert.True(exits("$dom_del") >= 1,
-            "a removal that removes a value was answered without the host, "
-            + "and the module cannot build a domain");
+            "a removal that splits an interval was answered without the "
+            + "host, and the module cannot intern the functor it needs");
     }
 
     [DiagFact]
