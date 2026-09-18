@@ -211,10 +211,14 @@ The setting survives `restart.`: a fresh engine comes back in the mode you
 were working in, so clearing the database does not quietly change what you
 were measuring. Reload the page to get the default back.
 
-`wasm_compile/1` is the older spelling of the same thing and still works.
-`wasm_compile(status)` has no `jit_compile` equivalent: it reports what is
-compiled, what was refused and why, and the tier's counters, which are a
-WebAssembly-specific report rather than a setting.
+At the top level, `jit_compile.` on its own turns compilation on at a
+moderate threshold, as a shorthand.
+
+`jit_compile(status).` is a top-level command rather than a setting, and
+belongs to the page the way `restart.` does: it reports what is compiled,
+what was refused and why, and the tier's counters. Ask for it from a program
+and you get a domain error, because there is nothing for a program to do with
+it.
 
 ---
 

@@ -54,16 +54,16 @@ internal static partial class WebShumwayApp
     /// <summary>The stdlib bundle's wasm module (linked with --wasm when the
     /// tier is built in): installed now rather than at the first query, so
     /// the boot pays for it and not the user's first goal. Nothing is
-    /// written to the page: wasm_compile(status) reports the note.</summary>
+    /// written to the page: jit_compile(status) reports the note.</summary>
     internal static void InstallBundleWasm(PrologEngine engine)
     {
         if (engine.IlPromotion.Wasm is not { } wasm) return;
-        // wasm_compile(off) asked for no wasm: installing 530 predicates of
+        // jit_compile(off) asked for no wasm: installing 530 predicates of
         // it at boot would answer a different question.
         if (BrowserWasmTier.Disabled)
         {
             engine.IlPromotion.PendingWasmModules.Clear();
-            BrowserWasmTier.BundleInstallNote = "not installed (wasm_compile off)";
+            BrowserWasmTier.BundleInstallNote = "not installed (jit_compile off)";
             return;
         }
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();

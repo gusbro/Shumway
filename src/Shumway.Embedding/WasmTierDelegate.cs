@@ -179,7 +179,7 @@ public sealed class WasmTierDelegate
     /// no attr-table record after every delegate return. Off by default.</summary>
     public static bool DiagOrphanScan;
 
-    /// <summary>Clears every tally. wasm_compile(status) calls this AFTER
+    /// <summary>Clears every tally. jit_compile(status) calls this AFTER
     /// reporting, so each status reads as the delta since the previous one
     /// and a goal can be measured on its own -- totals since boot answer a
     /// question nobody asked and read as if they belonged to the last

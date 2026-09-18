@@ -221,12 +221,12 @@ function runningIndicator() {
   };
 }
 
-// Under wasm_compile(all): re-run the batch compile at the BOUNDARY — after
+// Under jit_compile(all): re-run the batch compile at the BOUNDARY — after
 // a consult, after a completed query (a query may consult) — so the cost
 // never lands inside the user's next real query. One int compare when
 // nothing changed; fire-and-forget, the page never waits on it.
 function wasmAllTick() {
-  try { session.exports().WasmCompileAllTick(); } catch { }
+  try { session.exports().JitCompileAllTick(); } catch { }
 }
 
 async function step() {
@@ -269,18 +269,21 @@ async function run(queryText) {
     emit('% the engine is fresh — nothing is loaded (consult to reload)\n\n', 'note');
     return;
   }
-  // `wasm_compile.` — the page-side switch for the wasm tier, like `restart.`:
+  // `jit_compile.` — answered by the PAGE, like `restart.`. The engine has
+  // a jit_compile/1 builtin of its own and it does the same thing; the page
+  // intercepts the top-level form to print the report, and to answer
+  // `status`, which is a report of this tier rather than a setting.
   // attaches the promotion store to the LIVE engine (safe between queries;
-  // nothing already running changes). Variants: wasm_compile(N). sets the
-  // promotion threshold (1 = promote on first call), wasm_compile(all).
+  // nothing already running changes). Variants: jit_compile(N). sets the
+  // promotion threshold (1 = promote on first call), jit_compile(all).
   // compiles the whole static program now and after every consult,
-  // wasm_compile(off). stops promoting (what already promoted keeps running
+  // jit_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the stdlib bundle's wasm module), wasm_compile(status). reports.
-  const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
+  // tier nor the stdlib bundle's wasm module), jit_compile(status). reports.
+  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
-  if (wasmCompile) {
-    const report = await session.exports().WasmCompileControl(wasmCompile[1] || 'on');
+  if (jitCompile) {
+    const report = await session.exports().JitCompileControl(jitCompile[1] || 'on');
     emit(report + '\n', 'note');
     return;
   }
@@ -1807,33 +1810,33 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
 } else if (location.hash === '#wasmcompilecheck') {
-  // The wasm_compile pseudo-goal's export, end to end on the live session
+  // The jit_compile pseudo-goal's export, end to end on the live session
   // engine: attach at threshold 1, run something hot through the REPL path,
   // and status must show the promotion (plus the compile-time tally).
   const mark = (t) => { try { fetch('/collect', { method: 'POST', body: 'mark: ' + t }); } catch { } };
   try {
     const lines = [];
     mark('attach 1');
-    lines.push(await session.exports().WasmCompileControl('1'));
+    lines.push(await session.exports().JitCompileControl('1'));
     await session.consult('wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
     mark('wloop query');
     const err = await session.start('wloop(50000).');
     if (err) lines.push('start error: ' + err);
     else lines.push('wloop: ' + JSON.stringify(await session.next(80)));
-    lines.push(await session.exports().WasmCompileControl('status'));
-    // wasm_compile(all): the batch runs NOW and again after a consult —
+    lines.push(await session.exports().JitCompileControl('status'));
+    // jit_compile(all): the batch runs NOW and again after a consult —
     // status must show the new predicate promoted without any query
     // having dispatched it. Registration is EAGER at install, so a module
     // the browser refuses fails the batch here, cleanly.
     mark('all');
-    lines.push(await session.exports().WasmCompileControl('all'));
+    lines.push(await session.exports().JitCompileControl('all'));
     mark('post-all query');
     const err2 = await session.start('numlist(1, 20, L), msort(L, S), length(S, 20), wloop(1000).');
     if (err2) lines.push('post-all start error: ' + err2 + '\n');
     else lines.push('post-all: ' + JSON.stringify(await session.next(80)) + '\n');
     mark('consult later');
     await session.consult('later(0).  later(N) :- N > 0, N1 is N - 1, later(N1).');
-    lines.push('tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('tick: ' + await session.exports().JitCompileAllTick() + '\n');
     mark('later query');
     const err3 = await session.start('later(500).');
     if (err3) lines.push('later start error: ' + err3 + '\n');
@@ -1843,9 +1846,9 @@ if (persistMode) {
     // the user's own predicates under it.
     mark('clpfd');
     await session.consult(':- use_module(library(clpfd)).  b(X) :- X in 1..3, X #> 1.');
-    lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('clpfd tick: ' + await session.exports().JitCompileAllTick() + '\n');
     mark('final status');
-    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('status'));
     // A library the page compiles under the tier carries its wasm module:
     // loading it installs the predicates from the archive, and status counts
     // them among the baked instead of the compiled.
@@ -1858,13 +1861,13 @@ if (persistMode) {
         ':- module(wccl, [wrev/2]).\nwrev(L, R) :- wrev(L, [], R).\n' +
         'wrev([], A, A).\nwrev([X|Xs], A, R) :- wrev(Xs, [X|A], R).\n');
       const baked = (status) => Number(/(\d+) baked/.exec(status)?.[1] ?? 0);
-      const before = baked(await session.exports().WasmCompileControl('status'));
+      const before = baked(await session.exports().JitCompileControl('status'));
       lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl')) + '\n');
       await session.consult(':- use_module(library(wccl)).');
       const errL = await session.start('numlist(1, 100, L), wrev(L, R), R = [100|_].');
       if (errL) lines.push('library start error: ' + errL + '\n');
       else lines.push('library: ' + JSON.stringify(await session.next(80)) + '\n');
-      const after = baked(await session.exports().WasmCompileControl('status'));
+      const after = baked(await session.exports().JitCompileControl('status'));
       lines.push(`library archive: ${after - before} more baked (expected 2)\n`);
       await libraries.remove(collection);
     }
@@ -1877,33 +1880,33 @@ if (persistMode) {
       'qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).\n' +
       'qoff(_, [], _).\n' +
       'qoff(Q, [R|Rs], D) :- Q + D #\\= R, R + D #\\= Q, D1 is D + 1, qoff(Q, Rs, D1).\n');
-    lines.push('queens tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('queens tick: ' + await session.exports().JitCompileAllTick() + '\n');
     const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
     if (errQ) lines.push('queens start error: ' + errQ + '\n');
     else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
     // The status right here, before anything else moves the counters: a clpfd
     // run is where the builtin exits dominate, and the ranking says which
     // builtins they are.
-    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('status'));
     // A fresh engine (restart.): the bundle's module must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
-    // wasm_compile(off) must SURVIVE a restart: the boot skips both the
+    // jit_compile(off) must SURVIVE a restart: the boot skips both the
     // tier and the bundle's module, or "an engine with no wasm at all" would
     // be false the moment it booted.
     mark('off then restart');
-    lines.push(await session.exports().WasmCompileControl('off'));
+    lines.push(await session.exports().JitCompileControl('off'));
     await session.resetEngine();
     lines.push('after off+restart:\n');
-    lines.push(await session.exports().WasmCompileControl('status'));
-    lines.push(await session.exports().WasmCompileControl('on'));
+    lines.push(await session.exports().JitCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('on'));
     mark('restart');
     await session.resetEngine();
     lines.push('after restart:\n');
-    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('status'));
     mark('post-restart all');
-    lines.push(await session.exports().WasmCompileControl('all'));
-    lines.push(await session.exports().WasmCompileControl('off'));
+    lines.push(await session.exports().JitCompileControl('all'));
+    lines.push(await session.exports().JitCompileControl('off'));
     const report = lines.join('');
     emit(report);
     try { await fetch('/collect', { method: 'POST', body: report }); } catch { }

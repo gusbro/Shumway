@@ -98,7 +98,7 @@ Declared in `Directory.Build.props`.
 
 | Property | Constant | Enables |
 |---|---|---|
-| `ShumwayDiag` | `SHUMWAY_DIAG` | The whole developer-diagnostics family above (the `SHUMWAY_*_DIAG` / dump / survey env-vars become live), and the WebAssembly tier's counters: chains, hops, host switches, deopts and the rankings of deopt sites and builtin exits that `wasm_compile(status)` reports. Without it the tier runs and counts nothing, and the status says so rather than printing zeros. |
+| `ShumwayDiag` | `SHUMWAY_DIAG` | The whole developer-diagnostics family above (the `SHUMWAY_*_DIAG` / dump / survey env-vars become live), and the WebAssembly tier's counters: chains, hops, host switches, deopts and the rankings of deopt sites and builtin exits that `jit_compile(status)` reports. Without it the tier runs and counts nothing, and the status says so rather than printing zeros. |
 | `ShumwayProfile` | `SHUMWAY_PROFILE` | The `Profiler` hooks: opcode histogram, per-predicate/builtin counts and inclusive time, backtrack/unify/choice-point counters. |
 | `ShumwayRetractTrace` | `SHUMWAY_RETRACT_TRACE` | Trace of dynamic-store retract/assert bookkeeping. |
 | `ShumwayCpTrace` | `SHUMWAY_CP_TRACE` | Choice-point stack dumps (`ChoicePointTrace`). |

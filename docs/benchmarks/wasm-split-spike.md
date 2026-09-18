@@ -179,7 +179,7 @@ same story as above; what the tier needs on this program is the builtin exit
 ranking, not more modules. The deopts are the same in both grains, so they
 are the code, not the partition.
 
-**The ranking, now that it is shown.** `wasm_compile(status)` reports it
+**The ranking, now that it is shown.** `jit_compile(status)` reports it
 beside the deopt sites. On the queens-8 clpfd program in the browser:
 
 ```
@@ -318,7 +318,7 @@ moment the report is posted, so read `/collect` (or suppress `window.close`
 from a debugger session) rather than polling the DOM: a poll that never sees
 the report looks exactly like a hang.
 
-## wasm_compile(all): one module, or one per predicate
+## jit_compile(all): one module, or one per predicate
 
 The batch and the lazy grain differ in two things at once: what gets
 compiled (everything, or what runs) and how it is cut (one module, or one
@@ -350,7 +350,7 @@ the shared preamble) and ~0.5 ms of registration each. Compiling per predicate
 is 10-20% cheaper than the monolith, so the compile is linear either way; the
 batch's one build is not what makes it slow, the mono-interpreted compiler is.
 
-What this decides: `wasm_compile(all)` keeps the monolith. It is the
+What this decides: `jit_compile(all)` keeps the monolith. It is the
 whole-program build the user asked for by name, it runs fastest, and its
 extra cost is a single build. The lazy grain keeps one module per predicate:
 its +11% on queens is this same hop cost, and it compiles only what runs.

@@ -98,7 +98,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     }
     private int _lastBundleInstalled;
 
-    /// <summary>wasm_compile(all): compile the whole static program as it is
+    /// <summary>jit_compile(all): compile the whole static program as it is
     /// CONSULTED, not when the user's first query happens to need the link —
     /// deferring the batch would bill that query for every compile at once.
     /// While set, <see cref="CompileAllTick"/> re-runs the batch after any
@@ -282,7 +282,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>Every static predicate of <paramref name="engine"/>'s linked
     /// program through <see cref="BatchPromoter"/> in one build: the
-    /// wasm_compile(all) path. Skips what is already promoted, already
+    /// jit_compile(all) path. Skips what is already promoted, already
     /// refused, or excluded from promotion (query wrappers). Returns how
     /// many predicates were newly compiled, or -1 when there is no batch
     /// promoter or no linked program to read.</summary>

@@ -86,7 +86,7 @@ public sealed class CallSiteTierChangeTests
 
     [DiagTheory]
     [InlineData("before")]   // the boot: attached before any query linked
-    [InlineData("after")]    // wasm_compile. on a live engine that already ran queries
+    [InlineData("after")]    // jit_compile. on a live engine that already ran queries
     [InlineData("never")]    // no store at all: a delegate bound by hand
     public void ADelegateIsReachedFromSitesLinkedBeforeTheTierExisted(string when)
     {
@@ -120,7 +120,7 @@ public sealed class CallSiteTierChangeTests
         PromoteLo(engine);
         Assert.True(EntriesOf(engine, oracle) > 0, "the tier was never entered");
 
-        // wasm_compile(none): promotion off, the installed keep running.
+        // jit_compile(none): promotion off, the installed keep running.
         engine.IlPromotion.Wasm!.Threshold = 0;
         Assert.True(EntriesOf(engine, oracle) > 0,
             "an installed delegate stopped running when promotion went off");

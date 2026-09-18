@@ -622,7 +622,7 @@ dependency ⇒ ADR).
 
 ## Group partitioning — one module, K functions under the JIT cliff
 
-`wasm_compile(all)`'s 529-member group exposed a limit no validator
+`jit_compile(all)`'s 529-member group exposed a limit no validator
 enforces: a single `run()` body of ~640k instructions crosses the JIT's
 compilation cliff (RyuJIT on the desktop world, Liftoff bailing to
 TurboFan in the browser) and takes minutes to enter — while 634k takes
@@ -650,7 +650,7 @@ into one RELOCATABLE module (`WasmRelocatableModule`) and stores it in
 the bundle's own trailer; a host with a wasm world installs it when the
 bundle is loaded. The web build links the stdlib bundle with `--wasm`,
 so the boot installs the whole prelude in a few hundred milliseconds —
-the ~7 s browser-side compile of `wasm_compile(all)` paid once per
+the ~7 s browser-side compile of `jit_compile(all)` paid once per
 build instead of per session, and `all` itself drops to milliseconds
 (nothing left to compile but user code).
 
@@ -681,7 +681,7 @@ CoreCLR. Interning now happens inside Register().
 
 ## The boards.pl round: relink, attvars, and what is still not understood
 
-`use_module(library(clpfd))` plus `wasm_compile(all)` plus a queens goal
+`use_module(library(clpfd))` plus `jit_compile(all)` plus a queens goal
 reported "Encountered reserved_invalid opcode ... bytecode corruption".
 Pulling that thread produced three findings and two honest gaps. The gaps
 are written down here because a tidy story that does not fit the evidence
@@ -811,7 +811,7 @@ by its instruction. The total alone said nothing actionable, and both the
 standing hypotheses — clpfd, attributed variables — were wrong. The
 ranking put `Trust` in `select/3` and `permutation/2` at the top and the
 question answered itself. `WasmTierDelegate.DeoptRanking()` keeps that
-ranking and `wasm_compile(status)` prints it.
+ranking and `jit_compile(status)` prints it.
 
 The regression test is `tests/Shumway.Tests.Wasm/RestorePathTests.cs`: deep
 backtracking on the tier with `deopts == 0` asserted. Nothing in it binds
@@ -978,7 +978,7 @@ into the persistent program: a callee that can never promote gets
 `CallBytecode` sites (no dispatch hook, so no counting), one that already
 has a delegate gets `CallIl` sites (no bytecode), and the program stays
 linked until the next consult. Two events break that between queries.
-Attaching or enabling the tier on a live engine (`wasm_compile.` after a
+Attaching or enabling the tier on a live engine (`jit_compile.` after a
 query ran) left every static site bytecode-only: nothing below the top
 level was ever counted or promoted. `IlPromotionStore.PromotabilityChanged`
 now fires when the verdict can flip (its threshold or the wasm store's

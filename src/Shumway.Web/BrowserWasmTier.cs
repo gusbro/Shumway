@@ -106,7 +106,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             return i;
         });
         // EAGERLY on the installing thread: a module the browser refuses (a
-        // V8 size limit, say — a giant wasm_compile(all) group) must fail
+        // V8 size limit, say — a giant jit_compile(all) group) must fail
         // HERE, where the caller can fall back to bytecode and report,
         // never inside some later user query's first chain call. Every pool
         // thread is the same kind of worker, so this thread's verdict
@@ -538,11 +538,11 @@ internal static class BrowserWasmTier
 
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
-    /// <summary>Set by wasm_compile(off) and honoured by the BOOT, so a
+    /// <summary>Set by jit_compile(off) and honoured by the BOOT, so a
     /// restart really does give an engine with no wasm in it. Without it the
     /// boot re-attached the tier at the default threshold AND installed the
     /// bundle's module, so "restart. for a clean engine" was false twice over.
-    /// Cleared by any wasm_compile that turns the tier back on.</summary>
+    /// Cleared by any jit_compile that turns the tier back on.</summary>
     internal static bool Disabled;
 
     /// <summary>The mode a restart comes back with. jit_compile/1 is engine
@@ -567,7 +567,7 @@ internal static class BrowserWasmTier
         => engine.IlPromotion.JitPolicy = t => SetJit(engine, t).Ok;
 
     /// <summary>The policy proper. Returns the page's wording too, so
-    /// wasm_compile and jit_compile cannot drift apart: one of them is the
+    /// jit_compile and jit_compile cannot drift apart: one of them is the
     /// other's spelling.</summary>
     internal static (bool Ok, string Report) SetJit(PrologEngine engine, int threshold)
     {
@@ -661,7 +661,7 @@ internal static class BrowserWasmTier
         store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
     }
 
-    /// <summary>The wasm_compile(all) path: the whole candidate set in ONE
+    /// <summary>The jit_compile(all) path: the whole candidate set in ONE
     /// module. A candidate the compiler refuses must not take the batch
     /// down: on a failed build each candidate is test-compiled alone and the
     /// refusals are marked unpromotable; the survivors build together.</summary>
@@ -727,7 +727,7 @@ internal static class BrowserWasmTier
     }
 
     /// <summary>Wall time spent COMPILING modules, and how many — the cost
-    /// side of the tier, reported by wasm_compile(status). Mono-interpreted
+    /// side of the tier, reported by jit_compile(status). Mono-interpreted
     /// C#, so this is the dominant promotion cost in the browser.</summary>
     internal static long DiagCompileTicks;
     internal static int DiagCompileBuilds;
@@ -763,7 +763,7 @@ internal static class BrowserWasmTier
     }
 
     /// <summary>What became of the stdlib bundle's wasm module at boot —
-    /// surfaced by wasm_compile(status), because boot-time page writes
+    /// surfaced by jit_compile(status), because boot-time page writes
     /// predate the console.</summary>
     internal static string BundleInstallNote = "no bundle module";
 
@@ -1289,7 +1289,7 @@ internal static partial class WebShumwayApp
 }
 
 /// <summary>The REPL's runtime switch for the wasm tier: the page answers the
-/// pseudo-goal <c>wasm_compile.</c> (and its variants) by calling here, the
+/// pseudo-goal <c>jit_compile.</c> (and its variants) by calling here, the
 /// way <c>restart.</c> is answered by the page. Attaching to the LIVE engine
 /// is safe between queries — nothing already running changes, the next
 /// dispatches start counting. "off" stops further promotion; what already
@@ -1299,19 +1299,19 @@ internal static partial class WebShumwayApp
 internal static partial class WebShumwayApp
 {
     [JSExport]
-    internal static Task<string> WasmCompileControl(string command)
+    internal static Task<string> JitCompileControl(string command)
         => OnEngine(() =>
         {
             if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen)
-                return "% wasm_compile: the capability is off in this build\n";
+                return "% jit_compile: the capability is off in this build\n";
             var engine = _session?.Engine;
-            if (engine is null) return "% wasm_compile: no engine\n";
+            if (engine is null) return "% jit_compile: no engine\n";
             var store = engine.IlPromotion;
 
             if (command == "status")
             {
                 if (store.Wasm is not { } w)
-                    return "% wasm_compile: not attached (wasm_compile. to attach)\n";
+                    return "% jit_compile: not attached (jit_compile. to attach)\n";
                 string Name(int f)
                 {
                     var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
@@ -1361,7 +1361,7 @@ internal static partial class WebShumwayApp
                     .Select(f => w.RefusalReason(f) is { } why
                         ? $"{Name(f)} ({why})" : Name(f))
                     .ToList();
-                string report = $"% wasm_compile: threshold={w.Threshold}\n"
+                string report = $"% jit_compile: threshold={w.Threshold}\n"
                     + $"%   stdlib bundle wasm: {BrowserWasmTier.BundleInstallNote}\n"
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
@@ -1424,17 +1424,17 @@ internal static partial class WebShumwayApp
             int threshold = command == "on" ? 16
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
-                return "% wasm_compile: all | none | status | <threshold>\n";
+                return "% jit_compile: all | none | status | <threshold>\n";
             return BrowserWasmTier.SetJit(engine, threshold).Report;
         });
 
     /// <summary>Called by the page after a consult and after each completed
-    /// query: under wasm_compile(all) it re-runs the batch when the program
+    /// query: under jit_compile(all) it re-runs the batch when the program
     /// changed — a consult mid-query included — so the compile always lands
     /// here, on the boundary, never inside the user's next real query. One
     /// int compare when nothing changed.</summary>
     [JSExport]
-    internal static Task<int> WasmCompileAllTick()
+    internal static Task<int> JitCompileAllTick()
         => OnEngine(() =>
         {
             var engine = _session?.Engine;

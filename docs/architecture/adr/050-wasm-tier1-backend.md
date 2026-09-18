@@ -107,9 +107,10 @@ can set it with a directive and a harness written in Prolog can ask for a
 configuration without knowing which product it is running in: a build has
 exactly one Tier-1, the IL compiler in Shumway and this backend in
 WebShumway, and the same goal names whichever it is. The page's
-`wasm_compile/1` becomes a spelling of it, sharing one implementation so the
-two cannot drift; `wasm_compile(status)` stays page-side, being a report of
-this backend rather than a setting.
+`wasm_compile/1` was renamed to it rather than kept as an alias: the tier
+had never shipped, so nothing was owed compatibility. `jit_compile(status)`
+stays page-side, being a report of this backend rather than a setting, and
+the top level answers it the way it answers `restart.`.
 
 `off` evicts what already promoted, deferred to the next query setup. It
 cannot happen where it is asked: a choice point created inside tier code has

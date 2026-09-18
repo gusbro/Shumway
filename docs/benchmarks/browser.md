@@ -61,7 +61,7 @@ rather than shipping a runtime with no shim -- which used to die later at
 `DllNotFoundException` the first time a module registered.
 `Shumway.Web` is not in the solution, so `dotnet build` never builds it.
 
-Confirm the tier is live before believing any number: `wasm_compile(status).`
+Confirm the tier is live before believing any number: `jit_compile(status).`
 at the top level. "the capability is off in this build" means the flag was
 missing from the publish.
 
@@ -74,7 +74,7 @@ looks like a hang and is not.
 | hook | what it is |
 |---|---|
 | `#selftest` | The browser's own test suite. ADR-042 makes it the only automatic test that reaches this layer. |
-| `#wasmcompilecheck` | End to end on the `wasm_compile` pseudo-goal over the live session engine: attach, run something hot, and status must show the promotion. A test, not a measurement. |
+| `#wasmcompilecheck` | End to end on the `jit_compile` pseudo-goal over the live session engine: attach, run something hot, and status must show the promotion. A test, not a measurement. |
 | `#wasmbench[=rounds]` | The five-program benchmark this page reports. |
 | `#wasmtier[=rounds]` | The older three-program probe, kept for its time-split diagnostics. |
 | `#wasmgrain[=rounds[xqueens][:cell]]` | The many-modules measurement: batch, eager, lazy and Tier-0 side by side, with module count, bytes, compile and registration cost, and the per-run hop/switch/deopt tally INCLUDING the ranking of deopt sites. The instrument for "what is still leaving the module". |
