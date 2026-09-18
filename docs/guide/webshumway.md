@@ -211,8 +211,8 @@ The setting survives `restart.`: a fresh engine comes back in the mode you
 were working in, so clearing the database does not quietly change what you
 were measuring. Reload the page to get the default back.
 
-At the top level, `jit_compile.` on its own turns compilation on at a
-moderate threshold, as a shorthand.
+`none` is accepted as another spelling of `off`, and `on` as a moderate
+threshold. At the top level, `jit_compile.` on its own means `on`.
 
 `jit_compile(status).` is a top-level command rather than a setting, and
 belongs to the page the way `restart.` does: it reports what is compiled,

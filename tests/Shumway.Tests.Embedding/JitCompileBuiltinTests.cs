@@ -105,6 +105,34 @@ public sealed class JitCompileBuiltinTests
             + $"{underRare}: the argument is ignored");
     }
 
+    /// <summary>The top level's spellings work here too. They did not, which
+    /// made jit_compile(none) a goal that worked when typed at the page and
+    /// raised when a program ran it.</summary>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("off")]
+    [InlineData("on")]
+    [InlineData("all")]
+    [InlineData("16")]
+    public void EverySpellingTheTopLevelTakesIsAccepted(string mode)
+        => Assert.True(Engine().Query($"jit_compile({mode}).").Success, mode);
+
+    /// <summary>And a rejected mode names the offender. It reported an
+    /// unbound variable, which tells the reader nothing about what they
+    /// typed.</summary>
+    [Fact]
+    public void ARejectedModeNamesTheOffender()
+    {
+        // Asserted on the PROLOG term, which is what the user reads: the
+        // culprit reported as _ says nothing about what they typed.
+        Assert.True(Engine().Query(
+            "catch(jit_compile(sideways), "
+            + "error(domain_error(jit_compile_mode, sideways), _), true).").Success);
+        Assert.True(Engine().Query(
+            "catch(jit_compile(f(x)), "
+            + "error(domain_error(jit_compile_mode, f(x)), _), true).").Success);
+    }
+
     [Fact]
     public void BadModesAreRejected()
     {

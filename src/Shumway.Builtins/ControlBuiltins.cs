@@ -156,9 +156,10 @@ public static class ControlBuiltins
     }
 
     /// <summary><c>jit_compile(Mode)</c> — sets how Tier-1 promotion behaves
-    /// from here on. <c>off</c> stops promoting and returns what already
-    /// promoted to Tier-0, <c>all</c> promotes each predicate on its first
-    /// call, and a positive integer is the call threshold to wait for.
+    /// from here on. <c>off</c> (or <c>none</c>) stops promoting and returns
+    /// what already promoted to Tier-0, <c>all</c> promotes each predicate on
+    /// its first call, <c>on</c> is a moderate threshold, and a positive
+    /// integer is the call threshold to wait for.
     ///
     /// <para>Which compiler Tier-1 is depends on the product and there is
     /// only one per build, so the same goal means the same thing in both:
@@ -185,24 +186,31 @@ public static class ControlBuiltins
         {
             long n = c.AsInt;
             if (n < 0 || n > int.MaxValue)
-                throw new PrologRuntimeException("domain_error", "jit_compile_mode");
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
             threshold = (int)n;
         }
         else if (c.Tag == Tag.Atom)
         {
+            // none and on are the top level's spellings and mean the same
+            // here: one vocabulary, or a goal that works when typed and
+            // raises when run.
             string? name = AtomTable.GetById(c.AsAtomId)?.Name;
             threshold = name switch
             {
-                "off" => 0,
+                "off" or "none" => 0,
                 "all" => 1,
+                "on" => 16,
                 _ => -1,
             };
             if (threshold < 0)
-                throw new PrologRuntimeException("domain_error", "jit_compile_mode");
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
         }
         else
         {
-            throw new PrologRuntimeException("domain_error", "jit_compile_mode");
+            throw new PrologRuntimeException(
+                "domain_error", "jit_compile_mode", engine, c);
         }
 
         if (engine.JitControl is { } control) return control(threshold);
