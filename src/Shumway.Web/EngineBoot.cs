@@ -23,6 +23,7 @@ internal static partial class WebShumwayApp
         // The wasm Tier-1 (plan phase 2): promotion through the ordinary
         // dispatch machinery, execution as native wasm. No-op unless the
         // Shumway.WasmCodegen switch is on.
+        BrowserWasmTier.WireJitControl(engine);
         BrowserWasmTier.Attach(engine);
         InstallBundleWasm(engine);
         return engine;

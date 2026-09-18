@@ -545,6 +545,71 @@ internal static class BrowserWasmTier
     /// Cleared by any wasm_compile that turns the tier back on.</summary>
     internal static bool Disabled;
 
+    /// <summary>The mode a restart comes back with. jit_compile/1 is engine
+    /// state, and a restart builds a new engine -- without these, clearing the
+    /// database also silently threw away the tier setting the session was
+    /// working under, which is the one thing a restart should not touch.
+    /// <see cref="Disabled"/> already survived for the off case; these carry
+    /// the rest.</summary>
+    internal static int BootThreshold = 1;
+
+    /// <summary>Whether the restarted engine batches (see <see
+    /// cref="Attach"/>).</summary>
+    internal static bool BootBatch = true;
+
+    /// <summary>jit_compile/1 for this page: the threshold alone does not
+    /// describe the tier here, because the world is attached lazily and "all"
+    /// means "compile the program now and at every consult", not "promote on
+    /// the first call". Installed on the STORE so it survives query setup,
+    /// and installed even when the tier is off -- otherwise nothing could
+    /// turn it back on.</summary>
+    internal static void WireJitControl(PrologEngine engine)
+        => engine.IlPromotion.JitPolicy = t => SetJit(engine, t).Ok;
+
+    /// <summary>The policy proper. Returns the page's wording too, so
+    /// wasm_compile and jit_compile cannot drift apart: one of them is the
+    /// other's spelling.</summary>
+    internal static (bool Ok, string Report) SetJit(PrologEngine engine, int threshold)
+    {
+        if (!RuntimeCaps.SupportsWasmCodegen)
+            return (threshold == 0,
+                "% jit_compile: the capability is off in this build\n");
+        var store = engine.IlPromotion;
+        if (threshold == 0)
+        {
+            Disabled = true;
+            BootThreshold = 0;
+            BootBatch = false;
+            if (store.Wasm is { } w) { w.Threshold = 0; w.CompileAllOnConsult = false; }
+            // The already-promoted go back to bytecode at the next query
+            // setup: dropping a delegate with a live choice point inside it
+            // would leave the redo nowhere to land.
+            store.QueueJitOff();
+            return (true, "% jit_compile: off. The goals after this one run on "
+                + "Tier-0, and restart. gives an engine with no wasm at all\n");
+        }
+        Disabled = false;               // asking for any of it un-disables
+        bool batch = threshold == 1;    // "all" is the batch; a count is lazy
+        BootThreshold = threshold;
+        BootBatch = batch;
+        if (store.Wasm is null) Attach(engine, threshold, batch);
+        if (store.Wasm is not { } wa) return (false, "% jit_compile: could not attach\n");
+        wa.Threshold = threshold;
+        wa.CompileAllOnConsult = batch;
+        if (!batch)
+            return (true, $"% jit_compile: threshold={threshold} (lazy; "
+                + "jit_compile(all) restores one build per program)\n");
+        long b0 = Stopwatch.GetTimestamp();
+        int batched = wa.CompileAllTick(engine);
+        double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
+        return (true, $"% jit_compile: all -- {batched} predicates compiled now "
+            + $"({ms:F0} ms), threshold 1 from here; every consult "
+            + "recompiles the new ones\n"
+            + (wa.BundleFids.Count == 0 && batched > 100
+                ? $"% (the stdlib bundle's wasm is not installed -- {BundleInstallNote})\n"
+                : ""));
+    }
+
     /// <summary>Attaches the tier. The default is the BATCH mode: one module
     /// for the whole linked program at each consult boundary; the lazy mode
     /// compiles one module per predicate as it crosses the threshold. Either
@@ -554,9 +619,11 @@ internal static class BrowserWasmTier
     ///
     /// <para>A caller asking for a numeric threshold is asking for the lazy
     /// mode and gets it, batch off.</para></summary>
-    internal static void Attach(PrologEngine engine, int threshold = 1,
-        bool batch = true)
+    internal static void Attach(PrologEngine engine, int? threshold = null,
+        bool? batch = null)
     {
+        int th = threshold ?? BootThreshold;
+        bool bt = batch ?? BootBatch;
         if (!RuntimeCaps.SupportsWasmCodegen || Disabled) return;
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
@@ -564,8 +631,8 @@ internal static class BrowserWasmTier
         var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
         {
-            Threshold = threshold,
-            CompileAllOnConsult = batch,
+            Threshold = th,
+            CompileAllOnConsult = bt,
             Promoter = (pred, linkedBase) =>
                 Promote(store, world, env, pred, linkedBase),
             BatchPromoter = candidates =>
@@ -1348,52 +1415,9 @@ internal static partial class WebShumwayApp
                 return report;
             }
             if (command is "off" or "none")
-            {
-                if (store.Wasm is { } w)
-                {
-                    w.Threshold = 0;
-                    w.CompileAllOnConsult = false;
-                }
-                // A predicate already promoted keeps running as wasm: taking
-                // its delegate away with a live choice point inside would
-                // break the redo. A fresh engine has none, so the flag makes
-                // the BOOT skip both the tier and the bundle's module — which
-                // is what makes the sentence below true.
-                BrowserWasmTier.Disabled = true;
-                return "% wasm_compile: promotion off. Already-promoted "
-                    + "predicates keep running as wasm; restart. now gives an "
-                    + "engine with no wasm at all (wasm_compile. re-enables)\n";
-            }
+                return BrowserWasmTier.SetJit(engine, 0).Report;
             if (command == "all")
-            {
-                // Compile the whole static program NOW and again after every
-                // consult — never on the user's first real query, which would
-                // otherwise be billed for all of it at once.
-                BrowserWasmTier.Disabled = false;   // asking for all un-disables
-                if (store.Wasm is null) BrowserWasmTier.Attach(engine, threshold: 16);
-                if (store.Wasm is not { } wa)
-                    return "% wasm_compile: could not attach\n";
-                wa.CompileAllOnConsult = true;
-                // `all` means ALL: whatever the batch cannot reach - a
-                // predicate consulted later, one the batch skipped - promotes
-                // on its FIRST dispatch instead of after the lazy tier's
-                // warm-up count.
-                wa.Threshold = 1;
-                long b0 = Stopwatch.GetTimestamp();
-                int batched = wa.CompileAllTick(engine);
-                double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
-                // Compiling the whole prelude here means the bundle's module
-                // is NOT carrying it — say why right where the cost shows up,
-                // not only in status.
-                string bakedNote = wa.BundleFids.Count == 0 && batched > 100
-                    ? $"% (the stdlib bundle's wasm is not installed — {BrowserWasmTier.BundleInstallNote})\n"
-                    : "";
-                return $"% wasm_compile: all — {batched} predicates compiled now "
-                    + $"({ms:F0} ms), threshold 1 from here; every consult "
-                    + "recompiles the new ones\n"
-                    + bakedNote
-                    + "% (experimental)\n";
-            }
+                return BrowserWasmTier.SetJit(engine, 1).Report;
             // "on", or a numeric threshold. Attach once; afterwards only the
             // threshold moves (re-attaching would abandon the group's members
             // while their delegates live on).
@@ -1401,22 +1425,7 @@ internal static partial class WebShumwayApp
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
                 return "% wasm_compile: all | none | status | <threshold>\n";
-            BrowserWasmTier.Disabled = false;       // turning it on un-disables
-            if (store.Wasm is { } existing)
-            {
-                existing.Threshold = threshold;
-                // A threshold IS the lazy mode. Leaving the consult batch on
-                // beside it would compile the whole program anyway and make
-                // the number meaningless.
-                existing.CompileAllOnConsult = false;
-                return $"% wasm_compile: threshold={threshold} (lazy; "
-                     + "wasm_compile(all) restores one build per program)\n";
-            }
-            BrowserWasmTier.Attach(engine, threshold, batch: false);
-            return store.Wasm is null
-                ? "% wasm_compile: could not attach\n"
-                : $"% wasm_compile: attached, threshold={threshold} — hot "
-                  + "predicates now compile to WebAssembly\n";
+            return BrowserWasmTier.SetJit(engine, threshold).Report;
         });
 
     /// <summary>Called by the page after a consult and after each completed

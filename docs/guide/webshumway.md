@@ -180,6 +180,44 @@ works; it just loads slowly.
 
 ---
 
+## Choosing how much gets compiled
+
+`jit_compile/1` sets how much of your program the just-in-time compiler takes
+on, for the goals that follow:
+
+```prolog
+?- jit_compile(all).     % compile everything, now and after every consult
+?- jit_compile(16).      % compile a predicate once it has been called 16 times
+?- jit_compile(off).     % stop compiling, and run on the interpreter again
+```
+
+It is an ordinary predicate, so a directive in a consulted file works too:
+
+```prolog
+:- jit_compile(all).
+```
+
+The same three forms mean the same thing in the desktop system, where what
+they control is the IL compiler rather than the WebAssembly one. A program
+does not have to know which engine it landed in to ask for a setting, which is
+what lets one test harness run under every configuration.
+
+`off` is a real off: the predicates already compiled go back to the
+interpreter, not just the ones that would have been compiled next. That takes
+effect from the goal after the switch, never inside it, because a compiled
+predicate may be in the middle of producing solutions when you ask.
+
+The setting survives `restart.`: a fresh engine comes back in the mode you
+were working in, so clearing the database does not quietly change what you
+were measuring. Reload the page to get the default back.
+
+`wasm_compile/1` is the older spelling of the same thing and still works.
+`wasm_compile(status)` has no `jit_compile` equivalent: it reports what is
+compiled, what was refused and why, and the tier's counters, which are a
+WebAssembly-specific report rather than a setting.
+
+---
+
 ## Debugging
 
 The **Debug** toggle in the toolbar turns the page into the same source-level
