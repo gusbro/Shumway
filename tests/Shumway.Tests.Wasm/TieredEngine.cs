@@ -17,7 +17,15 @@ internal static class TieredEngine
     }
 
     public static (PrologEngine Engine, List<WasmGroupMember> Members, DesktopWasmWorld World)
-        BuildWithWorld(string corpus)
+        BuildWithWorld(string corpus) => BuildWithWorld(corpus, wasmThreshold: 1);
+
+    /// <summary>Same, with the wasm promotion threshold exposed: 1 promotes a
+    /// predicate on its first call ("all" in the conformance runner), a
+    /// higher value leaves the rarely-called ones on Tier-0 and promotes the
+    /// hot ones mid-run ("jit"), which exercises the Tier-0-to-wasm handover
+    /// in flight rather than before the query.</summary>
+    public static (PrologEngine Engine, List<WasmGroupMember> Members, DesktopWasmWorld World)
+        BuildWithWorld(string corpus, int wasmThreshold)
     {
         var engine = new PrologEngine();
         var store = engine.IlPromotion;
@@ -28,7 +36,7 @@ internal static class TieredEngine
 
         store.Wasm = new WasmPromotionStore(store)
         {
-            Threshold = 1,
+            Threshold = wasmThreshold,
             Promoter = (pred, linkedBase) =>
             {
                 var m = new WasmGroupMember(pred, linkedBase,

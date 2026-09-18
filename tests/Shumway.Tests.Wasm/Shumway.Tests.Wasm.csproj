@@ -21,6 +21,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The shared wasm-tier conformance corpus: the desktop runner reads it
+         from the output directory, the browser hook from wwwroot. One source. -->
+    <Content Include="wasm-conformance.pl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Core\Shumway.Core.csproj" />
     <!-- The engine, for the differential half: the same programs run on
