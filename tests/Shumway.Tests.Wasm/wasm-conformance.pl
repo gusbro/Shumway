@@ -133,6 +133,18 @@ wc_case(fib_ground_ok,  fib(10, 55)).
 wc_case(fib_ground_no,  \+ fib(10, 54)).
 wc_case(tpath_all,      (findall(Y, tpath(p, Y), L), sort(L, S),
                          S == [p, q, r, s])).
+wc_case(arith_add_ovf,  (wc_add_ovf(X), X =:= 576460752303423488)).
+wc_case(arith_mul_ovf,  (wc_mul_ovf(X), X =:= 1152921504606846974)).
+wc_case(arith_sub_ovf,  (wc_sub_ovf(X), X =:= -576460752303423489)).
+
+% Arithmetic that escalates out of the 60-bit inline integer lane. The tier
+% cannot represent the result, so it steps aside and the engine finishes the
+% work in bigger numbers. Held out of this corpus while a deopt on a
+% predicate's FIRST call was being handed back to the tier as though it were a
+% tail call, which spun instead of answering.
+wc_add_ovf(X) :- X is 576460752303423487 + 1.
+wc_mul_ovf(X) :- X is 576460752303423487 * 2.
+wc_sub_ovf(X) :- X is -576460752303423488 - 1.
 
 % ---- the harness (environment-agnostic) ----
 
