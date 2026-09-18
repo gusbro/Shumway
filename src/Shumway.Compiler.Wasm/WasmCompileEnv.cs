@@ -145,6 +145,22 @@ public interface IWasmCompileEnv
     /// DID change, and the answer is almost always no.</summary>
     bool IsInlineDomEmpty(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>$dom_contains/2</c>, which the
+    /// module answers by walking the intervals. Unbounded domains (inf or sup
+    /// as a bound) step aside.</summary>
+    bool IsInlineDomContains(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>$dom_del/3</c>. The module answers
+    /// the case that removes NOTHING, which is most of them, by handing back
+    /// the domain it was given. A removal that really removes has to build a
+    /// domain and steps aside.</summary>
+    bool IsInlineDomDel(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>$dom_singleton/2</c>: one interval
+    /// whose two bounds are the same integer. Asked right after $dom_same
+    /// says a domain changed.</summary>
+    bool IsInlineDomSingleton(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>call/1</c>, whose goal the module
     /// can dispatch itself through the call-marker table instead of stepping
     /// aside. Every other meta-call shape (call/N with extra arguments,

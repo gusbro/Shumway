@@ -1578,6 +1578,42 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineDomContains(ins.I0))
+                    {
+                        EmitInlineDomContains(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
+                    if (_env.IsInlineDomDel(ins.I0))
+                    {
+                        EmitInlineDomDel(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
+                    if (_env.IsInlineDomSingleton(ins.I0))
+                    {
+                        EmitInlineDomSingleton(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
                     {
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
@@ -1668,6 +1704,42 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineDomEmpty(ins.I0))
                     {
                         EmitInlineDomEmpty(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineDomContains(ins.I0))
+                    {
+                        EmitInlineDomContains(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineDomDel(ins.I0))
+                    {
+                        EmitInlineDomDel(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineDomSingleton(ins.I0))
+                    {
+                        EmitInlineDomSingleton(ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -2007,6 +2079,316 @@ public static class WasmPredicateCompiler
             GoFail();                                       // a domain, not empty
             CloseNested();
 
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>Walks a domain's intervals looking for an integer.
+        ///
+        /// <para>Emitted INSIDE the $done/$slow pair the forms open, and it
+        /// opens two more of its own, so from inside the loop the branch
+        /// depths are: 0 the loop, 1 $found, 2 $absent, 3 $slow, 4 $done.
+        /// Getting one of those wrong is a jump to the wrong arm, which is a
+        /// wrong answer and not a crash, so they are written down.</para>
+        ///
+        /// <para>Every bound it compares must be an INTEGER. inf and sup are
+        /// atoms (ADR-051 D3) and an unbounded domain steps aside instead:
+        /// the comparison would have to be three-way, and the domains this
+        /// runs on are finite. Measured on queens_fd, no unbounded domain
+        /// reaches it.</para>
+        ///
+        /// <para>The callbacks run OUTSIDE the loop, where the depths are
+        /// different again: in onFound they are 0 $absent, 1 $slow, 2 $done,
+        /// and in onAbsent 0 $slow, 1 $done. Counting them as though $found
+        /// were still open sends a found value down the absent arm, which
+        /// answers the wrong thing and answers it quietly.</para>
+        ///
+        /// <para>Expects: LT0 the structure's heap index, LT1 its arity,
+        /// LDomB the value. Spends LT2 as the cursor and LC1 as scratch
+        /// (Deref spends LC1 too, so nothing is derefed inside).</para>
+        /// </summary>
+        private void EmitDomIntervalScan(Action onFound, Action onAbsent)
+        {
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LT2));                          // cursor
+
+            OpenBlock();                                    // $absent
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $probe
+            {
+                // Past the last bound: not in any interval.
+                Op(new LocalGet(LT2));
+                Op(new LocalGet(LT1));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(2));                        // -> $absent
+
+                // lo = heap[base + 1 + i], an integer or this is not ours.
+                CellLoadDyn(LHeapB, LT0, 1);
+                Op(new LocalSet(LC1));
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant((int)Tag.Int));
+                Op(new Int32NotEqual());
+                Op(new BranchIf(3));                        // -> $slow
+
+                // V < lo: the intervals ascend, so nothing further can hold it.
+                Op(new LocalGet(LDomB));
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                EmitSignExtend60();
+                Op(new Int64LessThanSigned());
+                Op(new BranchIf(2));                        // -> $absent
+
+                // hi = heap[base + 2 + i].
+                CellLoadDyn(LHeapB, LT0, 2);
+                Op(new LocalSet(LC1));
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant((int)Tag.Int));
+                Op(new Int32NotEqual());
+                Op(new BranchIf(3));                        // -> $slow
+
+                // V <= hi: inside this interval.
+                Op(new LocalGet(LDomB));
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                EmitSignExtend60();
+                Op(new Int64LessThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $found
+
+                // Next interval: the cursor counts bounds, and the base
+                // moves with it so CellLoadDyn's +1/+2 stay put.
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(2));
+                Op(new Int32Add());
+                Op(new LocalSet(LT2));
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(2));
+                Op(new Int32Add());
+                Op(new LocalSet(LT0));
+                Op(new Branch(0));                          // -> $probe
+            }
+            CloseNested();                                  // $probe
+            CloseNested();                                  // $found
+            onFound();
+            CloseNested();                                  // $absent
+            onAbsent();
+        }
+
+        /// <summary>Sign-extends a 60-bit payload on the stack to i64: an
+        /// Int cell keeps its value in the payload, and a negative bound read
+        /// as unsigned compares wrong against everything.</summary>
+        private void EmitSignExtend60()
+        {
+            Op(new Int64Constant(4));
+            Op(new Int64ShiftLeft());
+            Op(new Int64Constant(4));
+            Op(new Int64ShiftRightSigned());
+        }
+
+        /// <summary>Loads the domain in <paramref name="load"/> and its value
+        /// argument, leaving LT0 at the structure, LT1 at the arity and LDomB
+        /// at the value. Branches to $slow for anything that is not a
+        /// non-empty domain and an integer.</summary>
+        private void EmitDomAndIntSetup(Action load, Action loadValue)
+        {
+            load(); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LDomA));
+            EmitIsDomainStr(LDomA);
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // not a domain -> $slow
+
+            loadValue(); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Int));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            EmitSignExtend60();
+            Op(new LocalSet(LDomB));                        // the value
+
+            // The structure's heap index, and its arity from the table.
+            Op(new LocalGet(LDomA));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT0));
+            CellLoadDyn(LHeapB, LT0);
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));
+            LoadSlot32(WasmAbi.FunctorTableBase);
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int64Load());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // arity
+        }
+
+        /// <summary>$dom_singleton(+Dom, -V): one interval whose bounds are
+        /// the same value. No walk needed, so this only wants the arity and
+        /// the first two bounds.
+        ///
+        /// <para>clpfd_narrow asks it right after $dom_same says the domain
+        /// changed, which is why it is worth answering even though the answer
+        /// is usually no.</para></summary>
+        private void EmitInlineDomSingleton(int pc, Action emitBuiltinExit,
+                                            Action? load0 = null, Action? load1 = null)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LDomA));
+
+            // The empty domain is no singleton, and saying so needs nothing.
+            Op(new LocalGet(LDomA));
+            Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
+            Op(new Int64Equal());
+            OpenIf();
+            GoFail();
+            CloseNested();
+
+            EmitIsDomainStr(LDomA);
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // not a domain -> $slow
+
+            Op(new LocalGet(LDomA));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT0));                          // the structure
+            CellLoadDyn(LHeapB, LT0);
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));
+            LoadSlot32(WasmAbi.FunctorTableBase);
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int64Load());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // arity
+
+            // More than one interval: not a singleton.
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(2));
+            Op(new Int32NotEqual());
+            OpenIf();
+            GoFail();
+            CloseNested();
+
+            CellLoadDyn(LHeapB, LT0, 1);
+            Op(new LocalSet(LC1));
+            CellLoadDyn(LHeapB, LT0, 2);
+            Op(new LocalSet(LC2));
+
+            // Both bounds integers, or this is an unbounded domain and the
+            // host's business.
+            Op(new LocalGet(LC1));
+            Op(new Int64Constant(60));
+            Op(new Int64ShiftRightUnsigned());
+            Op(new Int32WrapInt64());
+            Op(new Int32Constant((int)Tag.Int));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC2));
+            Op(new Int64Constant(60));
+            Op(new Int64ShiftRightUnsigned());
+            Op(new Int32WrapInt64());
+            Op(new Int32Constant((int)Tag.Int));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // lo != hi: an interval, not a point.
+            Op(new LocalGet(LC1));
+            Op(new LocalGet(LC2));
+            Op(new Int64NotEqual());
+            OpenIf();
+            GoFail();
+            CloseNested();
+
+            // The bound moves to a local of this form's own BEFORE the
+            // unification: EmitUnifyTwo derefs its other operand, Deref
+            // spends LC1, and the value would be read back as whatever the
+            // deref left there. (Measured: the answers changed and clpfd
+            // took longer paths, with nothing failing outright.)
+            Op(new LocalGet(LC1));
+            Op(new LocalSet(LDomB));
+            EmitUnifyTwo(load1 ?? (() => RegLoad(1)),
+                         () => Op(new LocalGet(LDomB)), pc);
+            Op(new Branch(1));                              // -> $done
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>$dom_contains(+Dom, +V): the walk, and nothing else.
+        /// </summary>
+        private void EmitInlineDomContains(int pc, Action emitBuiltinExit,
+                                           Action? load0 = null, Action? load1 = null)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            EmitDomAndIntSetup(load0 ?? (() => RegLoad(0)),
+                               load1 ?? (() => RegLoad(1)));
+            EmitDomIntervalScan(
+                onFound: () => Op(new Branch(2)),           // -> $done, true
+                onAbsent: GoFail);
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>$dom_del(+Dom, +V, -Out) for the case that removes
+        /// NOTHING: Out is the incoming domain, the same cell, no allocation.
+        ///
+        /// <para>That is most of them. clpfd posts a disequality by removing
+        /// a value and asking whether the domain changed, and by the time a
+        /// propagator re-fires the value is usually already gone. Measured on
+        /// queens_fd(7): of 8,807 removals, about 7,600 remove nothing.</para>
+        ///
+        /// <para>A removal that DOES remove has to build a domain, which the
+        /// module could do and does not yet: it steps aside.</para></summary>
+        private void EmitInlineDomDel(int pc, Action emitBuiltinExit,
+                                      Action? load0 = null, Action? load1 = null,
+                                      Action? load2 = null)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            EmitDomAndIntSetup(load0 ?? (() => RegLoad(0)),
+                               load1 ?? (() => RegLoad(1)));
+            EmitDomIntervalScan(
+                onFound: () => Op(new Branch(1)),           // removes -> $slow
+                onAbsent: () =>
+                {
+                    // Out = the domain that came in, cell for cell. The
+                    // general shapes inside EmitUnifyTwo step aside on their
+                    // own, so semantics stay the engine's.
+                    EmitUnifyTwo(load2 ?? (() => RegLoad(2)),
+                                 () => Op(new LocalGet(LDomA)), pc);
+                    Op(new Branch(1));                      // -> $done
+                });
             CloseNested();                                  // $slow
             emitBuiltinExit();
             CloseNested();                                  // $done

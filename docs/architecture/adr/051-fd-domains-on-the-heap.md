@@ -227,5 +227,15 @@ What was audited, each with a test:
    changed, which the host owes), $dom_empty 1,233 -> 0. The rest of D4's
    reads ($dom_contains, $dom_singleton, $dom_min, $dom_max) need a walk
    over the intervals, which is the same machinery phase 3 needs.
-3. `$dom_del` open-coded, including the allocating path.
+3. PARTLY DONE. The module walks a domain's intervals, which answers
+   $dom_contains, $dom_singleton, and $dom_del for the case that removes
+   NOTHING (most of them: clpfd posts a disequality by removing a value
+   and asking whether anything changed, and by the time a propagator
+   re-fires the value is usually already gone). A removal that DOES
+   remove has to build a domain and still steps aside, as do unbounded
+   domains, whose bounds are atoms.
+   Desktop counts on queens_fd(7): builtin exits 14,448 -> 5,115,
+   $dom_del 8,807 -> 1,226, $dom_contains 519 -> 0, $dom_singleton
+   1,233 -> 0, chains 3,587 -> 2,692. Against the 23,262 the arc started
+   from, that is -78%.
 4. Whatever the counts then say is next.

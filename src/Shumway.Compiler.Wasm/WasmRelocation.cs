@@ -267,6 +267,24 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         return _inner.IsInlineDomEmpty(builtinId);
     }
 
+    public bool IsInlineDomContains(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineDomContains(builtinId);
+    }
+
+    public bool IsInlineDomDel(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineDomDel(builtinId);
+    }
+
+    public bool IsInlineDomSingleton(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineDomSingleton(builtinId);
+    }
+
     public bool IsInlineMetaCall(int builtinId)
     {
         Note(builtinId);
