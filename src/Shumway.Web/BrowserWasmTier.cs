@@ -599,6 +599,10 @@ internal static class BrowserWasmTier
         if (!batch)
             return (true, $"% jit_compile: threshold={threshold} (lazy; "
                 + "jit_compile(all) restores one build per program)\n");
+        // The program did not change, the mode did: say so, or the tick
+        // takes its early-out and "all" compiles nothing until something else
+        // happens to trigger a batch.
+        wa.ForceNextBatch();
         long b0 = Stopwatch.GetTimestamp();
         int batched = wa.CompileAllTick(engine);
         double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;

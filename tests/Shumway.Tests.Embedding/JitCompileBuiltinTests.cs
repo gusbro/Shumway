@@ -117,13 +117,24 @@ public sealed class JitCompileBuiltinTests
 
     /// <summary>The mode is engine state, so a directive in a consulted file
     /// sets it for what follows -- the point of the builtin over a top-level
-    /// command is that a Prolog harness can ask for the tier itself.</summary>
+    /// command is that a Prolog harness can ask for the tier itself.
+    ///
+    /// <para>Asserted on the MODE and not on a promotion count: what promotes
+    /// depends on what the engine already carries, and counting it here
+    /// passed alone and failed in the full suite. That the mode leads to
+    /// promotion is what the tests above are for.</para></summary>
     [Fact]
     public void ADirectiveSetsTheMode()
     {
         var e = new PrologEngine();
+        Assert.Equal(0, e.IlPromotion.Threshold);
         e.ConsultString(":- jit_compile(all).\n" + Corpus);
+        Assert.Equal(1, e.IlPromotion.Threshold);
         Assert.True(e.Query(Work).Success);
-        Assert.NotEmpty(e.IlPromotion.PromotedFunctorIds());
+
+        var off = new PrologEngine();
+        off.ConsultString(":- jit_compile(off).\n" + Corpus);
+        Assert.Equal(0, off.IlPromotion.Threshold);
+        Assert.True(off.Query(Work).Success);
     }
 }

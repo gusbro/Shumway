@@ -240,6 +240,16 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// </summary>
     public int BatchTicksWorked { get; private set; }
 
+    /// <summary>Makes the next <see cref="CompileAllTick"/> do the work
+    /// even though the program has not changed. Turning the batch ON is such
+    /// a moment: the tick's early-out asks whether the PROGRAM moved, and
+    /// what moved here is the MODE. Without this, jit_compile(all) compiled
+    /// nothing and the batch ran later, triggered by predicates crossing the
+    /// threshold during the user's next query -- which therefore ran
+    /// interpreted. Measured in the browser: 107 s for the first goal, 1.8 s
+    /// for the same goal after.</summary>
+    public void ForceNextBatch() => _lastLink = null;
+
     public int CompileAllTick(PrologEngine engine)
     {
         // Only a change to the STATIC program can add candidates or move
