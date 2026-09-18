@@ -221,6 +221,11 @@ What was audited, each with a test:
    existing clpfd and clpz suites are the oracle, and they are large. Nothing
    about wasm yet.
 1. DONE. The audit above, each item with a test.
-2. The reads of D4 open-coded in wasm, counted in the browser.
+2. PARTLY DONE. $dom_same on identical cells and $dom_empty are answered
+   in the module. Desktop counts on queens_fd(7): builtin exits 23,262 ->
+   14,448, $dom_same 8,814 -> 1,233 (the calls where the domain really
+   changed, which the host owes), $dom_empty 1,233 -> 0. The rest of D4's
+   reads ($dom_contains, $dom_singleton, $dom_min, $dom_max) need a walk
+   over the intervals, which is the same machinery phase 3 needs.
 3. `$dom_del` open-coded, including the allocating path.
 4. Whatever the counts then say is next.

@@ -138,6 +138,13 @@ public interface IWasmCompileEnv
     /// builtin exit in the run.</para></summary>
     bool IsInlineDomSame(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>$dom_empty/1</c>. The empty domain
+    /// is an atom of its own (ADR-051 D1), so the test is a cell comparison,
+    /// and a non-empty domain is answered false in the module rather than
+    /// stepped aside: clpfd_narrow asks this on the path where the domain
+    /// DID change, and the answer is almost always no.</summary>
+    bool IsInlineDomEmpty(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>call/1</c>, whose goal the module
     /// can dispatch itself through the call-marker table instead of stepping
     /// aside. Every other meta-call shape (call/N with extra arguments,

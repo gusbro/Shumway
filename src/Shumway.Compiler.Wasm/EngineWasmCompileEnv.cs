@@ -83,22 +83,16 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "get_attr" && entry.Arity == 3;
     }
 
-    /// <summary>Off while ADR-051 phase 0 lands. The form recognised a
-    /// domain by its FOREIGN tag, and a domain is now a term, so the guard
-    /// never held and every call stepped aside.
-    ///
-    /// <para>It comes back in phase 2, where the module reads domains rather
-    /// than only comparing their cells. Recognising one then means checking
-    /// the functor against the table, which the module has to do for every
-    /// domain read anyway, and the comparison it enables is by CONTENTS --
-    /// strictly better than the identity test this was, which could only see
-    /// the case where $dom_del handed its own cell back. That half still
-    /// pays for itself: an unchanged domain no longer builds a second copy
-    /// of itself on the heap.</para></summary>
     public bool IsInlineDomSame(int builtinId)
     {
-        _ = builtinId;
-        return false;
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_same" && entry.Arity == 2;
+    }
+
+    public bool IsInlineDomEmpty(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_empty" && entry.Arity == 1;
     }
 
     public bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)

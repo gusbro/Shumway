@@ -766,6 +766,8 @@ public static class WasmPredicateCompiler
             // $dom_same's first cell, held across the second argument's
             // deref. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
+            // And its second. Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -1564,6 +1566,18 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineDomEmpty(ins.I0))
+                    {
+                        EmitInlineDomEmpty(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
                     {
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
@@ -1642,6 +1656,18 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineDomSame(ins.I0))
                     {
                         EmitInlineDomSame(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineDomEmpty(ins.I0))
+                    {
+                        EmitInlineDomEmpty(ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -1839,22 +1865,84 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>$dom_same/2 answered where the answer is a comparison:
-        /// two IDENTICAL Foreign cells name one domain object, and a domain
-        /// is the same as itself. Two different cells may still hold equal
-        /// interval lists, and only the host can see that, so those step
-        /// aside.
+        /// <summary>Leaves 1 on the wasm stack when the cell in <paramref
+        /// name="cellLocal"/> is a NON-EMPTY domain, '$fd_dom'(...), and 0 for
+        /// anything else including the empty domain's atom.
         ///
-        /// <para>The cheap half is the common half because $dom_del hands
-        /// back its incoming cell when it removes nothing, and clpfd_narrow
-        /// asks '$dom_same'(New, Old) precisely to learn whether anything
-        /// was removed. Measured in a browser on queens_fd(9): the pair was
-        /// 82% of every builtin exit in the run.</para>
+        /// <para>Recognised by the functor's ATOM, read out of the staged
+        /// functor table, because the arity varies with the interval count and
+        /// so the functor id does too. The atom travels as a relocatable cell
+        /// (the cut's rule: ids are per process, and a baked module outlives
+        /// the process that built it), so the id is rebuilt from the table's
+        /// packed (atom, arity) word and compared as a cell.</para>
         ///
-        /// <para>Both cells must be FOREIGN. Identical cells of any other tag
-        /// are a type error the builtin owes, and answering "true" to a call
-        /// that owes an error would make this a semantic change rather than a
-        /// speed one.</para></summary>
+        /// <para>Checking this is what keeps the forms a speed change: a
+        /// domain is an ordinary term over a reserved functor, so anyone can
+        /// write one, and answering a call about `f(1)` would be answering a
+        /// call that owes a type error.</para></summary>
+        private void EmitIsDomainStr(uint cellLocal)
+        {
+            Op(new LocalGet(cellLocal));
+            Op(new Int64Constant(60));
+            Op(new Int64ShiftRightUnsigned());
+            Op(new Int32WrapInt64());
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32Equal());
+            OpenIf(BlockType.Int32);
+            {
+                // heap[base] is the functor cell; its payload is the id.
+                CellLoadDyn(LHeapB, LT0Of(cellLocal));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));                  // functor id
+
+                // functorTable[fid] is (atomId << 32) | arity.
+                LoadSlot32(WasmAbi.FunctorTableBase);
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int64Constant(32));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int64Constant((long)Tag.Atom << 60));
+                Op(new Int64Or());                      // the atom, as a cell
+                Op(new Int64Constant(_env.AtomCell(FdDomAtomId)));
+                Op(new Int64Equal());
+            }
+            OpenElse();
+            Op(new Int32Constant(0));
+            CloseNested();
+        }
+
+        /// <summary>The heap index a Str cell points at, parked in LT0 so
+        /// CellLoadDyn can index from it.</summary>
+        private uint LT0Of(uint cellLocal)
+        {
+            Op(new LocalGet(cellLocal));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT0));
+            return LT0;
+        }
+
+        /// <summary>$dom_same/2 where a comparison settles it: two cells that
+        /// are IDENTICAL name one domain, and a domain is the same as itself.
+        ///
+        /// <para>That is the common case because $dom_del hands back the cell
+        /// it was given when it removes nothing, and clpfd_narrow asks
+        /// '$dom_same'(New, Old) precisely to learn whether anything was
+        /// removed. Measured in a browser on queens_fd(9), the pair was 82% of
+        /// every builtin exit in the run.</para>
+        ///
+        /// <para>Two DIFFERENT cells may still hold equal intervals. Deciding
+        /// that needs a walk, which is phase 2's next step and not this one,
+        /// so they step aside. Both operands are checked to BE domains first:
+        /// a reserved functor is a term anyone can write, and answering about
+        /// f(1) would be answering a call that owes a type error.</para>
+        /// </summary>
         private void EmitInlineDomSame(int pc, Action emitBuiltinExit,
                                        Action? load0 = null, Action? load1 = null)
         {
@@ -1863,24 +1951,61 @@ public static class WasmPredicateCompiler
             OpenBlock();                                    // $slow
 
             (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
-            TagOfC0();
-            Op(new Int32Constant((int)Tag.Foreign));
-            Op(new Int32NotEqual());
-            Op(new BranchIf(0));                            // -> $slow
-            Op(new LocalGet(LC0));
-            Op(new LocalSet(LDomA));                        // cell A, whole
-
+            Op(new LocalGet(LC0)); Op(new LocalSet(LDomA));
             (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
-            TagOfC0();
-            Op(new Int32Constant((int)Tag.Foreign));
-            Op(new Int32NotEqual());
+            Op(new LocalGet(LC0)); Op(new LocalSet(LDomB));
+
+            // Different cells: this form has nothing to say.
+            Op(new LocalGet(LDomA));
+            Op(new LocalGet(LDomB));
+            Op(new Int64NotEqual());
             Op(new BranchIf(0));                            // -> $slow
+
+            // Identical, so one of them being a domain settles both.
+            EmitIsDomainStr(LDomA);
+            OpenIf();
+            Op(new Branch(2));                              // -> $done, true
+            CloseNested();
+
+            // The empty domain is an atom, and identical atoms are equal.
+            Op(new LocalGet(LDomA));
+            Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
+            Op(new Int64Equal());
+            OpenIf();
+            Op(new Branch(2));                              // -> $done, true
+            CloseNested();
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>$dom_empty/1: the empty domain is an atom of its own, so
+        /// the test is a cell comparison. A non-empty domain answers FALSE
+        /// here rather than stepping aside, which is the half that matters --
+        /// clpfd_narrow asks this on the path where the domain did change,
+        /// and the answer is almost always no.</summary>
+        private void EmitInlineDomEmpty(int pc, Action emitBuiltinExit,
+                                        Action? load0 = null)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LDomA));
 
             Op(new LocalGet(LDomA));
-            Op(new LocalGet(LC0));
-            Op(new Int64NotEqual());
-            Op(new BranchIf(0));                            // different -> $slow
-            Op(new Branch(1));                              // identical -> $done
+            Op(new Int64Constant(_env.AtomCell(FdDomEmptyAtomId)));
+            Op(new Int64Equal());
+            OpenIf();
+            Op(new Branch(2));                              // empty -> $done, true
+            CloseNested();
+
+            EmitIsDomainStr(LDomA);
+            OpenIf();
+            GoFail();                                       // a domain, not empty
+            CloseNested();
 
             CloseNested();                                  // $slow
             emitBuiltinExit();
@@ -5017,11 +5142,21 @@ public static class WasmPredicateCompiler
         private const uint LGoalBase = 48;  // i32: the meta-called goal's heap index
         private const uint LGoalCell = 49;  // i64: that goal's functor cell
         private const uint LDomA = 50;      // i64: $dom_same's first cell
+        private const uint LDomB = 51;      // i64: $dom_same's second cell
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.
         private static readonly int CutAtomId =
             Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
+
+        // ADR-051's two names, for the same reason and through the same
+        // relocatable cells: a domain is '$fd_dom'(...) of some even arity,
+        // and the empty one is an atom of its own.
+        private static readonly int FdDomAtomId =
+            Shumway.Core.AtomTable.Intern("$fd_dom", permanent: true).Id;
+
+        private static readonly int FdDomEmptyAtomId =
+            Shumway.Core.AtomTable.Intern("$fd_dom_empty", permanent: true).Id;
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it
