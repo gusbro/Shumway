@@ -1942,6 +1942,58 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash.startsWith('#wasmwake')) {
+  // #wasmwake=<lib>+<lib>...: load those libraries IN THAT ORDER, then probe
+  // that freeze/when/dif wake on binding. This is the PR #128 verdict probe:
+  // the page loads libraries as baked bundles, which the desktop CLI does
+  // not (it consults their embedded source), so only here does the
+  // clpfd-then-coroutining order exercise the bundle seed path that broke.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmwake=([a-z_+]+)$/.exec(location.hash);
+    const libs = (spec ? spec[1] : 'clpfd+coroutining').split('+');
+    emit(`--- wasm wake probe: ${libs.join(' -> ')} ---\n`);
+    for (const lib of libs)
+      await session.consult(`:- use_module(library(${lib})).\n`);
+
+    // Each goal must SUCCEED; the counter-goals must FAIL. A wake bug makes
+    // the positive ones false (suspension holds, binding never fires the
+    // hook), which is exactly the reproduction table in the regression note.
+    const cases = [
+      ['freeze wakes',   'freeze(Y, Z = w), Y = 1, Z == w.',            true],
+      ['when wakes',     'when(nonvar(Y), Z = w), Y = 1, Z == w.',      true],
+      ['dif survives',   'dif(X, 1), X = 2.',                           true],
+      ['dif enforces',   'dif(X, 1), X = 1.',                           false],
+      ['freeze holds',   'freeze(_, Z = w), Z == w.',                   false],
+    ];
+    let bad = 0;
+    const lines = [];
+    for (const [label, goal, want] of cases) {
+      const err = await session.start(goal);
+      let got = false;
+      if (!err) {
+        const { tag } = await session.next(60);
+        got = tag === 's' || tag === 'l';   // session.SOLUTION / session.LAST
+        if (tag === 's') await session.cancel();
+      }
+      const ok = got === want;
+      if (!ok) bad++;
+      lines.push(`${ok ? 'PASS' : 'FAIL'} ${label}: ${goal} -> ${got} (want ${want})`);
+    }
+    const report = `wasm wake ${libs.join('->')}: ` +
+                   `${bad === 0 ? 'ALL PASS' : bad + ' FAILED'}\n` +
+                   lines.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmwake';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark(report);
+  } catch (ex) {
+    const text = `wasm wake CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
 } else if (location.hash.startsWith('#wasmfd')) {
   // #wasmfd, or #wasmfd=<n>x<rounds>: finite-domain queens under
   // jit_compile(all) against jit_compile(off), with plain queens as the
