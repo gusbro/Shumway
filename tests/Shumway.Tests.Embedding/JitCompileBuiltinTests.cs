@@ -31,45 +31,50 @@ public sealed class JitCompileBuiltinTests
     private const string Work =
         "numlist(1, 400, L), len(L, N), N =:= 400.";
 
-    /// <summary>The mode each form establishes, which is what this builtin
-    /// owes. Whether the tier then promotes anything depends on WHEN it was
-    /// turned on -- turning it on before a consult promotes nothing, after
-    /// one it does -- which is a separate open question and not something
-    /// jit_compile decides. Asserting on promotion counts here passed alone
-    /// and failed in the full suite, alternating between the tests in this
-    /// file by run order.</summary>
+    /// <summary>How many predicates a Tier-1 build actually promoted, counted
+    /// only once the background compiles have landed.
+    ///
+    /// <para>Promotion compiles on a worker by default, so the count right
+    /// after a query is whatever happened to finish in time -- 0, 1 or 2 on
+    /// the same run. That asynchrony, read too early, is what made these
+    /// tests flake between each other by run order, and it is not enablement
+    /// order: drained, every path reaches the same count.</para></summary>
+    private static int PromotedAfterDraining(PrologEngine e)
+    {
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(),
+            "background promotions did not settle within the timeout");
+        return e.IlPromotion.PromotedFunctorIds().Count();
+    }
+
+    /// <summary>all promotes, off evicts and stops promoting. Both counts are
+    /// taken after the background compiles drain, so they are the settled
+    /// numbers and not a snapshot of a race.</summary>
     [Fact]
-    public void AllAndOffEstablishTheirModes()
+    public void AllPromotesAndOffEvicts()
     {
         var e = Engine();
         Assert.True(e.Query("jit_compile(all).").Success);
         Assert.Equal(1, e.IlPromotion.Threshold);
         Assert.True(e.Query(Work).Success);
+        Assert.True(PromotedAfterDraining(e) > 0,
+            "jit_compile(all) then a goal promoted nothing once drained");
 
         Assert.True(e.Query("jit_compile(off).").Success);
         Assert.Equal(0, e.IlPromotion.Threshold);
         Assert.True(e.Query(Work).Success);
-        // off is the one promotion claim that holds either way: whatever was
-        // promoted is evicted, and nothing promotes while it is off.
         Assert.Empty(e.IlPromotion.PromotedFunctorIds());
     }
 
     /// <summary>off returns what ALREADY promoted, not only what would have.
     /// The eviction is queued and applied at the next query setup, so the
     /// count is taken after a further goal has run.</summary>
-    /// <summary>off evicts what is promoted, whatever that is. Set up by
-    /// turning the threshold on directly, which is the order that does
-    /// promote (see the note above), so the eviction has something to do.
-    /// </summary>
     [Fact]
     public void OffReturnsAlreadyPromotedPredicatesToTierZero()
     {
-        var e = new PrologEngine();
-        e.IlPromotion.Threshold = 0;
-        e.ConsultString(Corpus);
-        e.IlPromotion.Threshold = 1;
+        var e = Engine();
+        Assert.True(e.Query("jit_compile(all).").Success);
         Assert.True(e.Query(Work).Success);
-        Assert.NotEmpty(e.IlPromotion.PromotedFunctorIds());
+        Assert.True(PromotedAfterDraining(e) > 0);
 
         Assert.True(e.Query("jit_compile(off).").Success);
         Assert.True(e.Query("true.").Success);
@@ -93,15 +98,9 @@ public sealed class JitCompileBuiltinTests
         Assert.True(e.Query("numlist(1, 30, L), len(L, N), N =:= 30.").Success);
     }
 
-    /// <summary>A threshold leaves the rarely-called ones behind, which is
-    /// the whole difference between it and "all".
-    ///
-    /// <para>Counted as each engine's OWN delta across the same goal, not as
-    /// totals: an engine starts with whatever its bundle already carries, and
-    /// that varies with what else has run in the process. Comparing the
-    /// totals passed alone and failed in the full suite.</para></summary>
-    /// <summary>Kept because it compares two engines set up the SAME way, so
-    /// whatever the promotion order does, it does it to both.</summary>
+    /// <summary>A huge threshold leaves the rarely-called ones behind, which
+    /// is the whole difference between it and "all". Both counts are drained
+    /// first, so the comparison is between settled numbers.</summary>
     [Fact]
     public void AThresholdPromotesLessThanAll()
     {
@@ -111,6 +110,7 @@ public sealed class JitCompileBuiltinTests
             Assert.True(e.Query($"jit_compile({mode}).").Success);
             var before = new HashSet<int>(e.IlPromotion.PromotedFunctorIds());
             Assert.True(e.Query(Work).Success);
+            Assert.True(e.IlPromotion.WaitForPendingPromotions());
             return e.IlPromotion.PromotedFunctorIds().Count(f => !before.Contains(f));
         }
 
@@ -162,12 +162,9 @@ public sealed class JitCompileBuiltinTests
 
     /// <summary>The mode is engine state, so a directive in a consulted file
     /// sets it for what follows -- the point of the builtin over a top-level
-    /// command is that a Prolog harness can ask for the tier itself.
-    ///
-    /// <para>Asserted on the MODE and not on a promotion count: what promotes
-    /// depends on what the engine already carries, and counting it here
-    /// passed alone and failed in the full suite. That the mode leads to
-    /// promotion is what the tests above are for.</para></summary>
+    /// command is that a Prolog harness can ask for the tier itself. And it
+    /// leads to real promotion, checked after the background compiles drain.
+    /// </summary>
     [Fact]
     public void ADirectiveSetsTheMode()
     {
@@ -176,10 +173,13 @@ public sealed class JitCompileBuiltinTests
         e.ConsultString(":- jit_compile(all).\n" + Corpus);
         Assert.Equal(1, e.IlPromotion.Threshold);
         Assert.True(e.Query(Work).Success);
+        Assert.True(PromotedAfterDraining(e) > 0,
+            "a :- jit_compile(all) directive then a goal promoted nothing");
 
         var off = new PrologEngine();
         off.ConsultString(":- jit_compile(off).\n" + Corpus);
         Assert.Equal(0, off.IlPromotion.Threshold);
         Assert.True(off.Query(Work).Success);
+        Assert.Empty(off.IlPromotion.PromotedFunctorIds());
     }
 }
