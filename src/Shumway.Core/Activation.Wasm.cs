@@ -27,6 +27,8 @@ public sealed partial class Activation
         /// means there is none and get_attr/3 exits to the host.</summary>
         long AttrTableBase = 0,
         int AttrTableMask = 0,
+        long FdDomFunctorBase = 0,
+        int FdDomFunctorLength = 0,
         /// <summary>Base and length of the call-marker table. A zero base
         /// means a meta-call steps aside.</summary>
         long CallMarkerBase = 0,
@@ -132,6 +134,8 @@ public sealed partial class Activation
         m[WasmAbi.FunctorTableBase] = bases.FunctorTableBase;
         m[WasmAbi.AttrTableBase] = bases.AttrTableBase;
         m[WasmAbi.AttrTableMask] = bases.AttrTableMask;
+        m[WasmAbi.FdDomFunctorBase] = bases.FdDomFunctorBase;
+        m[WasmAbi.FdDomFunctorLength] = bases.FdDomFunctorLength;
         m[WasmAbi.CallMarkerBase] = bases.CallMarkerBase;
         m[WasmAbi.CallMarkerLength] = bases.CallMarkerLength;
         m[WasmAbi.MetaCacheBase] = bases.MetaCacheBase;

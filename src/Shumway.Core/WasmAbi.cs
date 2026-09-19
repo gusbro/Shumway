@@ -270,7 +270,25 @@ public static class WasmAbi
     public const string TableModule = "env";
     public const string TableField = "__indirect_function_table";
 
-    public const int SlotCount = 46;
+    /// <summary>Base of the '$fd_dom' functor cells, indexed by INTERVAL
+    /// COUNT: entry k is the functor of a domain with k intervals, which has
+    /// arity 2k (ADR-051). Zero means the table does not reach that far and
+    /// the module exits to the host, the same safe direction an unwritten
+    /// base gives everywhere else.
+    ///
+    /// <para>The module needs this because a domain's functor depends on how
+    /// many intervals it ends up with, and interning one is the host's. A
+    /// removal that splits an interval or empties one changes the count; the
+    /// rest reuse the functor already on the heap and never read this.</para>
+    /// </summary>
+    public const int FdDomFunctorBase = 46;
+
+    /// <summary>Entries in the table above: interval counts 0 through
+    /// Length - 1. A domain more fragmented than that exits to the host.
+    /// </summary>
+    public const int FdDomFunctorLength = 47;
+
+    public const int SlotCount = 48;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

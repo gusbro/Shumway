@@ -237,6 +237,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ModuleIndexBase: _w.ModuleIndexAddress(),
                 AttrTableBase: AttrMirrorAddress(),
                 AttrTableMask: _engine.AttrMirrorMask,
+                FdDomFunctorBase: FdDomFunctorAddress(),
+                FdDomFunctorLength: FdDomFunctorTable.Cells.Length,
                 CallMarkerBase: CallMarkerAddress(),
                 CallMarkerLength: _w._table.CallMarkers.Length,
                 MetaCacheBase: MetaCacheAddress(),
@@ -248,6 +250,19 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                     "a mode-incompatible activation reached the wasm world");
             _engineAuthoritative = false;
             DiagStageTicks += Stopwatch.GetTimestamp() - t0;
+        }
+
+        /// <summary>The '$fd_dom' functor table's address (ADR-051). Pinned
+        /// ONCE: the contents are interned at startup and never change, so
+        /// unlike every other area here there is nothing to repin.</summary>
+        private static GCHandle _fdDomPin;
+
+        private static long FdDomFunctorAddress()
+        {
+            if (!_fdDomPin.IsAllocated)
+                _fdDomPin = GCHandle.Alloc(FdDomFunctorTable.Cells,
+                                           GCHandleType.Pinned);
+            return (long)_fdDomPin.AddrOfPinnedObject();
         }
 
         /// <summary>The atom marker table's address, repinning when the host

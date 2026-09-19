@@ -771,9 +771,10 @@ public static class WasmPredicateCompiler
             // The second domain's heap index, for the contents comparison.
             // Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
-            // The copy cursor when a domain is rebuilt. Appended last, same
+            // The copy cursor when a domain is rebuilt, and the two the
+            // count-changing rebuild needs beside it. Appended last, same
             // rule.
-            new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2487,6 +2488,214 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
+        /// <summary>Writes the rebuilt domain and unifies it. The functor is
+        /// in LC0, the resulting arity in LDomI, and the source is LDomBase2
+        /// (the structure) with LT2 the offset of the low bound of the
+        /// interval being changed.
+        ///
+        /// <para>Three spans: the bounds before the interval, what replaces
+        /// it (nothing when it disappears, four bounds when it splits), and
+        /// the bounds after. Written in that order into fresh heap.</para>
+        /// </summary>
+        private void EmitDomRebuildBody(int pc, int deltaIntervals, Action? load2)
+        {
+            // Room for the functor and every bound, before anything is
+            // written. The count is a run-time value, so this is the dynamic
+            // form of EmitHeapGuard.
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LDomI));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            EmitDeopt(pc, 19);
+            CloseNested();
+
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LT0Alt));                       // the new structure
+
+            CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            // The bounds before the interval: source indices 1 .. LT2.
+            Op(new Int32Constant(1));
+            Op(new LocalSet(LDomJ));
+            OpenBlock();
+            OpenLoop();
+            {
+                Op(new LocalGet(LDomJ));
+                Op(new LocalGet(LT2));
+                Op(new Int32GreaterThanSigned());
+                Op(new BranchIf(1));
+                EmitCopyBound();
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+
+            if (deltaIntervals > 0)
+            {
+                // lo, V - 1, V + 1, hi.
+                EmitStoreBound(() => Op(new LocalGet(LC1)));
+                EmitStoreBound(() =>
+                {
+                    Op(new LocalGet(LDomB));
+                    Op(new Int64Constant(1));
+                    Op(new Int64Subtract());
+                    EmitIntCellFromI64();
+                });
+                EmitStoreBound(() =>
+                {
+                    Op(new LocalGet(LDomB));
+                    Op(new Int64Constant(1));
+                    Op(new Int64Add());
+                    EmitIntCellFromI64();
+                });
+                EmitStoreBound(() => Op(new LocalGet(LC2)));
+            }
+
+            // The bounds after it: source indices LT2 + 3 .. arity.
+            Op(new LocalGet(LT2));
+            Op(new Int32Constant(3));
+            Op(new Int32Add());
+            Op(new LocalSet(LDomJ));
+            OpenBlock();
+            OpenLoop();
+            {
+                Op(new LocalGet(LDomJ));
+                Op(new LocalGet(LT1));
+                Op(new Int32GreaterThanSigned());
+                Op(new BranchIf(1));
+                EmitCopyBound();
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+
+            EmitUnifyTwo(load2 ?? (() => RegLoad(2)), () =>
+            {
+                Op(new LocalGet(LT0Alt));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Constant((long)Tag.Str << 60));
+                Op(new Int64Or());
+            }, pc);
+        }
+
+        /// <summary>heap[LH++] = heap[LDomBase2 + LDomJ++], the copy step both
+        /// spans share.</summary>
+        private void EmitCopyBound()
+        {
+            Op(new LocalGet(LHeapB));
+            Op(new LocalGet(LDomBase2));
+            Op(new LocalGet(LDomJ));
+            Op(new Int32Add());
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int64Load());
+            Op(new LocalSet(LC0));
+            CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+            Op(new LocalGet(LDomJ));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LDomJ));
+        }
+
+        /// <summary>heap[LH++] = the cell the callback pushes.</summary>
+        private void EmitStoreBound(Action cell)
+        {
+            CellStoreDyn(LHeapB, LH, 0, cell);
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        /// <summary>An i64 value on the stack becomes an Int cell.</summary>
+        private void EmitIntCellFromI64()
+        {
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int64Constant((long)Tag.Int << 60));
+            Op(new Int64Or());
+        }
+
+        /// <summary>Rebuilds a domain whose interval COUNT changed, and
+        /// unifies it with the output argument.
+        ///
+        /// <para><paramref name="deltaIntervals"/> is -1 when the interval
+        /// held only the value being removed and disappears, and +1 when the
+        /// value is strictly inside and splits it. The functor comes from the
+        /// table the host stages, indexed by the resulting count, because
+        /// interning one is not something a module can do. A count the table
+        /// does not reach reads as zero and exits to the host, which is the
+        /// same answer it gave before the table existed.</para>
+        ///
+        /// <para>Expects the scan's state: LT0 at the pair holding the value,
+        /// LT2 the offset of its low bound, LT1 the arity, LDomB the value,
+        /// LDomBase2 walked to the pair as well, LC1 and LC2 the two bounds.
+        /// Emitted inside the found arm, where $slow is one block out.</para>
+        /// </summary>
+        private void EmitDomRebuild(int pc, int deltaIntervals, Action? load2)
+        {
+            // The resulting arity, and the functor for it.
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(2 * deltaIntervals));
+            Op(new Int32Add());
+            Op(new LocalSet(LDomI));                        // new arity
+
+            // An empty result is the empty ATOM, not a zero-arity structure.
+            Op(new LocalGet(LDomI));
+            Op(new Int32Constant(0));
+            Op(new Int32LessThanOrEqualSigned());
+            OpenIf();
+            {
+                EmitUnifyTwo(load2 ?? (() => RegLoad(2)),
+                             () => Op(new Int64Constant(
+                                 _env.AtomCell(FdDomEmptyAtomId))), pc);
+            }
+            OpenElse();
+            {
+                // functorCells[newArity / 2], zero when the table stops short.
+                LoadSlot32(WasmAbi.FdDomFunctorBase);
+                Op(new LocalSet(LT0Alt));
+                Op(new LocalGet(LDomI));
+                Op(new Int32Constant(1));
+                Op(new Int32ShiftRightSigned());
+                Op(new LocalSet(LDomJ));                    // interval count
+                Op(new LocalGet(LDomJ));
+                LoadSlot32(WasmAbi.FdDomFunctorLength);
+                Op(new Int32GreaterThanOrEqualSigned());
+                // Depths here: 0 this else, 1 the found arm's if, 2 $absent,
+                // 3 $slow, 4 $done. Landing on $absent instead would unify
+                // the output with the domain that came IN, which is a wrong
+                // answer and not a slower one.
+                Op(new BranchIf(3));                        // past it -> $slow
+
+                Op(new LocalGet(LT0Alt));
+                Op(new LocalGet(LDomJ));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new LocalSet(LC0));                      // the functor cell
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(0));
+                Op(new Int64Equal());
+                Op(new BranchIf(3));                        // unfilled -> $slow
+
+                EmitDomRebuildBody(pc, deltaIntervals, load2);
+            }
+            CloseNested();
+        }
+
         /// <summary>$dom_del(+Dom, +V, -Out), answered in the module when it
         /// can be.
         ///
@@ -2531,15 +2740,22 @@ public static class WasmPredicateCompiler
                     CellLoadDyn(LHeapB, LT0, 2);
                     Op(new LocalSet(LC2));                  // hi cell
 
-                    // A one-value interval disappears, which changes the
-                    // interval count: the host's.
+                    // Three shapes, and which one decides the interval
+                    // COUNT of the result: a one-value interval disappears
+                    // (count - 1), a value strictly inside splits it
+                    // (count + 1), and a value at a bound narrows it (count
+                    // unchanged). Only the last reuses the functor on the
+                    // heap; the other two look theirs up by count.
                     Op(new LocalGet(LC1));
                     Op(new LocalGet(LC2));
                     Op(new Int64Equal());
-                    Op(new BranchIf(1));                    // -> $slow
+                    OpenIf();
+                    {
+                        EmitDomRebuild(pc, -1, load2);
+                        Op(new Branch(3));                  // -> $done
+                    }
+                    CloseNested();
 
-                    // Strictly inside: the interval splits in two. Also the
-                    // host's.
                     Op(new LocalGet(LDomB));
                     Op(new LocalGet(LC1));
                     Op(new Int64Constant(Cell.PayloadMask));
@@ -2553,7 +2769,12 @@ public static class WasmPredicateCompiler
                     EmitSignExtend60();
                     Op(new Int64NotEqual());
                     Op(new Int32And());
-                    Op(new BranchIf(1));                    // both -> $slow
+                    OpenIf();
+                    {
+                        EmitDomRebuild(pc, +1, load2);
+                        Op(new Branch(3));                  // -> $done
+                    }
+                    CloseNested();
 
                     // A bound moves in. Room for the functor and the bounds,
                     // checked before anything is written: the count is a
@@ -5813,6 +6034,8 @@ public static class WasmPredicateCompiler
         private const uint LDomB = 51;      // i64: $dom_same's second cell
         private const uint LDomBase2 = 52;  // i32: the second domain's heap index
         private const uint LDomI = 53;      // i32: the copy cursor
+        private const uint LDomJ = 54;      // i32: the second copy cursor
+        private const uint LT0Alt = 55;     // i32: scratch the scan's LT0 outlives
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

@@ -66,6 +66,21 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
                                      del_lo_loop(I1, N, D2, Out).
         run_del_lo(N, Out) :- '$dom_new'(1, 900, D), del_lo_loop(1, N, D, Out).
         unbounded(V) :- '$dom_new'(1, sup, D), '$dom_contains'(D, V).
+
+        % The interval is exactly the value: it disappears, and the count
+        % drops. With one interval the whole domain becomes the empty atom.
+        del_only(Out) :- '$dom_new'(7, 7, D), '$dom_del'(D, 7, Out).
+        % Two intervals, and the second is a single value that goes.
+        del_drop_one(Out) :- '$dom_new'(1, 6, D), '$dom_del'(D, 5, D2),
+                             '$dom_del'(D2, 6, Out).
+
+        % Fragmented past the functor table's reach. Each removal splits an
+        % interval, so after N of them the domain has N + 1 of them, and the
+        % module has no functor to build the next one with.
+        frag(I, N, D, D) :- I > N, !.
+        frag(I, N, D, Out) :- V is I * 2, '$dom_del'(D, V, D2),
+                              I1 is I + 1, frag(I1, N, D2, Out).
+        shredded(N, Out) :- '$dom_new'(1, 400, D), frag(1, N, D, Out).
         """;
 
     private static PrologEngine Plain()
@@ -120,6 +135,11 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
     [InlineData("del_second(Out), Out == '$fd_dom'(1, 4, 7, 9)")]
     [InlineData("run_del_lo(100, Out), Out == '$fd_dom'(101, 900)")]
     [InlineData("run_del_lo(1, Out), Out == '$fd_dom'(2, 900)")]
+    // Counts that CHANGE: a split (one interval becomes two) and an empty
+    // (one interval disappears). Through predicates, so they are promoted.
+    [InlineData("del_present(Out), Out == '$fd_dom'(1, 4, 6, 9)")]
+    [InlineData("del_only(Out), Out == '$fd_dom_empty'")]
+    [InlineData("del_drop_one(Out), Out == '$fd_dom'(1, 4)")]
     public void TheAnswerIsTheEnginesEitherWay(string goal)
     {
         Assert.True(Plain().Query($"{goal}.").Success, $"Tier-0: {goal}");
@@ -169,19 +189,52 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
         Assert.Equal(0, exits("$dom_del"));
     }
 
-    /// <summary>A removal that SPLITS an interval changes the interval count,
-    /// so it needs a functor the module cannot intern, and steps aside.
-    /// Anti-vacuity for the zero above.</summary>
+    /// <summary>A removal that changes the interval count is rebuilt in
+    /// the module too, taking its functor from the table the host stages.
+    /// Splitting an interval and emptying one are both this.
+    ///
+    /// <para>This test asserted the opposite until the table existed, which
+    /// is what it was: the module cannot intern a functor, so the host had
+    /// to. Now it can look one up.</para></summary>
     [DiagFact]
-    public void ARemovalThatSplitsStepsAside()
+    public void ARemovalThatChangesTheCountIsRebuiltInTheModule()
+    {
+        foreach (string p in new[] { "del_present", "del_only", "del_drop_one" })
+        {
+            var (tier, exits) = Tier();
+            tier.Query($"{p}(_).");                     // warm: promotes it
+            WasmTierDelegate.ResetDiag();
+            Assert.True(tier.Query($"{p}(_).").Success, p);
+            o.WriteLine($"{p}: $dom_del exits {exits("$dom_del")}");
+            Assert.Equal(0, exits("$dom_del"));
+        }
+    }
+
+    /// <summary>The functor table is a valve, not a semantic limit: a domain
+    /// fragmented past its reach exits to the host, which answers it exactly
+    /// as it always did. Anti-vacuity for the zeros above, and the only
+    /// remaining way a removal reaches the host.</summary>
+    [DiagFact]
+    public void ADomainFragmentedPastTheTableStepsAside()
     {
         var (tier, exits) = Tier();
-        tier.Query("del_present(_).");                  // warm: promotes it
+        tier.Query("shredded(4, _).");                  // warm: promotes it
         WasmTierDelegate.ResetDiag();
-        Assert.True(tier.Query("del_present(_).").Success);
+        // 70 splits: past the table's 64 intervals, so the last few cannot
+        // be built in the module.
+        Assert.True(tier.Query("shredded(70, _).").Success);
+        o.WriteLine($"$dom_del exits for 70 splits: {exits("$dom_del")}");
         Assert.True(exits("$dom_del") >= 1,
-            "a removal that splits an interval was answered without the "
-            + "host, and the module cannot intern the functor it needs");
+            "a domain fragmented past the functor table was still rebuilt in "
+            + "the module, which has no functor for it");
+
+        // And the answer is the engine's: compared against Tier-0, not
+        // against itself, which is what a wrong rebuild would have passed.
+        var plain = Plain();
+        var t0 = plain.Query("shredded(70, Out), with_output_to(atom(A), writeq(Out)).");
+        var t1 = tier.Query("shredded(70, Out), with_output_to(atom(A), writeq(Out)).");
+        Assert.True(t0.Success && t1.Success);
+        Assert.Equal(t0.Bindings["A"].ToString(), t1.Bindings["A"].ToString());
     }
 
     [DiagFact]

@@ -188,7 +188,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
-        private int _attrAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
+        private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -241,7 +241,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // may be unaligned (the align immediate is a hint), so no test
             // can fail on dropping this -- do not go looking for one.
             _attrAt = (_moduleIndexAt + moduleCount * 4 + 7) & ~7;
-            _callMarkerAt = _attrAt + attrRows.Length * 8;
+            _fdDomAt = _attrAt + attrRows.Length * 8;
+            _callMarkerAt = _fdDomAt + FdDomFunctorTable.Cells.Length * 8;
             _metaCacheAt = (_callMarkerAt + callMarkers.Length * 4 + 7) & ~7;
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
             if (_atomMarkerAt + atomMarkers.Length * 4 > (long)Pages * 65536)
@@ -260,6 +261,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ModuleIndexBase: _moduleIndexAt,
                 AttrTableBase: attrRows.Length > 0 ? _attrAt : 0,
                 AttrTableMask: _engine.AttrMirrorMask,
+                FdDomFunctorBase: _fdDomAt,
+                FdDomFunctorLength: FdDomFunctorTable.Cells.Length,
                 CallMarkerBase: _callMarkerAt,
                 CallMarkerLength: callMarkers.Length,
                 MetaCacheBase: _metaCacheAt,
@@ -311,6 +314,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             fixed (long* p = attrRows)
                 Buffer.MemoryCopy(p, mem + _attrAt, attrRows.Length * 8L,
                                   attrRows.Length * 8L);
+            // Copied once per staging, and it is 520 bytes: the contents
+            // never change, but the ADDRESS moves when the areas before it
+            // grow, so there is nothing to compare against that is cheaper
+            // than the copy.
+            fixed (long* p = FdDomFunctorTable.Cells)
+                Buffer.MemoryCopy(p, mem + _fdDomAt, FdDomFunctorTable.Cells.Length * 8L,
+                                  FdDomFunctorTable.Cells.Length * 8L);
             // Copied only when it actually changed: install and eviction are
             // the only writers, so a run that promotes nothing copies this
             // once. Without the check queens re-copies 8 KB on each of its
