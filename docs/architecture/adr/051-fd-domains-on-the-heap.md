@@ -259,7 +259,10 @@ What was audited, each with a test:
    domain operation reaches the host any more. Against the 23,262 the arc
    started from, -89%, with inferences and heap cells unchanged
    throughout.
-7. What remains is not domains: put_attr/3 (1,035) and the wakeups
-   ($wake_hook_goal, $get_cut_barrier, 519 each). And the number that
-   still has to be measured is TIME, in a browser, where a builtin exit
-   costs what it costs.
+7. MEASURED. Headless Edge, one machine, the arc's HEAD against the commit
+   before phase 0, best-of-ABBA (the #wasmfd hook): queens_fd(9) under
+   jit_compile(all) went from 10,360 ms to 2,365 ms, a 4.4x from the arc
+   alone, with plain queens as the control moving 10% between the runs. The
+   off/all ratio for queens_fd went from 2.0x to 5.6x.
+8. What remains is not domains: put_attr/3 (1,035) and the wakeups
+   ($wake_hook_goal, $get_cut_barrier, 519 each).

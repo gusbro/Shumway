@@ -1942,6 +1942,84 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash.startsWith('#wasmfd')) {
+  // #wasmfd, or #wasmfd=<n>x<rounds>: finite-domain queens under
+  // jit_compile(all) against jit_compile(off), with plain queens as the
+  // control, ABBA within each round so drift cancels. Feeds ADR-051's
+  // "measure it in a browser" step; wall-clock is legitimate here and only
+  // here (CONTRIBUTING.md).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmfd=(\d+)x(\d+)$/.exec(location.hash);
+    const n = spec ? Number(spec[1]) : 8;
+    const rounds = spec ? Number(spec[2]) : 2;
+    emit(`--- wasm fd: queens(${n}) x${rounds} rounds ---\n`);
+    mark(`fd: starting n=${n} rounds=${rounds}`);
+
+    await session.consult(
+      ':- use_module(library(clpfd)).\n' +
+      'queens(N, Qs) :- numlist(1, N, Ns), permutation(Ns, Qs), safe(Qs).\n' +
+      'safe([]).\n' +
+      'safe([Q|Qs]) :- no_attack(Q, Qs, 1), safe(Qs).\n' +
+      'no_attack(_, [], _).\n' +
+      'no_attack(Q, [R|Rs], D) :- Q =\\= R + D, Q =\\= R - D, D1 is D + 1, no_attack(Q, Rs, D1).\n' +
+      'queens_fd(N, Qs) :- length(Qs, N), Qs ins 1..N, all_different(Qs), diagonals(Qs), label(Qs).\n' +
+      'diagonals([]).\n' +
+      'diagonals([Q|Qs]) :- no_diag(Q, Qs, 1), diagonals(Qs).\n' +
+      'no_diag(_, [], _).\n' +
+      'no_diag(Q, [R|Rs], D) :- Q #\\= R + D, Q #\\= R - D, D1 is D + 1, no_diag(Q, Rs, D1).\n');
+
+    async function run(goal) {
+      const t0 = performance.now();
+      const err = await session.start(
+        `findall(x, ${goal}, L), length(L, C).`);
+      if (err) return { ms: -1, text: 'start error: ' + err };
+      const r = await session.next(3600);
+      return { ms: performance.now() - t0, text: JSON.stringify(r) };
+    }
+
+    async function mode(m) {
+      const rep = await session.exports().JitCompileControl(m);
+      // The eviction a jit_compile(off) queues applies at the NEXT query
+      // setup, so run one before measuring anything.
+      await session.start('true.'); await session.next(5);
+      return rep;
+    }
+
+    const best = { };
+    const note = (k, ms) => {
+      if (ms >= 0 && (!(k in best) || ms < best[k])) best[k] = ms;
+    };
+    for (let r = 0; r < rounds; r++) {
+      // ABBA: off, all, all, off.
+      for (const m of ['off', 'all', 'all', 'off']) {
+        await mode(m);
+        for (const g of [`queens_fd(${n}, _)`, `queens(${n}, _)`]) {
+          const res = await run(g);
+          const key = `${g.split('(')[0]} ${m}`;
+          note(key, res.ms);
+          mark(`fd: round ${r} ${m} ${g} -> ${Math.round(res.ms)}ms ${res.text}`);
+        }
+      }
+    }
+    const line = (p) => {
+      const off = best[`${p} off`], all = best[`${p} all`];
+      return `${p} n=${n}: off ${Math.round(off)}ms, all ${Math.round(all)}ms, ` +
+             `speedup x${(off / all).toFixed(2)}`;
+    };
+    const report = `wasm fd bench (best of ${rounds} ABBA rounds)\n` +
+                   line('queens_fd') + '\n' + line('queens') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmfd';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm fd CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
 } else if (location.hash.startsWith('#wasmgrain')) {
   // #wasmgrain, or #wasmgrain=<rounds>: the many-modules measurement --
   // the same programs batch (one module per consult), eager (the batch's
