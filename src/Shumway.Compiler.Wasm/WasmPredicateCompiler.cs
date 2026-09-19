@@ -54,6 +54,7 @@ public static class WasmPredicateCompiler
     {
         var c = new Compilation(members, env, moduleId);
         c.Decode();
+        c.RejectIfCrossingsDominate();
         c.AssignCursors();
         byte[] bytes = c.Emit();
         if (shared) bytes = WasmSharedMemory.Patch(bytes);
@@ -266,11 +267,161 @@ public static class WasmPredicateCompiler
             }
         }
 
+        // Per-member (per-section) cost census, filled by Census during
+        // Decode. sureExits are opcodes that ALWAYS cross to the host when
+        // run (a C# builtin with no inline form -- catch_begin/end, put_attr,
+        // most of the registry); compilable are the ones that run inside the
+        // module. A call to another predicate is neither: its cost belongs to
+        // the callee, which promotes or not on its own (ADR: static promotion
+        // census, 2026-09).
+        private int[]? _sureExits;
+        private int[]? _compilable;
+
+        /// <summary>Refuses to promote a member whose guaranteed host
+        /// crossings are not paid for by the work that runs in the module.
+        ///
+        /// <para>The shape this exists for is catch/3 around a call
+        /// (deep3/perftest1.pl): $catch_begin and $catch_end are two host
+        /// crossings per execution, the body is one `is`, and the recursion
+        /// is a call whose cost is the callee's. Promoted, it ran 24x SLOWER
+        /// than Tier-0 in a desktop measurement -- 40,000 crossings for
+        /// 20,000 levels. The census is a by-product of the decode pass that
+        /// already visits every opcode, so it costs nothing at run time,
+        /// which is the whole reason it is static and not measured: measuring
+        /// would tax every module that runs WELL.</para>
+        ///
+        /// <para>The bar is deliberately low -- reject only when crossings
+        /// EQUAL OR OUTNUMBER the compilable work -- so it catches the clear
+        /// losers (deep3) without second-guessing predicates that gain today.
+        /// A member with no crossings at all is never in question.</para>
+        /// </summary>
+        public void RejectIfCrossingsDominate()
+        {
+            if (_sureExits is null) return;
+            for (int sec = 0; sec < _members.Count; sec++)
+            {
+                int exits = _sureExits[sec];
+                // A single crossing never disqualifies. A one-line wrapper
+                // over a C# builtin (clpfd_iv/3 and friends) crosses once
+                // whether it is promoted or not -- promoted it exits mid-
+                // chain, refused it closes and reopens the chain -- so
+                // refusing it buys nothing and measured WORSE on queens_fd
+                // (chains 1,459 -> 2,669 for 174 fewer exits). The damage
+                // this census exists for starts at TWO crossings per pass,
+                // which is what catch/3 costs.
+                if (exits < 2) continue;
+                // What one host crossing costs, measured in compilable ops
+                // it takes to pay for it. The honest number is in the
+                // hundreds (a crossing is microseconds, an op's wasm gain is
+                // nanoseconds), but the census counts TEXT, not executions:
+                // a hot loop re-runs its compilable ops thousands of times
+                // per crossing elsewhere (clpfd does exactly that and wins
+                // 5.6x WITH crossings in its text). So the weight stays low
+                // on purpose: catch only the bodies whose text is dominated
+                // by crossings -- deep3 and its catch helper -- and leave
+                // anything with real work alone.
+                const int CrossingWeight = 8;
+                if (exits * CrossingWeight >= _compilable![sec])
+                {
+                    var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
+                        _members[sec].Predicate.FunctorId);
+                    string name = Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?";
+                    throw new WasmCompileException(
+                        $"{name}/{ar}: {exits} host crossings against "
+                        + $"{_compilable[sec]} compilable ops -- promoting it "
+                        + "would cross more than it runs");
+                }
+            }
+        }
+
+        /// <summary>Whether a builtin has a form the emitter runs INSIDE the
+        /// module rather than exiting to the host. The one place that answer
+        /// lives: EmitCall dispatches on exactly these, and the census reads
+        /// the same list, so the two cannot drift on which builtins stay in
+        /// wasm.</summary>
+        /// <summary>Classifies one instruction into the cost census. Called
+        /// from Census, so it rides the decode pass. Default is compilable:
+        /// the exits and the neutrals are enumerated, everything else runs in
+        /// the module.</summary>
+        private void CostCensus(Instr ins)
+        {
+            _sureExits ??= new int[_members.Count];
+            _compilable ??= new int[_members.Count];
+            int sec = ins.Section;
+            switch (ins.Op)
+            {
+                // A call to another predicate: its work is the callee's, and
+                // it reaches the callee by a local jump or an in-wasm hop, so
+                // it is neither a crossing nor this member's compilable work.
+                //
+                // EXCEPT a call to this predicate's own '$catchgoal_N' helper.
+                // catch/3 in a body is rewritten to that call (MetaTransform.
+                // RewriteCatch), and the helper's $catch_begin/$catch_end are
+                // the CALLER's catch: two host crossings every time this body
+                // runs, owned here even though the opcodes sit in the helper.
+                // Counting them only in the helper let deep3 promote with
+                // "zero" crossings and bounce wasm-host-wasm on every level.
+                // Matching by name is the established contract for these
+                // helpers (BundleWriter does the same).
+                case Opcode.Call:
+                case Opcode.Execute:
+                case Opcode.DeallocateExecute:
+                case Opcode.DeallocateProceed:
+                case Opcode.Proceed:
+                case Opcode.CutProceed:
+                case Opcode.CutDeallocateProceed:
+                // Frame and clause control: bookkeeping, not work that a
+                // crossing has to be weighed against.
+                case Opcode.Allocate:
+                case Opcode.AllocateGetLevel:
+                case Opcode.Deallocate:
+                case Opcode.TryMeElse:
+                case Opcode.RetryMeElse:
+                case Opcode.TrustMe:
+                case Opcode.Try:
+                case Opcode.Retry:
+                case Opcode.Trust:
+                case Opcode.Jump:
+                case Opcode.Meta:
+                    if (ins.Op is Opcode.Call or Opcode.Execute or Opcode.DeallocateExecute
+                        && _callee.TryGetValue(ins.Pc, out int callee))
+                    {
+                        var (aid, _) = Shumway.Core.FunctorTable.Lookup(callee);
+                        string nm = Shumway.Core.AtomTable.GetById(aid)?.Name ?? "";
+                        if (nm.Contains("$catchgoal_")) _sureExits[sec] += 2;
+                    }
+                    return;
+                case Opcode.CallBuiltin:
+                case Opcode.ExecuteBuiltin:
+                    if (BuiltinHasInlineForm(ins.I0)) _compilable[sec]++;
+                    else _sureExits[sec]++;      // a guaranteed host crossing
+                    return;
+                default:
+                    _compilable[sec]++;          // runs in the module
+                    return;
+            }
+        }
+
+        private bool BuiltinHasInlineForm(int builtinId)
+            => _env.IsInlineUnify(builtinId)
+            || _env.IsInlineCompare(builtinId, out _)
+            || (_env.TryGetInlineTypeTest(builtinId, out var t) && t != WasmTypeTest.None)
+            || _env.IsInlineGetAttr(builtinId)
+            || _env.IsInlineDomSame(builtinId)
+            || _env.IsInlineDomEmpty(builtinId)
+            || _env.IsInlineDomContains(builtinId)
+            || _env.IsInlineDomDel(builtinId)
+            || _env.IsInlineDomSingleton(builtinId)
+            || _env.IsInlineMetaCall(builtinId)
+            || _env.IsInlineBarrierCall(builtinId);
+
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
         /// it stays on the tier it was on.</summary>
         private void Census(Instr ins)
         {
+            CostCensus(ins);
+
             switch (ins.Op)
             {
                 case Opcode.SwitchOnTerm:
