@@ -250,9 +250,16 @@ What was audited, each with a test:
    remove: 503 of 1,226 on queens_fd(7), 63% on send+more=money. Desktop
    counts: builtin exits 3,882 -> 3,379, $dom_del 1,226 -> 723. Against
    the 23,262 the arc started from, -85%.
-6. What is left of the domain exits is $dom_del where the value IS
-   present (1,226), which has to build a domain. The module can allocate
-   on the heap, but a domain's functor depends on the resulting interval
-   count and the module cannot intern one, so this needs a small table of
-   '$fd_dom' functors by arity in the mailbox. That is new ABI, which is
-   why it is its own step rather than part of phase 3.
+6. DONE. $dom_del rebuilds whatever the removal does to the interval
+   count, taking the functor it needs from a table of '$fd_dom' functors
+   the host stages, indexed by interval count. Its 64-interval reach is a
+   valve: past it the module exits to the host, which answers as it
+   always did.
+   queens_fd(7): builtin exits 3,379 -> 2,656, $dom_del 723 -> 0. No
+   domain operation reaches the host any more. Against the 23,262 the arc
+   started from, -89%, with inferences and heap cells unchanged
+   throughout.
+7. What remains is not domains: put_attr/3 (1,035) and the wakeups
+   ($wake_hook_goal, $get_cut_barrier, 519 each). And the number that
+   still has to be measured is TIME, in a browser, where a builtin exit
+   costs what it costs.
