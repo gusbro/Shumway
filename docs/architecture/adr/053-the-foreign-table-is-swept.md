@@ -2,10 +2,10 @@
 
 ## Status
 
-Proposed (2026-09-19). Changes what the heap collector does at the end of a
-collection and the lifetime of a managed object the engine holds on a
-Prolog program's behalf, which `docs/architecture/decision-policy.md` names
-a major decision. Companion to ADR-052, which did the same for the
+Accepted and implemented (2026-09-19). Changes what the heap collector does
+at the end of a collection, and the lifetime of a managed object the engine
+holds on a Prolog program's behalf, which
+`docs/architecture/decision-policy.md` names a major decision. Companion to ADR-052, which did the same for the
 attribute table; ADR-051 removed this table's highest-rate producer.
 
 ## Context
@@ -74,10 +74,10 @@ The objects are not small. A `TermSlot` holds a whole AST `Term` (and a
 `HashSet<int>` with one entry per live attributed variable. The retained
 slot is 8 bytes; the retained *object* is the cost.
 
-### What the collector knows about a foreign cell today
+### What the collector knew about a foreign cell
 
-Nothing. `Tag.Foreign` has no case in `GcMarkReferents` and falls through
-to the leaf default, so a foreign cell is traced as an opaque value. The
+Nothing. Before this ADR, `Tag.Foreign` had no case in `GcMarkReferents`
+and fell through to the leaf default, so a foreign cell is traced as an opaque value. The
 collector walks `_foreignTable` exactly once, to relocate `AttrSnapshot`
 homes, and never to decide whether an entry is still referenced.
 
@@ -145,18 +145,61 @@ program with an empty table pays nothing. The table is empty for every
 program that does not use native reftypes or `call_residue_vars/2`, which
 after ADR-051 is nearly all of them.
 
-### Verification
+### Verification, and what it found
 
-- The measurement table above, re-run: the foreign rows must fall to the
-  live count after a collection, where today they stay flat.
-- **Red first**: a foreign object held only in a Y slot across a collection
-  must still resolve. Without step 1 it must fail.
-- A `TermSlot` written through a native block, collected over, then read
-  back through `reftype_term`.
-- `call_residue_vars/2` across a forced collection (ADR-052 already added
-  this test; it must keep passing with the snapshot's slot swept).
-- The debugger's attvar transplant over a collection, which is the hazard
-  above.
+**Red first, and it was.** With the sweep in and step 1 out, three
+soundness tests failed together: a foreign object reachable from a
+register, one reachable only through a compound on the heap, and a dead
+entry under a live one. All three went green when the `Tag.Foreign` case
+landed.
+
+**The leak is observable from Prolog**, which is how it is pinned rather
+than through an internal counter. Ids are positional, so the id the engine
+hands to the next slot says how big the table is, and a foreign cell
+renders as `'$foreign'(N)` in a binding:
+
+```
+3,000 abandoned slots, no collection   -> next id 3000
+3,000 abandoned slots, then collect    -> next id 0
+```
+
+(The compound is a RENDERING, not a term that unifies: `S = '$foreign'(N)`
+fails. The id is readable from the binding and nowhere else, which is worth
+knowing before writing a test against it.)
+
+**ADR-052 and this ADR compose, and the composition needed its own test.**
+An attribute can hold a foreign object, and then the only path to the id
+runs: root -> variable -> (ADR-052's `AttVar` edge) -> attribute value ->
+(this ADR's `Foreign` edge) -> id. Either edge missing and the object is
+swept under a live attribute. Both directions are pinned: an attribute
+holding a slot survives a collection, and 2,000 slots behind abandoned
+attributed variables come back (next id 0).
+
+Also covered: a slot still WRITABLE after a collection, not merely
+readable; a slot reachable only inside a compound; and
+`call_residue_vars/2` across a forced collection, which ADR-052 added and
+which now also exercises sweeping the snapshot's own slot.
+
+### Notes from the implementation
+
+**Liveness, not null-ness, and a test says why.** `MakeForeign` accepts
+null, so a swept entry and one a program stored on purpose are
+indistinguishable by value. Shrinking the tail on null-ness would drop a
+live id off the end and turn the next `AsForeign` into an
+index-out-of-range thrown out of the engine.
+`AnIntentionalNullEntryIsStillALiveId` is that trap, written down.
+
+**A collection returns early on an empty heap** (`oldTop == 0`), so a
+mechanism test that sets up only registers and a foreign object asserts
+nothing at all. Three of these tests passed vacuously until each was given
+a heap cell to collect.
+
+**The probes share the mark phase but not the sweep.**
+`HeapLiveProbe` and `HeapRootAttributionProbe` run `GcMarkReferents`
+without resetting the live set, so they write into the previous
+collection's bitmap. That is harmless because `CollectHeap` clears it
+before every real mark and the writes are bounds-guarded, but it is the
+reason the reset lives in `CollectHeap` and not in the mark helpers.
 
 ## Alternatives considered
 

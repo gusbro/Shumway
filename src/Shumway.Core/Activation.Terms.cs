@@ -141,6 +141,37 @@ public sealed partial class Activation
         return Cell.Foreign(id);
     }
 
+    /// <summary>ADR-053: releases every foreign object the collector just
+    /// disproved. <paramref name="live"/> is the per-collection bitmap the
+    /// trace filled from the FOREIGN cells it reached; an id outside it is
+    /// named by nothing reachable.
+    ///
+    /// <para>Dead entries are NULLED rather than removed, so every surviving
+    /// id keeps meaning what it meant and no id is ever reused under a live
+    /// reference. Only the TAIL is actually removed, and only while its last
+    /// entry is dead -- which is the common append-then-die shape, and gives
+    /// the slots back without moving anything.</para>
+    ///
+    /// <para>Judged by LIVENESS, never by null-ness: <see cref="MakeForeign"/>
+    /// accepts null, so a program can store one on purpose, and shrinking on
+    /// null would drop a live id off the end and turn the next
+    /// <see cref="AsForeign(Cell)"/> into an index-out-of-range thrown out of
+    /// the engine.</para></summary>
+    private void ForeignSweepUnmarked(bool[]? live)
+    {
+        int n = _foreignTable.Count;
+        if (n == 0) return;
+        for (int i = 0; i < n; i++)
+            if (_foreignTable[i] is not null && !IsForeignLive(live, i))
+                _foreignTable[i] = null;
+        int top = n;
+        while (top > 0 && !IsForeignLive(live, top - 1)) top--;
+        if (top < n) _foreignTable.RemoveRange(top, n - top);
+    }
+
+    private static bool IsForeignLive(bool[]? live, int id)
+        => live is not null && id < live.Length && live[id];
+
     /// <summary>The foreign-table entry by raw id, or null when out of range. The
     /// debugger's attvar transplant reads a SUSPENDED activation's table with this to
     /// re-register the object on the evaluation activation (foreign ids are

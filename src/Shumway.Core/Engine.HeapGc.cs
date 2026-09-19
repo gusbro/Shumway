@@ -22,6 +22,22 @@ public sealed partial class Activation
     private int _gcMarkCount;
     private int[]? _gcForward;
     private int[]? _gcWork;
+    // ADR-053: which foreign ids the trace reached, this collection. Filled
+    // by GcMarkReferents' Foreign case -- the only place a FOREIGN cell is
+    // ever looked at -- and read once by the sweep.
+    private bool[]? _gcForeignLive;
+
+    /// <summary>ADR-053: clears the per-collection set of reached foreign
+    /// ids. Sized to the table, so a program that never makes a foreign
+    /// object allocates nothing and the sweep has nothing to do.</summary>
+    private void ResetForeignLiveSet()
+    {
+        int n = _foreignTable.Count;
+        if (n == 0) return;
+        if (_gcForeignLive is null || _gcForeignLive.Length < n)
+            _gcForeignLive = new bool[System.Math.Max(n, 16)];
+        else System.Array.Clear(_gcForeignLive, 0, n);
+    }
     // mark-phase state for the de-closured GcMarkCell /
     // GcMarkReferents (they were closure-capturing locals invoked through
     // Action<int> / Action<Cell> — a delegate call per register / stack
@@ -458,6 +474,7 @@ public sealed partial class Activation
         // remain only for the external OnGcMark hook.
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
+        ResetForeignLiveSet();
 
         MarkRoots(oldTop);
         // The attribute trail log, the wakeup queue and the cleanup handlers
@@ -483,6 +500,12 @@ public sealed partial class Activation
         // unrelated variable. Dropping them also stops the table itself
         // from growing without bound, which freeing their cells does not.
         AttrSweepUnmarked(marked, oldTop);
+
+        // ADR-053: and the same for the foreign table, off the ids the trace
+        // recorded. Before relocation for the same reason -- though the ids
+        // do not move, the AttrSnapshot relocation below walks this table and
+        // should not be handed entries the collector has disproved.
+        ForeignSweepUnmarked(_gcForeignLive);
 
         // ---- forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -914,6 +937,21 @@ public sealed partial class Activation
             }
             case Tag.Float:
                 GcMarkCell(c.FloatPairedIndex);
+                break;
+            case Tag.Foreign:
+                // ADR-053: the one place a FOREIGN cell is ever looked
+                // at. Recording the id here is what makes the foreign
+                // table a weak holder: an entry the trace never reaches
+                // is released by the sweep. Costs nothing for any other
+                // tag, which is why the edge lives here.
+                //
+                // Bounds-guarded like every other payload: the stack is
+                // scanned conservatively, so a stale slot can read as
+                // Foreign with an id past the table. Ignoring that is
+                // the safe direction -- it can only over-retain.
+                if (_gcForeignLive is { } fgn
+                    && (uint)c.AsForeignId < (uint)fgn.Length)
+                    fgn[c.AsForeignId] = true;
                 break;
             case Tag.Pstr:
             {

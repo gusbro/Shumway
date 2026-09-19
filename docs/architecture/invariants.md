@@ -158,6 +158,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
+- **The foreign table is a WEAK holder** — an entry lives only while a
+  FOREIGN cell naming it is reachable. Dead entries are NULLED (surviving
+  ids stay positional, so no id is reused under a live reference) and only
+  the tail is removed, while its last entry is provably dead. Judged by
+  liveness, never by null-ness: `MakeForeign` accepts null. (ADR-053.)
 - **The attribute table is a WEAK root** — a row does not keep its variable
   alive. The attribute value is reached from the live variable, never the
   variable from its row, and rows the trace disproves are swept before
