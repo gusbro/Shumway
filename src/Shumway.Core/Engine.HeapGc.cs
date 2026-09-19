@@ -460,11 +460,12 @@ public sealed partial class Activation
         _gcOldTop = oldTop;
 
         MarkRoots(oldTop);
-        // Attributed variables: the attr table is keyed by the variable's home
-        // heap index and its entries hold attribute-term indices, so both are
-        // roots. Same for the transient wakeup queue. Marking them is the half
-        // of "collect with attvars live" that is purely additive; relocating
-        // them is the other half.
+        // The attribute trail log, the wakeup queue and the cleanup handlers
+        // hold heap indices the heap walk does not reach, so they are roots.
+        // The attribute table is NOT one of them (ADR-052): its rows are
+        // reached through their own live variables and swept when they are
+        // not. Marking these is the half of "collect with attvars live" that
+        // is purely additive; relocating them is the other half.
         MarkExternalHolders(oldTop);
         // Pending b_setval restores hold old-value cells (possibly compounds).
         MarkExternalTrailRoots(GcMarkReferents);
@@ -474,6 +475,14 @@ public sealed partial class Activation
         // re-read the field each iteration.)
         while (_gcWorkTop > 0)
             GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
+
+        // ADR-052: the trace has now decided which attributed variables are
+        // reachable, so the rows of the ones that are not are garbage. They
+        // must go BEFORE relocation: a dead home relocates to wherever the
+        // next live cell landed, and the row would come to answer for an
+        // unrelated variable. Dropping them also stops the table itself
+        // from growing without bound, which freeing their cells does not.
+        AttrSweepUnmarked(marked, oldTop);
 
         // ---- forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -508,7 +517,7 @@ public sealed partial class Activation
 
         // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
-        RelocateExternalHolders(forward);
+        RelocateExternalHolders(forward, oldTop);
         RelocateExternalTrail(c => RelocateCell(c, forward));
         OnGcRelocate?.Invoke(
             idx => RelocIndex(idx, forward),
@@ -529,14 +538,14 @@ public sealed partial class Activation
     /// <para>The attribute trail log is the subtle one: it holds an attribute's
     /// PREVIOUS value so backtracking can restore it. Nothing else need
     /// reference that term — the current value replaced it — so without this it
-    /// is collected and backtracking restores a dangling index.</para></summary>
+    /// is collected and backtracking restores a dangling index.</para>
+    ///
+    /// <para>The attribute TABLE is deliberately absent (ADR-052). A row is
+    /// not a reason to keep its variable: it is reached through the variable
+    /// (GcMarkReferents' AttVar case), never the other way round, and the
+    /// rows the trace disproves are swept before relocation.</para></summary>
     private void MarkExternalHolders(int oldTop)
     {
-        foreach (var (home, _, attrValueIdx) in AttrAll())
-        {
-            if ((uint)home < (uint)oldTop) GcMarkCell(home);
-            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
-        }
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
             if (home == int.MinValue) continue;   // dead record (cut-dropped entry)
@@ -555,7 +564,7 @@ public sealed partial class Activation
     /// <summary>Relocates every external holder's heap indices. Runs in the
     /// same pass as the rest of the relocation: compaction reuses addresses, so
     /// an index left unmapped can come to name an unrelated cell.</summary>
-    private void RelocateExternalHolders(int[] forward)
+    private void RelocateExternalHolders(int[] forward, int oldTop)
     {
         // The attribute table is rebuilt: its KEYS are heap indices, so this is
         // a re-key, not an in-place edit.
@@ -581,12 +590,24 @@ public sealed partial class Activation
 
         // call_residue_vars snapshots observe by raw address and deliberately
         // do NOT retain, so they are relocated but never marked.
+        //
+        // ADR-052: which makes a DEAD home the hazard AttrSnapshot's own
+        // comment warns about -- RelocIndex on an unmarked index yields
+        // where the next live cell landed, so the entry would come to name
+        // an unrelated variable and '$attv_new_since' would read a
+        // genuinely new attributed variable as already-seen. An entry the
+        // collector did not mark is dropped instead of mapped.
+        bool[]? live = _gcMarked;
         foreach (object? o in _foreignTable)
             if (o is AttrSnapshot snap)
             {
                 var mapped = new System.Collections.Generic.HashSet<int>(snap.Homes.Count);
                 foreach (int home in snap.Homes)
+                {
+                    if (live is not null && (uint)home < (uint)oldTop && !live[home])
+                        continue;                       // died in this collection
                     mapped.Add(RelocIndex(home, forward));
+                }
                 snap.Homes.Clear();
                 foreach (int home in mapped) snap.Homes.Add(home);
             }
@@ -666,13 +687,12 @@ public sealed partial class Activation
         Drain();
         int cCatch = _gcMarkCount - c0; c0 = _gcMarkCount;
         int h0 = _gcMarkCount;
-        foreach (var (home, _, attrValueIdx) in AttrAll())
-        {
-            if ((uint)home < (uint)oldTop) GcMarkCell(home);
-            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
-        }
-        Drain();
-        int hTable = _gcMarkCount - h0; h0 = _gcMarkCount;
+        // ADR-052: the table is NOT a root. It is charged nothing here on
+        // purpose -- a breakdown that marked it would over-report against
+        // the collection it is meant to explain. An attribute term reached
+        // through its live variable is charged to whatever root reached the
+        // variable, which is the honest attribution.
+        int hTable = 0;
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
             if (home == int.MinValue) continue;   // dead record
@@ -858,8 +878,22 @@ public sealed partial class Activation
         switch (c.Tag)
         {
             case Tag.Ref:
+                GcMarkCell(c.AsHeapIndex);
+                break;
             case Tag.AttVar:
                 GcMarkCell(c.AsHeapIndex);
+                // ADR-052: reaching an attributed variable reaches its
+                // attributes, and this is the ONLY way a row is reached --
+                // the table itself is not a root. Costs nothing for a cell
+                // that is not an attributed variable, which is the reason
+                // the edge lives here and not in GcMarkCell.
+                //
+                // A conservatively-scanned slot holding a stale cell that
+                // reads as AttVar probes a home that may no longer be that
+                // variable's: over-retention, never a wrong answer, exactly
+                // as the note above this method describes for every other
+                // stale-but-plausible payload.
+                AttrMarkValuesOf(c.AsHeapIndex);
                 break;
             case Tag.Str:
             {

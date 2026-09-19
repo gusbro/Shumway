@@ -143,6 +143,50 @@ public sealed partial class Activation
         return pairs;
     }
 
+    /// <summary>ADR-052: marks the attribute values carried by
+    /// <paramref name="home"/>. THE one edge into a row.
+    ///
+    /// <para>The table is a weak key: a row is reached only through its own
+    /// live variable, so the collector calls this when it marks an
+    /// attributed-variable cell and never walks the table to find roots.
+    /// The work list it feeds runs to fixpoint on its own, so an attribute
+    /// term that reaches another attributed variable pulls that one's
+    /// attributes in on the same pass -- no second scan of the table, and no
+    /// quadratic corner.</para>
+    ///
+    /// <para>Calls the mark primitive directly rather than through a
+    /// delegate: this sits inside the trace loop, which was deliberately
+    /// de-closured.</para></summary>
+    private void AttrMarkValuesOf(int home)
+    {
+        if (_attrStore.Count == 0) return;
+        if (!_attrStore.TryGetValue(home, out var record)) return;
+        foreach (var (_, value) in record) GcMarkCell(value);
+    }
+
+    /// <summary>ADR-052: drops every row the collector just disproved -- a
+    /// home it did not mark is a variable nothing can reach again. Runs
+    /// after the trace and BEFORE relocation, because afterwards the index
+    /// means nothing.
+    ///
+    /// <para>Goes through <see cref="AttrDropRecord"/>, one of the five
+    /// writers, so the wasm tier's linear-memory mirror follows by
+    /// construction. A home at or past the collected range is left alone:
+    /// the collector says nothing about it, and silence is not a
+    /// proof.</para></summary>
+    private void AttrSweepUnmarked(bool[] marked, int oldTop)
+    {
+        if (_attrStore.Count == 0) return;
+        // Collected first: AttrDropRecord mutates the store, which the key
+        // enumeration would not survive.
+        List<int>? dead = null;
+        foreach (int home in _attrStore.Keys)
+            if ((uint)home < (uint)oldTop && !marked[home])
+                (dead ??= new List<int>()).Add(home);
+        if (dead is null) return;
+        foreach (int home in dead) AttrDropRecord(home);
+    }
+
     /// <summary>Every (home, module, value) the store holds. For the whole-
     /// store passes: the GC's root marking and the debug sweeps.</summary>
     private IEnumerable<(int Home, int Module, int Value)> AttrAll()

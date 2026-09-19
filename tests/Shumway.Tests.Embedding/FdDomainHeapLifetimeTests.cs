@@ -60,13 +60,15 @@ public sealed class FdDomainHeapLifetimeTests(ITestOutputHelper o)
     /// reclaimable. Asserted on the domains ALONE, through the $dom_*
     /// builtins, with no constraint variable involved.
     ///
-    /// <para>Measured through clpfd instead, the number is dominated by
-    /// something else: a cut leaves the attributed variable in the attribute
-    /// table with its propagator list, and the table is a GC root, so the
-    /// propagators are retained. That is not this arc. It costs the same
-    /// before and after (27,480 heap cells against 27,570 for thirty rounds
-    /// of 200 propagators, the 90 being the collapsed final domains), and
-    /// asserting on it here would have pinned someone else's leak.</para>
+    /// <para>Measured through clpfd instead, the number used to be dominated
+    /// by something else: a cut left the attributed variable in the
+    /// attribute table with its propagator list, and the table was a GC
+    /// root, so the propagators were retained. That was not this arc (it
+    /// cost the same before and after: 27,480 heap cells against 27,570 for
+    /// thirty rounds of 200 propagators, the 90 being the collapsed final
+    /// domains), and asserting on it here would have pinned someone else's
+    /// leak. ADR-052 has since made the table a weak root and closed it;
+    /// AttrTableWeakRootTests owns that measurement.</para>
     /// </summary>
     [Fact]
     public void AbandonedDomainsAreReclaimed()

@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed (2026-09-19). Changes what the heap collector treats as a root,
-which `docs/architecture/decision-policy.md` names a major decision, so it
-is written before any of it is implemented. Builds on ADR-016 (the heap
+Accepted and implemented (2026-09-19). Changes what the heap collector
+treats as a root, which `docs/architecture/decision-policy.md` names a
+major decision, so it was written before any of it was implemented. Builds on ADR-016 (the heap
 collector) and on the bounded-memory arc of phase 40, which closed the
 other two leaks of this family (orphan attr-log registers, dead choice
 points under LCO frames).
@@ -13,8 +13,8 @@ points under LCO frames).
 
 The attributed-variable store maps a variable's home heap index to its
 attributes: `home -> { moduleId -> attributeValueHeapIndex }`. Both halves
-are heap indices, so the collector cannot skip the store. Today
-`MarkExternalHolders` marks both:
+are heap indices, so the collector cannot skip the store. Before this ADR,
+`MarkExternalHolders` marked both:
 
 ```csharp
 foreach (var (home, _, attrValueIdx) in AttrAll())
@@ -107,14 +107,18 @@ The edge moves from the table into the trace, where `GcMarkReferents`
 already has a case for the tag:
 
 ```csharp
-case Tag.Ref:
 case Tag.AttVar:
     GcMarkCell(c.AsHeapIndex);
     // ADR-052: reaching an attributed variable reaches its attributes.
     // The table is a weak key: this is the only edge INTO a row.
-    if (c.Tag == Tag.AttVar) AttrEnqueueValues(c.AsHeapIndex, GcMarkCell);
+    AttrMarkValuesOf(c.AsHeapIndex);
     break;
 ```
+
+`AttrMarkValuesOf` lives in `Activation.Attrs.cs` beside the other readers,
+so the store stays private to its funnel, and it calls the mark primitive
+directly rather than through a delegate, because the trace loop was
+deliberately de-closured.
 
 This is deliberately *not* a fixpoint loop over the table. The work list
 already runs to fixpoint, so an attribute term that reaches another
@@ -150,34 +154,74 @@ A snapshot's homes are relocated today and never filtered. `RelocIndex` on
 an *unmarked* index returns where the next live cell landed, so a dead home
 silently becomes an unrelated live variable's address, and
 `'$attv_new_since'` then reads a genuinely new attributed variable as "not
-new". The trap is documented in `AttrSnapshot` itself and exists today; it
-is latent only because the table pins nearly every home. Making the table
-weak makes it reachable, so it is fixed here: an entry whose home is
-unmarked is dropped from the snapshot instead of relocated.
+new". The trap is documented in `AttrSnapshot` itself. An entry whose home
+is unmarked is dropped from the snapshot instead of relocated.
+
+**This part turned out to be bigger than a latent hazard.** Writing the
+test for it showed that the strong root makes `call_residue_vars/2` give a
+WRONG ANSWER today, with no collection required:
+
+```prolog
+dead      :- Y in 1..9, Y #\= 5, !.
+inner(X)  :- dead, churn(1500), garbage_collect, X in 1..3.
+
+?- call_residue_vars(inner(X), Vs), length(Vs, N).
+   Vs = [X, _G10], N = 2, _G10 in 1..4\/6..9.     % before
+   Vs = [X],       N = 1.                          % after
+```
+
+`_G10` is the `Y` that `dead/0` abandoned behind its cut. The program
+cannot name it, and the engine reports it as a residual constraint of the
+goal because the table still had its row. So the strong root was not only
+holding memory, it was answering with variables that no longer exist.
 
 ## Consequences
 
 ### What gets better
 
-The corpus above drops from 54,570 retained cells to the handful the roots
-genuinely reach, and stops growing with the number of rounds. Every program
-that constrains a variable and then abandons it gets the same treatment, and
-that is most of what a solver does: a labelling search abandons attributed
-variables at every failed node.
+The corpus above drops from **54,570 retained cells to 4**, with the table
+itself going from 30 rows to 0, and stops growing with the number of rounds
+(measured end to end: 5 rounds against 40 rounds of the same program held
+72,800 and 582,120 heap bytes after a full collection before, an exact 8x,
+and are flat after). Every program that constrains a variable and then
+abandons it gets the same treatment, and that is most of what a solver
+does: a labelling search abandons attributed variables at every failed
+node. `call_residue_vars/2` stops reporting variables the program cannot
+reach.
 
 The foreign-table leak shrinks with it. `ClpfdDomain` entries no longer
 enter the table after ADR-051, but every other producer is unaffected;
 see the separate backlog item, which needs its own ADR because it changes
 cell lifetime rather than root policy.
 
-### What gets slower
+### What it costs, and what it actually did
 
 One extra dictionary probe per *attributed variable* the trace marks, and
 one pass over the table to sweep. Both are proportional to the number of
-attributed variables, not to the heap, and the table is small precisely in
-the programs that collect often. The measurement to take before accepting:
-a clpfd labelling benchmark, back to back, expecting the collection itself
-to get faster because it has less to mark and less to slide.
+attributed variables, not to the heap, and a program with no attributed
+variables pays nothing at all: the sweep returns on an empty store and the
+edge is only ever reached from an `AttVar` cell. Against that, the marking
+no longer walks the whole table for roots, and every collection has less to
+mark and less to slide.
+
+Measured, ABBA, three rounds of the abandoning corpus at 200 rounds (the
+one workload here where the collector actually runs):
+
+```
+before  10.958  10.955  11.113  11.140  11.369  11.037   best 10.955
+after   10.168  10.341  10.587  10.322  10.766  10.477   best 10.168
+```
+
+**Every** after-sample beats **every** before-sample: about 6% faster, with
+67 collections against 83 for the same 4.17M inferences and the same 71.17M
+heap cells claimed. The change pays for itself rather than costing.
+
+A first attempt measured a clpfd labelling benchmark instead and read 1.088s
+against 1.814s, i.e. a large REGRESSION. It was measuring nothing:
+`statistics` reported **0 GC runs** for that query, so not one line of this
+change ran. Wall-clock between two separately-built binaries is noise at
+that scale; the collector has to actually run before a collector change can
+be timed.
 
 ### What could break, and how it is caught
 
@@ -195,7 +239,11 @@ make cheap:
 
 - **Red first**: a test that constrains a variable, keeps it reachable from a
   Y slot only, collects, and asserts the constraint still holds. Without
-  step 2 it must fail.
+  step 2 it must fail. **It did**: with step 1 alone, three of the
+  soundness tests went red together (the domain enumerated wrong, the
+  constraint stopped rejecting, and a variable held across a choice point
+  lost its domain), and all three went green when the ephemeron edge
+  landed.
 - Retention: the corpus above, asserting the retained-cell count stops
   growing with rounds, plus `'$heap_root_diag'` attribution naming the table.
 - Soundness at scale: the clpz/clpb certification suites and the Neumerkel
@@ -224,3 +272,19 @@ Reachability is the question, and only the collector answers it.
 
 **Keep the table strong and cap it.** A cap turns a leak into a wrong
 answer.
+
+## Notes from the implementation
+
+The backtracking path needed nothing. `TrailType.AttrModify`'s unwind
+already tolerates a missing record (`if (AttrHasRecord(home))`), from an
+earlier arc that hit the same shape, with a comment saying a restore for a
+home that is no longer a live attributed variable "would mean nothing".
+The sweep can therefore never throw there, and a home a live undo record
+could still restore is rooted by that record anyway.
+
+Steps 1 and 2 alone made every test pass, including the retention one:
+without the table as a root the CELLS go even if the rows stay. The sweep
+is still not optional, and the tests that pass without it say why it is
+needed rather than whether it is: a surviving row keeps the managed
+dictionary growing without bound, and `AttrRekeyAll` would relocate its
+dead home onto whatever live cell took that address.

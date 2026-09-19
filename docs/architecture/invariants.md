@@ -158,6 +158,12 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
+- **The attribute table is a WEAK root** — a row does not keep its variable
+  alive. The attribute value is reached from the live variable, never the
+  variable from its row, and rows the trace disproves are swept before
+  relocation. Adding the table back as a root reintroduces a leak that
+  retained 54,570 of 54,574 live cells, and makes `call_residue_vars/2`
+  report variables the program cannot reach. (ADR-052.)
 
 ## Debugger
 
