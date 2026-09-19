@@ -396,6 +396,9 @@ public sealed class WasmRelocatableModule
     {
         var w = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         w.Write(Magic);
+        // The mailbox ABI stamp: a module compiled against another layout
+        // would read shifted slots with no error anywhere downstream.
+        w.Write(WasmAbi.Fingerprint);
         w.Write(RegisterDemand);
         w.Write(Bytes.Length); w.Write(Bytes);
         w.Write(Members.Count);
@@ -440,6 +443,11 @@ public sealed class WasmRelocatableModule
         var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
         if (r.ReadUInt32() != Magic)
             throw new InvalidDataException("not a relocatable wasm module");
+        if (r.ReadUInt64() != WasmAbi.Fingerprint)
+            throw new InvalidDataException(
+                "wasm module was baked against a different engine mailbox ABI"
+                + " -- rebake the bundle: installed as-is it would read the"
+                + " wrong mailbox slots with nothing to catch it");
         var m = new WasmRelocatableModule { RegisterDemand = r.ReadInt32() };
         m.Bytes = r.ReadBytes(r.ReadInt32());
         int n = r.ReadInt32();

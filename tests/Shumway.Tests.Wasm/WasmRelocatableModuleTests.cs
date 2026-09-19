@@ -192,6 +192,22 @@ public class WasmRelocatableModuleTests
         Assert.Contains("not linked", reason);
     }
 
+    [Fact]
+    public void AnotherMailboxAbi_RejectsWithARebakeMessage()
+    {
+        var (_, membersA) = Linked();
+        byte[] bytes = WasmRelocatableModule.Bake(membersA, new EngineWasmCompileEnv()).ToBytes();
+        // The ABI stamp sits right after the magic. A module baked by an
+        // engine with another mailbox layout reads shifted slots with no
+        // error anywhere downstream, so the READER is the only place that
+        // can catch it -- and the message must say the cure.
+        bytes[4] ^= 0xFF;
+        var ex = Assert.Throws<InvalidDataException>(
+            () => WasmRelocatableModule.Read(new MemoryStream(bytes)));
+        Assert.Contains("mailbox ABI", ex.Message);
+        Assert.Contains("rebake", ex.Message);
+    }
+
     /// <summary>A copy of the module with other relocations or evidence:
     /// through the wire, so a tampered file is what the reader sees.</summary>
     private static WasmRelocatableModule Tamper(WasmRelocatableModule m,

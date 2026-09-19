@@ -305,4 +305,39 @@ public static class WasmAbi
     public const string MemoryField = "memory";
     /// <summary>The exported entry point of every compiled predicate.</summary>
     public const string EntryExport = "run";
+
+    /// <summary>A fingerprint of this mailbox layout: every constant above,
+    /// by name and value, plus the verdict codes. A baked wasm module reads
+    /// mailbox slots by the numbers that were constants AT BAKE TIME, so a
+    /// module loaded into an engine whose layout moved reads the WRONG slots
+    /// and nothing else would notice -- no trap, no bad verdict, just wrong
+    /// addresses. The stamp travels with every relocatable module and is
+    /// compared on read. Computed, not hand-bumped: forgetting the bump was
+    /// the failure mode.</summary>
+    public static readonly ulong Fingerprint = ComputeFingerprint();
+
+    private static ulong ComputeFingerprint()
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        void Mix(string name, long value)
+        {
+            foreach (char c in name) { h ^= c; h *= prime; }
+            h ^= (ulong)value; h *= prime;
+        }
+        // Reflection order is unspecified: sort so the stamp is a function
+        // of the layout alone, identical across runtimes and builds.
+        var fields = typeof(WasmAbi).GetFields(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        System.Array.Sort(fields, (x, y) => string.CompareOrdinal(x.Name, y.Name));
+        foreach (var f in fields)
+        {
+            if (!f.IsLiteral) continue;
+            if (f.FieldType == typeof(int)) Mix(f.Name, (int)f.GetRawConstantValue()!);
+            else if (f.FieldType == typeof(long)) Mix(f.Name, (long)f.GetRawConstantValue()!);
+        }
+        foreach (var name in System.Enum.GetNames(typeof(WasmVerdict)))
+            Mix(name, (int)System.Enum.Parse(typeof(WasmVerdict), name));
+        return h;
+    }
 }
