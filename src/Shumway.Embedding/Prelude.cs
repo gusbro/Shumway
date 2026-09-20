@@ -218,6 +218,8 @@ internal static class Prelude
         :- public strip_module/3.
         :- public '$skip_max_list'/4.
         :- public '$absent_attr'/3.
+        :- public '$unattributed_var'/1.
+        :- public '$det_length_rundown'/2.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
         :- public well_founded/2.
@@ -2389,6 +2391,24 @@ internal static class Prelude
         % C# builtins (AttvarBuiltins) — the Prolog walks were the hottest
         % predicates of a clpz solve.
         '$term_attributed_variables'(T, Vs) :- term_attvars(T, Vs).
+
+        % '$unattributed_var'(?V): V is an unbound variable carrying NO
+        % attributes. A Scryer engine primitive its library(lists) uses to
+        % pick the fast path in length/2 -- without it `length(L, 3)` with L
+        % unbound raises existence_error the moment a program imports their
+        % lists.pl, which every clpz program does. Their semantics exactly:
+        % a non-var fails, a plain var succeeds, and an attributed variable
+        % succeeds only when its attribute list is empty.
+        '$unattributed_var'(V) :- var(V), term_attvars(V, []).
+
+        % '$det_length_rundown'(-Vs, +N): Vs is a fresh list of N variables.
+        % The companion primitive: Scryer's length/2 commits to it once
+        % '$unattributed_var'/1 says the list is an unconstrained variable.
+        % Its own recursion rather than length/2, so which length/2 is in
+        % scope cannot matter.
+        '$det_length_rundown'(Vs, N) :- '$dlr_fresh'(N, Vs).
+        '$dlr_fresh'(0, []) :- !.
+        '$dlr_fresh'(N, [_|T]) :- N1 is N - 1, '$dlr_fresh'(N1, T).
         '$get_attr_list'(V, Ls) :- '$attr_modules'(V, Ms), '$attr_collect'(Ms, V, Ls).
         '$attr_collect'([], _, []).
         '$attr_collect'([M|Ms], V, Ls) :-
