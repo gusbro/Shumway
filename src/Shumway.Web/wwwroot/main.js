@@ -2097,11 +2097,8 @@ if (persistMode) {
     // that worked did. ConsultBuffer REPLACES what the buffer defines, so a
     // buffer that is nothing but a directive may not keep its imports.
     const errB = await session.consult(
-      ':- use_module(library(clpz)).
-:- use_module(library(lists)).
-'
-      + 'zzz_probe(X) :- X in 1..3, indomain(X).
-');
+      ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n'
+      + 'zzz_probe(X) :- X in 1..3, indomain(X).\n');
     say('B) consult directive + program -> ' + (errB ? 'ERROR ' + errB : 'null'));
     const err = errB;
 

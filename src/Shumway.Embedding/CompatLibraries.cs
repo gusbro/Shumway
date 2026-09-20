@@ -39,13 +39,30 @@ internal static class CompatLibraries
             "quads"  => Quads,
             "$project_atts" => ProjectAtts,
             "atts" => Atts,
-            // Covered by Shumway's prelude / builtins — importing them is a
-            // no-op that just marks the module available. `loader` is Scryer's
-            // bootstrap module; the one predicate real libraries import from it
-            // (strip_module/3 — dcgs.pl) is already in the prelude.
+            // Scryer's bootstrap module. It used to be a no-op on the
+            // grounds that the one predicate real libraries import from it
+            // (strip_module/3) is already in the prelude — but dcgs.pl does
+            // not CALL it bare, it calls `loader:strip_module(...)`, and a
+            // qualified call needs a MODULE of that name to have it. With
+            // the no-op there is no such module, so dcgs raised
+            // existence_error: loader/0, atts failed with it, the `attribute`
+            // operator was never declared, and Scryer's clpz.pl then failed
+            // to PARSE at its `:- attribute clpz/1, ...` line. A whole
+            // constraint library, lost to an empty shim.
+            "loader" =>
+                ":- module(loader, [strip_module/3]).\n"
+                // The prelude has strip_module/3, but a clause HERE that
+                // called it would call itself, so the definition is
+                // inlined. Same semantics, single level, which is all
+                // real code writes.
+                + "strip_module(MG, M, G) :-\n"
+                + "    ( nonvar(MG), MG = M0:G0 -> M = M0, G = G0\n"
+                + "    ; G = MG, ( var(M) -> M = user ; true ) ).\n",
+            // Covered by Shumway's prelude / builtins -- importing them
+            // is a no-op that just marks the module available.
             "lists" or "charsio" or "error" or "iso_ext" or "between"
               or "apply" or "pio" or "si" or "debug" or "pairs"
-              or "ordsets" or "assoc" or "dcg" or "dcg_basics" or "loader" => "",
+              or "ordsets" or "assoc" or "dcg" or "dcg_basics" => "",
             _ => null!,
         };
         return source is not null;
