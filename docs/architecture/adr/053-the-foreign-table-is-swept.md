@@ -15,10 +15,10 @@ returns a `FOREIGN` cell whose payload is the index. **Nothing ever removes
 an entry**: not backtracking, not the heap collector, not a cut. Every
 object put there is retained until the activation dies.
 
-### The engine already reclaims two of its three side tables
+### The engine already reclaims two of its three side tables, but only on backtracking
 
-This is not a missing mechanism, it is an unapplied one. `TrailType`
-carries two entries whose whole purpose is reclaiming a side-table slot:
+`TrailType` carries two entries whose whole purpose is reclaiming a
+side-table slot:
 
 ```
 BigIntAlloc  = 2    one slot appended to the BigInteger side table; HeapIdx
@@ -43,17 +43,41 @@ The bottom two rows are the decision. Backtracking over five thousand big
 integers returns every slot; backtracking over five thousand foreign
 objects returns none, and neither does a full collection.
 
-### The scope is one query, and smaller than it was
+**But the sibling mechanism does not cover the deployment shape either**,
+and measuring it is what corrected this ADR's first draft. A trail entry is
+unwound by BACKTRACKING. A loop that is deterministic -- the input/output
+loop an embedded system sits in -- never backtracks, so nothing unwinds:
 
-Two facts bound this, and both are worth stating because the earlier
-backlog note overstated the severity.
+| deterministic loop, then `garbage_collect` | table |
+|---|---|
+| 5,000 transient big integers | **5,000** |
+| 20,000 transient big integers | **20,000** |
+| 5,000 reftype slots (after this ADR) | **0** |
 
-**A query gets a fresh `Activation`**, so the table dies with the query.
-This is not a session-lifetime leak: it is unbounded growth *inside one
-long-running query*, which is exactly the shape an embedded rules engine or
-a long search has, and not a problem for a top level.
+The big-integer table grows linearly with the loop and a full collection
+does not touch it, even though the program can only ever name one of those
+values at a time. So the two "solved" tables are solved for SEARCH and
+unsolved for the long-running loop, which is the case that matters here.
+That does not change this ADR's decision; it strengthens it, and it means
+the sweep below is the mechanism the other two should adopt rather than the
+other way round. Recorded as follow-up work, not done here: the foreign
+table is the one this ADR is about, and extending the sweep to the numeric
+side tables is its own change.
 
-**ADR-051 removed the high-rate producer.** `ClpfdDomain` used to enter the
+### The scope is one query, and that is the whole system
+
+A query gets a fresh `Activation`, so the table dies with the query. It is
+tempting to read that as a bound. **It is not one.** This engine is for
+embedded use: a process that starts, loads a program, and then sits in a
+loop reading input and writing output. That loop is ONE query. "Per
+activation" is the lifetime of the deployed system, and the top level,
+where a query is short, is the testing case rather than the target.
+
+So the correct statement is the plain one: an object put in this table is
+never released while the system runs.
+
+**ADR-051 did remove the high-rate producer**, and that part is a real
+reduction in severity. `ClpfdDomain` used to enter the
 table once per propagation step (4,656 for `queens_fd(8)`). With domains on
 the heap, a real clpfd search touches the table *zero* times:
 `queens_fd(7)` run under `call_residue_vars/2` leaves the table at **1**
@@ -204,8 +228,10 @@ reason the reset lives in `CollectHeap` and not in the mark helpers.
 ## Alternatives considered
 
 **Trail the allocation, like `BigIntAlloc`.** The obvious move, and it is
-what the two sibling tables do. Rejected as the primary mechanism for two
-reasons. It reclaims by POSITION rather than by liveness, so it releases an
+what the two sibling tables do. Rejected as the primary mechanism for
+three reasons. It does not fix the case this engine is deployed in at all:
+a deterministic loop never backtracks, so a trailed allocation is never
+reclaimed (measured above). It reclaims by POSITION rather than by liveness, so it releases an
 id the moment the allocation is backtracked over, which is precisely when a
 `'$foreign'(N)` integer captured elsewhere would go stale. And it puts a
 trail entry on every `MakeForeign`, i.e. on the native interop path, to
