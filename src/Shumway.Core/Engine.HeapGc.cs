@@ -26,17 +26,27 @@ public sealed partial class Activation
     // by GcMarkReferents' Foreign case -- the only place a FOREIGN cell is
     // ever looked at -- and read once by the sweep.
     private bool[]? _gcForeignLive;
+    // ADR-053: and the same for the numeric side tables, whose own
+    // reclamation only fires on backtracking and so does nothing in the
+    // deterministic loop an embedded system lives in.
+    private bool[]? _gcBigIntLive;
+    private bool[]? _gcRationalLive;
 
-    /// <summary>ADR-053: clears the per-collection set of reached foreign
-    /// ids. Sized to the table, so a program that never makes a foreign
-    /// object allocates nothing and the sweep has nothing to do.</summary>
-    private void ResetForeignLiveSet()
+    /// <summary>ADR-053: clears the per-collection sets of reached side-table
+    /// ids. Each is sized to its table, so a program that never makes one of
+    /// these allocates nothing and its sweep has nothing to do.</summary>
+    private void ResetSideTableLiveSets()
     {
-        int n = _foreignTable.Count;
+        ResetLiveSet(ref _gcForeignLive, _foreignTable.Count);
+        ResetLiveSet(ref _gcBigIntLive, _bigIntTable.Count);
+        ResetLiveSet(ref _gcRationalLive, _rationalTable.Count);
+    }
+
+    private static void ResetLiveSet(ref bool[]? set, int n)
+    {
         if (n == 0) return;
-        if (_gcForeignLive is null || _gcForeignLive.Length < n)
-            _gcForeignLive = new bool[System.Math.Max(n, 16)];
-        else System.Array.Clear(_gcForeignLive, 0, n);
+        if (set is null || set.Length < n) set = new bool[System.Math.Max(n, 16)];
+        else System.Array.Clear(set, 0, n);
     }
     // mark-phase state for the de-closured GcMarkCell /
     // GcMarkReferents (they were closure-capturing locals invoked through
@@ -474,7 +484,7 @@ public sealed partial class Activation
         // remain only for the external OnGcMark hook.
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
-        ResetForeignLiveSet();
+        ResetSideTableLiveSets();
 
         MarkRoots(oldTop);
         // The attribute trail log, the wakeup queue and the cleanup handlers
@@ -501,11 +511,12 @@ public sealed partial class Activation
         // from growing without bound, which freeing their cells does not.
         AttrSweepUnmarked(marked, oldTop);
 
-        // ADR-053: and the same for the foreign table, off the ids the trace
+        // ADR-053: and the same for the side tables, off the ids the trace
         // recorded. Before relocation for the same reason -- though the ids
-        // do not move, the AttrSnapshot relocation below walks this table and
-        // should not be handed entries the collector has disproved.
+        // do not move, the AttrSnapshot relocation below walks the foreign
+        // table and should not be handed entries the collector disproved.
         ForeignSweepUnmarked(_gcForeignLive);
+        NumericSweepUnmarked(_gcBigIntLive, _gcRationalLive);
 
         // ---- forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -937,6 +948,21 @@ public sealed partial class Activation
             }
             case Tag.Float:
                 GcMarkCell(c.FloatPairedIndex);
+                break;
+            case Tag.BigInt:
+                // ADR-053: a big integer's slot is reachable only through
+                // cells like this one. Recording the id is what lets the
+                // sweep release the rest -- the trail reclaims a slot only
+                // when backtracking unwinds past the allocation, which a
+                // deterministic loop never does.
+                if (_gcBigIntLive is { } bg
+                    && (uint)c.AsBigIntId < (uint)bg.Length)
+                    bg[c.AsBigIntId] = true;
+                break;
+            case Tag.Rational:
+                if (_gcRationalLive is { } rt
+                    && (uint)c.AsRationalId < (uint)rt.Length)
+                    rt[c.AsRationalId] = true;
                 break;
             case Tag.Foreign:
                 // ADR-053: the one place a FOREIGN cell is ever looked

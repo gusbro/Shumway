@@ -60,9 +60,9 @@ values at a time. So the two "solved" tables are solved for SEARCH and
 unsolved for the long-running loop, which is the case that matters here.
 That does not change this ADR's decision; it strengthens it, and it means
 the sweep below is the mechanism the other two should adopt rather than the
-other way round. Recorded as follow-up work, not done here: the foreign
-table is the one this ADR is about, and extending the sweep to the numeric
-side tables is its own change.
+other way round. **So it is applied to all three** (see the last decision
+step): the same trace-records-ids, sweep-the-rest shape, over one generic
+helper.
 
 ### The scope is one query, and that is the whole system
 
@@ -132,6 +132,26 @@ the END of the list, which is the common append-then-die shape, the list is
 truncated while its last entry is dead. This reclaims the slot itself, and
 it is liveness-driven rather than position-driven: an id is only released
 once the collector has proved that nothing reachable names it.
+
+### 4. The same for the BigInteger and Rational tables
+
+`Tag.BigInt` and `Tag.Rational` get the same case in the trace, and the
+same sweep runs over their tables, with `default` in place of null: zero
+for a big integer, the zero struct for a rational, each of which drops the
+magnitude array that is the actual memory. One generic
+`SweepSideTable<T>(List<T>, bool[]?)` serves all three, so the three cannot
+drift on the liveness rule.
+
+This is **safer** here than for the foreign table: a BigInt or Rational id
+never escapes into a term, since every use is an immediate lookup inside
+`Activation`, so nothing corresponds to the `'$foreign'(N)` round-trip that
+constrains id reuse.
+
+It also does not disturb the trail contract it joins. `BigIntAlloc` unwinds
+by truncating the table to the size it recorded, *and only when the table
+is currently larger*, so a table the collector already shrank makes the
+unwind a no-op rather than a wrong answer. Backtracking over a collection,
+in both directions, is tested.
 
 ## Consequences
 
@@ -218,6 +238,20 @@ mechanism test that sets up only registers and a foreign object asserts
 nothing at all. Three of these tests passed vacuously until each was given
 a heap cell to collect.
 
+**A memory assertion taken after a QUERY measures a dead activation.** The
+first attempt at an end-to-end test for the numeric tables compared managed
+bytes after running the loop, and read the same 43 MB with the sweep on and
+off, because by then the whole activation was collectable either way. The
+counter-proof (disable the sweep, re-measure) is what caught it. These are
+asserted on exact table counts in the mechanism tests instead, which is
+where the numbers are unambiguous.
+
+**`Rational.Create` REDUCES**, and an exact quotient comes back as an
+integer cell that never touches the rational table. A test built its "live"
+rational as `Big(999)/7`, which divides exactly, so it was asserting about
+a `BigInt` cell. The anti-vacuity check now sits right after the
+construction.
+
 **The probes share the mark phase but not the sweep.**
 `HeapLiveProbe` and `HeapRootAttributionProbe` run `GcMarkReferents`
 without resetting the live set, so they write into the previous
@@ -251,6 +285,13 @@ Prolog heap's, and only the Prolog collector can see it.
 Applicable to neither survivor: a `TermSlot` and an `AttrSnapshot` are
 managed objects with managed interiors, not term shapes that a heap cell
 can hold.
+
+**Sweep the catch-frame stack too.** Reviewed under the same lens and
+**not needed**: `_catchFrames` returns to zero after 20,000 catch/3 in a
+deterministic loop, sequential or nested. `TryReclaimCatchFrame` already
+pops a frame on a deterministic exit when it is the top one and no choice
+point outlived the guarded goal. The backlog note claiming frames are freed
+only by backtracking was stale.
 
 **Do nothing.** Defensible on the numbers, and worth stating: ADR-051 took
 the rate from thousands per query to zero for the common case, and what

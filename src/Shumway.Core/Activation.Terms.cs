@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace Shumway.Core;
@@ -158,18 +159,57 @@ public sealed partial class Activation
     /// <see cref="AsForeign(Cell)"/> into an index-out-of-range thrown out of
     /// the engine.</para></summary>
     private void ForeignSweepUnmarked(bool[]? live)
+        => SweepSideTable(_foreignTable, live);
+
+    /// <summary>ADR-053: the same sweep over the numeric side tables.
+    ///
+    /// <para><see cref="TrailType.BigIntAlloc"/> and
+    /// <see cref="TrailType.RationalAlloc"/> reclaim a slot when
+    /// backtracking unwinds past the allocation, which covers a SEARCH and
+    /// covers nothing else: a deterministic loop never backtracks, and that
+    /// loop is what an embedded system spends its life in. Twenty thousand
+    /// transient big integers in one left twenty thousand entries standing
+    /// after a full collection, linear in the loop, though the program could
+    /// only ever name one at a time.</para>
+    ///
+    /// <para>Safer here than for the foreign table: a BigInt or Rational id
+    /// never escapes into a term (every use is an immediate lookup inside
+    /// this class), so there is no analogue of the '$foreign'(N)
+    /// round-trip to go stale when a tail slot is released.</para>
+    ///
+    /// <para>This does not disturb the trail contract. The unwind truncates
+    /// only when the table is LARGER than the size it recorded, so a table
+    /// the collector already shrank makes it a no-op.</para></summary>
+    private void NumericSweepUnmarked(bool[]? bigLive, bool[]? ratLive)
     {
-        int n = _foreignTable.Count;
-        if (n == 0) return;
-        for (int i = 0; i < n; i++)
-            if (_foreignTable[i] is not null && !IsForeignLive(live, i))
-                _foreignTable[i] = null;
-        int top = n;
-        while (top > 0 && !IsForeignLive(live, top - 1)) top--;
-        if (top < n) _foreignTable.RemoveRange(top, n - top);
+        SweepSideTable(_bigIntTable, bigLive);
+        SweepSideTable(_rationalTable, ratLive);
     }
 
-    private static bool IsForeignLive(bool[]? live, int id)
+    /// <summary>Releases every entry the collector disproved. Dead entries
+    /// are reset to <c>default</c> rather than removed, so surviving ids
+    /// stay positional and none is reused under a live reference -- null for
+    /// a foreign object, zero for a big integer or rational, each of which
+    /// drops the magnitude array that is the actual memory. Only the TAIL is
+    /// removed, and only while its last entry is dead.
+    ///
+    /// <para>Judged by LIVENESS, never by the stored value: a program can
+    /// store a null foreign object or the integer zero on purpose, and
+    /// shrinking on the value would drop a live id off the end and turn the
+    /// next lookup into an index-out-of-range thrown out of the
+    /// engine.</para></summary>
+    private static void SweepSideTable<T>(List<T> table, bool[]? live)
+    {
+        int n = table.Count;
+        if (n == 0) return;
+        for (int i = 0; i < n; i++)
+            if (!IsSideTableLive(live, i)) table[i] = default!;
+        int top = n;
+        while (top > 0 && !IsSideTableLive(live, top - 1)) top--;
+        if (top < n) table.RemoveRange(top, n - top);
+    }
+
+    private static bool IsSideTableLive(bool[]? live, int id)
         => live is not null && id < live.Length && live[id];
 
     /// <summary>The foreign-table entry by raw id, or null when out of range. The
