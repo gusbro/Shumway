@@ -1942,6 +1942,327 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash === '#clpzvar') {
+  // use_module(library(clpz)) reports success and loads NOTHING on a
+  // page-created collection. Not the registration (re-creating does not
+  // help) and not a dialect pack (scryer has no clpz entry). The two
+  // remaining variables, one run: the DIALECT tag, and whether the library
+  // is COMPILED first -- which is the path the page's own UI uses, and the
+  // only one that reads the dialect marker explicitly (Libraries.cs).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  const ask = async (g) => {
+    await session.start(g);
+    const r = await session.next(200);
+    if (r.tag === 's') await session.cancel();
+    return `${r.tag} ${r.text}`;
+  };
+  try {
+    const out = [];
+    const say = (t) => { out.push(t); mark('var: ' + t); };
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const texts = {};
+    for (const f of files) texts[f] = await (await fetch('scryerlib/' + f)).text();
+
+    // Each variant gets its OWN engine, so one cannot contaminate the next.
+    async function variant(label, dialect, compileFirst) {
+      await session.resetEngine();
+      const c = 'v_' + label;
+      await libraries.remove(c);
+      await libraries.create(c, dialect);
+      for (const f of files) await libraries.write(c, f, texts[f]);
+      let compiled = '(not compiled)';
+      if (compileFirst) {
+        const t = performance.now();
+        compiled = JSON.stringify(await libraries.compile(c, 'clpz'))
+                 + ` in ${Math.round(performance.now() - t)}ms`;
+      }
+      const t2 = performance.now();
+      const err = await session.consult(':- use_module(library(clpz)).');
+      const ms = Math.round(performance.now() - t2);
+      const probe = await ask('catch(all_distinct([_,_]), E, true).');
+      say(`[${label}] dialect=${JSON.stringify(dialect)} compile=${compiled}`);
+      say(`[${label}] consult ${ms}ms -> ${err ? 'ERROR ' + err : 'null'}; `
+        + `all_distinct -> ${probe}`);
+      return probe.indexOf('existence_error') < 0;
+    }
+
+    const r1 = await variant('scryer_src', 'scryer', false);
+    const r2 = await variant('nodialect', '', false);
+    const r3 = await variant('scryer_compiled', 'scryer', true);
+    say(`VERDICT scryer=${r1} nodialect=${r2} scryer+compiled=${r3}`);
+
+    const report = 'clpz load variants:\n' + out.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzvar';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('VAR DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz var CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash === '#clpzpage') {
+  // The engine ALREADY says why: TryResolveLibrary failing lands in branch
+  // (4) of ExecuteUseModuleDirectiveCore, which warns "unknown library 'X'
+  // ... (searched: <dirs>)" and returns null -- a silent no-op to the caller,
+  // because consult's return value carries errors, not warnings. Those
+  // warnings go to the PAGE (WebShumwayApp.PageWriter -> Emit -> #out), and
+  // a headless run that only reads /collect never sees them. So: read #out.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const page = () => (document.getElementById('out')?.textContent ?? '');
+    let seen = page().length;
+    const newPageText = () => { const t = page(); const d = t.slice(seen); seen = t.length; return d; };
+
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    await libraries.create(collection, 'scryer');
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    mark(`page: wrote ${files.length}, collection files=${(await libraries.files(collection)).length}`);
+    newPageText();
+
+    const err = await session.consult(':- use_module(library(clpz)).');
+    const said = newPageText();
+    mark(`page: consult -> ${err ? 'ERROR ' + err : 'null'}`);
+    mark('page: WHAT THE PAGE SAID DURING THE CONSULT >>>\n'
+         + (said.trim() || '(nothing at all)') + '\n<<<');
+
+    await session.start('catch(all_distinct([_,_]), E, true).');
+    const r = await session.next(200);
+    mark(`page: all_distinct -> ${r.tag} ${r.text}`);
+    mark('page: after the probe >>>\n' + (newPageText().trim() || '(nothing)') + '\n<<<');
+
+    // And what the engine thinks its search path IS, from Prolog.
+    for (const g of ["catch(current_prolog_flag(library_directory, D), E, true).",
+                     "catch(exists_source(library(clpz)), E, true).",
+                     "catch(exists_source(library(lists)), E, true).",
+                     "catch(use_module(library(clpz)), E, true)."]) {
+      await session.start(g);
+      const x = await session.next(200);
+      if (x.tag === 's') await session.cancel();
+      mark(`page: ${g} -> ${x.tag} ${x.text}`);
+      const w = newPageText().trim();
+      if (w) mark('page:   said: ' + w);
+    }
+
+    mark('PAGE DONE');
+    emit('\nclpz page-instrumentation done\n');
+  } catch (ex) {
+    mark(`clpz page CRASHED: ${ex && ex.stack ? ex.stack : ex}`);
+  }
+} else if (location.hash === '#clpzwho') {
+  // WHO answers library(clpz) in the browser? The smoke goal FAILS rather
+  // than raising existence_error, so in/2 exists and something is answering
+  // -- the question is what. Cheap: no tier, no benchmark, just goals.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  const ask = async (g) => {
+    await session.start(g);
+    const r = await session.next(200);
+    if (r.tag === 's') await session.cancel();
+    return `${r.tag} ${r.text}`;
+  };
+  try {
+    const out = [];
+    const say = (t) => { out.push(t); mark('who: ' + t); };
+
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    say('create -> ' + await libraries.create(collection, 'scryer'));
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    say('collections: ' + JSON.stringify(await libraries.names()));
+    say('dialect: ' + await libraries.dialect(collection));
+    const inColl = await libraries.files(collection);
+    say(`files in collection: ${inColl.length}, clpz.pl present: ${inColl.includes('clpz.pl')}`);
+
+    // BEFORE loading anything: is in/2 already there? If it is, something
+    // other than the file is providing it and use_module never had to.
+    say('BEFORE use_module, in/2: ' + await ask('catch((X in 1..3), E, true).'));
+    say('BEFORE, clpz:fd_var/1: ' + await ask('catch(clpz:fd_var(_), E, true).'));
+
+    // A: the directive ALONE -- what every failing run did.
+    const errA = await session.consult(':- use_module(library(clpz)).');
+    say('A) consult directive ALONE -> ' + (errA ? 'ERROR ' + errA : 'null'));
+    say('A) all_distinct: ' + await ask('catch(all_distinct([_,_]), E, true).'));
+
+    // B: the directive WITH a program in the same buffer -- what the runs
+    // that worked did. ConsultBuffer REPLACES what the buffer defines, so a
+    // buffer that is nothing but a directive may not keep its imports.
+    const errB = await session.consult(
+      ':- use_module(library(clpz)).
+:- use_module(library(lists)).
+'
+      + 'zzz_probe(X) :- X in 1..3, indomain(X).
+');
+    say('B) consult directive + program -> ' + (errB ? 'ERROR ' + errB : 'null'));
+    const err = errB;
+
+    say('AFTER, in/2:        ' + await ask('catch((X in 1..3), E, true).'));
+    say('AFTER, indomain/1:  ' + await ask('catch((X in 1..3, indomain(X)), E, true).'));
+    say('AFTER, clpz:fd_var: ' + await ask('catch(clpz:fd_var(_), E, true).'));
+    say('AFTER, label/1:     ' + await ask('catch((X in 1..3, label([X])), E, true).'));
+    // Whose in/2? clpz exports it; so does our clpfd. The module manifest
+    // tells them apart without guessing.
+    say('current_predicate:  ' + await ask('catch(current_predicate(in/2), E, true).'));
+    say('all_distinct/1:     ' + await ask('catch(all_distinct([_,_]), E, true).'));
+    say('transpose/2:        ' + await ask('catch(transpose([[1,2]], T), E, true).'));
+    say('B) zzz_probe:      ' + await ask('catch(zzz_probe(X), E, true).'));
+
+    const report = 'clpz who answers:\n' + out.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzwho';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('WHO DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz who CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash.startsWith('#clpzdiag')) {
+  // #clpzdiag: why does SEND+MORE never return on the wasm tier when Tier-0
+  // answers in milliseconds? Runs the goal in STAGES -- posting alone, then
+  // posting plus labeling -- on each tier, each stage bounded by a cancel so
+  // a hang costs seconds instead of the whole run, and dumps the tier's
+  // counters (deopt and builtin-exit rankings) after each. Needs a build with
+  // -p:ShumwayDiag=true as well as -p:ShumwayWasmTier=true.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    emit('--- clpz diag: staged SEND+MORE, tier0 vs wasm ---\n');
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    await libraries.create(collection, 'scryer');
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    // Verify the collection took. 46 awaited writes across the JS/.NET
+    // bridge came up short once and consult still reported no error, so the
+    // run measured a page with no clpz on it and every stage read as a
+    // few-millisecond error.
+    const written = await libraries.files(collection);
+    mark(`diag: collection holds ${written.length} files (wrote ${files.length})`);
+    if (written.length !== files.length)
+      mark(`diag: LIBRARY WRITE INCOMPLETE ${written.length}/${files.length}`);
+
+    const cases = await (await fetch('scryerlib/cases.pl')).text();
+
+    // Does clpz actually resolve? A consult that returns null is the success
+    // signal and it has lied here: 46/46 files present, no error, and in/2
+    // still not there. So the load is PROVED, not assumed.
+    async function loadAndSmoke(tag) {
+      const e = await session.consult(
+        ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n' + cases);
+      mark(`diag: [${tag}] consult -> ${e ? 'ERROR ' + e : 'null (no error)'}`);
+      await session.start('X in 1..3, indomain(X).');
+      const r = await session.next(60);
+      const ok = r.tag === 's' || r.tag === 'l';
+      if (r.tag === 's') await session.cancel();
+      mark(`diag: [${tag}] smoke -> ${r.tag} ${r.text} => ${ok ? 'LOADED' : 'NOT LOADED'}`);
+      return ok;
+    }
+
+    let loaded = await loadAndSmoke('first');
+    if (!loaded) {
+      // THE EXPERIMENT. LibraryCreate registers the directory on
+      // _session.Engine; if the page replaced that engine afterwards the
+      // FILES survive (libraries.files still counts 46) while the
+      // REGISTRATION does not, and use_module then resolves nothing with
+      // nothing to say. Re-creating re-registers on whatever engine is live
+      // now: if that fixes it, the registration was the thing that was lost.
+      mark('diag: re-registering the collection on the LIVE engine');
+      const again = await libraries.create(collection, 'scryer');
+      mark(`diag: re-create -> ${again ? 'ERROR ' + again : 'ok'}`);
+      loaded = await loadAndSmoke('after-re-register');
+      mark(loaded
+        ? 'diag: VERDICT -- the registration was lost, the files were fine'
+        : 'diag: VERDICT -- re-registering did NOT help, it is something else');
+    }
+    if (!loaded) { mark('diag: ABORTING, clpz is not loaded'); }
+    mark('diag: loaded');
+
+    // A goal, bounded: race the answer against a timer and cancel on timeout.
+    // QueryCancel is observed at the engine's next safe point, so a goal that
+    // is making progress stops and one that is truly wedged says so too.
+    async function bounded(goal, seconds) {
+      const t = performance.now();
+      const e0 = await session.start(goal);
+      if (e0) return { ms: 0, state: 'start-error: ' + e0 };
+      let timer = null;
+      const answer = session.next(60).then(r => ({ tag: r.tag }));
+      const race = await Promise.race([
+        answer,
+        new Promise(res => { timer = setTimeout(() => res({ timeout: true }), seconds * 1000); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (race.timeout) {
+        await session.cancel();
+        // Let the cancelled query settle so the next start() is clean.
+        const after = await Promise.race([
+          answer,
+          new Promise(res => setTimeout(() => res({ stuck: true }), 20000)),
+        ]);
+        return { ms: performance.now() - t,
+                 state: after.stuck ? `WEDGED (>${seconds}s, cancel did not land)`
+                                    : `TIMEOUT >${seconds}s (cancelled ok)` };
+      }
+      return { ms: performance.now() - t, state: race.tag };
+    }
+
+    // THE SEQUENCE THAT HUNG. A single check(sendmore) finishes on the tier
+    // (782ms against Tier-0's 343ms), so the hang needs what runs BEFORE it:
+    // in the benchmark, sendmore came after queens10ff's loop. Same order
+    // here, same loop/2 shape, each bounded by a cancel.
+    const STAGES = [
+      ['q10ff loop x5 ', 'loop(queens10ff, 5).', 120],
+      ['sendmore x2   ', 'loop(sendmore, 2).', 120],
+      ['sendmore x2 #2', 'loop(sendmore, 2).', 120],
+      ['sendmore once ', 'check(sendmore).', 60],
+    ];
+
+    const lines = [];
+    for (const m of ['all']) {
+      const tSwitch = performance.now();
+      const rep = await session.exports().JitCompileControl(m);
+      await session.start('true.'); await session.next(5);
+      lines.push(`=== jit_compile(${m}) in ${Math.round(performance.now() - tSwitch)}ms`);
+      mark(`diag: jit_compile(${m}) :: ${rep.slice(0, 200)}`);
+      for (const [label, goal, budget] of STAGES) {
+        const r = await bounded(goal, budget);
+        const line = `  ${label} ${String(Math.round(r.ms)).padStart(7)}ms  ${r.state}`;
+        lines.push(line);
+        mark('diag: ' + m + ' ' + line.trim());
+      }
+      // The counters, after this tier's stages.
+      const status = await session.exports().JitCompileControl('status');
+      const keep = status.split('\n').filter(l =>
+        /chains=|deopt|builtin|modules=|compile:|switches=/.test(l)).slice(0, 24);
+      lines.push('  --- counters after ' + m + ' ---');
+      for (const k of keep) lines.push('  ' + k.trim());
+      mark(`diag: counters after ${m}:\n` + keep.join('\n'));
+    }
+
+    const report = 'clpz diag: staged SEND+MORE\n' + lines.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzdiag';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('DIAG DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz diag CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
 } else if (location.hash.startsWith('#wasmclpz')) {
   // #wasmclpz, or #wasmclpz=<rounds>: Triska's canonical CLP(Z) examples over
   // the REAL clpz.pl from the Scryer tree (served beside the page, never

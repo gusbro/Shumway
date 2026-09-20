@@ -647,6 +647,36 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         catch { /* a host whose sink is gone must not take the load down */ }
     }
 
+    /// <summary>The <c>library(X)</c> imports that resolved to NOTHING since
+    /// <see cref="ClearUnresolvedImports"/>, most recent last.
+    ///
+    /// <para>A <c>use_module(library(X))</c> naming a library the search path
+    /// does not hold is a WARNING: it is reported and the load continues, the
+    /// way a Prolog system does. The cost is that the warning goes to a text
+    /// sink while the caller's result says only whether something THREW, so a
+    /// consult whose every import resolved to nothing is indistinguishable
+    /// from one that worked. That cost is real: a browser measurement ran a
+    /// whole clp(Z) benchmark against a page where the library was absent,
+    /// reporting timings for predicates that did not exist, because consult
+    /// had answered "no error".</para>
+    ///
+    /// <para>So the fact is recorded as well as written. The error channel is
+    /// deliberately untouched: callers that treat any diagnostic as a failure
+    /// keep working, and callers that care ask.</para></summary>
+    public System.Collections.Generic.IReadOnlyList<string> UnresolvedImports
+        => _unresolvedImports;
+
+    private readonly System.Collections.Generic.List<string> _unresolvedImports = new();
+
+    /// <summary>Forgets the imports recorded so far, so a caller can scope the
+    /// question to one consult.</summary>
+    public void ClearUnresolvedImports() => _unresolvedImports.Clear();
+
+    internal void NoteUnresolvedImport(string libraryName)
+    {
+        _unresolvedImports.Add(libraryName);
+    }
+
     /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
     /// <c>get_char/1</c> and the rest. Null means the host's standard input
     /// (and end-of-file where the host has none, as a browser does). Set it

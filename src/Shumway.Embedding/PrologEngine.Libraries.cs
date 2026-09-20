@@ -784,6 +784,10 @@ public sealed partial class PrologEngine
                     // reader guessing between a misspelling, a search path that
                     // was never added, and a file that is not where it is
                     // expected — three different fixes.
+                    // Recorded as well as warned: the warning goes to a text
+                    // sink, and a caller that only sees "did anything throw"
+                    // cannot tell this apart from a successful load.
+                    NoteUnresolvedImport(libName);
                     string searched = string.Join(", ", EnumerateLibraryDirs());
                     Warn($"warning: unknown library '{libName}' in use_module/1 — ignored"
                        + (searched.Length == 0
