@@ -1807,6 +1807,17 @@ public static class WasmPredicateCompiler
                                            envTrim: ins.I1);
                         return true;
                     }
+                    // call/N for N >= 2. Until now every one of these
+                    // fell through to the deopt below, because a
+                    // meta-call builtin cannot be requested through the
+                    // mailbox either. maplist/3 IS call(G, X, Y), so a
+                    // library built on maplist deopted once per element.
+                    if (_env.IsInlineMetaCallN(ins.I0, out int appendedN))
+                    {
+                        EmitInlineMetaCall(ins.Pc, SelfFid(ins), envTrim: ins.I1,
+                                           appended: appendedN);
+                        return true;
+                    }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { MetaGuard(18); EmitDeopt(ins.Pc, DeoptStamped); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
@@ -1939,6 +1950,12 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineBarrierCall(ins.I0))
                     {
                         EmitInlineMetaCall(ins.Pc, 0, tail: true, barrierFromX1: true);
+                        return true;
+                    }
+                    if (_env.IsInlineMetaCallN(ins.I0, out int appendedT))
+                    {
+                        EmitInlineMetaCall(ins.Pc, 0, tail: true,
+                                           appended: appendedT);
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
@@ -3609,6 +3626,18 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             OpenIf();
             {
+                // An ATOM goal is out of reach for call/N. The table
+                // below is keyed by atom and names the name/0 predicate;
+                // an appending call site wants name/appended, and the
+                // module cannot form that functor id -- interning is a
+                // search of the functor table and it can only index. So
+                // the atom form of call/N still steps aside; only the
+                // partially applied (compound) goal is served here.
+                if (appended != 0)
+                {
+                    MetaGuard(13);
+                    GoSlow();
+                }
                 // The goal is `!`. Measured, this is what '$call'/2 carries
                 // in clpr: the prelude expands a disjunction into helpers
                 // that run each branch through it, and a branch is often the
@@ -3975,19 +4004,34 @@ public static class WasmPredicateCompiler
             MetaGuard(5);
             Op(new BranchIf(0));                            // 0, or too wide -> $slow
 
-            // The resolved functor must have the GOAL's arity. Mangling
+            // The resolved functor must have the goal's arity plus whatever
+            // this call site appends -- call(G, X) resolves to a predicate
+            // one wider than G, and call/1 to one exactly as wide. Mangling
             // preserves it, so this only ever fires on a cache that is
             // telling the truth about the wrong pair -- but without it the
             // copy below would read past the goal's arguments and call
             // another predicate with whatever followed them on the heap.
             // Degrading safely should not depend on the wrong answer
             // happening to name a predicate no module covers.
+            if (appended != 0)
+            {
+                Op(new LocalGet(LMetaArity));
+                Op(new Int32Constant(0));
+                Op(new Int32LessThanSigned());
+                MetaGuard(11);
+                Op(new BranchIf(0));                        // -> $slow
+            }
             Op(new LocalGet(LMetaArity));
             Op(new Int32Constant(0));
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
             {
                 Op(new LocalGet(LMetaArity));
+                if (appended != 0)
+                {
+                    Op(new Int32Constant(appended));
+                    Op(new Int32Add());
+                }
                 Op(new LocalGet(LT1));
                 Op(new Int32NotEqual());
                 MetaGuard(11);
@@ -3998,6 +4042,18 @@ public static class WasmPredicateCompiler
             // LAST chance: the copy below overwrites X1.
             EmitReadBarrier();
 
+            // call/N: the arguments to append are sitting in X1..Xappended,
+            // and the copy below writes X0 upwards -- so it would eat them
+            // before they are placed. Park them above MaxMetaCallArity,
+            // which no callee reaches, and put them back once the goal's
+            // own arguments are down. Unrolled: appended is known here.
+            for (int i = 1; i <= appended; i++)
+            {
+                int park = MaxMetaCallArity + i - 1;
+                if (park > _maxRegister) _maxRegister = park;
+                RegStore(park, () => RegLoad(i));
+            }
+
             // The goal's arguments become X0..Xn-1.
             Op(new Int32Constant(0));
             Op(new LocalSet(LAtSlot));
@@ -4005,7 +4061,7 @@ public static class WasmPredicateCompiler
             OpenLoop();                                     // $copy
             {
                 Op(new LocalGet(LAtSlot));
-                Op(new LocalGet(LT1));
+                Op(new LocalGet(appended != 0 ? LMetaArity : LT1));
                 Op(new Int32GreaterThanOrEqualUnsigned());
                 Op(new BranchIf(1));                        // -> $copied
 
@@ -4034,6 +4090,25 @@ public static class WasmPredicateCompiler
             }
             CloseNested();                                  // $copy
             CloseNested();                                  // $copied
+
+            // ...and the appended ones follow them, at X[goalArity + i].
+            // The destination is only known at run time, so the address is
+            // computed; the source is a parking slot, which is a constant.
+            for (int i = 0; i < appended; i++)
+            {
+                Op(new LocalGet(LRegsB));
+                Op(new LocalGet(LMetaArity));
+                if (i != 0)
+                {
+                    Op(new Int32Constant(i));
+                    Op(new Int32Add());
+                }
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                RegLoad(MaxMetaCallArity + i);
+                Op(new Int64Store());
+            }
 
             // From here it is an ordinary call: the callee enters a new
             // procedure, so its cut barrier is refreshed, and CP is the marker
