@@ -71,6 +71,26 @@ public interface IWasmCompileEnv
     /// CallBuiltin.</summary>
     bool TryGetBuiltin(int calleeFunctorId, out int builtinId);
 
+    /// <summary>Whether the builtin is <c>call/N</c> for N >= 2, and how
+    /// many arguments it appends to the goal (N - 1).
+    ///
+    /// <para><c>call/1</c> has had an inline form since the tier shipped;
+    /// every wider arity stepped aside, and a meta-call builtin cannot be
+    /// requested directly either, so each one DEOPTED. That is not a
+    /// corner: <c>maplist/3</c> is <c>call(G, X, Y)</c> in a loop, so a
+    /// library built on maplist deopts once per element. Measured on
+    /// clp(Z) in a browser: 1,336,036 of 1,336,496 deopts in a single
+    /// goal -- 100% -- at one site, <c>lists$maplist/3</c>.</para>
+    ///
+    /// <para>The cap is <see cref="MaxMetaCallArity"/>-shaped: the goal's
+    /// own arguments and the appended ones share the register file the
+    /// inline meta-call already sizes.</para></summary>
+    bool IsInlineMetaCallN(int builtinId, out int appended)
+    {
+        appended = 0;
+        return false;
+    }
+
     /// <summary>Whether the builtin can be invoked directly through the
     /// request protocol (entry.Impl against the engine). Meta-call builtins
     /// (call/N, the $call helpers) need the interpreter's dispatch machinery

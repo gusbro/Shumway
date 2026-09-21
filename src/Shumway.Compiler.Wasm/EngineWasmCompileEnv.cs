@@ -77,6 +77,21 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "call" && entry.Arity == 1;
     }
 
+    public bool IsInlineMetaCallN(int builtinId, out int appended)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        appended = entry.Arity - 1;
+        // call/1 keeps its own form; 2..8 append 1..7 arguments. The
+        // upper bound is the register file the meta-call already
+        // sizes, not a property of call/N.
+        return entry.Name == "call" && entry.Arity >= 2
+            && entry.Arity <= MaxInlineMetaCallArity;
+    }
+
+    /// <summary>The widest call/N the inline form takes. Matches the
+    /// emitter's MaxMetaCallArity: wider goals go to the host.</summary>
+    public const int MaxInlineMetaCallArity = 8;
+
     public bool IsInlineGetAttr(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

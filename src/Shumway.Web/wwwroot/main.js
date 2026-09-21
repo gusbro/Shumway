@@ -2158,7 +2158,19 @@ if (persistMode) {
     // still not there. So the load is PROVED, not assumed.
     async function loadAndSmoke(tag) {
       const e = await session.consult(
-        ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n' + cases);
+        ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n'
+      + 'tl_trivial :- ( between(1,1,_), atom(a), fail ; true ).\n'
+      + 'tl_neg :- ( between(1,1,_), \\+ \\+ atom(a), fail ; true ).\n'
+      + 'h_flat(V) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0.\n'
+      + 'c_flat :- h_flat(V), label(V).\n'
+      + 'h_three([S,E,N,D], [M,O,R,Y], [A,B]) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0, A = 1, B = 2.\n'
+      + 'c_three :- h_three(P,Q,R0), append([P,Q,R0], Vs), label(Vs).\n'
+      + 'h_rep([S,E,N,D] + [M,O,R,E] = [M,O,N,E,Y]) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0.\n'
+      + 'c_rep :- h_rep(A+B=C), append([A,B,C], Vs), label(Vs).\n'
+      + 'tl_flat :- ( between(1,1,_), \\+ \\+ c_flat, fail ; true ).\n'
+      + 'tl_three :- ( between(1,1,_), \\+ \\+ c_three, fail ; true ).\n'
+      + 'tl_rep :- ( between(1,1,_), \\+ \\+ c_rep, fail ; true ).\n'
+      + cases);
       mark(`diag: [${tag}] consult -> ${e ? 'ERROR ' + e : 'null (no error)'}`);
       await session.start('X in 1..3, indomain(X).');
       const r = await session.next(60);
@@ -2219,22 +2231,117 @@ if (persistMode) {
     // (782ms against Tier-0's 343ms), so the hang needs what runs BEFORE it:
     // in the benchmark, sendmore came after queens10ff's loop. Same order
     // here, same loop/2 shape, each bounded by a cancel.
+    // ORDER IS THE EXPERIMENT. Last time the single solve ran LAST, after
+    // 240s of deopting, and read 224ms -- suspiciously close to Tier-0's
+    // 386ms. So: is one solve genuinely fast on a fresh tier, or had the
+    // tier already given the hot predicates back to Tier-0 by then?
+    // Single FIRST, twice, then the loop, then single again.
+    // 1, 2, 4, 8 of the SAME loop. If the cost is linear the tier is
+    // merely slow; if it is not, something is wrong beyond slowness.
+    // The SAME goal shapes on BOTH tiers. Tier-0 runs the identical
+    // loop -- same \+ \+ and the same fail that backtracks out of a
+    // finished solve -- in ~190ms, so the question is not the loop.
+    // It is whether ONE sendmore behaves the same under backtracking
+    // on each tier. Whichever shape diverges is the bug.
+    // Three shapes, both tiers, same run. Tier-0 runs the identical
+    // control flow, so the variable under test is the TIER.
+    //   first solution : no backtracking out of a finished solve
+    //   once-semantics : prunes, still no backtracking out
+    //   backtracked out: proves once and then FAILS back through it
+    // If only the last one diverges, the bug is what the tier does when
+    // control backtracks out of a solve, not the cost of running one.
+    // NARROWING the >400x. Known: \+ \+ check(sendmore) alone is 979ms on
+    // the tier (2.5x over Tier-0) but loop(sendmore,1) -- the same goal
+    // plus a fail that backtracks out -- passes 240s.
+    //   A  the pruned solve alone, control
+    //   B  fail back over it, WITHOUT between/3: is between the variable?
+    //   D  fail back WITHOUT the negation: full search, on both tiers,
+    //      which says whether failing back is costly in itself or only
+    //      costly through a negation
+    // B (fail-back over the negation, no generator) is FAST on the tier:
+    // 1022ms. Adding between(1,1,_) in front makes the same goal pass
+    // 240s. So the variable is the GENERATOR, not the negation and not
+    // failing back -- and between(1,1,_) has exactly one solution, so
+    // after the fail there is nothing left to retry.
+    //   E  the bad one, reconfirmed in this run
+    //   F  member/2 instead: a Prolog generator rather than a
+    //      backtrackable C# builtin
+    //   G  between with a TRIVIAL body: is between alone enough?
+    // THE CONFIRMATION, both in one run so nothing is compared across
+    // runs. cases.pl defines
+    //   loop(C, N) :- ( between(1, N, _), \+ \+ check(C), fail ; true ).
+    // H is that body written INLINE at the top level; I calls the
+    // PREDICATE, which jit_compile(all) promoted to wasm. Same control
+    // flow, same promoted check/1 underneath.
+    // IS IT A LOOP? "cancel works" proves only that the engine reaches
+    // safe points, and an infinite loop reaches them too. If the SHAPE is
+    // what is broken, the size of the work should not matter: a trivial
+    // body in the same promoted failure-driven loop hangs just the same.
+    // These three are consulted before jit_compile(all), so promoted.
+    // THE SCALING CURVE, one knob: N constrained variables in the body of
+    // a promoted failure-driven loop. Trivial bodies already showed the
+    // shape alone is only 6-9x and TERMINATES, so this is not an infinite
+    // loop; what grows is the multiplier (8.7x, then 68x, then >158x).
+    // If the ratio keeps climbing with N the cost is superlinear in the
+    // constraint work, which is a different bug from a constant tax.
+    // ISOLATING THE EQUATION. The scaling curve (all_distinct + label over
+    // N vars) is FLAT at 2-3x, so constraint work alone does not explode.
+    // SEND+MORE has one thing that curve did not: a wide linear equation
+    // over 8 variables. Same 8 vars and the same 0..9 domain in all
+    // three rows, so the only variable is which constraints are posted.
+    // My SEND+MORE ran in 842ms on the tier and cases.pl's explodes, so
+    // they are not the same program. The difference: check/1 APPENDS the
+    // puzzle's three lists and labels the 13 elements that come out, in
+    // which M O N E Y each appear more than once. Mine labelled the 8
+    // distinct variables. Three rows separate the two candidates:
+    //   lab8     label the 8 distinct vars
+    //   lab13    append/3 then label the 13 with duplicates
+    //   lab13nc  the same 13 written by hand, no append/3
+    // Every variant that called a predicate which POSTS the constraints
+    // and hands back attributed variables exploded; the one that posted
+    // them in the caller did not. So: is it returning attributed
+    // variables across a promoted-predicate boundary?
+    //   inside   callee posts, caller labels   (expected to explode)
+    //   outside  caller posts and labels       (expected fine)
+    //   two      the same as inside with 2 variables and domain 1..2,
+    //            to see how small the reproduction gets
+    // THE CONTROL I kept inferring across runs, now in ONE run. Identical
+    // constraints in both; the only difference is whether label/1 runs in
+    // the body that POSTED them or in a caller that RECEIVED the
+    // variables. The third row drops all_different, to see whether the
+    // equation alone is enough once it crosses.
+    // A flat head (one variable) is FAST; pz/1, whose head is a nested
+    // compound with M, O and E REPEATED across its three sublists,
+    // explodes. Same constraints in all three rows; only the HEAD of the
+    // promoted predicate changes.
+    //   flat    head is one variable            (control, fast)
+    //   three   structured head, NO repeats
+    //   rep     structured head WITH repeats    (pz's shape)
+    // Only the two that matter, so the counters belong to THEM: the
+    // control that is fine and the one that explodes. The deopt reason
+    // histogram after each says what the module is stepping aside on.
     const STAGES = [
-      ['q10ff loop x5 ', 'loop(queens10ff, 5).', 120],
-      ['sendmore x2   ', 'loop(sendmore, 2).', 120],
-      ['sendmore x2 #2', 'loop(sendmore, 2).', 120],
-      ['sendmore once ', 'check(sendmore).', 60],
+      ['struct, unique (ok)', 'tl_three.', 120],
+      ['struct, repeat     ', 'tl_rep.', 120],
     ];
 
     const lines = [];
-    for (const m of ['all']) {
+    for (const m of ['off', 'all']) {
       const tSwitch = performance.now();
       const rep = await session.exports().JitCompileControl(m);
       await session.start('true.'); await session.next(5);
       lines.push(`=== jit_compile(${m}) in ${Math.round(performance.now() - tSwitch)}ms`);
       mark(`diag: jit_compile(${m}) :: ${rep.slice(0, 200)}`);
       for (const [label, goal, budget] of STAGES) {
+        // Counters around EACH stage, so a histogram belongs to one
+        // goal instead of to the whole run.
+        const before = await session.exports().JitCompileControl("status");
         const r = await bounded(goal, budget);
+        const after = await session.exports().JitCompileControl("status");
+        mark("diag: COUNTERS BEFORE " + label + "\n"
+             + before.split("\n").slice(0, 14).join("\n"));
+        mark("diag: COUNTERS AFTER " + label + "\n"
+             + after.split("\n").slice(0, 14).join("\n"));
         const line = `  ${label} ${String(Math.round(r.ms)).padStart(7)}ms  ${r.state}`;
         lines.push(line);
         mark('diag: ' + m + ' ' + line.trim());
