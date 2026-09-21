@@ -186,9 +186,19 @@ public sealed class WasmResumeTable
     /// those goals keep going to the host, which is what they did before
     /// there was a cache.</summary>
     public void NoteMetaResolution(
-        object? addressMap, int moduleAtomId, int goalFid, int resolvedFid)
+        object? addressMap, int moduleAtomId, int goalFid, int appended,
+        int resolvedFid)
     {
         if (moduleAtomId < 0 || goalFid < 0 || resolvedFid < 0) return;
+        // call/N appends arguments, so the predicate it resolves to has a
+        // WIDER arity than the goal -- a different functor, which the
+        // module cannot derive from the goal's (ids are interned, not
+        // computed). It probes with what it has, so that is the key.
+        if ((uint)appended > MaxAppended) return;
+        // The module id shares the key word with appended; past this it
+        // would run into the sign bit. Not cached is the pre-cache
+        // behaviour, which is slow and right.
+        if (moduleAtomId + 1 >= (1 << 27)) return;
         if (!ReferenceEquals(_metaStamp, addressMap))
         {
             System.Array.Clear(_metaCache, 0, _metaCache.Length);
@@ -196,8 +206,8 @@ public sealed class WasmResumeTable
             _metaStamp = addressMap;
             MetaCacheVersion++;
         }
-        long key = ((long)(moduleAtomId + 1) << 32) | (uint)goalFid;
-        int slot = MetaProbe(moduleAtomId, goalFid, _metaCacheMask);
+        long key = MetaKey(moduleAtomId, goalFid, appended);
+        int slot = MetaProbe(moduleAtomId, goalFid, appended, _metaCacheMask);
         for (int probe = 0; probe <= _metaCacheMask; probe++)
         {
             long k = _metaCache[slot * 2];
@@ -225,12 +235,24 @@ public sealed class WasmResumeTable
 
     /// <summary>The probe's first slot. The module recomputes this exact
     /// function, so the two move together or not at all.</summary>
-    public static int MetaProbe(int moduleAtomId, int goalFid, int mask)
+    public static int MetaProbe(int moduleAtomId, int goalFid, int appended, int mask)
     {
-        uint h = (uint)moduleAtomId * 2654435761u + (uint)goalFid * 2246822519u;
+        uint h = (uint)moduleAtomId * 2654435761u + (uint)goalFid * 2246822519u
+              + (uint)appended * 2166136261u;
         h ^= h >> 15;
         return (int)(h & (uint)mask);
     }
+
+    /// <summary>The key a slot holds. The module packs the same word, so
+    /// the two move together or not at all.</summary>
+    public static long MetaKey(int moduleAtomId, int goalFid, int appended)
+        => ((long)(moduleAtomId + 1) << 35)
+         | ((long)(appended & MaxAppended) << 32)
+         | (uint)goalFid;
+
+    /// <summary>The widest call/N the key can carry, and the reason it is
+    /// three bits: call/8 appends seven.</summary>
+    public const int MaxAppended = 7;
 
     /// <summary>What the cache says, or -1. For the cross-check and its
     /// tests; the engine itself resolves.</summary>
@@ -245,10 +267,10 @@ public sealed class WasmResumeTable
         MetaCacheVersion++;
     }
 
-    public int MetaLookup(int moduleAtomId, int goalFid)
+    public int MetaLookup(int moduleAtomId, int goalFid, int appended = 0)
     {
-        long key = ((long)(moduleAtomId + 1) << 32) | (uint)goalFid;
-        int slot = MetaProbe(moduleAtomId, goalFid, _metaCacheMask);
+        long key = MetaKey(moduleAtomId, goalFid, appended);
+        int slot = MetaProbe(moduleAtomId, goalFid, appended, _metaCacheMask);
         for (int probe = 0; probe <= _metaCacheMask; probe++)
         {
             long k = _metaCache[slot * 2];

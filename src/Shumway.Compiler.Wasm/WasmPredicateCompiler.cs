@@ -3442,7 +3442,8 @@ public static class WasmPredicateCompiler
         }
 
         private void EmitInlineMetaCall(int pc, int selfFid, bool tail = false,
-                                        bool barrierFromX1 = false, int envTrim = 0)
+                                        bool barrierFromX1 = false, int envTrim = 0,
+                                        int appended = 0)
         {
             if (MaxMetaCallArity - 1 > _maxRegister) _maxRegister = MaxMetaCallArity - 1;
             EmitFlagsCheck(pc);
@@ -3791,19 +3792,25 @@ public static class WasmPredicateCompiler
                 MetaGuard(8);
                 Op(new BranchIf(1));                        // no cache -> $slow
 
-                // key = ((module + 1) << 32) | goalFunctor
+                // key = ((module + 1) << 35) | (appended << 32) | goalFunctor
+                // -- WasmResumeTable.MetaKey, which this must match word for
+                // word. call/N resolves to a WIDER functor than the goal,
+                // and the module cannot derive that id, so the key is what
+                // it can form: the goal and how many arguments it appends.
                 Op(new LocalGet(LT0));
                 Op(new Int32Constant(1));
                 Op(new Int32Add());
                 Op(new Int64ExtendInt32Signed());
-                Op(new Int64Constant(32));
+                Op(new Int64Constant(35));
                 Op(new Int64ShiftLeft());
+                Op(new Int64Constant((long)(appended & 7) << 32));
+                Op(new Int64Or());
                 Op(new LocalGet(LT1));
                 Op(new Int64ExtendInt32Unsigned());
                 Op(new Int64Or());
                 Op(new LocalSet(LAtKey));
 
-                // slot = hash(module, goalFunctor) & mask
+                // slot = hash(module, goalFunctor, appended) & mask
                 Op(new LocalGet(LT0));
                 Op(new Int32Constant(unchecked((int)2654435761u)));
                 Op(new Int32Multiply());
@@ -3811,6 +3818,13 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant(unchecked((int)2246822519u)));
                 Op(new Int32Multiply());
                 Op(new Int32Add());
+                if (appended != 0)
+                {
+                    // Folded as an immediate: appended is known here.
+                    Op(new Int32Constant(
+                        unchecked((int)((uint)appended * 2166136261u))));
+                    Op(new Int32Add());
+                }
                 Op(new LocalSet(LAtSlot));
                 Op(new LocalGet(LAtSlot));
                 Op(new LocalGet(LAtSlot));

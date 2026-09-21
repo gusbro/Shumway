@@ -86,7 +86,7 @@ public sealed partial class Activation
     ///
     /// <para>Null unless a wasm world is attached, and called only on the
     /// resolution path, which is already the slow one.</para></summary>
-    public System.Action<object?, int, int, int>? MetaResolutionObserver;
+    public System.Action<object?, int, int, int, int>? MetaResolutionObserver;
 
     /// <summary>False when the activation is in a mode the compiled code does
     /// not honour (trail-everything, occurs_check) -- the tier delegate then
