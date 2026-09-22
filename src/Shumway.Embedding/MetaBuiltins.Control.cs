@@ -2085,10 +2085,33 @@ public static partial class MetaBuiltins
                 first = false;
                 try { sb.Append(AtomTable.GetById(m)?.Name ?? m.ToString()); }
                 catch (System.Exception) { sb.Append(m); }
+                // And WHAT it carries. A variable a solver really
+                // constrained holds that solver's attribute term; a
+                // record nothing reaches holds something else, and the
+                // two are indistinguishable by count or by address.
+                sb.Append('=').Append(ValueShape(engine, addr, m));
             }
             sb.Append(']');
         }
         Shumway.Core.Diagnostics.AttrTrace.LiveSnapshot = sb.ToString();
+    }
+
+    /// <summary>The functor of an attribute's value, or its tag when it
+    /// is not a compound. Diagnostic.</summary>
+    private static string ValueShape(Activation engine, int addr, int moduleId)
+    {
+        try
+        {
+            int v = engine.GetAttr(addr, moduleId);
+            if (v < 0) return "none";
+            int d = engine.Deref(v);
+            Cell c = engine.GetHeap(d);
+            if (c.Tag != Tag.Str) return c.Tag.ToString();
+            var (aid, ar) = FunctorTable.Lookup(
+                engine.GetHeap(c.AsHeapIndex).AsFunctorId);
+            return (AtomTable.GetById(aid)?.Name ?? "?") + "/" + ar;
+        }
+        catch (System.Exception) { return "?"; }
     }
 
     /// <summary>Builds a proper heap list whose elements are references to
