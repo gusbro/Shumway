@@ -1386,6 +1386,23 @@ internal static partial class WebShumwayApp
             if (engine is null) return "% jit_compile: no engine\n";
             var store = engine.IlPromotion;
 
+            // The area trace: armed around one stage, dumped after it.
+            // Both tiers sample into the same ring, so two dumps of the
+            // same goal can be laid side by side.
+            if (command == "trace on")
+            {
+                Shumway.Core.Diagnostics.AreaTrace.Reset();
+                Shumway.Core.Diagnostics.AreaTrace.Enabled = true;
+                return "% area trace: armed" + System.Environment.NewLine;
+            }
+            if (command == "trace off")
+            {
+                Shumway.Core.Diagnostics.AreaTrace.Enabled = false;
+                return "% area trace: off" + System.Environment.NewLine;
+            }
+            if (command == "trace dump")
+                return Shumway.Core.Diagnostics.AreaTrace.Dump();
+
             if (command == "status")
             {
                 if (store.Wasm is not { } w)

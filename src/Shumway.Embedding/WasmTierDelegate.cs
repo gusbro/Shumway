@@ -366,6 +366,11 @@ public sealed class WasmTierDelegate
         if (st > DiagMaxStackTop) DiagMaxStackTop = st;
         long ct = cx.ReadSlot(WasmAbi.ChoiceTop);
         if (ct > DiagMaxChoiceTop) DiagMaxChoiceTop = ct;
+        // The tier half of the same trace. The mailbox scalars are the
+        // live ones here; the engine fields are only refreshed on sync.
+        Shumway.Core.Diagnostics.AreaTrace.Note(
+            engine.CellsAllocated + cx.ReadSlot(WasmAbi.CellsClaimed),
+            (int)st, (int)ct, (int)cx.ReadSlot(WasmAbi.HeapTop));
         if (DiagCpCensus is null && st > CpCensusStackAbove)
         {
             DiagCpCensus = CensusChoicePoints(engine);

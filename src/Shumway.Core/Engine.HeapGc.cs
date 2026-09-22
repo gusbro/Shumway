@@ -233,6 +233,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeap()
     {
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         // Cooperative cancellation: checked at EVERY safe point (not only at the
         // GC watermark). Lazy Y-slot allocation made many loops heap-light, so a
         // watermark-only check left them uncancellable — and the watermark may
@@ -284,6 +285,10 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeapAtCall(int functorId)
     {
+        // The Tier-0 half of the area trace. A call is the densest point
+        // both tiers reach, and the sampler compiles away without the
+        // diag symbol, so the steady-state path is unchanged.
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
@@ -301,6 +306,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeapAtDispatch(int target)
     {
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
@@ -320,6 +326,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeapAtReturn()
     {
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
