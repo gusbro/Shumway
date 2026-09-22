@@ -304,6 +304,12 @@ public sealed partial class Activation
             GrowIfNeeded(ref _extraTrail, _extraTrailTop, extra, _config.MaxExtraTrailSize, "extra trail");
     }
 
+    /// <summary>Which buffer last raised resource_error(memory). The ISO
+    /// term says only "memory", which is right for a program and useless
+    /// for finding out WHY an engine ran out where another did not.
+    /// Diagnostic: last writer wins, no synchronisation.</summary>
+    public static string? LastExhausted;
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void GrowIfNeeded<T>(ref T[] buffer, int top, int extra, int maxSize, string name)
@@ -321,11 +327,17 @@ public sealed partial class Activation
         if (maxSize > 0 && newSize > maxSize)
         {
             if (required > maxSize)
+            {
+                LastExhausted = name;
                 throw new PrologRuntimeException("resource_error", "memory");
+            }
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
+        {
+            LastExhausted = name;
             throw new PrologRuntimeException("resource_error", "memory");
+        }
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         // A machine that cannot hold the doubled buffer raises .NET's OOM
         // from the resize itself, long before the int.MaxValue guard — the
@@ -336,6 +348,7 @@ public sealed partial class Activation
         try { Array.Resize(ref buffer, (int)newSize); }
         catch (OutOfMemoryException)
         {
+            LastExhausted = name;
             throw new PrologRuntimeException("resource_error", "memory");
         }
     }

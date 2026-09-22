@@ -443,6 +443,17 @@ internal static class BrowserWasmTier
         return sb.ToString();
     }
 
+    /// <summary>Which buffer last ran out, if one did. The ISO term says
+    /// only "memory", which is right for a program and useless for finding
+    /// out why one engine ran out where another did not.</summary>
+    internal static string AreaReport()
+        => "%   high water: stackTop=" + WasmTierDelegate.DiagMaxStackTop
+         + " choiceTop=" + WasmTierDelegate.DiagMaxChoiceTop + System.Environment.NewLine;
+
+    internal static string ExhaustionReport()
+        => Shumway.Core.Activation.LastExhausted is { } b
+            ? "%   last resource_error(memory): " + b + "\n" : "";
+
     /// <summary>The callees a chain could not continue into, heaviest
     /// first. A foreign exit means the callee has no module at all, so
     /// the chain closes and the interpreter runs it -- the count says how
@@ -1320,7 +1331,7 @@ internal static partial class WebShumwayApp
                               // and each hands control to the interpreter
                               // rather than just running C# and returning.
                               + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n')
-                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine).TrimEnd('\n');
+                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport().TrimEnd('\n');
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
@@ -1448,7 +1459,7 @@ internal static partial class WebShumwayApp
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
-                    + BrowserWasmTier.ForeignRankingReport(engine)
+                    + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport()
                     + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "

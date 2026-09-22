@@ -188,6 +188,7 @@ public sealed class WasmTierDelegate
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
+        DiagMaxStackTop = DiagMaxChoiceTop = 0;
         DiagBuiltinTally.Clear();
         DiagBuiltinFailTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
@@ -339,6 +340,20 @@ public sealed class WasmTierDelegate
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountBoundaryExit() => DiagBoundaryExits++;
+
+    /// <summary>How high the WAM stack ever stood while the tier held
+    /// control. A tier that fails to reclaim shows up here and nowhere
+    /// else: the answers stay right until the buffer runs out.</summary>
+    public static long DiagMaxStackTop, DiagMaxChoiceTop;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void NoteAreas(IWasmChainContext cx)
+    {
+        long st = cx.ReadSlot(WasmAbi.StackTop);
+        if (st > DiagMaxStackTop) DiagMaxStackTop = st;
+        long ct = cx.ReadSlot(WasmAbi.ChoiceTop);
+        if (ct > DiagMaxChoiceTop) DiagMaxChoiceTop = ct;
+    }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountSwitch(int fid, int address)
@@ -502,6 +517,7 @@ public sealed class WasmTierDelegate
             while (true)
             {
                 WasmVerdict v = cx.Call(target);
+                NoteAreas(cx);
                 if (v == WasmVerdict.Success)
                 {
                     int cp = (int)cx.ReadSlot(WasmAbi.ContinuationPc);
