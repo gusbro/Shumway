@@ -193,6 +193,8 @@ public sealed class WasmTierDelegate
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
         DiagDeoptOverflow = 0;
         for (int i = 0; i < DiagSwitchKeys.Length; i++) { DiagSwitchKeys[i] = -1; DiagSwitchHits[i] = 0; }
+        for (int i = 0; i < DiagForeignKeys.Length; i++)
+        { DiagForeignKeys[i] = -1; DiagForeignHits[i] = 0; }
         DiagFirstDeoptSlots = null;
         DiagFirstRestoreGuard = null;
         DiagDelegateTicks = DiagBuiltinTicks = 0;
@@ -308,8 +310,32 @@ public sealed class WasmTierDelegate
     private static void BuiltinClockStop(long t0)
         => DiagBuiltinTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
 
+    /// <summary>The callees a chain could not continue into, by functor.
+    /// The count alone says how much there is to remove; it does not say
+    /// WHAT to remove, and the two answers point at different work -- a
+    /// handful of predicates carrying millions of exits is a promotion
+    /// question, millions of distinct ones is an architecture question.
+    /// </summary>
+    private static readonly long[] DiagForeignKeys = FreshPcTable();
+    private static readonly long[] DiagForeignHits = new long[DeoptSiteSlots];
+
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
-    private static void CountForeignExit() => DiagForeignExits++;
+    private static void CountForeignExit(int functorId)
+    {
+        DiagForeignExits++;
+        NoteSite(DiagForeignKeys, DiagForeignHits, functorId);
+    }
+
+    /// <summary>The foreign-exit callees, heaviest first: (functor, hits).
+    /// Diagnostic.</summary>
+    public static List<(int Fid, long Hits)> ForeignRanking()
+    {
+        var r = new List<(int, long)>();
+        for (int i = 0; i < DiagForeignKeys.Length; i++)
+            if (DiagForeignKeys[i] >= 0) r.Add(((int)DiagForeignKeys[i], DiagForeignHits[i]));
+        r.Sort((x, y) => y.Item2.CompareTo(x.Item2));
+        return r;
+    }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountBoundaryExit() => DiagBoundaryExits++;
@@ -649,7 +675,8 @@ public sealed class WasmTierDelegate
         // how much there is to remove. BOUNDARY means the target IS here but
         // the host owes work first (a heap collection, a wakeup, a
         // cancellation); that exit stays no matter how modules are arranged.
-        if (!cx.TryResolve(fid, address, out WasmTarget t)) { CountForeignExit(); return false; }
+        if (!cx.TryResolve(fid, address, out WasmTarget t))
+        { CountForeignExit(fid); return false; }
         if (cx.ReadSlot(WasmAbi.HeapTop) >= cx.ReadSlot(WasmAbi.HeapWatermark))
         { CountBoundaryExit(); return false; }
         if (engine.IsCancellationRequested || engine.HasPendingWakeups)

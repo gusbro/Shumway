@@ -218,7 +218,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // Turn the image on before reading its rows: an engine that never
             // meets a wasm world keeps paying nothing for it.
             _engine.AttrMirrorEnable();
-            _engine.MetaResolutionObserver = _w.ResumeTable.NoteMetaResolution;
+            _engine.MetaResolutionObserver = _w.Modules.NoteMetaResolution;
             Cell[] heap = _engine.WasmHeapView;
             Cell[] stack = _engine.WasmStackView;
             Cell[] regs = _engine.WasmRegistersView;

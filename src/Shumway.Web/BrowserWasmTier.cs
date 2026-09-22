@@ -209,7 +209,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             long t0 = Stopwatch.GetTimestamp();
             _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
             _engine.AttrMirrorEnable();
-            _engine.MetaResolutionObserver = _w._table.NoteMetaResolution;
+            _engine.MetaResolutionObserver = _w._modules.NoteMetaResolution;
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
@@ -439,6 +439,48 @@ internal static class BrowserWasmTier
             var (name, arity, hits) = rank[i];
             double pct = total > 0 ? hits * 100.0 / total : 0;
             sb.Append($"%     {hits} ({pct:F0}%) {name}/{arity}\n");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>The callees a chain could not continue into, heaviest
+    /// first. A foreign exit means the callee has no module at all, so
+    /// the chain closes and the interpreter runs it -- the count says how
+    /// much there is to remove, and this says what.</summary>
+    internal static string ForeignRankingReport(PrologEngine engine)
+    {
+        var rank = WasmTierDelegate.ForeignRanking();
+        if (rank.Count == 0) return "";
+        // Does the callee EXIST as a static predicate, and at what
+        // address? A functor that names one which was simply not
+        // promoted is a promotion question; one that names none, or one
+        // sharing an address with a mangled sibling, is a naming bug.
+        var addrOf = new Dictionary<int, int>();
+        foreach (var (a2, p) in WasmPromotionStore.StaticPredicatesOf(engine))
+            addrOf[p.FunctorId] = a2;
+        var sb = new System.Text.StringBuilder();
+        long total = WasmTierDelegate.DiagForeignExits;
+        sb.Append("%   foreign callees (of ").Append(total).Append(", ")
+          .Append(rank.Count).Append(" distinct):\n");
+        for (int i = 0; i < rank.Count && i < 16; i++)
+        {
+            var (fid, hits) = rank[i];
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+            double pct = total > 0 ? hits * 100.0 / total : 0;
+            string name = Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?";
+            string where = addrOf.TryGetValue(fid, out int at)
+                ? $" static@{at}" : " NOT a static predicate";
+            // The same name under some module, and where THAT sits.
+            string twin = "";
+            foreach (var kv in addrOf)
+            {
+                var (taid, tar) = Shumway.Core.FunctorTable.Lookup(kv.Key);
+                string tn = Shumway.Core.AtomTable.GetById(taid)?.Name ?? "";
+                if (tar != ar || kv.Key == fid) continue;
+                if (tn == name || tn.EndsWith("$" + name, System.StringComparison.Ordinal))
+                    twin += $" | {tn}/{tar}@{kv.Value}";
+            }
+            sb.Append($"%     {hits} ({pct:F0}%) {name}/{ar}{where}{twin}\n");
         }
         return sb.ToString();
     }
@@ -1277,7 +1319,8 @@ internal static partial class WebShumwayApp
                               // them per run, against 23,594 builtin exits,
                               // and each hands control to the interpreter
                               // rather than just running C# and returning.
-                              + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n');
+                              + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n')
+                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine).TrimEnd('\n');
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
@@ -1405,6 +1448,7 @@ internal static partial class WebShumwayApp
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
+                    + BrowserWasmTier.ForeignRankingReport(engine)
                     + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "

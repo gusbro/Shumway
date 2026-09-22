@@ -124,6 +124,7 @@ public sealed class WasmModuleRegistry
         {
             _byFid[fid] = m;
             _entryAddressByFid[fid] = entryAddressByFid[fid];
+            _installedByEntry[entryAddressByFid[fid]] = fid;
         }
         // A fresh entry is address 0 under the member's own functor; every
         // other re-entry point belongs to whichever member's range it falls
@@ -189,15 +190,77 @@ public sealed class WasmModuleRegistry
     public bool TryResolve(int functorId, int address, out WasmTarget target)
     {
         target = default;
-        if (!Activation.TryGetResumeMarker(functorId, address, out int marker)) return false;
-        if (!Table.TryGet(marker, out int moduleId, out int cursor)) return false;
-        target = new WasmTarget(moduleId, cursor);
+        if (Activation.TryGetResumeMarker(functorId, address, out int marker)
+            && Table.TryGet(marker, out int moduleId, out int cursor))
+        {
+            target = new WasmTarget(moduleId, cursor);
+            return true;
+        }
+        // The callee may be a name with no code of its own -- a closure built
+        // in one module and called from another resolves to a bare functor --
+        // whose address map entry is the ENTRY of one that does have code.
+        // Only an entry (address 0) can be aliased this way: a resume point
+        // inside a body belongs to the body it was compiled from.
+        if (address != 0 || _byFid.ContainsKey(functorId)) return false;
+        if (!_entryOfAlias.TryGetValue(functorId, out int entry)) return false;
+        if (!_installedByEntry.TryGetValue(entry, out int owner)) return false;
+        if (!Activation.TryGetResumeMarker(owner, 0, out int ownMarker)) return false;
+        if (!Table.TryGet(ownMarker, out int ownModule, out int ownCursor)) return false;
+        target = new WasmTarget(ownModule, ownCursor);
         return true;
     }
 
     /// <summary>A functor's entry address as its module baked it; still
     /// known after an eviction.</summary>
     public int EntryAddressOf(int functorId) => _entryAddressByFid[functorId];
+
+    /// <summary>Records what the host resolved, naming the functor that
+    /// actually HAS the code.
+    ///
+    /// <para>A closure built in one module and called from another resolves
+    /// to a bare functor: <c>maplist(unwrap_with(bare_integer), ...)</c> is
+    /// written in clpz and the call happens in lists, so the goal is looked
+    /// up relative to lists and lands on <c>unwrap_with/3</c> -- which names
+    /// no predicate of its own. The interpreter follows the address map and
+    /// runs the right code; the module cannot, because its jump target is a
+    /// MARKER and markers are minted per functor. So it read zero and the
+    /// chain closed, 2.9 million times in one clp(Z) goal.</para>
+    ///
+    /// <para>The two names share an ADDRESS, and that is what makes this
+    /// sound rather than a guess: the callee is renamed only when the map
+    /// sends it to the exact entry of an installed functor, so it is the
+    /// same code either way. Nothing here changes what a goal MEANS -- that
+    /// question is meta_predicate's, and the interpreter already answers
+    /// it.</para></summary>
+    public void NoteMetaResolution(
+        object? addressMap, int moduleAtomId, int goalKey, int appended,
+        int resolvedFid, bool atomGoal)
+        => Table.NoteMetaResolution(addressMap, moduleAtomId, goalKey, appended,
+                                    CanonicalCallee(addressMap, resolvedFid),
+                                    atomGoal);
+
+    private int CanonicalCallee(object? addressMap, int functorId)
+    {
+        if (_byFid.ContainsKey(functorId)) return functorId;
+        if (addressMap is not IReadOnlyDictionary<int, int> map) return functorId;
+        if (!map.TryGetValue(functorId, out int address)) return functorId;
+        // Remembered even when nothing is installed there YET. Promotion is
+        // lazy, so a closure's first resolution usually happens BEFORE its
+        // callee is compiled -- and the interpreter caches the route, so it
+        // never asks again. Renaming only here would freeze that first,
+        // uninstalled answer for the rest of the run.
+        _entryOfAlias[functorId] = address;
+        return _installedByEntry.TryGetValue(address, out int owner)
+            ? owner : functorId;
+    }
+
+    private readonly Dictionary<int, int> _installedByEntry = new();
+
+    /// <summary>A functor with no code of its own, and the entry the address
+    /// map sends it to. Filled as resolutions go by and read back when a
+    /// marker resolves nowhere: the two halves arrive in either order, so
+    /// neither may depend on the other having happened first.</summary>
+    private readonly Dictionary<int, int> _entryOfAlias = new();
 
     /// <summary>Build-space to live-space for an address the functor's own
     /// module baked. Identity for a functor no module covers.</summary>
