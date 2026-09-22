@@ -1224,7 +1224,7 @@ public sealed partial class BytecodeInterpreter
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
-                    Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId);
+                    Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
                     try { implOk = entry.Impl(_engine); }
                     catch (PrologRuntimeException re)
                     {
@@ -2589,7 +2589,7 @@ public sealed partial class BytecodeInterpreter
                     }
                     try
                     {
-                        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId);
+                        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
                         implOk = entry.Impl(_engine);
                     }
                     catch (PrologRuntimeException re)

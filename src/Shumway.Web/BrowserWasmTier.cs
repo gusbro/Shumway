@@ -1467,6 +1467,32 @@ internal static partial class WebShumwayApp
             if (command == "shapes dump")
                 return Shumway.Core.Diagnostics.CallShapeTrace.Dump();
 
+            // The builtin calls IN ORDER. The tier open-codes some, so a
+            // raw diff of the two sequences differs for that reason alone;
+            // the names are printed so a comparison can drop the open-coded
+            // ones from BOTH sides before looking.
+            if (command == "seq dump")
+            {
+                var seq = Shumway.Core.Diagnostics.BuiltinTally.Sequence();
+                var sb3 = new System.Text.StringBuilder();
+                sb3.Append("# ").Append(seq.Count).Append(" calls in order")
+                   .Append(System.Environment.NewLine);
+                for (int i = 0; i < seq.Count; i++)
+                {
+                    string bn;
+                    try
+                    {
+                        var e4 = Shumway.Builtins.BuiltinsRegistry.GetById(seq[i].Id);
+                        bn = e4.Name + "/" + e4.Arity;
+                    }
+                    catch (System.Exception) { bn = "?id" + seq[i].Id; }
+                    sb3.Append(i).Append(' ').Append(bn).Append(' ')
+                       .Append(seq[i].Cells).Append(System.Environment.NewLine);
+                }
+                return sb3.ToString();
+            }
+
+
 
             // The builtin tally BOTH tiers write, so the same goal gives
             // two numbers that can be subtracted.

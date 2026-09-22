@@ -71,8 +71,11 @@ public static class CallShapeTrace
           .Append(Total).Append(" calls)\n");
         for (int i = 0; i < _count; i++)
         {
+            // "tag", not a dash: a dash is also a real functor name, and a
+            // placeholder that can be mistaken for one turns a diff into a
+            // misreading. (It did.)
             string n;
-            if (Arities[i] < 0) n = "-";
+            if (Arities[i] < 0) n = "tag";
             else
             {
                 try { n = AtomTable.GetById(Names[i])?.Name ?? Names[i].ToString(); }
