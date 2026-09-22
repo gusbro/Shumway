@@ -448,7 +448,10 @@ internal static class BrowserWasmTier
     /// out why one engine ran out where another did not.</summary>
     internal static string AreaReport()
         => "%   high water: stackTop=" + WasmTierDelegate.DiagMaxStackTop
-         + " choiceTop=" + WasmTierDelegate.DiagMaxChoiceTop + System.Environment.NewLine;
+         + " choiceTop=" + WasmTierDelegate.DiagMaxChoiceTop
+         + System.Environment.NewLine
+         + (WasmTierDelegate.DiagCpCensus is { } c
+             ? "%   cp chain: " + c + System.Environment.NewLine : "");
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b

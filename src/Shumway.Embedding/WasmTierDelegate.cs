@@ -189,6 +189,7 @@ public sealed class WasmTierDelegate
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagMaxStackTop = DiagMaxChoiceTop = 0;
+        DiagCpCensus = null;
         DiagBuiltinTally.Clear();
         DiagBuiltinFailTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
@@ -346,13 +347,53 @@ public sealed class WasmTierDelegate
     /// else: the answers stay right until the buffer runs out.</summary>
     public static long DiagMaxStackTop, DiagMaxChoiceTop;
 
+    /// <summary>WHOSE choice points those are, taken once, the first time
+    /// the stack passes a height no healthy run reaches. A count says the
+    /// tier is not reclaiming; only the chain says what it is not
+    /// reclaiming -- and whether the points are LIVE at all, since this
+    /// walks the B chain and a dead point is not on it.</summary>
+    public static string? DiagCpCensus;
+
+    /// <summary>High enough that no correct run reaches it (a healthy
+    /// stage of the same corpus peaks around 400) and low enough to catch
+    /// the runaway while walking it is still affordable.</summary>
+    private const long CpCensusStackAbove = 1_000_000;
+
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
-    private static void NoteAreas(IWasmChainContext cx)
+    private static void NoteAreas(IWasmChainContext cx, Activation engine)
     {
         long st = cx.ReadSlot(WasmAbi.StackTop);
         if (st > DiagMaxStackTop) DiagMaxStackTop = st;
         long ct = cx.ReadSlot(WasmAbi.ChoiceTop);
         if (ct > DiagMaxChoiceTop) DiagMaxChoiceTop = ct;
+        if (DiagCpCensus is null && st > CpCensusStackAbove)
+            DiagCpCensus = CensusChoicePoints(engine);
+    }
+
+    private static string CensusChoicePoints(Activation engine)
+    {
+        var byLabel = new Dictionary<string, int>();
+        int walked = 0;
+        bool capped = false;
+        foreach (var (_, bp, _) in engine.EnumerateChoicePoints())
+        {
+            // A chain this long has already answered the question, and
+            // walking every one of tens of millions would itself hang.
+            if (++walked > 200_000) { capped = true; break; }
+            string label = bp == Activation.IlChoicePointSentinelBp
+                ? "[il-sentinel]"
+                : engine.ResolveAddressToLabel?.Invoke(bp) ?? $"@0x{bp:X}";
+            byLabel.TryGetValue(label, out int n);
+            byLabel[label] = n + 1;
+        }
+        var sb = new System.Text.StringBuilder();
+        sb.Append("walked ").Append(walked).Append(capped ? "+ (capped)" : "")
+          .Append(" live choice points, ").Append(byLabel.Count).Append(" distinct");
+        var top = new List<KeyValuePair<string, int>>(byLabel);
+        top.Sort((x, y) => y.Value.CompareTo(x.Value));
+        for (int i = 0; i < top.Count && i < 12; i++)
+            sb.Append("; ").Append(top[i].Value).Append(' ').Append(top[i].Key);
+        return sb.ToString();
     }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
@@ -517,7 +558,7 @@ public sealed class WasmTierDelegate
             while (true)
             {
                 WasmVerdict v = cx.Call(target);
-                NoteAreas(cx);
+                NoteAreas(cx, engine);
                 if (v == WasmVerdict.Success)
                 {
                     int cp = (int)cx.ReadSlot(WasmAbi.ContinuationPc);
