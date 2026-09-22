@@ -40,6 +40,11 @@ public static class AttrTrace
     /// </summary>
     public static bool Enabled;
 
+    /// <summary>Which attributed variables were live when the engine
+    /// last counted, with the modules each carries. Set by the builtin
+    /// that does the counting; null until it runs.</summary>
+    public static string? LiveSnapshot;
+
     /// <summary>How many writes happened, including any past the cap.
     /// </summary>
     public static long Total;
@@ -49,6 +54,7 @@ public static class AttrTrace
     {
         _count = 0;
         Total = 0;
+        LiveSnapshot = null;
     }
 
     /// <summary><paramref name="shape"/> is the value's functor arity for a

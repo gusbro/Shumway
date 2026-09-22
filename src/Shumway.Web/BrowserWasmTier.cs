@@ -1451,6 +1451,9 @@ internal static partial class WebShumwayApp
             }
             if (command == "attrs dump")
                 return Shumway.Core.Diagnostics.AttrTrace.Dump();
+            if (command == "live dump")
+                return (Shumway.Core.Diagnostics.AttrTrace.LiveSnapshot ?? "(never counted)")
+                       + System.Environment.NewLine;
 
             // What =../2 is handed, call by call.
             if (command == "shapes on")

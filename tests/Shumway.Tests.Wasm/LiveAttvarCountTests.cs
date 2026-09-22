@@ -38,6 +38,27 @@ public sealed class LiveAttvarCountTests(ITestOutputHelper o)
         % Still standing on purpose: an anti-vacuity case, so a probe that
         % could never see an attributed variable would fail here.
         standing(N) :- _X in 1..9, live(N).
+        % The driver the browser stage actually uses: a failure-driven
+        % loop around a double negation. Backtracking out of it must
+        % leave no attributed cell standing.
+        loop(N) :-
+            ( between(1, 1, _),
+              \+ \+ (Vs = [A,B,C], Vs ins 1..3, all_different(Vs),
+                      A #< B, label(Vs)),
+              fail
+            ; true
+            ),
+            live(N).
+        % The same with the constrained variables reachable from OUTSIDE
+        % the negation, which is how clp(Z)'s stage is written.
+        loopout(N) :-
+            Vs = [_,_,_],
+            ( between(1, 1, _),
+              \+ \+ (Vs ins 1..3, all_different(Vs), label(Vs)),
+              fail
+            ; true
+            ),
+            live(N).
         """;
 
     [Theory]
@@ -45,6 +66,8 @@ public sealed class LiveAttvarCountTests(ITestOutputHelper o)
     [InlineData("solved")]
     [InlineData("failed")]
     [InlineData("standing")]
+    [InlineData("loop")]
+    [InlineData("loopout")]
     public void BothTiersHoldTheSameAttributedVariables(string goal)
     {
         var plain = new PrologEngine();
