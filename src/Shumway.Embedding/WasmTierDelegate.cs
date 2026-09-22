@@ -189,7 +189,7 @@ public sealed class WasmTierDelegate
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagMaxStackTop = DiagMaxChoiceTop = 0;
-        DiagCpCensus = null;
+        DiagCpCensus = DiagEnvCensus = null;
         DiagBuiltinTally.Clear();
         DiagBuiltinFailTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
@@ -357,7 +357,7 @@ public sealed class WasmTierDelegate
     /// <summary>High enough that no correct run reaches it (a healthy
     /// stage of the same corpus peaks around 400) and low enough to catch
     /// the runaway while walking it is still affordable.</summary>
-    private const long CpCensusStackAbove = 1_000_000;
+    public static long CpCensusStackAbove = 1_000_000;
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void NoteAreas(IWasmChainContext cx, Activation engine)
@@ -367,7 +367,74 @@ public sealed class WasmTierDelegate
         long ct = cx.ReadSlot(WasmAbi.ChoiceTop);
         if (ct > DiagMaxChoiceTop) DiagMaxChoiceTop = ct;
         if (DiagCpCensus is null && st > CpCensusStackAbove)
+        {
             DiagCpCensus = CensusChoicePoints(engine);
+            DiagEnvCensus = CensusEnvironments(engine);
+        }
+    }
+
+    /// <summary>The same for the ENVIRONMENT chain. A stack held by
+    /// frames and a stack held by alternatives are different faults,
+    /// and only walking both says which one this is.</summary>
+    public static string? DiagEnvCensus;
+
+    /// <summary>What a saved continuation POINTS AT. A frame the tier
+    /// built holds a resume MARKER, not a bytecode address: read as an
+    /// address it resolves to whichever predicate happens to sit below
+    /// the marker base and reports offsets in the billions.</summary>
+    private static string DescribeReturn(Activation engine, int cp)
+    {
+        if (Activation.IsResumeMarker(cp))
+        {
+            var (fid, addr) = Activation.DecodeResumeMarker(cp);
+            string name;
+            try
+            {
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+                name = (Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?") + "/" + ar;
+            }
+            catch (System.Exception) { name = "fid" + fid; }
+            return "marker " + name + "@" + addr;
+        }
+        // The return address is the instruction AFTER the call, so -1
+        // keeps a call in the last byte of its predicate from being
+        // attributed to the next one.
+        return engine.ResolveAddressToLabel?.Invoke(cp - 1) ?? $"@0x{cp:X}";
+    }
+
+    private static string CensusEnvironments(Activation engine)
+    {
+        var byLabel = new Dictionary<string, int>();
+        int walked = 0;
+        bool capped = false;
+        int lowest = int.MaxValue, highest = int.MinValue;
+        var seen = new HashSet<int>();
+        bool cycled = false;
+        foreach (var (e, ret) in engine.EnumerateEnvironmentFrames())
+        {
+            if (++walked > 200_000) { capped = true; break; }
+            // POSITIONS, not addresses: a frame seen twice means the
+            // chain loops, which reads exactly like a deep recursion
+            // through the return addresses alone.
+            if (!seen.Add(e)) { cycled = true; break; }
+            if (e < lowest) lowest = e;
+            if (e > highest) highest = e;
+            string label = DescribeReturn(engine, ret);
+            byLabel.TryGetValue(label, out int n);
+            byLabel[label] = n + 1;
+        }
+        var sb = new System.Text.StringBuilder();
+        sb.Append("walked ").Append(walked).Append(capped ? "+ (capped)" : "")
+          .Append(" frames, ").Append(seen.Count).Append(" distinct positions, ")
+          .Append(byLabel.Count).Append(" distinct callers");
+        if (cycled) sb.Append(" -- THE CHAIN LOOPS");
+        if (seen.Count > 0)
+            sb.Append("; span ").Append(lowest).Append("..").Append(highest);
+        var top = new List<KeyValuePair<string, int>>(byLabel);
+        top.Sort((x, y) => y.Value.CompareTo(x.Value));
+        for (int i = 0; i < top.Count && i < 12; i++)
+            sb.Append("; ").Append(top[i].Value).Append(' ').Append(top[i].Key);
+        return sb.ToString();
     }
 
     private static string CensusChoicePoints(Activation engine)
@@ -381,8 +448,7 @@ public sealed class WasmTierDelegate
             // walking every one of tens of millions would itself hang.
             if (++walked > 200_000) { capped = true; break; }
             string label = bp == Activation.IlChoicePointSentinelBp
-                ? "[il-sentinel]"
-                : engine.ResolveAddressToLabel?.Invoke(bp) ?? $"@0x{bp:X}";
+                ? "[il-sentinel]" : DescribeReturn(engine, bp);
             byLabel.TryGetValue(label, out int n);
             byLabel[label] = n + 1;
         }

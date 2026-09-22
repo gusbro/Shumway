@@ -80,4 +80,32 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
         Assert.True(tiered.Query("run(L), L == [a-1, b-2].").Success,
             "a callee nothing compiled stopped answering");
     }
+
+    /// <summary>PROBE: does the stack grow without bound on the tier?
+    /// Tier 0 runs this in constant stack; the browser's clp(Z) goal dies
+    /// with resource_error(memory) whose buffer is the STACK.</summary>
+    [DiagFact]
+    [Trait("Category", "Slow")]
+    public void DoesTheStackGrow()
+    {
+        foreach (int n in new[] { 1000, 10000, 100000, 400000 })
+        {
+            string goal = $"run({n}, _).";
+            var plain = new PrologEngine();
+            plain.ConsultString(Corpus);
+            string p0;
+            try { p0 = plain.Query(goal).Success ? "ok" : "failed"; }
+            catch (System.Exception ex) { p0 = ex.Message; }
+
+            var (tiered, _) = TieredEngine.Build(Corpus);
+            WasmTierDelegate.ResetDiag();
+            string t0;
+            try { t0 = tiered.Query(goal).Success ? "ok" : "failed"; }
+            catch (System.Exception ex) { t0 = ex.Message; }
+            o.WriteLine($"n={n,7} tier0={p0,-28} tier={t0,-28} "
+                + $"chains={WasmTierDelegate.DiagEntries} "
+                + $"exhausted={Shumway.Core.Activation.LastExhausted ?? "-"}");
+        }
+    }
+
 }

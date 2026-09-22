@@ -451,7 +451,9 @@ internal static class BrowserWasmTier
          + " choiceTop=" + WasmTierDelegate.DiagMaxChoiceTop
          + System.Environment.NewLine
          + (WasmTierDelegate.DiagCpCensus is { } c
-             ? "%   cp chain: " + c + System.Environment.NewLine : "");
+             ? "%   cp chain: " + c + System.Environment.NewLine : "")
+         + (WasmTierDelegate.DiagEnvCensus is { } e
+             ? "%   env chain: " + e + System.Environment.NewLine : "");
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b

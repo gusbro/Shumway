@@ -770,6 +770,28 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>The environment chain as POSITIONS, innermost first, with the
+    /// return address each frame carries.
+    ///
+    /// <para>Diagnostic. <see cref="EnumerateCallReturnAddresses"/> answers
+    /// "what called this", and a recursive predicate makes every frame carry
+    /// the same address there, so a long run of one address says nothing
+    /// about whether the chain is deep or merely repeating. Positions are
+    /// distinct per frame, so these separate a 100,000-deep recursion from a
+    /// chain that loops back on itself -- two different bugs that look
+    /// identical through the addresses.</para></summary>
+    public IEnumerable<(int E, int Ret)> EnumerateEnvironmentFrames()
+    {
+        int e = _e;
+        while (e >= 0)
+        {
+            yield return (e, (int)_stack[e + EnvCpOffset].Data);
+            int prevE = (int)_stack[e + EnvCeOffset].Data;
+            if (prevE == e || prevE < 0) yield break;
+            e = prevE;
+        }
+    }
+
     /// <summary>The environment and continuation the top choice point will restore —
     /// the state its retried clause runs in. See <see cref="PendingRedoEnvDepth"/>.
     /// Returns the current pair for an IL choice point, which restores neither.</summary>
