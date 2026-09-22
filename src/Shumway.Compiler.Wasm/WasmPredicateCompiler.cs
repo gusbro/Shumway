@@ -53,6 +53,7 @@ public static class WasmPredicateCompiler
                                               int moduleId = 0)
     {
         var c = new Compilation(members, env, moduleId);
+        c.RejectDispatchOnlyPredicates();
         c.Decode();
         c.RejectIfCrossingsDominate();
         c.AssignCursors();
@@ -295,6 +296,32 @@ public static class WasmPredicateCompiler
         /// losers (deep3) without second-guessing predicates that gain today.
         /// A member with no crossings at all is never in question.</para>
         /// </summary>
+        /// <summary>Some predicates are not what their clauses say they are.
+        /// <c>':'/2</c> and <c>'$mqual'/2</c> carry a module and a goal, and
+        /// the INTERPRETER intercepts them inside its own dispatch: their
+        /// clauses exist to have something to name, and running them as
+        /// written does not do what calling them does.
+        ///
+        /// <para>So they cannot be compiled. On the tier <c>':'/2</c> ran
+        /// its own body and a qualified goal came back as an
+        /// existence_error on the MODULE ATOM -- not even the goal -- while
+        /// Tier 0 answered. Refusing them costs nothing: a call to one takes
+        /// the ordinary path for an uncompiled callee and lands on its
+        /// bytecode, which is where its meaning lives.</para></summary>
+        public void RejectDispatchOnlyPredicates()
+        {
+            foreach (var m in _members)
+            {
+                int fid = m.Predicate.FunctorId;
+                if (fid != _env.ColonFunctorId && fid != _env.MqualFunctorId)
+                    continue;
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+                throw new WasmCompileException(
+                    $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar} is "
+                    + "dispatched by the interpreter, not run as written");
+            }
+        }
+
         public void RejectIfCrossingsDominate()
         {
             if (_sureExits is null) return;

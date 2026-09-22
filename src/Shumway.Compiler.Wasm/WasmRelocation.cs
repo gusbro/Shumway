@@ -308,6 +308,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     // would be a cross-process bug: functor ids are handed out in intern
     // ORDER, so the same predicate is a different id in another process.
     public int MqualFunctorId => _inner.MqualFunctorId;
+    public int ColonFunctorId => _inner.ColonFunctorId;
 
     public IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins
         => _inner.MetaCallableBuiltins;

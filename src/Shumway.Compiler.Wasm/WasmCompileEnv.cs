@@ -225,6 +225,13 @@ public interface IWasmCompileEnv
     /// wrapper, not the goal.</summary>
     int MqualFunctorId { get; }
 
+    /// <summary>The functor id of <c>':'/2</c>. A body goal written
+    /// <c>Module:Goal</c> that the compiler could not resolve statically
+    /// stays a call to this, and it is NOT a predicate: the interpreter
+    /// unwraps it inside its own dispatch. A module that treats it as an
+    /// ordinary callee jumps past that.</summary>
+    int ColonFunctorId { get; }
+
     /// <summary>Every (goal functor, builtin) pair a meta-call may meet as
     /// a GOAL. The compiler asks the SAME form questions of these that it
     /// asks of a static callee -- IsInlineUnify, IsInlineCompare,

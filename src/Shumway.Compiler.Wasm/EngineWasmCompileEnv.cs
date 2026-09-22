@@ -47,6 +47,9 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public int MqualFunctorId { get; } =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
+    public int ColonFunctorId { get; } =
+        FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+
     public IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins { get; }
         = BuildMetaCallable();
 

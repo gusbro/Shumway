@@ -98,6 +98,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     int IWasmCompileEnv.MqualFunctorId { get; } = Shumway.Core.FunctorTable.Intern(
         Shumway.Core.AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
+    int IWasmCompileEnv.ColonFunctorId { get; } = Shumway.Core.FunctorTable.Intern(
+        Shumway.Core.AtomTable.Intern(":", permanent: true).Id, 2);
+
     // The harness open-codes only =/2, so that is the one goal form it
     // offers; anything else it meets as a goal takes its own slow path.
     IReadOnlyList<(int FunctorId, int BuiltinId)> IWasmCompileEnv.MetaCallableBuiltins
