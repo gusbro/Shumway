@@ -190,6 +190,8 @@ public sealed class WasmTierDelegate
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagMaxStackTop = DiagMaxChoiceTop = 0;
         DiagCpCensus = DiagEnvCensus = null;
+        for (int i = 0; i < DiagBuiltinCallerKeys.Length; i++)
+        { DiagBuiltinCallerKeys[i] = -1; DiagBuiltinCallerHits[i] = 0; }
         DiagBuiltinTally.Clear();
         DiagBuiltinFailTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
@@ -320,6 +322,31 @@ public sealed class WasmTierDelegate
     /// </summary>
     private static readonly long[] DiagForeignKeys = FreshPcTable();
     private static readonly long[] DiagForeignHits = new long[DeoptSiteSlots];
+
+    /// <summary>Builtin requests by (builtin, REQUESTING predicate). The
+    /// plain tally says which builtin a run leaves for; when one of them
+    /// is the whole run, the next question is always who is asking, and
+    /// the answer names a clause to read.</summary>
+    private static readonly long[] DiagBuiltinCallerKeys = FreshPcTable();
+    private static readonly long[] DiagBuiltinCallerHits = new long[DeoptSiteSlots];
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountBuiltinCaller(int builtinId, int callerFid)
+        => NoteSite(DiagBuiltinCallerKeys, DiagBuiltinCallerHits,
+                    ((long)builtinId << 32) | (uint)callerFid);
+
+    /// <summary>(builtin id, caller functor, hits), heaviest first.
+    /// Diagnostic.</summary>
+    public static List<(int BuiltinId, int CallerFid, long Hits)> BuiltinCallerRanking()
+    {
+        var r = new List<(int, int, long)>();
+        for (int i = 0; i < DiagBuiltinCallerKeys.Length; i++)
+            if (DiagBuiltinCallerKeys[i] >= 0)
+                r.Add(((int)(DiagBuiltinCallerKeys[i] >> 32),
+                       (int)DiagBuiltinCallerKeys[i], DiagBuiltinCallerHits[i]));
+        r.Sort((x, y) => y.Item3.CompareTo(x.Item3));
+        return r;
+    }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountForeignExit(int functorId)
@@ -702,6 +729,7 @@ public sealed class WasmTierDelegate
                 // space, and its marker is keyed under the member that owns
                 // it -- which, after hops, is not the functor that entered.
                 if (ret >= 0) currentFid = cx.OwnerFunctorOf(ret);
+                CountBuiltinCaller(builtinId, currentFid);
                 // The builtin runs against the ENGINE: adopt the mailbox
                 // first, restage after -- managed code may bind, allocate,
                 // even replace an area array by growing it.

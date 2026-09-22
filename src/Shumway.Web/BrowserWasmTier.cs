@@ -446,6 +446,40 @@ internal static class BrowserWasmTier
     /// <summary>Which buffer last ran out, if one did. The ISO term says
     /// only "memory", which is right for a program and useless for finding
     /// out why one engine ran out where another did not.</summary>
+    /// <summary>Who ASKS for the builtins, heaviest pair first. The plain
+    /// tally says which builtin a run leaves for; when one of them is the
+    /// whole run, the next question is always who is asking, and the answer
+    /// names a clause to read.</summary>
+    internal static string BuiltinCallerReport()
+    {
+        var rank = WasmTierDelegate.BuiltinCallerRanking();
+        if (rank.Count == 0) return "";
+        var sb = new System.Text.StringBuilder();
+        sb.Append("%   builtin callers (").Append(rank.Count)
+          .Append(" pairs):").Append(System.Environment.NewLine);
+        for (int i = 0; i < rank.Count && i < 10; i++)
+        {
+            var (bid, fid, hits) = rank[i];
+            string bn;
+            try
+            {
+                var e2 = Shumway.Builtins.BuiltinsRegistry.GetById(bid);
+                bn = e2.Name + "/" + e2.Arity;
+            }
+            catch (System.Exception) { bn = "?id" + bid; }
+            string cn;
+            try
+            {
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+                cn = (Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?") + "/" + ar;
+            }
+            catch (System.Exception) { cn = "fid" + fid; }
+            sb.Append("%     ").Append(hits).Append(' ').Append(bn)
+              .Append(" from ").Append(cn).Append(System.Environment.NewLine);
+        }
+        return sb.ToString();
+    }
+
     internal static string AreaReport()
         => "%   high water: stackTop=" + WasmTierDelegate.DiagMaxStackTop
          + " choiceTop=" + WasmTierDelegate.DiagMaxChoiceTop
@@ -1336,7 +1370,7 @@ internal static partial class WebShumwayApp
                               // and each hands control to the interpreter
                               // rather than just running C# and returning.
                               + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n')
-                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport().TrimEnd('\n');
+                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport().TrimEnd('\n');
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
@@ -1402,6 +1436,21 @@ internal static partial class WebShumwayApp
             }
             if (command == "trace dump")
                 return Shumway.Core.Diagnostics.AreaTrace.Dump();
+
+            // The propagation trace: every attribute write, in order.
+            if (command == "attrs on")
+            {
+                Shumway.Core.Diagnostics.AttrTrace.Reset();
+                Shumway.Core.Diagnostics.AttrTrace.Enabled = true;
+                return "% attr trace: armed" + System.Environment.NewLine;
+            }
+            if (command == "attrs off")
+            {
+                Shumway.Core.Diagnostics.AttrTrace.Enabled = false;
+                return "% attr trace: off" + System.Environment.NewLine;
+            }
+            if (command == "attrs dump")
+                return Shumway.Core.Diagnostics.AttrTrace.Dump();
 
             if (command == "status")
             {
@@ -1481,7 +1530,7 @@ internal static partial class WebShumwayApp
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
-                    + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport()
+                    + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport()
                     + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "

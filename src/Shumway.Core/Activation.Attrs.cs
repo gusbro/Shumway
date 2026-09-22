@@ -49,6 +49,24 @@ public sealed partial class Activation
     {
         _attrStore[home][moduleId] = valueHeapIdx;
         AttrMirrorPut(home, moduleId, valueHeapIdx);
+        Diagnostics.AttrTrace.Note(_cellsAllocated, moduleId, AttrValueShape(valueHeapIdx));
+    }
+
+    /// <summary>The written value's functor arity, or a negative tag code.
+    /// ADR-051 makes a finite domain a term whose arity counts its
+    /// intervals, so this one number says how narrow the domain became --
+    /// which is what a propagation trace is for. Deref'd, because a value
+    /// reached through a bound variable has the same shape as the term it
+    /// points at.</summary>
+    private int AttrValueShape(int valueHeapIdx)
+    {
+        if (valueHeapIdx < 0 || valueHeapIdx >= _heapTop) return -1;
+        Cell c = _heap[Deref(valueHeapIdx)];
+        if (c.Tag != Tag.Str) return -((int)c.Tag + 2);
+        int fidx = c.AsHeapIndex;
+        if (fidx < 0 || fidx >= _heapTop) return -1;
+        var (_, arity) = FunctorTable.Lookup(_heap[fidx].AsFunctorId);
+        return arity;
     }
 
     /// <summary>Removes <paramref name="moduleId"/>'s attribute; returns the
