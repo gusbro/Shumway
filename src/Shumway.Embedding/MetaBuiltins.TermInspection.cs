@@ -382,6 +382,25 @@ public static partial class MetaBuiltins
     {
         Cell t = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(0)));
 
+        // What the walk is being handed, when someone is recording. A tally
+        // cannot tell a bigger term from the same term over and over; the
+        // functor can.
+        if (Shumway.Core.Diagnostics.CallShapeTrace.Wants)
+        {
+            if (t.Tag == Tag.Str)
+            {
+                var (nameId, ar) = FunctorTable.Lookup(
+                    engine.GetHeap(t.AsHeapIndex).AsFunctorId);
+                Shumway.Core.Diagnostics.CallShapeTrace.Note(
+                    engine.CellsAllocated, nameId, ar);
+            }
+            else
+            {
+                Shumway.Core.Diagnostics.CallShapeTrace.Note(
+                    engine.CellsAllocated, 0, -((int)t.Tag + 2));
+            }
+        }
+
         // Decompose modes — build the list directly in the heap with
         // a single allocation, no intermediate Cell[] buffer.
         if (t.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)

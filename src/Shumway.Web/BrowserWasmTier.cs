@@ -1452,6 +1452,22 @@ internal static partial class WebShumwayApp
             if (command == "attrs dump")
                 return Shumway.Core.Diagnostics.AttrTrace.Dump();
 
+            // What =../2 is handed, call by call.
+            if (command == "shapes on")
+            {
+                Shumway.Core.Diagnostics.CallShapeTrace.Reset();
+                Shumway.Core.Diagnostics.CallShapeTrace.Enabled = true;
+                return "% call-shape trace: armed" + System.Environment.NewLine;
+            }
+            if (command == "shapes off")
+            {
+                Shumway.Core.Diagnostics.CallShapeTrace.Enabled = false;
+                return "% call-shape trace: off" + System.Environment.NewLine;
+            }
+            if (command == "shapes dump")
+                return Shumway.Core.Diagnostics.CallShapeTrace.Dump();
+
+
             // The builtin tally BOTH tiers write, so the same goal gives
             // two numbers that can be subtracted.
             if (command == "builtins on")
