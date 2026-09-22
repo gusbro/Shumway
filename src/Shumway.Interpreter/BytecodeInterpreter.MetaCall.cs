@@ -560,11 +560,18 @@ public sealed partial class BytecodeInterpreter
         }
 
         int totalArity = goalArity + extraCount;
-        // The key the MODULE can form: it reads the goal off the heap, so
-        // it knows (name, goalArity) and, statically, how many arguments
-        // this call/N appends. It cannot derive the resolved functor,
-        // whose arity is wider.
-        int observedGoalFid = FunctorTable.Intern(atomId, goalArity);
+        // The key the MODULE can form. It reads the goal off the heap, so
+        // for a compound it knows the functor id and, statically, how many
+        // arguments this call/N appends; it cannot derive the RESOLVED
+        // functor, whose arity is wider.
+        //
+        // An ATOM goal has no functor to read -- interning (name, 0) is a
+        // search and a module can only index -- so it keys by the atom id
+        // instead, flagged, because atom ids and functor ids overlap.
+        bool observedAtomGoal = goalArity == 0;
+        int observedGoalKey = observedAtomGoal
+            ? atomId
+            : FunctorTable.Intern(atomId, goalArity);
         for (int i = 0; i < goalArity; i++)
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
         for (int i = 0; i < extraCount; i++)
@@ -708,8 +715,8 @@ public sealed partial class BytecodeInterpreter
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
             {
                 _engine.MetaResolutionObserver?.Invoke(
-                    addresses, resolutionModule, observedGoalFid, extraCount,
-                    mangledFid);
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    mangledFid, observedAtomGoal);
                 return JumpToUserGoal(code, pc, mangledAddr);
             }
             // ADR-038 — the module's import table: a bare goal it doesn't define
@@ -721,8 +728,8 @@ public sealed partial class BytecodeInterpreter
                 && addresses.TryGetValue(importedFid, out int importedAddr))
             {
                 _engine.MetaResolutionObserver?.Invoke(
-                    addresses, resolutionModule, observedGoalFid, extraCount,
-                    importedFid);
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    importedFid, observedAtomGoal);
                 return JumpToUserGoal(code, pc, importedAddr);
             }
         }
@@ -770,8 +777,8 @@ public sealed partial class BytecodeInterpreter
             // conjunction forever. That hang is how this was found.
             if (resolutionModule >= 0 && userKind == Shumway.Core.MetaRouteKind.Jump)
                 _engine.MetaResolutionObserver?.Invoke(
-                    addresses, resolutionModule, observedGoalFid, extraCount,
-                    functorId);
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    functorId, observedAtomGoal);
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(userKind, address);
             return JumpToUserGoal(code, pc, address);

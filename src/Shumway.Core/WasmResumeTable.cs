@@ -186,19 +186,19 @@ public sealed class WasmResumeTable
     /// those goals keep going to the host, which is what they did before
     /// there was a cache.</summary>
     public void NoteMetaResolution(
-        object? addressMap, int moduleAtomId, int goalFid, int appended,
-        int resolvedFid)
+        object? addressMap, int moduleAtomId, int goalKey, int appended,
+        int resolvedFid, bool atomGoal = false)
     {
-        if (moduleAtomId < 0 || goalFid < 0 || resolvedFid < 0) return;
+        if (moduleAtomId < 0 || goalKey < 0 || resolvedFid < 0) return;
         // call/N appends arguments, so the predicate it resolves to has a
         // WIDER arity than the goal -- a different functor, which the
         // module cannot derive from the goal's (ids are interned, not
         // computed). It probes with what it has, so that is the key.
         if ((uint)appended > MaxAppended) return;
-        // The module id shares the key word with appended; past this it
-        // would run into the sign bit. Not cached is the pre-cache
-        // behaviour, which is slow and right.
-        if (moduleAtomId + 1 >= (1 << 27)) return;
+        // The module id shares the key word with appended and the atom
+        // flag; past this it would run into the sign bit. Not cached is
+        // the pre-cache behaviour, which is slow and right.
+        if (moduleAtomId + 1 >= (1 << 26)) return;
         if (!ReferenceEquals(_metaStamp, addressMap))
         {
             System.Array.Clear(_metaCache, 0, _metaCache.Length);
@@ -206,8 +206,9 @@ public sealed class WasmResumeTable
             _metaStamp = addressMap;
             MetaCacheVersion++;
         }
-        long key = MetaKey(moduleAtomId, goalFid, appended);
-        int slot = MetaProbe(moduleAtomId, goalFid, appended, _metaCacheMask);
+        long key = MetaKey(moduleAtomId, goalKey, appended, atomGoal);
+        int slot = MetaProbe(moduleAtomId, goalKey, appended, atomGoal,
+                             _metaCacheMask);
         for (int probe = 0; probe <= _metaCacheMask; probe++)
         {
             long k = _metaCache[slot * 2];
@@ -235,20 +236,30 @@ public sealed class WasmResumeTable
 
     /// <summary>The probe's first slot. The module recomputes this exact
     /// function, so the two move together or not at all.</summary>
-    public static int MetaProbe(int moduleAtomId, int goalFid, int appended, int mask)
+    public static int MetaProbe(int moduleAtomId, int goalKey, int appended,
+                                bool atomGoal, int mask)
     {
-        uint h = (uint)moduleAtomId * 2654435761u + (uint)goalFid * 2246822519u
-              + (uint)appended * 2166136261u;
+        uint h = (uint)moduleAtomId * 2654435761u + (uint)goalKey * 2246822519u
+              + (uint)appended * 2166136261u
+              + (atomGoal ? 1u : 0u) * 2654435789u;
         h ^= h >> 15;
         return (int)(h & (uint)mask);
     }
 
     /// <summary>The key a slot holds. The module packs the same word, so
-    /// the two move together or not at all.</summary>
-    public static long MetaKey(int moduleAtomId, int goalFid, int appended)
-        => ((long)(moduleAtomId + 1) << 35)
+    /// the two move together or not at all.
+    ///
+    /// <para>For a COMPOUND goal the key half is its functor id; for an
+    /// ATOM goal it is the atom id, and the two id spaces overlap, hence
+    /// the flag. An atom goal cannot be keyed by functor at all: the
+    /// callee is name/appended and a module cannot intern that id.</para>
+    /// </summary>
+    public static long MetaKey(int moduleAtomId, int goalKey, int appended,
+                               bool atomGoal = false)
+        => ((long)(moduleAtomId + 1) << 36)
+         | ((atomGoal ? 1L : 0L) << 35)
          | ((long)(appended & MaxAppended) << 32)
-         | (uint)goalFid;
+         | (uint)goalKey;
 
     /// <summary>The widest call/N the key can carry, and the reason it is
     /// three bits: call/8 appends seven.</summary>
@@ -267,10 +278,12 @@ public sealed class WasmResumeTable
         MetaCacheVersion++;
     }
 
-    public int MetaLookup(int moduleAtomId, int goalFid, int appended = 0)
+    public int MetaLookup(int moduleAtomId, int goalKey, int appended = 0,
+                          bool atomGoal = false)
     {
-        long key = MetaKey(moduleAtomId, goalFid, appended);
-        int slot = MetaProbe(moduleAtomId, goalFid, appended, _metaCacheMask);
+        long key = MetaKey(moduleAtomId, goalKey, appended, atomGoal);
+        int slot = MetaProbe(moduleAtomId, goalKey, appended, atomGoal,
+                             _metaCacheMask);
         for (int probe = 0; probe <= _metaCacheMask; probe++)
         {
             long k = _metaCache[slot * 2];

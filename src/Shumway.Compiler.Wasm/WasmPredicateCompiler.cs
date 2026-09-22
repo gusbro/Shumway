@@ -926,6 +926,9 @@ public static class WasmPredicateCompiler
             // count-changing rebuild needs beside it. Appended last, same
             // rule.
             new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
+            // Whether the meta-called goal is an ATOM, which keys the
+            // cache differently. Appended last, same rule.
+            new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -3783,35 +3786,71 @@ public static class WasmPredicateCompiler
                 Op(new Int32WrapInt64());
                 Op(new LocalSet(LT0));                      // module atom
 
-                // The goal inside must itself be a compound.
+                // The goal inside is a compound, or an ATOM -- which is a
+                // predicate of arity 0 before this call site appends to it,
+                // and the shape clp(Z)'s maplist/3 actually carries: its
+                // goal arrives in a variable holding a bare predicate name.
+                // Both key the cache; they differ in WHAT they key by, and
+                // in that an atom has no arguments to copy.
                 CellLoadDyn(LHeapB, LT2, 2);
                 Op(new LocalSet(LC0));
                 Deref();
                 TagOfC0();
                 Op(new Int32Constant((int)Tag.Str));
-                Op(new Int32NotEqual());
-                MetaGuard(7);
-                Op(new BranchIf(1));                        // -> $slow
-                Op(new LocalGet(LC0));
-                Op(new Int32WrapInt64());
-                Op(new LocalSet(LT2));                      // the GOAL's index
-                CellLoadDyn(LHeapB, LT2);
-                Op(new Int64Constant(Cell.PayloadMask));
-                Op(new Int64And());
-                Op(new Int32WrapInt64());
-                Op(new LocalSet(LT1));                      // the goal's functor
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LMetaAtom));
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LT2));                  // the GOAL's index
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LT1));                  // the goal's functor
 
-                // The goal's own arity, kept for the cross-check below: the
-                // args are copied out of the GOAL, but their count comes from
-                // the RESOLVED functor, and those two have to agree.
-                LoadSlot32(WasmAbi.FunctorTableBase);
-                Op(new LocalGet(LT1));
-                Op(new Int32Constant(3));
-                Op(new Int32ShiftLeft());
-                Op(new Int32Add());
-                Op(new Int64Load());
-                Op(new Int32WrapInt64());
-                Op(new LocalSet(LMetaArity));               // goal arity
+                    // The goal's own arity, kept for the cross-check below:
+                    // the args are copied out of the GOAL, but the callee's
+                    // width comes from the RESOLVED functor, and the two
+                    // have to agree once this site's appended count is in.
+                    LoadSlot32(WasmAbi.FunctorTableBase);
+                    Op(new LocalGet(LT1));
+                    Op(new Int32Constant(3));
+                    Op(new Int32ShiftLeft());
+                    Op(new Int32Add());
+                    Op(new Int64Load());
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LMetaArity));           // goal arity
+                }
+                OpenElse();
+                {
+                    // An atom keys by its ATOM id. Interning (name, 0) is a
+                    // search of the functor table and a module can only
+                    // index, so the functor is not available here at all --
+                    // which is why the key carries a flag: atom ids and
+                    // functor ids share their range.
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.Atom));
+                    Op(new Int32NotEqual());
+                    OpenIf();
+                    {
+                        MetaGuard(7);
+                        GoSlow();
+                    }
+                    CloseNested();
+                    Op(new Int32Constant(1));
+                    Op(new LocalSet(LMetaAtom));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LMetaArity));           // no arguments
+                    Op(new LocalGet(LC0));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LT1));                  // the atom id
+                }
+                CloseNested();
 
                 LoadSlot32(WasmAbi.MetaCacheBase);
                 Op(new LocalSet(LMetaBase));
@@ -3821,17 +3860,24 @@ public static class WasmPredicateCompiler
                 MetaGuard(8);
                 Op(new BranchIf(1));                        // no cache -> $slow
 
-                // key = ((module + 1) << 35) | (appended << 32) | goalFunctor
+                // key = ((module + 1) << 36) | (atom << 35)
+                //     | (appended << 32) | goalKey
                 // -- WasmResumeTable.MetaKey, which this must match word for
                 // word. call/N resolves to a WIDER functor than the goal,
                 // and the module cannot derive that id, so the key is what
-                // it can form: the goal and how many arguments it appends.
+                // it can form: the goal, whether the goal is an atom, and
+                // how many arguments this site appends.
                 Op(new LocalGet(LT0));
                 Op(new Int32Constant(1));
                 Op(new Int32Add());
                 Op(new Int64ExtendInt32Signed());
+                Op(new Int64Constant(36));
+                Op(new Int64ShiftLeft());
+                Op(new LocalGet(LMetaAtom));
+                Op(new Int64ExtendInt32Unsigned());
                 Op(new Int64Constant(35));
                 Op(new Int64ShiftLeft());
+                Op(new Int64Or());
                 Op(new Int64Constant((long)(appended & 7) << 32));
                 Op(new Int64Or());
                 Op(new LocalGet(LT1));
@@ -3854,6 +3900,12 @@ public static class WasmPredicateCompiler
                         unchecked((int)((uint)appended * 2166136261u))));
                     Op(new Int32Add());
                 }
+                // The atom flag is only known at run time, so this one is
+                // a multiply rather than an immediate.
+                Op(new LocalGet(LMetaAtom));
+                Op(new Int32Constant(unchecked((int)2654435789u)));
+                Op(new Int32Multiply());
+                Op(new Int32Add());
                 Op(new LocalSet(LAtSlot));
                 Op(new LocalGet(LAtSlot));
                 Op(new LocalGet(LAtSlot));
@@ -3933,6 +3985,8 @@ public static class WasmPredicateCompiler
             {
                 // Not wrapped: the callee IS the goal, so there are not two
                 // arities to reconcile.
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LMetaAtom));
                 Op(new Int32Constant(-1));
                 Op(new LocalSet(LMetaArity));
                 Op(new LocalGet(LC1));
@@ -4054,7 +4108,9 @@ public static class WasmPredicateCompiler
                 RegStore(park, () => RegLoad(i));
             }
 
-            // The goal's arguments become X0..Xn-1.
+            // The goal's arguments become X0..Xn-1. An ATOM goal has none
+            // and LMetaArity is 0, so this loop runs zero times -- which is
+            // what keeps LT2 (not a goal index in that case) unread.
             Op(new Int32Constant(0));
             Op(new LocalSet(LAtSlot));
             OpenBlock();                                    // $copied
@@ -6276,6 +6332,7 @@ public static class WasmPredicateCompiler
         private const uint LDomI = 53;      // i32: the copy cursor
         private const uint LDomJ = 54;      // i32: the second copy cursor
         private const uint LT0Alt = 55;     // i32: scratch the scan's LT0 outlives
+        private const uint LMetaAtom = 56; // i32: 1 when the goal is an atom
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

@@ -299,18 +299,18 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
         object mapA = new object();
         object mapB = new object();
 
-        table.NoteMetaResolution(mapA, moduleAtomId: 7, goalFid: 11, appended: 0, resolvedFid: 42);
+        table.NoteMetaResolution(mapA, moduleAtomId: 7, goalKey: 11, appended: 0, resolvedFid: 42);
         Assert.Equal(42, table.MetaLookup(7, 11));
 
         // A second resolution against the SAME map joins it.
-        table.NoteMetaResolution(mapA, moduleAtomId: 7, goalFid: 12, appended: 0, resolvedFid: 43);
+        table.NoteMetaResolution(mapA, moduleAtomId: 7, goalKey: 12, appended: 0, resolvedFid: 43);
         Assert.Equal(42, table.MetaLookup(7, 11));
         Assert.Equal(43, table.MetaLookup(7, 12));
 
         // A new map drops everything the old one said -- including the pair
         // that is not being re-resolved right now, which is exactly the one
         // that would otherwise answer wrongly later.
-        table.NoteMetaResolution(mapB, moduleAtomId: 7, goalFid: 12, appended: 0, resolvedFid: 99);
+        table.NoteMetaResolution(mapB, moduleAtomId: 7, goalKey: 12, appended: 0, resolvedFid: 99);
         Assert.Equal(99, table.MetaLookup(7, 12));
         Assert.Equal(-1, table.MetaLookup(7, 11));
     }

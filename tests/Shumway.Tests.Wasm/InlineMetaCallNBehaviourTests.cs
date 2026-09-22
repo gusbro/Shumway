@@ -228,8 +228,9 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
             "an atom goal must still run");
     }
 
-    /// <summary>A goal that is a bare ATOM at run time is NOT served here,
-    /// and this pins that on purpose rather than by omission.
+    /// <summary>A goal that is a bare ATOM at run time, which is the shape
+    /// clp(Z)'s maplist/3 carries: the goal arrives in a variable holding a
+    /// predicate NAME, not a partial application.
     ///
     /// <para>The module resolves an atom goal through a table keyed by atom
     /// that names the name/0 predicate. An appending call site wants
@@ -243,7 +244,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
     /// If someone teaches the module the atom form, this test goes red and
     /// should be turned into the opposite claim.</para></summary>
     [DiagFact]
-    public void AnAtomGoalStillStepsAsideAndStillAnswers()
+    public void AnAtomGoalIsServedInsideTheModule()
     {
         const string Program = """
             pick(a, 1).
@@ -261,8 +262,37 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
         Assert.True(tiered.Query("drive(pick, L), L == [a-1, b-2].").Success,
             "the atom form of call/3 stopped answering");
         o.WriteLine($"atom goal: deopts={WasmTierDelegate.DiagDeopts}");
-        Assert.True(WasmTierDelegate.DiagDeopts > 0,
-            "the atom form no longer steps aside: if that is deliberate, "
-            + "this test is the one that has to change");
+        Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
+    }
+
+    /// <summary>The atom goal and the compound goal key the cache by
+    /// DIFFERENT id spaces -- an atom id and a functor id -- and those two
+    /// ranges overlap, which is the whole reason the key carries a flag.
+    ///
+    /// <para>Both shapes go through one call site here, so a key that did
+    /// not tell them apart would serve one resolution for the other: a
+    /// wrong call, not a slow one. The goals report what they received, so
+    /// a crossed resolution comes back as a different term.</para>
+    /// </summary>
+    [DiagFact]
+    public void AnAtomGoalAndACompoundGoalDoNotShareASlot()
+    {
+        const string Program = """
+            pick(X, Y) :- Y = bare(X).
+            pick(K, X, Y) :- Y = partial(K, X).
+            two(G, X, R) :- call(G, X, R).
+            drive(A, B) :- two(pick, one, A), two(pick(k), one, B).
+            """;
+        const string Goal = "drive(A, B), A == bare(one), B == partial(k, one).";
+        Assert.True(Plain(Program).Query(Goal).Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Program);
+        Assert.True(tiered.Query(Goal).Success);
+        WasmTierDelegate.ResetDiag();
+        Assert.True(tiered.Query(Goal).Success,
+            "the atom and compound forms of one goal name crossed");
+        o.WriteLine($"mixed: deopts={WasmTierDelegate.DiagDeopts}");
+        Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
     }
 }

@@ -22,7 +22,7 @@ public sealed class MetaCacheAppendedKeyTests
     {
         var t = new WasmResumeTable();
         foreach (var (appended, resolved) in rows)
-            t.NoteMetaResolution(Map, moduleAtomId: 5, goalFid: 77,
+            t.NoteMetaResolution(Map, moduleAtomId: 5, goalKey: 77,
                                  appended: appended, resolvedFid: resolved);
         return t;
     }
@@ -88,5 +88,35 @@ public sealed class MetaCacheAppendedKeyTests
         Assert.Equal(-1, t.MetaLookup(5, 77, WasmResumeTable.MaxAppended + 1));
         // ...and it did not land on appended = 0 either.
         Assert.Equal(-1, t.MetaLookup(5, 77, 0));
+    }
+
+    /// <summary>The flag is the only thing separating an atom goal from a
+    /// compound one, because atom ids and functor ids are drawn from
+    /// overlapping ranges: the SAME number means a different goal depending
+    /// on it. A key that dropped it would hand one goal's resolution to the
+    /// other.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(7)]
+    public void TheAtomFlagSeparatesOtherwiseIdenticalKeys(int appended)
+    {
+        Assert.NotEqual(
+            WasmResumeTable.MetaKey(3, 9, appended, atomGoal: false),
+            WasmResumeTable.MetaKey(3, 9, appended, atomGoal: true));
+    }
+
+    /// <summary>And a key stays positive: the probe compares it against a
+    /// zero that means "empty slot", so a key that reached the sign bit
+    /// would be a row nothing could ever match.</summary>
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 7)]
+    [InlineData((1 << 26) - 2, 7)]
+    public void EveryKeyTheCacheAcceptsIsPositive(int module, int appended)
+    {
+        foreach (bool atom in new[] { false, true })
+            Assert.True(WasmResumeTable.MetaKey(module, int.MaxValue, appended, atom) > 0,
+                $"module {module}, appended {appended}, atom {atom}");
     }
 }
