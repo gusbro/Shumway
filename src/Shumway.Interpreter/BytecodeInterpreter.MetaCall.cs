@@ -426,6 +426,7 @@ public sealed partial class BytecodeInterpreter
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
             _engine.CurrentBuiltinName = entry.Name;
             _engine.CurrentBuiltinArity = entry.Arity;
+            Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId);
             try { return entry.Impl(_engine); }
             catch (PrologRuntimeException re)
             { re.StampBuiltin(entry.Name, entry.Arity); throw; }
@@ -811,6 +812,7 @@ public sealed partial class BytecodeInterpreter
         _engine.CurrentBuiltinName = builtin.Name;
         _engine.CurrentBuiltinArity = builtin.Arity;
         bool ok;
+        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId);
         try { ok = builtin.Impl(_engine); }
         catch (PrologRuntimeException re)
         { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }

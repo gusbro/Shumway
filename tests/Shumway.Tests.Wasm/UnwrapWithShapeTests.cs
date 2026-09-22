@@ -23,6 +23,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
 {
     private const string Corpus = """
         :- use_module(library(lists)).
+        :- use_module(library(clpfd)).
         :- op(150, fx, #).
         uw(_, V, V) :- var(V), !.
         uw(Goal, #V0, V) :- !, call(Goal, V0, V).
@@ -35,6 +36,15 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
         % second clause meta-calls it with two arguments appended, so
         % the callee is a BUILTIN reached through call/3.
         drive_hash(N, T) :- numlist(1, N, L), wrap(L, W), uw(=, W, T).
+        % The one structural difference left between this and what
+        % clp(Z) hands the walk: the terms carry ATTRIBUTED variables,
+        % which is what a propagator goal is made of. The first clause
+        % is a var test with a cut, and its head unifies the second
+        % argument with the third -- so meeting one binds an attributed
+        % variable, which is a wakeup, mid-walk.
+        mkattr(0, []) :- !.
+        mkattr(N, [X|Xs]) :- X in 1..9, N1 is N - 1, mkattr(N1, Xs).
+        drive_attr(N, T) :- mkattr(N, L), uw(same, L, T).
         """;
 
     /// <summary>A list of N elements is a term nested N deep, which is what
@@ -100,5 +110,35 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
         Assert.Equal("ok", outcome);
         Assert.True(univ < 3000,
             $"=../2 ran {univ} times over a 200-deep walk: it is rewalking");
+    }
+
+    /// <summary>And the same walk over a term carrying ATTRIBUTED
+    /// variables, which is what a propagator goal is.</summary>
+    [DiagFact]
+    public void TheWalkOverAttributedVariables()
+    {
+        var plain = new PrologEngine();
+        plain.ConsultString(Corpus);
+        Assert.True(plain.Query("drive_attr(150, T), length(T, N), N == 150.").Success,
+            "the interpreter's own answer moved");
+
+        var (tiered, _) = TieredEngine.Build(Corpus);
+        WasmTierDelegate.ResetDiag();
+        string outcome;
+        try
+        {
+            outcome = tiered.Query("drive_attr(150, T), length(T, N), N == 150.").Success
+                ? "ok" : "failed";
+        }
+        catch (System.Exception ex) { outcome = ex.Message; }
+        long univ = 0;
+        foreach (var (name, arity, hits) in WasmTierDelegate.BuiltinRanking())
+            if (name == "=.." && arity == 2) univ = hits;
+        o.WriteLine($"attr tier: {outcome}  =../2 exits={univ} "
+            + $"chains={WasmTierDelegate.DiagEntries} "
+            + $"deopts={WasmTierDelegate.DiagDeopts}");
+        Assert.Equal("ok", outcome);
+        Assert.True(univ < 3000,
+            $"=../2 ran {univ} times over a 150-deep walk: it is rewalking");
     }
 }

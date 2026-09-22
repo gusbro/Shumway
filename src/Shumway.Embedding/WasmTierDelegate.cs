@@ -748,6 +748,7 @@ public sealed class WasmTierDelegate
                 bool ok;
                 Profiler.BuiltinEnter(builtinId);
                 long tb = BuiltinClockStart();
+                Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId);
                 try { ok = entry.Impl(engine); }
                 catch (PrologRuntimeException re)
                 {

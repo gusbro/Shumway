@@ -1452,6 +1452,44 @@ internal static partial class WebShumwayApp
             if (command == "attrs dump")
                 return Shumway.Core.Diagnostics.AttrTrace.Dump();
 
+            // The builtin tally BOTH tiers write, so the same goal gives
+            // two numbers that can be subtracted.
+            if (command == "builtins on")
+            {
+                Shumway.Core.Diagnostics.BuiltinTally.Reset();
+                Shumway.Core.Diagnostics.BuiltinTally.Enabled = true;
+                return "% builtin tally: armed" + System.Environment.NewLine;
+            }
+            if (command == "builtins off")
+            {
+                Shumway.Core.Diagnostics.BuiltinTally.Enabled = false;
+                return "% builtin tally: off" + System.Environment.NewLine;
+            }
+            if (command == "builtins dump")
+            {
+                var snap = Shumway.Core.Diagnostics.BuiltinTally.Snapshot();
+                var sb2 = new System.Text.StringBuilder();
+                long tot = 0;
+                foreach (var (_, c) in snap) tot += c;
+                sb2.Append("# ").Append(tot).Append(" builtin calls, ")
+                   .Append(snap.Count).Append(" distinct")
+                   .Append(System.Environment.NewLine);
+                for (int i = 0; i < snap.Count && i < 25; i++)
+                {
+                    string bn;
+                    try
+                    {
+                        var e3 = Shumway.Builtins.BuiltinsRegistry.GetById(snap[i].Id);
+                        bn = e3.Name + "/" + e3.Arity;
+                    }
+                    catch (System.Exception) { bn = "?id" + snap[i].Id; }
+                    sb2.Append(snap[i].Calls).Append(' ').Append(bn)
+                       .Append(System.Environment.NewLine);
+                }
+                return sb2.ToString();
+            }
+
+
             if (command == "status")
             {
                 if (store.Wasm is not { } w)
