@@ -877,6 +877,9 @@ public sealed partial class Activation
     /// </summary>
     public void TrailValueChange(int heapIdx, Cell oldValue)
     {
+        if (oldValue.Tag == Tag.AttVar)
+            Diagnostics.AttVarCellTrace.Note(_cellsAllocated, heapIdx,
+                Diagnostics.AttVarCellTrace.Kind.Overwritten);
         EnsureExtraTrailCapacity(1);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
@@ -926,6 +929,9 @@ public sealed partial class Activation
         {
             case TrailType.ValueChange:
                 _heap[entry.HeapIdx] = entry.OldValue;
+                if (entry.OldValue.Tag == Tag.AttVar)
+                    Diagnostics.AttVarCellTrace.Note(_cellsAllocated, entry.HeapIdx,
+                        Diagnostics.AttVarCellTrace.Kind.Restored);
                 break;
             case TrailType.BigIntAlloc:
                 // entry.HeapIdx holds the table size *before* the allocation

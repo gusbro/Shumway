@@ -1470,6 +1470,22 @@ internal static partial class WebShumwayApp
             if (command == "shapes dump")
                 return Shumway.Core.Diagnostics.CallShapeTrace.Dump();
 
+            // The attributed-variable CELL lifecycle.
+            if (command == "cells on")
+            {
+                Shumway.Core.Diagnostics.AttVarCellTrace.Reset();
+                Shumway.Core.Diagnostics.AttVarCellTrace.Enabled = true;
+                return "% cell trace: armed" + System.Environment.NewLine;
+            }
+            if (command == "cells off")
+            {
+                Shumway.Core.Diagnostics.AttVarCellTrace.Enabled = false;
+                return "% cell trace: off" + System.Environment.NewLine;
+            }
+            if (command == "cells dump")
+                return Shumway.Core.Diagnostics.AttVarCellTrace.Dump();
+
+
             // The builtin calls IN ORDER. The tier open-codes some, so a
             // raw diff of the two sequences differs for that reason alone;
             // the names are printed so a comparison can drop the open-coded

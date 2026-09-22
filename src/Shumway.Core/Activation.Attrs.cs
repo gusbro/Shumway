@@ -41,6 +41,8 @@ public sealed partial class Activation
             foreach (int moduleId in new List<int>(orphan.Keys))
                 AttrMirrorDelete(home, moduleId);
         _attrStore[home] = new Dictionary<int, int>();
+        Diagnostics.AttVarCellTrace.Note(_cellsAllocated, home,
+            Diagnostics.AttVarCellTrace.Kind.Created);
     }
 
     /// <summary>Sets <paramref name="moduleId"/>'s attribute value. The
