@@ -206,6 +206,7 @@ public sealed class WasmResumeTable
             _metaStamp = addressMap;
             MetaCacheVersion++;
         }
+        EnsureCallMarker(resolvedFid);
         long key = MetaKey(moduleAtomId, goalKey, appended, atomGoal);
         int slot = MetaProbe(moduleAtomId, goalKey, appended, atomGoal,
                              _metaCacheMask);
@@ -232,6 +233,37 @@ public sealed class WasmResumeTable
             }
             slot = (slot + 1) & _metaCacheMask;
         }
+    }
+
+    /// <summary>Makes sure the module has SOMETHING to jump to for this
+    /// functor.
+    ///
+    /// <para>A meta-call and an ordinary call end on the same instruction:
+    /// stage a marker in <see cref="WasmAbi.Pc"/> and return
+    /// SuccessTailCall. They differ only in where the marker comes from.
+    /// An ordinary call knows its callee when it is compiled and BAKES
+    /// marker(callee, 0); a meta-call learns it at run time and has to read
+    /// it out of this table.</para>
+    ///
+    /// <para>The table was filled only when a module was installed, so a
+    /// meta-call landing on a predicate nothing compiled -- one the census
+    /// refused, one below the threshold -- read zero and stepped aside,
+    /// while a direct call to that same predicate did not. There is no
+    /// reason for the asymmetry: marker(fid, 0) with no row of its own is
+    /// resolved by the host to the predicate's live bytecode entry, which
+    /// is exactly what Tier 0 would have done.</para>
+    ///
+    /// <para>Self-healing rather than eager: the first meta-call to a
+    /// functor still goes to the host, which is where this runs, and every
+    /// one after it has a target. Interning a marker for every functor up
+    /// front would grow the pool by predicates no meta-call ever names.
+    /// </para></summary>
+    private void EnsureCallMarker(int functorId)
+    {
+        if (functorId < 0) return;
+        if (functorId < _callMarkers.Length && _callMarkers[functorId] != 0)
+            return;
+        SetCallMarker(functorId, Activation.EncodeResumeMarker(functorId, 0));
     }
 
     /// <summary>The probe's first slot. The module recomputes this exact
