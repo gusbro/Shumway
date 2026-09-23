@@ -189,6 +189,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
+        private int _attrLogAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -237,6 +238,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int[] callMarkers = _w.ResumeTable.CallMarkers;
             long[] metaCache = _w.ResumeTable.MetaCache;
             int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
+            _engine.AttrLogMirrorEnable();
+            _engine.AttrLogMirrorAssert();
+            int[] attrLogHomes = _engine.AttrLogHomes;
+            int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
             // may be unaligned (the align immediate is a hint), so no test
             // can fail on dropping this -- do not go looking for one.
@@ -245,7 +250,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _callMarkerAt = _fdDomAt + FdDomFunctorTable.Cells.Length * 8;
             _metaCacheAt = (_callMarkerAt + callMarkers.Length * 4 + 7) & ~7;
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
-            if (_atomMarkerAt + atomMarkers.Length * 4 > (long)Pages * 65536)
+            _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
+            if (_attrLogAt + attrLogCount * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -268,7 +274,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 MetaCacheBase: _metaCacheAt,
                 MetaCacheMask: _w.ResumeTable.MetaCacheMask,
                 AtomMarkerBase: _atomMarkerAt,
-                AtomMarkerLength: atomMarkers.Length);
+                AtomMarkerLength: atomMarkers.Length,
+                AttrLogBase: attrLogCount > 0 ? _attrLogAt : 0,
+                AttrLogLength: attrLogCount);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -321,6 +329,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             fixed (long* p = FdDomFunctorTable.Cells)
                 Buffer.MemoryCopy(p, mem + _fdDomAt, FdDomFunctorTable.Cells.Length * 8L,
                                   FdDomFunctorTable.Cells.Length * 8L);
+            // Copied whole, for the attribute table's reason: records are
+            // truncated and relocated under it, so there is no "synced up to
+            // here" mark to resume from. Only the live prefix is copied.
+            if (attrLogCount > 0)
+                fixed (int* p = attrLogHomes)
+                    Buffer.MemoryCopy(p, mem + _attrLogAt, attrLogCount * 4L,
+                                      attrLogCount * 4L);
             // Copied only when it actually changed: install and eviction are
             // the only writers, so a run that promotes nothing copies this
             // once. Without the check queens re-copies 8 KB on each of its

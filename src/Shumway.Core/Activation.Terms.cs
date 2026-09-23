@@ -852,6 +852,7 @@ public sealed partial class Activation
     {
         int logIndex = _attrTrailLog.Count;
         _attrTrailLog.Add((homeAddr, moduleId, oldValue));
+        AttrLogMirrorAppend(logIndex, homeAddr);
         EnsureExtraTrailCapacity(1);
         Diagnostics.CommitTrace.Note(_cellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
@@ -999,8 +1000,12 @@ public sealed partial class Activation
                     // their original — lower — indices). Without this the
                     // log grew unboundedly under clpfd labeling.
                     if (_attrTrailLog.Count > entry.HeapIdx)
+                    {
+                        // The image is dense and read only below the count,
+                        // so dropping the tail needs no write of its own.
                         _attrTrailLog.RemoveRange(
                             entry.HeapIdx, _attrTrailLog.Count - entry.HeapIdx);
+                    }
                 }
                 break;
             case TrailType.CatchFrame:

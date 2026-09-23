@@ -305,7 +305,47 @@ public static class WasmAbi
     public const int TraceTop = 49;
     public const int TraceLimit = 50;
 
-    public const int SlotCount = 51;
+    /// <summary>The attribute trail log's HOME column, one i32 per record,
+    /// and how many records there are.
+    ///
+    /// <para>A cut's compaction judges an AttrModify entry by the RECORD's
+    /// home, not by anything in the entry, and the record lives in a managed
+    /// list. That one read is why the tier's cut hands the whole walk to the
+    /// host: measured on clp(Z), 717 of 784 walks read it. The image is the
+    /// same shape as the functor mirror -- the host writes, the module only
+    /// reads -- so the list stays the single source of truth.</para>
+    ///
+    /// <para>A record the compaction ORPHANED reads as int.MinValue, which is
+    /// below every floor and so survives every test; that is the same answer
+    /// the managed list gives, because a cleared record is (int.MinValue, 0,
+    /// 0).</para></summary>
+    public const int AttrLogBase = 51;
+    public const int AttrLogLength = 52;
+
+    /// <summary>The survival floor an active catch frame imposes: the highest
+    /// SnapHeapTop among them, or 0 when there is none.
+    ///
+    /// <para>A cut drops trail entries that any outer backtrack would make
+    /// moot, but a THROW is a second unwind consumer that truncates only to
+    /// its own snapshot, so every mutation of a cell older than that must
+    /// survive. One number, and it cannot change inside a chain: a catch
+    /// frame is pushed by '$catch_begin'/2, which is a builtin, and a builtin
+    /// ends the chain.</para></summary>
+    public const int CatchHeapFloor = 53;
+
+    /// <summary>The highest trail snapshot any catch frame holds, binding and
+    /// extra. A compaction that leaves both tops at or above these clipped
+    /// nothing, and clipping is control state the module cannot write.
+    /// Measured on clp(Z), exactly one walk in 784 had to clip.</summary>
+    public const int CatchSnapBindingMax = 54;
+    public const int CatchSnapExtraMax = 55;
+
+    /// <summary>Whether the attribute store holds any record at all. A cut
+    /// that drops a ValueChange entry may have to drop a dead record with it,
+    /// and with an empty store it never does.</summary>
+    public const int AttrRecordCount = 56;
+
+    public const int SlotCount = 57;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

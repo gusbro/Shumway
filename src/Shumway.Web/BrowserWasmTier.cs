@@ -246,7 +246,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 MetaCacheBase: MetaCacheAddress(),
                 MetaCacheMask: _w._table.MetaCacheMask,
                 AtomMarkerBase: AtomMarkerAddress(),
-                AtomMarkerLength: _w._table.AtomCallMarkers.Length);
+                AtomMarkerLength: _w._table.AtomCallMarkers.Length,
+                AttrLogBase: AttrLogAddress(),
+                AttrLogLength: _engine.AttrLogCount);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -347,6 +349,29 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 _callMarkers = markers;
             }
             return (long)_callPin.AddrOfPinnedObject();
+        }
+
+        /// <summary>The attribute trail log's home column, pinned the same
+        /// way and for the same reason: the array is replaced on growth, so
+        /// caching the address across a staging would hand the module a
+        /// freed one. Enabling it here is what makes an engine that never
+        /// meets a wasm world pay nothing for attribute mutation.</summary>
+        private GCHandle _attrLogPin;
+        private int[]? _attrLogHomesPinned;
+
+        private long AttrLogAddress()
+        {
+            _engine.AttrLogMirrorEnable();
+            _engine.AttrLogMirrorAssert();
+            if (_engine.AttrLogCount == 0) return 0;
+            int[] homes = _engine.AttrLogHomes;
+            if (!ReferenceEquals(_attrLogHomesPinned, homes))
+            {
+                if (_attrLogPin.IsAllocated) _attrLogPin.Free();
+                _attrLogPin = GCHandle.Alloc(homes, GCHandleType.Pinned);
+                _attrLogHomesPinned = homes;
+            }
+            return (long)_attrLogPin.AddrOfPinnedObject();
         }
 
         /// <summary>The attribute image's address, repinning when the host
@@ -552,11 +577,13 @@ internal static class BrowserWasmTier
     internal static string CompactReport()
         => "%   cut compactions: " + Shumway.Core.Diagnostics.CompactCensus.Walks
          + " walks, " + Shumway.Core.Diagnostics.CompactCensus.Dropped
-         + " dropped something, "
-         + Shumway.Core.Diagnostics.CompactCensus.SawAttrModify
-         + " read the attr log, "
-         + Shumway.Core.Diagnostics.CompactCensus.WroteTheLog
-         + " wrote it" + System.Environment.NewLine;
+         + " dropped something; "
+         + Shumway.Core.Diagnostics.CompactCensus.ReadTheLog + " read the log, "
+         + Shumway.Core.Diagnostics.CompactCensus.WroteTheLog + " wrote it, "
+         + Shumway.Core.Diagnostics.CompactCensus.DroppedARecord + " dropped a record, "
+         + Shumway.Core.Diagnostics.CompactCensus.ClippedAFrame + " clipped a frame; "
+         + Shumway.Core.Diagnostics.CompactCensus.ReachableByAnImage
+         + " need only a READ image" + System.Environment.NewLine;
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b

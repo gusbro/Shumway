@@ -100,12 +100,13 @@ public sealed partial class Activation
     /// variable for the life of the query, and because the record is a GC root
     /// it holds the variable's whole term with it — which is what made a lazy
     /// DCG retain every window it had already consumed.</para></summary>
-    private void DropDeadAttrRecord(int home)
+    private bool DropDeadAttrRecord(int home)
     {
         // Still an attributed variable — the binding was undone, or this entry
         // was about something else at the same address. Nothing to drop.
-        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return;
+        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return false;
         AttrDropRecord(home);
+        return true;
     }
 
     private static void Validate(ActivationConfig c)
@@ -1141,7 +1142,8 @@ public sealed partial class Activation
             return;
         Diagnostics.CompactCensus.NoteWalk();
         int beforeExtra = _extraTrailTop, beforeBind = _bindingTrailTop;
-        bool diagSawAttrModify = false, diagWroteTheLog = false;
+        bool diagReadLog = false, diagWroteLog = false,
+             diagDroppedRecord = false, diagClippedFrame = false;
 
         // A cut's "young entry" drop reasons about BACKTRACKING: anything
         // above the parent CP's heap top is truncated by any outer
@@ -1222,7 +1224,7 @@ public sealed partial class Activation
                 TrailType.MutableSet => true,
                 TrailType.AttrModify => AttrModifySurvives(entry.HeapIdx,
                                                           effectiveFloor,
-                                                          ref diagSawAttrModify),
+                                                          ref diagReadLog),
                 _ => entry.HeapIdx < effectiveFloor,
             };
             if (survives)
@@ -1232,8 +1234,7 @@ public sealed partial class Activation
             }
             else if (AttrRecordTotal > 0 && entry.Type == TrailType.ValueChange)
             {
-                diagWroteTheLog = true;
-                DropDeadAttrRecord(entry.HeapIdx);
+                diagDroppedRecord |= DropDeadAttrRecord(entry.HeapIdx);
             }
             else if (entry.Type == TrailType.AttrModify)
             {
@@ -1245,9 +1246,12 @@ public sealed partial class Activation
                 // exactly these orphans (one per chunk, via the frozen tail's
                 // old attribute). Dead records are skipped by mark/relocate
                 // and physically reclaimed when an unwind truncates past them.
-                diagWroteTheLog = true;
                 if ((uint)entry.HeapIdx < (uint)_attrTrailLog.Count)
+                {
+                    diagWroteLog = true;
                     _attrTrailLog[entry.HeapIdx] = (int.MinValue, 0, 0);
+                    AttrLogMirrorSet(entry.HeapIdx, int.MinValue);
+                }
             }
             extraRead++;
         }
@@ -1263,7 +1267,6 @@ public sealed partial class Activation
 
         _bindingTrailTop = bindingWrite;
         _extraTrailTop = extraWrite;
-        Diagnostics.CompactCensus.NoteReach(diagSawAttrModify, diagWroteTheLog);
 
         // catch frames captured snapshots of the trail
         // tops at push time. The compaction above just dropped some
@@ -1286,8 +1289,10 @@ public sealed partial class Activation
                 f.SnapExtraTrailTop = _extraTrailTop;
                 changed = true;
             }
-            if (changed) _catchFrames[i] = f;
+            if (changed) { _catchFrames[i] = f; diagClippedFrame = true; }
         }
+        Diagnostics.CompactCensus.NoteReach(diagReadLog, diagWroteLog,
+                                            diagDroppedRecord, diagClippedFrame);
         Diagnostics.CompactCensus.NoteDropped(
             _extraTrailTop != beforeExtra || _bindingTrailTop != beforeBind);
     }

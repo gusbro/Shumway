@@ -41,7 +41,12 @@ public sealed partial class Activation
         int MetaCacheMask = 0,
         /// <summary>Base and length of the atom marker table.</summary>
         long AtomMarkerBase = 0,
-        int AtomMarkerLength = 0);
+        int AtomMarkerLength = 0,
+        /// <summary>Base and length of the attribute trail log's home column.
+        /// A zero base means a cut that has to judge an AttrModify entry
+        /// steps aside instead of compacting in place.</summary>
+        long AttrLogBase = 0,
+        int AttrLogLength = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -148,6 +153,32 @@ public sealed partial class Activation
         m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
         m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
         m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
+        m[WasmAbi.AttrLogBase] = bases.AttrLogBase;
+        m[WasmAbi.AttrLogLength] = bases.AttrLogLength;
+        m[WasmAbi.AttrRecordCount] = AttrTableCount;
+
+        // What a compaction owes the catch frames, as three numbers. They
+        // cannot change inside a chain: a frame is pushed and deactivated by
+        // '$catch_begin'/2 and '$catch_end'/0, which are builtins, and a
+        // builtin ends the chain.
+        //
+        // The floor is a SURVIVAL floor, not an optimisation: a throw
+        // truncates the heap only to its own snapshot, so every mutation of
+        // a cell older than that has to be restorable when it fires. The two
+        // maxima are the opposite question -- a compaction that leaves both
+        // trail tops at or above them clipped no snapshot, and clipping is
+        // control state a module cannot write.
+        int catchFloor = 0, snapBind = 0, snapExtra = 0;
+        for (int i = 0; i < _catchFrames.Count; i++)
+        {
+            CatchFrame f = _catchFrames[i];
+            if (f.Active && f.SnapHeapTop > catchFloor) catchFloor = f.SnapHeapTop;
+            if (f.SnapBindingTrailTop > snapBind) snapBind = f.SnapBindingTrailTop;
+            if (f.SnapExtraTrailTop > snapExtra) snapExtra = f.SnapExtraTrailTop;
+        }
+        m[WasmAbi.CatchHeapFloor] = catchFloor;
+        m[WasmAbi.CatchSnapBindingMax] = snapBind;
+        m[WasmAbi.CatchSnapExtraMax] = snapExtra;
         return true;
     }
 

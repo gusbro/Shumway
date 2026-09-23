@@ -614,8 +614,10 @@ public sealed partial class Activation
         for (int i = 0; i < _attrTrailLog.Count; i++)
         {
             var (home, module, oldValue) = _attrTrailLog[i];
-            _attrTrailLog[i] = (RelocIndex(home, forward), module,
+            int moved = RelocIndex(home, forward);
+            _attrTrailLog[i] = (moved, module,
                                 oldValue < 0 ? oldValue : RelocIndex(oldValue, forward));
+            AttrLogMirrorSet(i, moved);
         }
 
         for (int i = 0; i < _pendingWakeups.Count; i++)
