@@ -580,7 +580,12 @@ public static class WasmPredicateCompiler
                     return;
                 case Opcode.AIntBin:
                     int binOp = (ins.I0 >> 24) & 0xFF;
-                    if (binOp is not (0 or 1 or 2 or 4 or 5))   // Add Sub Mul IntDiv Mod
+                    // Add Sub Mul IntDiv Mod Min Max. Refusing min and max
+                    // cost the whole predicate: clp(Z)'s cis_min_/3 and
+                    // cis_max_/3 were refused over one instruction each, and
+                    // between them they were 171 of the 199 calls a compiled
+                    // chain could not continue into.
+                    if (binOp is not (0 or 1 or 2 or 4 or 5 or 7 or 8))
                         throw new WasmCompileException($"a_int_bin op {binOp} at {ins.Pc}");
                     return;
                 default:
@@ -6721,6 +6726,19 @@ public static class WasmPredicateCompiler
                     EmitDeopt(pcDeopt, 26);
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64DivideSigned());
+                    Op(new LocalSet(LC0));
+                    break;
+                case 7:     // Min
+                case 8:     // Max
+                    // The result IS one of the operands, so there is nothing
+                    // to range-check: both already fit in sixty bits.
+                    Op(new LocalGet(LC2));
+                    Op(new LocalGet(LC1));
+                    Op(new LocalGet(LC2));
+                    Op(new LocalGet(LC1));
+                    Op(op == 7 ? new Int64LessThanOrEqualSigned()
+                               : (Instruction)new Int64GreaterThanOrEqualSigned());
+                    Op(new Select());
                     Op(new LocalSet(LC0));
                     break;
                 case 5:     // Mod (sign of the divisor)
