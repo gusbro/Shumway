@@ -99,13 +99,37 @@ public sealed class CutCompactsInPlaceTests(ITestOutputHelper o)
     public void ABindingOnlyCutIsCompactedInTheModule()
         => Assert.Equal(0L, GuardHitsOf("bind_only(R), R == yes."));
 
-    /// <summary>The counterproof, in red: a DROPPED attribute entry orphans
-    /// its record, which is a write into the log, so the module declines
-    /// instead of compacting half of it.</summary>
+    /// <summary>A DROPPED attribute entry orphans its record, and clearing
+    /// that record is a write the module cannot make. It does not decline
+    /// for it: the index is PARKED and the host clears it when the chain
+    /// comes out, because the clearing is hygiene and not semantics.
+    ///
+    /// <para>The counterproof for this one is not here but in the answers
+    /// above -- restores/2, nested/1 and guarded/1 all backtrack or throw
+    /// THROUGH a compaction that parked something -- and in <see
+    /// cref="CutCompactsOrStepsAsideTests"/>, where the write that cannot be
+    /// deferred still declines.</para></summary>
     [DiagFact]
-    public void ADroppedEntryStillStepsAside()
-        => Assert.True(GuardHitsOf("young(R), R == yes.") > 0,
-            "a dropped attribute entry has to leave its record to the engine");
+    public void ADroppedEntryIsParkedRatherThanDeclined()
+        => Assert.Equal(0L, GuardHitsOf("young(R), R == yes."));
+
+    /// <summary>And the parked record really IS cleared. Deferring a write
+    /// is only sound if the write happens, and a leak that never fires an
+    /// assertion is exactly what this would otherwise become: the engine's
+    /// own comment says an orphaned record roots its home and its old value
+    /// against the heap GC forever.</summary>
+    [DiagFact]
+    public void AParkedRecordIsClearedOnTheWayOut()
+    {
+        var (tiered, _) = TieredEngine.Build(Corpus);
+        Assert.True(tiered.Query("young(R), R == yes.").Success);
+        Shumway.Core.Diagnostics.CompactCensus.Reset();
+        Assert.True(tiered.Query("young(R), R == yes.").Success);
+        o.WriteLine("orphans cleared = "
+            + Shumway.Core.Diagnostics.CompactCensus.OrphansCleared);
+        Assert.True(Shumway.Core.Diagnostics.CompactCensus.OrphansCleared > 0,
+            "the module parked a record the host never cleared");
+    }
 
     private long GuardHitsOf(string goal)
     {

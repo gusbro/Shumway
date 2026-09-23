@@ -1012,7 +1012,7 @@ public static class WasmPredicateCompiler
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
             // The cut compaction's bank. Appended last, same rule.
-            new Local { Count = 13, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 14, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2287,6 +2287,8 @@ public static class WasmPredicateCompiler
             CloseNested();
 
             // ---- pass one: can this be done at all? ----
+            LoadSlot32(WasmAbi.AttrOrphanTop);
+            Op(new LocalSet(LKOrph));
             Op(new LocalGet(LKPE)); Op(new LocalSet(LKER));
             Op(new LocalGet(LKPE)); Op(new LocalSet(LKEW));
             OpenBlock();                                    // $scanned
@@ -2317,14 +2319,29 @@ public static class WasmPredicateCompiler
                 }
                 OpenElse();
                 {
-                    // A dropped AttrModify has to clear its record, which is
-                    // a write into the log.
+                    // A dropped AttrModify orphans its record, and clearing
+                    // that record is a write into a managed list. It is
+                    // HYGIENE rather than semantics -- the record is dead the
+                    // moment the entry goes and nothing reads it again -- so
+                    // the index is PARKED for the host to clear when the
+                    // chain comes out, and only a full ring declines.
                     Op(new LocalGet(LKH));
                     Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
                     Op(new Int32Equal());
                     OpenIf();
-                    MetaGuard(30);
-                    Op(new Branch(4));                      // -> $slow
+                    {
+                        Op(new LocalGet(LKOrph));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new LocalSet(LKOrph));
+                        Op(new LocalGet(LKOrph));
+                        LoadSlot32(WasmAbi.AttrOrphanLimit);
+                        Op(new Int32GreaterThanSigned());
+                        OpenIf();
+                        MetaGuard(30);
+                        Op(new Branch(5));                  // -> $slow
+                        CloseNested();
+                    }
                     CloseNested();
 
                     // A dropped ValueChange may drop a dead record from the
@@ -2438,6 +2455,8 @@ public static class WasmPredicateCompiler
                 Op(new LocalSet(LKT));
 
                 EmitEntrySurvives(LKH, LKT, declineToSlow: false);
+                Op(new LocalSet(LKStop));                   // the verdict, once
+                Op(new LocalGet(LKStop));
                 OpenIf();
                 {
                     // Moved down over the entries dropped before it, and its
@@ -2462,6 +2481,32 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant(1));
                     Op(new Int32Add());
                     Op(new LocalSet(LKEW));
+                }
+                OpenElse();
+                {
+                    // Dropped. An AttrModify leaves a record behind; the
+                    // first pass already made room for its index.
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    {
+                        LoadSlot32(WasmAbi.AttrOrphanBase);
+                        LoadSlot32(WasmAbi.AttrOrphanTop);
+                        Op(new Int32Constant(2));
+                        Op(new Int32ShiftLeft());
+                        Op(new Int32Add());
+                        Op(new LocalGet(LKT));
+                        Op(new Int32Store());
+                        StoreSlot64(WasmAbi.AttrOrphanTop, () =>
+                        {
+                            LoadSlot32(WasmAbi.AttrOrphanTop);
+                            Op(new Int32Constant(1));
+                            Op(new Int32Add());
+                            Op(new Int64ExtendInt32Signed());
+                        });
+                    }
+                    CloseNested();
                 }
                 CloseNested();
 
@@ -7547,6 +7592,7 @@ public static class WasmPredicateCompiler
         private const uint LKPB = 69;    // i32: the parent's binding top
         private const uint LKStop = 70;  // i32: where a binding run stops
         private const uint LKPE = 71;    // i32: the parent's extra top
+        private const uint LKOrph = 72;  // i32: orphaned records parked
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

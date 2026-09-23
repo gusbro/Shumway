@@ -249,7 +249,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AtomMarkerLength: _w._table.AtomCallMarkers.Length,
                 AttrLogBase: AttrLogAddress(),
                 AttrLogLength: _engine.AttrLogCount,
-                ExtraTrailBase: ExtraTrailAddress());
+                ExtraTrailBase: ExtraTrailAddress(),
+                AttrOrphanBase: OrphanRingAddress(),
+                AttrOrphanLimit: _engine.WasmOrphanRingView.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -379,6 +381,23 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 _extraTrailPinned = t;
             }
             return (long)_extraTrailPin.AddrOfPinnedObject();
+        }
+
+        /// <summary>The orphaned-record ring, pinned. The module writes,
+        /// the host drains on the way out.</summary>
+        private GCHandle _orphanPin;
+        private int[]? _orphanPinned;
+
+        private long OrphanRingAddress()
+        {
+            int[] r = _engine.WasmOrphanRingView;
+            if (!ReferenceEquals(_orphanPinned, r))
+            {
+                if (_orphanPin.IsAllocated) _orphanPin.Free();
+                _orphanPin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _orphanPinned = r;
+            }
+            return (long)_orphanPin.AddrOfPinnedObject();
         }
 
         private long AttrLogAddress()
@@ -605,7 +624,10 @@ internal static class BrowserWasmTier
          + Shumway.Core.Diagnostics.CompactCensus.DroppedARecord + " dropped a record, "
          + Shumway.Core.Diagnostics.CompactCensus.ClippedAFrame + " clipped a frame; "
          + Shumway.Core.Diagnostics.CompactCensus.ReachableByAnImage
-         + " need only a READ image" + System.Environment.NewLine;
+         + " need only a READ image; "
+         + Shumway.Core.Diagnostics.CompactCensus.OrphansCleared
+         + " records parked by the module and cleared here"
+         + System.Environment.NewLine;
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b

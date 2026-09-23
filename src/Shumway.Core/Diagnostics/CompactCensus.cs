@@ -45,7 +45,16 @@ public static class CompactCensus
     {
         Walks = 0; Dropped = 0; ReadTheLog = 0; WroteTheLog = 0;
         DroppedARecord = 0; ClippedAFrame = 0; ReachableByAnImage = 0;
+        OrphansCleared = 0;
     }
+
+    /// <summary>Records a module-side compaction orphaned and the host
+    /// cleared on the way out. The deferral is only sound if the clearing
+    /// actually happens, and nothing else can see that it did.</summary>
+    public static long OrphansCleared;
+
+    [Conditional(Symbol)]
+    public static void NoteOrphanCleared() => OrphansCleared++;
 
     [Conditional(Symbol)]
     public static void NoteWalk() => Walks++;

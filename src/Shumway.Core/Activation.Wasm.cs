@@ -50,7 +50,11 @@ public sealed partial class Activation
         /// <summary>Base of the extra trail itself. A zero base means a cut
         /// that finds entries on it steps aside instead of compacting.
         /// </summary>
-        long ExtraTrailBase = 0);
+        long ExtraTrailBase = 0,
+        /// <summary>Base and capacity of the orphaned-record ring. A zero
+        /// base means a compaction that would orphan one declines.</summary>
+        long AttrOrphanBase = 0,
+        int AttrOrphanLimit = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -73,6 +77,33 @@ public sealed partial class Activation
     /// module rewrites entries, which is why the copying world has to copy
     /// it back and not just in.</summary>
     public ExtraTrailEntry[] WasmExtraTrailView => _extraTrail;
+
+    /// <summary>Where a compaction parks the records it orphaned. Allocated
+    /// on first ask, because an engine that never meets a wasm world has no
+    /// use for it.</summary>
+    public int[] WasmOrphanRingView => _wasmOrphanRing ??= new int[1024];
+
+    private int[]? _wasmOrphanRing;
+
+    /// <summary>Clears the records a compaction orphaned, which is the write
+    /// it could not make itself. Deferred this far and no further: the
+    /// chain is out, the engine is authoritative again, and every index was
+    /// a live record when the module dropped its entry.</summary>
+    private void DrainOrphanedAttrRecords(int count)
+    {
+        if (_wasmOrphanRing is null || count <= 0) return;
+        int n = count < _wasmOrphanRing.Length ? count : _wasmOrphanRing.Length;
+        for (int i = 0; i < n; i++)
+        {
+            int idx = _wasmOrphanRing[i];
+            // An unwind since the drop may have truncated the log past it,
+            // in which case the record is gone already and better gone.
+            if ((uint)idx >= (uint)_attrTrailLog.Count) continue;
+            _attrTrailLog[idx] = (int.MinValue, 0, 0);
+            AttrLogMirrorSet(idx, int.MinValue);
+            Diagnostics.CompactCensus.NoteOrphanCleared();
+        }
+    }
 
     /// <summary>How many of those are live, for the same world.</summary>
     public int WasmExtraTrailTop => _extraTrailTop;
@@ -171,6 +202,9 @@ public sealed partial class Activation
         m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
         m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
         m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
+        m[WasmAbi.AttrOrphanBase] = bases.AttrOrphanBase;
+        m[WasmAbi.AttrOrphanLimit] = bases.AttrOrphanLimit;
+        m[WasmAbi.AttrOrphanTop] = 0;
         m[WasmAbi.AttrLogBase] = bases.AttrLogBase;
         m[WasmAbi.AttrLogLength] = bases.AttrLogLength;
         m[WasmAbi.AttrRecordCount] = AttrTableCount;
@@ -214,6 +248,7 @@ public sealed partial class Activation
         // path -- and leaving it unadopted would silently undo the
         // compaction on the way out.
         _extraTrailTop = (int)m[WasmAbi.ExtraTrailTop];
+        DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         _e = (int)m[WasmAbi.EnvTop];
         _b = (int)m[WasmAbi.ChoiceTop];
         _hb = (int)m[WasmAbi.HeapBacktrack];

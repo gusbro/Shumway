@@ -189,7 +189,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
-        private int _attrLogAt, _extraTrailAt, _extraTrailStaged;
+        private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -242,6 +242,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _engine.AttrLogMirrorAssert();
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraTop = _engine.WasmExtraTrailTop;
+            int[] orphanRing = _engine.WasmOrphanRingView;
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
@@ -254,8 +255,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
             _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
             _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
-            if (_extraTrailAt + (long)extraTop * WasmAbi.ExtraTrailEntryBytes
-                > (long)Pages * 65536)
+            _orphanAt = _extraTrailAt + extraTop * WasmAbi.ExtraTrailEntryBytes;
+            if (_orphanAt + (long)orphanRing.Length * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -281,7 +282,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AtomMarkerLength: atomMarkers.Length,
                 AttrLogBase: attrLogCount > 0 ? _attrLogAt : 0,
                 AttrLogLength: attrLogCount,
-                ExtraTrailBase: _extraTrailAt);
+                ExtraTrailBase: _extraTrailAt,
+                AttrOrphanBase: _orphanAt,
+                AttrOrphanLimit: orphanRing.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -436,6 +439,14 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // not just length. Copy what was staged, since the compaction
             // only ever lowers the top and the bytes above it are dead
             // either way.
+            // What the compaction parked for the host to clear. Only the
+            // prefix the module actually wrote, which the mailbox counts.
+            int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
+            int[] orphanRing = _engine.WasmOrphanRingView;
+            if (orphans > 0)
+                fixed (int* p = orphanRing)
+                    Buffer.MemoryCopy(mem + _orphanAt, p, orphanRing.Length * 4L,
+                                      System.Math.Min(orphans, orphanRing.Length) * 4L);
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             if (_extraTrailStaged > 0)
                 fixed (ExtraTrailEntry* p = extraTrail)

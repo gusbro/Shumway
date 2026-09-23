@@ -360,7 +360,30 @@ public static class WasmAbi
     public const int ExtraTrailOldValueOffset = 8;
     public const int ExtraTrailMarkerOffset = 16;
 
-    public const int SlotCount = 57;
+    /// <summary>Where a compaction PARKS the attribute records it
+    /// orphaned, for the host to clear when the chain comes out.
+    ///
+    /// <para>A dropped AttrModify entry was the only reference into its
+    /// record, and leaving the record standing roots its home and its old
+    /// value against the heap GC forever. Clearing it is the fix, and it is
+    /// a write into a managed list -- which is why a cut that dropped one
+    /// used to hand the whole compaction back, 300 times in one clp(Z) goal
+    /// and 47% of everything the module deopted for.</para>
+    ///
+    /// <para>It is deferrable because it is HYGIENE and not semantics: the
+    /// record is dead the moment its entry is dropped, nothing reads it
+    /// again, and clearing it one chain later costs one chain of retention.
+    /// A garbage collection in between marks it and moves on, which is the
+    /// same thing it did before the compaction existed.</para>
+    ///
+    /// <para>A full ring is not a correctness problem, only a missed
+    /// compaction: the module checks for room in its first pass and declines
+    /// exactly as it would for a write it cannot defer.</para></summary>
+    public const int AttrOrphanBase = 57;
+    public const int AttrOrphanTop = 58;
+    public const int AttrOrphanLimit = 59;
+
+    public const int SlotCount = 60;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
