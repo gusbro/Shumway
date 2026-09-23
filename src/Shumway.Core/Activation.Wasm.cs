@@ -46,7 +46,11 @@ public sealed partial class Activation
         /// A zero base means a cut that has to judge an AttrModify entry
         /// steps aside instead of compacting in place.</summary>
         long AttrLogBase = 0,
-        int AttrLogLength = 0);
+        int AttrLogLength = 0,
+        /// <summary>Base of the extra trail itself. A zero base means a cut
+        /// that finds entries on it steps aside instead of compacting.
+        /// </summary>
+        long ExtraTrailBase = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -63,6 +67,15 @@ public sealed partial class Activation
     public Cell[] WasmStackView => _stack;
     public Cell[] WasmRegistersView => _registers;
     public int[] WasmBindingTrailView => _bindingTrail;
+
+    /// <summary>The extra trail, for a world that stages it. Shared so a
+    /// cut can COMPACT it in place: unlike every other area here the
+    /// module rewrites entries, which is why the copying world has to copy
+    /// it back and not just in.</summary>
+    public ExtraTrailEntry[] WasmExtraTrailView => _extraTrail;
+
+    /// <summary>How many of those are live, for the same world.</summary>
+    public int WasmExtraTrailTop => _extraTrailTop;
 
     /// <summary>Grows the binding trail past its current length. For the wasm
     /// tier after a chain deopted AT the trail limit: the wasm limit reserves
@@ -110,7 +123,12 @@ public sealed partial class Activation
         m[WasmAbi.StackBase] = bases.StackBase;
         m[WasmAbi.RegistersBase] = bases.RegistersBase;
         m[WasmAbi.BindingTrailBase] = bases.BindingTrailBase;
-        m[WasmAbi.ExtraTrailBase] = 0;
+        // Withheld under a debug session, and that is ADR-035 D5+: with
+        // TrailEverything on, the trail IS the debugger's history and
+        // cut-time compaction destroys it. Not offering the image is how
+        // the module is told, because a module with no base cannot
+        // compact and steps aside exactly as it did before.
+        m[WasmAbi.ExtraTrailBase] = _trailEverything ? 0 : bases.ExtraTrailBase;
         m[WasmAbi.HeapTop] = _heapTop;
         m[WasmAbi.HeapWatermark] = _gcThreshold > 0
             ? System.Math.Min(_gcThreshold, bases.HeapLimitCells)
@@ -191,6 +209,11 @@ public sealed partial class Activation
     {
         _heapTop = (int)m[WasmAbi.HeapTop];
         _bindingTrailTop = (int)m[WasmAbi.TrailTop];
+        // Adopted because a cut that compacts IN PLACE lowers it. Nothing
+        // else in the module writes it, so this is a no-op for every other
+        // path -- and leaving it unadopted would silently undo the
+        // compaction on the way out.
+        _extraTrailTop = (int)m[WasmAbi.ExtraTrailTop];
         _e = (int)m[WasmAbi.EnvTop];
         _b = (int)m[WasmAbi.ChoiceTop];
         _hb = (int)m[WasmAbi.HeapBacktrack];

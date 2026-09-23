@@ -133,6 +133,10 @@ public static class WasmPredicateCompiler
         14 => "atom id past the marker table",
         15 => "no module covers this zero-arity goal",
         16 => "setup_call_cleanup handlers are live, so the cut declines",
+        30 => "a cut dropped an attribute entry, which orphans its record",
+        31 => "a cut dropped a binding whose dead record the engine must drop",
+        32 => "a cut would leave a catch frame's snapshot to clip",
+        33 => "an attribute entry indexes past the log image",
         _ => "unnamed",
     };
 
@@ -1002,6 +1006,8 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
+            // The cut compaction's bank. Appended last, same rule.
+            new Local { Count = 13, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2157,6 +2163,493 @@ public static class WasmPredicateCompiler
             // declines would have sent the work to the wrong place.
             MetaGuard(17);
             EmitDeopt(pc, DeoptStamped);
+            CloseNested();
+        }
+
+        /// <summary>The compaction a cut owes the trails, done IN PLACE.
+        ///
+        /// <para>A cut drops the trail entries it has made unreachable: an
+        /// entry whose target is younger than the parent choice point's heap
+        /// top is truncated by any outer backtrack, so restoring it is moot.
+        /// The tier used to hand the whole walk to the host, which closed the
+        /// chain -- 766 times in one clp(Z) goal, the single largest reason
+        /// the module left.</para>
+        ///
+        /// <para>Two passes, and the first one is the point. A walk can turn
+        /// out to need a WRITE into managed state the module cannot reach:
+        /// an orphaned attribute record has to be cleared, a dead record
+        /// dropped from the store, a catch frame's snapshot clipped. Finding
+        /// that out halfway through is not an option, because a half-done
+        /// compaction that leaves a record orphaned is a leak the engine
+        /// already documents (a lazy phrase_from_file retained its entire
+        /// consumed input through exactly those orphans). So the first pass
+        /// decides WITHOUT touching anything, and the second pass only runs
+        /// when the answer is yes. Measured, that is 479 of 784 walks.</para>
+        ///
+        /// <para>The survival floor is the parent's heap top raised to the
+        /// highest active catch frame's snapshot, and that raise is
+        /// correctness, not caution: a throw truncates the heap only to its
+        /// own snapshot, so a mutation of anything older must still be
+        /// restorable when it fires.</para></summary>
+        private void EmitCompactAtCut(int pc)
+        {
+            Op(new LocalGet(LT0));
+            Op(new LocalSet(LKBar));
+            Op(new LocalGet(LT1));
+            Op(new LocalSet(LKPE));
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new LocalSet(LKETop));
+
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            Op(new LocalSet(LKEB));
+
+            // The parent's tops, off the barrier's choice point. A barrier of
+            // -1 has no choice point and implies zero for all three.
+            Op(new LocalGet(LKBar));
+            Op(new Int32Constant(0));
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            {
+                Op(new Int32Constant(0)); Op(new LocalSet(LKPB));
+                Op(new Int32Constant(0)); Op(new LocalSet(LKFloor));
+            }
+            OpenElse();
+            {
+                // stack[barrier] is the arity; the saved tops sit at
+                // +arity+5 (binding), +arity+6 (extra), +arity+7 (heap).
+                CellLoadDyn(LStackB, LKBar);
+                Op(new Int32WrapInt64());
+                Op(new LocalGet(LKBar));
+                Op(new Int32Add());
+                Op(new LocalSet(LKT));                      // barrier + arity
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(5));
+                Op(new Int32Add());
+                Op(new LocalSet(LKH));
+                CellLoadDyn(LStackB, LKH);
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKPB));
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(7));
+                Op(new Int32Add());
+                Op(new LocalSet(LKH));
+                CellLoadDyn(LStackB, LKH);
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKFloor));
+            }
+            CloseNested();
+
+            // Nothing trailed since the barrier: both walks would be empty
+            // and no catch snapshot can sit above an unchanged top, so the
+            // whole thing is a no-op. This is the common case.
+            Op(new LocalGet(LKPE));
+            Op(new LocalGet(LKETop));
+            Op(new Int32Equal());
+            Op(new LocalGet(LKPB));
+            Op(new LocalGet(LTR));
+            Op(new Int32Equal());
+            Op(new Int32And());
+            Op(new BranchIf(1));                            // -> $done
+
+            // No image, and something on the extra trail to judge: decline.
+            // A cut that trailed only BINDINGS needs no image at all, which
+            // is why this is asked here and not before the no-op test. The
+            // host withholds the base under a debug session, where the trail
+            // is the debugger's history rather than an optimisation.
+            Op(new LocalGet(LKEB));
+            Op(new Int32EqualZero());
+            Op(new LocalGet(LKPE));
+            Op(new LocalGet(LKETop));
+            Op(new Int32NotEqual());
+            Op(new Int32And());
+            OpenIf();
+            MetaGuard(28);
+            Op(new Branch(1));                              // -> $slow
+            CloseNested();
+
+            // The floor a live catch frame imposes.
+            LoadSlot32(WasmAbi.CatchHeapFloor);
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LKFloor));
+            Op(new Int32GreaterThanSigned());
+            OpenIf();
+            Op(new LocalGet(LKT));
+            Op(new LocalSet(LKFloor));
+            CloseNested();
+
+            // ---- pass one: can this be done at all? ----
+            Op(new LocalGet(LKPE)); Op(new LocalSet(LKER));
+            Op(new LocalGet(LKPE)); Op(new LocalSet(LKEW));
+            OpenBlock();                                    // $scanned
+            OpenLoop();                                     // $scan
+            {
+                Op(new LocalGet(LKER));
+                Op(new LocalGet(LKETop));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $scanned
+
+                EmitEntryAddr(LKER);
+                Op(new LocalSet(LKT));                      // the entry
+                Op(new LocalGet(LKT));
+                Op(new Int32Load8Unsigned
+                    { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+                Op(new LocalSet(LKH));                      // its type, briefly
+                Op(new LocalGet(LKT));
+                Op(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+                Op(new LocalSet(LKT));                      // and its index
+
+                EmitEntrySurvives(LKH, LKT, declineToSlow: true);
+                OpenIf();
+                {
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKEW));
+                }
+                OpenElse();
+                {
+                    // A dropped AttrModify has to clear its record, which is
+                    // a write into the log.
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    MetaGuard(30);
+                    Op(new Branch(4));                      // -> $slow
+                    CloseNested();
+
+                    // A dropped ValueChange may drop a dead record from the
+                    // attribute STORE, and only when the cell at its home
+                    // stopped being an attributed variable. That test the
+                    // module can make exactly, so it declines only when the
+                    // drop would really fire.
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Constant((int)Shumway.Core.TrailType.ValueChange));
+                    Op(new Int32Equal());
+                    LoadSlot32(WasmAbi.AttrRecordCount);
+                    Op(new Int32Constant(0));
+                    Op(new Int32GreaterThanSigned());
+                    Op(new Int32And());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LKT));
+                        Op(new LocalGet(LH));
+                        Op(new Int32LessThanUnsigned());
+                        OpenIf(BlockType.Int32);
+                        {
+                            CellLoadDyn(LHeapB, LKT);
+                            Op(new Int64Constant(60));
+                            Op(new Int64ShiftRightUnsigned());
+                            Op(new Int32WrapInt64());
+                            Op(new Int32Constant((int)Tag.AttVar));
+                            Op(new Int32Equal());
+                        }
+                        OpenElse();
+                        Op(new Int32Constant(0));
+                        CloseNested();
+                        Op(new Int32EqualZero());
+                        OpenIf();
+                        MetaGuard(31);
+                        Op(new Branch(5));                  // -> $slow
+                        CloseNested();
+                    }
+                    CloseNested();
+                }
+                CloseNested();
+
+                Op(new LocalGet(LKER));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKER));
+                Op(new Branch(0));                          // -> $scan
+            }
+            CloseNested();                                  // $scan
+            CloseNested();                                  // $scanned
+
+            // The binding side drops nothing managed, so it only has to be
+            // counted -- for the snapshot test below.
+            Op(new LocalGet(LKPB)); Op(new LocalSet(LKBR));
+            Op(new LocalGet(LKPB)); Op(new LocalSet(LKBW));
+            EmitBindingScan(countOnly: true);
+
+            // A compaction that leaves either top below a catch frame's
+            // snapshot has to clip it, and that is control state the module
+            // cannot write.
+            LoadSlot32(WasmAbi.CatchSnapBindingMax);
+            Op(new LocalGet(LKBW));
+            Op(new Int32GreaterThanSigned());
+            LoadSlot32(WasmAbi.CatchSnapExtraMax);
+            Op(new LocalGet(LKEW));
+            Op(new Int32GreaterThanSigned());
+            Op(new Int32Or());
+            OpenIf();
+            MetaGuard(32);
+            Op(new Branch(1));                              // -> $slow
+            CloseNested();
+
+            // ---- pass two: do it ----
+            Op(new LocalGet(LKPB)); Op(new LocalSet(LKBR));
+            Op(new LocalGet(LKPB)); Op(new LocalSet(LKBW));
+            Op(new LocalGet(LKPE)); Op(new LocalSet(LKER));
+            Op(new LocalGet(LKPE)); Op(new LocalSet(LKEW));
+            OpenBlock();                                    // $compacted
+            OpenLoop();                                     // $compact
+            {
+                Op(new LocalGet(LKER));
+                Op(new LocalGet(LKETop));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $compacted
+
+                // Every binding entry that came BEFORE this extra entry, so
+                // the marker rewritten below names the right position.
+                EmitEntryAddr(LKER);
+                Op(new LocalSet(LKT));
+                Op(new LocalGet(LKT));
+                Op(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset });
+                Op(new LocalSet(LKStop));                   // the marker
+                Op(new LocalGet(LKStop));
+                Op(new LocalGet(LTR));
+                Op(new Int32LessThanSigned());
+                OpenIf(BlockType.Int32);
+                Op(new LocalGet(LKStop));
+                OpenElse();
+                Op(new LocalGet(LTR));
+                CloseNested();
+                Op(new LocalSet(LKStop));                   // the stop
+                EmitBindingRun(LKStop);
+
+                EmitEntryAddr(LKER);
+                Op(new LocalSet(LKT));
+                Op(new LocalGet(LKT));
+                Op(new Int32Load8Unsigned
+                    { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+                Op(new LocalSet(LKH));
+                Op(new LocalGet(LKT));
+                Op(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+                Op(new LocalSet(LKT));
+
+                EmitEntrySurvives(LKH, LKT, declineToSlow: false);
+                OpenIf();
+                {
+                    // Moved down over the entries dropped before it, and its
+                    // marker rewritten to where the binding side now stands.
+                    EmitEntryAddr(LKEW);
+                    Op(new LocalSet(LKT));
+                    Op(new LocalGet(LKT));
+                    EmitEntryAddr(LKER);
+                    Op(new Int64Load());
+                    Op(new Int64Store());
+                    Op(new LocalGet(LKT));
+                    EmitEntryAddr(LKER);
+                    Op(new Int64Load
+                        { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+                    Op(new Int64Store
+                        { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+                    Op(new LocalGet(LKT));
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Store
+                        { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset });
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKEW));
+                }
+                CloseNested();
+
+                Op(new LocalGet(LKER));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKER));
+                Op(new Branch(0));                          // -> $compact
+            }
+            CloseNested();                                  // $compact
+            CloseNested();                                  // $compacted
+
+            // Whatever binding entries came after the last extra entry.
+            EmitBindingRun(LTR);
+
+            Op(new LocalGet(LKBW));
+            Op(new LocalSet(LTR));
+            StoreSlot64(WasmAbi.ExtraTrailTop,
+                        () => { Op(new LocalGet(LKEW)); Op(new Int64ExtendInt32Signed()); });
+            Op(new Branch(1));                              // -> $done
+
+            CloseNested();                                  // $slow
+            EmitDeopt(pc, DeoptStamped);
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>Pushes the byte address of extra-trail entry
+        /// <paramref name="indexLocal"/>.</summary>
+        private void EmitEntryAddr(uint indexLocal)
+        {
+            Op(new LocalGet(LKEB));
+            Op(new LocalGet(indexLocal));
+            Op(new Int32Constant(WasmAbi.ExtraTrailEntryBytes));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+        }
+
+        /// <summary>Pushes 1 when the entry survives the cut's compaction.
+        ///
+        /// <para>The kinds whose index is NOT a heap address each have their
+        /// own answer, and every one of them is "keep": a side table is
+        /// reclaimed only by its own entry, and control state is not a heap
+        /// cell. The default rule is the young-cell rule -- an entry whose
+        /// target is younger than the floor is dropped, because any outer
+        /// backtrack truncates it anyway.</para>
+        ///
+        /// <para>AttrModify is the one that has to look somewhere else: its
+        /// index names a RECORD, not a cell, and the record's home is what
+        /// the rule is about. That is the read the image exists for. An index
+        /// past the image is not a question the module can answer, so with
+        /// <paramref name="declineToSlow"/> it declines; the second pass
+        /// never reaches this, because the first one already agreed.</para>
+        /// </summary>
+        private void EmitEntrySurvives(uint typeLocal, uint idxLocal,
+                                       bool declineToSlow)
+        {
+            uint slow = declineToSlow ? 3u : 2u;
+
+            Op(new LocalGet(typeLocal));
+            Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
+            Op(new Int32Equal());
+            OpenIf(BlockType.Int32);
+            {
+                if (declineToSlow)
+                {
+                    Op(new LocalGet(idxLocal));
+                    LoadSlot32(WasmAbi.AttrLogLength);
+                    Op(new Int32GreaterThanOrEqualUnsigned());
+                    OpenIf();
+                    MetaGuard(33);
+                    Op(new Branch(slow + 1));               // -> $slow
+                    CloseNested();
+                }
+                LoadSlot32(WasmAbi.AttrLogBase);
+                Op(new LocalGet(idxLocal));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalGet(LKFloor));
+                Op(new Int32LessThanSigned());
+            }
+            OpenElse();
+            {
+                // Always kept: a side table nothing else trims, external
+                // state, and the catch-frame stack.
+                Op(new LocalGet(typeLocal));
+                Op(new Int32Constant((int)Shumway.Core.TrailType.BigIntAlloc));
+                Op(new Int32Equal());
+                Op(new LocalGet(typeLocal));
+                Op(new Int32Constant((int)Shumway.Core.TrailType.RationalAlloc));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new LocalGet(typeLocal));
+                Op(new Int32Constant((int)Shumway.Core.TrailType.MutableSet));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new LocalGet(typeLocal));
+                Op(new Int32Constant((int)Shumway.Core.TrailType.CatchFrame));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                OpenIf(BlockType.Int32);
+                Op(new Int32Constant(1));
+                OpenElse();
+                Op(new LocalGet(idxLocal));
+                Op(new LocalGet(LKFloor));
+                Op(new Int32LessThanSigned());
+                CloseNested();
+            }
+            CloseNested();
+        }
+
+        /// <summary>Compacts binding entries up to <paramref name="stop"/>,
+        /// moving the survivors down. The binding trail holds plain heap
+        /// addresses, so the young-cell rule is the whole test.</summary>
+        private void EmitBindingRun(uint stopLocal)
+        {
+            OpenBlock();
+            OpenLoop();
+            {
+                Op(new LocalGet(LKBR));
+                Op(new LocalGet(stopLocal));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));
+                Op(new LocalGet(LTrailB));
+                Op(new LocalGet(LKBR));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalSet(LKH));
+                Op(new LocalGet(LKH));
+                Op(new LocalGet(LKFloor));
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                {
+                    Op(new LocalGet(LTrailB));
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant(2));
+                    Op(new Int32ShiftLeft());
+                    Op(new Int32Add());
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Store());
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKBW));
+                }
+                CloseNested();
+                Op(new LocalGet(LKBR));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKBR));
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+        }
+
+        /// <summary>The same walk with the store left out: the first pass
+        /// only needs to know how many survive.</summary>
+        private void EmitBindingScan(bool countOnly)
+        {
+            OpenBlock();
+            OpenLoop();
+            {
+                Op(new LocalGet(LKBR));
+                Op(new LocalGet(LTR));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));
+                Op(new LocalGet(LTrailB));
+                Op(new LocalGet(LKBR));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalGet(LKFloor));
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                {
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKBW));
+                }
+                CloseNested();
+                Op(new LocalGet(LKBR));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKBR));
+                Op(new Branch(0));
+            }
+            CloseNested();
             CloseNested();
         }
 
@@ -6843,18 +7336,10 @@ public static class WasmPredicateCompiler
                 Op(new Int32WrapInt64());
                 Op(new LocalSet(LT1));
                 CloseNested();
-                // Anything trailed since the barrier is something the
-                // interpreter's cut would weigh and possibly drop, and the
-                // module has no way to weigh it.
-                Op(new LocalGet(LT1));
-                LoadSlot32(WasmAbi.ExtraTrailTop);
-                Op(new Int32NotEqual());
-                OpenIf();
-                {
-                    MetaGuard(28);
-                    EmitDeopt(pc, DeoptStamped);
-                }
-                CloseNested();
+                // LT1 is the parent's extra-trail top. Everything the
+                // compaction needs beyond it comes off the same choice point,
+                // so it is read there rather than passed.
+                EmitCompactAtCut(pc);
                 Op(new LocalGet(LT0));
                 Op(new LocalSet(LB));
             }
@@ -7028,6 +7513,22 @@ public static class WasmPredicateCompiler
         // hold a value ACROSS the unify that delivers it needs them.
         private const uint LU0 = 57;
         private const uint LU1 = 58;
+        // The cut's compaction. Its own bank because it runs between a
+        // barrier test and a B store, with every general scratch local
+        // already spoken for by the helpers it calls.
+        private const uint LKBar = 59;   // i32: the barrier
+        private const uint LKEB = 60;    // i32: byte base of the extra trail
+        private const uint LKFloor = 61; // i32: the survival floor
+        private const uint LKER = 62;    // i32: extra read cursor
+        private const uint LKEW = 63;    // i32: extra write cursor
+        private const uint LKBR = 64;    // i32: binding read cursor
+        private const uint LKBW = 65;    // i32: binding write cursor
+        private const uint LKT = 66;     // i32: scratch (a type, a stop)
+        private const uint LKH = 67;     // i32: scratch (an index)
+        private const uint LKETop = 68;  // i32: the extra trail's top
+        private const uint LKPB = 69;    // i32: the parent's binding top
+        private const uint LKStop = 70;  // i32: where a binding run stops
+        private const uint LKPE = 71;    // i32: the parent's extra top
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

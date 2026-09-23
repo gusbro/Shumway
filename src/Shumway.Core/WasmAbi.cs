@@ -345,6 +345,21 @@ public static class WasmAbi
     /// and with an empty store it never does.</summary>
     public const int AttrRecordCount = 56;
 
+    /// <summary>One extra-trail entry as it lies in the shared image:
+    /// twenty bytes, a byte of Type then three four-byte fields, one of
+    /// which is an eight-byte cell sitting at a four-byte boundary.
+    ///
+    /// <para>Unaligned on purpose and harmless: a wasm i64.load's align
+    /// immediate is a hint, not a constraint. These are ASSERTED against the
+    /// managed struct by a test, because a module bakes them and a silent
+    /// layout change would have it read the wrong field rather than
+    /// fail.</para></summary>
+    public const int ExtraTrailEntryBytes = 20;
+    public const int ExtraTrailTypeOffset = 0;
+    public const int ExtraTrailHeapIdxOffset = 4;
+    public const int ExtraTrailOldValueOffset = 8;
+    public const int ExtraTrailMarkerOffset = 16;
+
     public const int SlotCount = 57;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;

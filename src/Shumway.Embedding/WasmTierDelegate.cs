@@ -160,13 +160,13 @@ public sealed class WasmTierDelegate
     /// deopt reads guard 0.</para></summary>
     // 32, not 16: the codes run past 16 and an index at or over the length
     // was dropped silently, so the cut's own decline never appeared.
-    public static readonly long[] DiagMetaGuardHist = new long[32];
+    public static readonly long[] DiagMetaGuardHist = new long[64];
 
     /// <summary>The goal functor LAST seen at each reason code, where the
     /// site stamped one (DiagB). A histogram row says 400 meta-calls found
     /// no marker; only this says 400 of WHAT -- and a reason whose functor
     /// cannot be named in the current tables is itself a finding.</summary>
-    public static readonly long[] DiagGuardFids = new long[32];
+    public static readonly long[] DiagGuardFids = new long[64];
 
     /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run

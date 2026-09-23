@@ -189,7 +189,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
-        private int _attrLogAt;
+        private int _attrLogAt, _extraTrailAt, _extraTrailStaged;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -240,6 +240,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
             _engine.AttrLogMirrorEnable();
             _engine.AttrLogMirrorAssert();
+            ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
+            int extraTop = _engine.WasmExtraTrailTop;
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
@@ -251,7 +253,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _metaCacheAt = (_callMarkerAt + callMarkers.Length * 4 + 7) & ~7;
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
             _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
-            if (_attrLogAt + attrLogCount * 4 > (long)Pages * 65536)
+            _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
+            if (_extraTrailAt + (long)extraTop * WasmAbi.ExtraTrailEntryBytes
+                > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -276,7 +280,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AtomMarkerBase: _atomMarkerAt,
                 AtomMarkerLength: atomMarkers.Length,
                 AttrLogBase: attrLogCount > 0 ? _attrLogAt : 0,
-                AttrLogLength: attrLogCount);
+                AttrLogLength: attrLogCount,
+                ExtraTrailBase: _extraTrailAt);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -336,6 +341,16 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = attrLogHomes)
                     Buffer.MemoryCopy(p, mem + _attrLogAt, attrLogCount * 4L,
                                       attrLogCount * 4L);
+            // The one area the module REWRITES rather than only appending to:
+            // a cut compacts it in place. Copied in whole and copied BACK on
+            // the way out, and how much to copy back is remembered here
+            // because the module lowers the top.
+            _extraTrailStaged = extraTop;
+            if (extraTop > 0)
+                fixed (ExtraTrailEntry* p = extraTrail)
+                    Buffer.MemoryCopy(p, mem + _extraTrailAt,
+                                      (long)extraTop * WasmAbi.ExtraTrailEntryBytes,
+                                      (long)extraTop * WasmAbi.ExtraTrailEntryBytes);
             // Copied only when it actually changed: install and eviction are
             // the only writers, so a run that promotes nothing copies this
             // once. Without the check queens re-copies 8 KB on each of its
@@ -416,6 +431,17 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int tr2 = (int)_mailbox[WasmAbi.TrailTop];
             fixed (int* p = trail)
                 Buffer.MemoryCopy(mem + _trailAt, p, trail.Length * 4L, tr2 * 4L);
+            // Back, because a cut may have COMPACTED it: entries move down
+            // over the ones it dropped, so the live prefix changed shape and
+            // not just length. Copy what was staged, since the compaction
+            // only ever lowers the top and the bytes above it are dead
+            // either way.
+            ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
+            if (_extraTrailStaged > 0)
+                fixed (ExtraTrailEntry* p = extraTrail)
+                    Buffer.MemoryCopy(mem + _extraTrailAt, p,
+                                      (long)extraTrail.Length * WasmAbi.ExtraTrailEntryBytes,
+                                      (long)_extraTrailStaged * WasmAbi.ExtraTrailEntryBytes);
             _engine.SyncFromWasmMailbox(_mailbox);
             _engineAuthoritative = true;
         }

@@ -65,12 +65,13 @@ public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
             + "corpus stopped binding attvars or the deopt is back");
         // The property this pins is that an ATTVAR BIND does not deopt,
         // and the count of ALL deopts stopped being the way to say it: a
-        // cut with something on the extra trail now steps aside on purpose
-        // (guard 28), because the compaction it owes is the engine's. So
-        // the assertion names the reason instead of counting reasons.
+        // cut whose compaction owes a WRITE into managed state declines on
+        // purpose, and there are five reasons it can. So the assertion
+        // names the reasons instead of counting them.
         for (int g = 0; g < WasmTierDelegate.DiagMetaGuardHist.Length; g++)
         {
-            if (g == 28 || WasmTierDelegate.DiagMetaGuardHist[g] == 0) continue;
+            bool cutDeclined = g == 28 || (g >= 30 && g <= 33);
+            if (cutDeclined || WasmTierDelegate.DiagMetaGuardHist[g] == 0) continue;
             Assert.Fail($"{WasmTierDelegate.DiagMetaGuardHist[g]} deopts at "
                 + $"guard {g}: "
                 + Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g));

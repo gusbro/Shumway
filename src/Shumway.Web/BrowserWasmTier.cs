@@ -248,7 +248,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AtomMarkerBase: AtomMarkerAddress(),
                 AtomMarkerLength: _w._table.AtomCallMarkers.Length,
                 AttrLogBase: AttrLogAddress(),
-                AttrLogLength: _engine.AttrLogCount);
+                AttrLogLength: _engine.AttrLogCount,
+                ExtraTrailBase: ExtraTrailAddress());
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -358,6 +359,27 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// meets a wasm world pay nothing for attribute mutation.</summary>
         private GCHandle _attrLogPin;
         private int[]? _attrLogHomesPinned;
+
+        /// <summary>The extra trail, pinned. The one area the module
+        /// REWRITES rather than only appending to -- a cut compacts it in
+        /// place -- which in this world costs nothing extra, because pinning
+        /// means the engine's array IS the image and there is no copy back
+        /// to get wrong.</summary>
+        private GCHandle _extraTrailPin;
+        private ExtraTrailEntry[]? _extraTrailPinned;
+
+        private long ExtraTrailAddress()
+        {
+            ExtraTrailEntry[] t = _engine.WasmExtraTrailView;
+            if (t.Length == 0) return 0;
+            if (!ReferenceEquals(_extraTrailPinned, t))
+            {
+                if (_extraTrailPin.IsAllocated) _extraTrailPin.Free();
+                _extraTrailPin = GCHandle.Alloc(t, GCHandleType.Pinned);
+                _extraTrailPinned = t;
+            }
+            return (long)_extraTrailPin.AddrOfPinnedObject();
+        }
 
         private long AttrLogAddress()
         {
