@@ -27,7 +27,10 @@ public static class CommitTrace
     private const string Symbol = "SHUMWAY_DIAG";
     private const int Capacity = 60_000;
 
-    public enum Kind : byte { Push, Cut, Unwind }
+    /// <summary>Trail records an APPEND to the extra trail, whose
+    /// `from` is the TrailType: an unwind's target is a top, and a top
+    /// only means something once you know what is under it.</summary>
+    public enum Kind : byte { Push, Cut, Unwind, Trail }
 
     private static readonly Kind[] Kinds = new Kind[Capacity];
     private static readonly int[] Froms = new int[Capacity];

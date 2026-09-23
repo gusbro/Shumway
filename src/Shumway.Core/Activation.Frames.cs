@@ -318,6 +318,9 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact-above idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
+            Diagnostics.CommitTrace.Note(_cellsAllocated,
+                Diagnostics.CommitTrace.Kind.Trail,
+                (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
                 Type = TrailType.CatchFrame,
@@ -367,6 +370,9 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.CatchFrame, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.CatchFrame,
@@ -403,6 +409,9 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
+            Diagnostics.CommitTrace.Note(_cellsAllocated,
+                Diagnostics.CommitTrace.Kind.Trail,
+                (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
                 Type = TrailType.CatchFrame,

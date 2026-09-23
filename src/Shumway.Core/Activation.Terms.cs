@@ -34,6 +34,9 @@ public sealed partial class Activation
     private void TrailBigIntAlloc(int oldCount)
     {
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.BigIntAlloc, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.BigIntAlloc,
@@ -64,6 +67,9 @@ public sealed partial class Activation
         int id = _rationalTable.Count;
         _rationalTable.Add(value);
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.RationalAlloc, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.RationalAlloc,
@@ -96,6 +102,9 @@ public sealed partial class Activation
         int idx = _externalTrailLog.Count;
         _externalTrailLog.Add((target, key, oldValue, hadOldValue));
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.MutableSet, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.MutableSet,
@@ -844,6 +853,9 @@ public sealed partial class Activation
         int logIndex = _attrTrailLog.Count;
         _attrTrailLog.Add((homeAddr, moduleId, oldValue));
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.AttrModify, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.AttrModify,
@@ -881,6 +893,9 @@ public sealed partial class Activation
             Diagnostics.AttVarCellTrace.Note(_cellsAllocated, heapIdx,
                 Diagnostics.AttVarCellTrace.Kind.Overwritten);
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.ValueChange, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.ValueChange,
