@@ -799,6 +799,8 @@ public sealed partial class Activation
 
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Push, _b, _stackTop);
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
         if (CpPushRing is { } cpRing)
@@ -933,6 +935,8 @@ public sealed partial class Activation
     /// </summary>
     public void Cut(int barrier)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Cut, _b, barrier);
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));
         // a stale barrier (above current B) means the

@@ -900,6 +900,8 @@ public sealed partial class Activation
     /// </summary>
     public void UnwindTrails(int bindingTarget, int extraTarget)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Unwind, _extraTrailTop, extraTarget);
         if (bindingTarget < 0 || bindingTarget > _bindingTrailTop)
             throw new ArgumentOutOfRangeException(nameof(bindingTarget));
         if (extraTarget < 0 || extraTarget > _extraTrailTop)

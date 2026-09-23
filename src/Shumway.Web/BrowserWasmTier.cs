@@ -235,6 +235,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ResumeTableBase: _w.RowsAddress(),
                 ResumeTableRows: _w._table.Length,
                 ModuleIndexBase: _w.ModuleIndexAddress(),
+                TraceBase: TraceRingAddress(),
+                TraceLimit: _traceRing?.Length ?? 0,
                 AttrTableBase: AttrMirrorAddress(),
                 AttrTableMask: _engine.AttrMirrorMask,
                 FdDomFunctorBase: FdDomFunctorAddress(),
@@ -256,6 +258,45 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// ONCE: the contents are interned at startup and never change, so
         /// unlike every other area here there is nothing to repin.</summary>
         private static GCHandle _fdDomPin;
+
+        /// <summary>TRACE MODE's ring, pinned for the module to write into.
+        /// Allocated only once something arms the trace, so an ordinary run
+        /// carries neither the buffer nor the pin.</summary>
+        private static long[]? _traceRing;
+        private static GCHandle _tracePin;
+
+        private static long TraceRingAddress()
+        {
+            if (!Shumway.Core.Diagnostics.CommitTrace.Enabled) return 0;
+            if (_traceRing is null)
+            {
+                _traceRing = new long[64 * 1024];
+                _tracePin = GCHandle.Alloc(_traceRing, GCHandleType.Pinned);
+            }
+            return (long)_tracePin.AddrOfPinnedObject();
+        }
+
+        /// <summary>Moves whatever the module wrote into the host's trace and
+        /// empties the ring. Called wherever the chain comes out, so the two
+        /// tiers' events land in ONE stream in the order they happened.
+        /// </summary>
+        private void DrainTraceRing()
+        {
+            if (_traceRing is null) return;
+            int n = (int)ReadSlot(WasmAbi.TraceTop);
+            for (int i = 0; i < n && i < _traceRing.Length; i++)
+            {
+                long rec = _traceRing[i];
+                int kind = (int)(rec & 0xFF);
+                int payload = (int)(rec >> 8);
+                Shumway.Core.Diagnostics.CommitTrace.Note(
+                    _engine.CellsAllocated,
+                    kind == 1 ? Shumway.Core.Diagnostics.CommitTrace.Kind.Push
+                              : Shumway.Core.Diagnostics.CommitTrace.Kind.Cut,
+                    -1, payload);
+            }
+            WriteSlot(WasmAbi.TraceTop, 0);
+        }
 
         private static long FdDomFunctorAddress()
         {
@@ -365,6 +406,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         public void SyncEngine()
         {
             if (_engineAuthoritative) return;
+            // Whatever the module traced belongs in the stream BEFORE the
+            // host resumes writing to it, or the two tiers interleave wrong.
+            DrainTraceRing();
             _engine.SyncFromWasmMailbox(_mailbox);
             _engineAuthoritative = true;
         }
@@ -1484,6 +1528,25 @@ internal static partial class WebShumwayApp
             }
             if (command == "cells dump")
                 return Shumway.Core.Diagnostics.AttVarCellTrace.Dump();
+
+            // Choice points: pushed, committed to, gone back to.
+            if (command == "commits on")
+            {
+                Shumway.Core.Diagnostics.CommitTrace.Reset();
+                Shumway.Core.Diagnostics.CommitTrace.Enabled = true;
+                // The EMITTER has to be armed before the modules are
+                // compiled, or they carry no trace sites at all.
+                Shumway.Compiler.Wasm.WasmPredicateCompiler.TraceCommits = true;
+                return "% commit trace: armed" + System.Environment.NewLine;
+            }
+            if (command == "commits off")
+            {
+                Shumway.Core.Diagnostics.CommitTrace.Enabled = false;
+                return "% commit trace: off" + System.Environment.NewLine;
+            }
+            if (command == "commits dump")
+                return Shumway.Core.Diagnostics.CommitTrace.Dump();
+
 
 
             // The builtin calls IN ORDER. The tier open-codes some, so a

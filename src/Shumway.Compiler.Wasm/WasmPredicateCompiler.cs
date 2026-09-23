@@ -48,6 +48,11 @@ public static class WasmPredicateCompiler
     /// BAKED into the code, not read from the mailbox: after a hop the
     /// mailbox is still the chain's, and a module that took its identity
     /// from there would dispatch another module's cursors as its own.</param>
+    /// <summary>TRACE MODE, off unless a diagnostic turns it on BEFORE the
+    /// module is compiled. See EmitTraceRecord: an unarmed module is byte
+    /// for byte the module it was before.</summary>
+    public static bool TraceCommits;
+
     public static WasmGroupEntry CompileGroup(IReadOnlyList<WasmGroupMember> members,
                                               IWasmCompileEnv env, bool shared = false,
                                               int moduleId = 0)
@@ -4995,9 +5000,69 @@ public static class WasmPredicateCompiler
         /// <summary>The engine's PushChoicePoint, cell for cell; jumps to
         /// <paramref name="gotoAddr"/> afterwards when one is given, else
         /// falls through.</summary>
+        /// <summary>TRACE MODE, off unless a diagnostic turns it on before
+        /// the module is compiled. When on, the module writes one record per
+        /// commit-shaped event into a ring in the shared image, which the
+        /// host drains when the chain comes out.
+        ///
+        /// <para>It exists because everything the module COMMITS -- pushing
+        /// a choice point, cutting one away -- happens inside wasm without
+        /// calling anything the engine can see, so no host-side instrument
+        /// can line those up against Tier 0's. Writing to memory rather than
+        /// leaving the module keeps a traced build usable: a bounds check and
+        /// two stores per event, against a verdict round trip per event.</para>
+        ///
+        /// <para>Compiled in only when armed, so an unarmed module is byte
+        /// for byte the module it was before.</para></summary>
+
+        /// <summary>One record: (kind | payload &lt;&lt; 8), appended if the
+        /// ring has room. A full ring stops recording rather than wrapping --
+        /// what is being compared is where two runs first differ, so the
+        /// beginning is the part worth keeping.</summary>
+        private void EmitTraceRecord(int kind, System.Action payload)
+        {
+            if (!WasmPredicateCompiler.TraceCommits) return;
+            LoadSlot32(WasmAbi.TraceBase);
+            Op(new Int32Constant(0));
+            Op(new Int32NotEqual());
+            OpenIf();
+            {
+                LoadSlot32(WasmAbi.TraceTop);
+                LoadSlot32(WasmAbi.TraceLimit);
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                {
+                    // ring[top] = kind | payload << 8
+                    LoadSlot32(WasmAbi.TraceBase);
+                    LoadSlot32(WasmAbi.TraceTop);
+                    Op(new Int32Constant(3));
+                    Op(new Int32ShiftLeft());
+                    Op(new Int32Add());
+                    Op(new Int64Constant(kind));
+                    payload();
+                    Op(new Int64ExtendInt32Signed());
+                    Op(new Int64Constant(8));
+                    Op(new Int64ShiftLeft());
+                    Op(new Int64Or());
+                    Op(new Int64Store());
+                    StoreSlot64(WasmAbi.TraceTop, () =>
+                    {
+                        LoadSlot32(WasmAbi.TraceTop);
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new Int64ExtendInt32Signed());
+                    });
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
         private void EmitPushChoicePoint(int pc, int fid, int arity, int bpAddress,
                                          int gotoAddr = -1)
         {
+            // 1 = a choice point pushed, payload = where it lands.
+            EmitTraceRecord(1, () => Op(new LocalGet(LST)));
             int size = 11 + arity;
             Op(new LocalGet(LST));
             Op(new Int32Constant(size));
@@ -6187,6 +6252,11 @@ public static class WasmPredicateCompiler
         {
             pushBarrier();
             Op(new LocalSet(LT0));
+            // 2 = a cut, payload = the barrier it commits to. Recorded
+            // before the staleness test, so a cut that turns out to be a
+            // no-op is still visible as an ATTEMPT -- which is the half a
+            // comparison against Tier 0 needs.
+            EmitTraceRecord(2, () => Op(new LocalGet(LT0)));
             // A stale barrier (at or above B) is a no-op, per ISO: the CP the
             // cut meant to commit to is already gone.
             Op(new LocalGet(LT0));

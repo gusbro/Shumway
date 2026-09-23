@@ -25,6 +25,8 @@ public sealed partial class Activation
         long ModuleIndexBase = 0,
         /// <summary>Base and mask of the attribute table's image. A zero base
         /// means there is none and get_attr/3 exits to the host.</summary>
+        long TraceBase = 0,
+        long TraceLimit = 0,
         long AttrTableBase = 0,
         int AttrTableMask = 0,
         long FdDomFunctorBase = 0,
@@ -132,6 +134,9 @@ public sealed partial class Activation
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;
         m[WasmAbi.UnifyPointer] = _unifyPointer;
         m[WasmAbi.FunctorTableBase] = bases.FunctorTableBase;
+        m[WasmAbi.TraceBase] = bases.TraceBase;
+        m[WasmAbi.TraceLimit] = bases.TraceLimit;
+        m[WasmAbi.TraceTop] = 0;
         m[WasmAbi.AttrTableBase] = bases.AttrTableBase;
         m[WasmAbi.AttrTableMask] = bases.AttrTableMask;
         m[WasmAbi.FdDomFunctorBase] = bases.FdDomFunctorBase;

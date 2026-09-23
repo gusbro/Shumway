@@ -288,7 +288,24 @@ public static class WasmAbi
     /// </summary>
     public const int FdDomFunctorLength = 47;
 
-    public const int SlotCount = 48;
+    /// <summary>TRACE MODE (diagnostic, off unless armed): a ring the
+    /// module writes one i64 per traced event into, and the cursor and
+    /// capacity that bound it. Zero base means do not trace.
+    ///
+    /// <para>It exists because the module commits and backtracks INSIDE
+    /// wasm without calling anything the engine can see, so no host-side
+    /// instrument can compare those against Tier 0's. Writing to memory
+    /// rather than calling out keeps the emitted code to a bounds check
+    /// and two stores, and the host drains the ring whenever the chain
+    /// comes out.</para>
+    ///
+    /// <para>An entry is (kind | payload &lt;&lt; 8): what happened and one
+    /// number about it.</para></summary>
+    public const int TraceBase = 48;
+    public const int TraceTop = 49;
+    public const int TraceLimit = 50;
+
+    public const int SlotCount = 51;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
