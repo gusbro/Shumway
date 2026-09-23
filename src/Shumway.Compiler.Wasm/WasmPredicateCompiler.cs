@@ -343,6 +343,27 @@ public static class WasmPredicateCompiler
                 // this census exists for starts at TWO crossings per pass,
                 // which is what catch/3 costs.
                 if (exits < 2) continue;
+                // A body with REAL WORK in it is compiled whatever its
+                // crossing count. That is what this census already says
+                // it wants -- leave anything with real work alone -- and
+                // a ratio cannot say it: a large predicate crosses more
+                // in absolute terms simply by being large, so the ratio
+                // rejects it on the same evidence that should acquit it.
+                //
+                // Measured, that is not hypothetical. clp(Z)'s get_atts/2
+                // (96 crossings, 746 compilable ops) and put_atts/2 (59,
+                // 458) were refused by 3%, and refusing them cost 1,208
+                // chain CLOSURES in one goal -- every call from compiled
+                // code to a refused callee ends a chain and pays a fresh
+                // staging, a cost the ratio does not model because it
+                // only weighs the callee's own crossings.
+                //
+                // The floor is where the two populations actually sit,
+                // not a tuned margin: everything this census has ever
+                // refused has 62 compilable ops or fewer, and the two it
+                // should not have refused have 458 and 746.
+                const int RealWorkFloor = 128;
+                if (_compilable![sec] >= RealWorkFloor) continue;
                 // What one host crossing costs, measured in compilable ops
                 // it takes to pay for it. The honest number is in the
                 // hundreds (a crossing is microseconds, an op's wasm gain is

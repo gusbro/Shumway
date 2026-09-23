@@ -1127,6 +1127,8 @@ public sealed partial class Activation
         // deterministic cut pay O(catch frames) for nothing).
         if (parentBindingTop == _bindingTrailTop && parentExtraTop == _extraTrailTop)
             return;
+        Diagnostics.CompactCensus.NoteWalk();
+        int beforeExtra = _extraTrailTop, beforeBind = _bindingTrailTop;
 
         // A cut's "young entry" drop reasons about BACKTRACKING: anything
         // above the parent CP's heap top is truncated by any outer
@@ -1268,6 +1270,8 @@ public sealed partial class Activation
             }
             if (changed) _catchFrames[i] = f;
         }
+        Diagnostics.CompactCensus.NoteDropped(
+            _extraTrailTop != beforeExtra || _bindingTrailTop != beforeBind);
     }
 
 }

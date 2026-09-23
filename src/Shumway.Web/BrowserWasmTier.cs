@@ -533,6 +533,27 @@ internal static class BrowserWasmTier
          + (WasmTierDelegate.DiagEnvCensus is { } e
              ? "%   env chain: " + e + System.Environment.NewLine : "");
 
+    /// <summary>Where the delegate's time went. The pieces sum:
+    /// delegate = inside wasm + staging + builtins + the glue of the
+    /// verdict loop, and a run that is slower than Tier 0 has to say
+    /// WHICH of those it is before anything is tuned.</summary>
+    internal static string TimingReport()
+    {
+        double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        double del = WasmTierDelegate.DiagDelegateTicks * f;
+        double inw = BrowserWasmWorld.DiagCallTicks * f;
+        double stg = BrowserWasmWorld.DiagStageTicks * f;
+        double bti = WasmTierDelegate.DiagBuiltinTicks * f;
+        return $"%   delegate {del:F1} ms = inWasm {inw:F1} + stage {stg:F1}"
+             + $" + builtins {bti:F1} + glue {del - inw - stg - bti:F1}"
+             + System.Environment.NewLine;
+    }
+
+    internal static string CompactReport()
+        => "%   cut compactions: " + Shumway.Core.Diagnostics.CompactCensus.Walks
+         + " walks, " + Shumway.Core.Diagnostics.CompactCensus.Dropped
+         + " dropped something" + System.Environment.NewLine;
+
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b
             ? "%   last resource_error(memory): " + b + "\n" : "";
@@ -1414,7 +1435,7 @@ internal static partial class WebShumwayApp
                               // and each hands control to the interpreter
                               // rather than just running C# and returning.
                               + "\n" + BrowserWasmTier.DeoptRankingReport(engine).TrimEnd('\n')
-                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport().TrimEnd('\n');
+                              + "\n" + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.TimingReport() + BrowserWasmTier.CompactReport() + BrowserWasmTier.ExhaustionReport().TrimEnd('\n');
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
@@ -1614,6 +1635,16 @@ internal static partial class WebShumwayApp
             }
 
 
+            if (command == "compact reset")
+            {
+                Shumway.Core.Diagnostics.CompactCensus.Reset();
+                WasmTierDelegate.DiagDelegateTicks = 0;
+                WasmTierDelegate.DiagBuiltinTicks = 0;
+                BrowserWasmWorld.DiagCallTicks = 0;
+                BrowserWasmWorld.DiagStageTicks = 0;
+                return "% compact census: reset" + System.Environment.NewLine;
+            }
+
             if (command == "status")
             {
                 if (store.Wasm is not { } w)
@@ -1692,7 +1723,7 @@ internal static partial class WebShumwayApp
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
-                    + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.ExhaustionReport()
+                    + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.TimingReport() + BrowserWasmTier.CompactReport() + BrowserWasmTier.ExhaustionReport()
                     + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "
