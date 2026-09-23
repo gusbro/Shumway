@@ -1106,6 +1106,18 @@ public sealed partial class Activation
     /// would occupy in the compacted binding trail, preserving the relative ordering that
     /// <see cref="UnwindTrails"/> relies on.
     /// </summary>
+    /// <summary>Whether an AttrModify entry survives the cut's compaction,
+    /// which is decided by the attribute RECORD's home and not by the
+    /// entry's own field. Named so the one read into managed state that a
+    /// module-side compaction would have to reach is visible as such.
+    /// </summary>
+    private bool AttrModifySurvives(int logIndex, int effectiveFloor,
+                                    ref bool diagSaw)
+    {
+        diagSaw = true;
+        return _attrTrailLog[logIndex].Home < effectiveFloor;
+    }
+
     private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
     {
         // ADR-035 D5+ — under a debug session the trail IS the debugger's history: Set
@@ -1129,6 +1141,7 @@ public sealed partial class Activation
             return;
         Diagnostics.CompactCensus.NoteWalk();
         int beforeExtra = _extraTrailTop, beforeBind = _bindingTrailTop;
+        bool diagSawAttrModify = false, diagWroteTheLog = false;
 
         // A cut's "young entry" drop reasons about BACKTRACKING: anything
         // above the parent CP's heap top is truncated by any outer
@@ -1207,7 +1220,9 @@ public sealed partial class Activation
                 // external trail log, not the heap — a backtrack to an ancestor
                 // above the cut must still restore the host-level value.
                 TrailType.MutableSet => true,
-                TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < effectiveFloor,
+                TrailType.AttrModify => AttrModifySurvives(entry.HeapIdx,
+                                                          effectiveFloor,
+                                                          ref diagSawAttrModify),
                 _ => entry.HeapIdx < effectiveFloor,
             };
             if (survives)
@@ -1217,6 +1232,7 @@ public sealed partial class Activation
             }
             else if (AttrRecordTotal > 0 && entry.Type == TrailType.ValueChange)
             {
+                diagWroteTheLog = true;
                 DropDeadAttrRecord(entry.HeapIdx);
             }
             else if (entry.Type == TrailType.AttrModify)
@@ -1229,6 +1245,7 @@ public sealed partial class Activation
                 // exactly these orphans (one per chunk, via the frozen tail's
                 // old attribute). Dead records are skipped by mark/relocate
                 // and physically reclaimed when an unwind truncates past them.
+                diagWroteTheLog = true;
                 if ((uint)entry.HeapIdx < (uint)_attrTrailLog.Count)
                     _attrTrailLog[entry.HeapIdx] = (int.MinValue, 0, 0);
             }
@@ -1246,6 +1263,7 @@ public sealed partial class Activation
 
         _bindingTrailTop = bindingWrite;
         _extraTrailTop = extraWrite;
+        Diagnostics.CompactCensus.NoteReach(diagSawAttrModify, diagWroteTheLog);
 
         // catch frames captured snapshots of the trail
         // tops at push time. The compaction above just dropped some

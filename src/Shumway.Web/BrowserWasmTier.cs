@@ -552,7 +552,11 @@ internal static class BrowserWasmTier
     internal static string CompactReport()
         => "%   cut compactions: " + Shumway.Core.Diagnostics.CompactCensus.Walks
          + " walks, " + Shumway.Core.Diagnostics.CompactCensus.Dropped
-         + " dropped something" + System.Environment.NewLine;
+         + " dropped something, "
+         + Shumway.Core.Diagnostics.CompactCensus.SawAttrModify
+         + " read the attr log, "
+         + Shumway.Core.Diagnostics.CompactCensus.WroteTheLog
+         + " wrote it" + System.Environment.NewLine;
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b
