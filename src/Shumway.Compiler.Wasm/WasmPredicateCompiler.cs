@@ -116,6 +116,7 @@ public static class WasmPredicateCompiler
         24 => "binding an attributed variable: the wakeup is the host's",
         25 => "a general unification only the engine's unifier can do",
         26 => "arithmetic: a shape or an error the evaluator hands to the host",
+        28 => "a cut with entries on the extra trail: the compaction is the engine's",
         1 => "no call-marker table staged",
         2 => "goal is neither a compound nor an atom",
         4 => "no module covers the goal's functor",
@@ -1676,11 +1677,11 @@ public static class WasmPredicateCompiler
                     return true;
                 case Opcode.NeckCut:
                     EmitFlagsCheck(ins.Pc);
-                    EmitCut(() => LoadSlot32(WasmAbi.CutBarrier));
+                    EmitCut(() => LoadSlot32(WasmAbi.CutBarrier), ins.Pc);
                     return false;
                 case Opcode.Cut:
                     EmitFlagsCheck(ins.Pc);
-                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     return false;
                 case Opcode.GetLevel:
                     YStore(ins.I0, () => RawInt(() => LoadSlot32(WasmAbi.CutBarrier)));
@@ -1694,12 +1695,12 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.CutProceed:
                     EmitFlagsCheck(ins.Pc);
-                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitProceedReturn();
                     return true;
                 case Opcode.CutDeallocateProceed:
                     EmitFlagsCheck(ins.Pc);
-                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitDeallocate();
                     EmitProceedReturn();
                     return true;
@@ -3715,7 +3716,7 @@ public static class WasmPredicateCompiler
                         {
                             Op(new LocalGet(LC0));
                             Op(new Int32WrapInt64());
-                        });
+                        }, pc);
                         // Symmetry with the calling path: pc + 9 pops a frame.
                         if (ownFrame)
                         {
@@ -6248,7 +6249,26 @@ public static class WasmPredicateCompiler
         /// word (checked before every cut), and the compaction is a memory
         /// optimisation the wasm skips: a redundant trail entry unwinds into
         /// dead heap, which is harmless.</summary>
-        private void EmitCut(Action pushBarrier)
+        /// <summary>A cut, and the compaction it owes.
+        ///
+        /// <para>The interpreter's Cut does two things: it lowers B, and it
+        /// COMPACTS the trails, dropping entries the cut has made
+        /// unreachable. The module can do the first and not the second, and
+        /// the difference is not academic: measured on clp(Z), an AttrModify
+        /// entry the interpreter drops here survived on the tier, sat below a
+        /// later choice point, and was unwound at the end of the goal --
+        /// putting twenty-five cells back to ATTVAR and leaving six
+        /// attributed variables in an answer that should have had none.
+        /// </para>
+        ///
+        /// <para>So the module decides whether there is anything to compact
+        /// and steps aside when there is, the same shape the restore path
+        /// already uses for the extra trail. It can decide it: the barrier's
+        /// choice point holds the extra-trail top as of when it was pushed,
+        /// and equal tops mean nothing was trailed since -- which is the
+        /// common case by far, so the ordinary cut stays a compare and a
+        /// store.</para></summary>
+        private void EmitCut(Action pushBarrier, int pc)
         {
             pushBarrier();
             Op(new LocalSet(LT0));
@@ -6263,8 +6283,44 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LB));
             Op(new Int32LessThanSigned());
             OpenIf();
-            Op(new LocalGet(LT0));
-            Op(new LocalSet(LB));
+            {
+                // The extra-trail top the barrier's choice point saved:
+                // stack[barrier + 1 + arity + 5], with arity at stack[barrier].
+                // A barrier of -1 has no choice point, and the top it implies
+                // is zero.
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(0));
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LT1));
+                OpenElse();
+                CellLoadDyn(LStackB, LT0);
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant(6));
+                Op(new Int32Add());
+                Op(new LocalGet(LT0));
+                Op(new Int32Add());
+                Op(new LocalSet(LT1));
+                CellLoadDyn(LStackB, LT1);
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));
+                CloseNested();
+                // Anything trailed since the barrier is something the
+                // interpreter's cut would weigh and possibly drop, and the
+                // module has no way to weigh it.
+                Op(new LocalGet(LT1));
+                LoadSlot32(WasmAbi.ExtraTrailTop);
+                Op(new Int32NotEqual());
+                OpenIf();
+                {
+                    MetaGuard(28);
+                    EmitDeopt(pc, DeoptStamped);
+                }
+                CloseNested();
+                Op(new LocalGet(LT0));
+                Op(new LocalSet(LB));
+            }
             CloseNested();
         }
 

@@ -63,6 +63,17 @@ public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
         Assert.True(eq >= 10,
             $"=/2 shows {eq} exits: the escape is not running, so either the "
             + "corpus stopped binding attvars or the deopt is back");
-        Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
+        // The property this pins is that an ATTVAR BIND does not deopt,
+        // and the count of ALL deopts stopped being the way to say it: a
+        // cut with something on the extra trail now steps aside on purpose
+        // (guard 28), because the compaction it owes is the engine's. So
+        // the assertion names the reason instead of counting reasons.
+        for (int g = 0; g < WasmTierDelegate.DiagMetaGuardHist.Length; g++)
+        {
+            if (g == 28 || WasmTierDelegate.DiagMetaGuardHist[g] == 0) continue;
+            Assert.Fail($"{WasmTierDelegate.DiagMetaGuardHist[g]} deopts at "
+                + $"guard {g}: "
+                + Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g));
+        }
     }
 }
