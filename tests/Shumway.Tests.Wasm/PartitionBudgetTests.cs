@@ -33,7 +33,9 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
             if (id == 3)
             {
                 int p = at;
-                return (int)ReadLeb(module, ref p) - 3;
+                // run, the fail/proceed resolver, the unifier and the
+                // comparator are not partitions.
+                return (int)ReadLeb(module, ref p) - 4;
             }
             at += (int)size;
         }

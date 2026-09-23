@@ -205,14 +205,18 @@ public class EngineWasmTierTests
         Assert.True(e.Query("alldiff(0, [1,2,3,4,5,6,7,8,9,10]).").Success);
         Assert.Equal(0, WasmTierDelegate.DiagBuiltins);
 
-        // Non-atomic operands fall back to the builtin — same answers,
-        // through the exit.
+        // Compounds are decided by the module's comparator, and the
+        // answers are the same either way.
         Assert.True(e.Query("idc(f(a), f(a), same), idc(f(a), f(b), diff).").Success);
         Assert.True(e.Query("idc(X, X, same), idc(X, Y, diff).").Success);
+
+        // What the comparator DECLINES still exits: two equal bignums can
+        // wear different cells, so cell identity is not term identity.
+        Assert.True(e.Query("B1 is 2 ^ 200, B2 is 2 ^ 200, idc(f(B1), f(B2), same).").Success);
         WasmTierDelegate.ResetDiag();
-        Assert.True(e.Query("idc(f(a), f(a), same).").Success);
+        Assert.True(e.Query("B1 is 2 ^ 200, B2 is 2 ^ 200, idc(f(B1), f(B2), same).").Success);
         Assert.True(WasmTierDelegate.DiagBuiltins > 0,
-            "a compound comparison must exit to the real builtin");
+            "a bignum comparison must exit to the real builtin");
     }
 
     [Fact]

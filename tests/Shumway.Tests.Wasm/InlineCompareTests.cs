@@ -158,11 +158,14 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
         Assert.Equal(0L, ExitsFor("\\=="));
     }
 
-    /// <summary>Two compounds still leave: deciding them needs a walk, and the
-    /// module does not have one. The count must be NON-zero, or the module is
-    /// taking pairs it has no business taking.</summary>
+    /// <summary>Two compounds no longer leave -- the module carries a
+    /// comparator now -- but a BIGNUM inside one still does. Two equal
+    /// bignums can wear different cells, so cell identity is not term
+    /// identity there and the walk must decline rather than answer. The
+    /// count must be NON-zero, or the module is taking pairs it has no
+    /// business taking.</summary>
     [DiagFact]
-    public void TwoCompoundsStillReachTheHost()
+    public void ABignumInsideStillReachesTheHost()
     {
         var (engine, _) = TieredEngine.Build("""
             spin(0, _, _).
@@ -171,10 +174,32 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
             """);
         WasmTierDelegate.ResetDiag();
 
-        Assert.True(engine.Query("X = f(1, 2), Y = f(1, 2), spin(20, X, Y).").Success);
+        Assert.True(engine.Query(
+            // SEPARATELY computed: two Refs to one variable deref to one cell,
+            // and the walk would never see two bignum cells at all.
+            "B1 is 2 ^ 200, B2 is 2 ^ 200, X = f(B1), Y = f(B2), spin(20, X, Y).").Success);
 
         o.WriteLine($"==/2 exits={ExitsFor("==")}");
         Assert.True(ExitsFor("==") >= 20,
-            "two compounds were decided inside the module");
+            "a bignum inside was decided by cell identity");
+    }
+
+    /// <summary>And the counterproof to THAT: without the bignum the same
+    /// clause decides inside the module. Otherwise the test above would pass
+    /// just as well with the comparator switched off.</summary>
+    [DiagFact]
+    public void TwoPlainCompoundsDoNotReachTheHost()
+    {
+        var (engine, _) = TieredEngine.Build("""
+            spin(0, _, _).
+            spin(N, X, Y) :- N > 0, atom_length(ab, _), X == Y,
+                             N1 is N - 1, spin(N1, X, Y).
+            """);
+        Assert.True(engine.Query("X = f(1, 2), Y = f(1, 2), spin(20, X, Y).").Success);
+        WasmTierDelegate.ResetDiag();
+        Assert.True(engine.Query("X = f(1, 2), Y = f(1, 2), spin(20, X, Y).").Success);
+
+        Assert.True(ExitsFor("atom_length") >= 20, "the clause never ran on the tier");
+        Assert.Equal(0L, ExitsFor("=="));
     }
 }

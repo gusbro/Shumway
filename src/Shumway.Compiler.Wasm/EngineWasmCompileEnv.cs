@@ -101,6 +101,31 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "get_attr" && entry.Arity == 3;
     }
 
+    public bool IsInlineFunctor(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "functor" && entry.Arity == 3;
+    }
+
+    public bool IsInlineGetFromAttrList(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$get_from_attr_list" && entry.Arity == 3;
+    }
+
+    public bool IsInlineArg(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "arg" && entry.Arity == 3;
+    }
+
+    public bool IsInlineTrivial(int builtinId, out bool succeeds)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        succeeds = entry.Name == "true";
+        return entry.Arity == 0 && (succeeds || entry.Name == "fail");
+    }
+
     public bool IsInlineDomSame(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

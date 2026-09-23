@@ -145,6 +145,46 @@ public interface IWasmCompileEnv
     /// </summary>
     bool IsInlineGetAttr(int builtinId) => false;
 
+    /// <summary>Whether the builtin is <c>functor/3</c>, whose DECOMPOSING
+    /// mode a module can answer without leaving.
+    ///
+    /// <para>It is the single heaviest exit clp(Z) makes -- 867 of 2,846
+    /// builtin requests in one goal, 30% -- and the module already holds
+    /// everything the answer needs: the term is in a register, and the
+    /// functor mirror turns its functor id into a name and an arity.</para>
+    ///
+    /// <para>Decomposing only. Constructing (an unbound first argument)
+    /// allocates a fresh compound and raises on half a dozen shapes, and
+    /// those stay the engine's.</para></summary>
+    bool IsInlineFunctor(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>'$get_from_attr_list'/3</c>, the
+    /// lookup every get_atts/2 makes.
+    ///
+    /// <para>It needs exactly what get_attr/3's inline form already has --
+    /// the attribute image and its probe -- plus a walk of a heap list, so
+    /// the two share the probe and differ only in what they do with the
+    /// value it finds.</para></summary>
+    bool IsInlineGetFromAttrList(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>arg/3</c>, whose INDEXED mode a
+    /// module can answer without leaving: a bound index into a bound
+    /// compound is a bounds check and one heap read.
+    ///
+    /// <para>An unbound index is a different predicate -- it enumerates,
+    /// and leaves a choice point behind -- and every error shape is the
+    /// engine's. Both step aside.</para></summary>
+    bool IsInlineArg(int builtinId) => false;
+
+    /// <summary>Whether the builtin is <c>fail/0</c> or <c>true/0</c>,
+    /// whose whole implementation is a verdict. <paramref
+    /// name="succeeds"/> says which.
+    ///
+    /// <para>clp(Z) left the module 72 times in one goal to be told no by
+    /// a predicate whose body is <c>=> false</c>.</para></summary>
+    bool IsInlineTrivial(int builtinId, out bool succeeds)
+    { succeeds = false; return false; }
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps
