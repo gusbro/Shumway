@@ -45,7 +45,7 @@ public static class CompactCensus
     {
         Walks = 0; Dropped = 0; ReadTheLog = 0; WroteTheLog = 0;
         DroppedARecord = 0; ClippedAFrame = 0; ReachableByAnImage = 0;
-        OrphansCleared = 0;
+        OrphansCleared = 0; AttrPutUpdate = 0; AttrPutInsert = 0;
     }
 
     /// <summary>Records a module-side compaction orphaned and the host
@@ -55,6 +55,15 @@ public static class CompactCensus
 
     [Conditional(Symbol)]
     public static void NoteOrphanCleared() => OrphansCleared++;
+
+    /// <summary>How a put_to_attr_list found the store: a row already
+    /// there (an UPDATE, which a module can do in place) or not (an
+    /// INSERT, which may have to grow an open-addressed table).</summary>
+    public static long AttrPutUpdate, AttrPutInsert;
+
+    [Conditional(Symbol)]
+    public static void NoteAttrPut(bool update)
+    { if (update) AttrPutUpdate++; else AttrPutInsert++; }
 
     [Conditional(Symbol)]
     public static void NoteWalk() => Walks++;

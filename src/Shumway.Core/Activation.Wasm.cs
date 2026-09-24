@@ -58,7 +58,13 @@ public sealed partial class Activation
         /// <summary>Base and length of the arithmetic functor table. A zero
         /// base means a compound operand steps aside.</summary>
         long ArithTableBase = 0,
-        int ArithTableLength = 0);
+        int ArithTableLength = 0,
+        /// <summary>Base and capacity of the parked attribute writes. A zero
+        /// base means an attribute write steps aside.</summary>
+        long AttrWriteBase = 0,
+        int AttrWriteLimit = 0,
+        /// <summary>How many entries the extra trail holds.</summary>
+        int ExtraTrailLimitEntries = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -88,6 +94,43 @@ public sealed partial class Activation
     public int[] WasmOrphanRingView => _wasmOrphanRing ??= new int[1024];
 
     private int[]? _wasmOrphanRing;
+
+    /// <summary>Where a module parks the attribute writes it made in the
+    /// image, four i32 each: home, module, the old value, the new one.
+    /// </summary>
+    public int[] WasmAttrWriteRingView => _wasmAttrWrites ??= new int[4 * 512];
+
+    private int[]? _wasmAttrWrites;
+
+    /// <summary>Puts the module's attribute writes in the store, and their
+    /// records in the log. The module already wrote the image and the trail
+    /// entry -- it had to, both are order-sensitive -- so this is the half
+    /// it could not reach, and it must land BEFORE anything reads the store.
+    ///
+    /// <para>The log records go in the same ORDER the module reserved them,
+    /// because the trail entries it wrote carry those indices. The assert is
+    /// not paranoia: a mismatch would have an unwind restore one attribute's
+    /// old value onto another attribute.</para></summary>
+    private void DrainPendingAttrWrites(int count)
+    {
+        if (_wasmAttrWrites is null || count <= 0) return;
+        int n = count * 4 <= _wasmAttrWrites.Length
+            ? count : _wasmAttrWrites.Length / 4;
+        for (int i = 0; i < n; i++)
+        {
+            int home = _wasmAttrWrites[i * 4];
+            int moduleId = _wasmAttrWrites[i * 4 + 1];
+            int oldValue = _wasmAttrWrites[i * 4 + 2];
+            int newValue = _wasmAttrWrites[i * 4 + 3];
+            int logIndex = _attrTrailLog.Count;
+            _attrTrailLog.Add((home, moduleId, oldValue));
+            AttrLogMirrorAppend(logIndex, home);
+            // AttrSet and not a raw store write: the funnel is what keeps
+            // the image a pure derivation, and it writes the same value the
+            // module already put there.
+            AttrSet(home, moduleId, newValue);
+        }
+    }
 
     /// <summary>Clears the records a compaction orphaned, which is the write
     /// it could not make itself. Deferred this far and no further: the
@@ -206,6 +249,10 @@ public sealed partial class Activation
         m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
         m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
         m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
+        m[WasmAbi.AttrWriteBase] = bases.AttrWriteBase;
+        m[WasmAbi.AttrWriteLimit] = bases.AttrWriteLimit;
+        m[WasmAbi.AttrWriteTop] = 0;
+        m[WasmAbi.ExtraTrailLimit] = bases.ExtraTrailLimitEntries;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -236,6 +283,12 @@ public sealed partial class Activation
             if (f.SnapBindingTrailTop > snapBind) snapBind = f.SnapBindingTrailTop;
             if (f.SnapExtraTrailTop > snapExtra) snapExtra = f.SnapExtraTrailTop;
         }
+        // Armed HERE rather than in each world: every staging is a
+        // handover, and the image is what the module reads. A divergence
+        // from the store is a module computing on a lie, and this is the
+        // last moment it costs nothing to catch. Diagnostic builds only.
+        AttrMirrorVerify("wasm staging");
+        AttrLogMirrorAssert();
         m[WasmAbi.CatchHeapFloor] = catchFloor;
         m[WasmAbi.CatchSnapBindingMax] = snapBind;
         m[WasmAbi.CatchSnapExtraMax] = snapExtra;
@@ -256,6 +309,11 @@ public sealed partial class Activation
         // path -- and leaving it unadopted would silently undo the
         // compaction on the way out.
         _extraTrailTop = (int)m[WasmAbi.ExtraTrailTop];
+        // Writes BEFORE orphans, and the order is load-bearing: a
+        // compaction in the same chain can have orphaned a record this
+        // write created, and clearing an index the log does not hold yet
+        // does nothing at all.
+        DrainPendingAttrWrites((int)m[WasmAbi.AttrWriteTop]);
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         _e = (int)m[WasmAbi.EnvTop];
         _b = (int)m[WasmAbi.ChoiceTop];

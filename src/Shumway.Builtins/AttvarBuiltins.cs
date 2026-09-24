@@ -64,6 +64,7 @@ public static class AttvarBuiltins
         int moduleId = ModuleId(engine, 1);
         var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
         int listIdx = engine.GetAttr(varAddr, moduleId);
+        Shumway.Core.Diagnostics.CompactCensus.NoteAttrPut(listIdx >= 0);
         var kept = CollectNonMatching(engine, listIdx, kind, key, out _);
         Cell regCell = engine.GetRegister(2);
         Cell headCell = regCell.Tag is Tag.Ref or Tag.AttVar

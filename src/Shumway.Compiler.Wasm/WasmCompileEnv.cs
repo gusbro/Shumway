@@ -185,6 +185,16 @@ public interface IWasmCompileEnv
     bool IsInlineTrivial(int builtinId, out bool succeeds)
     { succeeds = false; return false; }
 
+    /// <summary>Whether the builtin WRITES a module's attribute list:
+    /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
+    /// with <paramref name="isDelete"/> set.
+    ///
+    /// <para>Together they are 448 of the 730 builtin requests clp(Z)
+    /// makes in one goal, 61%, and both are the same walk: rebuild the
+    /// list without the element sharing Attr's functor.</para></summary>
+    bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
+    { isDelete = false; return false; }
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps

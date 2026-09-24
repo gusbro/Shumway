@@ -253,7 +253,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrOrphanBase: OrphanRingAddress(),
                 AttrOrphanLimit: _engine.WasmOrphanRingView.Length,
                 ArithTableBase: ArithTableAddress(),
-                ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length);
+                ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length,
+                AttrWriteBase: AttrWriteRingAddress(),
+                AttrWriteLimit: _engine.WasmAttrWriteRingView.Length / 4,
+                ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -409,6 +412,22 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             return (long)_arithPin.AddrOfPinnedObject();
         }
 
+        /// <summary>The parked attribute writes, pinned.</summary>
+        private GCHandle _attrWritePin;
+        private int[]? _attrWritePinned;
+
+        private long AttrWriteRingAddress()
+        {
+            int[] r = _engine.WasmAttrWriteRingView;
+            if (!ReferenceEquals(_attrWritePinned, r))
+            {
+                if (_attrWritePin.IsAllocated) _attrWritePin.Free();
+                _attrWritePin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _attrWritePinned = r;
+            }
+            return (long)_attrWritePin.AddrOfPinnedObject();
+        }
+
         private long OrphanRingAddress()
         {
             int[] r = _engine.WasmOrphanRingView;
@@ -424,7 +443,6 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private long AttrLogAddress()
         {
             _engine.AttrLogMirrorEnable();
-            _engine.AttrLogMirrorAssert();
             if (_engine.AttrLogCount == 0) return 0;
             int[] homes = _engine.AttrLogHomes;
             if (!ReferenceEquals(_attrLogHomesPinned, homes))
@@ -647,7 +665,9 @@ internal static class BrowserWasmTier
          + Shumway.Core.Diagnostics.CompactCensus.ReachableByAnImage
          + " need only a READ image; "
          + Shumway.Core.Diagnostics.CompactCensus.OrphansCleared
-         + " records parked by the module and cleared here"
+         + " records parked by the module and cleared here; put_atts "
+         + Shumway.Core.Diagnostics.CompactCensus.AttrPutUpdate + " update / "
+         + Shumway.Core.Diagnostics.CompactCensus.AttrPutInsert + " insert"
          + System.Environment.NewLine;
 
     internal static string ExhaustionReport()

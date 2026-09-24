@@ -190,7 +190,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
-        private int _arithAt;
+        private int _arithAt, _attrWriteAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -240,10 +240,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             long[] metaCache = _w.ResumeTable.MetaCache;
             int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
             _engine.AttrLogMirrorEnable();
-            _engine.AttrLogMirrorAssert();
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraTop = _engine.WasmExtraTrailTop;
             int[] orphanRing = _engine.WasmOrphanRingView;
+            int[] attrWrites = _engine.WasmAttrWriteRingView;
             int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
             int[] attrLogHomes = _engine.AttrLogHomes;
@@ -260,7 +260,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
             _orphanAt = _extraTrailAt + extraTop * WasmAbi.ExtraTrailEntryBytes;
             _arithAt = _orphanAt + orphanRing.Length * 4;
-            if (_arithAt + (long)arithLen * 4 > (long)Pages * 65536)
+            _attrWriteAt = _arithAt + arithLen * 4;
+            if (_attrWriteAt + (long)attrWrites.Length * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -290,7 +291,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrOrphanBase: _orphanAt,
                 AttrOrphanLimit: orphanRing.Length,
                 ArithTableBase: arithLen > 0 ? _arithAt : 0,
-                ArithTableLength: arithLen);
+                ArithTableLength: arithLen,
+                AttrWriteBase: _attrWriteAt,
+                AttrWriteLimit: attrWrites.Length / 4,
+                ExtraTrailLimitEntries: extraTrail.Length - 8);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -452,18 +456,35 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // either way.
             // What the compaction parked for the host to clear. Only the
             // prefix the module actually wrote, which the mailbox counts.
+            // The module writes these, so they come BACK like the extra
+            // trail does and unlike every read-only image here.
+            int attrWrote = (int)_mailbox[WasmAbi.AttrWriteTop];
+            int[] attrWrites = _engine.WasmAttrWriteRingView;
+            if (attrWrote > 0)
+                fixed (int* p = attrWrites)
+                    Buffer.MemoryCopy(mem + _attrWriteAt, p, attrWrites.Length * 4L,
+                                      System.Math.Min(attrWrote * 4, attrWrites.Length) * 4L);
             int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
             int[] orphanRing = _engine.WasmOrphanRingView;
             if (orphans > 0)
                 fixed (int* p = orphanRing)
                     Buffer.MemoryCopy(mem + _orphanAt, p, orphanRing.Length * 4L,
                                       System.Math.Min(orphans, orphanRing.Length) * 4L);
+            // The count is the FINAL top and not what was staged. A cut
+            // compacts entries down over the ones it drops, which stays
+            // inside the staged length; but an attribute write APPENDS one,
+            // and that entry sits above the mark. Copying the staged length
+            // alone left it behind as a zero-typed entry an unwind could not
+            // read.
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
-            if (_extraTrailStaged > 0)
+            int extraBack = (int)_mailbox[WasmAbi.ExtraTrailTop];
+            if (extraBack < _extraTrailStaged) extraBack = _extraTrailStaged;
+            if (extraBack > extraTrail.Length) extraBack = extraTrail.Length;
+            if (extraBack > 0)
                 fixed (ExtraTrailEntry* p = extraTrail)
                     Buffer.MemoryCopy(mem + _extraTrailAt, p,
                                       (long)extraTrail.Length * WasmAbi.ExtraTrailEntryBytes,
-                                      (long)_extraTrailStaged * WasmAbi.ExtraTrailEntryBytes);
+                                      (long)extraBack * WasmAbi.ExtraTrailEntryBytes);
             _engine.SyncFromWasmMailbox(_mailbox);
             _engineAuthoritative = true;
         }

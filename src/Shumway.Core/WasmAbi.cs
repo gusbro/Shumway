@@ -401,7 +401,31 @@ public static class WasmAbi
     public const int ArithValue = 62;
     public const int ArithKind = 63;
 
-    public const int SlotCount = 64;
+    /// <summary>Where a module PARKS an attribute it wrote, for the host
+    /// to put in the store when the chain comes out. Entries are four i32:
+    /// home, module, the value that was there, the value now.
+    ///
+    /// <para>The module writes the IMAGE and the trail itself, because both
+    /// are in linear memory and both are order-sensitive: the trail entry
+    /// has to sit between whatever else the chain trails, and a later read
+    /// in the same chain has to see the new value. What it cannot write is
+    /// the store and the attribute log, and those are what this carries.
+    /// Between the write and the drain the image LEADS the store, which is
+    /// sound only because managed code never runs in between: every builtin
+    /// request syncs first, and the drain is part of that sync.</para>
+    ///
+    /// <para>Updates only. An INSERT would have to place a new key in an
+    /// open-addressed table and keep its load factor, and a module that got
+    /// that wrong would leave a table that never rebuilds.</para></summary>
+    public const int AttrWriteBase = 64;
+    public const int AttrWriteTop = 65;
+    public const int AttrWriteLimit = 66;
+
+    /// <summary>How many entries the extra trail can hold. It was never
+    /// needed while the module only ever READ the trail.</summary>
+    public const int ExtraTrailLimit = 67;
+
+    public const int SlotCount = 68;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
