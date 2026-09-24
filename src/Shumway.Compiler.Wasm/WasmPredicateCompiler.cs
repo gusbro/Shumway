@@ -1031,9 +1031,9 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // The cut compaction's bank, and the four the attribute
+            // The cut compaction's bank, and the six the attribute
             // WRITE needs beside it. Appended last, same rule.
-            new Local { Count = 18, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 20, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -5384,6 +5384,10 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant(1));
             Op(new Int32Add());
             Op(new LocalSet(LT2));
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LAtIns));
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LAtFresh));
 
             OpenBlock();                                    // $found
             OpenLoop();                                     // $probe
@@ -5400,13 +5404,33 @@ public static class WasmPredicateCompiler
                 Op(new LocalSet(LC1));
 
                 // An empty slot ends the probe: no such attribute. For a
-                // reader that IS the answer; for a writer it is an insert.
+                // reader that IS the answer. For a writer it is an INSERT,
+                // and this is where it would go -- unless a tombstone came
+                // first, which is the cheaper slot and takes no new room.
                 Op(new LocalGet(LC1));
                 Op(new Int64Constant(0));
                 Op(new Int64Equal());
                 OpenIf();
                 if (missIsFailure) GoFail();
-                else Op(new Branch(3));                     // -> $slow
+                else
+                {
+                    Op(new LocalGet(LAtIns));
+                    Op(new Int32EqualZero());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LT1));
+                        Op(new LocalSet(LAtIns));
+                        Op(new Int32Constant(1));
+                        Op(new LocalSet(LAtFresh));
+                    }
+                    CloseNested();
+                    // Not found: no row to update, and LAtRow says so.
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAtRow));
+                    Op(new Int32Constant(-1));
+                    Op(new LocalSet(LAtVal));
+                    Op(new Branch(2));                      // -> $found
+                }
                 CloseNested();
 
                 // A hit: take the value and leave.
@@ -5422,6 +5446,25 @@ public static class WasmPredicateCompiler
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LAtVal));
                     Op(new Branch(2));                      // -> $found
+                }
+                CloseNested();
+
+                // A tombstone is where a row COULD go, and the first one
+                // is where it WOULD: reusing it shortens nothing but costs
+                // nothing either, which is why the host does not count it
+                // against the load factor and neither does this.
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(-1));
+                Op(new Int64Equal());
+                Op(new LocalGet(LAtIns));
+                Op(new Int32EqualZero());
+                Op(new Int32And());
+                OpenIf();
+                {
+                    Op(new LocalGet(LT1));
+                    Op(new LocalSet(LAtIns));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAtFresh));
                 }
                 CloseNested();
 
@@ -5775,11 +5818,20 @@ public static class WasmPredicateCompiler
             Op(new BranchIf(0));                            // -> $slow
 
             // ---- pass one: how many survive, and did anything match ----
+            // With no row there is no list: nothing survives and nothing
+            // matched, and the walk would read heap[-1] to learn it.
+            Op(new Int32Constant(0)); Op(new LocalSet(LKER));
+            Op(new Int32Constant(0)); Op(new LocalSet(LKEW));
+            Op(new LocalGet(LAtRow));
+            OpenIf();
             EmitAttrListCount();
+            CloseNested();
 
             if (isDelete)
             {
                 // Nothing matched: the builtin is a no-op and so is this.
+                // That covers the missing row too -- deleting from a list
+                // that is not there changes nothing.
                 Op(new LocalGet(LKEW));
                 Op(new Int32EqualZero());
                 Op(new BranchIf(1));                        // -> $done
@@ -5787,6 +5839,25 @@ public static class WasmPredicateCompiler
                 Op(new LocalGet(LKER));
                 Op(new Int32EqualZero());
                 Op(new BranchIf(0));                        // -> $slow
+            }
+            else
+            {
+                // An INSERT taking a fresh slot spends from the budget the
+                // host staged: that budget is the distance to the load
+                // factor, so spending it all is exactly the point at which
+                // one call has to go back and let the table be rebuilt.
+                Op(new LocalGet(LAtRow));
+                Op(new Int32EqualZero());
+                Op(new LocalGet(LAtFresh));
+                Op(new Int32And());
+                OpenIf();
+                {
+                    LoadSlot32(WasmAbi.AttrMirrorBudget);
+                    Op(new Int32Constant(0));
+                    Op(new Int32LessThanOrEqualSigned());
+                    Op(new BranchIf(1));                    // -> $slow
+                }
+                CloseNested();
             }
 
             // ---- room for the whole list, before a cell is written ----
@@ -5825,7 +5896,10 @@ public static class WasmPredicateCompiler
                 CellStoreDyn(LHeapB, LKBW, 0, () => Op(new LocalGet(LU0)));
                 EmitAttrListLink();
             }
+            Op(new LocalGet(LAtRow));
+            OpenIf();
             EmitAttrListCopy();
+            CloseNested();
 
             // The last pair ends the list, and the root points at the first.
             Op(new LocalGet(LKBW));
@@ -5844,11 +5918,38 @@ public static class WasmPredicateCompiler
 
             // ---- the write itself ----
             // The image first, because it is what a later read in this same
-            // chain looks at.
+            // chain looks at. An existing row takes the new value; a missing
+            // one is PLACED where the probe said it would go, key and all,
+            // and the slot it takes comes off the budget when it was fresh.
             Op(new LocalGet(LAtRow));
-            Op(new LocalGet(LKBW));
-            Op(new Int64ExtendInt32Unsigned());
-            Op(new Int64Store { Offset = 8 });
+            OpenIf();
+            {
+                Op(new LocalGet(LAtRow));
+                Op(new LocalGet(LKBW));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Store { Offset = 8 });
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LAtIns));
+                Op(new LocalGet(LAtKey));
+                Op(new Int64Store());
+                Op(new LocalGet(LAtIns));
+                Op(new LocalGet(LKBW));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Store { Offset = 8 });
+                Op(new LocalGet(LAtFresh));
+                OpenIf();
+                StoreSlot64(WasmAbi.AttrMirrorBudget, () =>
+                {
+                    LoadSlot32(WasmAbi.AttrMirrorBudget);
+                    Op(new Int32Constant(1));
+                    Op(new Int32Subtract());
+                    Op(new Int64ExtendInt32Signed());
+                });
+                CloseNested();
+            }
+            CloseNested();
 
             // Then the trail entry, carrying the log index the host will
             // fill. Sequential by construction: the k-th parked write takes
@@ -5898,8 +5999,21 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LKT));
             Op(new LocalGet(LAtMod));
             Op(new Int32Store { Offset = 4 });
+            // The old value, or which KIND of insert this was: -1 for a
+            // fresh slot, which is occupancy the host has to count, and -2
+            // for a reused tombstone, which is not.
             Op(new LocalGet(LKT));
+            Op(new LocalGet(LAtRow));
+            OpenIf(BlockType.Int32);
             Op(new LocalGet(LAtVal));
+            OpenElse();
+            Op(new LocalGet(LAtFresh));
+            OpenIf(BlockType.Int32);
+            Op(new Int32Constant(-1));
+            OpenElse();
+            Op(new Int32Constant(-2));
+            CloseNested();
+            CloseNested();
             Op(new Int32Store { Offset = 8 });
             Op(new LocalGet(LKT));
             Op(new LocalGet(LKBW));
@@ -8088,6 +8202,8 @@ public static class WasmPredicateCompiler
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
         private const uint LKT0Alt = 76; // i32: a parked row's index
+        private const uint LAtIns = 77;  // i32: where a row WOULD go
+        private const uint LAtFresh = 78;// i32: and whether that slot is fresh
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.

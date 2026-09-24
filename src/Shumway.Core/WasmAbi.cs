@@ -425,7 +425,24 @@ public static class WasmAbi
     /// needed while the module only ever READ the trail.</summary>
     public const int ExtraTrailLimit = 67;
 
-    public const int SlotCount = 68;
+    /// <summary>How many rows the module may still INSERT into the
+    /// attribute image before it has to hand one back.
+    ///
+    /// <para>An insert into an open-addressed table is only dangerous
+    /// because of what it does to the load factor: cross it and the table
+    /// has to be rebuilt, which is not a thing a module can do. So the host
+    /// says up front how much room there is to the threshold, and the module
+    /// spends it. When it runs out it declines ONE call, the host inserts
+    /// that one and rebuilds if it must, and the next staging hands over a
+    /// fresh budget.</para>
+    ///
+    /// <para>Only a FRESH slot costs budget. Reusing a tombstone lengthens
+    /// no probe that was not already long, and the host's own insert does
+    /// not count it either -- the two have to agree about this or the
+    /// table's occupancy drifts.</para></summary>
+    public const int AttrMirrorBudget = 68;
+
+    public const int SlotCount = 69;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

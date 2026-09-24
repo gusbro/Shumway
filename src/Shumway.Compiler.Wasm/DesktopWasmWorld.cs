@@ -294,7 +294,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ArithTableLength: arithLen,
                 AttrWriteBase: _attrWriteAt,
                 AttrWriteLimit: attrWrites.Length / 4,
-                ExtraTrailLimitEntries: extraTrail.Length - 8);
+                ExtraTrailLimitEntries: extraTrail.Length - 8,
+                AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");

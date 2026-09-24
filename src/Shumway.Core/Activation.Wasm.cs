@@ -64,7 +64,10 @@ public sealed partial class Activation
         long AttrWriteBase = 0,
         int AttrWriteLimit = 0,
         /// <summary>How many entries the extra trail holds.</summary>
-        int ExtraTrailLimitEntries = 0);
+        int ExtraTrailLimitEntries = 0,
+        /// <summary>How many rows the module may insert into the attribute
+        /// image before the load factor would need a rebuild.</summary>
+        int AttrMirrorBudget = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -122,9 +125,17 @@ public sealed partial class Activation
             int moduleId = _wasmAttrWrites[i * 4 + 1];
             int oldValue = _wasmAttrWrites[i * 4 + 2];
             int newValue = _wasmAttrWrites[i * 4 + 3];
+            // The parked row says what the write WAS: a value that was
+            // there, or an insert, and for an insert whether it took a fresh
+            // slot (-1) or reused a tombstone (-2). The log only ever wants
+            // "there was none", so both collapse to -1 there.
             int logIndex = _attrTrailLog.Count;
-            _attrTrailLog.Add((home, moduleId, oldValue));
+            _attrTrailLog.Add((home, moduleId, oldValue < 0 ? -1 : oldValue));
             AttrLogMirrorAppend(logIndex, home);
+            // A fresh slot the module took is occupancy the image knows
+            // about and the store does not: AttrSet below finds the key
+            // already present and will not count it.
+            if (oldValue == -1) AttrMirrorNoteModuleInsert();
             // AttrSet and not a raw store write: the funnel is what keeps
             // the image a pure derivation, and it writes the same value the
             // module already put there.
@@ -253,6 +264,7 @@ public sealed partial class Activation
         m[WasmAbi.AttrWriteLimit] = bases.AttrWriteLimit;
         m[WasmAbi.AttrWriteTop] = 0;
         m[WasmAbi.ExtraTrailLimit] = bases.ExtraTrailLimitEntries;
+        m[WasmAbi.AttrMirrorBudget] = bases.AttrMirrorBudget;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;

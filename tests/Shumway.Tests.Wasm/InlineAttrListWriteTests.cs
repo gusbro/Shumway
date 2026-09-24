@@ -71,6 +71,19 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
               att_get(V, foo(A)), A == 1, att_get(V, bar(C)), C == 2, fail
             ; att_get(V, foo(F)), att_get(V, bar(B)) ).
 
+        % A SECOND module on a variable that is already attributed. This
+        % is the row INSERT: the record exists, this module's row does not.
+        % (The first put on a fresh variable is a different thing -- it
+        % PROMOTES the cell to an attributed variable -- and stays the
+        % host's.)
+        other_put(V, A) :- '$put_to_attr_list'(V, n, A).
+        other_get(V, A) :- '$get_from_attr_list'(V, n, A).
+        second_module(F, G) :- seeded(V), other_put(V, gee(3)),
+                               att_get(V, foo(F)), other_get(V, gee(G)).
+        % And the two do not see each other's lists.
+        modules_apart(R) :- seeded(V), other_put(V, gee(3)),
+                            ( other_get(V, foo(_)) -> R = crossed ; R = apart ).
+
         % Two DIFFERENT variables, so the parked rows must not cross.
         two_vars(A, B) :-
             seeded(V), seeded(W),
@@ -87,6 +100,8 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
     [InlineData("restores(X, Y), X == 0, Y == 0.")]
     [InlineData("interleaved(F, B), F == 0, B == 0.")]
     [InlineData("two_vars(A, B), A == 1, B == 2.")]
+    [InlineData("second_module(F, G), F == 0, G == 3.")]
+    [InlineData("modules_apart(R), R == apart.")]
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
         var plain = new PrologEngine();
@@ -110,10 +125,19 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
     public void ADeleteThatMatchesNothingDoesNotLeave()
         => Assert.Equal(0L, WriteExitsOf("del_miss(F, B), F == 0."));
 
-    /// <summary>The counterproofs, in red. An INSERT places a new key in an
-    /// open-addressed table and a delete that empties the list removes one;
-    /// both stay the host's. Without these the tests above would pass just
-    /// as well with a module that wrote whatever it liked.</summary>
+    /// <summary>A row INSERT is written inside too: the record is already
+    /// there, only this module's row is missing, and the probe knows where
+    /// it would go. It spends from the budget the host staged, which is the
+    /// distance to the load factor the table rebuilds at.</summary>
+    [DiagFact]
+    public void ARowInsertIsWrittenInTheModule()
+        => Assert.Equal(0L, WriteExitsOf("second_module(F, G), G == 3."));
+
+    /// <summary>The counterproofs, in red. A delete that empties the list
+    /// REMOVES a row rather than writing one, and promoting a plain
+    /// variable to an attributed one is not a row write at all. Without
+    /// these the tests above would pass just as well with a module that
+    /// wrote whatever it liked.</summary>
     [DiagTheory]
     [InlineData("empties(R), R == gone.")]
     public void WhatItCannotWriteStaysTheHosts(string goal)

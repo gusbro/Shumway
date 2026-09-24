@@ -256,7 +256,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length,
                 AttrWriteBase: AttrWriteRingAddress(),
                 AttrWriteLimit: _engine.WasmAttrWriteRingView.Length / 4,
-                ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8);
+                ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8,
+                AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
