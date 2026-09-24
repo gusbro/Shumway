@@ -6036,9 +6036,73 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
 
-            // Then the trail entry, carrying the log index the host will
-            // fill. Sequential by construction: the k-th parked write takes
-            // the k-th index after the log's current length.
+            // Then the trail entry the change owes.
+            EmitTrailAttrChange();
+
+            // And park what only the host can put away: the store row and
+            // the log record.
+            EmitParkAttrWrite(WasmAbi.AttrOpSet, () => Op(new LocalGet(LKBW)));
+        }
+
+        /// <summary>Parks one attribute change for the host, and moves the
+        /// ring on. Everything in it is what the module could NOT write: the
+        /// store row and the log record. The old value is what the probe
+        /// found, or -1 when there was none, which is what an unwind reads
+        /// as "remove it again".</summary>
+        private void EmitParkAttrWrite(int op, Action newValue)
+        {
+            LoadSlot32(WasmAbi.AttrWriteBase);
+            LoadSlot32(WasmAbi.AttrWriteTop);
+            Op(new Int32Constant(WasmAbi.AttrWriteEntryInts));
+            Op(new Int32Multiply());
+            Op(new Int32Constant(4));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+
+            void Field(int index, Action value)
+            {
+                Op(new LocalGet(LKT));
+                value();
+                Op(new Int32Store { Offset = (uint)(index * 4) });
+            }
+
+            Field(WasmAbi.AttrWriteOp, () => Op(new Int32Constant(op)));
+            Field(WasmAbi.AttrWriteHome, () => Op(new LocalGet(LAtHome)));
+            Field(WasmAbi.AttrWriteModule, () => Op(new LocalGet(LAtMod)));
+            Field(WasmAbi.AttrWriteOld, () =>
+            {
+                Op(new LocalGet(LAtRow));
+                OpenIf(BlockType.Int32);
+                Op(new LocalGet(LAtVal));
+                OpenElse();
+                Op(new Int32Constant(-1));
+                CloseNested();
+            });
+            Field(WasmAbi.AttrWriteNew, newValue);
+            Field(WasmAbi.AttrWriteFresh, () =>
+            {
+                Op(new LocalGet(LAtRow));
+                Op(new Int32EqualZero());
+                Op(new LocalGet(LAtFresh));
+                Op(new Int32And());
+            });
+
+            StoreSlot64(WasmAbi.AttrWriteTop, () =>
+            {
+                LoadSlot32(WasmAbi.AttrWriteTop);
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Signed());
+            });
+        }
+
+        /// <summary>The trail entry an attribute change owes, carrying the
+        /// log index the host will fill. Sequential by construction: the
+        /// k-th parked write takes the k-th index after the log's length.
+        /// </summary>
+        private void EmitTrailAttrChange()
+        {
             LoadSlot32(WasmAbi.ExtraTrailBase);
             LoadSlot32(WasmAbi.ExtraTrailTop);
             Op(new Int32Constant(WasmAbi.ExtraTrailEntryBytes));
@@ -6062,50 +6126,6 @@ public static class WasmPredicateCompiler
             StoreSlot64(WasmAbi.ExtraTrailTop, () =>
             {
                 LoadSlot32(WasmAbi.ExtraTrailTop);
-                Op(new Int32Constant(1));
-                Op(new Int32Add());
-                Op(new Int64ExtendInt32Signed());
-            });
-
-            // And park what only the host can put away: the store row and
-            // the log record, (home, module, the value that was there, the
-            // value now).
-            LoadSlot32(WasmAbi.AttrWriteBase);
-            LoadSlot32(WasmAbi.AttrWriteTop);
-            Op(new Int32Constant(4));
-            Op(new Int32Multiply());
-            Op(new Int32Constant(4));
-            Op(new Int32Multiply());
-            Op(new Int32Add());
-            Op(new LocalSet(LKT));
-            Op(new LocalGet(LKT));
-            Op(new LocalGet(LAtHome));
-            Op(new Int32Store());
-            Op(new LocalGet(LKT));
-            Op(new LocalGet(LAtMod));
-            Op(new Int32Store { Offset = 4 });
-            // The old value, or which KIND of insert this was: -1 for a
-            // fresh slot, which is occupancy the host has to count, and -2
-            // for a reused tombstone, which is not.
-            Op(new LocalGet(LKT));
-            Op(new LocalGet(LAtRow));
-            OpenIf(BlockType.Int32);
-            Op(new LocalGet(LAtVal));
-            OpenElse();
-            Op(new LocalGet(LAtFresh));
-            OpenIf(BlockType.Int32);
-            Op(new Int32Constant(-1));
-            OpenElse();
-            Op(new Int32Constant(-2));
-            CloseNested();
-            CloseNested();
-            Op(new Int32Store { Offset = 8 });
-            Op(new LocalGet(LKT));
-            Op(new LocalGet(LKBW));
-            Op(new Int32Store { Offset = 12 });
-            StoreSlot64(WasmAbi.AttrWriteTop, () =>
-            {
-                LoadSlot32(WasmAbi.AttrWriteTop);
                 Op(new Int32Constant(1));
                 Op(new Int32Add());
                 Op(new Int64ExtendInt32Signed());

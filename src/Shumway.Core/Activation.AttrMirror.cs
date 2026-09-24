@@ -92,6 +92,52 @@ public sealed partial class Activation
     private static long AttrMirrorKey(int home, int moduleId)
         => ((long)(home + 1) << 32) | (uint)moduleId;
 
+    /// <summary>A module id no module has, carrying a variable's ROW COUNT
+    /// in a row of its own.
+    ///
+    /// <para>Why the count is in the image at all: a module can add a row
+    /// and take one away, but it cannot CREATE or DESTROY the record --
+    /// promoting a plain variable to an attributed one, and demoting it
+    /// back when its last attribute goes. Both turn on how many rows the
+    /// variable has, which is a managed dictionary's Count, and that one
+    /// number is the whole reason those two operations stayed the host's
+    /// (193 of the 630 crossings clp(Z) had left).</para>
+    ///
+    /// <para>In the SAME table rather than a second one, because the funnel
+    /// is what makes a derived view trustworthy and there is no sense in
+    /// having two of them to keep. Module ids are small and positive, so -1
+    /// cannot collide with one.</para></summary>
+    internal const int AttrMirrorCountModule = -1;
+
+    /// <summary>The count row for a home, or 0. Reading it is the same
+    /// probe the module runs, so the two cannot disagree about a home.
+    /// </summary>
+    internal int AttrMirrorRowCount(int home)
+    {
+        if (_attrMirror is null) return 0;
+        long key = AttrMirrorKey(home, AttrMirrorCountModule);
+        long[] rows = _attrMirror;
+        int slot = AttrMirrorHash(home, AttrMirrorCountModule, _attrMirrorMask);
+        for (int n = _attrMirrorMask + 1; n > 0; n--)
+        {
+            long k = rows[slot * 2];
+            if (k == AttrMirrorEmpty) return 0;
+            if (k == key) return (int)rows[slot * 2 + 1];
+            slot = (slot + 1) & _attrMirrorMask;
+        }
+        return 0;
+    }
+
+    private void AttrMirrorSetRowCount(int home, int count)
+    {
+        if (_attrMirror is null) return;
+        if (count <= 0) AttrMirrorDelete(home, AttrMirrorCountModule);
+        else AttrMirrorPut(home, AttrMirrorCountModule, count);
+    }
+
+    private void AttrMirrorBumpRowCount(int home, int delta)
+        => AttrMirrorSetRowCount(home, AttrMirrorRowCount(home) + delta);
+
     private void AttrMirrorPut(int home, int moduleId, int value)
     {
         if (_attrMirror is null) return;
@@ -199,6 +245,17 @@ public sealed partial class Activation
             inImage++;
             int home = (int)(k >> 32) - 1;
             int module = (int)k;
+            if (module == AttrMirrorCountModule)
+            {
+                // A count row is a derivation OF the rows, not one of them:
+                // checked against the record's size and left out of the
+                // tally below.
+                inImage--;
+                int want = _attrStore.TryGetValue(home, out var r) ? r.Count : 0;
+                if ((int)rows[slot * 2 + 1] != want)
+                    return $"count row var@{home} image={rows[slot * 2 + 1]} store={want}";
+                continue;
+            }
             if (AttrValueAt(home, module) != (int)rows[slot * 2 + 1])
                 return $"stale row var@{home} module={module}";
         }

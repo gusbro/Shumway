@@ -293,7 +293,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ArithTableBase: arithLen > 0 ? _arithAt : 0,
                 ArithTableLength: arithLen,
                 AttrWriteBase: _attrWriteAt,
-                AttrWriteLimit: attrWrites.Length / 4,
+                AttrWriteLimit: attrWrites.Length / WasmAbi.AttrWriteEntryInts,
                 ExtraTrailLimitEntries: extraTrail.Length - 8,
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
@@ -464,7 +464,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             if (attrWrote > 0)
                 fixed (int* p = attrWrites)
                     Buffer.MemoryCopy(mem + _attrWriteAt, p, attrWrites.Length * 4L,
-                                      System.Math.Min(attrWrote * 4, attrWrites.Length) * 4L);
+                                      System.Math.Min(
+                                          attrWrote * WasmAbi.AttrWriteEntryInts,
+                                          attrWrites.Length) * 4L);
             int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
             int[] orphanRing = _engine.WasmOrphanRingView;
             if (orphans > 0)

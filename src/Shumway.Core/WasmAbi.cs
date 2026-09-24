@@ -417,6 +417,37 @@ public static class WasmAbi
     /// <para>Updates only. An INSERT would have to place a new key in an
     /// open-addressed table and keep its load factor, and a module that got
     /// that wrong would leave a table that never rebuilds.</para></summary>
+    /// <summary>One parked attribute write, six i32 and two of padding.
+    ///
+    /// <para>Named fields rather than a sign-encoded value: the module makes
+    /// four different changes now -- set a value, promote a plain variable
+    /// and set one, remove a row, remove the last row and demote the cell --
+    /// and telling them apart by the sign of the old value stopped being
+    /// something a reader could check.</para></summary>
+    public const int AttrWriteEntryInts = 8;
+    public const int AttrWriteOp = 0;
+    public const int AttrWriteHome = 1;
+    public const int AttrWriteModule = 2;
+    public const int AttrWriteOld = 3;
+    public const int AttrWriteNew = 4;
+    /// <summary>1 when the module took a FRESH slot in the image, which is
+    /// occupancy the host has to count because its own put will not.
+    /// </summary>
+    public const int AttrWriteFresh = 5;
+
+    /// <summary>Set a value on a row that exists, or on one the module
+    /// placed.</summary>
+    public const int AttrOpSet = 0;
+    /// <summary>The same, on a variable the module PROMOTED: the cell and
+    /// its value change are already written and trailed, the record is
+    /// not.</summary>
+    public const int AttrOpPromote = 1;
+    /// <summary>Take a row away; the record keeps others.</summary>
+    public const int AttrOpRemove = 2;
+    /// <summary>Take the LAST row away. The module has already demoted the
+    /// cell and trailed it.</summary>
+    public const int AttrOpRemoveLast = 3;
+
     public const int AttrWriteBase = 64;
     public const int AttrWriteTop = 65;
     public const int AttrWriteLimit = 66;

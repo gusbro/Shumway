@@ -101,7 +101,8 @@ public sealed partial class Activation
     /// <summary>Where a module parks the attribute writes it made in the
     /// image, four i32 each: home, module, the old value, the new one.
     /// </summary>
-    public int[] WasmAttrWriteRingView => _wasmAttrWrites ??= new int[4 * 512];
+    public int[] WasmAttrWriteRingView
+        => _wasmAttrWrites ??= new int[WasmAbi.AttrWriteEntryInts * 512];
 
     private int[]? _wasmAttrWrites;
 
@@ -117,29 +118,54 @@ public sealed partial class Activation
     private void DrainPendingAttrWrites(int count)
     {
         if (_wasmAttrWrites is null || count <= 0) return;
-        int n = count * 4 <= _wasmAttrWrites.Length
-            ? count : _wasmAttrWrites.Length / 4;
+        int w = WasmAbi.AttrWriteEntryInts;
+        int n = count * w <= _wasmAttrWrites.Length ? count : _wasmAttrWrites.Length / w;
         for (int i = 0; i < n; i++)
         {
-            int home = _wasmAttrWrites[i * 4];
-            int moduleId = _wasmAttrWrites[i * 4 + 1];
-            int oldValue = _wasmAttrWrites[i * 4 + 2];
-            int newValue = _wasmAttrWrites[i * 4 + 3];
-            // The parked row says what the write WAS: a value that was
-            // there, or an insert, and for an insert whether it took a fresh
-            // slot (-1) or reused a tombstone (-2). The log only ever wants
-            // "there was none", so both collapse to -1 there.
+            int at = i * w;
+            int op = _wasmAttrWrites[at + WasmAbi.AttrWriteOp];
+            int home = _wasmAttrWrites[at + WasmAbi.AttrWriteHome];
+            int moduleId = _wasmAttrWrites[at + WasmAbi.AttrWriteModule];
+            int oldValue = _wasmAttrWrites[at + WasmAbi.AttrWriteOld];
+            int newValue = _wasmAttrWrites[at + WasmAbi.AttrWriteNew];
+            bool fresh = _wasmAttrWrites[at + WasmAbi.AttrWriteFresh] != 0;
+
+            // The log record goes in the order the module RESERVED it,
+            // because the trail entries it wrote carry those indices.
             int logIndex = _attrTrailLog.Count;
-            _attrTrailLog.Add((home, moduleId, oldValue < 0 ? -1 : oldValue));
+            _attrTrailLog.Add((home, moduleId, oldValue));
             AttrLogMirrorAppend(logIndex, home);
             // A fresh slot the module took is occupancy the image knows
-            // about and the store does not: AttrSet below finds the key
+            // about and the store does not: the funnel below finds the key
             // already present and will not count it.
-            if (oldValue == -1) AttrMirrorNoteModuleInsert();
-            // AttrSet and not a raw store write: the funnel is what keeps
-            // the image a pure derivation, and it writes the same value the
-            // module already put there.
-            AttrSet(home, moduleId, newValue);
+            if (fresh) AttrMirrorNoteModuleInsert();
+
+            switch (op)
+            {
+                case WasmAbi.AttrOpPromote:
+                    // The cell is already an attributed variable and the
+                    // change is already trailed; what is missing is the
+                    // record. Creating it sweeps the image rows of any
+                    // orphan the slot left behind -- including the one just
+                    // placed, which the set below puts back.
+                    AttrCreateRecord(home);
+                    AttrSet(home, moduleId, newValue);
+                    break;
+                case WasmAbi.AttrOpRemove:
+                case WasmAbi.AttrOpRemoveLast:
+                    // The module tombstoned the image row and, for the last
+                    // one, demoted the cell and trailed that too. Only the
+                    // store is behind.
+                    AttrRemove(home, moduleId);
+                    if (op == WasmAbi.AttrOpRemoveLast) AttrDropRecord(home);
+                    break;
+                default:
+                    // AttrSet and not a raw store write: the funnel is what
+                    // keeps the image a pure derivation, and it writes the
+                    // same value the module already put there.
+                    AttrSet(home, moduleId, newValue);
+                    break;
+            }
         }
     }
 

@@ -41,6 +41,7 @@ public sealed partial class Activation
             foreach (int moduleId in new List<int>(orphan.Keys))
                 AttrMirrorDelete(home, moduleId);
         _attrStore[home] = new Dictionary<int, int>();
+        AttrMirrorSetRowCount(home, 0);
         Diagnostics.AttVarCellTrace.Note(_cellsAllocated, home,
             Diagnostics.AttVarCellTrace.Kind.Created);
     }
@@ -49,8 +50,11 @@ public sealed partial class Activation
     /// record must exist.</summary>
     private void AttrSet(int home, int moduleId, int valueHeapIdx)
     {
-        _attrStore[home][moduleId] = valueHeapIdx;
+        var rec = _attrStore[home];
+        bool isNew = !rec.ContainsKey(moduleId);
+        rec[moduleId] = valueHeapIdx;
         AttrMirrorPut(home, moduleId, valueHeapIdx);
+        if (isNew) AttrMirrorSetRowCount(home, rec.Count);
         Diagnostics.AttrTrace.Note(_cellsAllocated, moduleId, AttrValueShape(valueHeapIdx));
     }
 
@@ -80,6 +84,7 @@ public sealed partial class Activation
         if (!_attrStore.TryGetValue(home, out var record)) return -1;
         record.Remove(moduleId);
         AttrMirrorDelete(home, moduleId);
+        AttrMirrorSetRowCount(home, record.Count);
         return record.Count;
     }
 
@@ -90,6 +95,7 @@ public sealed partial class Activation
         if (_attrMirror is not null && _attrStore.TryGetValue(home, out var record))
             foreach (int moduleId in new List<int>(record.Keys))
                 AttrMirrorDelete(home, moduleId);
+        AttrMirrorSetRowCount(home, 0);
         _attrStore.Remove(home);
     }
 

@@ -255,7 +255,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ArithTableBase: ArithTableAddress(),
                 ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length,
                 AttrWriteBase: AttrWriteRingAddress(),
-                AttrWriteLimit: _engine.WasmAttrWriteRingView.Length / 4,
+                AttrWriteLimit: _engine.WasmAttrWriteRingView.Length
+                                / WasmAbi.AttrWriteEntryInts,
                 ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8,
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
