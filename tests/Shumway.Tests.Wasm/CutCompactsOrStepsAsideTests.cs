@@ -47,16 +47,40 @@ public sealed class CutCompactsOrStepsAsideTests(ITestOutputHelper o)
         q(yes).
         """;
 
-    /// <summary>A narrowing's entries are DROPPED by the cut, and a dropped
-    /// attribute entry orphans its record. So this one declines, and the
-    /// reasons are named: guard 30 for the orphan, 31 for a dead record the
-    /// store has to lose. Both are writes into managed state, which is the
-    /// line the module does not cross.</summary>
+    /// <summary>A narrowing's entries are DROPPED by the cut, which orphans
+    /// a record and kills another, and the module does the whole walk
+    /// anyway: both of those are writes it PARKS for the host rather than
+    /// hands the walk back for.
+    ///
+    /// <para>Pinned from both sides, because "no declines" alone would pass
+    /// for a goal that never cut at all: the interpreter running the same
+    /// goal DOES walk, and the tier leaves the host nothing to walk.</para>
+    /// </summary>
     [DiagFact]
-    public void ACutWhoseDropsOweAWriteStillDeclines()
+    public void ACutWhoseDropsOweAWriteCompactsAnyway()
     {
-        Assert.True(DeclinesOf("trailed(R), R == yes.") > 0,
-            "a dropped attribute entry has to leave its record to the engine");
+        var plain = new PrologEngine();
+        plain.ConsultString(Corpus);
+        Shumway.Core.Diagnostics.CompactCensus.Reset();
+        Assert.True(plain.Query("trailed(R), R == yes.").Success);
+        long onTier0 = Shumway.Core.Diagnostics.CompactCensus.Walks;
+        o.WriteLine($"interpreter walks={onTier0}");
+        Assert.True(onTier0 > 0, "the goal never cut with anything trailed");
+
+        var (tiered, _) = TieredEngine.Build(Corpus);
+        Assert.True(tiered.Query("trailed(R), R == yes.").Success);
+        Shumway.Core.Diagnostics.CompactCensus.Reset();
+        Assert.True(tiered.Query("trailed(R), R == yes.").Success);
+        o.WriteLine($"tier: host walks={Shumway.Core.Diagnostics.CompactCensus.Walks}"
+            + $" declines={DeclineTotal()}");
+        Assert.Equal(0L, DeclineTotal());
+    }
+
+    private static long DeclineTotal()
+    {
+        long n = 0;
+        foreach (int g in DeclineGuards) n += WasmTierDelegate.DiagMetaGuardHist[g];
+        return n;
     }
 
     [DiagFact]

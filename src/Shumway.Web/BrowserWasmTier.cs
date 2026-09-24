@@ -258,7 +258,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrWriteLimit: _engine.WasmAttrWriteRingView.Length
                                 / WasmAbi.AttrWriteEntryInts,
                 ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8,
-                AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
+                AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
+                AttrDropBase: AttrDropRingAddress(),
+                AttrDropLimit: _engine.WasmAttrDropRingView.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -428,6 +430,22 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 _attrWritePinned = r;
             }
             return (long)_attrWritePin.AddrOfPinnedObject();
+        }
+
+        /// <summary>The dropped-record ring, pinned.</summary>
+        private GCHandle _attrDropPin;
+        private int[]? _attrDropPinned;
+
+        private long AttrDropRingAddress()
+        {
+            int[] r = _engine.WasmAttrDropRingView;
+            if (!ReferenceEquals(_attrDropPinned, r))
+            {
+                if (_attrDropPin.IsAllocated) _attrDropPin.Free();
+                _attrDropPin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _attrDropPinned = r;
+            }
+            return (long)_attrDropPin.AddrOfPinnedObject();
         }
 
         private long OrphanRingAddress()
@@ -780,7 +798,18 @@ internal static class BrowserWasmTier
                 // an arithmetic operand turned out to be is the whole
                 // question, and reading it as a functor id would name
                 // some unrelated predicate.
-                if (g == 34)
+                if (g == 25)
+                {
+                    // The unifier stamps WHICH of its six reasons.
+                    string[] why = ["?", "trail full", "worklist full at entry",
+                        "an attributed variable", "worklist full on a compound",
+                        "worklist full on a list",
+                        "a bignum, rational, packed string or foreign"];
+                    sb.Append("  [")
+                      .Append(gfid >= 0 && gfid < why.Length ? why[gfid] : gfid.ToString())
+                      .Append(']');
+                }
+                else if (g == 34)
                 {
                     var t34 = (Shumway.Core.Tag)(gfid >> 32);
                     sb.Append("  [last tag: ").Append(t34);

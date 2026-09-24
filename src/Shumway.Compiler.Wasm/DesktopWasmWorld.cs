@@ -190,7 +190,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
-        private int _arithAt, _attrWriteAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -244,6 +244,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int extraTop = _engine.WasmExtraTrailTop;
             int[] orphanRing = _engine.WasmOrphanRingView;
             int[] attrWrites = _engine.WasmAttrWriteRingView;
+            int[] attrDrops = _engine.WasmAttrDropRingView;
             int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
             int[] attrLogHomes = _engine.AttrLogHomes;
@@ -261,7 +262,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _orphanAt = _extraTrailAt + extraTop * WasmAbi.ExtraTrailEntryBytes;
             _arithAt = _orphanAt + orphanRing.Length * 4;
             _attrWriteAt = _arithAt + arithLen * 4;
-            if (_attrWriteAt + (long)attrWrites.Length * 4 > (long)Pages * 65536)
+            _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
+            if (_attrDropAt + (long)attrDrops.Length * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -295,7 +297,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrWriteBase: _attrWriteAt,
                 AttrWriteLimit: attrWrites.Length / WasmAbi.AttrWriteEntryInts,
                 ExtraTrailLimitEntries: extraTrail.Length - 8,
-                AttrMirrorBudget: _engine.AttrMirrorInsertBudget);
+                AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
+                AttrDropBase: _attrDropAt,
+                AttrDropLimit: attrDrops.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -467,6 +471,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                                       System.Math.Min(
                                           attrWrote * WasmAbi.AttrWriteEntryInts,
                                           attrWrites.Length) * 4L);
+            int dropped = (int)_mailbox[WasmAbi.AttrDropTop];
+            int[] attrDrops = _engine.WasmAttrDropRingView;
+            if (dropped > 0)
+                fixed (int* p = attrDrops)
+                    Buffer.MemoryCopy(mem + _attrDropAt, p, attrDrops.Length * 4L,
+                                      System.Math.Min(dropped, attrDrops.Length) * 4L);
             int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
             int[] orphanRing = _engine.WasmOrphanRingView;
             if (orphans > 0)

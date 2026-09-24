@@ -1044,9 +1044,9 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // The cut compaction's bank, and the eleven the attribute
+            // The cut compaction's bank, and the twelve the attribute
             // WRITE needs beside it. Appended last, same rule.
-            new Local { Count = 25, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 26, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2395,6 +2395,8 @@ public static class WasmPredicateCompiler
             // ---- pass one: can this be done at all? ----
             LoadSlot32(WasmAbi.AttrOrphanTop);
             Op(new LocalSet(LKOrph));
+            LoadSlot32(WasmAbi.AttrDropTop);
+            Op(new LocalSet(LKOrph2));
             Op(new LocalGet(LKPE)); Op(new LocalSet(LKER));
             Op(new LocalGet(LKPE)); Op(new LocalSet(LKEW));
             OpenBlock();                                    // $scanned
@@ -2481,8 +2483,26 @@ public static class WasmPredicateCompiler
                         CloseNested();
                         Op(new Int32EqualZero());
                         OpenIf();
-                        MetaGuard(31);
-                        Op(new Branch(5));                  // -> $slow
+                        {
+                            // The record is dead and has to go. PARKED
+                            // rather than handed back, for the reason the
+                            // orphan clearing is: from the moment the cell
+                            // stops being an attributed variable nothing
+                            // can reach the record, because every read of
+                            // one starts by checking exactly that. Only a
+                            // full ring declines.
+                            Op(new LocalGet(LKOrph2));
+                            Op(new Int32Constant(1));
+                            Op(new Int32Add());
+                            Op(new LocalSet(LKOrph2));
+                            Op(new LocalGet(LKOrph2));
+                            LoadSlot32(WasmAbi.AttrDropLimit);
+                            Op(new Int32GreaterThanSigned());
+                            OpenIf();
+                            MetaGuard(31);
+                            Op(new Branch(6));              // -> $slow
+                            CloseNested();
+                        }
                         CloseNested();
                     }
                     CloseNested();
@@ -2592,6 +2612,55 @@ public static class WasmPredicateCompiler
                 {
                     // Dropped. An AttrModify leaves a record behind; the
                     // first pass already made room for its index.
+                    // A dropped binding whose cell stopped being
+                    // attributed leaves a dead record; the first pass
+                    // already made room for it.
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Constant((int)Shumway.Core.TrailType.ValueChange));
+                    Op(new Int32Equal());
+                    LoadSlot32(WasmAbi.AttrRecordCount);
+                    Op(new Int32Constant(0));
+                    Op(new Int32GreaterThanSigned());
+                    Op(new Int32And());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LKT));
+                        Op(new LocalGet(LH));
+                        Op(new Int32LessThanUnsigned());
+                        OpenIf(BlockType.Int32);
+                        {
+                            CellLoadDyn(LHeapB, LKT);
+                            Op(new Int64Constant(60));
+                            Op(new Int64ShiftRightUnsigned());
+                            Op(new Int32WrapInt64());
+                            Op(new Int32Constant((int)Tag.AttVar));
+                            Op(new Int32Equal());
+                        }
+                        OpenElse();
+                        Op(new Int32Constant(0));
+                        CloseNested();
+                        Op(new Int32EqualZero());
+                        OpenIf();
+                        {
+                            LoadSlot32(WasmAbi.AttrDropBase);
+                            LoadSlot32(WasmAbi.AttrDropTop);
+                            Op(new Int32Constant(2));
+                            Op(new Int32ShiftLeft());
+                            Op(new Int32Add());
+                            Op(new LocalGet(LKT));
+                            Op(new Int32Store());
+                            StoreSlot64(WasmAbi.AttrDropTop, () =>
+                            {
+                                LoadSlot32(WasmAbi.AttrDropTop);
+                                Op(new Int32Constant(1));
+                                Op(new Int32Add());
+                                Op(new Int64ExtendInt32Signed());
+                            });
+                        }
+                        CloseNested();
+                    }
+                    CloseNested();
+
                     Op(new LocalGet(LKH));
                     Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
                     Op(new Int32Equal());
@@ -8987,6 +9056,7 @@ public static class WasmPredicateCompiler
         private const uint LKStop = 70;  // i32: where a binding run stops
         private const uint LKPE = 71;    // i32: the parent's extra top
         private const uint LKOrph = 72;  // i32: orphaned records parked
+        private const uint LKOrph2 = 84; // i32: dead records parked
         private const uint LAtRow = 73;  // i32: the attribute row's address
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
@@ -10519,6 +10589,17 @@ public static class WasmPredicateCompiler
                 LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
                 O(new Int32WrapInt64()); LSet(local);
             }
+
+            // Which of the six reasons it was. A pair the engine has to
+            // decide is four different populations plus two capacity
+            // signals, and telling them apart is what says which is
+            // worth translating.
+            void Ret2(int reason)
+            {
+                LG(MB); I64(reason);
+                O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.DiagB) });
+                Ret(2);
+            }
             void Ret(int verdict)
             {
                 LG(MB); LG(TR); O(new Int64ExtendInt32Signed());
@@ -10559,7 +10640,7 @@ public static class WasmPredicateCompiler
                     // Trail space FIRST: a heap store without its trail
                     // entry would survive backtracking.
                     LG(TR); LG(TRLIM); O(new Int32GreaterThanOrEqualSigned());
-                    OIf(); Ret(2); OEnd();
+                    OIf(); Ret2(1); OEnd();
                     HeapStore(addr, val);
                     LG(TRAILB); LG(TR); I32(2); O(new Int32ShiftLeft());
                     O(new Int32Add()); LG(addr); O(new Int32Store());
@@ -10597,7 +10678,7 @@ public static class WasmPredicateCompiler
             LG(WLBASE); LSet(WL);
             LG(WL); I32(16); O(new Int32Add()); LG(WLLIM);
             O(new Int32GreaterThanSigned());
-            OIf(); Ret(2); OEnd();
+            OIf(); Ret2(2); OEnd();
             LG(WL); LG(PA); O(new Int64Store());
             LG(WL); LG(PB); O(new Int64Store { Offset = 8 });
             LG(WL); I32(16); O(new Int32Add()); LSet(WL);
@@ -10617,7 +10698,7 @@ public static class WasmPredicateCompiler
 
                 TagIs(CA, (long)Tag.AttVar); TagIs(CB, (long)Tag.AttVar);
                 O(new Int32Or());
-                OIf(); Ret(2); OEnd();
+                OIf(); Ret2(3); OEnd();
 
                 TagIs(CA, 0);
                 OIf();
@@ -10674,7 +10755,7 @@ public static class WasmPredicateCompiler
                         O(new BranchIf(1));
                         LG(WL); I32(16); O(new Int32Add()); LG(WLLIM);
                         O(new Int32GreaterThanSigned());
-                        OIf(); Ret(2); OEnd();
+                        OIf(); Ret2(4); OEnd();
                         // the K-th args: base + K on both sides
                         LG(WL); LG(DA); LG(K); O(new Int32Add());
                         O(new Int64ExtendInt32Unsigned()); O(new Int64Store());
@@ -10697,7 +10778,7 @@ public static class WasmPredicateCompiler
                     LG(CB); O(new Int32WrapInt64()); LSet(DB);
                     LG(WL); I32(32); O(new Int32Add()); LG(WLLIM);
                     O(new Int32GreaterThanSigned());
-                    OIf(); Ret(2); OEnd();
+                    OIf(); Ret2(5); OEnd();
                     PushPairSlot(DA, 0, 0);
                     PushPairSlot(DB, 0, 8);
                     PushPairSlot(DA, 1, 16);
@@ -10727,7 +10808,7 @@ public static class WasmPredicateCompiler
                 }
                 OEnd();
 
-                Ret(2);     // BigInt / Rational / PSTR / Foreign: engine logic
+                Ret2(6);     // BigInt / Rational / PSTR / Foreign: engine logic
             }
             OEnd();
             I32(0);                      // unreachable fallthrough

@@ -67,7 +67,10 @@ public sealed partial class Activation
         int ExtraTrailLimitEntries = 0,
         /// <summary>How many rows the module may insert into the attribute
         /// image before the load factor would need a rebuild.</summary>
-        int AttrMirrorBudget = 0);
+        int AttrMirrorBudget = 0,
+        /// <summary>Base and capacity of the dropped-record ring.</summary>
+        long AttrDropBase = 0,
+        int AttrDropLimit = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -105,6 +108,23 @@ public sealed partial class Activation
         => _wasmAttrWrites ??= new int[WasmAbi.AttrWriteEntryInts * 512];
 
     private int[]? _wasmAttrWrites;
+
+    /// <summary>Where a compaction parks the homes whose record must go.
+    /// </summary>
+    public int[] WasmAttrDropRingView => _wasmAttrDrops ??= new int[512];
+
+    private int[]? _wasmAttrDrops;
+
+    /// <summary>Drops the records a compaction found dead. Re-checked rather
+    /// than trusted: DropDeadAttrRecord asks again whether the cell is still
+    /// an attributed variable, and between the module's decision and here a
+    /// backtrack may have put one back.</summary>
+    private void DrainDroppedAttrRecords(int count)
+    {
+        if (_wasmAttrDrops is null || count <= 0) return;
+        int n = count < _wasmAttrDrops.Length ? count : _wasmAttrDrops.Length;
+        for (int i = 0; i < n; i++) DropDeadAttrRecord(_wasmAttrDrops[i]);
+    }
 
     /// <summary>Puts the module's attribute writes in the store, and their
     /// records in the log. The module already wrote the image and the trail
@@ -291,6 +311,9 @@ public sealed partial class Activation
         m[WasmAbi.AttrWriteTop] = 0;
         m[WasmAbi.ExtraTrailLimit] = bases.ExtraTrailLimitEntries;
         m[WasmAbi.AttrMirrorBudget] = bases.AttrMirrorBudget;
+        m[WasmAbi.AttrDropBase] = bases.AttrDropBase;
+        m[WasmAbi.AttrDropLimit] = bases.AttrDropLimit;
+        m[WasmAbi.AttrDropTop] = 0;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -353,6 +376,7 @@ public sealed partial class Activation
         // does nothing at all.
         DrainPendingAttrWrites((int)m[WasmAbi.AttrWriteTop]);
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
+        DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
         _e = (int)m[WasmAbi.EnvTop];
         _b = (int)m[WasmAbi.ChoiceTop];
         _hb = (int)m[WasmAbi.HeapBacktrack];

@@ -471,9 +471,28 @@ public static class WasmAbi
     /// no probe that was not already long, and the host's own insert does
     /// not count it either -- the two have to agree about this or the
     /// table's occupancy drifts.</para></summary>
+    /// <summary>Where a compaction PARKS the homes whose attribute record
+    /// the engine has to drop.
+    ///
+    /// <para>A cut that drops a binding entry owes a record with it when the
+    /// cell at that home stopped being an attributed variable -- the record
+    /// is dead, and leaving it roots everything it points at. It is a write
+    /// into the store, so the compaction used to hand the whole walk back
+    /// for it: 67 deopts in one clp(Z) goal.</para>
+    ///
+    /// <para>Deferrable for the reason the orphan clearing is: the record is
+    /// unreachable from the moment the cell stops being attributed, since
+    /// every read of one starts by checking that. A ring of its own rather
+    /// than the write ring, because a write reserves a log index and this
+    /// reserves nothing -- sharing would make the k-th write's index depend
+    /// on how many drops came before it.</para></summary>
+    public const int AttrDropBase = 69;
+    public const int AttrDropTop = 70;
+    public const int AttrDropLimit = 71;
+
     public const int AttrMirrorBudget = 68;
 
-    public const int SlotCount = 69;
+    public const int SlotCount = 72;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
