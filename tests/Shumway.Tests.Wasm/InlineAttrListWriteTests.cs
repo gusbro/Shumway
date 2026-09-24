@@ -71,6 +71,12 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
               att_get(V, foo(A)), A == 1, att_get(V, bar(C)), C == 2, fail
             ; att_get(V, foo(F)), att_get(V, bar(B)) ).
 
+        % An ATOM attribute: the walk keys on a functor of arity one or
+        % more, so this one stays the host's.
+        atom_attr(V) :- '$put_to_attr_list'(V, m, plain).
+        declines(R) :- seeded(V), atom_attr(V),
+                       ( '$get_from_attr_list'(V, m, plain) -> R = yes ; R = no ).
+
         % A SECOND module on a variable that is already attributed. This
         % is the row INSERT: the record exists, this module's row does not.
         % (The first put on a fresh variable is a different thing -- it
@@ -102,6 +108,7 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
     [InlineData("two_vars(A, B), A == 1, B == 2.")]
     [InlineData("second_module(F, G), F == 0, G == 3.")]
     [InlineData("modules_apart(R), R == apart.")]
+    [InlineData("declines(R), R == yes.")]
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
         var plain = new PrologEngine();
@@ -113,40 +120,34 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
         Assert.True(tiered.Query(goal).Success, $"the tier disagrees on {goal}");
     }
 
-    /// <summary>An UPDATE is written inside: no request for it leaves.
-    /// </summary>
-    [DiagFact]
-    public void AnUpdateIsWrittenInTheModule()
-        => Assert.Equal(0L, WriteExitsOf("replaces(F, B), F == 1."));
-
-    /// <summary>And a delete that matches nothing writes nothing, which is
-    /// the cheapest correct answer there is.</summary>
-    [DiagFact]
-    public void ADeleteThatMatchesNothingDoesNotLeave()
-        => Assert.Equal(0L, WriteExitsOf("del_miss(F, B), F == 0."));
-
-    /// <summary>A row INSERT is written inside too: the record is already
-    /// there, only this module's row is missing, and the probe knows where
-    /// it would go. It spends from the budget the host staged, which is the
-    /// distance to the load factor the table rebuilds at.</summary>
-    [DiagFact]
-    public void ARowInsertIsWrittenInTheModule()
-        => Assert.Equal(0L, WriteExitsOf("second_module(F, G), G == 3."));
-
-    /// <summary>The counterproofs, in red. A delete that empties the list
-    /// REMOVES a row rather than writing one, and promoting a plain
-    /// variable to an attributed one is not a row write at all. Without
-    /// these the tests above would pass just as well with a module that
-    /// wrote whatever it liked.</summary>
+    /// <summary>Every shape of the write is made inside now: an update, a
+    /// row INSERT on a variable that is already attributed, the PROMOTION
+    /// of a plain one, a delete that matches nothing, and the REMOVAL that
+    /// takes the last row and demotes the cell with it.</summary>
     [DiagTheory]
+    [InlineData("replaces(F, B), F == 1.")]
+    [InlineData("second_module(F, G), G == 3.")]
+    [InlineData("del_miss(F, B), F == 0.")]
+    [InlineData("removes(R, B), R == gone.")]
     [InlineData("empties(R), R == gone.")]
-    public void WhatItCannotWriteStaysTheHosts(string goal)
-        => Assert.True(WriteExitsOf(goal) > 0, $"{goal} was written in the module");
+    [InlineData("restores(X, Y), X == 0.")]
+    [InlineData("interleaved(F, B), F == 0.")]
+    [InlineData("two_vars(A, B), A == 1.")]
+    public void EveryShapeIsWrittenInTheModule(string goal)
+        => Assert.Equal(0L, WriteExitsOf(goal));
 
-    /// <summary>Requests for the two writing builtins in one warm run,
-    /// less the inserts that are expected to leave. Seeding a variable is
-    /// ONE insert, not two: the first put creates the module's row and the
-    /// second already updates it.</summary>
+    /// <summary>The counterproof, in red: an ATOM attribute is keyed on a
+    /// functor of arity zero, which the walk cannot ask the mirror for, so
+    /// it stays the host's. Without it the tests above would pass just as
+    /// well with a module that wrote whatever it liked.</summary>
+    [DiagFact]
+    public void WhatItCannotWriteStaysTheHosts()
+        => Assert.True(WriteExitsOf("declines(R), R == yes.") > 0,
+            "an atom attribute was written in the module");
+
+    /// <summary>Requests for the two writing builtins in one warm run.
+    /// Nothing is subtracted any more: the promotion that used to leave is
+    /// made inside too.</summary>
     private long WriteExitsOf(string goal)
     {
         var (tiered, _) = TieredEngine.Build(Corpus);
@@ -162,9 +163,6 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
         }
         o.WriteLine($"{goal} -> put={puts} del={dels}"
             + $" deopts={WasmTierDelegate.DiagDeopts}");
-        return puts + dels - SeedingInserts(goal);
+        return puts + dels;
     }
-
-    private static long SeedingInserts(string goal)
-        => goal.StartsWith("two_vars") ? 2 : 1;
 }

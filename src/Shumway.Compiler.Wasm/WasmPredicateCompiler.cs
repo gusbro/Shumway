@@ -1044,9 +1044,9 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // The cut compaction's bank, and the six the attribute
+            // The cut compaction's bank, and the eleven the attribute
             // WRITE needs beside it. Appended last, same rule.
-            new Local { Count = 20, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 25, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2702,14 +2702,17 @@ public static class WasmPredicateCompiler
                         Op(new Branch(slow + 2));           // -> $slow
                         CloseNested();
                     }
+                    // The row's shape is the ABI's, and getting it from
+                    // anywhere else is how this read went stale when the
+                    // entry grew from four fields to eight: it was reading
+                    // the OP where the home is, and judging entries on it.
                     LoadSlot32(WasmAbi.AttrWriteBase);
                     Op(new LocalGet(LKT0Alt));
-                    Op(new Int32Constant(4));
-                    Op(new Int32Multiply());
-                    Op(new Int32Constant(4));
+                    Op(new Int32Constant(WasmAbi.AttrWriteEntryInts * 4));
                     Op(new Int32Multiply());
                     Op(new Int32Add());
-                    Op(new Int32Load());
+                    Op(new Int32Load
+                        { Offset = (uint)(WasmAbi.AttrWriteHome * 4) });
                 }
                 OpenElse();
                 {
@@ -5397,7 +5400,11 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT1));
             Op(new LocalSet(LAtMod));                       // and kept, for a writer
 
-            // A0 must be an attributed variable. Its payload IS its home.
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LAtPromote));
+
+            // A0 must be an attributed variable -- or, for a writer, a plain
+            // one it PROMOTES. Its payload IS its home either way.
             (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.AttVar));
@@ -5419,9 +5426,20 @@ public static class WasmPredicateCompiler
                 Op(new Int32Equal());
                 OpenIf();
                 if (missIsFailure) GoFail();
-                else Op(new Branch(2));                     // an insert -> $slow
+                else
+                {
+                    // A writer PROMOTES it. The home is the same field it
+                    // would be for an attributed variable, so the probe
+                    // below runs unchanged and finds nothing -- unless a
+                    // reused slot left an orphan row, which the count says
+                    // and the write declines on.
+                    Op(new Int32Constant(1));
+                    Op(new LocalSet(LAtPromote));
+                }
                 CloseNested();
-                Op(new Branch(1));                          // -> $slow
+                Op(new LocalGet(LAtPromote));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // still bound -> $slow
             }
             CloseNested();
             Op(new LocalGet(LC0));
@@ -5892,8 +5910,10 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.AttrWriteLimit);
             Op(new Int32GreaterThanSigned());
             Op(new BranchIf(0));                            // -> $slow
+            // Two entries, because a promotion or a last removal writes
+            // the CELL's change beside the attribute's.
             LoadSlot32(WasmAbi.ExtraTrailTop);
-            Op(new Int32Constant(1));
+            Op(new Int32Constant(2));
             Op(new Int32Add());
             LoadSlot32(WasmAbi.ExtraTrailLimit);
             Op(new Int32GreaterThanOrEqualSigned());
@@ -5916,21 +5936,61 @@ public static class WasmPredicateCompiler
             {
                 // Nothing matched: the builtin is a no-op and so is this.
                 // That covers the missing row too -- deleting from a list
-                // that is not there changes nothing.
+                // that is not there changes nothing -- and a plain variable,
+                // which has no list at all.
                 Op(new LocalGet(LKEW));
                 Op(new Int32EqualZero());
                 Op(new BranchIf(1));                        // -> $done
-                // Everything went: that is a REMOVAL, not an update.
+                // Everything went: the ROW goes, and with it the record if
+                // it was the last one.
                 Op(new LocalGet(LKER));
                 Op(new Int32EqualZero());
-                Op(new BranchIf(0));                        // -> $slow
+                OpenIf();
+                {
+                    EmitAttrRemoveRow();
+                    Op(new Branch(2));                      // -> $done
+                }
+                CloseNested();
             }
             else
             {
+                // A PROMOTION is only safe when the variable carries
+                // nothing at all. A count above zero is an orphan record a
+                // reused heap slot left behind, and sweeping that is the
+                // host's -- as is a row for this very module, which would
+                // be part of the same orphan.
+                Op(new LocalGet(LAtPromote));
+                OpenIf();
+                {
+                    EmitAttrCountProbe();
+                    Op(new LocalGet(LAtCount));
+                    Op(new Int32EqualZero());
+                    Op(new Int32EqualZero());
+                    Op(new BranchIf(1));                    // -> $slow
+                    Op(new LocalGet(LAtRow));
+                    Op(new BranchIf(1));                    // -> $slow
+                    Op(new LocalGet(LAtCntIns));
+                    Op(new Int32EqualZero());
+                    Op(new BranchIf(1));                    // -> $slow
+                    // Two rows go in, so two slots have to be there.
+                    Op(new LocalGet(LAtFresh));
+                    Op(new LocalGet(LAtCntFresh));
+                    Op(new Int32Add());
+                    LoadSlot32(WasmAbi.AttrMirrorBudget);
+                    Op(new Int32GreaterThanSigned());
+                    Op(new BranchIf(1));                    // -> $slow
+                }
+                CloseNested();
+
                 // An INSERT taking a fresh slot spends from the budget the
                 // host staged: that budget is the distance to the load
                 // factor, so spending it all is exactly the point at which
-                // one call has to go back and let the table be rebuilt.
+                // one call has to go back and let the table be rebuilt. A
+                // promotion has already checked for two.
+                Op(new LocalGet(LAtPromote));
+                Op(new Int32EqualZero());
+                OpenIf();
+                {
                 Op(new LocalGet(LAtRow));
                 Op(new Int32EqualZero());
                 Op(new LocalGet(LAtFresh));
@@ -5940,7 +6000,9 @@ public static class WasmPredicateCompiler
                     LoadSlot32(WasmAbi.AttrMirrorBudget);
                     Op(new Int32Constant(0));
                     Op(new Int32LessThanOrEqualSigned());
-                    Op(new BranchIf(1));                    // -> $slow
+                    Op(new BranchIf(2));                    // -> $slow
+                }
+                CloseNested();
                 }
                 CloseNested();
             }
@@ -6002,6 +6064,27 @@ public static class WasmPredicateCompiler
             });
 
             // ---- the write itself ----
+            // A promotion turns the cell into an attributed variable, and
+            // trails that first: PutAttr does the same two things in the
+            // same order, and an unwind that met them the other way round
+            // would restore a record onto a plain variable.
+            if (!isDelete)
+            {
+                Op(new LocalGet(LAtPromote));
+                OpenIf();
+                {
+                    EmitTrailCellChange(LAtHome, () => CellLoadDyn(LHeapB, LAtHome));
+                    CellStoreDyn(LHeapB, LAtHome, 0, () =>
+                    {
+                        Op(new LocalGet(LAtHome));
+                        Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Constant((long)Tag.AttVar << Cell.TagShift));
+                        Op(new Int64Or());
+                    });
+                }
+                CloseNested();
+            }
+
             // The image first, because it is what a later read in this same
             // chain looks at. An existing row takes the new value; a missing
             // one is PLACED where the probe said it would go, key and all,
@@ -6025,23 +6108,64 @@ public static class WasmPredicateCompiler
                 Op(new Int64Store { Offset = 8 });
                 Op(new LocalGet(LAtFresh));
                 OpenIf();
-                StoreSlot64(WasmAbi.AttrMirrorBudget, () =>
-                {
-                    LoadSlot32(WasmAbi.AttrMirrorBudget);
-                    Op(new Int32Constant(1));
-                    Op(new Int32Subtract());
-                    Op(new Int64ExtendInt32Signed());
-                });
+                EmitSpendMirrorBudget();
                 CloseNested();
             }
             CloseNested();
+
+            // A promoted variable now has exactly one row, and the count
+            // says so before anything reads it.
+            if (!isDelete)
+            {
+                Op(new LocalGet(LAtPromote));
+                OpenIf();
+                {
+                    // Probed AGAIN, because the row just written may have
+                    // taken the slot the first probe picked: two probes over
+                    // one table choose their insertion point independently,
+                    // and a linear walk from different starts reaches the
+                    // same first free slot as soon as the table has a few
+                    // rows in it. The budget checked above guarantees a
+                    // second free slot is there to find.
+                    EmitAttrCountProbe();
+                    Op(new LocalGet(LAtCntIns));
+                    Op(new LocalGet(LAtHome));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new Int64ExtendInt32Signed());
+                    Op(new Int64Constant(32));
+                    Op(new Int64ShiftLeft());
+                    Op(new Int64Constant(0xFFFFFFFFL));
+                    Op(new Int64Or());
+                    Op(new Int64Store());
+                    Op(new LocalGet(LAtCntIns));
+                    Op(new Int64Constant(1));
+                    Op(new Int64Store { Offset = 8 });
+                    Op(new LocalGet(LAtCntFresh));
+                    OpenIf();
+                    EmitSpendMirrorBudget();
+                    CloseNested();
+                }
+                CloseNested();
+            }
 
             // Then the trail entry the change owes.
             EmitTrailAttrChange();
 
             // And park what only the host can put away: the store row and
             // the log record.
-            EmitParkAttrWrite(WasmAbi.AttrOpSet, () => Op(new LocalGet(LKBW)));
+            EmitParkAttrWrite(
+                () =>
+                {
+                    if (isDelete) { Op(new Int32Constant(WasmAbi.AttrOpSet)); return; }
+                    Op(new LocalGet(LAtPromote));
+                    OpenIf(BlockType.Int32);
+                    Op(new Int32Constant(WasmAbi.AttrOpPromote));
+                    OpenElse();
+                    Op(new Int32Constant(WasmAbi.AttrOpSet));
+                    CloseNested();
+                },
+                () => Op(new LocalGet(LKBW)));
         }
 
         /// <summary>Parks one attribute change for the host, and moves the
@@ -6049,7 +6173,7 @@ public static class WasmPredicateCompiler
         /// store row and the log record. The old value is what the probe
         /// found, or -1 when there was none, which is what an unwind reads
         /// as "remove it again".</summary>
-        private void EmitParkAttrWrite(int op, Action newValue)
+        private void EmitParkAttrWrite(Action op, Action newValue)
         {
             LoadSlot32(WasmAbi.AttrWriteBase);
             LoadSlot32(WasmAbi.AttrWriteTop);
@@ -6067,7 +6191,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Store { Offset = (uint)(index * 4) });
             }
 
-            Field(WasmAbi.AttrWriteOp, () => Op(new Int32Constant(op)));
+            Field(WasmAbi.AttrWriteOp, op);
             Field(WasmAbi.AttrWriteHome, () => Op(new LocalGet(LAtHome)));
             Field(WasmAbi.AttrWriteModule, () => Op(new LocalGet(LAtMod)));
             Field(WasmAbi.AttrWriteOld, () =>
@@ -6131,6 +6255,82 @@ public static class WasmPredicateCompiler
                 Op(new Int64ExtendInt32Signed());
             });
         }
+
+        /// <summary>Takes the module's row away, and with it the record
+        /// when that row was the last one.
+        ///
+        /// <para>The last one is the case that needs the count: a variable
+        /// with no attributes left is a PLAIN variable again, and the cell
+        /// has to say so before anything in this chain reads it. The trail
+        /// order is DelAttr's -- the attribute's change first, the cell's
+        /// second -- because an unwind meeting them the other way round
+        /// would put a record back onto a plain variable.</para></summary>
+        private void EmitAttrRemoveRow()
+        {
+            EmitAttrCountProbe();
+            EmitTrailAttrChange();
+
+            // The row becomes a tombstone: the host's delete does the same,
+            // and a tombstone is what keeps a probe past it working.
+            Op(new LocalGet(LAtRow));
+            Op(new Int64Constant(-1));
+            Op(new Int64Store());
+            Op(new LocalGet(LAtRow));
+            Op(new Int64Constant(0));
+            Op(new Int64Store { Offset = 8 });
+
+            Op(new LocalGet(LAtCount));
+            Op(new Int32Constant(1));
+            Op(new Int32LessThanOrEqualSigned());
+            OpenIf();
+            {
+                // The last one. The count row goes too, and the variable
+                // becomes plain again.
+                Op(new LocalGet(LAtCntRow));
+                OpenIf();
+                {
+                    Op(new LocalGet(LAtCntRow));
+                    Op(new Int64Constant(-1));
+                    Op(new Int64Store());
+                    Op(new LocalGet(LAtCntRow));
+                    Op(new Int64Constant(0));
+                    Op(new Int64Store { Offset = 8 });
+                }
+                CloseNested();
+                EmitTrailCellChange(LAtHome, () => CellLoadDyn(LHeapB, LAtHome));
+                CellStoreDyn(LHeapB, LAtHome, 0, () =>
+                {
+                    Op(new LocalGet(LAtHome));
+                    Op(new Int64ExtendInt32Unsigned());
+                });
+                EmitParkAttrWrite(
+                    () => Op(new Int32Constant(WasmAbi.AttrOpRemoveLast)),
+                    () => Op(new Int32Constant(-1)));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LAtCntRow));
+                Op(new LocalGet(LAtCount));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new Int64ExtendInt32Signed());
+                Op(new Int64Store { Offset = 8 });
+                EmitParkAttrWrite(
+                    () => Op(new Int32Constant(WasmAbi.AttrOpRemove)),
+                    () => Op(new Int32Constant(-1)));
+            }
+            CloseNested();
+        }
+
+        /// <summary>One row off the budget the host staged.</summary>
+        private void EmitSpendMirrorBudget()
+            => StoreSlot64(WasmAbi.AttrMirrorBudget, () =>
+            {
+                LoadSlot32(WasmAbi.AttrMirrorBudget);
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new Int64ExtendInt32Signed());
+            });
 
         /// <summary>Walks the module's attribute list counting what SURVIVES
         /// the write and whether anything matched. Leaves the count in LKER
@@ -6586,6 +6786,171 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $slow
             emitBuiltinExit();
             CloseNested();                                  // $done
+        }
+
+        /// <summary>Probes the image for a home's ROW COUNT, which is kept
+        /// under a module id no module has.
+        ///
+        /// <para>It is what says whether a write CREATES or DESTROYS the
+        /// record: a promotion needs the count to be zero, and a removal
+        /// needs to know whether the row it takes is the last one. Leaves
+        /// the count, the row's address when there is one, and where a row
+        /// would go when there is not -- the same three things the value
+        /// probe leaves, because the two are the same probe over the same
+        /// table.</para></summary>
+        private void EmitAttrCountProbe()
+        {
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtCntRow));
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtCntIns));
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtCntFresh));
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtCount));
+
+            // key = ((home + 1) << 32) | (uint)-1
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(32));
+            Op(new Int64ShiftLeft());
+            Op(new Int64Constant(0xFFFFFFFFL));
+            Op(new Int64Or());
+            Op(new LocalSet(LU1));                          // the key
+
+            // The same hash the host computes, with -1 for the module.
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(unchecked((int)2654435761u)));
+            Op(new Int32Multiply());
+            Op(new Int32Constant(unchecked((int)(-1 * 2246822519))));
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant(15));
+            Op(new Int32ShiftRightUnsigned());
+            Op(new Int32ExclusiveOr());
+            LoadSlot32(WasmAbi.AttrTableMask);
+            Op(new Int32And());
+            Op(new LocalSet(LKT));                          // the slot
+
+            LoadSlot32(WasmAbi.AttrTableMask);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LKStop));                       // one pass, no more
+
+            OpenBlock();
+            OpenLoop();
+            {
+                LoadSlot32(WasmAbi.AttrTableBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(4));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LKH));                      // the row
+                // Its key is read from memory each time rather than kept:
+                // LU0 is the write's own, holding Attr's cell for as long
+                // as the operation lasts.
+                Op(new LocalGet(LKH));
+                Op(new Int64Load());
+                Op(new Int64Constant(0));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LAtCntIns));
+                    Op(new Int32EqualZero());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LKH));
+                        Op(new LocalSet(LAtCntIns));
+                        Op(new Int32Constant(1));
+                        Op(new LocalSet(LAtCntFresh));
+                    }
+                    CloseNested();
+                    Op(new Branch(2));
+                }
+                CloseNested();
+
+                Op(new LocalGet(LKH));
+                Op(new Int64Load());
+                Op(new LocalGet(LU1));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LKH));
+                    Op(new LocalSet(LAtCntRow));
+                    Op(new LocalGet(LKH));
+                    Op(new Int64Load { Offset = 8 });
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LAtCount));
+                    Op(new Branch(2));
+                }
+                CloseNested();
+
+                Op(new LocalGet(LKH));
+                Op(new Int64Load());
+                Op(new Int64Constant(-1));
+                Op(new Int64Equal());
+                Op(new LocalGet(LAtCntIns));
+                Op(new Int32EqualZero());
+                Op(new Int32And());
+                OpenIf();
+                {
+                    Op(new LocalGet(LKH));
+                    Op(new LocalSet(LAtCntIns));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAtCntFresh));
+                }
+                CloseNested();
+
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                LoadSlot32(WasmAbi.AttrTableMask);
+                Op(new Int32And());
+                Op(new LocalSet(LKT));
+                Op(new LocalGet(LKStop));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LKStop));
+                Op(new LocalGet(LKStop));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+        }
+
+        /// <summary>The trail entry a CELL change owes, so backtracking puts
+        /// the variable back the way it was. Written by the module because,
+        /// like every other entry, it has to sit in order between whatever
+        /// else the chain trails.</summary>
+        private void EmitTrailCellChange(uint homeLocal, Action oldCell)
+        {
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(WasmAbi.ExtraTrailEntryBytes));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant((int)Shumway.Core.TrailType.ValueChange));
+            Op(new Int32Store8 { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(homeLocal));
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+            Op(new LocalGet(LKT));
+            oldCell();
+            Op(new Int64Store { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LTR));
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset });
+            StoreSlot64(WasmAbi.ExtraTrailTop, () =>
+            {
+                LoadSlot32(WasmAbi.ExtraTrailTop);
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Signed());
+            });
         }
 
         private void EmitExecute(Instr ins)
@@ -8628,6 +8993,11 @@ public static class WasmPredicateCompiler
         private const uint LKT0Alt = 76; // i32: a parked row's index
         private const uint LAtIns = 77;  // i32: where a row WOULD go
         private const uint LAtFresh = 78;// i32: and whether that slot is fresh
+        private const uint LAtCntRow = 79;  // i32: the COUNT row's address
+        private const uint LAtCntIns = 80;  // i32: where it would go
+        private const uint LAtCntFresh = 81;// i32: and whether that slot is fresh
+        private const uint LAtCount = 82;   // i32: how many rows the home has
+        private const uint LAtPromote = 83; // i32: A0 was a PLAIN variable
 
         // `!` as an atom. Compared as a relocatable atom CELL, never as a
         // baked id: atom ids are per process.
