@@ -195,6 +195,11 @@ public interface IWasmCompileEnv
     bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
     { isDelete = false; return false; }
 
+    /// <summary>Whether the builtin is <c>=../2</c>, whose DECOMPOSING
+    /// mode is a list the module can lay out. Composing reads a list
+    /// instead of writing one and stays the engine's.</summary>
+    bool IsInlineUniv(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps

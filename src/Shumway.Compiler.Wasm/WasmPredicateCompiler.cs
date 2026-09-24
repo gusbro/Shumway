@@ -475,6 +475,7 @@ public static class WasmPredicateCompiler
             || _env.IsInlineArg(builtinId)
             || _env.IsInlineTrivial(builtinId, out _)
             || _env.IsInlineAttrListWrite(builtinId, out _)
+            || _env.IsInlineUniv(builtinId)
             || _env.IsInlineDomSame(builtinId)
             || _env.IsInlineDomEmpty(builtinId)
             || _env.IsInlineDomContains(builtinId)
@@ -1843,6 +1844,18 @@ public static class WasmPredicateCompiler
                         }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel3));
                         return false;
                     }
+                    if (_env.IsInlineUniv(ins.I0))
+                    {
+                        EmitInlineUniv(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineGetFromAttrList(ins.I0))
                     {
                         EmitInlineGetAttr(ins.Pc, () =>
@@ -2035,6 +2048,18 @@ public static class WasmPredicateCompiler
                             StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel2));
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineUniv(ins.I0))
+                    {
+                        EmitInlineUniv(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
                         EmitProceedReturn();
                         return true;
                     }
@@ -3883,6 +3908,18 @@ public static class WasmPredicateCompiler
                             () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel1));
+                    return false;
+                }
+                if (_env.IsInlineUniv(builtinId))
+                {
+                    EmitInlineUniv(ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     return false;
                 }
                 if (_env.IsInlineGetFromAttrList(builtinId))
@@ -6188,6 +6225,267 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LKBW));
         }
 
+        /// <summary><c>T =.. L</c> with T BOUND: build the list and unify.
+        ///
+        /// <para>All 81 of clp(Z)'s remaining univ calls come from one
+        /// walker, and the shape is the same every time: a term in hand, a
+        /// list wanted. The layout is the builtin's, cell for cell -- a cons
+        /// and a head alternating, the functor's atom first for a compound,
+        /// the empty list last.</para>
+        ///
+        /// <para>Arguments are copied VERBATIM, which is what the builtin
+        /// does and is right for an unbound one too: a variable's cell is a
+        /// reference to where it lives, so the copy refers to the same
+        /// variable rather than making a new one. That is also why a bignum
+        /// or a rational needs nothing from the module -- the cell is moved,
+        /// never read.</para>
+        ///
+        /// <para>An unbound T is the COMPOSING mode, a different predicate
+        /// that reads the list instead of writing it; a packed string is a
+        /// list the builtin materialises first. Both stay the engine's.
+        /// </para></summary>
+        private void EmitInlineUniv(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new LocalSet(LKT));                          // T's tag
+
+            OpenBlock();                                    // $built
+            OpenBlock();                                    // $compound
+            OpenBlock();                                    // $cons
+            {
+                // Inside here: 0 $cons, 1 $compound, 2 $built, 3 $slow.
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                Op(new BranchIf(1));                        // -> $compound
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Lis));
+                Op(new Int32Equal());
+                Op(new BranchIf(0));                        // -> $cons
+
+                // Every other BOUND shape is a one-element list holding T.
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Atom));
+                Op(new Int32Equal());
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Int));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Float));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.BigInt));
+                Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new Int32EqualZero());
+                Op(new BranchIf(3));                        // -> $slow
+
+                EmitUnivRoom(3, 3);
+                EmitUnivCons(0, 1);
+                CellStoreDyn(LHeapB, LKBW, 1, () => Op(new LocalGet(LC0)));
+                EmitUnivNil(2);
+                Op(new Branch(2));                          // -> $built
+            }
+            CloseNested();                                  // $cons
+            {
+                // Inside here: 0 $compound, 1 $built, 2 $slow.
+                // A cons is '.'(Head, Tail), its two cells side by side.
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKH));
+                EmitUnivRoom(7, 2);
+                EmitUnivCons(0, 1);
+                CellStoreDyn(LHeapB, LKBW, 1,
+                    () => Op(new Int64Constant(_env.AtomCell(DotAtomId))));
+                EmitUnivCons(2, 3);
+                CellStoreDyn(LHeapB, LKBW, 3, () => CellLoadDyn(LHeapB, LKH));
+                EmitUnivCons(4, 5);
+                CellStoreDyn(LHeapB, LKBW, 5, () => CellLoadDyn(LHeapB, LKH, 1));
+                EmitUnivNil(6);
+                Op(new Branch(1));                          // -> $built
+            }
+            CloseNested();                                  // $compound
+            {
+                // Inside here: 0 $built, 1 $slow.
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKH));                      // the functor cell
+                CellLoadDyn(LHeapB, LKH);
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKT));
+                LoadSlot32(WasmAbi.FunctorTableBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new LocalSet(LU0));                      // (atom << 32) | arity
+                Op(new LocalGet(LU0));
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKER));                     // the arity
+                // Zero means the host never mirrored the id, which no
+                // compound is.
+                Op(new LocalGet(LKER));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // -> $slow
+
+                Op(new LocalGet(LKER));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int32Constant(1));
+                Op(new Int32ShiftLeft());
+                Op(new LocalSet(LKPB));                     // 2 * (1 + arity)
+                Op(new LocalGet(LKPB));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKStop));
+                EmitUnivRoomDynamic(LKStop, 1);
+
+                EmitUnivCons(0, 1);
+                CellStoreDyn(LHeapB, LKBW, 1, () =>
+                {
+                    Op(new LocalGet(LU0));
+                    Op(new Int64Constant(32));
+                    Op(new Int64ShiftRightUnsigned());
+                    Op(new Int64Constant((long)Tag.Atom << Cell.TagShift));
+                    Op(new Int64Or());
+                });
+
+                // One cons and one argument per step, the argument copied
+                // from the compound as it lies.
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LKEW));                     // the argument index
+                OpenBlock();
+                OpenLoop();
+                {
+                    Op(new LocalGet(LKEW));
+                    Op(new LocalGet(LKER));
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    Op(new BranchIf(1));
+
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant(2));
+                    Op(new Int32Add());
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32ShiftLeft());
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKBR));                 // this cons
+                    CellStoreDyn(LHeapB, LKBR, 0, () =>
+                    {
+                        Op(new LocalGet(LKBR));
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                        Op(new Int64Or());
+                    });
+                    Op(new LocalGet(LKH));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKT));
+                    CellStoreDyn(LHeapB, LKBR, 1,
+                        () => CellLoadDyn(LHeapB, LKT));
+
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKEW));
+                    Op(new Branch(0));
+                }
+                CloseNested();
+                CloseNested();
+
+                // The list ends where the pairs do.
+                Op(new LocalGet(LKBW));
+                Op(new LocalGet(LKPB));
+                Op(new Int32Add());
+                Op(new LocalSet(LKT));
+                CellStoreDyn(LHeapB, LKT, 0,
+                    () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
+            }
+            CloseNested();                                  // $built
+
+            EmitUnifyTwo(() => RegLoad(1),
+                         () => CellLoadDyn(LHeapB, LKBW), pc);
+            Op(new Branch(1));                              // -> $done
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>Room for a list of a known size, with the base left in
+        /// LKBW. <paramref name="slowDepth"/> is where to go when the heap
+        /// has no room, and it differs per call site because each shape of
+        /// term is built at its own nesting.</summary>
+        private void EmitUnivRoom(int cells, int slowDepth)
+        {
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf((uint)slowDepth));
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LKBW));
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        /// <summary>The same for a size only known at run time.</summary>
+        private void EmitUnivRoomDynamic(uint cellsLocal, int slowDepth)
+        {
+            Op(new LocalGet(LH));
+            Op(new LocalGet(cellsLocal));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf((uint)slowDepth));
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LKBW));
+            Op(new LocalGet(LH));
+            Op(new LocalGet(cellsLocal));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        /// <summary>A cons cell at base+<paramref name="at"/> pointing at the
+        /// head that follows it.</summary>
+        private void EmitUnivCons(int at, int head)
+        {
+            CellStoreDyn(LHeapB, LKBW, at, () =>
+            {
+                Op(new LocalGet(LKBW));
+                Op(new Int32Constant(head));
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                Op(new Int64Or());
+            });
+        }
+
+        private void EmitUnivNil(int at)
+            => CellStoreDyn(LHeapB, LKBW, at,
+                () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
+
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
@@ -6248,6 +6546,18 @@ public static class WasmPredicateCompiler
                         StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(pc, awDel0));
+                    EmitProceedReturn();
+                    return;
+                }
+                if (_env.IsInlineUniv(builtinId))
+                {
+                    EmitInlineUniv(pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     EmitProceedReturn();
                     return;
                 }
@@ -8218,6 +8528,12 @@ public static class WasmPredicateCompiler
 
         private static readonly int FdDomEmptyAtomId =
             Shumway.Core.AtomTable.Intern("$fd_dom_empty", permanent: true).Id;
+
+        /// <summary>The list functor, which =../2 names for a cons cell.
+        /// Interned the way the builtin interns it, so the two answer with
+        /// the same atom.</summary>
+        private static readonly int DotAtomId =
+            Shumway.Core.AtomTable.Intern(".", permanent: true).Id;
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it

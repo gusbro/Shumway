@@ -134,6 +134,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
             && (isDelete || entry.Name == "$put_to_attr_list");
     }
 
+    public bool IsInlineUniv(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "=.." && entry.Arity == 2;
+    }
+
     public bool IsInlineDomSame(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
