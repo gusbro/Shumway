@@ -486,13 +486,23 @@ public static class WasmAbi
     /// than the write ring, because a write reserves a log index and this
     /// reserves nothing -- sharing would make the k-th write's index depend
     /// on how many drops came before it.</para></summary>
+    /// <summary>Base and mask of the reverse functor table: a name and an
+    /// arity give the id a Str cell carries.
+    ///
+    /// <para>What lets a module PUT a term together. The forward mirror
+    /// answers the other direction, which is all taking one apart needs; a
+    /// zero base means =../2's composing mode steps aside, as it did before
+    /// this existed.</para></summary>
+    public const int FunctorReverseBase = 72;
+    public const int FunctorReverseMask = 73;
+
     public const int AttrDropBase = 69;
     public const int AttrDropTop = 70;
     public const int AttrDropLimit = 71;
 
     public const int AttrMirrorBudget = 68;
 
-    public const int SlotCount = 72;
+    public const int SlotCount = 74;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

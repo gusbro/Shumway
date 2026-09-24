@@ -70,7 +70,10 @@ public sealed partial class Activation
         int AttrMirrorBudget = 0,
         /// <summary>Base and capacity of the dropped-record ring.</summary>
         long AttrDropBase = 0,
-        int AttrDropLimit = 0);
+        int AttrDropLimit = 0,
+        /// <summary>Base and mask of the reverse functor table.</summary>
+        long FunctorReverseBase = 0,
+        int FunctorReverseMask = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -311,6 +314,8 @@ public sealed partial class Activation
         m[WasmAbi.AttrWriteTop] = 0;
         m[WasmAbi.ExtraTrailLimit] = bases.ExtraTrailLimitEntries;
         m[WasmAbi.AttrMirrorBudget] = bases.AttrMirrorBudget;
+        m[WasmAbi.FunctorReverseBase] = bases.FunctorReverseBase;
+        m[WasmAbi.FunctorReverseMask] = bases.FunctorReverseMask;
         m[WasmAbi.AttrDropBase] = bases.AttrDropBase;
         m[WasmAbi.AttrDropLimit] = bases.AttrDropLimit;
         m[WasmAbi.AttrDropTop] = 0;

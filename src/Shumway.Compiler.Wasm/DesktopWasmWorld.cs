@@ -190,7 +190,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
-        private int _arithAt, _attrWriteAt, _attrDropAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -245,6 +245,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int[] orphanRing = _engine.WasmOrphanRingView;
             int[] attrWrites = _engine.WasmAttrWriteRingView;
             int[] attrDrops = _engine.WasmAttrDropRingView;
+            long[] funRev = FunctorReverseTable.Rows;
             int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
             int[] attrLogHomes = _engine.AttrLogHomes;
@@ -263,7 +264,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _arithAt = _orphanAt + orphanRing.Length * 4;
             _attrWriteAt = _arithAt + arithLen * 4;
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
-            if (_attrDropAt + (long)attrDrops.Length * 4 > (long)Pages * 65536)
+            _funRevAt = (_attrDropAt + attrDrops.Length * 4 + 7) & ~7;
+            if (_funRevAt + (long)funRev.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -299,7 +301,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ExtraTrailLimitEntries: extraTrail.Length - 8,
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: _attrDropAt,
-                AttrDropLimit: attrDrops.Length);
+                AttrDropLimit: attrDrops.Length,
+                FunctorReverseBase: _funRevAt,
+                FunctorReverseMask: FunctorReverseTable.Mask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -357,6 +361,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // here" mark to resume from. Only the live prefix is copied.
             // Append-only, but the ADDRESS moves when the areas before it
             // grow, so there is nothing cheaper to compare than the copy.
+            // Append-only and never re-keyed, but the table is REPLACED
+            // when it grows, so the copy follows the array it was handed.
+            fixed (long* p = funRev)
+                Buffer.MemoryCopy(p, mem + _funRevAt, funRev.Length * 8L,
+                                  funRev.Length * 8L);
             if (arithLen > 0)
                 fixed (int* p = arithRows)
                     Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);

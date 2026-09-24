@@ -260,7 +260,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ExtraTrailLimitEntries: _engine.WasmExtraTrailView.Length - 8,
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: AttrDropRingAddress(),
-                AttrDropLimit: _engine.WasmAttrDropRingView.Length);
+                AttrDropLimit: _engine.WasmAttrDropRingView.Length,
+                FunctorReverseBase: FunctorReverseAddress(),
+                FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -435,6 +437,23 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// <summary>The dropped-record ring, pinned.</summary>
         private GCHandle _attrDropPin;
         private int[]? _attrDropPinned;
+
+        /// <summary>The reverse functor table, pinned. Replaced when it
+        /// grows, so the address is re-taken rather than cached.</summary>
+        private static GCHandle _funRevPin;
+        private static long[]? _funRevPinned;
+
+        private static long FunctorReverseAddress()
+        {
+            long[] r = Shumway.Core.FunctorReverseTable.Rows;
+            if (!ReferenceEquals(_funRevPinned, r))
+            {
+                if (_funRevPin.IsAllocated) _funRevPin.Free();
+                _funRevPin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _funRevPinned = r;
+            }
+            return (long)_funRevPin.AddrOfPinnedObject();
+        }
 
         private long AttrDropRingAddress()
         {
@@ -696,7 +715,18 @@ internal static class BrowserWasmTier
          + Shumway.Core.Diagnostics.CompactCensus.InsertOnAttVar
          + " / on-plain " + Shumway.Core.Diagnostics.CompactCensus.InsertOnPlain
          + " / with-orphan " + Shumway.Core.Diagnostics.CompactCensus.InsertWithOrphan
+         + "; univ compose " + Shumway.Core.Diagnostics.CompactCensus.UnivCompose
+         + " declined " + UnivDeclinedReport()
          + System.Environment.NewLine;
+
+    private static string UnivDeclinedReport()
+    {
+        var sb = new System.Text.StringBuilder();
+        var t = Shumway.Core.Diagnostics.CompactCensus.UnivDeclinedTag;
+        for (int i = 0; i < t.Length; i++)
+            if (t[i] > 0) sb.Append((Shumway.Core.Tag)i).Append('=').Append(t[i]).Append(' ');
+        return sb.Length == 0 ? "none" : sb.ToString().TrimEnd();
+    }
 
     internal static string ExhaustionReport()
         => Shumway.Core.Activation.LastExhausted is { } b

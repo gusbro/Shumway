@@ -48,6 +48,8 @@ public static class CompactCensus
         OrphansCleared = 0; AttrPutUpdate = 0; AttrPutInsert = 0;
         System.Array.Clear(AttrDelShape, 0, AttrDelShape.Length);
         InsertOnAttVar = 0; InsertOnPlain = 0; InsertWithOrphan = 0;
+        UnivCompose = 0;
+        System.Array.Clear(UnivDeclinedTag, 0, UnivDeclinedTag.Length);
     }
 
     /// <summary>Records a module-side compaction orphaned and the host
@@ -86,6 +88,18 @@ public static class CompactCensus
     {
         if (onAttVar) InsertOnAttVar++; else InsertOnPlain++;
         if (orphan) InsertWithOrphan++;
+    }
+
+    /// <summary>What reached the host's =../2: the COMPOSING mode, or a
+    /// decompose the module declined and with which tag.</summary>
+    public static long UnivCompose;
+    public static readonly long[] UnivDeclinedTag = new long[16];
+
+    [Conditional(Symbol)]
+    public static void NoteUniv(bool composing, int tag)
+    {
+        if (composing) UnivCompose++;
+        else if ((uint)tag < (uint)UnivDeclinedTag.Length) UnivDeclinedTag[tag]++;
     }
 
     [Conditional(Symbol)]

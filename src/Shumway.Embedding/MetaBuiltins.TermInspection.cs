@@ -401,6 +401,12 @@ public static partial class MetaBuiltins
             }
         }
 
+        // Which MODE reached the host: composing is a different predicate
+        // that reads the list, and a decompose that got here was declined
+        // for a shape. Only the split says which is worth the work.
+        Shumway.Core.Diagnostics.CompactCensus.NoteUniv(
+            t.Tag is Tag.Ref or Tag.AttVar, (int)t.Tag);
+
         // Decompose modes — build the list directly in the heap with
         // a single allocation, no intermediate Cell[] buffer.
         if (t.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)

@@ -1044,9 +1044,9 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // The cut compaction's bank, and the twelve the attribute
-            // WRITE needs beside it. Appended last, same rule.
-            new Local { Count = 26, Type = WebAssemblyValueType.Int32 },
+            // The cut compaction's bank, and the thirteen the attribute
+            // WRITE and =../2 need beside it. Appended last, same rule.
+            new Local { Count = 27, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -6605,6 +6605,15 @@ public static class WasmPredicateCompiler
                 Op(new Int32Equal());
                 Op(new BranchIf(0));                        // -> $cons
 
+                // An unbound term is the COMPOSING mode: the list is read
+                // and the term built, which is the other half of =../2.
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant((int)Tag.Ref));
+                Op(new Int32Equal());
+                OpenIf();
+                EmitUnivCompose(pc, 4);
+                CloseNested();
+
                 // Every other BOUND shape is a one-element list holding T.
                 Op(new LocalGet(LKT));
                 Op(new Int32Constant((int)Tag.Atom));
@@ -7021,6 +7030,307 @@ public static class WasmPredicateCompiler
                 Op(new Int64ExtendInt32Signed());
             });
         }
+
+        /// <summary><c>T =.. L</c> with T UNBOUND: read the list and build
+        /// the term.
+        ///
+        /// <para>The half that asks the reverse question. Taking a term apart
+        /// needs a functor id to give a name and an arity, which the forward
+        /// mirror does; putting one together needs a name and an arity to
+        /// give an id, and that is a table of its own. A functor nobody has
+        /// interned yet has no id to find, and interning one is allocation
+        /// the host owns -- so that declines, which is also what makes this
+        /// safe: a wrong id would be a term of the wrong NAME.</para>
+        ///
+        /// <para>Two passes over the list, because the cell count is not
+        /// known until the end: one to count and check the shape, one to
+        /// copy. The elements are moved as they lie, for =../2's own reason
+        /// -- a variable's cell is a reference to where it lives.</para>
+        /// </summary>
+        private void EmitUnivCompose(int pc, int slowDepth)
+        {
+            Op(new LocalGet(LC0));
+            Op(new LocalSet(LU1));                          // T's own cell, kept
+
+            // ---- pass one: how long, and is it a proper list ----
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LKER));                         // the length
+            OpenBlock();
+            OpenLoop();
+            {
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Lis));
+                Op(new Int32NotEqual());
+                Op(new BranchIf(1));
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKH));
+                Op(new LocalGet(LKER));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKER));
+                CellLoadDyn(LHeapB, LKH, 1);
+                Op(new LocalSet(LC0)); Deref();
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+
+            // It has to END in the empty list. A partial one is an
+            // instantiation error and an improper one a type error, and
+            // both are the engine's to raise.
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId)));
+            Op(new Int64NotEqual());
+            Op(new BranchIf((uint)slowDepth));
+            // An empty list, and a one-element list, are their own rules:
+            // the first is a domain error and the second answers with the
+            // element itself, which has to be atomic.
+            Op(new LocalGet(LKER));
+            Op(new Int32Constant(2));
+            Op(new Int32LessThanSigned());
+            Op(new BranchIf((uint)slowDepth));
+
+            // ---- the head names the functor ----
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LKH));
+            CellLoadDyn(LHeapB, LKH);
+            Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32NotEqual());
+            Op(new BranchIf((uint)slowDepth));
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LKT));                          // the atom
+
+            // A '.'/2 term IS a cons cell here, and the difference is not
+            // cosmetic: the unifier calls two different tags a mismatch, so
+            // a Str named '.' would be a term nothing matches. functor/3 and
+            // the host's own =../2 both carry this same rule.
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant(DotAtomId));
+            Op(new Int32Equal());
+            Op(new LocalGet(LKER));
+            Op(new Int32Constant(3));
+            Op(new Int32Equal());
+            Op(new Int32And());
+            Op(new LocalSet(LKDot));
+
+            // The id is only wanted for a real compound.
+            Op(new LocalGet(LKDot));
+            Op(new Int32EqualZero());
+            OpenIf();
+            EmitFunctorReverseProbe(LKT, LKER, slowDepth + 1);
+            CloseNested();
+
+            // ---- room, then the functor cell and the arguments ----
+            // A cons is two cells and no functor; a compound is one cell
+            // for the functor and one per argument.
+            Op(new LocalGet(LKDot));
+            OpenIf(BlockType.Int32);
+            Op(new Int32Constant(2));
+            OpenElse();
+            Op(new LocalGet(LKER));
+            CloseNested();
+            Op(new LocalSet(LKBR));                         // the cells wanted
+
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LKBR));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf((uint)slowDepth));
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LKBW));                         // the term's base
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LKBR));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            Op(new LocalGet(LKDot));
+            Op(new Int32EqualZero());
+            OpenIf();
+            CellStoreDyn(LHeapB, LKBW, 0, () =>
+            {
+                Op(new LocalGet(LKPB));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Constant((long)Tag.Functor << Cell.TagShift));
+                Op(new Int64Or());
+            });
+            CloseNested();
+
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LKEW));                         // the argument index
+            OpenBlock();
+            OpenLoop();
+            {
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Lis));
+                Op(new Int32NotEqual());
+                Op(new BranchIf(1));
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKH));
+                // The head is the functor's name and is already spent; every
+                // element after it is an argument, moved as it lies.
+                Op(new LocalGet(LKEW));
+                OpenIf();
+                {
+                    // A cons has no functor cell, so its two elements sit one
+                    // place earlier than a compound's arguments do.
+                    Op(new LocalGet(LKBW));
+                    Op(new LocalGet(LKEW));
+                    Op(new Int32Add());
+                    Op(new LocalGet(LKDot));
+                    Op(new Int32Subtract());
+                    Op(new LocalSet(LKStop));
+                    CellStoreDyn(LHeapB, LKStop, 0, () => CellLoadDyn(LHeapB, LKH));
+                }
+                CloseNested();
+                Op(new LocalGet(LKEW));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LKEW));
+                CellLoadDyn(LHeapB, LKH, 1);
+                Op(new LocalSet(LC0)); Deref();
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+
+            // T is unbound, so this BINDS it -- through the ordinary path, so
+            // the trail and the young-to-old rule are the engine's.
+            EmitUnifyTwo(() => RegLoad(0), () =>
+            {
+                Op(new LocalGet(LKBW));
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new LocalGet(LKDot));
+                OpenIf(BlockType.Int64);
+                Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                OpenElse();
+                Op(new Int64Constant((long)Tag.Str << Cell.TagShift));
+                CloseNested();
+                Op(new Int64Or());
+            }, pc);
+            // $done sits one past $slow, and going anywhere else lands in
+            // the NEXT arm of the switch: composing and then falling into
+            // the compound case built a second term over the first.
+            Op(new Branch((uint)(slowDepth + 1)));          // -> $done
+        }
+
+        /// <summary>The functor id for an atom and an arity, into LKPB. A
+        /// miss is a functor nobody has interned, and interning one is the
+        /// host's, so it declines.</summary>
+        private void EmitFunctorReverseProbe(uint atomLocal, uint arityLocal,
+                                             int slowDepth)
+        {
+            LoadSlot32(WasmAbi.FunctorReverseBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf((uint)slowDepth));
+
+            // key = ((atom + 1) << 32) | (uint)(arity - 1)
+            Op(new LocalGet(arityLocal));
+            Op(new Int32Constant(1));
+            Op(new Int32Subtract());
+            Op(new LocalSet(LKStop));                       // the ARITY, one less
+            Op(new LocalGet(atomLocal));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(32));
+            Op(new Int64ShiftLeft());
+            Op(new LocalGet(LKStop));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Or());
+            Op(new LocalSet(LU0));                          // the key
+
+            Op(new LocalGet(atomLocal));
+            Op(new Int32Constant(unchecked((int)2654435761u)));
+            Op(new Int32Multiply());
+            Op(new LocalGet(LKStop));
+            Op(new Int32Constant(unchecked((int)2246822519u)));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKPB));
+            Op(new LocalGet(LKPB));
+            Op(new LocalGet(LKPB));
+            Op(new Int32Constant(15));
+            Op(new Int32ShiftRightUnsigned());
+            Op(new Int32ExclusiveOr());
+            LoadSlot32(WasmAbi.FunctorReverseMask);
+            Op(new Int32And());
+            Op(new LocalSet(LKPB));                         // the slot
+
+            LoadSlot32(WasmAbi.FunctorReverseMask);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LKBR));                         // one pass, no more
+
+            OpenBlock();
+            OpenLoop();
+            {
+                LoadSlot32(WasmAbi.FunctorReverseBase);
+                Op(new LocalGet(LKPB));
+                Op(new Int32Constant(4));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LKBW));
+                Op(new LocalGet(LKBW));
+                Op(new Int64Load());
+                Op(new LocalSet(LU1Alt()));
+                // An empty slot ends the probe: no such functor.
+                Op(new LocalGet(LU1Alt()));
+                Op(new Int64Constant(0));
+                Op(new Int64Equal());
+                Op(new BranchIf((uint)(slowDepth + 2)));
+                Op(new LocalGet(LU1Alt()));
+                Op(new LocalGet(LU0));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LKBW));
+                    Op(new Int64Load { Offset = 8 });
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKPB));
+                    Op(new Branch(2));
+                }
+                CloseNested();
+                Op(new LocalGet(LKPB));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                LoadSlot32(WasmAbi.FunctorReverseMask);
+                Op(new Int32And());
+                Op(new LocalSet(LKPB));
+                Op(new LocalGet(LKBR));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LKBR));
+                Op(new LocalGet(LKBR));
+                Op(new Int32EqualZero());
+                Op(new BranchIf((uint)(slowDepth + 2)));
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();
+        }
+
+        /// <summary>A scratch i64 the compose probe may spend: T's own cell
+        /// is in LU1 and the key in LU0, so the row's key needs a third, and
+        /// LC1 is deref's and free between derefs.</summary>
+        private static uint LU1Alt() => LC1;
 
         private void EmitExecute(Instr ins)
         {
@@ -9057,6 +9367,7 @@ public static class WasmPredicateCompiler
         private const uint LKPE = 71;    // i32: the parent's extra top
         private const uint LKOrph = 72;  // i32: orphaned records parked
         private const uint LKOrph2 = 84; // i32: dead records parked
+        private const uint LKDot = 85;   // i32: composing a CONS, not a Str
         private const uint LAtRow = 73;  // i32: the attribute row's address
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
