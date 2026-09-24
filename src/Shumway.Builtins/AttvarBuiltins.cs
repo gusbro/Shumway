@@ -106,9 +106,15 @@ public static class AttvarBuiltins
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
         int listIdx = engine.GetAttr(varAddr, moduleId);
-        if (listIdx < 0) return true;
+        if (listIdx < 0)
+        {
+            Shumway.Core.Diagnostics.CompactCensus.NoteAttrDel(0);
+            return true;
+        }
         var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
         var kept = CollectNonMatching(engine, listIdx, kind, key, out bool removedAny);
+        Shumway.Core.Diagnostics.CompactCensus.NoteAttrDel(
+            !removedAny ? 1 : kept.Count == 0 ? 2 : 3);
         if (!removedAny) return true;
         if (kept.Count == 0) engine.DelAttr(varAddr, moduleId);
         else engine.PutAttr(varAddr, moduleId, BuildAttrList(engine, null, kept));

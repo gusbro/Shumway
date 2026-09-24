@@ -46,6 +46,7 @@ public static class CompactCensus
         Walks = 0; Dropped = 0; ReadTheLog = 0; WroteTheLog = 0;
         DroppedARecord = 0; ClippedAFrame = 0; ReachableByAnImage = 0;
         OrphansCleared = 0; AttrPutUpdate = 0; AttrPutInsert = 0;
+        System.Array.Clear(AttrDelShape, 0, AttrDelShape.Length);
     }
 
     /// <summary>Records a module-side compaction orphaned and the host
@@ -64,6 +65,14 @@ public static class CompactCensus
     [Conditional(Symbol)]
     public static void NoteAttrPut(bool update)
     { if (update) AttrPutUpdate++; else AttrPutInsert++; }
+
+    /// <summary>What a del_from_attr_list found: 0 no list at all, 1
+    /// nothing matched, 2 the list EMPTIED (a removal), 3 an update.
+    /// Only 3 and the two no-ops are things a module can answer.</summary>
+    public static readonly long[] AttrDelShape = new long[4];
+
+    [Conditional(Symbol)]
+    public static void NoteAttrDel(int shape) => AttrDelShape[shape]++;
 
     [Conditional(Symbol)]
     public static void NoteWalk() => Walks++;

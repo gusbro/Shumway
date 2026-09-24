@@ -140,6 +140,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "=.." && entry.Arity == 2;
     }
 
+    public bool IsInlineGround(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "ground" && entry.Arity == 1;
+    }
+
     public bool IsInlineDomSame(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

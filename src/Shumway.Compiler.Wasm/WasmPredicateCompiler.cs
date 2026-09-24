@@ -227,6 +227,7 @@ public static class WasmPredicateCompiler
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
         private int IdentityIndex => _parts.Count + 3;  // and K+3 the comparator
         private int ArithIndex => _parts.Count + 4;     // and K+4 the evaluator
+        private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -476,6 +477,7 @@ public static class WasmPredicateCompiler
             || _env.IsInlineTrivial(builtinId, out _)
             || _env.IsInlineAttrListWrite(builtinId, out _)
             || _env.IsInlineUniv(builtinId)
+            || _env.IsInlineGround(builtinId)
             || _env.IsInlineDomSame(builtinId)
             || _env.IsInlineDomEmpty(builtinId)
             || _env.IsInlineDomContains(builtinId)
@@ -903,6 +905,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 2 });
+            module.Functions.Add(new Function { Type = 2 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -940,6 +943,15 @@ public static class WasmPredicateCompiler
                     new Local { Count = 2, Type = WebAssemblyValueType.Float64 },
                 ],
                 Code = BuildArithBody(),
+            });
+            module.Codes.Add(new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 8, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildGroundBody(),
             });
 
             using var ms = new MemoryStream();
@@ -1844,6 +1856,18 @@ public static class WasmPredicateCompiler
                         }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel3));
                         return false;
                     }
+                    if (_env.IsInlineGround(ins.I0))
+                    {
+                        EmitInlineGround(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineUniv(ins.I0))
                     {
                         EmitInlineUniv(ins.Pc, () =>
@@ -2048,6 +2072,18 @@ public static class WasmPredicateCompiler
                             StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel2));
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineGround(ins.I0))
+                    {
+                        EmitInlineGround(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
                         EmitProceedReturn();
                         return true;
                     }
@@ -3908,6 +3944,18 @@ public static class WasmPredicateCompiler
                             () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(ins.Pc, awDel1));
+                    return false;
+                }
+                if (_env.IsInlineGround(builtinId))
+                {
+                    EmitInlineGround(ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     return false;
                 }
                 if (_env.IsInlineUniv(builtinId))
@@ -6486,6 +6534,40 @@ public static class WasmPredicateCompiler
             => CellStoreDyn(LHeapB, LKBW, at,
                 () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
 
+        /// <summary><c>ground/1</c>, answered by the module's own walk.
+        ///
+        /// <para>73 exits in one clp(Z) goal, and every one of them a
+        /// question the module can answer: is there an unbound variable
+        /// anywhere in this term. An ATTRIBUTED variable is unbound too,
+        /// which is the case the libraries that call ground/1 hardest make
+        /// and the easy one to get wrong.</para></summary>
+        private void EmitInlineGround(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            // The walk works above the stack top, so the top has to be where
+            // the mailbox says before it runs.
+            StoreSlotFromI32Local(WasmAbi.StackTop, LST);
+            RegLoad(0);
+            Op(new LocalGet(0));
+            Op(new WebAssembly.Instructions.Call((uint)GroundIndex));
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant(2));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LT0));
+            Op(new Int32EqualZero());
+            OpenIf();
+            GoFail();
+            CloseNested();
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
@@ -6546,6 +6628,18 @@ public static class WasmPredicateCompiler
                         StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     }, missIsFailure: false, onValue: () => EmitInlineAttrListWrite(pc, awDel0));
+                    EmitProceedReturn();
+                    return;
+                }
+                if (_env.IsInlineGround(builtinId))
+                {
+                    EmitInlineGround(pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     EmitProceedReturn();
                     return;
                 }
@@ -9189,6 +9283,158 @@ public static class WasmPredicateCompiler
         // divide-by-zero checks, same promotion of a mixed pair to float.
         // Everything else declines, and declining is always sound -- the
         // engine then evaluates the whole expression itself, errors and all.
+
+        // ---- ground/1: module function K+5 ----
+        // (term: i64, mailbox: i32) -> i32: 1 ground, 0 not, 2 decline.
+        //
+        // The engine's own walk carries a VISITED set, because a cyclic term
+        // with no variables is ground and a walk without one would not
+        // terminate. A module has no set, and it does not need one: the
+        // worklist is bounded by the stack limit, so a cycle fills it and
+        // the walk declines. That is the same bound the unifier and the
+        // comparator run under, and it is why none of the three can be made
+        // to spin on user data.
+        //
+        // A packed string is the one shape it steps aside for: its tail may
+        // be an unbound variable reached through a representation only the
+        // engine unpacks.
+
+        private static List<Instruction> BuildGroundBody()
+        {
+            const uint ROOT = 0, MB = 1;
+            const uint HEAPB = 2, FTABB = 3, WL = 4, WLB = 5, WLLIM = 6,
+                       T0 = 7, K = 8, T1 = 9;
+            const uint C = 10, TMP = 11;
+
+            var code = new List<Instruction>();
+            int depth = 0;
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void I64(long v) => O(new Int64Constant(v));
+            void OIf() { O(new If(BlockType.Empty)); depth++; }
+            void OEnd() { O(new End()); depth--; }
+            void OBlock() { O(new Block(BlockType.Empty)); depth++; }
+            void OLoop() { O(new Loop(BlockType.Empty)); depth++; }
+            void Continue() => O(new Branch((uint)(depth - 1)));
+
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Ret(int v) { I32(v); O(new Return()); }
+            void HeapLoad(uint idxLocal)
+            {
+                LG(HEAPB); LG(idxLocal); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+            }
+            void TagOf(uint cel) { LG(cel); I64(60); O(new Int64ShiftRightUnsigned()); }
+            void TagIs(uint cel, long tag) { TagOf(cel); I64(tag); O(new Int64Equal()); }
+            void Deref(uint cel, uint home)
+            {
+                OBlock(); OLoop();
+                TagOf(cel); I64(0); O(new Int64NotEqual()); O(new BranchIf(1));
+                LG(cel); O(new Int32WrapInt64()); LSet(home);
+                HeapLoad(home); LSet(TMP);
+                LG(TMP); LG(cel); O(new Int64Equal()); O(new BranchIf(1));
+                LG(TMP); LSet(cel); O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            void PushCell(System.Action value)
+            {
+                LG(WL); I32(8); O(new Int32Add()); LG(WLLIM);
+                O(new Int32GreaterThanSigned());
+                OIf(); Ret(2); OEnd();
+                LG(WL); value(); O(new Int64Store());
+                LG(WL); I32(8); O(new Int32Add()); LSet(WL);
+            }
+
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.FunctorTableBase, FTABB);
+            SlotToI32(WasmAbi.StackBase, T0);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackTop) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLB);
+            LG(WLB); LSet(WL);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackLimit) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLLIM);
+
+            PushCell(() => LG(ROOT));
+
+            OLoop();
+            {
+                LG(WL); LG(WLB); O(new Int32Equal());
+                OIf(); Ret(1); OEnd();                      // nothing left: ground
+                LG(WL); I32(8); O(new Int32Subtract()); LSet(WL);
+                LG(WL); O(new Int64Load()); LSet(C);
+                Deref(C, T0);
+
+                // An unbound variable is what this predicate is looking for,
+                // and an ATTRIBUTED one is unbound too -- which is exactly
+                // the case the libraries that call ground/1 hardest make.
+                TagOf(C); I64(0); O(new Int64Equal());
+                TagIs(C, (long)Tag.AttVar);
+                O(new Int32Or());
+                OIf(); Ret(0); OEnd();
+
+                // A packed string's tail may be a variable behind a
+                // representation only the engine unpacks.
+                TagIs(C, (long)Tag.Pstr);
+                OIf(); Ret(2); OEnd();
+
+                TagIs(C, (long)Tag.Str);
+                OIf();
+                {
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);
+                    HeapLoad(T0); I64(Cell.PayloadMask); O(new Int64And());
+                    O(new Int32WrapInt64()); LSet(K);
+                    LG(FTABB); LG(K); I32(3); O(new Int32ShiftLeft());
+                    O(new Int32Add()); O(new Int64Load());
+                    O(new Int32WrapInt64()); LSet(K);       // the arity
+                    OBlock(); OLoop();
+                    {
+                        LG(K); I32(0); O(new Int32LessThanOrEqualSigned());
+                        O(new BranchIf(1));
+                        PushCell(() =>
+                        {
+                            // Its own scratch: T0 is the functor cell and
+                            // the loop needs it for every argument.
+                            LG(T0); LG(K); O(new Int32Add()); LSet(T1);
+                            HeapLoad(T1);
+                        });
+                        LG(K); I32(1); O(new Int32Subtract()); LSet(K);
+                        O(new Branch(0));
+                    }
+                    OEnd(); OEnd();
+                    Continue();
+                }
+                OEnd();
+
+                TagIs(C, (long)Tag.Lis);
+                OIf();
+                {
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);
+                    PushCell(() => HeapLoad(T0));
+                    LG(T0); I32(1); O(new Int32Add()); LSet(T0);
+                    PushCell(() => HeapLoad(T0));
+                    Continue();
+                }
+                OEnd();
+
+                // Everything else is a constant: an atom, a number of any
+                // width, a foreign handle. None of them holds a variable.
+                Continue();
+            }
+            OEnd();
+            I32(1);
+            O(new End());
+            return code;
+        }
 
         private static List<Instruction> BuildArithBody()
         {

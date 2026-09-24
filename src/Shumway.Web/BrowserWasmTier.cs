@@ -669,6 +669,10 @@ internal static class BrowserWasmTier
          + " records parked by the module and cleared here; put_atts "
          + Shumway.Core.Diagnostics.CompactCensus.AttrPutUpdate + " update / "
          + Shumway.Core.Diagnostics.CompactCensus.AttrPutInsert + " insert"
+         + "; del_atts no-list " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[0]
+         + " / no-match " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[1]
+         + " / emptied " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[2]
+         + " / update " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[3]
          + System.Environment.NewLine;
 
     internal static string ExhaustionReport()
