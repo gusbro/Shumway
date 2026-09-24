@@ -200,12 +200,21 @@ public sealed partial class Activation
         foreach (var unused in AttrAll()) live++;
         int slots = 64;
         while (slots * 2 < minCells) slots *= 2;
-        while (slots < (live + 1) * 4) slots *= 2;
+        // Room for the COUNT rows as well as the value rows: one per home,
+        // so a table sized for the values alone would be rebuilt again on
+        // the next write.
+        while (slots < (live + _attrStore.Count + 1) * 4) slots *= 2;
         _attrMirror = new long[slots * 2];
         _attrMirrorMask = slots - 1;
         _attrMirrorUsed = 0;
         foreach (var (home, module, value) in AttrAll())
             AttrMirrorPut(home, module, value);
+        // And the count rows, which are NOT in AttrAll: rebuilding without
+        // them left every home reading zero, and a module asking whether the
+        // row it is taking is the LAST one would have been told yes and
+        // demoted a variable that still had others.
+        foreach (var kv in _attrStore)
+            if (kv.Value.Count > 0) AttrMirrorPut(kv.Key, AttrMirrorCountModule, kv.Value.Count);
     }
 
     /// <summary>Asserts the image and the store still say the same thing, in
@@ -235,6 +244,16 @@ public sealed partial class Activation
             int got = AttrMirrorLookup(home, module);
             if (got != value)
                 return $"var@{home} module={module} store={value} mirror={got}";
+        }
+        // Every record owes a count row, and a MISSING one is exactly what
+        // a scan of the image cannot see: the rebuild that dropped them all
+        // left nothing behind to disagree with.
+        foreach (var kv in _attrStore)
+        {
+            if (kv.Value.Count == 0) continue;
+            int got = AttrMirrorRowCount(kv.Key);
+            if (got != kv.Value.Count)
+                return $"count row var@{kv.Key} image={got} store={kv.Value.Count}";
         }
         long[] rows = _attrMirror;
         int inImage = 0;

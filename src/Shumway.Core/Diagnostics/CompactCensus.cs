@@ -47,6 +47,7 @@ public static class CompactCensus
         DroppedARecord = 0; ClippedAFrame = 0; ReachableByAnImage = 0;
         OrphansCleared = 0; AttrPutUpdate = 0; AttrPutInsert = 0;
         System.Array.Clear(AttrDelShape, 0, AttrDelShape.Length);
+        InsertOnAttVar = 0; InsertOnPlain = 0; InsertWithOrphan = 0;
     }
 
     /// <summary>Records a module-side compaction orphaned and the host
@@ -73,6 +74,19 @@ public static class CompactCensus
 
     [Conditional(Symbol)]
     public static void NoteAttrDel(int shape) => AttrDelShape[shape]++;
+
+    /// <summary>What an insert the module declined actually was: a row
+    /// on an already-attributed variable, a promotion of a plain one, and
+    /// whether the store already held an ORPHAN record for that home --
+    /// which is the one shape the module refuses on purpose.</summary>
+    public static long InsertOnAttVar, InsertOnPlain, InsertWithOrphan;
+
+    [Conditional(Symbol)]
+    public static void NoteAttrInsertShape(bool onAttVar, bool orphan)
+    {
+        if (onAttVar) InsertOnAttVar++; else InsertOnPlain++;
+        if (orphan) InsertWithOrphan++;
+    }
 
     [Conditional(Symbol)]
     public static void NoteWalk() => Walks++;

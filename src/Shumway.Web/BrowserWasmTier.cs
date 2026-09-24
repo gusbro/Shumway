@@ -692,6 +692,10 @@ internal static class BrowserWasmTier
          + " / no-match " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[1]
          + " / emptied " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[2]
          + " / update " + Shumway.Core.Diagnostics.CompactCensus.AttrDelShape[3]
+         + "; declined inserts on-attvar "
+         + Shumway.Core.Diagnostics.CompactCensus.InsertOnAttVar
+         + " / on-plain " + Shumway.Core.Diagnostics.CompactCensus.InsertOnPlain
+         + " / with-orphan " + Shumway.Core.Diagnostics.CompactCensus.InsertWithOrphan
          + System.Environment.NewLine;
 
     internal static string ExhaustionReport()

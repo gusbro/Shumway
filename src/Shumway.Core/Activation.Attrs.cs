@@ -133,6 +133,11 @@ public sealed partial class Activation
 
     internal bool AttrHasRecordForTesting(int home) => AttrHasRecord(home);
 
+    /// <summary>Whether a home carries a record at all. For the census
+    /// that asks whether a declined insert met an ORPHAN, which is the
+    /// one shape the module refuses on purpose.</summary>
+    public bool AttrHasAnyRecord(int home) => AttrHasRecord(home);
+
     /// <summary>The module ids carrying an attribute on <paramref
     /// name="home"/>. A snapshot: the caller may mutate the store while
     /// iterating, which the live key collection would not survive.</summary>
