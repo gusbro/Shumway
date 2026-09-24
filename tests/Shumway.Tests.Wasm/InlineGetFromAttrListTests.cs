@@ -79,14 +79,35 @@ public sealed class InlineGetFromAttrListTests(ITestOutputHelper o)
     public void ACompoundLookupDoesNotLeaveTheModule(string goal)
         => Assert.Equal(0L, ExitsOf(goal));
 
-    /// <summary>The counterproof, in red: an ATOM Attr still leaves. Without
-    /// it the test above would pass just as well with a form that answered
-    /// shapes it cannot key on.</summary>
+    /// <summary>A constant Attr is answered inside too: an atom or an
+    /// integer keys on ITSELF, which one cell comparison asks -- the same
+    /// comparison the host makes of an atom's identity or an integer's
+    /// value.</summary>
+    [DiagTheory]
+    [InlineData("atom_attr(R), R == yes.")]
+    [InlineData("int_attr(R), R == yes.")]
+    public void AConstantAttrIsAnsweredInside(string goal)
+        => Assert.Equal(0L, ExitsOf(goal));
+
+    /// <summary>The counterproof, in red: an UNBOUND Attr owes an
+    /// instantiation error, and errors are the engine's. Reached through the
+    /// corpus predicate, because a builtin named in the QUERY text runs
+    /// interpreted and proves nothing about the module.</summary>
     [DiagFact]
-    public void AnAtomAttrStillLeaves()
-        => Assert.True(ExitsOf("atom_attr(R), R == yes.") > 0,
-            "an atom keys on a functor the module cannot intern, so it must "
-            + "stay the engine's");
+    public void AnUnboundAttrStaysTheEngines()
+    {
+        var (tiered, _) = TieredEngine.Build(Corpus);
+        Assert.True(tiered.Query("finds(A, B), A == 1.").Success);   // promoted
+        WasmTierDelegate.ResetDiag();
+        try { tiered.Query("loaded(V), g(V, _)."); }
+        catch (System.Exception) { }
+
+        long n = 0;
+        foreach (var (name, arity, hits) in WasmTierDelegate.BuiltinRanking())
+            if (name == "$get_from_attr_list" && arity == 3) n = hits;
+        o.WriteLine($"unbound attr -> exits={n}");
+        Assert.True(n > 0, "an unbound Attr was answered in the module");
+    }
 
     /// <summary>Builtin requests for '$get_from_attr_list'/3 in one warm run.
     /// The first run is the one that promotes, so it is not the one counted.

@@ -136,14 +136,31 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
     public void EveryShapeIsWrittenInTheModule(string goal)
         => Assert.Equal(0L, WriteExitsOf(goal));
 
-    /// <summary>The counterproof, in red: an ATOM attribute is keyed on a
-    /// functor of arity zero, which the walk cannot ask the mirror for, so
-    /// it stays the host's. Without it the tests above would pass just as
-    /// well with a module that wrote whatever it liked.</summary>
+    /// <summary>A constant attribute is written inside too: it keys on
+    /// ITSELF, which one cell comparison asks.</summary>
+    [DiagFact]
+    public void AConstantAttrIsWrittenInside()
+        => Assert.Equal(0L, WriteExitsOf("declines(R), R == yes."));
+
+    /// <summary>The counterproof, in red: an UNBOUND attribute owes an
+    /// instantiation error, and errors are the host's. Reached through the
+    /// corpus predicate, because a builtin named in the QUERY text runs
+    /// interpreted and proves nothing about the module.</summary>
     [DiagFact]
     public void WhatItCannotWriteStaysTheHosts()
-        => Assert.True(WriteExitsOf("declines(R), R == yes.") > 0,
-            "an atom attribute was written in the module");
+    {
+        var (tiered, _) = TieredEngine.Build(Corpus);
+        Assert.True(tiered.Query("replaces(F, B), F == 1.").Success);  // promoted
+        WasmTierDelegate.ResetDiag();
+        try { tiered.Query("seeded(V), att_put(V, _)."); }
+        catch (System.Exception) { }
+
+        long n = 0;
+        foreach (var (name, arity, hits) in WasmTierDelegate.BuiltinRanking())
+            if (name == "$put_to_attr_list" && arity == 3) n = hits;
+        o.WriteLine($"unbound attr -> exits={n}");
+        Assert.True(n > 0, "an unbound attribute was written in the module");
+    }
 
     /// <summary>Requests for the two writing builtins in one warm run.
     /// Nothing is subtracted any more: the promotion that used to leave is

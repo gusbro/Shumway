@@ -1044,9 +1044,9 @@ public static class WasmPredicateCompiler
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // The cut compaction's bank, and the thirteen the attribute
+            // The cut compaction's bank, and the fourteen the attribute
             // WRITE and =../2 need beside it. Appended last, same rule.
-            new Local { Count = 27, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 28, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -5697,35 +5697,53 @@ public static class WasmPredicateCompiler
         /// atom or a constant Attr steps aside instead.</para></summary>
         private void EmitAttrListWalk(int pc)
         {
-            // Attr's functor, and the shape gate in the same two reads.
+            // Attr keys the walk two ways, both the builtin's own: a
+            // COMPOUND on its functor, any other BOUND term on itself --
+            // one cell comparison, exactly as the host compares an atom's
+            // identity, an integer's value, a float's pointer. Unbound is
+            // an error, and errors are the host's.
             RegLoad(2); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
-            Op(new Int32Constant((int)Tag.Str));
-            Op(new Int32NotEqual());
-            Op(new BranchIf(0));                            // -> $slow
-
-            Op(new LocalGet(LC0));
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));
-            CellLoadDyn(LHeapB, LT1);
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
-            Op(new LocalSet(LT0Alt));                       // Attr's functor id
-
-            // Arity zero means the host never mirrored the id, and the walk
-            // below leans on the arity being one or more.
-            LoadSlot32(WasmAbi.FunctorTableBase);
-            Op(new LocalGet(LT0Alt));
-            Op(new Int32Constant(3));
-            Op(new Int32ShiftLeft());
-            Op(new Int32Add());
-            Op(new Int64Load());
-            Op(new Int32WrapInt64());
+            Op(new LocalGet(LT1));
             Op(new Int32EqualZero());
-            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant((int)Tag.AttVar));
+            Op(new Int32Equal());
+            Op(new Int32Or());
+            Op(new BranchIf(0));                            // unbound -> $slow
+            Op(new LocalGet(LC0));
+            Op(new LocalSet(LU0));                          // Attr's cell, kept
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32Equal());
+            Op(new LocalSet(LAtKind));
+
+            Op(new LocalGet(LAtKind));
+            OpenIf();
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LT0Alt));                   // Attr's functor id
+                // Arity zero means the host never mirrored the id.
+                LoadSlot32(WasmAbi.FunctorTableBase);
+                Op(new LocalGet(LT0Alt));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // -> $slow
+            }
+            CloseNested();
 
             CellLoadDyn(LHeapB, LAtVal);
             Op(new LocalSet(LC0)); Deref();
@@ -5750,29 +5768,46 @@ public static class WasmPredicateCompiler
 
                 CellLoadDyn(LHeapB, LT1);
                 Op(new LocalSet(LC0)); Deref();
-                TagOfC0();
-                Op(new Int32Constant((int)Tag.Str));
-                Op(new Int32Equal());
-                OpenIf();
+                Op(new LocalGet(LAtKind));
+                OpenIf(BlockType.Int32);
+                {
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.Str));
+                    Op(new Int32Equal());
+                    OpenIf(BlockType.Int32);
+                    {
+                        Op(new LocalGet(LC0));
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LT2));
+                        CellLoadDyn(LHeapB, LT2);
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalGet(LT0Alt));
+                        Op(new Int32Equal());
+                    }
+                    OpenElse();
+                    Op(new Int32Constant(0));
+                    CloseNested();
+                }
+                OpenElse();
                 {
                     Op(new LocalGet(LC0));
-                    Op(new Int64Constant(Cell.PayloadMask));
-                    Op(new Int64And());
-                    Op(new Int32WrapInt64());
-                    Op(new LocalSet(LT2));
-                    CellLoadDyn(LHeapB, LT2);
-                    Op(new Int64Constant(Cell.PayloadMask));
-                    Op(new Int64And());
-                    Op(new Int32WrapInt64());
-                    Op(new LocalGet(LT0Alt));
-                    Op(new Int32Equal());
-                    OpenIf();
-                    {
-                        Op(new LocalGet(LT1));
-                        Op(new LocalSet(LT0Alt));           // the element, key spent
-                        Op(new Branch(3));                  // -> $found
-                    }
-                    CloseNested();
+                    Op(new LocalGet(LU0));
+                    Op(new Int64Equal());
+                }
+                CloseNested();
+                OpenIf();
+                {
+                    Op(new LocalGet(LT1));
+                    Op(new LocalSet(LT0Alt));               // the element, key spent
+                    // The two nested ifs of the compound-only walk became
+                    // ONE value with one if, so $found sits a level closer
+                    // than it used to: keeping the old depth here sent every
+                    // MATCH to the slow exit, compounds included.
+                    Op(new Branch(2));                      // -> $found
                 }
                 CloseNested();
 
@@ -5939,35 +5974,53 @@ public static class WasmPredicateCompiler
         /// an update.</para></summary>
         private void EmitInlineAttrListWrite(int pc, bool isDelete)
         {
-            // Attr must be a compound, for the reason the read form gives:
-            // it is what makes the walk total rather than partial.
+            // Attr keys the walk two ways, and both are the builtin's own.
+            // A COMPOUND keys on its functor, which the mirror names. Any
+            // other BOUND term keys on itself, and the module can ask that
+            // with a cell comparison -- an atom, an integer, a float's
+            // pointer, all exactly as the host compares them. An unbound
+            // Attr is an error, and errors are the host's.
             RegLoad(2); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
-            Op(new Int32Constant((int)Tag.Str));
-            Op(new Int32NotEqual());
-            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalSet(LKStop));
+            Op(new LocalGet(LKStop));
+            Op(new Int32EqualZero());
+            Op(new LocalGet(LKStop));
+            Op(new Int32Constant((int)Tag.AttVar));
+            Op(new Int32Equal());
+            Op(new Int32Or());
+            Op(new BranchIf(0));                            // unbound -> $slow
             Op(new LocalGet(LC0));
             Op(new LocalSet(LU0));                          // Attr's cell, kept
-            Op(new LocalGet(LC0));
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
-            Op(new LocalSet(LKH));
-            CellLoadDyn(LHeapB, LKH);
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
-            Op(new LocalSet(LKT));                          // Attr's functor
+            Op(new LocalGet(LKStop));
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32Equal());
+            Op(new LocalSet(LAtKind));
 
-            LoadSlot32(WasmAbi.FunctorTableBase);
-            Op(new LocalGet(LKT));
-            Op(new Int32Constant(3));
-            Op(new Int32ShiftLeft());
-            Op(new Int32Add());
-            Op(new Int64Load());
-            Op(new Int32WrapInt64());
-            Op(new Int32EqualZero());
-            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LAtKind));
+            OpenIf();
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKH));
+                CellLoadDyn(LHeapB, LKH);
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKT));                      // Attr's functor
+                LoadSlot32(WasmAbi.FunctorTableBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // unmirrored -> $slow
+            }
+            CloseNested();
 
             // Neither ring nor trail room is something to discover halfway.
             LoadSlot32(WasmAbi.AttrWriteBase);
@@ -6511,34 +6564,51 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>Whether the head at LKH shares Attr's functor. Derefed,
-        /// because a head reached through a bound variable is the term it
-        /// points at; and a functor of arity one or more can never be the
-        /// arity-zero functor an atom keys on, so everything that is not a
-        /// compound is a miss rather than a question.</summary>
+        /// <summary>Whether the head at LKH matches Attr. Derefed, because
+        /// a head reached through a bound variable is the term it points at.
+        ///
+        /// <para>Two rules, which are the builtin's own. A COMPOUND Attr
+        /// matches a head with the same functor. A constant Attr matches the
+        /// head that IS it, which one cell comparison answers: an atom's
+        /// cell is its identity, an integer's its value, a float's its
+        /// pointer -- exactly the comparison the host makes. The kinds never
+        /// cross, because a functor of arity one or more is not any
+        /// constant's key, and a cell equal to a bound constant is that
+        /// constant.</para></summary>
         private void EmitAttrHeadMatches()
         {
             CellLoadDyn(LHeapB, LKH);
             Op(new LocalSet(LC0)); Deref();
-            TagOfC0();
-            Op(new Int32Constant((int)Tag.Str));
-            Op(new Int32Equal());
+            Op(new LocalGet(LAtKind));
             OpenIf(BlockType.Int32);
             {
-                Op(new LocalGet(LC0));
-                Op(new Int64Constant(Cell.PayloadMask));
-                Op(new Int64And());
-                Op(new Int32WrapInt64());
-                Op(new LocalSet(LKStop));
-                CellLoadDyn(LHeapB, LKStop);
-                Op(new Int64Constant(Cell.PayloadMask));
-                Op(new Int64And());
-                Op(new Int32WrapInt64());
-                Op(new LocalGet(LKT));
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
                 Op(new Int32Equal());
+                OpenIf(BlockType.Int32);
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKStop));
+                    CellLoadDyn(LHeapB, LKStop);
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new Int32WrapInt64());
+                    Op(new LocalGet(LKT));
+                    Op(new Int32Equal());
+                }
+                OpenElse();
+                Op(new Int32Constant(0));
+                CloseNested();
             }
             OpenElse();
-            Op(new Int32Constant(0));
+            {
+                Op(new LocalGet(LC0));
+                Op(new LocalGet(LU0));
+                Op(new Int64Equal());
+            }
             CloseNested();
         }
 
@@ -9368,6 +9438,7 @@ public static class WasmPredicateCompiler
         private const uint LKOrph = 72;  // i32: orphaned records parked
         private const uint LKOrph2 = 84; // i32: dead records parked
         private const uint LKDot = 85;   // i32: composing a CONS, not a Str
+        private const uint LAtKind = 86; // i32: Attr is a COMPOUND, not a constant
         private const uint LAtRow = 73;  // i32: the attribute row's address
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
