@@ -251,7 +251,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrLogLength: _engine.AttrLogCount,
                 ExtraTrailBase: ExtraTrailAddress(),
                 AttrOrphanBase: OrphanRingAddress(),
-                AttrOrphanLimit: _engine.WasmOrphanRingView.Length);
+                AttrOrphanLimit: _engine.WasmOrphanRingView.Length,
+                ArithTableBase: ArithTableAddress(),
+                ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -387,6 +389,25 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// the host drains on the way out.</summary>
         private GCHandle _orphanPin;
         private int[]? _orphanPinned;
+
+        /// <summary>The arithmetic functor table, pinned. It is replaced
+        /// when it grows with the functor table, so the address is re-taken
+        /// rather than cached across a staging.</summary>
+        private static GCHandle _arithPin;
+        private static int[]? _arithPinned;
+
+        private static long ArithTableAddress()
+        {
+            int[] r = Shumway.Builtins.ArithFunctorTable.Rows;
+            if (r.Length == 0) return 0;
+            if (!ReferenceEquals(_arithPinned, r))
+            {
+                if (_arithPin.IsAllocated) _arithPin.Free();
+                _arithPin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _arithPinned = r;
+            }
+            return (long)_arithPin.AddrOfPinnedObject();
+        }
 
         private long OrphanRingAddress()
         {
@@ -729,7 +750,23 @@ internal static class BrowserWasmTier
                 // one: a row saying 400 meta-calls found no marker only
                 // becomes actionable when it says 400 of WHAT.
                 long gfid = WasmTierDelegate.DiagGuardFids[g];
-                if (gfid > 0)
+                // Guard 34 stamps a cell TAG there, not a functor: what
+                // an arithmetic operand turned out to be is the whole
+                // question, and reading it as a functor id would name
+                // some unrelated predicate.
+                if (g == 34)
+                {
+                    var t34 = (Shumway.Core.Tag)(gfid >> 32);
+                    sb.Append("  [last tag: ").Append(t34);
+                    if (t34 == Shumway.Core.Tag.Str && (int)gfid != 0)
+                    {
+                        var (a34, r34) = Shumway.Core.FunctorTable.Lookup((int)gfid);
+                        sb.Append(" = ").Append(Shumway.Core.AtomTable.GetById(a34)?.Name)
+                          .Append('/').Append(r34);
+                    }
+                    sb.Append(']');
+                }
+                else if (gfid > 0)
                 {
                     var (gaid, gar) = Shumway.Core.FunctorTable.Lookup((int)gfid);
                     sb.Append("  [last: ")

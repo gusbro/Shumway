@@ -190,6 +190,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
+        private int _arithAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -243,6 +244,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraTop = _engine.WasmExtraTrailTop;
             int[] orphanRing = _engine.WasmOrphanRingView;
+            int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
+            int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
@@ -256,7 +259,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
             _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
             _orphanAt = _extraTrailAt + extraTop * WasmAbi.ExtraTrailEntryBytes;
-            if (_orphanAt + (long)orphanRing.Length * 4 > (long)Pages * 65536)
+            _arithAt = _orphanAt + orphanRing.Length * 4;
+            if (_arithAt + (long)arithLen * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -284,7 +288,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrLogLength: attrLogCount,
                 ExtraTrailBase: _extraTrailAt,
                 AttrOrphanBase: _orphanAt,
-                AttrOrphanLimit: orphanRing.Length);
+                AttrOrphanLimit: orphanRing.Length,
+                ArithTableBase: arithLen > 0 ? _arithAt : 0,
+                ArithTableLength: arithLen);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -340,6 +346,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // Copied whole, for the attribute table's reason: records are
             // truncated and relocated under it, so there is no "synced up to
             // here" mark to resume from. Only the live prefix is copied.
+            // Append-only, but the ADDRESS moves when the areas before it
+            // grow, so there is nothing cheaper to compare than the copy.
+            if (arithLen > 0)
+                fixed (int* p = arithRows)
+                    Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);
             if (attrLogCount > 0)
                 fixed (int* p = attrLogHomes)
                     Buffer.MemoryCopy(p, mem + _attrLogAt, attrLogCount * 4L,

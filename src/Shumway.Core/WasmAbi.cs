@@ -383,7 +383,25 @@ public static class WasmAbi
     public const int AttrOrphanTop = 58;
     public const int AttrOrphanLimit = 59;
 
-    public const int SlotCount = 60;
+    /// <summary>Which functors an arithmetic evaluation may apply, one
+    /// i32 per functor id: 0 not evaluable, else (arity &lt;&lt; 8) | op.
+    ///
+    /// <para>A module cannot compare strings, so the question arrives as a
+    /// number, and the table is derived from the evaluator's own name
+    /// resolvers so the two cannot disagree. A zero base means an arithmetic
+    /// operand that is a compound steps aside, which is what it did before
+    /// this existed.</para></summary>
+    public const int ArithTableBase = 60;
+    public const int ArithTableLength = 61;
+
+    /// <summary>Where the expression evaluator leaves its answer: the value
+    /// (a 60-bit integer, or the bits of a double) and which of the two it
+    /// is. It is a FUNCTION, so it cannot write the caller's locals.
+    /// </summary>
+    public const int ArithValue = 62;
+    public const int ArithKind = 63;
+
+    public const int SlotCount = 64;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

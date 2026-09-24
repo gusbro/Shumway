@@ -133,6 +133,8 @@ public static class WasmPredicateCompiler
         14 => "atom id past the marker table",
         15 => "no module covers this zero-arity goal",
         16 => "setup_call_cleanup handlers are live, so the cut declines",
+        34 => "an arithmetic expression the module does not evaluate",
+        35 => "an arithmetic operand that is neither a number nor an expression",
         30 => "a cut dropped an attribute entry, which orphans its record",
         31 => "a cut dropped a binding whose dead record the engine must drop",
         32 => "a cut would leave a catch frame's snapshot to clip",
@@ -224,6 +226,7 @@ public static class WasmPredicateCompiler
 
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
         private int IdentityIndex => _parts.Count + 3;  // and K+3 the comparator
+        private int ArithIndex => _parts.Count + 4;     // and K+4 the evaluator
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -887,11 +890,17 @@ public static class WasmPredicateCompiler
             });
             // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier; K+3: term
-            // identity. All internal but run.
+            // identity; K+4: arithmetic evaluation. All internal but run.
+            module.Types.Add(new WebAssemblyType
+            {
+                Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
+                Returns = [WebAssemblyValueType.Int32],
+            });
             int k = _parts.Count;
             for (int f = 0; f <= k + 1; f++) module.Functions.Add(new Function { Type = 0 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 1 });
+            module.Functions.Add(new Function { Type = 2 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -919,6 +928,16 @@ public static class WasmPredicateCompiler
                     new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
                 ],
                 Code = BuildIdentityBody(),
+            });
+            module.Codes.Add(new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                    new Local { Count = 2, Type = WebAssemblyValueType.Float64 },
+                ],
+                Code = BuildArithBody(),
             });
 
             using var ms = new MemoryStream();
@@ -7752,12 +7771,50 @@ public static class WasmPredicateCompiler
                 }
                 OpenElse();
                 {
-                    // var, bigint, rational, anything else: the interpreter's.
-                    EmitDeopt(pc, 26);
-                    Op(new Int64Constant(0));
-                    Op(new LocalSet(LA(slot)));
-                    Op(new Int32Constant(0));
-                    Op(new LocalSet(LAK(slot)));
+                    // Not a number. A COMPOUND is an EXPRESSION -- `X is E`
+                    // where E arrived in a register, which is what a solver
+                    // builds all day -- and the evaluator walks it. Anything
+                    // else (a variable, a bignum, a rational) is the
+                    // interpreter's, and so is an expression the evaluator
+                    // declines.
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)Tag.Str));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    {
+                        // The walk works above the stack top, so the top has
+                        // to be where the mailbox says before it runs.
+                        StoreSlotFromI32Local(WasmAbi.StackTop, LST);
+                        Op(new LocalGet(LC0));
+                        Op(new LocalGet(0));
+                        Op(new WebAssembly.Instructions.Call((uint)ArithIndex));
+                        Op(new Int32EqualZero());
+                        OpenIf();
+                        {
+                            MetaGuard(34);
+                            EmitDeopt(pc, DeoptStamped);
+                        }
+                        CloseNested();
+                        LoadSlot64(WasmAbi.ArithValue);
+                        Op(new LocalSet(LA(slot)));
+                        LoadSlot32(WasmAbi.ArithKind);
+                        Op(new LocalSet(LAK(slot)));
+                    }
+                    OpenElse();
+                    {
+                        MetaGuard(35);
+                        StoreSlot64(WasmAbi.DiagB, () =>
+                        {
+                            Op(new LocalGet(LT0));
+                            Op(new Int64ExtendInt32Unsigned());
+                        });
+                        EmitDeopt(pc, DeoptStamped);
+                        Op(new Int64Constant(0));
+                        Op(new LocalSet(LA(slot)));
+                        Op(new Int32Constant(0));
+                        Op(new LocalSet(LAK(slot)));
+                    }
+                    CloseNested();
                 }
                 CloseNested();
             }
@@ -8199,6 +8256,493 @@ public static class WasmPredicateCompiler
         // equal values there can wear different cells, so cell identity is
         // not term identity. A cyclic term is bounded the way the unifier is,
         // by the worklist running into the stack limit.
+
+        // ---- arithmetic expression evaluation: module function K+4 ----
+        // (root: i64, mailbox: i32) -> i32: 1 evaluated, 0 declined. The
+        // answer goes in the mailbox, because a function cannot write its
+        // caller's locals: ArithValue is a sixty-bit integer or the bits of
+        // a double, and ArithKind says which.
+        //
+        // Why it exists: `X is Expr` where Expr arrives in a REGISTER is not
+        // a leaf. The fused opcodes read one cell and the module could only
+        // handle a number, so an expression built at run time -- which is
+        // what a constraint solver does all day -- stepped aside. Measured
+        // on clp(Z), 198 of 402 deopts were exactly this, every one of them
+        // an operand whose tag was Str.
+        //
+        // Iterative, over two stacks growing toward each other above the
+        // stack top: a WORK stack of things still to do and an OPERAND stack
+        // of values already computed. A tree is not bounded by anything the
+        // compiler knows, so a recursive walk would be a wasm stack overflow
+        // on user data, which is not a failure a Prolog program may cause.
+        //
+        // It applies exactly the arithmetic the module already applies to
+        // leaves, and no more: same operators, same overflow and
+        // divide-by-zero checks, same promotion of a mixed pair to float.
+        // Everything else declines, and declining is always sound -- the
+        // engine then evaluates the whole expression itself, errors and all.
+
+        private static List<Instruction> BuildArithBody()
+        {
+            const uint ROOT = 0, MB = 1;
+            const uint HEAPB = 2, ATAB = 3, ATLEN = 4, WL = 5, WLB = 6,
+                       OL = 7, T0 = 8, T1 = 9, KA = 10, KB = 11, TAG = 12;
+            const uint C = 13, VA = 14, VB = 15, TMP = 16;
+            const uint FA = 17, FB = 18;   // f64: the promoted pair
+
+            var code = new List<Instruction>();
+            int depth = 0;
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void I64(long v) => O(new Int64Constant(v));
+            void OIf() { O(new If(BlockType.Empty)); depth++; }
+            void OIfT(BlockType t) { O(new If(t)); depth++; }
+            void OElse() => O(new Else());
+            void OEnd() { O(new End()); depth--; }
+            void OBlock() { O(new Block(BlockType.Empty)); depth++; }
+            void OLoop() { O(new Loop(BlockType.Empty)); depth++; }
+            void Continue() => O(new Branch((uint)(depth - 1)));
+
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Decline() { I32(0); O(new Return()); }
+            void HeapLoad(uint idxLocal)
+            {
+                LG(HEAPB); LG(idxLocal); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+            }
+            void TagOf(uint cel) { LG(cel); I64(60); O(new Int64ShiftRightUnsigned()); }
+            void TagIs(uint cel, long tag) { TagOf(cel); I64(tag); O(new Int64Equal()); }
+            void Deref(uint cel, uint home)
+            {
+                OBlock(); OLoop();
+                TagOf(cel); I64(0); O(new Int64NotEqual()); O(new BranchIf(1));
+                LG(cel); O(new Int32WrapInt64()); LSet(home);
+                HeapLoad(home); LSet(TMP);
+                LG(TMP); LG(cel); O(new Int64Equal()); O(new BranchIf(1));
+                LG(TMP); LSet(cel); O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            // Room for one more entry on each stack, which grow toward each
+            // other: the work stack up from the bottom, the operand stack
+            // down from the top.
+            void NeedRoom()
+            {
+                LG(WL); I32(16); O(new Int32Add());
+                LG(OL); I32(16); O(new Int32Subtract());
+                O(new Int32GreaterThanSigned());
+                OIf(); Decline(); OEnd();
+            }
+            void PushWork(int tag, System.Action payload)
+            {
+                LG(WL); payload(); O(new Int64Store());
+                LG(WL); I32(tag); O(new Int32Store { Offset = 8 });
+                LG(WL); I32(16); O(new Int32Add()); LSet(WL);
+            }
+            void PushOperand(uint valLocal, uint kindLocal)
+            {
+                LG(OL); I32(16); O(new Int32Subtract()); LSet(OL);
+                LG(OL); LG(valLocal); O(new Int64Store());
+                LG(OL); LG(kindLocal); O(new Int32Store { Offset = 8 });
+            }
+            void PopOperand(uint valLocal, uint kindLocal)
+            {
+                LG(OL); O(new Int64Load()); LSet(valLocal);
+                LG(OL); O(new Int32Load { Offset = 8 }); LSet(kindLocal);
+                LG(OL); I32(16); O(new Int32Add()); LSet(OL);
+            }
+            // A float cell is a tag nibble and a heap cell holding the rest.
+            void FloatBitsOf(uint cel, uint outLocal)
+            {
+                LG(cel); I64(56); O(new Int64ShiftRightUnsigned());
+                I64(0xF); O(new Int64And());
+                I64(60); O(new Int64ShiftLeft());
+                LG(cel); O(new Int32WrapInt64()); LSet(T0);
+                HeapLoad(T0); I64(Cell.PayloadMask); O(new Int64And());
+                O(new Int64Or()); LSet(outLocal);
+            }
+            void AsF64(uint valLocal, uint kindLocal)
+            {
+                LG(kindLocal); I32(1); O(new Int32Equal());
+                OIfT(BlockType.Float64);
+                LG(valLocal); O(new Float64ReinterpretInt64());
+                OElse();
+                LG(valLocal); O(new Float64ConvertInt64Signed());
+                OEnd();
+            }
+            void FitsOrDecline(uint local)
+            {
+                LG(local); I64(Cell.MinInt60); O(new Int64LessThanSigned());
+                LG(local); I64(Cell.MaxInt60); O(new Int64GreaterThanSigned());
+                O(new Int32Or());
+                OIf(); Decline(); OEnd();
+            }
+
+            // ---- prologue ----
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.ArithTableBase, ATAB);
+            SlotToI32(WasmAbi.ArithTableLength, ATLEN);
+            LG(ATAB); O(new Int32EqualZero());
+            OIf(); Decline(); OEnd();
+
+            SlotToI32(WasmAbi.StackBase, T0);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackTop) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLB);
+            LG(WLB); LSet(WL);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackLimit) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(OL);
+
+            NeedRoom();
+            PushWork(0, () => LG(ROOT));
+
+            // ---- the walk ----
+            OLoop();
+            {
+                LG(WL); LG(WLB); O(new Int32Equal());
+                OIf();
+                {
+                    // Done: one value is left, and it is the answer.
+                    PopOperand(VA, KA);
+                    LG(MB); LG(VA);
+                    O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.ArithValue) });
+                    LG(MB); LG(KA); O(new Int64ExtendInt32Unsigned());
+                    O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.ArithKind) });
+                    I32(1); O(new Return());
+                }
+                OEnd();
+
+                LG(WL); I32(16); O(new Int32Subtract()); LSet(WL);
+                LG(WL); O(new Int64Load()); LSet(C);
+                LG(WL); O(new Int32Load { Offset = 8 }); LSet(TAG);
+
+                // ---- an operand to evaluate ----
+                LG(TAG); I32(0); O(new Int32Equal());
+                OIf();
+                {
+                    Deref(C, T0);
+
+                    TagIs(C, (long)Tag.Int);
+                    OIf();
+                    {
+                        LG(C); I64(4); O(new Int64ShiftLeft());
+                        I64(4); O(new Int64ShiftRightSigned()); LSet(VA);
+                        I32(0); LSet(KA);
+                        NeedRoom();
+                        PushOperand(VA, KA);
+                        Continue();
+                    }
+                    OEnd();
+
+                    TagIs(C, (long)Tag.Float);
+                    OIf();
+                    {
+                        FloatBitsOf(C, VA);
+                        I32(1); LSet(KA);
+                        NeedRoom();
+                        PushOperand(VA, KA);
+                        Continue();
+                    }
+                    OEnd();
+
+                    // A compound: the table says whether it is arithmetic at
+                    // all, and with what. An id past the table is not a
+                    // question this can answer.
+                    TagIs(C, (long)Tag.Str);
+                    O(new Int32EqualZero());
+                    OIf(); Decline(); OEnd();
+
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);
+                    HeapLoad(T0); I64(Cell.PayloadMask); O(new Int64And());
+                    O(new Int32WrapInt64()); LSet(T1);           // the functor
+                    LG(T1); LG(ATLEN); O(new Int32GreaterThanOrEqualUnsigned());
+                    OIf(); Decline(); OEnd();
+                    LG(ATAB); LG(T1); I32(2); O(new Int32ShiftLeft());
+                    O(new Int32Add()); O(new Int32Load()); LSet(T1);   // the row
+                    LG(T1); O(new Int32EqualZero());
+                    OIf(); Decline(); OEnd();
+
+                    // Pushed so the arguments come off first and the
+                    // operator last, which is what makes the operand stack
+                    // hold (a, b) when the operator runs.
+                    LG(T1); I32(8); O(new Int32ShiftRightUnsigned());
+                    I32(2); O(new Int32Equal());
+                    OIf();
+                    {
+                        NeedRoom();
+                        PushWork(1, () =>
+                        {
+                            LG(T1); I32(0xFF); O(new Int32And());
+                            O(new Int64ExtendInt32Unsigned());
+                        });
+                        NeedRoom();
+                        PushWork(0, () =>
+                        {
+                            LG(T0); I32(2); O(new Int32Add()); LSet(T0);
+                            HeapLoad(T0);
+                            LG(T0); I32(2); O(new Int32Subtract()); LSet(T0);
+                        });
+                        NeedRoom();
+                        PushWork(0, () =>
+                        {
+                            LG(T0); I32(1); O(new Int32Add()); LSet(T0);
+                            HeapLoad(T0);
+                        });
+                        Continue();
+                    }
+                    OEnd();
+
+                    NeedRoom();
+                    PushWork(2, () =>
+                    {
+                        LG(T1); I32(0xFF); O(new Int32And());
+                        O(new Int64ExtendInt32Unsigned());
+                    });
+                    NeedRoom();
+                    PushWork(0, () =>
+                    {
+                        LG(T0); I32(1); O(new Int32Add()); LSet(T0);
+                        HeapLoad(T0);
+                    });
+                    Continue();
+                }
+                OEnd();
+
+                // ---- an operator to apply ----
+                LG(TAG); I32(1); O(new Int32Equal());
+                OIf();
+                {
+                    PopOperand(VB, KB);
+                    PopOperand(VA, KA);
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);    // the op
+
+                    LG(KA); LG(KB); O(new Int32Or());
+                    OIf();
+                    {
+                        // Mixed or float: the four the module does on
+                        // doubles, and a zero divisor is the engine's, not
+                        // an infinity.
+                        LG(T0); I32(3); O(new Int32Equal());
+                        OIf();
+                        {
+                            AsF64(VB, KB);
+                            O(new Float64Constant(0.0));
+                            O(new Float64Equal());
+                            OIf(); Decline(); OEnd();
+                        }
+                        OEnd();
+                        LG(T0); I32(4); O(new Int32LessThanSigned());
+                        O(new Int32EqualZero());
+                        OIf(); Decline(); OEnd();
+                        AsF64(VA, KA); LSet(FA);
+                        AsF64(VB, KB); LSet(FB);
+                        LG(T0); I32(0); O(new Int32Equal());
+                        OIfT(BlockType.Float64);
+                        LG(FA); LG(FB); O(new Float64Add());
+                        OElse();
+                        LG(T0); I32(1); O(new Int32Equal());
+                        OIfT(BlockType.Float64);
+                        LG(FA); LG(FB); O(new Float64Subtract());
+                        OElse();
+                        LG(T0); I32(2); O(new Int32Equal());
+                        OIfT(BlockType.Float64);
+                        LG(FA); LG(FB); O(new Float64Multiply());
+                        OElse();
+                        LG(FA); LG(FB); O(new Float64Divide());
+                        OEnd(); OEnd(); OEnd();
+                        O(new Int64ReinterpretFloat64()); LSet(VA);
+                        I32(1); LSet(KA);
+                    }
+                    OElse();
+                    {
+                        EmitArithIntBin(O, LG, LSet, I32, I64, OIf, OElse, OEnd,
+                                        OIfT, Decline, FitsOrDecline, T0, VA, VB, TMP);
+                        I32(0); LSet(KA);
+                    }
+                    OEnd();
+                    NeedRoom();
+                    PushOperand(VA, KA);
+                    Continue();
+                }
+                OEnd();
+
+                // ---- a unary operator ----
+                PopOperand(VA, KA);
+                LG(C); O(new Int32WrapInt64()); LSet(T0);
+                LG(KA); I32(1); O(new Int32Equal());
+                OIf();
+                {
+                    // Neg, Pos, Abs on a double. Everything else declines.
+                    LG(T0); I32(2); O(new Int32GreaterThanSigned());
+                    OIf(); Decline(); OEnd();
+                    LG(T0); I32(0); O(new Int32Equal());
+                    OIf();
+                    {
+                        LG(VA); O(new Float64ReinterpretInt64());
+                        O(new Float64Negate());
+                        O(new Int64ReinterpretFloat64()); LSet(VA);
+                    }
+                    OEnd();
+                    LG(T0); I32(2); O(new Int32Equal());
+                    OIf();
+                    {
+                        LG(VA); O(new Float64ReinterpretInt64());
+                        O(new Float64Absolute());
+                        O(new Int64ReinterpretFloat64()); LSet(VA);
+                    }
+                    OEnd();
+                }
+                OElse();
+                {
+                    // Neg, Pos, Abs, Sign on the integer lane.
+                    LG(T0); I32(3); O(new Int32GreaterThanSigned());
+                    OIf(); Decline(); OEnd();
+                    LG(T0); I32(0); O(new Int32Equal());
+                    OIf();
+                    {
+                        I64(0); LG(VA); O(new Int64Subtract()); LSet(VA);
+                        FitsOrDecline(VA);
+                    }
+                    OEnd();
+                    LG(T0); I32(2); O(new Int32Equal());
+                    OIf();
+                    {
+                        LG(VA); I64(0); O(new Int64LessThanSigned());
+                        OIfT(BlockType.Int64);
+                        I64(0); LG(VA); O(new Int64Subtract());
+                        OElse();
+                        LG(VA);
+                        OEnd();
+                        LSet(VA);
+                        FitsOrDecline(VA);
+                    }
+                    OEnd();
+                    LG(T0); I32(3); O(new Int32Equal());
+                    OIf();
+                    {
+                        LG(VA); I64(0); O(new Int64GreaterThanSigned());
+                        O(new Int64ExtendInt32Signed());
+                        LG(VA); I64(0); O(new Int64LessThanSigned());
+                        O(new Int64ExtendInt32Signed());
+                        O(new Int64Subtract()); LSet(VA);
+                    }
+                    OEnd();
+                }
+                OEnd();
+                NeedRoom();
+                PushOperand(VA, KA);
+                Continue();
+            }
+            OEnd();
+            I32(0);                      // unreachable fallthrough
+            O(new End());
+            return code;
+        }
+
+        /// <summary>The integer half of a binary operator, inside the
+        /// evaluator. Same operators and same checks as the leaf form:
+        /// nothing here is arithmetic the module did not already do.
+        /// </summary>
+        private static void EmitArithIntBin(
+            System.Action<Instruction> O, System.Action<uint> LG,
+            System.Action<uint> LSet, System.Action<int> I32,
+            System.Action<long> I64, System.Action OIf, System.Action OElse,
+            System.Action OEnd, System.Action<BlockType> OIfT,
+            System.Action Decline, System.Action<uint> FitsOrDecline,
+            uint opLocal, uint a, uint b, uint tmp)
+        {
+            void IsOp(int code) { LG(opLocal); I32(code); O(new Int32Equal()); }
+
+            IsOp(0);                                        // Add
+            OIf();
+            LG(a); LG(b); O(new Int64Add()); LSet(a);
+            FitsOrDecline(a);
+            OEnd();
+
+            IsOp(1);                                        // Sub
+            OIf();
+            LG(a); LG(b); O(new Int64Subtract()); LSet(a);
+            FitsOrDecline(a);
+            OEnd();
+
+            IsOp(2);                                        // Mul
+            OIf();
+            {
+                LG(a); LG(b); O(new Int64Multiply()); LSet(tmp);
+                // The 64-bit overflow probe BEFORE the 60-bit fit, exactly as
+                // the leaf form does it: a product that WRAPPED can land back
+                // inside sixty bits, and the fit check alone would pass it.
+                LG(a); I64(0); O(new Int64NotEqual());
+                LG(a); I64(-1); O(new Int64NotEqual());
+                O(new Int32And());
+                OIf();
+                {
+                    LG(tmp); LG(a); O(new Int64DivideSigned());
+                    LG(b); O(new Int64NotEqual());
+                    OIf(); Decline(); OEnd();
+                }
+                OEnd();
+                LG(tmp); LSet(a);
+                FitsOrDecline(a);
+            }
+            OEnd();
+
+            IsOp(4);                                        // IntDiv
+            OIf();
+            {
+                LG(b); I64(0); O(new Int64Equal());
+                OIf(); Decline(); OEnd();
+                LG(a); LG(b); O(new Int64DivideSigned()); LSet(a);
+            }
+            OEnd();
+
+            IsOp(5);                                        // Mod
+            OIf();
+            {
+                LG(b); I64(0); O(new Int64Equal());
+                OIf(); Decline(); OEnd();
+                LG(a); LG(b); O(new Int64RemainderSigned()); LSet(a);
+                LG(a); I64(0); O(new Int64NotEqual());
+                LG(a); LG(b); O(new Int64ExclusiveOr());
+                I64(0); O(new Int64LessThanSigned());
+                O(new Int32And());
+                OIf();
+                LG(a); LG(b); O(new Int64Add()); LSet(a);
+                OEnd();
+            }
+            OEnd();
+
+            IsOp(7);                                        // Min
+            OIf();
+            LG(a); LG(b); LG(a); LG(b); O(new Int64LessThanOrEqualSigned());
+            O(new Select()); LSet(a);
+            OEnd();
+
+            IsOp(8);                                        // Max
+            OIf();
+            LG(a); LG(b); LG(a); LG(b); O(new Int64GreaterThanOrEqualSigned());
+            O(new Select()); LSet(a);
+            OEnd();
+
+            // Anything outside that set is the engine's.
+            LG(opLocal); I32(0); O(new Int32Equal());
+            LG(opLocal); I32(1); O(new Int32Equal()); O(new Int32Or());
+            LG(opLocal); I32(2); O(new Int32Equal()); O(new Int32Or());
+            LG(opLocal); I32(4); O(new Int32Equal()); O(new Int32Or());
+            LG(opLocal); I32(5); O(new Int32Equal()); O(new Int32Or());
+            LG(opLocal); I32(7); O(new Int32Equal()); O(new Int32Or());
+            LG(opLocal); I32(8); O(new Int32Equal()); O(new Int32Or());
+            O(new Int32EqualZero());
+            OIf(); Decline(); OEnd();
+        }
 
         private static List<Instruction> BuildIdentityBody()
         {

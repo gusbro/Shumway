@@ -54,7 +54,11 @@ public sealed partial class Activation
         /// <summary>Base and capacity of the orphaned-record ring. A zero
         /// base means a compaction that would orphan one declines.</summary>
         long AttrOrphanBase = 0,
-        int AttrOrphanLimit = 0);
+        int AttrOrphanLimit = 0,
+        /// <summary>Base and length of the arithmetic functor table. A zero
+        /// base means a compound operand steps aside.</summary>
+        long ArithTableBase = 0,
+        int ArithTableLength = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -202,6 +206,10 @@ public sealed partial class Activation
         m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
         m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
         m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
+        m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
+        m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
+        m[WasmAbi.ArithValue] = 0;
+        m[WasmAbi.ArithKind] = 0;
         m[WasmAbi.AttrOrphanBase] = bases.AttrOrphanBase;
         m[WasmAbi.AttrOrphanLimit] = bases.AttrOrphanLimit;
         m[WasmAbi.AttrOrphanTop] = 0;
