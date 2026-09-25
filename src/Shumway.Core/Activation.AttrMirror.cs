@@ -148,26 +148,40 @@ public sealed partial class Activation
             AttrMirrorRebuild(_attrMirror.Length);
         }
         long key = AttrMirrorKey(home, moduleId);
-        long[] rows = _attrMirror!;
-        int slot = AttrMirrorHash(home, moduleId, _attrMirrorMask);
-        int firstFree = -1;
-        while (true)
+        // ONE pass per attempt, never an open-ended probe: the occupancy is
+        // partly TOLD (a module's fresh inserts arrive as flags), and a count
+        // that drifts low lets the table fill past its load factor. A probe
+        // that then finds neither the key nor an empty slot would cycle
+        // forever, which is exactly what queens 24 under clp(Z) did in the
+        // browser, with the cancel unable to land. A full pass rebuilds
+        // instead, which recounts from the store, and the retry has room.
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            long k = rows[slot * 2];
-            if (k == key) { rows[slot * 2 + 1] = value; return; }
-            if (k == AttrMirrorTomb)
+            long[] rows = _attrMirror!;
+            int mask = _attrMirrorMask;
+            int slot = AttrMirrorHash(home, moduleId, mask);
+            int firstFree = -1;
+            for (int n = mask + 1; n > 0; n--)
             {
-                if (firstFree < 0) firstFree = slot;
+                long k = rows[slot * 2];
+                if (k == key) { rows[slot * 2 + 1] = value; return; }
+                if (k == AttrMirrorTomb)
+                {
+                    if (firstFree < 0) firstFree = slot;
+                }
+                else if (k == AttrMirrorEmpty)
+                {
+                    if (firstFree < 0) { firstFree = slot; _attrMirrorUsed++; }
+                    rows[firstFree * 2] = key;
+                    rows[firstFree * 2 + 1] = value;
+                    return;
+                }
+                slot = (slot + 1) & mask;
             }
-            else if (k == AttrMirrorEmpty)
-            {
-                if (firstFree < 0) { firstFree = slot; _attrMirrorUsed++; }
-                rows[firstFree * 2] = key;
-                rows[firstFree * 2 + 1] = value;
-                return;
-            }
-            slot = (slot + 1) & _attrMirrorMask;
+            AttrMirrorRebuild(_attrMirror!.Length * 2);
         }
+        throw new System.InvalidOperationException(
+            "the attribute image has no empty slot after a rebuild");
     }
 
     private void AttrMirrorDelete(int home, int moduleId)
@@ -176,7 +190,10 @@ public sealed partial class Activation
         long key = AttrMirrorKey(home, moduleId);
         long[] rows = _attrMirror;
         int slot = AttrMirrorHash(home, moduleId, _attrMirrorMask);
-        while (true)
+        // One pass: a table with no empty slot ends the probe here rather
+        // than never (see AttrMirrorPut), and a key it does not hold is
+        // simply not deleted.
+        for (int n = _attrMirrorMask + 1; n > 0; n--)
         {
             long k = rows[slot * 2];
             if (k == AttrMirrorEmpty) return;

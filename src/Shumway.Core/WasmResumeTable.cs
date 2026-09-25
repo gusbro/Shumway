@@ -109,7 +109,7 @@ public sealed class WasmResumeTable
     public void ClearAtomCallMarker(int atomId)
     {
         if (atomId >= 0 && atomId < _atomCallMarkers.Length
-            && _atomCallMarkers[atomId] != 0)
+            && _atomCallMarkers[atomId] > 0)
         {
             _atomCallMarkers[atomId] = 0;
             CallMarkerVersion++;
@@ -187,7 +187,7 @@ public sealed class WasmResumeTable
     /// there was a cache.</summary>
     public void NoteMetaResolution(
         object? addressMap, int moduleAtomId, int goalKey, int appended,
-        int resolvedFid, bool atomGoal = false)
+        int resolvedFid, bool atomGoal = false, int builtinId = -1)
     {
         if (moduleAtomId < 0 || goalKey < 0 || resolvedFid < 0) return;
         // call/N appends arguments, so the predicate it resolves to has a
@@ -206,7 +206,8 @@ public sealed class WasmResumeTable
             _metaStamp = addressMap;
             MetaCacheVersion++;
         }
-        EnsureCallMarker(resolvedFid);
+        if (builtinId >= 0) PublishBuiltin(resolvedFid, builtinId);
+        else EnsureCallMarker(resolvedFid);
         long key = MetaKey(moduleAtomId, goalKey, appended, atomGoal);
         int slot = MetaProbe(moduleAtomId, goalKey, appended, atomGoal,
                              _metaCacheMask);
@@ -261,9 +262,26 @@ public sealed class WasmResumeTable
     private void EnsureCallMarker(int functorId)
     {
         if (functorId < 0) return;
-        if (functorId < _callMarkers.Length && _callMarkers[functorId] != 0)
+        if (functorId < _callMarkers.Length && _callMarkers[functorId] > 0)
             return;
         SetCallMarker(functorId, Activation.EncodeResumeMarker(functorId, 0));
+    }
+
+    /// <summary>A functor the host resolves to a DIRECT builtin gets a
+    /// NEGATIVE marker, -(builtin id + 1): the module reads it where it
+    /// reads a predicate's marker and, instead of jumping, requests the
+    /// builtin with the goal's arguments in the registers -- the same exit
+    /// a call_builtin site makes. Zero stays "nobody covers this".
+    /// A zero-arity builtin is an ATOM goal, keyed by its atom too.</summary>
+    public void PublishBuiltin(int functorId, int builtinId)
+    {
+        if (functorId < 0 || builtinId < 0) return;
+        int marker = -(builtinId + 1);
+        if (functorId >= _callMarkers.Length || _callMarkers[functorId] <= 0)
+            SetCallMarker(functorId, marker);
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        if (arity == 0 && (atomId >= _atomCallMarkers.Length || _atomCallMarkers[atomId] <= 0))
+            SetAtomCallMarker(atomId, marker);
     }
 
     /// <summary>The probe's first slot. The module recomputes this exact
@@ -333,7 +351,8 @@ public sealed class WasmResumeTable
     /// belt and braces, and cheap.</summary>
     public void ClearCallMarker(int functorId)
     {
-        if (functorId >= 0 && functorId < _callMarkers.Length)
+        if (functorId >= 0 && functorId < _callMarkers.Length
+            && _callMarkers[functorId] > 0)
         {
             _callMarkers[functorId] = 0;
             CallMarkerVersion++;

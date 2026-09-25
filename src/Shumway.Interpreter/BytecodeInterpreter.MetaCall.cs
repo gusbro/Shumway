@@ -691,6 +691,8 @@ public sealed partial class BytecodeInterpreter
         {
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.True, 0);
+            PublishBuiltinResolution(functorId, resolutionModule, observedGoalKey,
+                                     extraCount, observedAtomGoal);
             _engine.AdvancePc(9);
             return true;
         }
@@ -698,6 +700,8 @@ public sealed partial class BytecodeInterpreter
         {
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Fail, 0);
+            PublishBuiltinResolution(functorId, resolutionModule, observedGoalKey,
+                                     extraCount, observedAtomGoal);
             return TryBacktrack();
         }
 
@@ -717,7 +721,7 @@ public sealed partial class BytecodeInterpreter
             {
                 _engine.MetaResolutionObserver?.Invoke(
                     addresses, resolutionModule, observedGoalKey, extraCount,
-                    mangledFid, observedAtomGoal);
+                    mangledFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, mangledAddr);
             }
             // ADR-038 — the module's import table: a bare goal it doesn't define
@@ -730,7 +734,7 @@ public sealed partial class BytecodeInterpreter
             {
                 _engine.MetaResolutionObserver?.Invoke(
                     addresses, resolutionModule, observedGoalKey, extraCount,
-                    importedFid, observedAtomGoal);
+                    importedFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, importedAddr);
             }
         }
@@ -754,6 +758,12 @@ public sealed partial class BytecodeInterpreter
                         ? Shumway.Core.MetaRouteKind.DollarCall
                         : Shumway.Core.MetaRouteKind.Builtin,
                     builtinId);
+            // A DIRECT builtin is one a compiled module can request itself;
+            // the $call helpers need this dispatcher, so they stay its.
+            if (!builtin.IsDollarCall)
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    functorId, observedAtomGoal, builtinId);
             return InvokeBuiltinGoal(builtinId);
         }
 
@@ -779,7 +789,7 @@ public sealed partial class BytecodeInterpreter
             if (resolutionModule >= 0 && userKind == Shumway.Core.MetaRouteKind.Jump)
                 _engine.MetaResolutionObserver?.Invoke(
                     addresses, resolutionModule, observedGoalKey, extraCount,
-                    functorId, observedAtomGoal);
+                    functorId, observedAtomGoal, -1);
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(userKind, address);
             return JumpToUserGoal(code, pc, address);
@@ -806,6 +816,18 @@ public sealed partial class BytecodeInterpreter
     /// <summary>Invokes a builtin reached as a runtime meta-call goal
     /// (shared by DispatchCall's slow path and its cached
     /// Builtin/DollarCall routes).</summary>
+    /// <summary>true/0 and fail/0 are decided here before the registry is
+    /// asked, but a compiled module can only act on what the cache says:
+    /// published as the registry builtins they also are.</summary>
+    private void PublishBuiltinResolution(int functorId, int resolutionModule,
+                                          int goalKey, int appended, bool atomGoal)
+    {
+        if (resolutionModule < 0 || _engine.MetaResolutionObserver is null) return;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int id))
+            _engine.MetaResolutionObserver(_engine.CurrentFunctorAddresses,
+                resolutionModule, goalKey, appended, functorId, atomGoal, id);
+    }
+
     private bool InvokeBuiltinGoal(int builtinId)
     {
         var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

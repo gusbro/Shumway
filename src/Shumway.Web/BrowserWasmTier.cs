@@ -55,7 +55,11 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         return a;
     });
 
-    public BrowserWasmWorld() => _modules = new WasmModuleRegistry(_table);
+    public BrowserWasmWorld()
+    {
+        _modules = new WasmModuleRegistry(_table);
+        WasmBuiltinMarkers.Publish(_table);
+    }
 
     // (fid -> live linked address) after a relink; null until one happens.
     // Reference-swapped at a boundary tick, read lock-free by chains.
@@ -262,7 +266,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrDropBase: AttrDropRingAddress(),
                 AttrDropLimit: _engine.WasmAttrDropRingView.Length,
                 FunctorReverseBase: FunctorReverseAddress(),
-                FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask);
+                FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
+                GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
+                GlobalVarCount: globalPairs);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -398,6 +404,29 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// the host drains on the way out.</summary>
         private GCHandle _orphanPin;
         private int[]? _orphanPinned;
+
+        /// <summary>The global-variable image: (atom id, cell) pairs of the
+        /// keys a module may read itself, pinned. Rewritten only when the
+        /// store's version or the activation moved, which is what keeps a
+        /// staging that follows a b_setval cheap for every staging that does
+        /// not.</summary>
+        private readonly long[] _globalImage = GC.AllocateArray<long>(2 * 32, pinned: true);
+        private int _globalImageVersion = -1, _globalImageOwner = -1, _globalImagePairs;
+
+        private long GlobalVarImageAddress(out int pairs)
+        {
+            if (_engine.Host is not Shumway.Builtins.IGlobalVarHost host)
+            { pairs = 0; return 0; }
+            var store = host.GlobalVars;
+            if (store.Version != _globalImageVersion || _engine.InstanceId != _globalImageOwner)
+            {
+                _globalImagePairs = store.WriteLiveCells(_globalImage, _engine.InstanceId);
+                _globalImageVersion = store.Version;
+                _globalImageOwner = _engine.InstanceId;
+            }
+            pairs = _globalImagePairs;
+            return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_globalImage, 0);
+        }
 
         /// <summary>The arithmetic functor table, pinned. It is replaced
         /// when it grows with the functor table, so the address is re-taken
@@ -853,6 +882,28 @@ internal static class BrowserWasmTier
                         sb.Append(" = ").Append(Shumway.Core.AtomTable.GetById(a34)?.Name)
                           .Append('/').Append(r34);
                     }
+                    sb.Append(']');
+                }
+                else if (g == 9 && gfid != 0)
+                {
+                    // The meta cache KEY the probe missed with (WasmResumeTable.MetaKey):
+                    // module atom + 1 above bit 36, an atom-goal flag at bit 35,
+                    // the appended count at 32, the goal's functor or atom id below.
+                    int module = (int)(gfid >> 36) - 1;
+                    bool atomGoal = ((gfid >> 35) & 1) != 0;
+                    int appended = (int)((gfid >> 32) & 7);
+                    int goalKey = (int)gfid;
+                    sb.Append("  [last: ")
+                      .Append(Shumway.Core.AtomTable.GetById(module)?.Name ?? "?").Append(':');
+                    if (atomGoal)
+                        sb.Append(Shumway.Core.AtomTable.GetById(goalKey)?.Name ?? "?").Append("/0");
+                    else
+                    {
+                        var (g9aid, g9ar) = Shumway.Core.FunctorTable.Lookup(goalKey);
+                        sb.Append(Shumway.Core.AtomTable.GetById(g9aid)?.Name ?? "?")
+                          .Append('/').Append(g9ar);
+                    }
+                    if (appended > 0) sb.Append(" +").Append(appended);
                     sb.Append(']');
                 }
                 else if (gfid > 0)

@@ -178,7 +178,14 @@ public static class GlobalVarsBuiltins
     private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
-        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        int home = engine.Deref(c.AsHeapIndex);
+        Cell d = engine.GetHeap(home);
+        // A variable is a reference to its home, never the cell found there:
+        // an AttVar cell exists only at its home, and storing it would hand
+        // the read back an orphan copy -- a different variable, with no
+        // attributes the table knows of. clp(Z) keeps its current propagator
+        // state this way and asks `C == State` on the way back.
+        return d.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(home) : d;
     }
 }
 

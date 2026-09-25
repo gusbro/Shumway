@@ -502,7 +502,13 @@ public static class WasmAbi
 
     public const int AttrMirrorBudget = 68;
 
-    public const int SlotCount = 74;
+    /// <summary>Base and pair count of the global-variable image: (atom id,
+    /// cell) pairs for the keys a module may read itself. A zero base or a
+    /// count below one means every read goes to the host.</summary>
+    public const int GlobalVarBase = 74;
+    public const int GlobalVarCount = 75;
+
+    public const int SlotCount = 76;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

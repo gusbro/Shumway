@@ -215,19 +215,24 @@ public static class WasmPredicateCompiler
         private (int Lo, int Hi) _curPart;
 
         /// <summary>Partition budget in DECODED WAM instructions (~40 wasm
-        /// instructions each): ~100k emitted per function, far under the
-        /// ~640k cliff. A SAFETY VALVE, and measured as one: over the
-        /// prelude plus clpfd, no predicate compiled alone is ever cut (the
-        /// largest takes one function), while the whole program as one group
-        /// takes 7. It bites for the batch mode and for a generated fact
-        /// table, which is one predicate that can cross the budget by
-        /// itself. See PartitionBudgetTests.</summary>
-        private const int PartitionBudgetWamInstrs = 2500;
+        /// instructions each). Two ceilings, and the lower one rules. The
+        /// browser's JIT has a cliff near 640k instructions per function,
+        /// which a budget of 2,500 stayed far under; but its OPTIMISING
+        /// tier never arrived for functions of that size either -- V8 tiers
+        /// a function up by a per-function budget, and a 100k-instruction
+        /// function ran clp(Z) in baseline code for whole benchmarks. With
+        /// Liftoff disabled the same module ran 3.5x faster, so the budget
+        /// is what small predicates compile to on their own: a function the
+        /// optimiser reaches in milliseconds. A member above the budget
+        /// alone still gets exactly one function. See PartitionBudgetTests.
+        /// </summary>
+        private const int PartitionBudgetWamInstrs = 300;
 
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
         private int IdentityIndex => _parts.Count + 3;  // and K+3 the comparator
         private int ArithIndex => _parts.Count + 4;     // and K+4 the evaluator
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
+        private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -478,6 +483,8 @@ public static class WasmPredicateCompiler
             || _env.IsInlineAttrListWrite(builtinId, out _)
             || _env.IsInlineUniv(builtinId)
             || _env.IsInlineGround(builtinId)
+            || _env.IsInlineGlobalFetch(builtinId)
+            || _env.IsInlineAcyclic(builtinId)
             || _env.IsInlineDomSame(builtinId)
             || _env.IsInlineDomEmpty(builtinId)
             || _env.IsInlineDomContains(builtinId)
@@ -894,7 +901,8 @@ public static class WasmPredicateCompiler
             });
             // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier; K+3: term
-            // identity; K+4: arithmetic evaluation. All internal but run.
+            // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
+            // K+6: acyclic_term/1's. All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -904,6 +912,7 @@ public static class WasmPredicateCompiler
             for (int f = 0; f <= k + 1; f++) module.Functions.Add(new Function { Type = 0 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 1 });
+            module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
             module.Exports.Add(new Export
@@ -953,6 +962,19 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildGroundBody(),
             });
+            module.Codes.Add(new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 9, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildAcyclicBody(),
+            });
+
+            // A diagnostic build names its functions, so a browser profile
+            // reads "p12:clpz$state/3" instead of "wasm-function[12]".
+            if (DebugMetaGuards) module.CustomSections.Add(BuildNameSection(addrsInOrder));
 
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
@@ -1054,6 +1076,47 @@ public static class WasmPredicateCompiler
         /// sites only), and an $out case that spills the scalars and
         /// tail-calls run with the cursor to route — how a jump reaches
         /// another partition. In-partition jumps stay internal branches.</summary>
+        /// <summary>The wasm "name" custom section (function names only):
+        /// run, one entry per partition naming its first member and how
+        /// many more it holds, then the shared helpers.</summary>
+        private CustomSection BuildNameSection(List<int> addrsInOrder)
+        {
+            var names = new List<string> { "run" };
+            for (int p = 0; p < _parts.Count; p++)
+            {
+                var (lo, hi) = _parts[p];
+                int firstSec = _instrs[_byPc[addrsInOrder[lo]]].Section;
+                int members = 1;
+                for (int i = lo + 1; i < hi; i++)
+                    if (_instrs[_byPc[addrsInOrder[i]]].Section != _instrs[_byPc[addrsInOrder[i - 1]]].Section)
+                        members++;
+                var (aid, ar) = FunctorTable.Lookup(_members[firstSec].Predicate.FunctorId);
+                string first = (AtomTable.GetById(aid)?.Name ?? "?") + "/" + ar;
+                names.Add($"p{p + 1}:{first}" + (members > 1 ? $"(+{members - 1})" : ""));
+            }
+            names.Add("resolver"); names.Add("unifier"); names.Add("identity");
+            names.Add("arith"); names.Add("ground"); names.Add("acyclic");
+
+            var payload = new List<byte>();
+            static void Leb(List<byte> o, uint v)
+            {
+                do { byte b = (byte)(v & 0x7f); v >>= 7; if (v != 0) b |= 0x80; o.Add(b); } while (v != 0);
+            }
+            var map = new List<byte>();
+            Leb(map, (uint)names.Count);
+            for (int i = 0; i < names.Count; i++)
+            {
+                Leb(map, (uint)i);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(names[i]);
+                Leb(map, (uint)bytes.Length);
+                map.AddRange(bytes);
+            }
+            payload.Add(1);                                 // subsection: function names
+            Leb(payload, (uint)map.Count);
+            payload.AddRange(map);
+            return new CustomSection { Name = "name", Content = payload };
+        }
+
         private FunctionBody BuildPartitionBody((int Lo, int Hi) part,
                                                 List<int> addrsInOrder)
         {
@@ -1868,6 +1931,30 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineGlobalFetch(ins.I0))
+                    {
+                        EmitInlineGlobalFetch(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
+                    if (_env.IsInlineAcyclic(ins.I0))
+                    {
+                        EmitInlineWalk(AcyclicIndex, ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineUniv(ins.I0))
                     {
                         EmitInlineUniv(ins.Pc, () =>
@@ -2078,6 +2165,30 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineGround(ins.I0))
                     {
                         EmitInlineGround(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineGlobalFetch(ins.I0))
+                    {
+                        EmitInlineGlobalFetch(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineAcyclic(ins.I0))
+                    {
+                        EmitInlineWalk(AcyclicIndex, ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -4030,6 +4141,18 @@ public static class WasmPredicateCompiler
                     });
                     return false;
                 }
+                if (_env.IsInlineAcyclic(builtinId))
+                {
+                    EmitInlineWalk(AcyclicIndex, ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
+                    return false;
+                }
                 if (_env.IsInlineUniv(builtinId))
                 {
                     EmitInlineUniv(ins.Pc, () =>
@@ -4707,7 +4830,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant(-1));
                 Op(new LocalSet(LMetaArity));
                 EmitReadBarrier();
-                EmitMetaTail();
+                EmitMetaTailOrRequest();
             }
             CloseNested();
 
@@ -4787,8 +4910,30 @@ public static class WasmPredicateCompiler
                     Op(new Int32ShiftLeft());
                     Op(new Int32Add());
                     Op(new Int64Load());
+                    Op(new LocalSet(LC1));                  // the mirror row
+                    Op(new LocalGet(LC1));
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LMetaArity));           // goal arity
+
+                    // A compound whose functor has arity ZERO is an atom goal
+                    // to the host, which keys it by atom id (MetaCall.cs:
+                    // observedAtomGoal is goalArity == 0). Keyed the same
+                    // way here, from the row's atom half; keyed by functor it
+                    // never hits. Measured on clp(Z): one such site missed
+                    // 2,530 times.
+                    Op(new LocalGet(LMetaArity));
+                    Op(new Int32EqualZero());
+                    OpenIf();
+                    {
+                        Op(new Int32Constant(1));
+                        Op(new LocalSet(LMetaAtom));
+                        Op(new LocalGet(LC1));
+                        Op(new Int64Constant(32));
+                        Op(new Int64ShiftRightUnsigned());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LT1));              // the atom id
+                    }
+                    CloseNested();
                 }
                 OpenElse();
                 {
@@ -4909,6 +5054,11 @@ public static class WasmPredicateCompiler
                     OpenIf();
                     {
                         EmitInlineGoalForm();
+                        // The KEY the probe missed with, so the histogram
+                        // can name the goal (module, functor or atom) that
+                        // keeps going to the host.
+                        if (DebugMetaGuards)
+                            StoreSlot64(WasmAbi.DiagB, () => Op(new LocalGet(LAtKey)));
                         MetaGuard(9);
                         GoSlow();
                     }
@@ -5016,11 +5166,18 @@ public static class WasmPredicateCompiler
             Op(new Int64Load());
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // arity, fid spent
+            // Too wide for the registers, or zero -- unless the marker is a
+            // builtin's, which has nothing to copy and is requested as is.
             Op(new LocalGet(LT1));
-            Op(new Int32Constant(1));
-            Op(new Int32Subtract());
-            Op(new Int32Constant(MaxMetaCallArity - 1));
+            Op(new Int32Constant(MaxMetaCallArity));
             Op(new Int32GreaterThanUnsigned());
+            Op(new LocalGet(LT1));
+            Op(new Int32EqualZero());
+            Op(new LocalGet(LAtVal));
+            Op(new Int32Constant(0));
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new Int32And());
+            Op(new Int32Or());
             MetaGuard(5);
             Op(new BranchIf(0));                            // 0, or too wide -> $slow
 
@@ -5219,7 +5376,43 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.SuccessTailCall);
             }
 
-            EmitMetaTail();
+            // A NEGATIVE marker names a direct builtin (WasmResumeTable.
+            // PublishBuiltin): the goal's arguments are in X0.. by now, so
+            // this is exactly the request a call_builtin site makes, and the
+            // chain stays open for the host to resume at pc + 9. The frame
+            // is the one the jump arm would build, for the same reason it
+            // builds it: pc + 9 pops one.
+            void EmitMetaTailOrRequest()
+            {
+                Op(new LocalGet(LAtVal));
+                Op(new Int32Constant(0));
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                {
+                    if (ownFrame)
+                    {
+                        EmitAllocateFrame(0, pc);
+                        _metaFrameResume.Add(pc + 9);
+                    }
+                    StoreSlot64(WasmAbi.BuiltinId, () =>
+                    {
+                        Op(new Int32Constant(-1));
+                        Op(new LocalGet(LAtVal));
+                        Op(new Int32Subtract());            // -(marker) - 1: the id
+                        Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Constant((long)(tail ? 0 : envTrim) << 32));
+                        Op(new Int64Or());
+                    });
+                    StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                        tail ? -1 : _env.EncodeAddress(pc + 9))));
+                    EmitReturn(WasmVerdict.BuiltinRequest);
+                }
+                OpenElse();
+                EmitMetaTail();
+                CloseNested();
+            }
+
+            EmitMetaTailOrRequest();
 
             CloseNested();                                  // $slow
             EmitDeopt(pc, DeoptStamped);
@@ -6909,7 +7102,92 @@ public static class WasmPredicateCompiler
         /// anywhere in this term. An ATTRIBUTED variable is unbound too,
         /// which is the case the libraries that call ground/1 hardest make
         /// and the easy one to get wrong.</para></summary>
+        /// <summary><c>'$fetch_global_var'(Key, Value)</c> answered from the
+        /// global-variable image: the (atom id, cell) pairs of the keys whose
+        /// value is a cell live for this activation. A key the image lacks --
+        /// unset, a snapshot the host re-emits, another activation's write --
+        /// goes to the host as the request it always was, which also decides
+        /// the failure. The image is small (clp(Z) keeps one key) and read
+        /// on every propagator step, so a linear scan is the right probe.
+        /// </summary>
+        private void EmitInlineGlobalFetch(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // not an atom -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // the key's atom id
+
+            LoadSlot32(WasmAbi.GlobalVarBase);
+            Op(new LocalSet(LT0));                          // the row
+            Op(new LocalGet(LT0));
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // no image -> $slow
+            LoadSlot32(WasmAbi.GlobalVarCount);
+            Op(new LocalSet(LT2));                          // pairs left
+            Op(new LocalGet(LT2));
+            Op(new Int32Constant(0));
+            Op(new Int32LessThanOrEqualSigned());
+            Op(new BranchIf(0));                            // empty, or overflowed -> $slow
+
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $scan
+            {
+                Op(new LocalGet(LT2));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(2));                        // not in the image -> $slow
+                Op(new LocalGet(LT0));
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new LocalGet(LT1));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int64Load { Offset = 8 });
+                    Op(new LocalSet(LU0));                  // the value cell, kept
+                    Op(new Branch(2));                      // -> $found
+                }
+                CloseNested();
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(16));
+                Op(new Int32Add());
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LT2));
+                Op(new Branch(0));                          // -> $scan
+            }
+            CloseNested();                                  // $scan
+            CloseNested();                                  // $found
+
+            // Value against the cell. A pair the inline unify cannot decide
+            // leaves as the request itself, which the host answers by the
+            // same unification -- idempotent over whatever was bound first.
+            EmitUnifyTwo(() => RegLoad(1), () => Op(new LocalGet(LU0)), pc,
+                         emitEscape: emitBuiltinExit);
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
         private void EmitInlineGround(int pc, Action emitBuiltinExit)
+            => EmitInlineWalk(GroundIndex, pc, emitBuiltinExit);
+
+        /// <summary>A one-argument test answered by one of the module's
+        /// walkers over X0 -- 0 fails, 1 succeeds, 2 declines to the host.
+        /// </summary>
+        private void EmitInlineWalk(int walker, int pc, Action emitBuiltinExit)
         {
             EmitFlagsCheck(pc);
             OpenBlock();                                    // $done
@@ -6919,7 +7197,7 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.StackTop, LST);
             RegLoad(0);
             Op(new LocalGet(0));
-            Op(new WebAssembly.Instructions.Call((uint)GroundIndex));
+            Op(new WebAssembly.Instructions.Call((uint)walker));
             Op(new LocalSet(LT0));
             Op(new LocalGet(LT0));
             Op(new Int32Constant(2));
@@ -10278,6 +10556,178 @@ public static class WasmPredicateCompiler
             return code;
         }
 
+        /// <summary>acyclic_term/1 as a module function: (root cell, mailbox)
+        /// -> 0 cyclic, 1 acyclic, 2 declined. A depth-first walk over a
+        /// worklist above the stack top, like ground's; what makes it a
+        /// cycle check is a CLOSE entry pushed under every compound's
+        /// arguments, tagged as no term cell is (Functor) and carrying the
+        /// compound's address. The entries still pending are exactly the
+        /// compounds on the current path, so a compound is cyclic when the
+        /// pending entries name its address, and a shared subterm reached
+        /// again on ANOTHER path is not. Declines on a packed string, whose
+        /// tail only the engine unpacks, and when the worklist would cross
+        /// the stack limit.</summary>
+        private static List<Instruction> BuildAcyclicBody()
+        {
+            const uint ROOT = 0, MB = 1;
+            const uint HEAPB = 2, FTABB = 3, WL = 4, WLB = 5, WLLIM = 6,
+                       T0 = 7, K = 8, T1 = 9, P = 10;
+            const uint C = 11, TMP = 12, S = 13;
+
+            var code = new List<Instruction>();
+            int depth = 0;
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void I64(long v) => O(new Int64Constant(v));
+            void OIf() { O(new If(BlockType.Empty)); depth++; }
+            void OEnd() { O(new End()); depth--; }
+            void OBlock() { O(new Block(BlockType.Empty)); depth++; }
+            void OLoop() { O(new Loop(BlockType.Empty)); depth++; }
+            void Continue() => O(new Branch((uint)(depth - 1)));
+
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Ret(int v) { I32(v); O(new Return()); }
+            void HeapLoad(uint idxLocal)
+            {
+                LG(HEAPB); LG(idxLocal); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+            }
+            void TagOf(uint cel) { LG(cel); I64(60); O(new Int64ShiftRightUnsigned()); }
+            void TagIs(uint cel, long tag) { TagOf(cel); I64(tag); O(new Int64Equal()); }
+            void Deref(uint cel, uint home)
+            {
+                OBlock(); OLoop();
+                TagOf(cel); I64(0); O(new Int64NotEqual()); O(new BranchIf(1));
+                LG(cel); O(new Int32WrapInt64()); LSet(home);
+                HeapLoad(home); LSet(TMP);
+                LG(TMP); LG(cel); O(new Int64Equal()); O(new BranchIf(1));
+                LG(TMP); LSet(cel); O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            void PushCell(System.Action value)
+            {
+                LG(WL); I32(8); O(new Int32Add()); LG(WLLIM);
+                O(new Int32GreaterThanSigned());
+                OIf(); Ret(2); OEnd();
+                LG(WL); value(); O(new Int64Store());
+                LG(WL); I32(8); O(new Int32Add()); LSet(WL);
+            }
+            // The compound at T0 is on the current path when a pending
+            // CLOSE entry carries its address: cyclic.
+            void FailIfOnPath()
+            {
+                LG(WL); LSet(P);
+                OBlock(); OLoop();
+                LG(P); LG(WLB); O(new Int32Equal()); O(new BranchIf(1));
+                LG(P); I32(8); O(new Int32Subtract()); LSet(P);
+                LG(P); O(new Int64Load()); LSet(S);
+                TagIs(S, (long)Tag.Functor);
+                LG(S); O(new Int32WrapInt64()); LG(T0); O(new Int32Equal());
+                O(new Int32And());
+                OIf(); Ret(0); OEnd();
+                O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            void PushClose()
+            {
+                PushCell(() =>
+                {
+                    LG(T0); O(new Int64ExtendInt32Unsigned());
+                    I64((long)Tag.Functor << Cell.TagShift); O(new Int64Or());
+                });
+            }
+
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.FunctorTableBase, FTABB);
+            SlotToI32(WasmAbi.StackBase, T0);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackTop) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLB);
+            LG(WLB); LSet(WL);
+            LG(T0);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackLimit) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLLIM);
+
+            PushCell(() => LG(ROOT));
+
+            OLoop();
+            {
+                LG(WL); LG(WLB); O(new Int32Equal());
+                OIf(); Ret(1); OEnd();                      // nothing left: acyclic
+                LG(WL); I32(8); O(new Int32Subtract()); LSet(WL);
+                LG(WL); O(new Int64Load()); LSet(C);
+
+                // A CLOSE entry: its compound's arguments are all walked, so
+                // it leaves the path.
+                TagIs(C, (long)Tag.Functor);
+                OIf(); Continue(); OEnd();
+
+                Deref(C, T0);
+
+                // A packed string's tail may be a variable behind a
+                // representation only the engine unpacks.
+                TagIs(C, (long)Tag.Pstr);
+                OIf(); Ret(2); OEnd();
+
+                TagIs(C, (long)Tag.Str);
+                OIf();
+                {
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);
+                    FailIfOnPath();
+                    HeapLoad(T0); I64(Cell.PayloadMask); O(new Int64And());
+                    O(new Int32WrapInt64()); LSet(K);
+                    LG(FTABB); LG(K); I32(3); O(new Int32ShiftLeft());
+                    O(new Int32Add()); O(new Int64Load());
+                    O(new Int32WrapInt64()); LSet(K);       // the arity
+                    PushClose();
+                    OBlock(); OLoop();
+                    {
+                        LG(K); I32(0); O(new Int32LessThanOrEqualSigned());
+                        O(new BranchIf(1));
+                        PushCell(() =>
+                        {
+                            LG(T0); LG(K); O(new Int32Add()); LSet(T1);
+                            HeapLoad(T1);
+                        });
+                        LG(K); I32(1); O(new Int32Subtract()); LSet(K);
+                        O(new Branch(0));
+                    }
+                    OEnd(); OEnd();
+                    Continue();
+                }
+                OEnd();
+
+                TagIs(C, (long)Tag.Lis);
+                OIf();
+                {
+                    LG(C); O(new Int32WrapInt64()); LSet(T0);
+                    FailIfOnPath();
+                    PushClose();
+                    PushCell(() => HeapLoad(T0));
+                    LG(T0); I32(1); O(new Int32Add()); LSet(T1);
+                    PushCell(() => HeapLoad(T1));
+                    Continue();
+                }
+                OEnd();
+
+                // A variable, attributed or not, and every constant: nothing
+                // below it.
+                Continue();
+            }
+            OEnd();
+            I32(1);
+            O(new End());
+            return code;
+        }
+
         private static List<Instruction> BuildArithBody()
         {
             const uint ROOT = 0, MB = 1;
@@ -11078,6 +11528,30 @@ public static class WasmPredicateCompiler
                 LG(CA); LG(CB); O(new Int64Equal());
                 OIf(); Continue(); OEnd();
 
+                // An attributed variable against a plain unbound one: the
+                // plain variable binds to Ref(the attvar's home) and nothing
+                // wakes, the engine's own rule (UnifyAttVar). The home is the
+                // AttVar cell's payload -- an AttVar cell lives only at its
+                // home -- not the deref local, which a bound side leaves
+                // stale. Binding a compound's attvar slot is what clp(Z)'s
+                // state(queue(_,_,_,Aux)) does on every propagator step.
+                TagIs(CA, (long)Tag.AttVar); TagIs(CB, 0); O(new Int32And());
+                OIf();
+                {
+                    LG(CA); I64(Cell.PayloadMask); O(new Int64And()); LSet(C1);
+                    Bind(DB, C1); Continue();
+                }
+                OEnd();
+                TagIs(CB, (long)Tag.AttVar); TagIs(CA, 0); O(new Int32And());
+                OIf();
+                {
+                    LG(CB); I64(Cell.PayloadMask); O(new Int64And()); LSet(C1);
+                    Bind(DA, C1); Continue();
+                }
+                OEnd();
+
+                // Two attributed variables, or one against a bound value:
+                // attributes merge or a hook wakes, and both are the host's.
                 TagIs(CA, (long)Tag.AttVar); TagIs(CB, (long)Tag.AttVar);
                 O(new Int32Or());
                 OIf(); Ret2(3); OEnd();

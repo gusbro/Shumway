@@ -190,7 +190,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
         private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
-        private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt, _globalAt;
+        private readonly long[] _globalRows = new long[2 * 32];
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -265,8 +266,14 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _attrWriteAt = _arithAt + arithLen * 4;
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
             _funRevAt = (_attrDropAt + attrDrops.Length * 4 + 7) & ~7;
-            if (_funRevAt + (long)funRev.Length * 8 > (long)Pages * 65536)
+            _globalAt = _funRevAt + funRev.Length * 8;
+            if (_globalAt + (long)_globalRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
+            // The global-variable image, per staging: the store is a handful
+            // of keys, and a b_setval inside a builtin has to be visible on
+            // re-entry.
+            int globalPairs = _engine.Host is Shumway.Builtins.IGlobalVarHost gvHost
+                ? gvHost.GlobalVars.WriteLiveCells(_globalRows, _engine.InstanceId) : 0;
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
 
@@ -303,7 +310,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrDropBase: _attrDropAt,
                 AttrDropLimit: attrDrops.Length,
                 FunctorReverseBase: _funRevAt,
-                FunctorReverseMask: FunctorReverseTable.Mask);
+                FunctorReverseMask: FunctorReverseTable.Mask,
+                GlobalVarBase: globalPairs > 0 ? _globalAt : 0,
+                GlobalVarCount: globalPairs);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -366,6 +375,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             fixed (long* p = funRev)
                 Buffer.MemoryCopy(p, mem + _funRevAt, funRev.Length * 8L,
                                   funRev.Length * 8L);
+            if (globalPairs > 0)
+                fixed (long* p = _globalRows)
+                    Buffer.MemoryCopy(p, mem + _globalAt, globalPairs * 16L, globalPairs * 16L);
             if (arithLen > 0)
                 fixed (int* p = arithRows)
                     Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);

@@ -38,7 +38,11 @@ public sealed class DesktopWasmSpace : IDisposable
     internal int MetaCacheAt = -1;
     internal int MetaCacheCopied = -1;
 
-    public DesktopWasmSpace() => Modules = new(ResumeTable);
+    public DesktopWasmSpace()
+    {
+        Modules = new(ResumeTable);
+        WasmBuiltinMarkers.Publish(ResumeTable);
+    }
 
     public void Dispose() => Memory.Dispose();
 }

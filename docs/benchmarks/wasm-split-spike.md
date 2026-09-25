@@ -586,11 +586,85 @@ the workload that motivated the whole question:
 | consult clpz + cases | 56.9 s | 21.6 s | 2.6x | | |
 | jit_compile(all), 2791 predicates | 51.1 s | 11.4 s | 4.5x | | |
 
-Under AOT, Tier-0 beats the wasm tier on CLP(Z) by 3-6x: the tier's cost there
-is its exits to host builtins, which AOT does not touch, while the host side it
-competes with got 7x faster. For CLP(Z) the fastest configuration today is the
-AOT publish with the tier off; the tier keeps its wins where it stays inside
-wasm (nrev 13x, tak 26x, zebra 8x over AOT Tier-0).
+Under AOT, Tier-0 beat the wasm tier on CLP(Z) by 3-6x at first. That gap had
+five causes and a hang, all found with the counters and V8's sampler; the
+next section records them and where the tier stands after.
+
+### The tier on CLP(Z): five causes and a hang
+
+Instruments: `#wasmclpz=<rounds>:<case,case>` (a local main.js hook) runs the
+Triska cases on Scryer's clpz.pl, ABBA, and dumps `jit_compile(status)` after
+each mode, which is where the deopt and exit rankings come from; `#wasmexits`
+prices one exit kind per iteration. Under AOT a builtin request costs 7-9 us of
+round trip, a deopt about 15 us, and a loop that stays inside the module 0.1 us
+per iteration against Tier-0's 0.7.
+
+Starting point, queens10ff x5, no diagnostics: Tier-0 720 ms, tier 2,340 ms.
+Counters for queens10ff+sendmore: 27,898 chains, 8,125 deopts, 11,395 builtin
+exits, 1,142 foreign exits. In order of what they cost:
+
+1. **Baseline code.** With `--js-flags=--no-liftoff` the same module ran the
+   same pass in 975 ms instead of 3,406 (diagnostic build). V8 tiers a function
+   up to TurboFan by a per-function budget and compiles it in the background;
+   a partition of 2,500 WAM instructions is a ~100k-instruction function, and
+   forty of them never got there inside a benchmark. Nothing a page can ask
+   for changes that; the size of the hot functions does. The partition budget
+   is 300 now, which is the size a predicate compiles to on its own.
+2. **guard 25, 4,963 deopts (61%).** clpz's `state(queue(_,_,_,Aux))` matches
+   the live queue whose last slot is an attributed variable: two bound
+   compounds, so the pair reached the module's unifier, which stepped aside
+   at any ATTVAR. The engine's rule for an attributed variable against a plain
+   unbound one is to bind the plain one to Ref(home) and wake nothing; the
+   unifier does that now, in both orientations. The site went to zero.
+3. **guard 9, 2,771 deopts.** The meta cache only ever held resolutions that
+   end in a jump, so `call(G)` with G a builtin, `true` or `fail` missed every
+   time. A direct builtin now has a NEGATIVE call marker, -(id + 1), published
+   for every builtin up front and by the host when it resolves one; the module
+   requests it with the goal's arguments in the registers, the exit a
+   call_builtin site makes. A goal that is a compound with an arity-zero
+   functor is keyed as the atom the host keys it by. 2,771 became 73.
+4. **`$fetch_global_var/2`, 5,101 exits (37% of builtin exits).** clpz reads
+   its current propagator on every step (`bb_get`). The keys whose value is a
+   cell live for the activation are an image in linear memory (`GlobalVarBase`,
+   `GlobalVarCount`, atom-cell pairs), re-synced when the store's version
+   moves; a snapshot the host has to re-emit still goes to the host. Found on
+   the way: a backtrackable write of an attributed variable stored the AttVar
+   cell itself, so the read handed back an orphan copy and clpz's
+   `C == State` was always false on Tier-0. A variable is stored as a
+   reference to its home now.
+5. **`acyclic_term/1`, 3,000 exits.** A module walker beside ground/1's: a
+   worklist with a CLOSE entry under every compound's arguments, tagged as
+   no term cell is, so the entries still pending are the compounds on the
+   current path. A shared subterm is not a cycle; a packed string declines.
+
+And a hang: queens24 on the tier never finished, in any build, with the
+cancel unable to land. Named profile: 63% of all samples in
+`Activation.AttrMirrorSetRowCount`. The attribute image's `AttrMirrorPut`
+probed with `while (true)` and only an EMPTY slot ended it; occupancy is
+partly told by the module's fresh-insert flags, and once it drifted low the
+table filled up and the probe cycled forever, in the host, where no safe
+point is. Probes are one pass now, and a full pass rebuilds the image and
+retries. What makes the count drift is not identified.
+
+After all of it, no diagnostics, best of an ABBA round, the tier wins every
+case:
+
+| case | Tier-0 AOT | wasm tier AOT | |
+|---|---:|---:|---:|
+| queens10ff x5 | 935 ms | 436 ms | 2.1x |
+| sendmore x2 | 53 ms | 40 ms | 1.3x |
+| queens16 x2 | 476 ms | 400 ms | 1.2x |
+| queens24 x2 | 935 ms | 641 ms | 1.5x |
+| sudoku x1 | 4740 ms | 1355 ms | 3.5x |
+| factorial x10 | 207 ms | 128 ms | 1.6x |
+
+The grain set did not move: nrev 14x, tak 13x, zebra 8.5x, queens 8 (clpfd)
+1.6-2x over AOT Tier-0 in the lazy mode; clpr stays at parity (0.7-1.2x),
+which is its own open question. What is left on queens10ff+sendmore after
+changes 2 and 3 (browser counters, diagnostic build): 459 deopts, of which 175
+are an attributed variable bound to a value inside get_value (a wakeup, the
+host's) and 104 a restore that has to unwind the extra trail; the two walks
+of changes 4 and 5 take another 8,100 builtin exits off the 13,898.
 
 Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
 above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native

@@ -34,9 +34,9 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
             {
                 int p = at;
                 // run, the fail/proceed resolver, the unifier, the
-                // comparator, the expression evaluator and ground's walk
-                // are not partitions.
-                return (int)ReadLeb(module, ref p) - 6;
+                // comparator, the expression evaluator and the two walks
+                // (ground, acyclic) are not partitions.
+                return (int)ReadLeb(module, ref p) - 7;
             }
             at += (int)size;
         }

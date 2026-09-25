@@ -31,6 +31,18 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry is { IsCall: false, IsDollarCall: false };
     }
 
+    public bool IsInlineAcyclic(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "acyclic_term" && entry.Arity == 1;
+    }
+
+    public bool IsInlineGlobalFetch(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$fetch_global_var" && entry.Arity == 2;
+    }
+
     public bool IsInlineUnify(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

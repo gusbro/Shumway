@@ -47,6 +47,30 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     private readonly Dictionary<int, int> _owner = new();
     private readonly Dictionary<int, object> _retained = new();
 
+    /// <summary>Bumped by every write, so a mirror of the store can tell a
+    /// stale image from a current one without walking it.</summary>
+    public int Version { get; private set; }
+
+    /// <summary>The entries a compiled module may answer a read from: the
+    /// cells LIVE for <paramref name="ownerId"/>, as (atom id, cell) pairs
+    /// in <paramref name="rows"/>. A payload (a snapshot the host re-emits)
+    /// is not among them, and neither is another activation's backtrackable
+    /// write, so a key the rows lack still goes to the host. Returns the
+    /// pair count, or -1 when the rows cannot hold them all.</summary>
+    public int WriteLiveCells(long[] rows, int ownerId)
+    {
+        int n = 0;
+        foreach (var (atomId, cell) in _byAtomId)
+        {
+            if (_owner.TryGetValue(atomId, out int owner) && owner != ownerId) continue;
+            if (n * 2 + 2 > rows.Length) return -1;
+            rows[n * 2] = atomId;
+            rows[n * 2 + 1] = cell.Data;
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>A backtrackable write keeps the live cell, so it is only
     /// meaningful while the heap it points into is the one being run. The
     /// owning activation is recorded and the read checks it: a query is a
@@ -60,6 +84,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId[atomId] = value;
         if (backtrackable) _owner[atomId] = ownerId;
         else _owner.Remove(atomId);
+        Version++;
     }
 
     /// <summary>False when the key holds a backtrackable write from another
@@ -70,6 +95,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         if (!_owner.TryGetValue(atomId, out int owner) || owner == ownerId) return true;
         _byAtomId.Remove(atomId);
         _owner.Remove(atomId);
+        Version++;
         return false;
     }
 
@@ -82,6 +108,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId.Remove(atomId);
         _owner.Remove(atomId);
         _payloads[atomId] = payload;
+        Version++;
     }
 
     public bool TryGetPayload(int atomId, out object payload) =>
@@ -102,6 +129,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     {
         if (hadOldValue) _byAtomId[key] = oldValue;
         else { _byAtomId.Remove(key); _owner.Remove(key); }
+        Version++;
     }
 
     public bool TryGet(int atomId, out Cell value) =>
@@ -122,6 +150,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId.Remove(atomId);
         _payloads.Remove(atomId);
         _owner.Remove(atomId);
+        Version++;
     }
 
     /// <summary>ADR-016 — rewrites every stored cell through the heap

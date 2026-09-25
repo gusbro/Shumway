@@ -68,6 +68,9 @@ public sealed partial class Activation
         /// <summary>How many rows the module may insert into the attribute
         /// image before the load factor would need a rebuild.</summary>
         int AttrMirrorBudget = 0,
+        /// <summary>Base and pair count of the global-variable image.</summary>
+        long GlobalVarBase = 0,
+        int GlobalVarCount = 0,
         /// <summary>Base and capacity of the dropped-record ring.</summary>
         long AttrDropBase = 0,
         int AttrDropLimit = 0,
@@ -244,7 +247,9 @@ public sealed partial class Activation
     ///
     /// <para>Null unless a wasm world is attached, and called only on the
     /// resolution path, which is already the slow one.</para></summary>
-    public System.Action<object?, int, int, int, int, bool>? MetaResolutionObserver;
+    /// <para>The last argument is the builtin id when the goal resolved to
+    /// a DIRECT builtin (one a module can request), -1 for a predicate.</para>
+    public System.Action<object?, int, int, int, int, bool, int>? MetaResolutionObserver;
 
     /// <summary>False when the activation is in a mode the compiled code does
     /// not honour (trail-everything, occurs_check) -- the tier delegate then
@@ -329,6 +334,8 @@ public sealed partial class Activation
         m[WasmAbi.AttrLogBase] = bases.AttrLogBase;
         m[WasmAbi.AttrLogLength] = bases.AttrLogLength;
         m[WasmAbi.AttrRecordCount] = AttrTableCount;
+        m[WasmAbi.GlobalVarBase] = bases.GlobalVarBase;
+        m[WasmAbi.GlobalVarCount] = bases.GlobalVarCount;
 
         // What a compaction owes the catch frames, as three numbers. They
         // cannot change inside a chain: a frame is pushed and deactivated by

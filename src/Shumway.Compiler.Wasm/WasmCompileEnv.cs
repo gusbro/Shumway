@@ -204,6 +204,16 @@ public interface IWasmCompileEnv
     /// looking for an unbound variable and nothing else.</summary>
     bool IsInlineGround(int builtinId) => false;
 
+    /// <summary>Whether the builtin is '$fetch_global_var'/2, which the
+    /// compiled code answers from the global-variable image when the key is
+    /// there: the read clp(Z) makes on every propagator step.</summary>
+    bool IsInlineGlobalFetch(int builtinId) => false;
+
+    /// <summary>Whether the builtin is acyclic_term/1, which the compiled
+    /// code walks itself (the module's own walker, beside ground/1's): the
+    /// check clp(Z) makes on every expression it parses.</summary>
+    bool IsInlineAcyclic(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps
