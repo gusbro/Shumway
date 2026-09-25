@@ -32,6 +32,15 @@
          Build or publish with -p:ShumwayWasmTier=true to include it. -->
     <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
 
+    <!-- The engine is AOT-compiled to wasm by default: measured 6-9x faster
+         than mono's IL interpreter on Tier-0 (CLP(Z) 5-7x) once the two
+         try/finally on the dispatch path were removed. Costs a 4.5 MB
+         (brotli) native module and a ~20 min publish the first time; the
+         wasm-tools workload is required either way. Pass
+         -p:RunAOTCompilation=false for a quick interpreted publish. Numbers
+         in docs/benchmarks/wasm-split-spike.md. -->
+    <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">true</RunAOTCompilation>
+
     <!-- REQUIRED for the NativeFileReference below to reach the runtime.
          Threads do NOT imply the native relink: without this the SDK prints
          "the native references won't be linked in, because neither

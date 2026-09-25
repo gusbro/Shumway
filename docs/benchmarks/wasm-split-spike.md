@@ -514,22 +514,95 @@ It splits Tier-0 down the middle:
 | queens 12 | 4151 ms | 29166 ms | 7.0x SLOWER |
 
 Pure unification and search get 4-5x faster; everything arithmetic gets 5-9x
-slower, first runs included, so it is not warmup. The working hypothesis:
-some method on the arithmetic path falls back to Mono's interpreter under
-AOT, and interp-to-AOT transitions inside the hot loop cost more than AOT
-returns everywhere else. tak is the minimal reproducer -- nothing in it but
-is/2 and comparisons.
+slower, first runs included, so it is not warmup. The first hypothesis was a
+method on the arithmetic path falling back to Mono's interpreter under AOT.
 
-Where the wasm tier does the running and the host only serves, AOT helped
-about 2x (clpr batch 841 to 440 ms; queens' builtins component 464 to
-251 ms) -- not the order of magnitude that interpreted-vs-compiled suggests,
-consistent with part of the domain layer falling back too.
+### The split, explained: a `finally` in the dispatch frame
 
-So the flag is rejected as shipped. The conceivable follow-up is MIXED AOT,
-an explicit method list keeping the fallback out of hot paths; judged not
-worth the mechanism's complexity while the split above is not understood.
-Anyone reopening this starts by profiling tak under AOT, not by tuning
-flags.
+The fallback hypothesis was REFUTED by the AOT compiler's own log
+(`-p:WasmAOTCompilerVerbose=true -v:d`): every engine method, the whole
+arithmetic stack included, is compiled; the 26 Shumway methods left to the
+interpreter are cold (resource loading, gsharedvt generics). Isolated
+microbenchmarks in the same publish showed thread-static access, cross-assembly
+calls and the arithmetic eval stack all 1.5-2.5x FASTER under AOT, so the
+cost was somewhere the microbenchmarks did not reach.
+
+Profiling tak under AOT with V8's sampler (`--js-flags="--prof"`, engine
+isolate) put 2% of the samples in `BytecodeInterpreter.Dispatch` and the rest
+in the Mono runtime: `mono_seq_point_find_prev_by_native_offset`,
+`mono_metadata_parse_type_internal`, `mono_aot_get_class_from_name`,
+`dlmalloc`. One call chain accounts for all of it:
+
+```
+Dispatch -> ves_icall_thread_finish_async_abort
+         -> mono_thread_interruption_checkpoint_request
+         -> mono_walk_stack_with_ctx   (full stack walk, sequence points decoded)
+```
+
+Mono's JIT front end emits that icall at the exit of every `finally` clause,
+guarded by the clause's exception variable being non-null
+(`method-to-ir.c`, the `OP_CALL_HANDLER` leave path). Under the LLVM back end
+that variable is loaded from a per-method `alloca` which is only ever stored by
+an exception landing pad. In the long-lived, alloca-heavy `Dispatch` frame the
+guard reads non-null on the normal path, so every `finally` exit in that frame
+costs a runtime stack walk of roughly 150 us. A `try/finally` in a small clean
+frame does not reproduce it (100k iterations: 1.2 ms), so the exact trigger
+inside `Dispatch` is not pinned down; the effect is.
+
+The only `finally` clauses in `Dispatch` were the two around a builtin call
+(`call_builtin` and `execute_builtin`), whose sole job was the profiler's
+`BuiltinExit`. tak reaches one on every leaf: `A = Z` runs as a builtin
+`=/2`; about 30k leaves times 150 us is the missing five seconds. nrev and
+zebra never call a builtin in their loops, which is why they were the ones
+AOT sped up. The fix moves `BuiltinExit` into the catch clauses and after the
+try (Mono emits the icall for `finally` only; a `catch` clause costs nothing).
+
+With that change, back to back in the same headless session, median of 3:
+
+| program | Tier-0 interp | Tier-0 AOT | | wasm tier interp | wasm tier AOT | |
+|---|---:|---:|---:|---:|---:|---:|
+| nrev 200 x5 | 447 ms | 47 ms | 9.5x | 8.4 ms | 3.5 ms | 2.4x |
+| tak 18,12,6 | 739 ms | 130 ms | 5.7x | 6.3 ms | 5.0 ms | 1.3x |
+| zebra x10 | 1296 ms | 157 ms | 8.3x | 25 ms | 20 ms | 1.3x |
+| clpr x200 | 659 ms | 96 ms | 6.9x | 399 ms | 127 ms | 3.1x |
+| clpr x400 | 1243 ms | 168 ms | 7.4x | 881 ms | 258 ms | 3.4x |
+| queens 8 (clpfd) | 977 ms | 150 ms | 6.5x | 185 ms | 126 ms | 1.5x |
+
+(wasm tier = the lazy mode, one module per promoted predicate.) AOT now wins
+everywhere: Tier-0 by 6-9x, and the wasm tier by 1.3-3.4x, most where the
+tier exits to host builtins (clpr, clpfd). The rejection above is withdrawn.
+
+CLP(Z) on Scryer's `clpz.pl` (`#wasmclpz`, warm ABBA round, oracle-checked),
+the workload that motivated the whole question:
+
+| case | Tier-0 interp | Tier-0 AOT | | wasm tier interp | wasm tier AOT |
+|---|---:|---:|---:|---:|---:|
+| queens10ff x5 | 5340 ms | 719 ms | 7.4x | 11543 ms | 4170 ms |
+| sendmore x2 | 377 ms | 67 ms | 5.6x | 355 ms | 173 ms |
+| queens16 x2 | 3973 ms | 531 ms | 7.5x | 3064 ms | 3056 ms |
+| queens24 x2 | 7125 ms | 1368 ms | 5.2x | | |
+| sudoku x1 | 19709 ms | 2808 ms | 7.0x | | |
+| factorial x10 | 1663 ms | 235 ms | 7.1x | | |
+| consult clpz + cases | 56.9 s | 21.6 s | 2.6x | | |
+| jit_compile(all), 2791 predicates | 51.1 s | 11.4 s | 4.5x | | |
+
+Under AOT, Tier-0 beats the wasm tier on CLP(Z) by 3-6x: the tier's cost there
+is its exits to host builtins, which AOT does not touch, while the host side it
+competes with got 7x faster. For CLP(Z) the fastest configuration today is the
+AOT publish with the tier off; the tier keeps its wins where it stays inside
+wasm (nrev 13x, tak 26x, zebra 8x over AOT Tier-0).
+
+Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
+above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native
+module is 23.8 MB raw, 4.5 MB brotli, 6.6 MB for the whole `_framework`
+download against 2.9 MB interpreted; the runtime is up 6.2 s after navigation
+cold and 3.4 s warm, on localhost. Toolchain: SDK 10.0.401, wasm-tools 10.0.112,
+Emscripten 3.1.56 are the newest .NET ships (the 11 previews carry the same
+Emscripten).
+
+Any new `try/finally` on the Tier-0 dispatch path reopens this, and nothing but
+the AOT profile catches it: a headless run of `#wasmgrain` with
+`-p:RunAOTCompilation=true` is the regression check.
 
 ## Reproducing
 

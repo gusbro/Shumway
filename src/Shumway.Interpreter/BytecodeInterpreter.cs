@@ -1225,16 +1225,26 @@ public sealed partial class BytecodeInterpreter
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
                     Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+                    // NOT try/finally. Under mono's LLVM AOT (the WebShumway
+                    // publish) a `finally` exiting inside this frame calls the
+                    // runtime's async-abort check, which walks the whole stack
+                    // (~150 us per builtin: tak went 5x SLOWER than interpreted).
+                    // A catch clause costs nothing, so the exit bookkeeping
+                    // runs in the catches and after the try instead.
+                    // See docs/benchmarks/wasm-split-spike.md.
                     try { implOk = entry.Impl(_engine); }
                     catch (PrologRuntimeException re)
                     {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
                         re.StampBuiltin(entry.Name, entry.Arity);
                         throw;
                     }
-                    finally
+                    catch
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        throw;
                     }
+                    Shumway.Core.Profiler.BuiltinExit(builtinId);
                     _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {
@@ -2587,6 +2597,8 @@ public sealed partial class BytecodeInterpreter
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
+                    // NOT try/finally: a finally here costs a runtime stack
+                    // walk under mono's LLVM AOT. See the call_builtin site.
                     try
                     {
                         Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
@@ -2594,13 +2606,16 @@ public sealed partial class BytecodeInterpreter
                     }
                     catch (PrologRuntimeException re)
                     {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
                         re.StampBuiltin(entry.Name, entry.Arity);
                         throw;
                     }
-                    finally
+                    catch
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        throw;
                     }
+                    Shumway.Core.Profiler.BuiltinExit(builtinId);
                     _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {

@@ -15,6 +15,12 @@ dotnet publish src/Shumway.Web -c Release
 # the site is bin/Release/Shumway.Web/net10.0/publish/wwwroot
 ```
 
+The engine is compiled ahead of time to WebAssembly, which is what makes
+queries fast once the page is up; that publish takes around twenty minutes
+the first time (the wasm-tools workload is required). For a quick check of
+the page itself, `-p:RunAOTCompilation=false` publishes in a couple of
+minutes with the engine interpreted, several times slower.
+
 ---
 
 ## What it is
