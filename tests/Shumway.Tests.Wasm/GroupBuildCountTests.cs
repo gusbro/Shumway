@@ -32,6 +32,10 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     /// batch promoter wired, and counts group builds.</summary>
     private static (PrologEngine Engine, Func<int> Builds, WasmPromotionStore Store)
         Tier(bool batch, int threshold)
+        => TierCounting(batch, threshold, out _);
+
+    private static (PrologEngine Engine, Func<int> Builds, WasmPromotionStore Store)
+        TierCounting(bool batch, int threshold, out Func<int> refused)
     {
         var engine = new PrologEngine();
         var store = engine.IlPromotion;
@@ -40,15 +44,15 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         var env = new EngineWasmCompileEnv();
         var members = new List<WasmGroupMember>();
         int builds = 0;
+        // The promotion census refuses crossing-dominated members (a couple
+        // of prelude catch helpers qualify); each lazy refusal re-installs
+        // the group without the culprit, so builds = promotions + refusals.
+        int refusals = 0;
 
         void Install()
         {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
+            TieredEngine.Install(world, members, env);
             builds++;
-            var map = new Dictionary<int, int>(members.Count);
-            foreach (var mm in members) map[mm.Predicate.FunctorId] = mm.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, map, entry.RegisterDemand);
         }
 
         var wasm = new WasmPromotionStore(store)
@@ -62,6 +66,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
                 try { Install(); return new WasmTierDelegate(pred.FunctorId, world).Invoke; }
                 catch (WasmCompileException)
                 {
+                    refusals++;
                     members.Remove(m);
                     if (members.Count > 0) Install();
                     return null;
@@ -85,7 +90,15 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
                                 new List<WasmGroupMember> { m }, env);
                             good.Add(m);
                         }
-                        catch (WasmCompileException) { }
+                        catch (WasmCompileException ex)
+                        {
+                            // Production (BrowserWasmTier) marks a refused
+                            // member unpromotable; without it the member is
+                            // a candidate again on EVERY tick, and a goal
+                            // that changes nothing keeps announcing builds.
+                            store.Wasm?.MarkUnpromotable(
+                                m.Predicate.FunctorId, ex.Message);
+                        }
                     }
                     if (good.Count == 0) return 0;
                     members.AddRange(good);
@@ -100,6 +113,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         };
         store.Wasm = wasm;
         engine.ConsultString(Corpus);
+        refused = () => refusals;
         return (engine, () => builds, wasm);
     }
 
@@ -252,12 +266,12 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     {
         // The cost this exists to prevent, stated as a fact rather than a
         // worry: without the batch, the build count TRACKS the promotions.
-        var (e, builds, _) = Tier(batch: false, threshold: 1);
+        var (e, builds, _) = TierCounting(batch: false, threshold: 1, out var refused);
         Assert.True(e.Query("run(L), length(L, N), N == 1.").Success);
         int n = e.IlPromotion.PromotedFunctorIds().Count();
-        o.WriteLine($"lazy: promoted={n} builds={builds()}");
+        o.WriteLine($"lazy: promoted={n} builds={builds()} refused={refused()}");
 
         Assert.True(n > 1, $"only {n} promoted: the corpus did not exercise the tier");
-        Assert.Equal(n, builds());
+        Assert.Equal(n + refused(), builds());
     }
 }

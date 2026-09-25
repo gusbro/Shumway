@@ -31,11 +31,7 @@ public class WasmAttVarValueTests
                 members.Add(m);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var addrMap = new Dictionary<int, int>(members.Count);
-                    foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, addrMap, entry.RegisterDemand);
+                    Shumway.Tests.Wasm.TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException)

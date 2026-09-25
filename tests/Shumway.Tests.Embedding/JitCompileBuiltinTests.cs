@@ -1,0 +1,185 @@
+using System.Linq;
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>jit_compile/1 sets Tier-1 promotion for the goals that follow.
+/// A build has exactly one Tier-1 -- the IL compiler here, the WebAssembly
+/// backend in WebShumway -- so the same goal carries the same meaning in
+/// both, and a harness written in Prolog can ask for a tier setting without
+/// knowing which engine it landed in.</summary>
+public sealed class JitCompileBuiltinTests
+{
+    private const string Corpus = """
+        count(0, []) :- !.
+        count(N, [_|T]) :- count(M, T), N is M + 1.
+        len(L, N) :- count(N, L).
+        """;
+
+    private static PrologEngine Engine(int threshold = 0)
+    {
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString(Corpus);
+        return e;
+    }
+
+    /// <summary>The list is long enough that "all" and a threshold of 1000
+    /// cannot promote the same set, which is what makes the counts below a
+    /// test and not a formality.</summary>
+    private const string Work =
+        "numlist(1, 400, L), len(L, N), N =:= 400.";
+
+    /// <summary>How many predicates a Tier-1 build actually promoted, counted
+    /// only once the background compiles have landed.
+    ///
+    /// <para>Promotion compiles on a worker by default, so the count right
+    /// after a query is whatever happened to finish in time -- 0, 1 or 2 on
+    /// the same run. That asynchrony, read too early, is what made these
+    /// tests flake between each other by run order, and it is not enablement
+    /// order: drained, every path reaches the same count.</para></summary>
+    private static int PromotedAfterDraining(PrologEngine e)
+    {
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(),
+            "background promotions did not settle within the timeout");
+        return e.IlPromotion.PromotedFunctorIds().Count();
+    }
+
+    /// <summary>all promotes, off evicts and stops promoting. Both counts are
+    /// taken after the background compiles drain, so they are the settled
+    /// numbers and not a snapshot of a race.</summary>
+    [Fact]
+    public void AllPromotesAndOffEvicts()
+    {
+        var e = Engine();
+        Assert.True(e.Query("jit_compile(all).").Success);
+        Assert.Equal(1, e.IlPromotion.Threshold);
+        Assert.True(e.Query(Work).Success);
+        Assert.True(PromotedAfterDraining(e) > 0,
+            "jit_compile(all) then a goal promoted nothing once drained");
+
+        Assert.True(e.Query("jit_compile(off).").Success);
+        Assert.Equal(0, e.IlPromotion.Threshold);
+        Assert.True(e.Query(Work).Success);
+        Assert.Empty(e.IlPromotion.PromotedFunctorIds());
+    }
+
+    /// <summary>off returns what ALREADY promoted, not only what would have.
+    /// The eviction is queued and applied at the next query setup, so the
+    /// count is taken after a further goal has run.</summary>
+    [Fact]
+    public void OffReturnsAlreadyPromotedPredicatesToTierZero()
+    {
+        var e = Engine();
+        Assert.True(e.Query("jit_compile(all).").Success);
+        Assert.True(e.Query(Work).Success);
+        Assert.True(PromotedAfterDraining(e) > 0);
+
+        Assert.True(e.Query("jit_compile(off).").Success);
+        Assert.True(e.Query("true.").Success);
+        Assert.Empty(e.IlPromotion.PromotedFunctorIds());
+    }
+
+    /// <summary>Answers do not depend on the mode. This is the property the
+    /// conformance corpus checks at scale; here it guards the builtin itself,
+    /// since "promote nothing" would pass every count assertion above.
+    /// </summary>
+    [Theory]
+    [InlineData("off")]
+    [InlineData("all")]
+    [InlineData("2")]
+    [InlineData("1000")]
+    public void EveryModeAnswersTheSame(string mode)
+    {
+        var e = Engine();
+        Assert.True(e.Query($"jit_compile({mode}).").Success);
+        Assert.True(e.Query(Work).Success);
+        Assert.True(e.Query("numlist(1, 30, L), len(L, N), N =:= 30.").Success);
+    }
+
+    /// <summary>A huge threshold leaves the rarely-called ones behind, which
+    /// is the whole difference between it and "all". Both counts are drained
+    /// first, so the comparison is between settled numbers.</summary>
+    [Fact]
+    public void AThresholdPromotesLessThanAll()
+    {
+        static int NewlyPromotedRunning(string mode)
+        {
+            var e = Engine();
+            Assert.True(e.Query($"jit_compile({mode}).").Success);
+            var before = new HashSet<int>(e.IlPromotion.PromotedFunctorIds());
+            Assert.True(e.Query(Work).Success);
+            Assert.True(e.IlPromotion.WaitForPendingPromotions());
+            return e.IlPromotion.PromotedFunctorIds().Count(f => !before.Contains(f));
+        }
+
+        int underAll = NewlyPromotedRunning("all");
+        int underRare = NewlyPromotedRunning("100000");
+        Assert.True(underAll > 0, "jit_compile(all) promoted nothing new");
+        Assert.True(underAll > underRare,
+            $"all promoted {underAll} and a threshold of 100000 promoted "
+            + $"{underRare}: the argument is ignored");
+    }
+
+    /// <summary>The top level's spellings work here too. They did not, which
+    /// made jit_compile(none) a goal that worked when typed at the page and
+    /// raised when a program ran it.</summary>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("off")]
+    [InlineData("on")]
+    [InlineData("all")]
+    [InlineData("16")]
+    public void EverySpellingTheTopLevelTakesIsAccepted(string mode)
+        => Assert.True(Engine().Query($"jit_compile({mode}).").Success, mode);
+
+    /// <summary>And a rejected mode names the offender. It reported an
+    /// unbound variable, which tells the reader nothing about what they
+    /// typed.</summary>
+    [Fact]
+    public void ARejectedModeNamesTheOffender()
+    {
+        // Asserted on the PROLOG term, which is what the user reads: the
+        // culprit reported as _ says nothing about what they typed.
+        Assert.True(Engine().Query(
+            "catch(jit_compile(sideways), "
+            + "error(domain_error(jit_compile_mode, sideways), _), true).").Success);
+        Assert.True(Engine().Query(
+            "catch(jit_compile(f(x)), "
+            + "error(domain_error(jit_compile_mode, f(x)), _), true).").Success);
+    }
+
+    [Fact]
+    public void BadModesAreRejected()
+    {
+        var e = Engine();
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(sideways).").Success);
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(f(x)).").Success);
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(-3).").Success);
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(X).").Success);
+    }
+
+    /// <summary>The mode is engine state, so a directive in a consulted file
+    /// sets it for what follows -- the point of the builtin over a top-level
+    /// command is that a Prolog harness can ask for the tier itself. And it
+    /// leads to real promotion, checked after the background compiles drain.
+    /// </summary>
+    [Fact]
+    public void ADirectiveSetsTheMode()
+    {
+        var e = new PrologEngine();
+        Assert.Equal(0, e.IlPromotion.Threshold);
+        e.ConsultString(":- jit_compile(all).\n" + Corpus);
+        Assert.Equal(1, e.IlPromotion.Threshold);
+        Assert.True(e.Query(Work).Success);
+        Assert.True(PromotedAfterDraining(e) > 0,
+            "a :- jit_compile(all) directive then a goal promoted nothing");
+
+        var off = new PrologEngine();
+        off.ConsultString(":- jit_compile(off).\n" + Corpus);
+        Assert.Equal(0, off.IlPromotion.Threshold);
+        Assert.True(off.Query(Work).Success);
+        Assert.Empty(off.IlPromotion.PromotedFunctorIds());
+    }
+}

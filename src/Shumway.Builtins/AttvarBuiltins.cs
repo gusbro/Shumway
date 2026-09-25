@@ -64,6 +64,15 @@ public static class AttvarBuiltins
         int moduleId = ModuleId(engine, 1);
         var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
         int listIdx = engine.GetAttr(varAddr, moduleId);
+        // An "insert" is two different things, and the module handles
+        // both: a row on a variable that is already attributed, and the
+        // PROMOTION of a plain one. What reaches here is what it
+        // declined, so which of the two it was is the question.
+        Shumway.Core.Diagnostics.CompactCensus.NoteAttrPut(listIdx >= 0);
+        if (listIdx < 0)
+            Shumway.Core.Diagnostics.CompactCensus.NoteAttrInsertShape(
+                engine.GetHeap(engine.Deref(varAddr)).Tag == Shumway.Core.Tag.AttVar,
+                engine.AttrHasAnyRecord(engine.Deref(varAddr)));
         var kept = CollectNonMatching(engine, listIdx, kind, key, out _);
         Cell regCell = engine.GetRegister(2);
         Cell headCell = regCell.Tag is Tag.Ref or Tag.AttVar
@@ -105,9 +114,15 @@ public static class AttvarBuiltins
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
         int listIdx = engine.GetAttr(varAddr, moduleId);
-        if (listIdx < 0) return true;
+        if (listIdx < 0)
+        {
+            Shumway.Core.Diagnostics.CompactCensus.NoteAttrDel(0);
+            return true;
+        }
         var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
         var kept = CollectNonMatching(engine, listIdx, kind, key, out bool removedAny);
+        Shumway.Core.Diagnostics.CompactCensus.NoteAttrDel(
+            !removedAny ? 1 : kept.Count == 0 ? 2 : 3);
         if (!removedAny) return true;
         if (kept.Count == 0) engine.DelAttr(varAddr, moduleId);
         else engine.PutAttr(varAddr, moduleId, BuildAttrList(engine, null, kept));

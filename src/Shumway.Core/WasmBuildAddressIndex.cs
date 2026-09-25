@@ -1,13 +1,19 @@
 namespace Shumway.Core;
 
 /// <summary>Translates a group build's baked addresses into the live code
-/// space after a relink. A consult relinks the whole static program and
-/// moves every predicate (measured: two plain facts shifted all ~530 prelude
-/// addresses); the bytecode itself only MOVES, so a build stays runnable —
-/// what must not happen is a build-space pc reaching the interpreter's
-/// SetPc. The owning member is found by base (members' address ranges are
-/// disjoint and their leaders lie inside them), and the pc moves by that
-/// member's own displacement.</summary>
+/// space after a relink. The static layout is append-only, so what stays
+/// keeps its address (measured: a consult and a library load move nothing),
+/// but a predicate that DISAPPEARS leaves a hole the next relink closes,
+/// and everything above it slides down (measured: the helpers a library's
+/// directives leave behind are dropped at the next consult, and the 286
+/// predicates above them moved by a uniform -785). The bytecode itself only
+/// MOVES, so a build stays runnable — what must not happen is a build-space
+/// pc reaching the interpreter's SetPc. This is also what keeps a more
+/// aggressive compaction of the code space possible: the tier does not
+/// require addresses to be frozen, it requires them to be translatable.
+/// The owning member is found by base (members' address ranges are disjoint
+/// and their leaders lie inside them), and the pc moves by that member's own
+/// displacement.</summary>
 public sealed class WasmBuildAddressIndex
 {
     private readonly int[] _bases;
@@ -23,6 +29,16 @@ public sealed class WasmBuildAddressIndex
         foreach (var (fid, addr) in entryAddressByFid)
         { _bases[i] = addr; _fids[i] = fid; i++; }
         System.Array.Sort(_bases, _fids);
+    }
+
+    /// <summary>The functor owning a build-space pc, or -1. The same search
+    /// the translation uses, exposed because populating the resume table needs
+    /// to attribute each address to its predicate: a marker is a (functor,
+    /// address) pair and the build only records the addresses.</summary>
+    public int OwnerFunctorOf(long pc)
+    {
+        int at = OwnerOf(pc);
+        return at < 0 ? -1 : _fids[at];
     }
 
     /// <summary>The member owning a build-space pc: the greatest base at or

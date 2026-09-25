@@ -2056,7 +2056,62 @@ public static partial class MetaBuiltins
         foreach (int addr in engine.AttrTableKeysSnapshot())
             if (engine.IsAttVarAt(addr)) live.Add(addr);
         live.Sort();   // creation order: heap addresses grow
+        NoteLiveAttvars(engine, live);
         return engine.UnifyRegisterWithHeapAt(0, BuildRefList(engine, live));
+    }
+
+    /// <summary>Records WHICH variables were live, and under which
+    /// attribute modules, the moment the engine decided.
+    ///
+    /// <para>Two tiers copying a different NUMBER of attributes says one
+    /// of them holds a variable the other does not; it does not say
+    /// which. Taken here rather than from outside because this is where
+    /// the engine itself decides what is live, so the dump cannot
+    /// disagree with the answer for a reason of its own.</para></summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void NoteLiveAttvars(
+        Activation engine, System.Collections.Generic.List<int> live)
+    {
+        if (!Shumway.Core.Diagnostics.AttrTrace.Enabled) return;
+        var sb = new System.Text.StringBuilder();
+        sb.Append(live.Count).Append(" live:");
+        foreach (int addr in live)
+        {
+            sb.Append(' ').Append(addr).Append('[');
+            bool first = true;
+            foreach (int m in engine.AttrModules(addr))
+            {
+                if (!first) sb.Append(',');
+                first = false;
+                try { sb.Append(AtomTable.GetById(m)?.Name ?? m.ToString()); }
+                catch (System.Exception) { sb.Append(m); }
+                // And WHAT it carries. A variable a solver really
+                // constrained holds that solver's attribute term; a
+                // record nothing reaches holds something else, and the
+                // two are indistinguishable by count or by address.
+                sb.Append('=').Append(ValueShape(engine, addr, m));
+            }
+            sb.Append(']');
+        }
+        Shumway.Core.Diagnostics.AttrTrace.LiveSnapshot = sb.ToString();
+    }
+
+    /// <summary>The functor of an attribute's value, or its tag when it
+    /// is not a compound. Diagnostic.</summary>
+    private static string ValueShape(Activation engine, int addr, int moduleId)
+    {
+        try
+        {
+            int v = engine.GetAttr(addr, moduleId);
+            if (v < 0) return "none";
+            int d = engine.Deref(v);
+            Cell c = engine.GetHeap(d);
+            if (c.Tag != Tag.Str) return c.Tag.ToString();
+            var (aid, ar) = FunctorTable.Lookup(
+                engine.GetHeap(c.AsHeapIndex).AsFunctorId);
+            return (AtomTable.GetById(aid)?.Name ?? "?") + "/" + ar;
+        }
+        catch (System.Exception) { return "?"; }
     }
 
     /// <summary>Builds a proper heap list whose elements are references to

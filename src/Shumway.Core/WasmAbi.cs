@@ -152,7 +152,363 @@ public static class WasmAbi
     public const int GoalsRun = 27;
     public const int CellsClaimed = 28;
 
-    public const int SlotCount = 32;
+    /// <summary>Base of the RESUME TABLE: one i64 per resume marker, indexed
+    /// by <c>marker - Activation.ResumeMarkerBase</c>.
+    ///
+    /// <para>A marker is already a dense id — <c>EncodeResumeMarker</c> interns
+    /// the (functor, address) pair and hands back <c>Base + denseId</c> — so
+    /// resolving one is a subscript, not a search. That replaces a linear chain
+    /// of baked <c>if (bp == const)</c> comparisons, one per choice-point site
+    /// in the module.</para>
+    ///
+    /// <para>Row layout: <c>((moduleId + 1) &lt;&lt; 32) | cursor</c>. Zero means
+    /// the marker does not resolve HERE, which is the safe direction: the
+    /// module returns the verdict and the host takes over, exactly as it did
+    /// before there was a table.</para>
+    ///
+    /// <para>PER WORLD, never global. Functor ids and the marker pool are
+    /// process-wide, but bytecode addresses belong to each engine's code space:
+    /// two engines running the same program mint the SAME markers for DIFFERENT
+    /// code. Today that is safe only because resolution is per world, and a
+    /// shared table would quietly lose it.</para></summary>
+    public const int ResumeTableBase = 29;
+    /// <summary>Rows in the resume table. A marker at or past this is newer
+    /// than the table and resolves to the host.</summary>
+    public const int ResumeTableLength = 30;
+    /// <summary>Base of the ATTRIBUTE TABLE's image: two i64 per slot, key
+    /// <c>((home + 1) &lt;&lt; 32) | module</c> then the attribute value's heap
+    /// index. Key 0 is an empty slot and ends a probe; -1 is a tombstone and
+    /// does not.
+    ///
+    /// <para>Zero here means there is no image and get_attr/3 exits to the
+    /// host, which is what it did before there was one -- the same safe
+    /// direction an unwritten slot gives every other base.</para>
+    ///
+    /// <para>The host is the only writer. The module reading a row the store
+    /// no longer holds would be unsound, so every mutation goes through the
+    /// funnel in Activation.Attrs.cs and the image is rebuilt, never patched,
+    /// when the heap collector moves every index at once.</para></summary>
+    public const int AttrTableBase = 31;
+    /// <summary>Slots minus one: the image is a power of two, so a probe
+    /// wraps with an AND. Read only when the base is non-zero.</summary>
+    public const int AttrTableMask = 33;
+
+    /// <summary>Base of the moduleId -&gt; function-table index array the
+    /// in-wasm hop reads: -1 for a module this thread has not registered.
+    /// </summary>
+    public const int ModuleIndexBase = 32;
+    /// <summary>The module that produced the last verdict, written by every
+    /// exit to the host and by nothing else. After in-wasm hops it is the only
+    /// way the host can tell whose build space a pc is in.</summary>
+    public const int CurrentModuleId = 34;
+
+    /// <summary>Scratch for the emitter's DebugLoopGuard (off by default): a
+    /// dispatch counter, the last cursor, and a limit the host may set. Kept
+    /// here rather than at hand-picked indexes, which is how they came to
+    /// overlap the diagnostic tallies once already.</summary>
+    public const int DebugGuardLimit = 35;
+    public const int DebugGuardCount = 36;
+    public const int DebugGuardCursor = 37;
+    /// <summary>Hops taken inside wasm during the chain (a module tail-calling
+    /// another through the table). The only witness that a crossing stayed in
+    /// wasm: a hop that silently went out to the host instead is correct and
+    /// slow, and no answer-comparing test can tell.</summary>
+    public const int HopCount = 38;
+
+    /// <summary>Base of the CALL MARKER table: one i32 per functor id, the
+    /// resume marker of that functor's fresh entry, 0 for a functor no module
+    /// covers. Zero base means no table, and a meta-call steps aside exactly
+    /// as it did before there was one.
+    ///
+    /// <para>What it buys is the only thing a module could not do: call a
+    /// goal whose functor it learns at RUN time. A marker is interned by the
+    /// host, so it cannot be computed from a functor; with the marker in hand
+    /// the module takes the ordinary resume probe.</para></summary>
+    public const int CallMarkerBase = 39;
+    /// <summary>Entries in the call-marker table. A functor id at or past
+    /// this is newer than the table and steps aside.</summary>
+    public const int CallMarkerLength = 40;
+
+    /// <summary>Base of the META-CALL INLINE CACHE: two i64 per slot, key
+    /// <c>((moduleAtom + 1) &lt;&lt; 32) | goalFunctor</c> then the RESOLVED
+    /// functor. Zero base means no cache and a module-tagged meta-call steps
+    /// aside, as it always did.
+    ///
+    /// <para>The resolved functor, not a marker: the module reads the marker
+    /// from <see cref="CallMarkerBase"/> afterwards, so an eviction that
+    /// zeroes that row invalidates this cache for free.</para></summary>
+    public const int MetaCacheBase = 41;
+    /// <summary>Slots minus one. Read only when the base is non-zero.</summary>
+    public const int MetaCacheMask = 42;
+
+    /// <summary>Base of the ATOM marker table: one i32 per atom id, the
+    /// fresh-entry marker of the zero-arity predicate of that name. Zero
+    /// base means none is staged and an atom goal steps aside.
+    ///
+    /// <para>It exists because a module can index but not search: a bare
+    /// atom goal gives it an atom id, and (atom, 0) -&gt; functor is a
+    /// lookup only the host can do.</para></summary>
+    public const int AtomMarkerBase = 43;
+    /// <summary>Entries in the atom marker table.</summary>
+    public const int AtomMarkerLength = 44;
+
+    /// <summary>Non-zero while setup_call_cleanup/3 has live handlers.
+    ///
+    /// <para>A cut may FIRE them, and running a cleanup is meta-calling a
+    /// goal from inside the cut -- host work. So the module's inline cut
+    /// declines whenever any is live, which is the common case being
+    /// nothing.</para>
+    ///
+    /// <para>A slot of its own rather than a Flags bit: Flags makes the code
+    /// bail at the next safe point, and this must stop ONE emitted form, not
+    /// the whole chain.</para></summary>
+    public const int CleanupsPending = 45;
+
+    /// <summary>The thread's function table, as emscripten names it. Every
+    /// module a thread registers lands in this one, which is what lets a
+    /// module reach another without going out to the host.</summary>
+    public const string TableModule = "env";
+    public const string TableField = "__indirect_function_table";
+
+    /// <summary>Base of the '$fd_dom' functor cells, indexed by INTERVAL
+    /// COUNT: entry k is the functor of a domain with k intervals, which has
+    /// arity 2k (ADR-051). Zero means the table does not reach that far and
+    /// the module exits to the host, the same safe direction an unwritten
+    /// base gives everywhere else.
+    ///
+    /// <para>The module needs this because a domain's functor depends on how
+    /// many intervals it ends up with, and interning one is the host's. A
+    /// removal that splits an interval or empties one changes the count; the
+    /// rest reuse the functor already on the heap and never read this.</para>
+    /// </summary>
+    public const int FdDomFunctorBase = 46;
+
+    /// <summary>Entries in the table above: interval counts 0 through
+    /// Length - 1. A domain more fragmented than that exits to the host.
+    /// </summary>
+    public const int FdDomFunctorLength = 47;
+
+    /// <summary>TRACE MODE (diagnostic, off unless armed): a ring the
+    /// module writes one i64 per traced event into, and the cursor and
+    /// capacity that bound it. Zero base means do not trace.
+    ///
+    /// <para>It exists because the module commits and backtracks INSIDE
+    /// wasm without calling anything the engine can see, so no host-side
+    /// instrument can compare those against Tier 0's. Writing to memory
+    /// rather than calling out keeps the emitted code to a bounds check
+    /// and two stores, and the host drains the ring whenever the chain
+    /// comes out.</para>
+    ///
+    /// <para>An entry is (kind | payload &lt;&lt; 8): what happened and one
+    /// number about it.</para></summary>
+    public const int TraceBase = 48;
+    public const int TraceTop = 49;
+    public const int TraceLimit = 50;
+
+    /// <summary>The attribute trail log's HOME column, one i32 per record,
+    /// and how many records there are.
+    ///
+    /// <para>A cut's compaction judges an AttrModify entry by the RECORD's
+    /// home, not by anything in the entry, and the record lives in a managed
+    /// list. That one read is why the tier's cut hands the whole walk to the
+    /// host: measured on clp(Z), 717 of 784 walks read it. The image is the
+    /// same shape as the functor mirror -- the host writes, the module only
+    /// reads -- so the list stays the single source of truth.</para>
+    ///
+    /// <para>A record the compaction ORPHANED reads as int.MinValue, which is
+    /// below every floor and so survives every test; that is the same answer
+    /// the managed list gives, because a cleared record is (int.MinValue, 0,
+    /// 0).</para></summary>
+    public const int AttrLogBase = 51;
+    public const int AttrLogLength = 52;
+
+    /// <summary>The survival floor an active catch frame imposes: the highest
+    /// SnapHeapTop among them, or 0 when there is none.
+    ///
+    /// <para>A cut drops trail entries that any outer backtrack would make
+    /// moot, but a THROW is a second unwind consumer that truncates only to
+    /// its own snapshot, so every mutation of a cell older than that must
+    /// survive. One number, and it cannot change inside a chain: a catch
+    /// frame is pushed by '$catch_begin'/2, which is a builtin, and a builtin
+    /// ends the chain.</para></summary>
+    public const int CatchHeapFloor = 53;
+
+    /// <summary>The highest trail snapshot any catch frame holds, binding and
+    /// extra. A compaction that leaves both tops at or above these clipped
+    /// nothing, and clipping is control state the module cannot write.
+    /// Measured on clp(Z), exactly one walk in 784 had to clip.</summary>
+    public const int CatchSnapBindingMax = 54;
+    public const int CatchSnapExtraMax = 55;
+
+    /// <summary>Whether the attribute store holds any record at all. A cut
+    /// that drops a ValueChange entry may have to drop a dead record with it,
+    /// and with an empty store it never does.</summary>
+    public const int AttrRecordCount = 56;
+
+    /// <summary>One extra-trail entry as it lies in the shared image:
+    /// twenty bytes, a byte of Type then three four-byte fields, one of
+    /// which is an eight-byte cell sitting at a four-byte boundary.
+    ///
+    /// <para>Unaligned on purpose and harmless: a wasm i64.load's align
+    /// immediate is a hint, not a constraint. These are ASSERTED against the
+    /// managed struct by a test, because a module bakes them and a silent
+    /// layout change would have it read the wrong field rather than
+    /// fail.</para></summary>
+    public const int ExtraTrailEntryBytes = 20;
+    public const int ExtraTrailTypeOffset = 0;
+    public const int ExtraTrailHeapIdxOffset = 4;
+    public const int ExtraTrailOldValueOffset = 8;
+    public const int ExtraTrailMarkerOffset = 16;
+
+    /// <summary>Where a compaction PARKS the attribute records it
+    /// orphaned, for the host to clear when the chain comes out.
+    ///
+    /// <para>A dropped AttrModify entry was the only reference into its
+    /// record, and leaving the record standing roots its home and its old
+    /// value against the heap GC forever. Clearing it is the fix, and it is
+    /// a write into a managed list -- which is why a cut that dropped one
+    /// used to hand the whole compaction back, 300 times in one clp(Z) goal
+    /// and 47% of everything the module deopted for.</para>
+    ///
+    /// <para>It is deferrable because it is HYGIENE and not semantics: the
+    /// record is dead the moment its entry is dropped, nothing reads it
+    /// again, and clearing it one chain later costs one chain of retention.
+    /// A garbage collection in between marks it and moves on, which is the
+    /// same thing it did before the compaction existed.</para>
+    ///
+    /// <para>A full ring is not a correctness problem, only a missed
+    /// compaction: the module checks for room in its first pass and declines
+    /// exactly as it would for a write it cannot defer.</para></summary>
+    public const int AttrOrphanBase = 57;
+    public const int AttrOrphanTop = 58;
+    public const int AttrOrphanLimit = 59;
+
+    /// <summary>Which functors an arithmetic evaluation may apply, one
+    /// i32 per functor id: 0 not evaluable, else (arity &lt;&lt; 8) | op.
+    ///
+    /// <para>A module cannot compare strings, so the question arrives as a
+    /// number, and the table is derived from the evaluator's own name
+    /// resolvers so the two cannot disagree. A zero base means an arithmetic
+    /// operand that is a compound steps aside, which is what it did before
+    /// this existed.</para></summary>
+    public const int ArithTableBase = 60;
+    public const int ArithTableLength = 61;
+
+    /// <summary>Where the expression evaluator leaves its answer: the value
+    /// (a 60-bit integer, or the bits of a double) and which of the two it
+    /// is. It is a FUNCTION, so it cannot write the caller's locals.
+    /// </summary>
+    public const int ArithValue = 62;
+    public const int ArithKind = 63;
+
+    /// <summary>Where a module PARKS an attribute it wrote, for the host
+    /// to put in the store when the chain comes out. Entries are four i32:
+    /// home, module, the value that was there, the value now.
+    ///
+    /// <para>The module writes the IMAGE and the trail itself, because both
+    /// are in linear memory and both are order-sensitive: the trail entry
+    /// has to sit between whatever else the chain trails, and a later read
+    /// in the same chain has to see the new value. What it cannot write is
+    /// the store and the attribute log, and those are what this carries.
+    /// Between the write and the drain the image LEADS the store, which is
+    /// sound only because managed code never runs in between: every builtin
+    /// request syncs first, and the drain is part of that sync.</para>
+    ///
+    /// <para>Updates only. An INSERT would have to place a new key in an
+    /// open-addressed table and keep its load factor, and a module that got
+    /// that wrong would leave a table that never rebuilds.</para></summary>
+    /// <summary>One parked attribute write, six i32 and two of padding.
+    ///
+    /// <para>Named fields rather than a sign-encoded value: the module makes
+    /// four different changes now -- set a value, promote a plain variable
+    /// and set one, remove a row, remove the last row and demote the cell --
+    /// and telling them apart by the sign of the old value stopped being
+    /// something a reader could check.</para></summary>
+    public const int AttrWriteEntryInts = 8;
+    public const int AttrWriteOp = 0;
+    public const int AttrWriteHome = 1;
+    public const int AttrWriteModule = 2;
+    public const int AttrWriteOld = 3;
+    public const int AttrWriteNew = 4;
+    /// <summary>1 when the module took a FRESH slot in the image, which is
+    /// occupancy the host has to count because its own put will not.
+    /// </summary>
+    public const int AttrWriteFresh = 5;
+
+    /// <summary>Set a value on a row that exists, or on one the module
+    /// placed.</summary>
+    public const int AttrOpSet = 0;
+    /// <summary>The same, on a variable the module PROMOTED: the cell and
+    /// its value change are already written and trailed, the record is
+    /// not.</summary>
+    public const int AttrOpPromote = 1;
+    /// <summary>Take a row away; the record keeps others.</summary>
+    public const int AttrOpRemove = 2;
+    /// <summary>Take the LAST row away. The module has already demoted the
+    /// cell and trailed it.</summary>
+    public const int AttrOpRemoveLast = 3;
+
+    public const int AttrWriteBase = 64;
+    public const int AttrWriteTop = 65;
+    public const int AttrWriteLimit = 66;
+
+    /// <summary>How many entries the extra trail can hold. It was never
+    /// needed while the module only ever READ the trail.</summary>
+    public const int ExtraTrailLimit = 67;
+
+    /// <summary>How many rows the module may still INSERT into the
+    /// attribute image before it has to hand one back.
+    ///
+    /// <para>An insert into an open-addressed table is only dangerous
+    /// because of what it does to the load factor: cross it and the table
+    /// has to be rebuilt, which is not a thing a module can do. So the host
+    /// says up front how much room there is to the threshold, and the module
+    /// spends it. When it runs out it declines ONE call, the host inserts
+    /// that one and rebuilds if it must, and the next staging hands over a
+    /// fresh budget.</para>
+    ///
+    /// <para>Only a FRESH slot costs budget. Reusing a tombstone lengthens
+    /// no probe that was not already long, and the host's own insert does
+    /// not count it either -- the two have to agree about this or the
+    /// table's occupancy drifts.</para></summary>
+    /// <summary>Where a compaction PARKS the homes whose attribute record
+    /// the engine has to drop.
+    ///
+    /// <para>A cut that drops a binding entry owes a record with it when the
+    /// cell at that home stopped being an attributed variable -- the record
+    /// is dead, and leaving it roots everything it points at. It is a write
+    /// into the store, so the compaction used to hand the whole walk back
+    /// for it: 67 deopts in one clp(Z) goal.</para>
+    ///
+    /// <para>Deferrable for the reason the orphan clearing is: the record is
+    /// unreachable from the moment the cell stops being attributed, since
+    /// every read of one starts by checking that. A ring of its own rather
+    /// than the write ring, because a write reserves a log index and this
+    /// reserves nothing -- sharing would make the k-th write's index depend
+    /// on how many drops came before it.</para></summary>
+    /// <summary>Base and mask of the reverse functor table: a name and an
+    /// arity give the id a Str cell carries.
+    ///
+    /// <para>What lets a module PUT a term together. The forward mirror
+    /// answers the other direction, which is all taking one apart needs; a
+    /// zero base means =../2's composing mode steps aside, as it did before
+    /// this existed.</para></summary>
+    public const int FunctorReverseBase = 72;
+    public const int FunctorReverseMask = 73;
+
+    public const int AttrDropBase = 69;
+    public const int AttrDropTop = 70;
+    public const int AttrDropLimit = 71;
+
+    public const int AttrMirrorBudget = 68;
+
+    /// <summary>Base and pair count of the global-variable image: (atom id,
+    /// cell) pairs for the keys a module may read itself. A zero base or a
+    /// count below one means every read goes to the host.</summary>
+    public const int GlobalVarBase = 74;
+    public const int GlobalVarCount = 75;
+
+    public const int SlotCount = 76;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
@@ -169,4 +525,39 @@ public static class WasmAbi
     public const string MemoryField = "memory";
     /// <summary>The exported entry point of every compiled predicate.</summary>
     public const string EntryExport = "run";
+
+    /// <summary>A fingerprint of this mailbox layout: every constant above,
+    /// by name and value, plus the verdict codes. A baked wasm module reads
+    /// mailbox slots by the numbers that were constants AT BAKE TIME, so a
+    /// module loaded into an engine whose layout moved reads the WRONG slots
+    /// and nothing else would notice -- no trap, no bad verdict, just wrong
+    /// addresses. The stamp travels with every relocatable module and is
+    /// compared on read. Computed, not hand-bumped: forgetting the bump was
+    /// the failure mode.</summary>
+    public static readonly ulong Fingerprint = ComputeFingerprint();
+
+    private static ulong ComputeFingerprint()
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        void Mix(string name, long value)
+        {
+            foreach (char c in name) { h ^= c; h *= prime; }
+            h ^= (ulong)value; h *= prime;
+        }
+        // Reflection order is unspecified: sort so the stamp is a function
+        // of the layout alone, identical across runtimes and builds.
+        var fields = typeof(WasmAbi).GetFields(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        System.Array.Sort(fields, (x, y) => string.CompareOrdinal(x.Name, y.Name));
+        foreach (var f in fields)
+        {
+            if (!f.IsLiteral) continue;
+            if (f.FieldType == typeof(int)) Mix(f.Name, (int)f.GetRawConstantValue()!);
+            else if (f.FieldType == typeof(long)) Mix(f.Name, (long)f.GetRawConstantValue()!);
+        }
+        foreach (var name in System.Enum.GetNames(typeof(WasmVerdict)))
+            Mix(name, (int)System.Enum.Parse(typeof(WasmVerdict), name));
+        return h;
+    }
 }

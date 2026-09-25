@@ -79,7 +79,13 @@ public sealed partial class Activation
     // Backtracking reverts the ATTVAR cell to a plain REF (via the
     // ValueChange trail); the orphaned record is left in place and is
     // overwritten outright if the heap slot is later reused.
-    private readonly Dictionary<int, Dictionary<int, int>> _attrTable = new();
+    // Written ONLY through the AttrStore funnel below (Activation.Attrs.cs).
+    // Named with the underscore-store suffix so a direct use reads as the
+    // exception it is: the funnel exists so a derived view -- today the
+    // GC's scan, tomorrow a linear-memory mirror the wasm tier can read --
+    // can be kept in step from ONE place per mutation. Handing out the inner
+    // record would defeat that, so the funnel never returns it.
+    private readonly Dictionary<int, Dictionary<int, int>> _attrStore = new();
     // Side log for AttrModify trail entries: each records (attvar home
     // index, module id, previous value heap index — or -1 when the
     // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.
@@ -298,6 +304,12 @@ public sealed partial class Activation
             GrowIfNeeded(ref _extraTrail, _extraTrailTop, extra, _config.MaxExtraTrailSize, "extra trail");
     }
 
+    /// <summary>Which buffer last raised resource_error(memory). The ISO
+    /// term says only "memory", which is right for a program and useless
+    /// for finding out WHY an engine ran out where another did not.
+    /// Diagnostic: last writer wins, no synchronisation.</summary>
+    public static string? LastExhausted;
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void GrowIfNeeded<T>(ref T[] buffer, int top, int extra, int maxSize, string name)
@@ -315,11 +327,17 @@ public sealed partial class Activation
         if (maxSize > 0 && newSize > maxSize)
         {
             if (required > maxSize)
+            {
+                LastExhausted = name;
                 throw new PrologRuntimeException("resource_error", "memory");
+            }
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
+        {
+            LastExhausted = name;
             throw new PrologRuntimeException("resource_error", "memory");
+        }
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         // A machine that cannot hold the doubled buffer raises .NET's OOM
         // from the resize itself, long before the int.MaxValue guard — the
@@ -330,6 +348,7 @@ public sealed partial class Activation
         try { Array.Resize(ref buffer, (int)newSize); }
         catch (OutOfMemoryException)
         {
+            LastExhausted = name;
             throw new PrologRuntimeException("resource_error", "memory");
         }
     }

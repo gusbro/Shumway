@@ -221,12 +221,12 @@ function runningIndicator() {
   };
 }
 
-// Under wasm_compile(all): re-run the batch compile at the BOUNDARY — after
+// Under jit_compile(all): re-run the batch compile at the BOUNDARY — after
 // a consult, after a completed query (a query may consult) — so the cost
 // never lands inside the user's next real query. One int compare when
 // nothing changed; fire-and-forget, the page never waits on it.
 function wasmAllTick() {
-  try { session.exports().WasmCompileAllTick(); } catch { }
+  try { session.exports().JitCompileAllTick(); } catch { }
 }
 
 async function step() {
@@ -269,18 +269,21 @@ async function run(queryText) {
     emit('% the engine is fresh — nothing is loaded (consult to reload)\n\n', 'note');
     return;
   }
-  // `wasm_compile.` — the page-side switch for the wasm tier, like `restart.`:
+  // `jit_compile.` — answered by the PAGE, like `restart.`. The engine has
+  // a jit_compile/1 builtin of its own and it does the same thing; the page
+  // intercepts the top-level form to print the report, and to answer
+  // `status`, which is a report of this tier rather than a setting.
   // attaches the promotion store to the LIVE engine (safe between queries;
-  // nothing already running changes). Variants: wasm_compile(N). sets the
-  // promotion threshold (1 = promote on first call), wasm_compile(all).
+  // nothing already running changes). Variants: jit_compile(N). sets the
+  // promotion threshold (1 = promote on first call), jit_compile(all).
   // compiles the whole static program now and after every consult,
-  // wasm_compile(off). stops promoting (what already promoted keeps running
+  // jit_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the baked prelude), wasm_compile(status). reports.
-  const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
+  // tier nor the stdlib bundle's wasm module), jit_compile(status). reports.
+  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
-  if (wasmCompile) {
-    const report = await session.exports().WasmCompileControl(wasmCompile[1] || 'on');
+  if (jitCompile) {
+    const report = await session.exports().JitCompileControl(jitCompile[1] || 'on');
     emit(report + '\n', 'note');
     return;
   }
@@ -1680,6 +1683,74 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmscalar')) {
+  // #wasmscalar: where should the WAM's scalars live? Locals are registers but
+  // need a prologue and an epilogue; imported globals need neither but may not
+  // be registers. These are the hottest reads and writes in the engine.
+  try {
+    const spec = /^#wasmscalar=(\d+)x(\d+)$/.exec(location.hash);
+    const iterations = spec ? Number(spec[1]) : 20000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    const report = await session.exports().WasmScalarHomeProbe(iterations, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmscalar';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'scalar probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
+} else if (location.hash.startsWith('#wasmthread')) {
+  // #wasmthread: is engine work pinned to one thread? A module is registered
+  // in the calling thread's own function table, so a pool that hands out a
+  // different thread each time makes every module pay registration again.
+  try {
+    const report = await session.exports().WasmThreadProbe(8);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmthread';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'thread probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
+} else if (location.hash.startsWith('#wasmsplit')) {
+  // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
+  // arc: two modules hand control to each other with return_call_indirect
+  // through this thread's function table, never returning to the host. G0 is
+  // the gate that can kill the arc and it is a property, not a speed --
+  // millions of hops in bounded stack. Everything runs in C#; the page starts
+  // it and posts the report back, because a page cannot write to disk.
+  try {
+    // A negative round count means: carry the WAM scalar set on every
+    // hop, which is what a real crossing does.
+    const spec = /^#wasmsplit=(\d+)x(-?\d+)$/.exec(location.hash);
+    const hops = spec ? Number(spec[1]) : 10000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    emit(`--- wasm split spike: ${hops} hops x${rounds} ---\n`);
+    const report = await session.exports().WasmSplitProbe(hops, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmsplit';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'split spike STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t + '\n');
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  // A headless run has its answer; leaving the page open just holds the
+  // browser's profile singleton against the next run.
+  try { window.close(); } catch { }
 } else if (location.hash.startsWith('#wasmspike')) {
   // #wasmspike, or #wasmspike=<iterations>x<rounds>. Everything runs in C#:
   // it holds the module bytes, registers them per thread through the C shim's
@@ -1739,33 +1810,33 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
 } else if (location.hash === '#wasmcompilecheck') {
-  // The wasm_compile pseudo-goal's export, end to end on the live session
+  // The jit_compile pseudo-goal's export, end to end on the live session
   // engine: attach at threshold 1, run something hot through the REPL path,
   // and status must show the promotion (plus the compile-time tally).
   const mark = (t) => { try { fetch('/collect', { method: 'POST', body: 'mark: ' + t }); } catch { } };
   try {
     const lines = [];
     mark('attach 1');
-    lines.push(await session.exports().WasmCompileControl('1'));
+    lines.push(await session.exports().JitCompileControl('1'));
     await session.consult('wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
     mark('wloop query');
     const err = await session.start('wloop(50000).');
     if (err) lines.push('start error: ' + err);
     else lines.push('wloop: ' + JSON.stringify(await session.next(80)));
-    lines.push(await session.exports().WasmCompileControl('status'));
-    // wasm_compile(all): the batch runs NOW and again after a consult —
+    lines.push(await session.exports().JitCompileControl('status'));
+    // jit_compile(all): the batch runs NOW and again after a consult —
     // status must show the new predicate promoted without any query
     // having dispatched it. Registration is EAGER at install, so a module
     // the browser refuses fails the batch here, cleanly.
     mark('all');
-    lines.push(await session.exports().WasmCompileControl('all'));
+    lines.push(await session.exports().JitCompileControl('all'));
     mark('post-all query');
     const err2 = await session.start('numlist(1, 20, L), msort(L, S), length(S, 20), wloop(1000).');
     if (err2) lines.push('post-all start error: ' + err2 + '\n');
     else lines.push('post-all: ' + JSON.stringify(await session.next(80)) + '\n');
     mark('consult later');
     await session.consult('later(0).  later(N) :- N > 0, N1 is N - 1, later(N1).');
-    lines.push('tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('tick: ' + await session.exports().JitCompileAllTick() + '\n');
     mark('later query');
     const err3 = await session.start('later(500).');
     if (err3) lines.push('later start error: ' + err3 + '\n');
@@ -1775,9 +1846,31 @@ if (persistMode) {
     // the user's own predicates under it.
     mark('clpfd');
     await session.consult(':- use_module(library(clpfd)).  b(X) :- X in 1..3, X #> 1.');
-    lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('clpfd tick: ' + await session.exports().JitCompileAllTick() + '\n');
     mark('final status');
-    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('status'));
+    // A library the page compiles under the tier carries its wasm module:
+    // loading it installs the predicates from the archive, and status counts
+    // them among the baked instead of the compiled.
+    mark('library archive');
+    {
+      const collection = 'wcc_libs';
+      await libraries.remove(collection);
+      await libraries.create(collection, '');
+      await libraries.write(collection, 'wccl.pl',
+        ':- module(wccl, [wrev/2]).\nwrev(L, R) :- wrev(L, [], R).\n' +
+        'wrev([], A, A).\nwrev([X|Xs], A, R) :- wrev(Xs, [X|A], R).\n');
+      const baked = (status) => Number(/(\d+) baked/.exec(status)?.[1] ?? 0);
+      const before = baked(await session.exports().JitCompileControl('status'));
+      lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl')) + '\n');
+      await session.consult(':- use_module(library(wccl)).');
+      const errL = await session.start('numlist(1, 100, L), wrev(L, R), R = [100|_].');
+      if (errL) lines.push('library start error: ' + errL + '\n');
+      else lines.push('library: ' + JSON.stringify(await session.next(80)) + '\n');
+      const after = baked(await session.exports().JitCompileControl('status'));
+      lines.push(`library archive: ${after - before} more baked (expected 2)\n`);
+      await libraries.remove(collection);
+    }
     // The boards.pl shape: clpfd labeling under the tier — attvar binds,
     // wakeup drains, backtracking through promoted code. The reported
     // corruption ("reserved_invalid opcode") came from exactly this.
@@ -1787,29 +1880,33 @@ if (persistMode) {
       'qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).\n' +
       'qoff(_, [], _).\n' +
       'qoff(Q, [R|Rs], D) :- Q + D #\\= R, R + D #\\= Q, D1 is D + 1, qoff(Q, Rs, D1).\n');
-    lines.push('queens tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    lines.push('queens tick: ' + await session.exports().JitCompileAllTick() + '\n');
     const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
     if (errQ) lines.push('queens start error: ' + errQ + '\n');
     else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
-    // A fresh engine (restart.): the baked prelude must reinstall — interning
+    // The status right here, before anything else moves the counters: a clpfd
+    // run is where the builtin exits dominate, and the ranking says which
+    // builtins they are.
+    lines.push(await session.exports().JitCompileControl('status'));
+    // A fresh engine (restart.): the bundle's module must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
-    // wasm_compile(off) must SURVIVE a restart: the boot skips both the
-    // tier and the baked prelude, or "an engine with no wasm at all" would
+    // jit_compile(off) must SURVIVE a restart: the boot skips both the
+    // tier and the bundle's module, or "an engine with no wasm at all" would
     // be false the moment it booted.
     mark('off then restart');
-    lines.push(await session.exports().WasmCompileControl('off'));
+    lines.push(await session.exports().JitCompileControl('off'));
     await session.resetEngine();
     lines.push('after off+restart:\n');
-    lines.push(await session.exports().WasmCompileControl('status'));
-    lines.push(await session.exports().WasmCompileControl('on'));
+    lines.push(await session.exports().JitCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('on'));
     mark('restart');
     await session.resetEngine();
     lines.push('after restart:\n');
-    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().JitCompileControl('status'));
     mark('post-restart all');
-    lines.push(await session.exports().WasmCompileControl('all'));
-    lines.push(await session.exports().WasmCompileControl('off'));
+    lines.push(await session.exports().JitCompileControl('all'));
+    lines.push(await session.exports().JitCompileControl('off'));
     const report = lines.join('');
     emit(report);
     try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
@@ -1845,6 +1942,717 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash === '#clpzvar') {
+  // The #clpz* and #wasmclpz hooks fetch 'scryerlib/': Scryer's library tree
+  // served beside the page from a LOCAL checkout (gitignored). It is used as
+  // input, never vendored; in a clean checkout these hooks just 404.
+  // use_module(library(clpz)) reports success and loads NOTHING on a
+  // page-created collection. Not the registration (re-creating does not
+  // help) and not a dialect pack (scryer has no clpz entry). The two
+  // remaining variables, one run: the DIALECT tag, and whether the library
+  // is COMPILED first -- which is the path the page's own UI uses, and the
+  // only one that reads the dialect marker explicitly (Libraries.cs).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  const ask = async (g) => {
+    await session.start(g);
+    const r = await session.next(200);
+    if (r.tag === 's') await session.cancel();
+    return `${r.tag} ${r.text}`;
+  };
+  try {
+    const out = [];
+    const say = (t) => { out.push(t); mark('var: ' + t); };
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const texts = {};
+    for (const f of files) texts[f] = await (await fetch('scryerlib/' + f)).text();
+
+    // Each variant gets its OWN engine, so one cannot contaminate the next.
+    async function variant(label, dialect, compileFirst) {
+      await session.resetEngine();
+      const c = 'v_' + label;
+      await libraries.remove(c);
+      await libraries.create(c, dialect);
+      for (const f of files) await libraries.write(c, f, texts[f]);
+      let compiled = '(not compiled)';
+      if (compileFirst) {
+        const t = performance.now();
+        compiled = JSON.stringify(await libraries.compile(c, 'clpz'))
+                 + ` in ${Math.round(performance.now() - t)}ms`;
+      }
+      const t2 = performance.now();
+      const err = await session.consult(':- use_module(library(clpz)).');
+      const ms = Math.round(performance.now() - t2);
+      const probe = await ask('catch(all_distinct([_,_]), E, true).');
+      say(`[${label}] dialect=${JSON.stringify(dialect)} compile=${compiled}`);
+      say(`[${label}] consult ${ms}ms -> ${err ? 'ERROR ' + err : 'null'}; `
+        + `all_distinct -> ${probe}`);
+      return probe.indexOf('existence_error') < 0;
+    }
+
+    const r1 = await variant('scryer_src', 'scryer', false);
+    const r2 = await variant('nodialect', '', false);
+    const r3 = await variant('scryer_compiled', 'scryer', true);
+    say(`VERDICT scryer=${r1} nodialect=${r2} scryer+compiled=${r3}`);
+
+    const report = 'clpz load variants:\n' + out.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzvar';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('VAR DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz var CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash === '#clpzpage') {
+  // The engine ALREADY says why: TryResolveLibrary failing lands in branch
+  // (4) of ExecuteUseModuleDirectiveCore, which warns "unknown library 'X'
+  // ... (searched: <dirs>)" and returns null -- a silent no-op to the caller,
+  // because consult's return value carries errors, not warnings. Those
+  // warnings go to the PAGE (WebShumwayApp.PageWriter -> Emit -> #out), and
+  // a headless run that only reads /collect never sees them. So: read #out.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const page = () => (document.getElementById('out')?.textContent ?? '');
+    let seen = page().length;
+    const newPageText = () => { const t = page(); const d = t.slice(seen); seen = t.length; return d; };
+
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    await libraries.create(collection, 'scryer');
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    mark(`page: wrote ${files.length}, collection files=${(await libraries.files(collection)).length}`);
+    newPageText();
+
+    const err = await session.consult(':- use_module(library(clpz)).');
+    const said = newPageText();
+    mark(`page: consult -> ${err ? 'ERROR ' + err : 'null'}`);
+    mark('page: WHAT THE PAGE SAID DURING THE CONSULT >>>\n'
+         + (said.trim() || '(nothing at all)') + '\n<<<');
+
+    await session.start('catch(all_distinct([_,_]), E, true).');
+    const r = await session.next(200);
+    mark(`page: all_distinct -> ${r.tag} ${r.text}`);
+    mark('page: after the probe >>>\n' + (newPageText().trim() || '(nothing)') + '\n<<<');
+
+    // And what the engine thinks its search path IS, from Prolog.
+    for (const g of ["catch(current_prolog_flag(library_directory, D), E, true).",
+                     "catch(exists_source(library(clpz)), E, true).",
+                     "catch(exists_source(library(lists)), E, true).",
+                     "catch(use_module(library(clpz)), E, true)."]) {
+      await session.start(g);
+      const x = await session.next(200);
+      if (x.tag === 's') await session.cancel();
+      mark(`page: ${g} -> ${x.tag} ${x.text}`);
+      const w = newPageText().trim();
+      if (w) mark('page:   said: ' + w);
+    }
+
+    mark('PAGE DONE');
+    emit('\nclpz page-instrumentation done\n');
+  } catch (ex) {
+    mark(`clpz page CRASHED: ${ex && ex.stack ? ex.stack : ex}`);
+  }
+} else if (location.hash === '#clpzwho') {
+  // WHO answers library(clpz) in the browser? The smoke goal FAILS rather
+  // than raising existence_error, so in/2 exists and something is answering
+  // -- the question is what. Cheap: no tier, no benchmark, just goals.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  const ask = async (g) => {
+    await session.start(g);
+    const r = await session.next(200);
+    if (r.tag === 's') await session.cancel();
+    return `${r.tag} ${r.text}`;
+  };
+  try {
+    const out = [];
+    const say = (t) => { out.push(t); mark('who: ' + t); };
+
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    say('create -> ' + await libraries.create(collection, 'scryer'));
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    say('collections: ' + JSON.stringify(await libraries.names()));
+    say('dialect: ' + await libraries.dialect(collection));
+    const inColl = await libraries.files(collection);
+    say(`files in collection: ${inColl.length}, clpz.pl present: ${inColl.includes('clpz.pl')}`);
+
+    // BEFORE loading anything: is in/2 already there? If it is, something
+    // other than the file is providing it and use_module never had to.
+    say('BEFORE use_module, in/2: ' + await ask('catch((X in 1..3), E, true).'));
+    say('BEFORE, clpz:fd_var/1: ' + await ask('catch(clpz:fd_var(_), E, true).'));
+
+    // A: the directive ALONE -- what every failing run did.
+    const errA = await session.consult(':- use_module(library(clpz)).');
+    say('A) consult directive ALONE -> ' + (errA ? 'ERROR ' + errA : 'null'));
+    say('A) all_distinct: ' + await ask('catch(all_distinct([_,_]), E, true).'));
+
+    // B: the directive WITH a program in the same buffer -- what the runs
+    // that worked did. ConsultBuffer REPLACES what the buffer defines, so a
+    // buffer that is nothing but a directive may not keep its imports.
+    const errB = await session.consult(
+      ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n'
+      + 'zzz_probe(X) :- X in 1..3, indomain(X).\n');
+    say('B) consult directive + program -> ' + (errB ? 'ERROR ' + errB : 'null'));
+    const err = errB;
+
+    say('AFTER, in/2:        ' + await ask('catch((X in 1..3), E, true).'));
+    say('AFTER, indomain/1:  ' + await ask('catch((X in 1..3, indomain(X)), E, true).'));
+    say('AFTER, clpz:fd_var: ' + await ask('catch(clpz:fd_var(_), E, true).'));
+    say('AFTER, label/1:     ' + await ask('catch((X in 1..3, label([X])), E, true).'));
+    // Whose in/2? clpz exports it; so does our clpfd. The module manifest
+    // tells them apart without guessing.
+    say('current_predicate:  ' + await ask('catch(current_predicate(in/2), E, true).'));
+    say('all_distinct/1:     ' + await ask('catch(all_distinct([_,_]), E, true).'));
+    say('transpose/2:        ' + await ask('catch(transpose([[1,2]], T), E, true).'));
+    say('B) zzz_probe:      ' + await ask('catch(zzz_probe(X), E, true).'));
+
+    const report = 'clpz who answers:\n' + out.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzwho';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('WHO DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz who CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash.startsWith('#clpzdiag')) {
+  // #clpzdiag: why does SEND+MORE never return on the wasm tier when Tier-0
+  // answers in milliseconds? Runs the goal in STAGES -- posting alone, then
+  // posting plus labeling -- on each tier, each stage bounded by a cancel so
+  // a hang costs seconds instead of the whole run, and dumps the tier's
+  // counters (deopt and builtin-exit rankings) after each. Needs a build with
+  // -p:ShumwayDiag=true as well as -p:ShumwayWasmTier=true.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    emit('--- clpz diag: staged SEND+MORE, tier0 vs wasm ---\n');
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    await libraries.create(collection, 'scryer');
+    for (const f of files)
+      await libraries.write(collection, f, await (await fetch('scryerlib/' + f)).text());
+    // Verify the collection took. 46 awaited writes across the JS/.NET
+    // bridge came up short once and consult still reported no error, so the
+    // run measured a page with no clpz on it and every stage read as a
+    // few-millisecond error.
+    const written = await libraries.files(collection);
+    mark(`diag: collection holds ${written.length} files (wrote ${files.length})`);
+    if (written.length !== files.length)
+      mark(`diag: LIBRARY WRITE INCOMPLETE ${written.length}/${files.length}`);
+
+    const cases = await (await fetch('scryerlib/cases.pl')).text();
+
+    // Does clpz actually resolve? A consult that returns null is the success
+    // signal and it has lied here: 46/46 files present, no error, and in/2
+    // still not there. So the load is PROVED, not assumed.
+    async function loadAndSmoke(tag) {
+      const e = await session.consult(
+        ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n'
+      + 'tl_trivial :- ( between(1,1,_), atom(a), fail ; true ).\n'
+      + 'tl_neg :- ( between(1,1,_), \\+ \\+ atom(a), fail ; true ).\n'
+      + 'h_flat(V) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0.\n'
+      + 'c_flat :- h_flat(V), label(V).\n'
+      + 'h_three([S,E,N,D], [M,O,R,Y], [A,B]) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0, A = 1, B = 2.\n'
+      + 'c_three :- h_three(P,Q,R0), append([P,Q,R0], Vs), label(Vs).\n'
+      + 'h_rep([S,E,N,D] + [M,O,R,E] = [M,O,N,E,Y]) :- V = [S,E,N,D,M,O,R,Y], V ins 0..9, all_different(V), S*1000 + E*100 + N*10 + D + M*1000 + O*100 + R*10 + E #= M*10000 + O*1000 + N*100 + E*10 + Y, M #\\= 0, S #\\= 0.\n'
+      + 'c_rep :- h_rep(A+B=C), append([A,B,C], Vs), label(Vs).\n'
+      + 'tl_flat :- ( between(1,1,_), \\+ \\+ c_flat, fail ; true ).\n'
+      + 'tl_three :- ( between(1,1,_), \\+ \\+ c_three, fail ; true ).\n'
+      + 'tl_rep :- ( between(1,1,_), \\+ \\+ c_rep, fail ; true ).\n'
+      + cases);
+      mark(`diag: [${tag}] consult -> ${e ? 'ERROR ' + e : 'null (no error)'}`);
+      await session.start('X in 1..3, indomain(X).');
+      const r = await session.next(60);
+      const ok = r.tag === 's' || r.tag === 'l';
+      if (r.tag === 's') await session.cancel();
+      mark(`diag: [${tag}] smoke -> ${r.tag} ${r.text} => ${ok ? 'LOADED' : 'NOT LOADED'}`);
+      return ok;
+    }
+
+    let loaded = await loadAndSmoke('first');
+    if (!loaded) {
+      // THE EXPERIMENT. LibraryCreate registers the directory on
+      // _session.Engine; if the page replaced that engine afterwards the
+      // FILES survive (libraries.files still counts 46) while the
+      // REGISTRATION does not, and use_module then resolves nothing with
+      // nothing to say. Re-creating re-registers on whatever engine is live
+      // now: if that fixes it, the registration was the thing that was lost.
+      mark('diag: re-registering the collection on the LIVE engine');
+      const again = await libraries.create(collection, 'scryer');
+      mark(`diag: re-create -> ${again ? 'ERROR ' + again : 'ok'}`);
+      loaded = await loadAndSmoke('after-re-register');
+      mark(loaded
+        ? 'diag: VERDICT -- the registration was lost, the files were fine'
+        : 'diag: VERDICT -- re-registering did NOT help, it is something else');
+    }
+    if (!loaded) { mark('diag: ABORTING, clpz is not loaded'); }
+    mark('diag: loaded');
+
+    // A goal, bounded: race the answer against a timer and cancel on timeout.
+    // QueryCancel is observed at the engine's next safe point, so a goal that
+    // is making progress stops and one that is truly wedged says so too.
+    async function bounded(goal, seconds) {
+      const t = performance.now();
+      const e0 = await session.start(goal);
+      if (e0) return { ms: 0, state: 'start-error: ' + e0 };
+      let timer = null;
+      const answer = session.next(60).then(r => ({ tag: r.tag }));
+      const race = await Promise.race([
+        answer,
+        new Promise(res => { timer = setTimeout(() => res({ timeout: true }), seconds * 1000); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (race.timeout) {
+        await session.cancel();
+        // Let the cancelled query settle so the next start() is clean.
+        const after = await Promise.race([
+          answer,
+          new Promise(res => setTimeout(() => res({ stuck: true }), 20000)),
+        ]);
+        return { ms: performance.now() - t,
+                 state: after.stuck ? `WEDGED (>${seconds}s, cancel did not land)`
+                                    : `TIMEOUT >${seconds}s (cancelled ok)` };
+      }
+      return { ms: performance.now() - t, state: race.tag };
+    }
+
+    // THE SEQUENCE THAT HUNG. A single check(sendmore) finishes on the tier
+    // (782ms against Tier-0's 343ms), so the hang needs what runs BEFORE it:
+    // in the benchmark, sendmore came after queens10ff's loop. Same order
+    // here, same loop/2 shape, each bounded by a cancel.
+    // ORDER IS THE EXPERIMENT. Last time the single solve ran LAST, after
+    // 240s of deopting, and read 224ms -- suspiciously close to Tier-0's
+    // 386ms. So: is one solve genuinely fast on a fresh tier, or had the
+    // tier already given the hot predicates back to Tier-0 by then?
+    // Single FIRST, twice, then the loop, then single again.
+    // 1, 2, 4, 8 of the SAME loop. If the cost is linear the tier is
+    // merely slow; if it is not, something is wrong beyond slowness.
+    // The SAME goal shapes on BOTH tiers. Tier-0 runs the identical
+    // loop -- same \+ \+ and the same fail that backtracks out of a
+    // finished solve -- in ~190ms, so the question is not the loop.
+    // It is whether ONE sendmore behaves the same under backtracking
+    // on each tier. Whichever shape diverges is the bug.
+    // Three shapes, both tiers, same run. Tier-0 runs the identical
+    // control flow, so the variable under test is the TIER.
+    //   first solution : no backtracking out of a finished solve
+    //   once-semantics : prunes, still no backtracking out
+    //   backtracked out: proves once and then FAILS back through it
+    // If only the last one diverges, the bug is what the tier does when
+    // control backtracks out of a solve, not the cost of running one.
+    // NARROWING the >400x. Known: \+ \+ check(sendmore) alone is 979ms on
+    // the tier (2.5x over Tier-0) but loop(sendmore,1) -- the same goal
+    // plus a fail that backtracks out -- passes 240s.
+    //   A  the pruned solve alone, control
+    //   B  fail back over it, WITHOUT between/3: is between the variable?
+    //   D  fail back WITHOUT the negation: full search, on both tiers,
+    //      which says whether failing back is costly in itself or only
+    //      costly through a negation
+    // B (fail-back over the negation, no generator) is FAST on the tier:
+    // 1022ms. Adding between(1,1,_) in front makes the same goal pass
+    // 240s. So the variable is the GENERATOR, not the negation and not
+    // failing back -- and between(1,1,_) has exactly one solution, so
+    // after the fail there is nothing left to retry.
+    //   E  the bad one, reconfirmed in this run
+    //   F  member/2 instead: a Prolog generator rather than a
+    //      backtrackable C# builtin
+    //   G  between with a TRIVIAL body: is between alone enough?
+    // THE CONFIRMATION, both in one run so nothing is compared across
+    // runs. cases.pl defines
+    //   loop(C, N) :- ( between(1, N, _), \+ \+ check(C), fail ; true ).
+    // H is that body written INLINE at the top level; I calls the
+    // PREDICATE, which jit_compile(all) promoted to wasm. Same control
+    // flow, same promoted check/1 underneath.
+    // IS IT A LOOP? "cancel works" proves only that the engine reaches
+    // safe points, and an infinite loop reaches them too. If the SHAPE is
+    // what is broken, the size of the work should not matter: a trivial
+    // body in the same promoted failure-driven loop hangs just the same.
+    // These three are consulted before jit_compile(all), so promoted.
+    // THE SCALING CURVE, one knob: N constrained variables in the body of
+    // a promoted failure-driven loop. Trivial bodies already showed the
+    // shape alone is only 6-9x and TERMINATES, so this is not an infinite
+    // loop; what grows is the multiplier (8.7x, then 68x, then >158x).
+    // If the ratio keeps climbing with N the cost is superlinear in the
+    // constraint work, which is a different bug from a constant tax.
+    // ISOLATING THE EQUATION. The scaling curve (all_distinct + label over
+    // N vars) is FLAT at 2-3x, so constraint work alone does not explode.
+    // SEND+MORE has one thing that curve did not: a wide linear equation
+    // over 8 variables. Same 8 vars and the same 0..9 domain in all
+    // three rows, so the only variable is which constraints are posted.
+    // My SEND+MORE ran in 842ms on the tier and cases.pl's explodes, so
+    // they are not the same program. The difference: check/1 APPENDS the
+    // puzzle's three lists and labels the 13 elements that come out, in
+    // which M O N E Y each appear more than once. Mine labelled the 8
+    // distinct variables. Three rows separate the two candidates:
+    //   lab8     label the 8 distinct vars
+    //   lab13    append/3 then label the 13 with duplicates
+    //   lab13nc  the same 13 written by hand, no append/3
+    // Every variant that called a predicate which POSTS the constraints
+    // and hands back attributed variables exploded; the one that posted
+    // them in the caller did not. So: is it returning attributed
+    // variables across a promoted-predicate boundary?
+    //   inside   callee posts, caller labels   (expected to explode)
+    //   outside  caller posts and labels       (expected fine)
+    //   two      the same as inside with 2 variables and domain 1..2,
+    //            to see how small the reproduction gets
+    // THE CONTROL I kept inferring across runs, now in ONE run. Identical
+    // constraints in both; the only difference is whether label/1 runs in
+    // the body that POSTED them or in a caller that RECEIVED the
+    // variables. The third row drops all_different, to see whether the
+    // equation alone is enough once it crosses.
+    // A flat head (one variable) is FAST; pz/1, whose head is a nested
+    // compound with M, O and E REPEATED across its three sublists,
+    // explodes. Same constraints in all three rows; only the HEAD of the
+    // promoted predicate changes.
+    //   flat    head is one variable            (control, fast)
+    //   three   structured head, NO repeats
+    //   rep     structured head WITH repeats    (pz's shape)
+    // Only the two that matter, so the counters belong to THEM: the
+    // control that is fine and the one that explodes. The deopt reason
+    // histogram after each says what the module is stepping aside on.
+    const STAGES = [
+      ['struct, unique (ok)', 'tl_three.', 120],
+      ['struct, repeat     ', 'tl_rep.', 120],
+    ];
+
+    const lines = [];
+    for (const m of ['off', 'all']) {
+      const tSwitch = performance.now();
+      const rep = await session.exports().JitCompileControl(m);
+      await session.start('true.'); await session.next(5);
+      lines.push(`=== jit_compile(${m}) in ${Math.round(performance.now() - tSwitch)}ms`);
+      mark(`diag: jit_compile(${m}) :: ${rep.slice(0, 200)}`);
+      for (const [label, goal, budget] of STAGES) {
+        // Counters around EACH stage, so a histogram belongs to one
+        // goal instead of to the whole run.
+        const before = await session.exports().JitCompileControl("status");
+        const r = await bounded(goal, budget);
+        const after = await session.exports().JitCompileControl("status");
+        mark("diag: COUNTERS BEFORE " + label + "\n"
+             + before.split("\n").slice(0, 14).join("\n"));
+        mark("diag: COUNTERS AFTER " + label + "\n"
+             + after.split("\n").slice(0, 14).join("\n"));
+        const line = `  ${label} ${String(Math.round(r.ms)).padStart(7)}ms  ${r.state}`;
+        lines.push(line);
+        mark('diag: ' + m + ' ' + line.trim());
+      }
+      // The counters, after this tier's stages.
+      const status = await session.exports().JitCompileControl('status');
+      const keep = status.split('\n').filter(l =>
+        /chains=|deopt|builtin|modules=|compile:|switches=/.test(l)).slice(0, 24);
+      lines.push('  --- counters after ' + m + ' ---');
+      for (const k of keep) lines.push('  ' + k.trim());
+      mark(`diag: counters after ${m}:\n` + keep.join('\n'));
+    }
+
+    const report = 'clpz diag: staged SEND+MORE\n' + lines.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'clpzdiag';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark('DIAG DONE\n' + report);
+  } catch (ex) {
+    const text = `clpz diag CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash.startsWith('#wasmclpz')) {
+  // #wasmclpz, or #wasmclpz=<rounds>: Triska's canonical CLP(Z) examples over
+  // the REAL clpz.pl from the Scryer tree (served beside the page, never
+  // vendored), Tier-0 against the wasm tier, ABBA within each round so drift
+  // cancels. Wall-clock is legitimate here and ONLY here: the wasm tier is
+  // measured in a browser, because the desktop copies the heap per crossing
+  // where the browser pins it.
+  //
+  // The program is FETCHED, not inlined, so the browser runs byte-identical
+  // source to the desktop and Scryer runs of the same benchmark.
+  //
+  // METHOD (the one clpz-vs-scryer-benchmark.md fixes): every measurement is
+  // a WARM loop. Promotion happens at a dispatch threshold, so a cold timed
+  // loop measures the promotion instead of the solve -- measured at 11x on
+  // the desktop before this was fixed.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmclpz=(\d+)$/.exec(location.hash);
+    const rounds = spec ? Number(spec[1]) : 1;
+    emit(`--- wasm clpz: Triska examples, tier0 vs tier1, x${rounds} rounds ---\n`);
+
+    // 1. Scryer's library tree into a 'scryer' collection.
+    const t0 = performance.now();
+    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
+    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
+    const collection = 'scryer_clpz';
+    await libraries.remove(collection);
+    await libraries.create(collection, 'scryer');
+    let bytes = 0;
+    for (const f of files) {
+      const text = await (await fetch('scryerlib/' + f)).text();
+      bytes += text.length;
+      await libraries.write(collection, f, text);
+    }
+    const tWrite = performance.now() - t0;
+    mark(`clpz: wrote ${files.length} files, ${bytes} chars, ${Math.round(tWrite)}ms`);
+
+    // 2. clpz + the benchmark program. The load is itself a number.
+    const cases = await (await fetch('scryerlib/cases.pl')).text();
+    const tLoad0 = performance.now();
+    const err = await session.consult(
+      ':- use_module(library(clpz)).\n:- use_module(library(lists)).\n' + cases);
+    const tLoad = performance.now() - tLoad0;
+    if (err) { emit('consult failed: ' + err + '\n', 'error'); mark('clpz: CONSULT FAILED ' + err); }
+    mark(`clpz: consulted clpz + cases in ${Math.round(tLoad)}ms`);
+
+    async function goal(g, budget) {
+      const t = performance.now();
+      const e0 = await session.start(g);
+      if (e0) return { ms: -1, ok: false, text: 'start error: ' + e0 };
+      const r = await session.next(budget ?? 120);
+      return { ms: performance.now() - t, ok: r.tag === 's' || r.tag === 'l', text: r.text };
+    }
+
+    async function mode(m) {
+      const t = performance.now();
+      const rep = await session.exports().JitCompileControl(m);
+      // A queued jit_compile(off) eviction applies at the NEXT query setup.
+      await session.start('true.'); await session.next(5);
+      return { ms: performance.now() - t, rep };
+    }
+
+    // Counts are the desktop/Scryer ones divided by SCALE: browser Tier-0
+    // runs about 40x slower than the desktop tier, so the desktop counts
+    // would put one ABBA round in the hours. The RATIO is what this hook
+    // measures, and it is unaffected; the absolute numbers are per-solve.
+    const SCALE = 10;
+    const CASES = [['queens10ff', 50], ['sendmore', 20], ['queens16', 20],
+                   ['queens24', 20], ['sudoku', 5], ['factorial', 100]]
+                  .map(([c, n]) => [c, Math.max(1, Math.round(n / SCALE))]);
+    const best = {}, ok = {};
+    const note = (k, ms, good) => {
+      if (ms >= 0 && (!(k in best) || ms < best[k])) best[k] = ms;
+      ok[k] = (ok[k] ?? true) && good;
+    };
+    const switchMs = {};
+    for (let r = 0; r < rounds; r++) {
+      for (const m of ['off', 'all', 'all', 'off']) {
+        const sw = await mode(m);
+        switchMs[m] = Math.max(switchMs[m] ?? 0, sw.ms);
+        mark(`clpz: round ${r} jit_compile(${m}) ${Math.round(sw.ms)}ms :: ${sw.rep}`);
+        for (const [c, n] of CASES) {
+          // Warm first (discarded), then the timed loop.
+          const w = await goal(`loop(${c}, ${n}).`);
+          if (!w.ok) { mark(`clpz: WARM FAILED ${c} ${m}: ${w.text}`); }
+          const res = await goal(`loop(${c}, ${n}).`);
+          // The oracle, separately: a fast wrong answer must not pass.
+          const orc = await goal(`\\+ \\+ check(${c}).`);
+          note(`${c} ${m}`, res.ms, res.ok && orc.ok);
+          mark(`clpz: round ${r} ${m} ${c} x${n} -> ${Math.round(res.ms)}ms `
+             + `${res.ok ? 'ok' : 'BAD'} oracle=${orc.ok ? 'ok' : 'WRONG'}`);
+        }
+      }
+    }
+
+    const status = await session.exports().JitCompileControl('status');
+    const rows = CASES.map(([c, n]) => {
+      const off = best[`${c} off`], all = best[`${c} all`];
+      const good = ok[`${c} off`] && ok[`${c} all`];
+      const sp = (off > 0 && all > 0) ? (off / all).toFixed(2) : '?';
+      return `${(c + ' x' + n).padEnd(16)} tier0 ${String(Math.round(off)).padStart(7)}ms  `
+           + `tier1 ${String(Math.round(all)).padStart(7)}ms  x${sp}`
+           + `${good ? '' : '   ORACLE FAILED'}`;
+    });
+    const report =
+      `wasm clpz: Triska examples on Scryer's clpz.pl (best of ${rounds} ABBA rounds)\n`
+      + `library write: ${Math.round(tWrite)}ms (${files.length} files, ${bytes} chars)\n`
+      + `consult clpz + cases: ${Math.round(tLoad)}ms\n`
+      + `jit_compile(all): ${Math.round(switchMs['all'] ?? 0)}ms   `
+      + `jit_compile(off): ${Math.round(switchMs['off'] ?? 0)}ms\n`
+      + rows.join('\n') + '\n' + status + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmclpz';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark(report);
+  } catch (ex) {
+    const text = `wasm clpz CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash.startsWith('#wasmwake')) {
+  // #wasmwake=<lib>+<lib>...: load those libraries IN THAT ORDER, then probe
+  // that freeze/when/dif wake on binding. This is the PR #128 verdict probe:
+  // the page loads libraries as baked bundles, which the desktop CLI does
+  // not (it consults their embedded source), so only here does the
+  // clpfd-then-coroutining order exercise the bundle seed path that broke.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmwake=([a-z_+]+)$/.exec(location.hash);
+    const libs = (spec ? spec[1] : 'clpfd+coroutining').split('+');
+    emit(`--- wasm wake probe: ${libs.join(' -> ')} ---\n`);
+    for (const lib of libs)
+      await session.consult(`:- use_module(library(${lib})).\n`);
+
+    // Each goal must SUCCEED; the counter-goals must FAIL. A wake bug makes
+    // the positive ones false (suspension holds, binding never fires the
+    // hook), which is exactly the reproduction table in the regression note.
+    const cases = [
+      ['freeze wakes',   'freeze(Y, Z = w), Y = 1, Z == w.',            true],
+      ['when wakes',     'when(nonvar(Y), Z = w), Y = 1, Z == w.',      true],
+      ['dif survives',   'dif(X, 1), X = 2.',                           true],
+      ['dif enforces',   'dif(X, 1), X = 1.',                           false],
+      ['freeze holds',   'freeze(_, Z = w), Z == w.',                   false],
+    ];
+    let bad = 0;
+    const lines = [];
+    for (const [label, goal, want] of cases) {
+      const err = await session.start(goal);
+      let got = false;
+      if (!err) {
+        const { tag } = await session.next(60);
+        got = tag === 's' || tag === 'l';   // session.SOLUTION / session.LAST
+        if (tag === 's') await session.cancel();
+      }
+      const ok = got === want;
+      if (!ok) bad++;
+      lines.push(`${ok ? 'PASS' : 'FAIL'} ${label}: ${goal} -> ${got} (want ${want})`);
+    }
+    const report = `wasm wake ${libs.join('->')}: ` +
+                   `${bad === 0 ? 'ALL PASS' : bad + ' FAILED'}\n` +
+                   lines.join('\n') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmwake';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    mark(report);
+  } catch (ex) {
+    const text = `wasm wake CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    mark(text);
+  }
+} else if (location.hash.startsWith('#wasmfd')) {
+  // #wasmfd, or #wasmfd=<n>x<rounds>: finite-domain queens under
+  // jit_compile(all) against jit_compile(off), with plain queens as the
+  // control, ABBA within each round so drift cancels. Feeds ADR-051's
+  // "measure it in a browser" step; wall-clock is legitimate here and only
+  // here (CONTRIBUTING.md).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmfd=(\d+)x(\d+)$/.exec(location.hash);
+    const n = spec ? Number(spec[1]) : 8;
+    const rounds = spec ? Number(spec[2]) : 2;
+    emit(`--- wasm fd: queens(${n}) x${rounds} rounds ---\n`);
+    mark(`fd: starting n=${n} rounds=${rounds}`);
+
+    await session.consult(
+      ':- use_module(library(clpfd)).\n' +
+      'queens(N, Qs) :- numlist(1, N, Ns), permutation(Ns, Qs), safe(Qs).\n' +
+      'safe([]).\n' +
+      'safe([Q|Qs]) :- no_attack(Q, Qs, 1), safe(Qs).\n' +
+      'no_attack(_, [], _).\n' +
+      'no_attack(Q, [R|Rs], D) :- Q =\\= R + D, Q =\\= R - D, D1 is D + 1, no_attack(Q, Rs, D1).\n' +
+      'queens_fd(N, Qs) :- length(Qs, N), Qs ins 1..N, all_different(Qs), diagonals(Qs), label(Qs).\n' +
+      'diagonals([]).\n' +
+      'diagonals([Q|Qs]) :- no_diag(Q, Qs, 1), diagonals(Qs).\n' +
+      'no_diag(_, [], _).\n' +
+      'no_diag(Q, [R|Rs], D) :- Q #\\= R + D, Q #\\= R - D, D1 is D + 1, no_diag(Q, Rs, D1).\n');
+
+    async function run(goal) {
+      const t0 = performance.now();
+      const err = await session.start(
+        `findall(x, ${goal}, L), length(L, C).`);
+      if (err) return { ms: -1, text: 'start error: ' + err };
+      const r = await session.next(3600);
+      return { ms: performance.now() - t0, text: JSON.stringify(r) };
+    }
+
+    async function mode(m) {
+      const rep = await session.exports().JitCompileControl(m);
+      // The eviction a jit_compile(off) queues applies at the NEXT query
+      // setup, so run one before measuring anything.
+      await session.start('true.'); await session.next(5);
+      return rep;
+    }
+
+    const best = { };
+    const note = (k, ms) => {
+      if (ms >= 0 && (!(k in best) || ms < best[k])) best[k] = ms;
+    };
+    for (let r = 0; r < rounds; r++) {
+      // ABBA: off, all, all, off.
+      for (const m of ['off', 'all', 'all', 'off']) {
+        await mode(m);
+        for (const g of [`queens_fd(${n}, _)`, `queens(${n}, _)`]) {
+          const res = await run(g);
+          const key = `${g.split('(')[0]} ${m}`;
+          note(key, res.ms);
+          mark(`fd: round ${r} ${m} ${g} -> ${Math.round(res.ms)}ms ${res.text}`);
+        }
+      }
+    }
+    const line = (p) => {
+      const off = best[`${p} off`], all = best[`${p} all`];
+      return `${p} n=${n}: off ${Math.round(off)}ms, all ${Math.round(all)}ms, ` +
+             `speedup x${(off / all).toFixed(2)}`;
+    };
+    const report = `wasm fd bench (best of ${rounds} ABBA rounds)\n` +
+                   line('queens_fd') + '\n' + line('queens') + '\n';
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmfd';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm fd CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+} else if (location.hash.startsWith('#wasmgrain')) {
+  // #wasmgrain, or #wasmgrain=<rounds>: the many-modules measurement --
+  // the same programs batch (one module per consult), eager (the batch's
+  // set, one module each), lazy (one module per promoted predicate) and
+  // Tier-0, every engine booted from the stdlib bundle the way the page is;
+  // module count, table rows, bytes,
+  // compile and registration cost, and the per-run hop/switch/deopt tally.
+  // Feeds docs/benchmarks/wasm-split-spike.md.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    // #wasmgrain=<rounds>x<queens>:<program>/<mode>: the clpfd program's
+    // board size (0 skips it), then an optional cell of the matrix.
+    const spec = /^#wasmgrain=(\d+)(?:x(\d+))?(?::(.*))?$/.exec(location.hash);
+    const only = spec && spec[3] !== undefined ? spec[3] : '';
+    const rounds = spec ? Number(spec[1]) : 5;
+    const queens = spec && spec[2] !== undefined ? Number(spec[2]) : 12;
+    emit(`--- wasm grain: x${rounds} rounds, queens ${queens} ---\n`);
+    mark('grain: starting rounds=' + rounds);
+    const report = await session.exports().WasmGrainProbe(rounds, queens, only);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmgrain';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm grain CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+  try { window.close(); } catch { }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);

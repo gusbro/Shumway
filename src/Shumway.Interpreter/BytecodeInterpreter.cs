@@ -151,6 +151,28 @@ public sealed partial class BytecodeInterpreter
     // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the
     // module of the clause that meta-called it (ModuleRewrite). Unwrapped in the
     // meta-dispatch so Goal's bare functor resolves against Module's locals first.
+    // The four cut-transparent control constructs, by ATOM. The tests that
+    // use these ask about an atom and an ARITY, not a functor, because the
+    // effective goal of a call/N is name/(goalArity + extras): the functor
+    // sitting in the term is not the one being judged, so comparing against
+    // ,/2 would answer wrongly whenever a meta-call carries extra arguments.
+    //
+    // Interned once. This was a table read plus up to four STRING compares
+    // at three sites, one of them the meta-call dispatch itself.
+    private static readonly int ConjAtomId = AtomTable.Intern(",", permanent: true).Id;
+    private static readonly int DisjAtomId = AtomTable.Intern(";", permanent: true).Id;
+    private static readonly int ArrowAtomId = AtomTable.Intern("->", permanent: true).Id;
+    private static readonly int SoftArrowAtomId =
+        AtomTable.Intern("*->", permanent: true).Id;
+
+    /// <summary>Whether (atom, arity) names a cut-transparent control
+    /// construct: <c>,/2</c>, <c>;/2</c>, <c>-&gt;/2</c>, <c>*-&gt;/2</c>.
+    /// </summary>
+    private static bool IsControlConstruct(int atomId, int arity)
+        => arity == 2
+           && (atomId == ConjAtomId || atomId == DisjAtomId
+               || atomId == ArrowAtomId || atomId == SoftArrowAtomId);
+
     private static readonly int MqualFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
     // The ISO module-qualified goal `Module:Goal` — the same (Module, Goal)
@@ -262,7 +284,46 @@ public sealed partial class BytecodeInterpreter
     /// dispatch loop terminates. The engine's <c>P</c> is overwritten with the start PC
     /// and then advanced according to each instruction's semantics.
     /// </summary>
+    /// <summary>Ticks spent inside the dispatch loop, counted only at the
+    /// OUTERMOST entry: Run re-enters itself (a catch frame's recovery goal,
+    /// a sub-engine), and nesting would add the same time twice.
+    ///
+    /// <para>Splits what a browser measurement could otherwise only call
+    /// "outside the tier": with this, interpreter = thisRun - delegate, and
+    /// what is left of the wall clock is the query's setup and its answer.
+    /// The biggest bucket of a run had no name until it was split, and an
+    /// unnamed bucket is where optimisation goes to be guessed at.</para>
+    /// </summary>
+    public static long DiagRunTicks;
+#if SHUMWAY_DIAG
+    private static int _runDepth;
+#endif
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void ResetRunTicks() => DiagRunTicks = 0;
+
     public InterpreterResult Run(ProgramView code, int startPc)
+    {
+#if SHUMWAY_DIAG
+        long runT0 = _runDepth == 0
+            ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        _runDepth++;
+        try
+        {
+#endif
+        return RunCore(code, startPc);
+#if SHUMWAY_DIAG
+        }
+        finally
+        {
+            _runDepth--;
+            if (_runDepth == 0)
+                DiagRunTicks += System.Diagnostics.Stopwatch.GetTimestamp() - runT0;
+        }
+#endif
+    }
+
+    private InterpreterResult RunCore(ProgramView code, int startPc)
     {
         ArgumentNullException.ThrowIfNull(code.Primary);
         // A resume-marker start PC is legal: a --strip-wam predicate has no WAM
@@ -580,9 +641,16 @@ public sealed partial class BytecodeInterpreter
                                     continue;
                                 }
                                 if (_engine.IlTailCallPending)
+                                {
                                     _engine.IlTailCallPending = false;
+                                    // The resume is bytecode either way here; clear
+                                    // the deopt marking so it cannot outlive this one.
+                                    _engine.TakeIlDeopt();
+                                }
                                 else
+                                {
                                     _engine.SetPc(_engine.Cp);
+                                }
                                 continue;
                             }
                             _engine.SetPc(addr);   // run the callee's bytecode
@@ -632,6 +700,9 @@ public sealed partial class BytecodeInterpreter
                 if (_engine.IlTailCallPending)
                 {
                     _engine.IlTailCallPending = false;
+                    // The resume is bytecode either way here; clear the
+                    // deopt marking so it cannot outlive this one.
+                    _engine.TakeIlDeopt();
                 }
                 else
                 {
@@ -903,30 +974,7 @@ public sealed partial class BytecodeInterpreter
                 // (Call and CallIl share width and operand offsets).
                 case Opcode.CallIl:
                 {
-                    _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (_engine.HasPendingWakeups)   // ADR-049
-                    {
-                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
-                        int w = WakeBoundary(code, wakeAr, pc);
-                        if (w == WakeEntered) { inClause = false; break; }
-                        if (w == WakeFailed)
-                        {
-                            if (!TryBacktrack()) return InterpreterResult.Failed;
-                            break;
-                        }
-                    }
                     int functorId = ReadI32(code, codeArr, pc + 1);
-                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
-                    Shumway.Core.Profiler.Call(functorId);
-                    _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
-                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
-                    _engine.TrimEnv(numLivePerms);
-                    _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
-                    _engine.SetB0(_engine.B);
-                    // ADR-016 safe point — heap GC needs every goal
-                    // boundary regardless of dispatch tier. The callee's
-                    // functor bounds the live registers.
-                    _engine.MaybeCollectHeapAtCall(functorId);
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
@@ -938,14 +986,36 @@ public sealed partial class BytecodeInterpreter
                     ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
                     if (ilFn is null)
                     {
-                        // IL was unregistered after the link-time
-                        // rewrite installed CallIl here. Shouldn't
-                        // normally happen for Stage B.1, but bail to
-                        // existence_error rather than NRE.
-                        throw new InvalidOperationException(
-                            $"CallIl: no IL delegate for functor id {functorId}. "
-                            + "Bytecode rewrite invariant violated.");
+                        // The delegate was evicted after the site was
+                        // rewritten (a relink between queries): the site
+                        // goes back to a plain Call and is dispatched again
+                        // -- nothing above has run yet, so nothing repeats.
+                        HealIlSite(code, pc, functorId, isExecute: false);
+                        continue;
                     }
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
+                    if (_engine.HasPendingWakeups)   // ADR-049
+                    {
+                        (_, int wakeAr) = FunctorTable.Lookup(functorId);
+                        int w = WakeBoundary(code, wakeAr, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
+                    Shumway.Core.Profiler.Call(functorId);
+                    _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
+                    _engine.TrimEnv(numLivePerms);
+                    _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
+                    _engine.SetB0(_engine.B);
+                    // ADR-016 safe point — heap GC needs every goal
+                    // boundary regardless of dispatch tier. The callee's
+                    // functor bounds the live registers.
+                    _engine.MaybeCollectHeapAtCall(functorId);
                     if (!ilFn(_engine, 0))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -956,6 +1026,9 @@ public sealed partial class BytecodeInterpreter
                         // IL set Pc to its tail-call target; the outer
                         // dispatch loop picks it up next iteration.
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
                     }
                     else
                     {
@@ -1018,10 +1091,21 @@ public sealed partial class BytecodeInterpreter
                 // IlByFunctorId — no OnDispatch.
                 case Opcode.ExecuteIl:
                 {
+                    int functorId = ReadI32(code, codeArr, pc + 1);
+                    var table = IlByFunctorId;
+                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
+                        ? table[functorId] : null;
+                    // Same stale-snapshot fallback and healing as CallIl above.
+                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    if (ilFn is null)
+                    {
+                        HealIlSite(code, pc, functorId, isExecute: true);
+                        continue;
+                    }
                     _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
+                        (_, int wakeAr) = FunctorTable.Lookup(functorId);
                         int w = WakeBoundary(code, wakeAr, pc);
                         if (w == WakeEntered) { inClause = false; break; }
                         if (w == WakeFailed)
@@ -1030,21 +1114,11 @@ public sealed partial class BytecodeInterpreter
                             break;
                         }
                     }
-                    int functorId = ReadI32(code, codeArr, pc + 1);
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);  // tail call still enters a new procedure
                     _engine.MaybeCollectHeapAtCall(functorId);
-                    var table = IlByFunctorId;
-                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
-                        ? table[functorId] : null;
-                    // Same stale-snapshot fallback as CallIl above.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
-                    if (ilFn is null)
-                        throw new InvalidOperationException(
-                            $"ExecuteIl: no IL delegate for functor id {functorId}. "
-                            + "Bytecode rewrite invariant violated.");
                     if (!ilFn(_engine, 0))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -1053,6 +1127,9 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.IlTailCallPending)
                     {
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
                     }
                     else
                     {
@@ -1147,16 +1224,27 @@ public sealed partial class BytecodeInterpreter
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
+                    Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+                    // NOT try/finally. Under mono's LLVM AOT (the WebShumway
+                    // publish) a `finally` exiting inside this frame calls the
+                    // runtime's async-abort check, which walks the whole stack
+                    // (~150 us per builtin: tak went 5x SLOWER than interpreted).
+                    // A catch clause costs nothing, so the exit bookkeeping
+                    // runs in the catches and after the try instead.
+                    // See docs/benchmarks/wasm-split-spike.md.
                     try { implOk = entry.Impl(_engine); }
                     catch (PrologRuntimeException re)
                     {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
                         re.StampBuiltin(entry.Name, entry.Arity);
                         throw;
                     }
-                    finally
+                    catch
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        throw;
                     }
+                    Shumway.Core.Profiler.BuiltinExit(builtinId);
                     _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {
@@ -1167,9 +1255,16 @@ public sealed partial class BytecodeInterpreter
                     // that set IlTailCallPending + Pc has already
                     // chosen the resume address; honour it.
                     if (_engine.IlTailCallPending)
+                    {
                         _engine.IlTailCallPending = false;
+                        // The resume is bytecode either way here; clear the
+                        // deopt marking so it cannot outlive this one.
+                        _engine.TakeIlDeopt();
+                    }
                     else
+                    {
                         _engine.SetPc(_engine.Cp);
+                    }
                     break;
                 }
 
@@ -2502,19 +2597,25 @@ public sealed partial class BytecodeInterpreter
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
+                    // NOT try/finally: a finally here costs a runtime stack
+                    // walk under mono's LLVM AOT. See the call_builtin site.
                     try
                     {
+                        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
                         implOk = entry.Impl(_engine);
                     }
                     catch (PrologRuntimeException re)
                     {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
                         re.StampBuiltin(entry.Name, entry.Arity);
                         throw;
                     }
-                    finally
+                    catch
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        throw;
                     }
+                    Shumway.Core.Profiler.BuiltinExit(builtinId);
                     _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {
@@ -2971,9 +3072,17 @@ public sealed partial class BytecodeInterpreter
             }
             if (_engine.IlTailCallPending)
             {
+                _engine.IlTailCallPending = false;
+                if (_engine.TakeIlDeopt())
+                {
+                    // Not a tail call: the module stepped aside and Pc names
+                    // the instruction the INTERPRETER has to run. Re-entering
+                    // the loop with it as a dispatch target would hand it back
+                    // to the module that just refused it, forever.
+                    return;
+                }
                 // The IL set Pc to its tail-call target. Try IL on
                 // *that* target too.
-                _engine.IlTailCallPending = false;
                 target = _engine.P;
                 continue;
             }
@@ -3005,6 +3114,28 @@ public sealed partial class BytecodeInterpreter
         => code.Overflow is null
             ? BytecodeIO.ReadInt32(codeArr, offset)
             : BytecodeIO.ReadInt32(code, offset);
+
+    /// <summary>A CallIl/ExecuteIl site whose callee lost its delegate
+    /// (evicted after a relink rewrote the site) becomes the plain Call /
+    /// Execute it was: the operand goes back from functor id to address.
+    /// The buffers are the engine's own, so every activation sharing them
+    /// sees the plain site, which is always valid. Without a linked address
+    /// (an IL-only bundle) the eviction was impossible, so this is a
+    /// bug.</summary>
+    private void HealIlSite(in Shumway.Core.ProgramView code, int pc, int functorId,
+        bool isExecute)
+    {
+        int addr = Tier1Dispatcher?.AddressOfFunctor(functorId) ?? -1;
+        if (addr < 0)
+            throw new InvalidOperationException(
+                $"{(isExecute ? "ExecuteIl" : "CallIl")}: no IL delegate and no "
+                + $"bytecode for functor id {functorId}. Bytecode rewrite invariant violated.");
+        byte[] buf; int at;
+        if (pc < code.Split) { buf = code.Primary; at = pc; }
+        else { buf = code.Overflow!; at = pc - code.Split; }
+        buf[at] = isExecute ? (byte)Opcode.Execute : (byte)Opcode.Call;
+        BytecodeIO.WriteInt32(buf, at + 1, addr);
+    }
 
     /// <summary>peeled 8-byte operand read; see
     /// <see cref="ReadI32"/>. Worst pre-peel offender was

@@ -323,6 +323,9 @@ When proposing changes:
 | A Prolog character is a code point | ADR-048 |
 | Backtrackable wakeups (interrupted-goal model) | ADR-049 |
 | WebAssembly Tier-1 backend | ADR-050 |
+| CLP(FD) domains live on the heap | ADR-051 |
+| The attribute table observes, it does not retain | ADR-052 |
+| The foreign table is swept, not truncated | ADR-053 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

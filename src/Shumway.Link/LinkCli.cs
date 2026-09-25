@@ -186,6 +186,7 @@ internal static class LinkCli
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
+            Library = opts.Library,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -196,6 +197,12 @@ internal static class LinkCli
             DumpIlPath = opts.DumpIlPath,
             ForeignAssemblies = opts.ForeignDlls,
             NativeLibraries = opts.NativeDlls,
+#if !NETFRAMEWORK
+            WasmBaker = opts.Wasm
+                ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
+                    msg => Console.Error.WriteLine("shumway-link: " + msg))
+                : null,
+#endif
         };
 
         LinkResult result;
@@ -373,10 +380,12 @@ internal static class LinkCli
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
+        public bool Wasm { get; set; }
         public bool RegionPruneReport { get; set; }
         public bool RegionPrune { get; set; } = true;
         public bool BakePrelude { get; set; }
         public bool PrunePrelude { get; set; }
+        public bool Library { get; set; }
         public string? DumpWamPath { get; set; }
         public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
@@ -476,6 +485,21 @@ internal static class LinkCli
                     opts.IncludeCompiledIl = true;   // strip-wam implies IL
                     opts.StripWam = true;
                     break;
+
+                case "--library":
+                    opts.Library = true;
+                    break;
+
+                case "--wasm":
+#if NETFRAMEWORK
+                    Console.Error.WriteLine(
+                        "shumway-link: --wasm is not available in the .NET Framework build "
+                        + "of the toolchain.");
+                    return null;
+#else
+                    opts.Wasm = true;
+                    break;
+#endif
 
                 case "--prune-report":
                     opts.RegionPruneReport = true;
@@ -638,7 +662,7 @@ internal static class LinkCli
                 "shumway-link: at least one input is required (.shmo object or .shum library).");
             return null;
         }
-        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal))
+        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal) && !opts.Library)
         {
             Console.Error.WriteLine(
                 "shumway-link: at least one --entry pred/N or --goal Term is required "
@@ -678,6 +702,13 @@ internal static class LinkCli
                 "shumway-link: --debug is Tier-0 (interpreted) source-level debugging; it is "
                 + "incompatible with --with-compiled-il / --strip-wam (Tier-1 IL, which has no "
                 + "debug stop sites). Drop the IL flags for a debug build.");
+            return null;
+        }
+        if (opts.Wasm && opts.StripWam)
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --wasm and --strip-wam are contradictory: the wasm module "
+                + "resumes into the bytecode that --strip-wam drops.");
             return null;
         }
         if (!string.IsNullOrEmpty(opts.ExePath) && !string.IsNullOrEmpty(opts.DllPath))
@@ -901,6 +932,9 @@ internal static class LinkCli
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
+            + "      --library            Keep every predicate of every input: the bundle\n"
+            + "                           is a library loaded whole, so no --entry is\n"
+            + "                           needed and nothing is pruned.\n"
             + "      --stdlib             Embed the precompiled standard library (the\n"
             + "                           prelude) in the bundle so loading it skips\n"
             + "                           compiling the stdlib at startup (and, under\n"
@@ -924,6 +958,11 @@ internal static class LinkCli
             + "                           that has compiled IL. Smaller bundles. The result\n"
             + "                           requires the .NET JIT (it cannot run under\n"
             + "                           Native AOT).\n"
+            + "      --wasm               Also compile the bundle's static predicates to a\n"
+            + "                           WebAssembly module stored in the bundle. A host\n"
+            + "                           with a wasm tier (the browser) runs them from it\n"
+            + "                           at load instead of compiling them itself; every\n"
+            + "                           other host ignores it. Not with --strip-wam.\n"
             + "  -f, --foreign-dll <path> A .NET assembly exposing predicates written in C#\n"
             + "                           ([PrologPredicate] static methods). They resolve\n"
             + "                           as foreign predicates during linking, and the\n"

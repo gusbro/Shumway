@@ -158,6 +158,22 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
+- **Every side table is a WEAK holder** — foreign, BigInteger and
+  rational: an entry lives only while a
+  FOREIGN cell naming it is reachable. Dead entries are NULLED (surviving
+  ids stay positional, so no id is reused under a live reference) and only
+  the tail is removed, while its last entry is provably dead. Judged by
+  liveness, never by the stored value: null and zero are things a program
+  can store on purpose. The BigIntAlloc/RationalAlloc trail entries reclaim
+  a slot only when BACKTRACKING unwinds past the allocation, which does
+  nothing in the deterministic loop an embedded system lives in; the sweep
+  is what covers that. (ADR-053.)
+- **The attribute table is a WEAK root** — a row does not keep its variable
+  alive. The attribute value is reached from the live variable, never the
+  variable from its row, and rows the trace disproves are swept before
+  relocation. Adding the table back as a root reintroduces a leak that
+  retained 54,570 of 54,574 live cells, and makes `call_residue_vars/2`
+  report variables the program cannot reach. (ADR-052.)
 
 ## Debugger
 

@@ -61,8 +61,13 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net10.0
       # net10 only: the wasm backend targets the browser and the package it
       # builds on has no net48 assets, so the netfx lanes do not carry it.
+      # ShumwayDiag: the tier's counters are [Conditional] and a stock build
+      # does not keep them, but they are how this suite proves what it proves
+      # (only hops and no host switches, the exact spend of a goal, every
+      # deopt accounted for). Without the flag those 21 tests SKIP, and a
+      # gate that skips its instruments is not a gate.
       - name: Wasm
-        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0
+        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0 -p:ShumwayDiag=true
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
         env:

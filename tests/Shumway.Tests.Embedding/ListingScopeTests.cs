@@ -67,9 +67,9 @@ public sealed class ListingScopeTests
         var e = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
         string text = Listing(e);
 
-        // The user's own predicate is reported — with no source to show, since a
-        // release bundle carries none, which is what that message is FOR.
-        Assert.Contains("mine/1", text);
+        // The user's own predicate is listed from the clauses the bundle
+        // ships for inspection (a release bundle carries no source).
+        Assert.Contains("mine(1).", text);
         // The prelude's, on the other hand, are not the user's program at all.
         Assert.DoesNotContain("$prelude", text);
     }

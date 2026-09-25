@@ -509,6 +509,24 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>jit_compile/1's control over Tier-1 promotion, supplied by the
+    /// host because the promotion store lives above this assembly. The
+    /// argument is the threshold in calls: 0 turns promotion off and returns
+    /// what already promoted to Tier-0, 1 promotes a predicate on its first
+    /// call, N waits for N. Returns whether the mode was established.
+    ///
+    /// <para>WHICH tier this is depends on the product, and there is only ever
+    /// one: Tier-1 is the IL compiler in Shumway and the WebAssembly backend in
+    /// WebShumway. A build with no Tier-1 at all leaves this null, where only
+    /// "off" can be honoured -- it already holds.</para>
+    ///
+    /// <para>Turning it off cannot take effect where it is called from: a
+    /// choice point created inside Tier-1 code has to be able to redo there,
+    /// so the host defers the eviction to the next query setup, which is the
+    /// safe point. "the goals after this one run on Tier-0", not "this
+    /// one".</para></summary>
+    public Func<int, bool>? JitControl { get; set; }
+
     /// <summary>The consult-direct bare-call fallback: a bare goal no other
     /// route resolved is resolved to a DIRECTLY-consulted explicit module's
     /// local when exactly ONE such module defines the name — consulting a
@@ -752,6 +770,28 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>The environment chain as POSITIONS, innermost first, with the
+    /// return address each frame carries.
+    ///
+    /// <para>Diagnostic. <see cref="EnumerateCallReturnAddresses"/> answers
+    /// "what called this", and a recursive predicate makes every frame carry
+    /// the same address there, so a long run of one address says nothing
+    /// about whether the chain is deep or merely repeating. Positions are
+    /// distinct per frame, so these separate a 100,000-deep recursion from a
+    /// chain that loops back on itself -- two different bugs that look
+    /// identical through the addresses.</para></summary>
+    public IEnumerable<(int E, int Ret)> EnumerateEnvironmentFrames()
+    {
+        int e = _e;
+        while (e >= 0)
+        {
+            yield return (e, (int)_stack[e + EnvCpOffset].Data);
+            int prevE = (int)_stack[e + EnvCeOffset].Data;
+            if (prevE == e || prevE < 0) yield break;
+            e = prevE;
+        }
+    }
+
     /// <summary>The environment and continuation the top choice point will restore —
     /// the state its retried clause runs in. See <see cref="PendingRedoEnvDepth"/>.
     /// Returns the current pair for an IL choice point, which restores neither.</summary>
@@ -776,6 +816,33 @@ public sealed partial class Activation
     // caller's continuation immediately. Cleared by the handler that
     // observes it.
     public bool IlTailCallPending { get; set; }
+
+    // A DEOPT rides the same two signals as a tail call (Pc + the flag
+    // above) and means the opposite: a tail call says "continue at this
+    // target, and trying the tier there is right", while a deopt says "the
+    // module could not run this instruction, so the interpreter must".
+    // Telling them apart matters in exactly one place -- the Call/Execute
+    // helper, which re-dispatches the target through the tier. A deopt whose
+    // pc lands on the deopting predicate's own entry (an early instruction,
+    // or an arithmetic step that escalates out of the 60-bit lane) would be
+    // handed straight back to the module that just refused it, and the two
+    // spin: measured at 300k deopts a second, a hang with no stack growth
+    // and no exception to catch.
+    private bool _ilDeoptPending;
+
+    /// <summary>Marks the pending resume as a deopt rather than a tail
+    /// call.</summary>
+    public void SignalIlDeopt() => _ilDeoptPending = true;
+
+    /// <summary>Reads the deopt marking and clears it. Every consumer of
+    /// <see cref="IlTailCallPending"/> calls this, so the flag cannot
+    /// outlive the resume it describes.</summary>
+    public bool TakeIlDeopt()
+    {
+        bool d = _ilDeoptPending;
+        _ilDeoptPending = false;
+        return d;
+    }
 
     // ----- IL choice points (Tier-1) -----
     //
@@ -872,6 +939,19 @@ public sealed partial class Activation
             _resumeMarkerByPair[key] = id;
             return ResumeMarkerBase + id;
         }
+    }
+
+    /// <summary>The marker of a pair that was already interned, without
+    /// interning it: a host lookup that MISSES (an address no module baked)
+    /// must not mint a marker nobody will ever resolve.</summary>
+    public static bool TryGetResumeMarker(int functorId, int cursor, out int marker)
+    {
+        marker = 0;
+        if (cursor < 0) return false;
+        long key = ((long)functorId << 32) | (uint)cursor;
+        if (!_resumeMarkerByPair.TryGetValue(key, out int id)) return false;
+        marker = ResumeMarkerBase + id;
+        return true;
     }
 
     public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
@@ -1147,6 +1227,27 @@ public sealed partial class Activation
     /// the standard PC-jump path and the IL re-dispatch path.</summary>
     public bool TopChoicePointIsIl =>
         _b >= 0 && _ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key == _b;
+
+    /// <summary>Drop IL choice-point entries the current <c>_b</c> has moved
+    /// below. The wasm tier owns the memory-side choice-point stack and cuts,
+    /// trusts and backtracks over it WITHOUT touching this managed parallel
+    /// stack -- so after a chain runs, an entry can name a B the wasm has
+    /// already buried, and TopChoicePointIsIl would then miss the real IL CP
+    /// under it and read its sentinel bp as a bytecode address (SetPc(-1), a
+    /// silent false success). Cut prunes these the same way when it lowers
+    /// _b; a wasm chain needs the equivalent on return. Entries are pushed in
+    /// monotonic _b order, so the stale ones sit on top.</summary>
+    public void ReconcileIlChoicePointsToB()
+    {
+        while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > _b)
+        {
+            var onPrune = _ilCpStack[_ilCpTop - 1].OnPrune;
+            if (onPrune is not null) onPrune();
+            _ilCpStack[_ilCpTop - 1].Del = null!;
+            _ilCpStack[_ilCpTop - 1].OnPrune = null;
+            _ilCpTop--;
+        }
+    }
 
     /// <summary>Pops the topmost IL choice point, restoring engine state
     /// (heap top, trails, registers, …) the same way <c>TrustMe</c> would

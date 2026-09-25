@@ -28,9 +28,18 @@
     <!-- The wasm Tier-1 is OPT-IN for this app. A published WebShumway is
          Tier-0 unless asked otherwise: the tier is still an arc under
          measurement, and switching it on also drags in the emscripten relink
-         for the shim and a ~3 MB baked prelude asset.
+         for the shim and a ~3 MB wasm module in the stdlib bundle.
          Build or publish with -p:ShumwayWasmTier=true to include it. -->
     <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
+
+    <!-- The engine is AOT-compiled to wasm by default: measured 6-9x faster
+         than mono's IL interpreter on Tier-0 (CLP(Z) 5-7x) once the two
+         try/finally on the dispatch path were removed. Costs a 4.5 MB
+         (brotli) native module and a ~20 min publish the first time; the
+         wasm-tools workload is required either way. Pass
+         -p:RunAOTCompilation=false for a quick interpreted publish. Numbers
+         in docs/benchmarks/wasm-split-spike.md. -->
+    <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">true</RunAOTCompilation>
 
     <!-- REQUIRED for the NativeFileReference below to reach the runtime.
          Threads do NOT imply the native relink: without this the SDK prints
@@ -62,6 +71,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.Libraries\Shumway.Libraries.csproj" />
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
     <!-- The wasm Tier-1 spike (phase 0). Browser-only by nature. -->
     <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
@@ -98,6 +108,10 @@
          compile to WebAssembly modules and run natively. Browser only. -->
     <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"
         Value="$(ShumwayWasmTier)" Trim="true" />
+    <!-- Embedding loads the engine's libraries by assembly NAME at first
+         use; nothing references the assembly statically, so the trimmer
+         must be told to keep it. -->
+    <TrimmerRootAssembly Include="Shumway.Libraries" />
   </ItemGroup>
 
   <!-- Bake the standard library into a bundle the app embeds, so the engine boots
@@ -116,11 +130,18 @@
     <StdlibBundle>$(StdlibDir)stdlib.shum</StdlibBundle>
     <ShumwayCompileDll>..\Shumway.Compile\bin\$(Configuration)\net10.0\shumway-compile.dll</ShumwayCompileDll>
     <ShumwayLinkDll>..\Shumway.Link\bin\$(Configuration)\net10.0\shumway-link.dll</ShumwayLinkDll>
+    <!-- With the wasm tier built in, the stdlib bundle also carries its
+         predicates as a relocatable wasm module: the boot installs it in
+         place of the ~6 s browser-side compile of wasm_compile(all). The
+         wasm compiler is then an input of the bake. -->
+    <StdlibWasmFlag Condition="'$(ShumwayWasmTier)' == 'true'">--wasm</StdlibWasmFlag>
+    <StdlibBakeInputs>boot.pl;..\Shumway.Embedding\Prelude.cs</StdlibBakeInputs>
+    <StdlibBakeInputs Condition="'$(ShumwayWasmTier)' == 'true'">$(StdlibBakeInputs);..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</StdlibBakeInputs>
   </PropertyGroup>
 
   <Target Name="BakeStdlibBundle"
           BeforeTargets="PrepareForBuild"
-          Inputs="boot.pl;..\Shumway.Embedding\Prelude.cs"
+          Inputs="$(StdlibBakeInputs)"
           Outputs="$(StdlibBundle)">
     <!-- Ordering without a ProjectReference: a browser-wasm app is self-contained
          and may not reference a framework-dependent executable (NETSDK1150), so
@@ -135,48 +156,11 @@
              Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(StdlibDir)" />
     <Exec Command="dotnet &quot;$(ShumwayCompileDll)&quot; boot.pl -o &quot;$(StdlibDir)boot.shmo&quot;" />
-    <Exec Command="dotnet &quot;$(ShumwayLinkDll)&quot; &quot;$(StdlibDir)boot.shmo&quot; --stdlib --no-compress --entry web_boot/0 -o &quot;$(StdlibBundle)&quot;" />
+    <Exec Command="dotnet &quot;$(ShumwayLinkDll)&quot; &quot;$(StdlibDir)boot.shmo&quot; --stdlib --no-compress $(StdlibWasmFlag) --entry web_boot/0 -o &quot;$(StdlibBundle)&quot;" />
   </Target>
 
   <ItemGroup>
     <EmbeddedResource Include="$(StdlibBundle)" LogicalName="stdlib.shum" Visible="false" />
-  </ItemGroup>
-
-  <!-- Bake the prelude's wasm Tier-1 group ahead of time, so the engine boots
-       with the whole stdlib already native — wasm_compile(all)'s ~6 s browser
-       compile paid once at build time instead. The asset embeds validation
-       evidence and the boot rejects it (falling back to lazy compilation)
-       whenever this process would not reproduce the bake's intern state, so
-       staleness degrades to slowness, never to wrong code. Rebakes when the
-       stdlib bundle or the wasm compiler changes. -->
-  <PropertyGroup>
-    <WasmGroupAsset>$(StdlibDir)prelude.wasmgroup</WasmGroupAsset>
-    <ShumwayWasmBakeDll>..\Shumway.WasmBake\bin\$(Configuration)\net10.0\shumway-wasmbake.dll</ShumwayWasmBakeDll>
-  </PropertyGroup>
-
-  <!-- Two targets: the tool build runs unconditionally (MSBuild's own
-       up-to-date check makes it cheap), so the SECOND target's incremental
-       decision sees the FRESH tool dll — one target doing both would compare
-       against the stale dll and skip a needed rebake until the next build. -->
-  <Target Name="BuildWasmBakeTool"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(ShumwayWasmTier)' == 'true'"
-          DependsOnTargets="BakeStdlibBundle">
-    <MSBuild Projects="..\Shumway.WasmBake\Shumway.WasmBake.csproj"
-             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
-  </Target>
-
-  <Target Name="BakeWasmGroup"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(ShumwayWasmTier)' == 'true'"
-          DependsOnTargets="BuildWasmBakeTool"
-          Inputs="$(StdlibBundle);$(ShumwayWasmBakeDll)"
-          Outputs="$(WasmGroupAsset)">
-    <Exec Command="dotnet &quot;$(ShumwayWasmBakeDll)&quot; &quot;$(StdlibBundle)&quot; -o &quot;$(WasmGroupAsset)&quot;" />
-  </Target>
-
-  <ItemGroup Condition="'$(ShumwayWasmTier)' == 'true'">
-    <EmbeddedResource Include="$(WasmGroupAsset)" LogicalName="prelude.wasmgroup" Visible="false" />
   </ItemGroup>
 
 </Project>

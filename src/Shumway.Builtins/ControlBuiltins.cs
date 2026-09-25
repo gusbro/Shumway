@@ -154,4 +154,67 @@ public static class ControlBuiltins
             throw new PrologRuntimeException("domain_error", "int32");
         throw new PrologHaltException((int)code);
     }
+
+    /// <summary><c>jit_compile(Mode)</c> — sets how Tier-1 promotion behaves
+    /// from here on. <c>off</c> (or <c>none</c>) stops promoting and returns
+    /// what already promoted to Tier-0, <c>all</c> promotes each predicate on
+    /// its first call, <c>on</c> is a moderate threshold, and a positive
+    /// integer is the call threshold to wait for.
+    ///
+    /// <para>Which compiler Tier-1 is depends on the product and there is
+    /// only one per build, so the same goal means the same thing in both:
+    /// "run the following goals with this much of the JIT".</para>
+    ///
+    /// <para>Fails, rather than raising, when the mode cannot be established
+    /// because the build has no Tier-1 -- a failure is an answer a program can
+    /// test, and there is nothing exceptional about an engine that only
+    /// interprets. <c>off</c> always succeeds there: it already holds.</para>
+    /// </summary>
+    public static bool JitCompile(Activation engine)
+    {
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(c.AsHeapIndex);
+            c = engine.GetHeap(addr);
+        }
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+
+        int threshold;
+        if (c.Tag == Tag.Int)
+        {
+            long n = c.AsInt;
+            if (n < 0 || n > int.MaxValue)
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
+            threshold = (int)n;
+        }
+        else if (c.Tag == Tag.Atom)
+        {
+            // none and on are the top level's spellings and mean the same
+            // here: one vocabulary, or a goal that works when typed and
+            // raises when run.
+            string? name = AtomTable.GetById(c.AsAtomId)?.Name;
+            threshold = name switch
+            {
+                "off" or "none" => 0,
+                "all" => 1,
+                "on" => 16,
+                _ => -1,
+            };
+            if (threshold < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
+        }
+        else
+        {
+            throw new PrologRuntimeException(
+                "domain_error", "jit_compile_mode", engine, c);
+        }
+
+        if (engine.JitControl is { } control) return control(threshold);
+        // No Tier-1 in this build: "off" is already the state of the world.
+        return threshold == 0;
+    }
 }

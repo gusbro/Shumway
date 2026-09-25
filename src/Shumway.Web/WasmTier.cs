@@ -38,6 +38,10 @@ internal static partial class WebShumwayApp
 
     /// <summary>The registration and the crossing, for the tier's runner
     /// (BrowserWasmRunner): thin internal doors over the spike.c shim.</summary>
+    /// <summary>This thread's function-table length, for the pinning probe.
+    /// </summary>
+    internal static int TableLengthHere() => shumway_wasm_table_length();
+
     internal static int WasmRegister(int bytesPtr, int len)
         => shumway_wasm_register(bytesPtr, len);
     internal static int WasmCall(int index, int mailbox, int cursor)
@@ -92,6 +96,173 @@ internal static partial class WebShumwayApp
             return report.ToString();
         }).ConfigureAwait(false);
     }
+
+    /// <summary>Where the WAM's scalars should live. They are in LOCALS today,
+    /// loaded from the mailbox on entry and spilled on exit, and that prologue
+    /// and epilogue are both most of a small module's fixed size and what every
+    /// crossing pays. Imported mutable globals would remove them rather than
+    /// share them -- a module reached by a tail call would find the state
+    /// already there.
+    ///
+    /// <para>The question is the price of an ACCESS, because these are the
+    /// hottest reads and writes in the engine. The same counting loop, four
+    /// ways, differing only in where the counter lives.</para></summary>
+    [JSExport]
+    internal static async Task<string> WasmScalarHomeProbe(int iterations, int rounds)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            try
+            {
+                long[] mem = GC.AllocateArray<long>(16, pinned: true);
+                int memAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mem, 0);
+                foreach (SpikeScalarHomeModules.Home home in
+                         Enum.GetValues<SpikeScalarHomeModules.Home>())
+                {
+                    int idx;
+                    try
+                    {
+                        idx = Register(report, home.ToString(),
+                            SpikeScalarHomeModules.Build(home, shared: true));
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Append(home).Append(": REFUSED ")
+                              .Append(ex.Message).Append('\n');
+                        continue;
+                    }
+                    double best = double.MaxValue;
+                    long result = 0;
+                    for (int r = 0; r < Math.Max(1, rounds); r++)
+                    {
+                        mem[0] = iterations;
+                        var sw = Stopwatch.StartNew();
+                        shumway_wasm_call(idx, memAt, 0);
+                        sw.Stop();
+                        result = mem[SpikeScalarHomeModules.ResultSlot];
+                        double ns = sw.Elapsed.TotalMilliseconds * 1e6 / iterations;
+                        if (ns < best) best = ns;
+                    }
+                    report.Append(home).Append(": ").Append(best.ToString("F2"))
+                          .Append(" ns/access (result ").Append(result).Append(")\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
+    /// <summary>Is engine work actually pinned to one thread? A compiled module
+    /// is registered in the CALLING thread's function table, so a pool that
+    /// hands out a different thread each time makes every module pay
+    /// registration again there. The claim is only worth anything if the ids
+    /// come back identical, and worth checking because CA1416 says a dedicated
+    /// thread is unsupported on this platform -- an annotation older than
+    /// switchable threads, but an annotation all the same.</summary>
+    [JSExport]
+    internal static async Task<string> WasmThreadProbe(int calls)
+    {
+        var ids = new List<int>();
+        for (int i = 0; i < Math.Max(2, calls); i++)
+            ids.Add(await WebShumwayApp.OnEngineThreadId().ConfigureAwait(false));
+
+        var report = new StringBuilder();
+        report.Append("engine thread ids over ").Append(ids.Count)
+              .Append(" calls: ").Append(string.Join(", ", ids)).AppendLine();
+        bool pinned = ids.TrueForAll(i => i == ids[0]);
+        report.Append(pinned ? "PINNED: one thread" : "NOT PINNED: the ids differ")
+              .AppendLine();
+        report.Append("table length seen from it: ")
+              .Append(await WebShumwayApp.OnEngineTableLength().ConfigureAwait(false))
+              .AppendLine();
+        return report.ToString();
+    }
+
+    /// <summary>Phase 0 of the many-modules arc, in the browser: two modules
+    /// that hand control to each other with <c>return_call_indirect</c> through
+    /// this thread's function table, never returning to the host.
+    ///
+    /// <para>G0 is the gate that can kill the arc, and it is a PROPERTY, not a
+    /// speed: millions of hops must run in bounded stack. If the engine
+    /// compiles the tail call as an ordinary call the stack grows per hop and
+    /// there is no fallback -- in the WAM a call IS a jump and the continuation
+    /// lives in CP. G1 is the speed, against the 4-15 us a cross-module switch
+    /// costs today going out through mono-interpreted C#. G4 is that a module
+    /// reaches table slots added AFTER it was instantiated.</para></summary>
+    [JSExport]
+    internal static async Task<string> WasmSplitProbe(int hops, int rounds)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            try
+            {
+                long[] mem = GC.AllocateArray<long>(64, pinned: true);
+                int memAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mem, 0);
+
+                // Registered one at a time on purpose: B does not exist when A
+                // is instantiated, so A reaching B at all is G4 -- a table
+                // import is by reference, and slots added later must be
+                // visible.
+                bool carry = rounds < 0;        // negative rounds: carry state
+                rounds = Math.Abs(rounds);
+                report.Append(carry
+                    ? "hops CARRYING the scalar set (9 spilled, 13 reloaded)\n"
+                    : "bare hops (no state transfer)\n");
+                int a = Register(report, "ping",
+                    SpikeTailPingPongModules.Build(
+                        SpikeTailPingPongModules.HalfA,
+                        SpikeTailPingPongModules.IndexOfBSlot, shared: true,
+                        carryState: carry));
+                report.Append("table length after ping: ")
+                      .Append(shumway_wasm_table_length()).Append('\n');
+                int b = Register(report, "pong",
+                    SpikeTailPingPongModules.Build(
+                        SpikeTailPingPongModules.HalfB,
+                        SpikeTailPingPongModules.IndexOfASlot, shared: true,
+                        carryState: carry));
+                report.Append("table length after pong: ")
+                      .Append(shumway_wasm_table_length()).Append('\n');
+
+                mem[SpikeTailPingPongModules.IndexOfASlot] = a;
+                mem[SpikeTailPingPongModules.IndexOfBSlot] = b;
+
+                // One hop first: if the tail call is not wired the failure is
+                // here, small and readable, not inside a 10^7 loop.
+                mem[SpikeTailPingPongModules.HopsRemainingSlot] = 2;
+                int who = shumway_wasm_call(a, memAt, 0);
+                report.Append("two hops answer: ").Append(who)
+                      .Append(" (memory says ")
+                      .Append(mem[SpikeTailPingPongModules.HopsDoneSlot])
+                      .Append(")\n");
+
+                double best = double.MaxValue;
+                for (int r = 0; r < Math.Max(1, rounds); r++)
+                {
+                    mem[SpikeTailPingPongModules.HopsRemainingSlot] = hops;
+                    var sw = Stopwatch.StartNew();
+                    int end = shumway_wasm_call(a, memAt, 0);
+                    sw.Stop();
+                    double ns = sw.Elapsed.TotalMilliseconds * 1e6 / hops;
+                    report.Append("round ").Append(r).Append(": ").Append(hops)
+                          .Append(" hops in ").Append(sw.Elapsed.TotalMilliseconds.ToString("F1"))
+                          .Append(" ms = ").Append(ns.ToString("F1"))
+                          .Append(" ns/hop, ended in half ").Append(end).Append('\n');
+                    if (ns < best) best = ns;
+                }
+                report.Append("G0 = PASS (").Append(hops)
+                      .Append(" hops per round, bounded stack)\n");
+                report.Append("G1 best: ").Append(best.ToString("F1")).Append(" ns/hop\n");
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
 
     /// <summary>Whether the raw managed calli works once the index is valid
     /// for the calling thread -- kept apart because a hang here must not cost

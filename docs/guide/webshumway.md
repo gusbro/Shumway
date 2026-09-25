@@ -15,6 +15,12 @@ dotnet publish src/Shumway.Web -c Release
 # the site is bin/Release/Shumway.Web/net10.0/publish/wwwroot
 ```
 
+The engine is compiled ahead of time to WebAssembly, which is what makes
+queries fast once the page is up; that publish takes around twenty minutes
+the first time (the wasm-tools workload is required). For a quick check of
+the page itself, `-p:RunAOTCompilation=false` publishes in a couple of
+minutes with the engine interpreted, several times slower.
+
 ---
 
 ## What it is
@@ -135,6 +141,11 @@ attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
 
+In a build with the WebAssembly tier, a compiled library also carries its
+predicates as a WebAssembly module, baked once at compile time. Loading the
+library installs that module instead of compiling the predicates again, the
+same way the engine's own libraries (clpfd, clpr, coroutining) arrive.
+
 ### When one will not compile
 
 Importing a collection compiles libraries you did not ask about, so what they
@@ -172,6 +183,48 @@ bundle wins over the source beside it. Editing a source therefore does nothing
 until **rebuild**, and that is visible in the layout rather than imposed by a
 read-only flag somebody has to police. A library that will not compile still
 works; it just loads slowly.
+
+---
+
+## Choosing how much gets compiled
+
+`jit_compile/1` sets how much of your program the just-in-time compiler takes
+on, for the goals that follow:
+
+```prolog
+?- jit_compile(all).     % compile everything, now and after every consult
+?- jit_compile(16).      % compile a predicate once it has been called 16 times
+?- jit_compile(off).     % stop compiling, and run on the interpreter again
+```
+
+It is an ordinary predicate, so a directive in a consulted file works too:
+
+```prolog
+:- jit_compile(all).
+```
+
+The same three forms mean the same thing in the desktop system, where what
+they control is the IL compiler rather than the WebAssembly one. A program
+does not have to know which engine it landed in to ask for a setting, which is
+what lets one test harness run under every configuration.
+
+`off` is a real off: the predicates already compiled go back to the
+interpreter, not just the ones that would have been compiled next. That takes
+effect from the goal after the switch, never inside it, because a compiled
+predicate may be in the middle of producing solutions when you ask.
+
+The setting survives `restart.`: a fresh engine comes back in the mode you
+were working in, so clearing the database does not quietly change what you
+were measuring. Reload the page to get the default back.
+
+`none` is accepted as another spelling of `off`, and `on` as a moderate
+threshold. At the top level, `jit_compile.` on its own means `on`.
+
+`jit_compile(status).` is a top-level command rather than a setting, and
+belongs to the page the way `restart.` does: it reports what is compiled,
+what was refused and why, and the tier's counters. Ask for it from a program
+and you get a domain error, because there is nothing for a program to do with
+it.
 
 ---
 

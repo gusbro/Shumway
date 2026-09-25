@@ -71,12 +71,7 @@ public class EngineWasmTierTests
                 members.Add(candidate);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var entryAddr = new Dictionary<int, int>(members.Count);
-                    foreach (var m in members)
-                        entryAddr[m.Predicate.FunctorId] = m.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                    TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException)
@@ -85,12 +80,7 @@ public class EngineWasmTierTests
                     members.Remove(candidate);
                     if (members.Count > 0)
                     {
-                        var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                        var entryAddr = new Dictionary<int, int>(members.Count);
-                        foreach (var m in members)
-                            entryAddr[m.Predicate.FunctorId] = m.Bias;
-                        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                        TieredEngine.Install(world, members, env);
                     }
                     return null;
                 }
@@ -135,7 +125,7 @@ public class EngineWasmTierTests
         Assert.False(e.Query("wrap(1, T), same(T, f(g(1), h(2))).").Success);
     }
 
-    [Fact]
+    [DiagFact]
     public void InGroupCallsNeverLeaveTheModule()
     {
         // The group design's contract: once the predicates share a module,
@@ -196,7 +186,7 @@ public class EngineWasmTierTests
         Assert.InRange(WasmTierDelegate.DiagDeopts, 0, 16);
     }
 
-    [Fact]
+    [DiagFact]
     public void TermIdentityIsOpenCoded_ForAtomicCells()
     {
         // ==/2 and \==/2 on dereferenced Atom/Int cells decide INSIDE the
@@ -215,14 +205,18 @@ public class EngineWasmTierTests
         Assert.True(e.Query("alldiff(0, [1,2,3,4,5,6,7,8,9,10]).").Success);
         Assert.Equal(0, WasmTierDelegate.DiagBuiltins);
 
-        // Non-atomic operands fall back to the builtin — same answers,
-        // through the exit.
+        // Compounds are decided by the module's comparator, and the
+        // answers are the same either way.
         Assert.True(e.Query("idc(f(a), f(a), same), idc(f(a), f(b), diff).").Success);
         Assert.True(e.Query("idc(X, X, same), idc(X, Y, diff).").Success);
+
+        // What the comparator DECLINES still exits: two equal bignums can
+        // wear different cells, so cell identity is not term identity.
+        Assert.True(e.Query("B1 is 2 ^ 200, B2 is 2 ^ 200, idc(f(B1), f(B2), same).").Success);
         WasmTierDelegate.ResetDiag();
-        Assert.True(e.Query("idc(f(a), f(a), same).").Success);
+        Assert.True(e.Query("B1 is 2 ^ 200, B2 is 2 ^ 200, idc(f(B1), f(B2), same).").Success);
         Assert.True(WasmTierDelegate.DiagBuiltins > 0,
-            "a compound comparison must exit to the real builtin");
+            "a bignum comparison must exit to the real builtin");
     }
 
     [Fact]

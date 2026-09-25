@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.Libraries\Shumway.Libraries.csproj" />
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
   </ItemGroup>
 

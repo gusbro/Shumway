@@ -101,6 +101,27 @@ builds trim the whole `Shumway.Compiler.Wasm` subtree and the package, mirror
 of `Shumway.RuntimeCodegen`. Consult the property, never cache it, so the
 trimmer can fold it.
 
+**D8 — the tier's setting is a predicate, not a page command.**
+`jit_compile(off | all | N)` is a builtin of the engine, so a consulted file
+can set it with a directive and a harness written in Prolog can ask for a
+configuration without knowing which product it is running in: a build has
+exactly one Tier-1, the IL compiler in Shumway and this backend in
+WebShumway, and the same goal names whichever it is. The page's
+`wasm_compile/1` was renamed to it rather than kept as an alias: the tier
+had never shipped, so nothing was owed compatibility. `jit_compile(status)`
+stays page-side, being a report of this backend rather than a setting, and
+the top level answers it the way it answers `restart.`.
+
+`off` evicts what already promoted, deferred to the next query setup. It
+cannot happen where it is asked: a choice point created inside tier code has
+to be able to redo there, and query setup is the existing safe point for work
+of this shape (the dynamic-buffer compaction is deferred to the same place).
+So `off` governs the goals after it, not the one it appears in.
+
+The browser keeps the mode across `restart.`, which builds a fresh engine:
+the setting is what the session is working under, and clearing the database
+is not a reason to change it.
+
 ## Consequences
 
 The tier runs in the live engine, desktop and browser, measured

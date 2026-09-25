@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace Shumway.Core;
@@ -33,6 +34,9 @@ public sealed partial class Activation
     private void TrailBigIntAlloc(int oldCount)
     {
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.BigIntAlloc, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.BigIntAlloc,
@@ -63,6 +67,9 @@ public sealed partial class Activation
         int id = _rationalTable.Count;
         _rationalTable.Add(value);
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.RationalAlloc, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.RationalAlloc,
@@ -95,6 +102,9 @@ public sealed partial class Activation
         int idx = _externalTrailLog.Count;
         _externalTrailLog.Add((target, key, oldValue, hadOldValue));
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.MutableSet, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.MutableSet,
@@ -140,6 +150,76 @@ public sealed partial class Activation
         _foreignTable.Add(value);
         return Cell.Foreign(id);
     }
+
+    /// <summary>ADR-053: releases every foreign object the collector just
+    /// disproved. <paramref name="live"/> is the per-collection bitmap the
+    /// trace filled from the FOREIGN cells it reached; an id outside it is
+    /// named by nothing reachable.
+    ///
+    /// <para>Dead entries are NULLED rather than removed, so every surviving
+    /// id keeps meaning what it meant and no id is ever reused under a live
+    /// reference. Only the TAIL is actually removed, and only while its last
+    /// entry is dead -- which is the common append-then-die shape, and gives
+    /// the slots back without moving anything.</para>
+    ///
+    /// <para>Judged by LIVENESS, never by null-ness: <see cref="MakeForeign"/>
+    /// accepts null, so a program can store one on purpose, and shrinking on
+    /// null would drop a live id off the end and turn the next
+    /// <see cref="AsForeign(Cell)"/> into an index-out-of-range thrown out of
+    /// the engine.</para></summary>
+    private void ForeignSweepUnmarked(bool[]? live)
+        => SweepSideTable(_foreignTable, live);
+
+    /// <summary>ADR-053: the same sweep over the numeric side tables.
+    ///
+    /// <para><see cref="TrailType.BigIntAlloc"/> and
+    /// <see cref="TrailType.RationalAlloc"/> reclaim a slot when
+    /// backtracking unwinds past the allocation, which covers a SEARCH and
+    /// covers nothing else: a deterministic loop never backtracks, and that
+    /// loop is what an embedded system spends its life in. Twenty thousand
+    /// transient big integers in one left twenty thousand entries standing
+    /// after a full collection, linear in the loop, though the program could
+    /// only ever name one at a time.</para>
+    ///
+    /// <para>Safer here than for the foreign table: a BigInt or Rational id
+    /// never escapes into a term (every use is an immediate lookup inside
+    /// this class), so there is no analogue of the '$foreign'(N)
+    /// round-trip to go stale when a tail slot is released.</para>
+    ///
+    /// <para>This does not disturb the trail contract. The unwind truncates
+    /// only when the table is LARGER than the size it recorded, so a table
+    /// the collector already shrank makes it a no-op.</para></summary>
+    private void NumericSweepUnmarked(bool[]? bigLive, bool[]? ratLive)
+    {
+        SweepSideTable(_bigIntTable, bigLive);
+        SweepSideTable(_rationalTable, ratLive);
+    }
+
+    /// <summary>Releases every entry the collector disproved. Dead entries
+    /// are reset to <c>default</c> rather than removed, so surviving ids
+    /// stay positional and none is reused under a live reference -- null for
+    /// a foreign object, zero for a big integer or rational, each of which
+    /// drops the magnitude array that is the actual memory. Only the TAIL is
+    /// removed, and only while its last entry is dead.
+    ///
+    /// <para>Judged by LIVENESS, never by the stored value: a program can
+    /// store a null foreign object or the integer zero on purpose, and
+    /// shrinking on the value would drop a live id off the end and turn the
+    /// next lookup into an index-out-of-range thrown out of the
+    /// engine.</para></summary>
+    private static void SweepSideTable<T>(List<T> table, bool[]? live)
+    {
+        int n = table.Count;
+        if (n == 0) return;
+        for (int i = 0; i < n; i++)
+            if (!IsSideTableLive(live, i)) table[i] = default!;
+        int top = n;
+        while (top > 0 && !IsSideTableLive(live, top - 1)) top--;
+        if (top < n) table.RemoveRange(top, n - top);
+    }
+
+    private static bool IsSideTableLive(bool[]? live, int id)
+        => live is not null && id < live.Length && live[id];
 
     /// <summary>The foreign-table entry by raw id, or null when out of range. The
     /// debugger's attvar transplant reads a SUSPENDED activation's table with this to
@@ -625,10 +705,10 @@ public sealed partial class Activation
     public bool IsAttVar(int heapAddr) => _heap[Deref(heapAddr)].Tag == Tag.AttVar;
 
     /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
-    internal int AttrTableCount => _attrTable.Count;
+    internal int AttrTableCount => AttrRecordTotal;
 
     /// <summary>Attribute records currently held — a diagnostic.</summary>
-    public int AttrRecordCount => _attrTable.Count;
+    public int AttrRecordCount => AttrRecordTotal;
 
     /// <summary>A snapshot of the attribute table's keys — the heap home of
     /// every variable that carries attributes, or carried them before it was
@@ -646,12 +726,7 @@ public sealed partial class Activation
     /// stands down whenever the attribute table is non-empty. A collector that
     /// runs with attributed variables live has to relocate the saved snapshots
     /// as well.</para></summary>
-    public int[] AttrTableKeysSnapshot()
-    {
-        var keys = new int[_attrTable.Count];
-        _attrTable.Keys.CopyTo(keys, 0);
-        return keys;
-    }
+    public int[] AttrTableKeysSnapshot() => AttrHomes();
 
     /// <summary>True when the heap cell at <paramref name="addr"/> is an
     /// (unbound) attributed variable.</summary>
@@ -678,7 +753,7 @@ public sealed partial class Activation
             // left by a backtracked-then-reused heap slot.
             TrailValueChange(addr, cell);
             _heap[addr] = Cell.AttVar(addr);
-            _attrTable[addr] = new Dictionary<int, int>();
+            AttrCreateRecord(addr);
         }
         else if (cell.Tag != Tag.AttVar)
         {
@@ -687,10 +762,9 @@ public sealed partial class Activation
             throw new PrologRuntimeException("type_error", "var");
         }
 
-        var record = _attrTable[addr];
-        int oldValue = record.TryGetValue(moduleId, out int prev) ? prev : -1;
+        int oldValue = AttrValueAt(addr, moduleId);
         TrailAttrChange(addr, moduleId, oldValue);
-        record[moduleId] = valueHeapIdx;
+        AttrSet(addr, moduleId, valueHeapIdx);
     }
 
     /// <summary>Reads the attribute for <paramref name="moduleId"/> on
@@ -707,13 +781,13 @@ public sealed partial class Activation
         // as "no attribute" rather than throwing out of the engine. In
         // Debug it still asserts — a missing record outside those windows
         // is an invariant break worth catching.
-        if (!_attrTable.TryGetValue(addr, out var record))
+        if (!AttrHasRecord(addr))
         {
             System.Diagnostics.Debug.Assert(false,
                 $"AttVar at heap[{addr}] has no attr record");
             return -1;
         }
-        return record.TryGetValue(moduleId, out int value) ? value : -1;
+        return AttrValueAt(addr, moduleId);
     }
 
     /// <summary>Removes the attribute for <paramref name="moduleId"/>
@@ -724,11 +798,10 @@ public sealed partial class Activation
     {
         int addr = Deref(varAddr);
         if (_heap[addr].Tag != Tag.AttVar) return;
-        var record = _attrTable[addr];
-        if (!record.TryGetValue(moduleId, out int oldValue)) return;
+        int oldValue = AttrValueAt(addr, moduleId);
+        if (oldValue < 0) return;
         TrailAttrChange(addr, moduleId, oldValue);
-        record.Remove(moduleId);
-        if (record.Count == 0)
+        if (AttrRemove(addr, moduleId) == 0)
         {
             // Last attribute gone → demote back to a plain unbound variable
             // (SWI semantics: attvar/1 is false again). Trailed like PutAttr's
@@ -747,7 +820,7 @@ public sealed partial class Activation
     {
         int addr = Deref(varAddr);
         return _heap[addr].Tag == Tag.AttVar
-            ? _attrTable[addr].Keys
+            ? AttrModulesAt(addr)
             : Array.Empty<int>();
     }
 
@@ -758,7 +831,7 @@ public sealed partial class Activation
     public int FindOrphanAttVar()
     {
         for (int i = 0; i < _heapTop; i++)
-            if (_heap[i].Tag == Tag.AttVar && !_attrTable.ContainsKey(i))
+            if (_heap[i].Tag == Tag.AttVar && !AttrHasRecord(i))
                 return i;
         return -1;
     }
@@ -771,7 +844,7 @@ public sealed partial class Activation
         for (int i = System.Math.Max(0, at - radius);
              i <= System.Math.Min(_heapTop - 1, at + radius); i++)
             sb.Append($"[{i}]={_heap[i].Tag}:{_heap[i].Data & Cell.PayloadMask}"
-                + (_attrTable.ContainsKey(i) ? "*" : "") + " ");
+                + (AttrHasRecord(i) ? "*" : "") + " ");
         return sb.ToString();
     }
 
@@ -779,7 +852,11 @@ public sealed partial class Activation
     {
         int logIndex = _attrTrailLog.Count;
         _attrTrailLog.Add((homeAddr, moduleId, oldValue));
+        AttrLogMirrorAppend(logIndex, homeAddr);
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.AttrModify, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.AttrModify,
@@ -813,7 +890,13 @@ public sealed partial class Activation
     /// </summary>
     public void TrailValueChange(int heapIdx, Cell oldValue)
     {
+        if (oldValue.Tag == Tag.AttVar)
+            Diagnostics.AttVarCellTrace.Note(_cellsAllocated, heapIdx,
+                Diagnostics.AttVarCellTrace.Kind.Overwritten);
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.ValueChange, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.ValueChange,
@@ -833,6 +916,8 @@ public sealed partial class Activation
     /// </summary>
     public void UnwindTrails(int bindingTarget, int extraTarget)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Unwind, _extraTrailTop, extraTarget);
         if (bindingTarget < 0 || bindingTarget > _bindingTrailTop)
             throw new ArgumentOutOfRangeException(nameof(bindingTarget));
         if (extraTarget < 0 || extraTarget > _extraTrailTop)
@@ -862,6 +947,9 @@ public sealed partial class Activation
         {
             case TrailType.ValueChange:
                 _heap[entry.HeapIdx] = entry.OldValue;
+                if (entry.OldValue.Tag == Tag.AttVar)
+                    Diagnostics.AttVarCellTrace.Note(_cellsAllocated, entry.HeapIdx,
+                        Diagnostics.AttVarCellTrace.Kind.Restored);
                 break;
             case TrailType.BigIntAlloc:
                 // entry.HeapIdx holds the table size *before* the allocation
@@ -898,10 +986,10 @@ public sealed partial class Activation
                     // value for it would mean nothing. Indexing regardless
                     // threw KeyNotFoundException out of the engine, where a
                     // Prolog program could reach it.
-                    if (_attrTable.TryGetValue(home, out var record))
+                    if (AttrHasRecord(home))
                     {
-                        if (oldValue < 0) record.Remove(mod);
-                        else record[mod] = oldValue;
+                        if (oldValue < 0) AttrRemove(home, mod);
+                        else AttrSet(home, mod, oldValue);
                     }
                     // truncate the side log. entry.HeapIdx is the
                     // log index assigned at append time (TrailAttrChange),
@@ -912,8 +1000,12 @@ public sealed partial class Activation
                     // their original — lower — indices). Without this the
                     // log grew unboundedly under clpfd labeling.
                     if (_attrTrailLog.Count > entry.HeapIdx)
+                    {
+                        // The image is dense and read only below the count,
+                        // so dropping the tail needs no write of its own.
                         _attrTrailLog.RemoveRange(
                             entry.HeapIdx, _attrTrailLog.Count - entry.HeapIdx);
+                    }
                 }
                 break;
             case TrailType.CatchFrame:
@@ -1949,9 +2041,7 @@ public sealed partial class Activation
     /// variable that a callee's head decomposed never fired.</para>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
     {
-        if (!_attrTable.TryGetValue(attvarHome, out var record)) return;
-        foreach (var (moduleId, attrValueIdx) in record)
-            _pendingWakeups.Add((moduleId, attrValueIdx, otherIdx, attvarHome));
+        AttrQueueWakeups(attvarHome, otherIdx, _pendingWakeups);
     }
 
     /// <summary>True when attribute hooks are queued and waiting to run.
@@ -2265,18 +2355,16 @@ public sealed partial class Activation
         int toHome = Deref(toAddr);
         if (_heap[fromHome].Tag != Tag.AttVar || _heap[toHome].Tag != Tag.AttVar)
             return true;
-        var fromRecord = _attrTable[fromHome];
-        var toRecord = _attrTable[toHome];
-        // Snapshot the source modules: the Unify below can't mutate
-        // fromRecord, but iterating a dictionary we may also be reading
-        // is fragile — copy the pairs first.
-        foreach (var (moduleId, fromValueIdx) in fromRecord.ToArray())
+        // The source pairs come out as a snapshot: the Unify below cannot
+        // mutate them, but iterating a record we may also be reading is
+        // fragile, and the funnel hands out copies for exactly that reason.
+        foreach (var (moduleId, fromValueIdx) in AttrPairsAt(fromHome))
         {
-            int toValueIdx = toRecord.TryGetValue(moduleId, out int v) ? v : -1;
+            int toValueIdx = AttrValueAt(toHome, moduleId);
             if (toValueIdx < 0)
             {
                 TrailAttrChange(toHome, moduleId, -1);
-                toRecord[moduleId] = fromValueIdx;
+                AttrSet(toHome, moduleId, fromValueIdx);
             }
             else if (ModuleHasHook(moduleId))
             {

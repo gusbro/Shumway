@@ -45,6 +45,11 @@ namespace Shumway.Embedding;
 ///                   each seed      : { name:string, arity:uint32,
 ///                                      clauseCount:uint32,
 ///                                      each clause: byteCount:uint32 + bytes }
+///                 ... native, operator, export-qualification trailers ...
+///                 clauseTermCount  : uint32   (TermCodec-encoded raw static
+///                       clauses, for clause/2 + listing/1 on a source-less
+///                       load; 0 under --strip)
+///                   each clause    : byteCount:uint32 + bytes
 ///   then the bundle-level trailers:
 ///                 foreignAsmCount  : uint32   (filename-only;
 ///                       LoadBundle resolves next to the .shum / the exe)
@@ -60,6 +65,9 @@ namespace Shumway.Embedding;
 ///                   each member    : { fileNameLen:uint32, fileNameBytes:utf-8,
 ///                                      shmoByteCount:uint32, shmoBytes (verbatim
 ///                                      .shmo image) }
+///                 wasmModuleCount  : uint32   (shumway-link --wasm: relocatable
+///                       wasm modules of the static predicates; 0 otherwise)
+///                   each module    : byteCount:uint32 + bytes
 /// </code>
 ///
 /// <para>PRE-RELEASE FORMAT POLICY (same as <see cref="ShmoFormat"/>): there

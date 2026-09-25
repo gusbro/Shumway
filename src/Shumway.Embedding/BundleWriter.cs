@@ -158,7 +158,8 @@ public static class BundleWriter
                     isExportQualified: effective[i].IsExportQualified,
                     exports: effective[i].Exports,
                     imports: effective[i].Imports,
-                    dialect: effective[i].Dialect);
+                    dialect: effective[i].Dialect,
+                    clauseTerms: effective[i].ClauseTerms);
             }
         }
 
@@ -270,6 +271,14 @@ public static class BundleWriter
             bw.Write((uint)member.ShmoBytes.Length);
             bw.Write(member.ShmoBytes);
         }
+        // Wasm-modules trailer (shumway-link --wasm): opaque relocatable
+        // modules. Mirrors ShmoLinker.SerialiseBundle exactly.
+        bw.Write((uint)bundle.WasmModules.Count);
+        foreach (var module in bundle.WasmModules)
+        {
+            bw.Write((uint)module.Length);
+            bw.Write(module);
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());
@@ -313,7 +322,7 @@ public static class BundleWriter
                     operators: e.Operators,
                     isExportQualified: e.IsExportQualified,
                     exports: e.Exports, imports: e.Imports,
-                    dialect: e.Dialect));
+                    dialect: e.Dialect, clauseTerms: e.ClauseTerms));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -802,6 +811,14 @@ public static class BundleWriter
         // ADR-040 — the module's source dialect (null = Shumway/ISO).
         bw.Write(entry.Dialect is not null);
         if (entry.Dialect is not null) WriteLengthPrefixedUtf8(bw, entry.Dialect);
+        // Clause-terms trailer: the raw static clauses for clause/2 and
+        // listing/1 on a source-less load (empty under --strip).
+        bw.Write((uint)entry.ClauseTerms.Count);
+        foreach (var enc in entry.ClauseTerms)
+        {
+            bw.Write((uint)enc.Length);
+            bw.Write(enc);
+        }
     }
 
     /// <summary>Per-entry <c>:- op/3</c> definitions,

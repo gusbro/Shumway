@@ -50,6 +50,21 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     public Func<Activation, int, bool>? ResolveByFunctorId(int functorId)
         => _store.TryGetResumeWrapper(functorId);
 
+    // Built on the first miss only: a CallIl site losing its delegate is an
+    // eviction between queries, not a per-dispatch event.
+    private Dictionary<int, int>? _addressByFid;
+
+    public int AddressOfFunctor(int functorId)
+    {
+        if (_addressByFid is null)
+        {
+            _addressByFid = new Dictionary<int, int>(_predicatesByAddress.Count);
+            foreach (var (addr, pred) in _predicatesByAddress)
+                _addressByFid[pred.FunctorId] = addr;
+        }
+        return _addressByFid.TryGetValue(functorId, out int a) ? a : -1;
+    }
+
     // The store's eviction stamp this cache was built against. Eviction cannot reach
     // wrappers already cached here by address, and a stale wrapper serving an evicted
     // dynamic snapshot violates the logical update view — so one int compare per

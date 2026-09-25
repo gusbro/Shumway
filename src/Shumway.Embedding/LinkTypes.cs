@@ -110,6 +110,14 @@ public sealed class LinkConfig
     /// and these predicates would be unrunnable.</summary>
     public bool StripWam { get; init; }
 
+    /// <summary>When set, compiles the linked bundle's static predicates to
+    /// a relocatable wasm module stored in the bundle (the <c>--wasm</c>
+    /// option; the baker lives in Shumway.Compiler.Wasm, which this assembly
+    /// does not reference). Returns the module bytes, or null when nothing
+    /// compiled. Refused together with <see cref="StripWam"/>: the module
+    /// runs the bytecode that option drops.</summary>
+    public Func<Bundle, byte[]?>? WasmBaker { get; init; }
+
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable
     /// seeds to functor ids, and runs <see cref="RegionReachability"/> to report how many
@@ -234,6 +242,13 @@ public sealed class LinkConfig
     /// you conjure dynamically). Interactive/REPL-style consumers that accept
     /// arbitrary queries should keep the full prelude.</summary>
     public bool PrunePrelude { get; init; }
+
+    /// <summary>When <c>true</c>, every predicate defined in every object is a
+    /// reachability root: the bundle is a library loaded whole (the
+    /// <c>--library</c> option), not a program pruned from its entry points.
+    /// A library's predicates are reached by runtime-built goals the walk
+    /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
+    public bool Library { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a

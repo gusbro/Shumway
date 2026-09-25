@@ -20,7 +20,7 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public int EncodeBp(int functorId, int cursor) => Marker(functorId, cursor);
     public int EncodeReturnMarker(int functorId, int cursor) => Marker(functorId, cursor);
     public int EncodeCallTarget(int calleeFunctorId) => Marker(calleeFunctorId, 0);
-    public int EncodeDeoptPc(int bytecodePc) => bytecodePc;
+    public int EncodeAddress(int address) => address;
 
     public bool TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
@@ -29,6 +29,18 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         return entry is { IsCall: false, IsDollarCall: false };
+    }
+
+    public bool IsInlineAcyclic(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "acyclic_term" && entry.Arity == 1;
+    }
+
+    public bool IsInlineGlobalFetch(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$fetch_global_var" && entry.Arity == 2;
     }
 
     public bool IsInlineUnify(int builtinId)
@@ -42,5 +54,155 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         negated = entry.Name == "\\==";
         return entry.Arity == 2 && entry.Name is "==" or "\\==";
+    }
+
+    public int MqualFunctorId { get; } =
+        FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
+
+    public int ColonFunctorId { get; } =
+        FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+
+    public IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins { get; }
+        = BuildMetaCallable();
+
+    private static (int, int)[] BuildMetaCallable()
+    {
+        var list = new List<(int, int)>();
+        foreach (var e in Shumway.Builtins.BuiltinsRegistry.AllEntries())
+            list.Add((FunctorTable.Intern(
+                AtomTable.Intern(e.Name, permanent: true).Id, e.Arity), e.Id));
+        return list.ToArray();
+    }
+
+    public bool IsInlineAppend(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "append" && entry.Arity == 3;
+    }
+
+    public bool IsInlineBarrierCall(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$call" && entry.Arity == 2;
+    }
+
+    public bool IsInlineMetaCall(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "call" && entry.Arity == 1;
+    }
+
+    public bool IsInlineMetaCallN(int builtinId, out int appended)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        appended = entry.Arity - 1;
+        // call/1 keeps its own form; 2..8 append 1..7 arguments. The
+        // upper bound is the register file the meta-call already
+        // sizes, not a property of call/N.
+        return entry.Name == "call" && entry.Arity >= 2
+            && entry.Arity <= MaxInlineMetaCallArity;
+    }
+
+    /// <summary>The widest call/N the inline form takes. Matches the
+    /// emitter's MaxMetaCallArity: wider goals go to the host.</summary>
+    public const int MaxInlineMetaCallArity = 8;
+
+    public bool IsInlineGetAttr(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "get_attr" && entry.Arity == 3;
+    }
+
+    public bool IsInlineFunctor(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "functor" && entry.Arity == 3;
+    }
+
+    public bool IsInlineGetFromAttrList(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$get_from_attr_list" && entry.Arity == 3;
+    }
+
+    public bool IsInlineArg(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "arg" && entry.Arity == 3;
+    }
+
+    public bool IsInlineTrivial(int builtinId, out bool succeeds)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        succeeds = entry.Name == "true";
+        return entry.Arity == 0 && (succeeds || entry.Name == "fail");
+    }
+
+    public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        isDelete = entry.Name == "$del_from_attr_list";
+        return entry.Arity == 3
+            && (isDelete || entry.Name == "$put_to_attr_list");
+    }
+
+    public bool IsInlineUniv(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "=.." && entry.Arity == 2;
+    }
+
+    public bool IsInlineGround(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "ground" && entry.Arity == 1;
+    }
+
+    public bool IsInlineDomSame(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_same" && entry.Arity == 2;
+    }
+
+    public bool IsInlineDomEmpty(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_empty" && entry.Arity == 1;
+    }
+
+    public bool IsInlineDomContains(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_contains" && entry.Arity == 2;
+    }
+
+    public bool IsInlineDomDel(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_del" && entry.Arity == 3;
+    }
+
+    public bool IsInlineDomSingleton(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "$dom_singleton" && entry.Arity == 2;
+    }
+
+    public bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        test = entry.Arity == 1 ? entry.Name switch
+        {
+            "var" => WasmTypeTest.Var,
+            "nonvar" => WasmTypeTest.Nonvar,
+            "integer" => WasmTypeTest.Integer,
+            "float" => WasmTypeTest.Float,
+            "number" => WasmTypeTest.Number,
+            "atom" => WasmTypeTest.Atom,
+            "atomic" => WasmTypeTest.Atomic,
+            "compound" => WasmTypeTest.Compound,
+            _ => WasmTypeTest.None,
+        } : WasmTypeTest.None;
+        return test != WasmTypeTest.None;
     }
 }

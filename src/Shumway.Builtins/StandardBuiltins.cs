@@ -372,6 +372,9 @@ public static class StandardBuiltins
             Control, "halt", "Halts the engine with exit code 0.");
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1,
             Control, "halt(+Status)", "Halts the engine with the given exit code.");
+        BuiltinsRegistry.Register("jit_compile", 1, ControlBuiltins.JitCompile,
+            Control, "jit_compile(+Mode)",
+            "Sets Tier-1 promotion for the goals that follow: off returns the engine to the interpreter, all promotes each predicate on its first call, and a positive integer is the call threshold. Fails if the build has no Tier-1 to set.");
         BuiltinsRegistry.Register("get_cpu_time", 1, ControlBuiltins.GetCpuTime,
             Control, "get_cpu_time(-Time)", "Binds Time to a high-resolution monotonic process timer, in milliseconds (float).");
         // time/1 support (the predicate itself is a prelude meta-predicate).

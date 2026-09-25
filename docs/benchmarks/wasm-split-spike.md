@@ -1,0 +1,693 @@
+# Phase 0 of the many-modules arc: can wasm reach wasm?
+
+Measured 2026-09-09 on Windows 10, .NET 10, Edge 152 headless (V8), WebShumway
+published with `-p:ShumwayWasmTier=true` and served with the isolation headers.
+Desktop figures are the emitter library's own wasm engine, which executes by
+compiling to IL.
+
+The arc wants many small modules instead of one big one, compiled
+incrementally, with the transfer between them happening inside wasm rather than
+by returning to the host. Everything rests on one claim: that a cross-module
+hop is cheap **when it is not a trip through mono-interpreted C#**. These are
+the gates that had to pass before any of it was worth building.
+
+## The results
+
+| gate | asks | result |
+|---|---|---|
+| G0 | 10⁷ hops per round in bounded stack | **PASS** — 5 rounds, 50 M hops, no growth |
+| G1 | ≤ 100 ns per hop | **PASS** — 6.1 ns best, ~6.3 ns median |
+| G3 | the test library executes the hop | **PASS** — so xUnit can exercise it |
+| G4 | a module reaches slots added later | **PASS** |
+| G2 | incremental compile ≤ 1.5× batch | **PASS** — 0.76×, i.e. cheaper |
+
+```
+ping: 139 bytes, registered at index 7874 on thread 7
+pong: 139 bytes, registered at index 7875 on thread 7
+two hops answer: 1 (memory says 1)
+round 0: 10000000 hops in 62.5 ms = 6.3 ns/hop
+round 1: 10000000 hops in 73.8 ms = 7.4 ns/hop
+round 2: 10000000 hops in 62.4 ms = 6.2 ns/hop
+round 3: 10000000 hops in 61.4 ms = 6.1 ns/hop
+round 4: 10000000 hops in 70.6 ms = 7.1 ns/hop
+```
+
+## What each gate settled
+
+**G0 — is it really a tail call.** This is the one that could have killed the
+arc outright, and it is a property rather than a speed. A Prolog program makes
+millions of calls, and in the WAM a call IS a jump: the continuation lives in
+CP, not on the host stack. Had V8 compiled `return_call_indirect` as an
+ordinary call, the stack would have grown per hop and there was no fallback
+design. Fifty million hops without unwinding says it does not.
+
+**G1 — 6.1 ns against 4,000–15,000 ns.** That range is what a cross-module
+switch costs today: decode the marker, probe a dictionary, close the chain, let
+the interpreter re-dispatch, open another chain — all in C# that the browser
+runs interpreted. Same crossing, 650× to 2,400× cheaper, because it never
+leaves wasm.
+
+**G4 — the table is live, not a snapshot.** `ping` was registered at index 7874
+and `pong` at 7875, so `pong` did not exist when `ping` was instantiated, and
+`ping` still reaches it. A table import is by reference. Without that, every
+new module would have meant re-instantiating the ones that call it.
+
+**G3 — the arc is testable without a browser.** The emitter library executes
+`return_call_indirect` through an imported table, so `tests/Shumway.Tests.Wasm`
+can exercise the hop. Had it not, every cross-module path would have been
+browser-only to test, which changes the cost of the whole arc.
+
+## G2 — compiling one at a time is CHEAPER
+
+818 predicates of the prelude and clpfd, compile time only (instantiation and
+per-thread registration are the browser's):
+
+```
+one batch      : 763 ms, 4,095,932 bytes
+one at a time  : 583 ms, 6,268,753 bytes total
+ratio          : 0.76x time, 1.53x bytes
+per predicate  : median 0.31 ms, max 35.74 ms
+```
+
+The gate asked for no worse than 1.5x. It is 0.76x — separate modules are
+*faster* to compile, because a group pays work that is superlinear in its
+member count: numbering global cursors, building the br_table, cutting
+partitions. Incremental promotion does not pay a toll here, it collects one.
+
+A median of 0.31 ms per predicate against a 30 ms budget means a promotion can
+happen mid-session without being felt, which is what lets the tier stop needing
+a batch mode at all.
+
+The cost has moved to **bytes: 1.53x**. Every module repeats the dispatcher,
+the fail/proceed resolver and the general unifier, so 818 of them carry 2.2 MB
+more wasm than one group — and the browser compiles all of it. That is the same
+currency the resume table just saved 26.8% of, so it does not sink the arc, but
+it names the next fight: either modules share those functions through imports,
+or predicates are grouped a few at a time rather than one each.
+
+The 35.74 ms maximum against a 0.31 ms median says one predicate is enormous
+(almost certainly in clpfd) and on its own justifies keeping partitions as a
+safety valve rather than deleting them.
+
+## The grain: 16 predicates a module, not one
+
+The 1.53x above is entirely fixed furniture -- the dispatcher, the fail/proceed
+resolver and the general unifier -- repeated per module. Measured on the same
+818 predicates:
+
+```
+smallest module : 3,028 bytes (its predicate is 1 byte of WAM)
+median module   : 5,727 bytes
+one group       : 4,095,932 bytes
+
+  1 per module  : 6,268,753 bytes  (1.53x)
+  4 per module  : 4,576,292 bytes  (1.12x)
+ 16 per module  : 4,192,857 bytes  (1.02x)
+ 64 per module  : 4,110,601 bytes  (1.00x)
+```
+
+A one-byte predicate yields a 3 KB module, so the floor is ~3 KB and the median
+one-predicate module is more than half furniture.
+
+At 16 per module the overhead is 2%. That keeps what the arc actually wants --
+adding a predicate recompiles sixteen, not eight hundred -- without asking the
+browser to compile 2.2 MB more. "One module per predicate" was the intuitive
+phrasing and is the worst of the measured options.
+
+Untried, and possibly better than either: put the three shared functions in
+their own module and import them, which would give per-predicate grain with no
+repetition at all. Whether functions can be imported across these modules the
+way the table is has not been established.
+
+## Lazy against batch, in the browser, on whole programs
+
+The two grains the browser tier can run, on the same four programs, against
+Tier-0. **Batch** compiles everything consulted into one module at the
+boundary tick (the prelude included, as a page does at boot); **lazy**
+compiles one module per predicate the first time it is called. Both engines
+start without the baked prelude, so the compile columns are comparable.
+Edge headless (V8), Release publish, best of 5; `#wasmgrain=5`.
+
+```
+                    tier0      batch                 lazy
+nrev 200 x5       489.7 ms    10.5 ms  46.7x        5.7 ms   85.7x
+  modules / bytes            1 / 2,687,050         3 / 34,964
+  compile+register           4,791 + 25 ms         28 + 2 ms
+  per run                    hops 0                hops 9,975
+
+tak 18,12,6       914.6 ms    11.9 ms  76.8x        6.8 ms  134.3x
+  modules / bytes            1 / 2,687,050         1 / 10,665
+  compile+register           4,398 + 12 ms         7 + 1 ms
+  per run                    deopts 30             deopts 30
+
+zebra x10       1,717.3 ms    45.5 ms  37.7x       43.9 ms   39.1x
+  modules / bytes            1 / 2,724,639         7 / 101,165
+  compile+register           4,555 + 12 ms         68 + 4 ms
+  per run                    hops 0                hops 447,750
+
+queens 12 clpfd 5,215.0 ms 4,154.5 ms   1.3x    4,600.5 ms    1.1x
+  modules / bytes            1 / 4,433,024       101 / 1,058,652
+  compile+register           8,137 + 13 ms         682 + 54 ms
+  per run                    chains 524,030        chains 524,030
+                             deopts 95,140         deopts 95,140
+                             builtin exits 626,930 builtin exits 626,930
+                             hops 0                hops 1,499,135
+```
+
+Three things settle here.
+
+**The hop is free at program scale.** zebra crosses a module boundary 447,750
+times per run in the lazy grain and runs in the same time as the single
+module; queens crosses 1.5 million times and lands within the noise of its
+batch twin. Switches stay at zero in every row: no cross-module call or
+backtrack falls back to the host.
+
+**Lazy costs nothing the batch does not.** The batch pays 4.4–8.1 s to compile the 539
+prelude predicates a small program never calls, and the first run is not
+faster for it. Lazy compiles 1–7 modules for the three classic programs, 101
+for the clpfd one, and its first run lands 0.4–0.5 s after the consult: a
+promotion costs ~7 ms of mono-interpreted compile plus ~0.5 ms of registration.
+Whether the batch machinery stays is the phase 6 question. **Read the next
+section before answering it: the cost this paragraph charges the batch is
+the prelude, and the bake stopped charging it.**
+
+**clpfd is not a hop problem.** queens 12 is 1.1–1.3x in both grains because
+a run is 524,030 short chains that exit to a builtin 626,930 times and deopt
+95,140 times; the chain hardly runs any WAM code before leaving. The
+per-module bytes (1.06 MB lazy against 4.43 MB batch) and the hops are the
+same story as above; what the tier needs on this program is the builtin exit
+ranking, not more modules. The deopts are the same in both grains, so they
+are the code, not the partition.
+
+**The ranking, now that it is shown.** `jit_compile(status)` reports it
+beside the deopt sites. On the queens-8 clpfd program in the browser:
+
+```
+builtin exits (of 32,872, 24 distinct)      deopt sites (of 5,073)
+  15,584 (47%)  integer/1                     3,884 (77%)  clpfd_run/1@+85 CallBuiltin
+   5,540 (17%)  get_attr/3                      878 (17%)  $wake_call/1@+28 CallBuiltin
+   4,075 (12%)  ==/2                            108  (2%)  $disj_5/6@+114 CallBuiltin
+   2,045  (6%)  $dom_same/2
+   1,830  (6%)  $dom_del/3
+     987  (3%)  var/1
+     968  (3%)  $dom_new/3
+```
+
+Half the exits are TYPE TESTS: `integer/1` alone is 47% and `var/1`
+another 3%, each a one-instruction check on a tagged cell that the module
+leaves the chain to ask the host about. They are the cheapest thing in the
+list to open-code and the largest share of it, which is the answer the
+ranking was added to give. The attribute pair (`get_attr/3`, `put_attr/3`)
+and the domain helpers are the next band, and those are real work.
+
+## The same question once the prelude is baked
+
+The measurement above ran every engine from a bare `new PrologEngine()`, so
+the batch compiled the prelude in the browser and that dominated it. The
+relocatable bake changed the premise: a page boots from the stdlib bundle
+with its wasm module installed, and nothing of the prelude is compiled at
+all. Re-measured with every engine booted the way the page boots (Edge
+headless, Release publish, two runs at 3 and 5 rounds).
+
+```
+                  run 1 (x3)                 run 2 (x5)
+                  batch   eager   lazy       batch   eager   lazy
+nrev 200 x5       50.7     9.6     8.3       10.5     8.9     8.3   ms
+tak 18,12,6        7.5     7.3    40.8        6.5    11.6     6.8
+zebra x10         32.1    22.6    50.1       45.1    23.4    22.3
+
+predicates compiled at the consult: 5, 5, 7 -- the user's, in every mode
+compile cost: batch 69-1,334 ms, eager 40-86 ms, lazy 13-97 ms
+modules: batch 2 (the baked stdlib + one), eager and lazy 2-8
+switches: 0 everywhere; deopts identical across the three
+```
+
+**What the batch compiles is now the program, not the prelude.** Its compile
+column fell from 4.4-8.1 s to tens or hundreds of milliseconds, because the
+535 stdlib predicates arrive baked and every mode starts with them installed
+(`promoted` is ~540 in all three). The batch and the lazy grain now differ by
+a handful of predicates, so the old argument against the batch -- that it
+pays seconds for code the program never calls -- is void.
+
+**The run times do not separate the grains.** Every per-program ordering
+flips between the two runs (nrev's batch 50.7 then 10.5; tak's lazy 40.8 then
+6.8), which is the signature of wall-clock noise in a browser rather than of
+an effect. What repeats is zebra, where the batch is slower than either fine
+grain in both runs (32.1/45.1 against 22.3-23.4) despite its 447,750 hops a
+run being the ones it does NOT pay: worth its own look, not a conclusion
+here.
+
+**So the batch stays**, and for a different reason than it was kept before.
+Not because it is faster, but because after the bake it costs almost nothing
+and is the only grain that leaves one module and no hops. The machinery it
+needs is a flag and a tick.
+
+## The desktop world is not a stopwatch
+
+clpr is the program that made this explicit, and it is worth recording
+because the desktop number was not merely noisy, it was the wrong shape.
+
+The two worlds stage the engine's memory differently.
+`DesktopWasmWorld.StageFromEngine` copies the live heap, stack, registers
+and trail into linear memory on every chain entry; the browser pins the
+engine's own arrays and copies nothing. So a crossing costs O(live data)
+on the desktop and O(1) in the browser, and clpr's heap grows as it runs.
+
+Desktop, the same program at three sizes, with the crossings doubling each
+time:
+
+```
+N     crossings   wasm      us per crossing
+100      8,504    300 ms         35
+200     17,005    892 ms         52
+400     34,006  3,101 ms         91
+```
+
+The per-crossing cost doubles with the problem: the tier reads as 5x
+slower than Tier-0 and getting worse. In the browser, the same program and
+the same counts:
+
+```
+                 tier0     batch          eager          lazy
+clpr x200      1,166 ms   924 (1.3x)    533 (2.2x)    551 (2.1x)
+clpr x400      1,552 ms  1,158 (1.3x) 1,365 (1.1x)  1,174 (1.3x)
+```
+
+The tier WINS, 1.1 to 2.2x. Same code, same counters (43,206 chains and
+72,594 builtin exits at x200 either way) -- the desktop figure was
+measuring the harness.
+
+**What the browser says is left.** The time split the probe now reports
+puts most of it at the boundary rather than inside the module:
+
+```
+clpr x200 lazy:   inWasm 185 ms    stage 497 ms      (3 rounds)
+clpr x400 lazy:   inWasm 442 ms    stage 1,128 ms
+```
+
+Staging is ~70% of the accounted time even where it pins instead of
+copying, and it is paid per crossing: 216 chain entries per iteration of a
+program whose body is four constraints. That is what makes open-coding a
+builtin worth doing -- not the work of the builtin, which is trivial, but
+the crossing it avoids.
+
+**And the browser is where you find out whether it applied.** The
+one-argument type tests were open-coded, measured on the desktop and
+committed; the browser's ranking still read `var/1` and `number/1` at the
+top afterwards. The decision was being lost in the RELOCATING compile env,
+which the bake uses and which had not been taught the new hook, so it
+inherited the interface's default answer of no. Every baked module kept
+its exits, and baked modules are what the browser's libraries run from:
+the live path had the open-coding and the baked path did not.
+
+With that delegated, on clpr x200 in the browser:
+
+```
+                exits (top three)                        lazy
+before     var/1 23,400  number/1 14,994  get_attr 12,600   518.7 ms  1.3x
+after      get_attr 12,600  append 6,000  ==/2 3,000        326.7 ms  2.2x
+```
+
+40,794 of 72,594 exits gone, and the tier goes from 1.3x to 2.2x of
+Tier-0. The work had been committed for a day and was worth nothing in
+production until the env delegated. `get_attr/3` now genuinely tops the
+ranking, and is the next one.
+
+Reproducing needs one caveat: the `#wasmgrain` hook closes its window the
+moment the report is posted, so read `/collect` (or suppress `window.close`
+from a debugger session) rather than polling the DOM: a poll that never sees
+the report looks exactly like a hang.
+
+## jit_compile(all): one module, or one per predicate
+
+The batch and the lazy grain differ in two things at once: what gets
+compiled (everything, or what runs) and how it is cut (one module, or one
+per predicate). This isolates the cut. `eager` compiles the same 827
+predicates as the batch, one module each, at the same boundary tick; the
+`b*` rows first compile the prelude as ONE module (what a page boots from)
+and then cut only the 293 predicates of the clpfd program. queens 12, Edge
+headless, Release publish, best of 5, two runs of each cell back to back.
+
+```
+                          run (ms)       compile     register   modules / bytes
+batch   (827 in 1)     4,072  4,140    7.3-8.8 s    18-21 ms      1 / 4,433,024
+eager   (827 in 827)   5,194  5,353    5.6-6.9 s   416-457 ms   827 / 7,420,398
+
+bbatch  (prelude + 293 in 1)   4,025  4,272   8.5-9.0 s    25-37 ms     2 / 4,439,377
+beager  (prelude + 293 in 293) 4,545  4,735   7.5-7.9 s   157-160 ms  294 / 5,527,451
+```
+
+Per run both cuts count the same 524,030 chains, 95,140 deopts and 626,930
+builtin exits; the only counter that moves is hops: 0 against 1,499,135 for
+the whole program, 9,560 against 1,487,575 with the prelude fused. So the
+clpfd program crosses between ITS OWN predicates 1.5 million times per run,
+and the cut costs 0.5 s for it: about 300 ns per hop on chains this short,
+where the hop is a large fraction of the chain. zebra's 447,750 hops did not
+show because its chains are long.
+
+The rest of the cut's price is fixed per module: ~3.6 KB (dispatcher, resolver,
+the shared preamble) and ~0.5 ms of registration each. Compiling per predicate
+is 10-20% cheaper than the monolith, so the compile is linear either way; the
+batch's one build is not what makes it slow, the mono-interpreted compiler is.
+
+What this decides: `jit_compile(all)` keeps the monolith. It is the
+whole-program build the user asked for by name, it runs fastest, and its
+extra cost is a single build. The lazy grain keeps one module per predicate:
+its +11% on queens is this same hop cost, and it compiles only what runs.
+Once the libraries are baked as groups the hops inside clpfd vanish from both.
+
+## Where the scalars live, and what a crossing really costs
+
+The WAM's scalars live in LOCALS, loaded from the mailbox on entry and spilled
+on exit. That prologue and epilogue are ~1,198 of a small module's ~3,234 byte
+floor, and every crossing pays them, so three alternatives were measured.
+
+**A local is a register and nothing else is.** The same counting loop, four
+ways, V8:
+
+```
+Local            0.32 ns/access
+OwnGlobal        1.05 ns/access    3.3x
+ImportedGlobal   2.57 ns/access    8x
+Memory (mailbox) 2.49 ns/access    7.8x
+```
+
+Keeping the scalars in imported globals and reading them directly is 8x per
+access, on values like `H` that move on every allocation. And an imported
+global costs the same as a mailbox slot (2.57 against 2.49), so using globals
+as the home and caching them in locals at the boundaries — the second variant —
+buys nothing either: the prologue would read fifteen globals instead of fifteen
+memory slots at the same price. Note it is *importing* that costs: a module's
+own global is 1.05 ns, but a private global cannot be shared state.
+
+**And the crossing's state transfer is nearly free**, which is the number that
+settles it:
+
+```
+bare hop                                6.1 ns
+hop spilling 9 scalars and reloading 13  10.2 ns
+                                        --------
+state transfer                          ~4.1 ns
+```
+
+Estimating that at 24 accesses times 2.5 ns gives ~60 ns, and that estimate is
+wrong by fifteen. The accesses are to contiguous memory in one cache line with
+no dependencies between them, and the processor overlaps them; the 2.5 ns above
+was the cost of an access *on the critical path of a dependent loop*, where
+each iteration waits for the last. A unit cost measured in a dependent loop
+does not multiply.
+
+So a full cross-module crossing, state and all, is **~10 ns against the
+4,000–15,000 ns** the same crossing costs today going out through
+mono-interpreted C#. The prologue and epilogue are not the problem, in time or
+in bytes, and the design stands as it is: scalars in locals, mailbox for
+crossings.
+
+## What the spike caught
+
+The module addressed linear memory absolutely — slots 0, 8, 16 — instead of
+relative to the base the host passes it. On the desktop that is invisible,
+because the test image is private and the harness writes at those same
+addresses. In a browser address 0 belongs to the runtime, so the module read
+garbage and wrote over memory that was not its own.
+
+It announced itself as a wrong *parity*: with two hops the run must end in half
+B, and it reported half A. The timing was nonsense too — ten million hops in
+"0.0 ms" — but the parity is what identified it. Worth remembering: a
+measurement that is too good is a bug report.
+
+## What is not settled
+
+**Firefox.** The gates were taken on V8 only; this machine has no Firefox.
+SpiderMonkey implemented tail calls separately, so G0 is genuinely open there.
+
+**Tablets.** iPad and Android are untested. The fallback if a device lacks tail
+calls is Tier-0, which already works; how to detect it — by feature probe at
+boot, or by user agent after a report — is a decision for when there is one.
+
+**The 1.53× in bytes.** Every module repeating the dispatcher, the resolver and
+the unifier is the one number that got worse, and the browser compiles all of
+it at load. Sharing those functions through imports, or grouping a few
+predicates per module, is the obvious answer and neither has been tried.
+
+## The baseline everything after this is measured against
+
+`#wasmgrain=1`, Release publish with both flags, one desktop machine. Taken
+once the meta-call forms landed, as the reference point for the work that
+follows. Times are one round and swing; the COUNTS do not, and they are what
+this table is for.
+
+| program | tier0 | best tier | inWasm | stage | builtins | interp+glue |
+|---|---:|---:|---:|---:|---:|---:|
+| nrev 200 x5 | 631 ms | 13 ms | 3 | 0 | 0 | 1 |
+| tak 18,12,6 | 767 ms | 8 ms | 3 | 0 | 0 | 0 |
+| zebra x10 | 1565 ms | 29 ms | 26 | 0 | 0 | 0 |
+| clpr x200 | 928 ms | 279 ms | 23 | 79 | 21 | 135 |
+| clpr x400 | 1178 ms | 602 ms | 56 | 171 | 38 | 313 |
+| queens 12 | 5574 ms | 849 ms | 61 | 153 | 403 | 189 |
+
+The two shapes this splits into:
+
+**Deopt-bound, and the deopts are meta-calls.** clpr steps aside 804 times per
+200 solves at five distinct sites, and two of them are half each:
+
+```
+401 (50%)  $wake_call/1@+28        CallBuiltin
+400 (50%)  clpr$$disj_42/3@+111    CallBuiltin
+```
+
+**Builtin-exit bound.** queens deopts 462 times and leaves for a builtin
+**23,594** times, which is 403 ms of its 849 -- more than the module spends
+executing. Three functions are most of it:
+
+```
+$dom_same/2=7923   $dom_del/3=7314   $dom_new/3=3671   put_attr/3=1045
+```
+
+Those are clpfd's native domain layer, and in the browser they are
+Mono-interpreted C#. That is the same fact this whole arc started from: a
+crossing cost 4-15 us because the code on the other side is interpreted, not
+because crossing wasm is expensive. Per exit here it works out around 17 us.
+
+A third of the builtin exits in clpr are calls that always fail --
+`$cyclic_spine/1` 400 of 400, `get_attr/3` 400 of 400 -- one host round trip
+each to be told no.
+
+**Read the counts, not the ratios.** Over one round the batch/eager/lazy
+ordering contradicts itself between clpr x200 and x400, so it says nothing
+about grain.
+
+### Progress against the baseline
+
+Measured with the same run after the meta-call arc's follow-ups. Counts, not
+times.
+
+| program | deopts | what changed |
+|---|---:|---|
+| clpr x200 | 804 -> 403 -> **4** | first the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to -- $wake_call/1 left the ranking, its 401 round trips became in-wasm hops. Then the inline =/2's step-aside became a leaf builtin request, chain open: the 400 attvar binds show as =/2 exits now. The 4 left are one-off trail growths. |
+| queens 12 | 462 -> 262 -> **133** | same two changes. What remains is named and stays: 60 at a Trust whose restore would unwind the extra trail, 67 at get_value ops meeting attvars -- those cannot take the leaf escape, because it needs the goal's arguments in X0/X1 and a get_value pair lives in registers the clause still reads. |
+
+get_attr/3 on a plain variable also left the builtin rankings (400 exits in
+clpr, 12 in queens), answered inside the module.
+
+What remains is fully attributed and is the wakeup machinery itself: guard 25
+(binding an attributed variable through a meta-called =/2 -- the wakeup is
+the host's by design), guard 23 (a restore that would unwind the extra
+trail), and a few trail growths. Irreducible in COUNT; the open lever is the
+cost per exit -- a meta-call that must hand its goal to the host still leaves
+by full deopt rather than by the cheaper builtin-request exit.
+
+### RunAOTCompilation: measured and rejected
+
+The obvious lever against the interpreted-C# cost was tried back to back
+against the baseline above: the same publish plus `-p:RunAOTCompilation=true`,
+same machine, same session, `#wasmgrain=1` headless.
+
+It splits Tier-0 down the middle:
+
+| tier0 | interpreted | AOT | ratio |
+|---|---:|---:|---:|
+| nrev 200 x5 | 494 ms | 112 ms | 0.23 |
+| zebra x10 | 1623 ms | 306 ms | 0.19 |
+| tak 18,12,6 | 1626 ms | 8668 ms | 5.3x SLOWER |
+| clpr x400 | 1332 ms | 11939 ms | 9.0x SLOWER |
+| queens 12 | 4151 ms | 29166 ms | 7.0x SLOWER |
+
+Pure unification and search get 4-5x faster; everything arithmetic gets 5-9x
+slower, first runs included, so it is not warmup. The first hypothesis was a
+method on the arithmetic path falling back to Mono's interpreter under AOT.
+
+### The split, explained: a `finally` in the dispatch frame
+
+The fallback hypothesis was REFUTED by the AOT compiler's own log
+(`-p:WasmAOTCompilerVerbose=true -v:d`): every engine method, the whole
+arithmetic stack included, is compiled; the 26 Shumway methods left to the
+interpreter are cold (resource loading, gsharedvt generics). Isolated
+microbenchmarks in the same publish showed thread-static access, cross-assembly
+calls and the arithmetic eval stack all 1.5-2.5x FASTER under AOT, so the
+cost was somewhere the microbenchmarks did not reach.
+
+Profiling tak under AOT with V8's sampler (`--js-flags="--prof"`, engine
+isolate) put 2% of the samples in `BytecodeInterpreter.Dispatch` and the rest
+in the Mono runtime: `mono_seq_point_find_prev_by_native_offset`,
+`mono_metadata_parse_type_internal`, `mono_aot_get_class_from_name`,
+`dlmalloc`. One call chain accounts for all of it:
+
+```
+Dispatch -> ves_icall_thread_finish_async_abort
+         -> mono_thread_interruption_checkpoint_request
+         -> mono_walk_stack_with_ctx   (full stack walk, sequence points decoded)
+```
+
+Mono's JIT front end emits that icall at the exit of every `finally` clause,
+guarded by the clause's exception variable being non-null
+(`method-to-ir.c`, the `OP_CALL_HANDLER` leave path). Under the LLVM back end
+that variable is loaded from a per-method `alloca` which is only ever stored by
+an exception landing pad. In the long-lived, alloca-heavy `Dispatch` frame the
+guard reads non-null on the normal path, so every `finally` exit in that frame
+costs a runtime stack walk of roughly 150 us. A `try/finally` in a small clean
+frame does not reproduce it (100k iterations: 1.2 ms), so the exact trigger
+inside `Dispatch` is not pinned down; the effect is.
+
+The only `finally` clauses in `Dispatch` were the two around a builtin call
+(`call_builtin` and `execute_builtin`), whose sole job was the profiler's
+`BuiltinExit`. tak reaches one on every leaf: `A = Z` runs as a builtin
+`=/2`; about 30k leaves times 150 us is the missing five seconds. nrev and
+zebra never call a builtin in their loops, which is why they were the ones
+AOT sped up. The fix moves `BuiltinExit` into the catch clauses and after the
+try (Mono emits the icall for `finally` only; a `catch` clause costs nothing).
+
+With that change, back to back in the same headless session, median of 3:
+
+| program | Tier-0 interp | Tier-0 AOT | | wasm tier interp | wasm tier AOT | |
+|---|---:|---:|---:|---:|---:|---:|
+| nrev 200 x5 | 447 ms | 47 ms | 9.5x | 8.4 ms | 3.5 ms | 2.4x |
+| tak 18,12,6 | 739 ms | 130 ms | 5.7x | 6.3 ms | 5.0 ms | 1.3x |
+| zebra x10 | 1296 ms | 157 ms | 8.3x | 25 ms | 20 ms | 1.3x |
+| clpr x200 | 659 ms | 96 ms | 6.9x | 399 ms | 127 ms | 3.1x |
+| clpr x400 | 1243 ms | 168 ms | 7.4x | 881 ms | 258 ms | 3.4x |
+| queens 8 (clpfd) | 977 ms | 150 ms | 6.5x | 185 ms | 126 ms | 1.5x |
+
+(wasm tier = the lazy mode, one module per promoted predicate.) AOT now wins
+everywhere: Tier-0 by 6-9x, and the wasm tier by 1.3-3.4x, most where the
+tier exits to host builtins (clpr, clpfd). The rejection above is withdrawn.
+
+CLP(Z) on Scryer's `clpz.pl` (`#wasmclpz`, warm ABBA round, oracle-checked),
+the workload that motivated the whole question:
+
+| case | Tier-0 interp | Tier-0 AOT | | wasm tier interp | wasm tier AOT |
+|---|---:|---:|---:|---:|---:|
+| queens10ff x5 | 5340 ms | 719 ms | 7.4x | 11543 ms | 4170 ms |
+| sendmore x2 | 377 ms | 67 ms | 5.6x | 355 ms | 173 ms |
+| queens16 x2 | 3973 ms | 531 ms | 7.5x | 3064 ms | 3056 ms |
+| queens24 x2 | 7125 ms | 1368 ms | 5.2x | | |
+| sudoku x1 | 19709 ms | 2808 ms | 7.0x | | |
+| factorial x10 | 1663 ms | 235 ms | 7.1x | | |
+| consult clpz + cases | 56.9 s | 21.6 s | 2.6x | | |
+| jit_compile(all), 2791 predicates | 51.1 s | 11.4 s | 4.5x | | |
+
+Under AOT, Tier-0 beat the wasm tier on CLP(Z) by 3-6x at first. That gap had
+five causes and a hang, all found with the counters and V8's sampler; the
+next section records them and where the tier stands after.
+
+### The tier on CLP(Z): five causes and a hang
+
+Instruments: `#wasmclpz=<rounds>:<case,case>` (a local main.js hook) runs the
+Triska cases on Scryer's clpz.pl, ABBA, and dumps `jit_compile(status)` after
+each mode, which is where the deopt and exit rankings come from; `#wasmexits`
+prices one exit kind per iteration. Under AOT a builtin request costs 7-9 us of
+round trip, a deopt about 15 us, and a loop that stays inside the module 0.1 us
+per iteration against Tier-0's 0.7.
+
+Starting point, queens10ff x5, no diagnostics: Tier-0 720 ms, tier 2,340 ms.
+Counters for queens10ff+sendmore: 27,898 chains, 8,125 deopts, 11,395 builtin
+exits, 1,142 foreign exits. In order of what they cost:
+
+1. **Baseline code.** With `--js-flags=--no-liftoff` the same module ran the
+   same pass in 975 ms instead of 3,406 (diagnostic build). V8 tiers a function
+   up to TurboFan by a per-function budget and compiles it in the background;
+   a partition of 2,500 WAM instructions is a ~100k-instruction function, and
+   forty of them never got there inside a benchmark. Nothing a page can ask
+   for changes that; the size of the hot functions does. The partition budget
+   is 300 now, which is the size a predicate compiles to on its own.
+2. **guard 25, 4,963 deopts (61%).** clpz's `state(queue(_,_,_,Aux))` matches
+   the live queue whose last slot is an attributed variable: two bound
+   compounds, so the pair reached the module's unifier, which stepped aside
+   at any ATTVAR. The engine's rule for an attributed variable against a plain
+   unbound one is to bind the plain one to Ref(home) and wake nothing; the
+   unifier does that now, in both orientations. The site went to zero.
+3. **guard 9, 2,771 deopts.** The meta cache only ever held resolutions that
+   end in a jump, so `call(G)` with G a builtin, `true` or `fail` missed every
+   time. A direct builtin now has a NEGATIVE call marker, -(id + 1), published
+   for every builtin up front and by the host when it resolves one; the module
+   requests it with the goal's arguments in the registers, the exit a
+   call_builtin site makes. A goal that is a compound with an arity-zero
+   functor is keyed as the atom the host keys it by. 2,771 became 73.
+4. **`$fetch_global_var/2`, 5,101 exits (37% of builtin exits).** clpz reads
+   its current propagator on every step (`bb_get`). The keys whose value is a
+   cell live for the activation are an image in linear memory (`GlobalVarBase`,
+   `GlobalVarCount`, atom-cell pairs), re-synced when the store's version
+   moves; a snapshot the host has to re-emit still goes to the host. Found on
+   the way: a backtrackable write of an attributed variable stored the AttVar
+   cell itself, so the read handed back an orphan copy and clpz's
+   `C == State` was always false on Tier-0. A variable is stored as a
+   reference to its home now.
+5. **`acyclic_term/1`, 3,000 exits.** A module walker beside ground/1's: a
+   worklist with a CLOSE entry under every compound's arguments, tagged as
+   no term cell is, so the entries still pending are the compounds on the
+   current path. A shared subterm is not a cycle; a packed string declines.
+
+And a hang: queens24 on the tier never finished, in any build, with the
+cancel unable to land. Named profile: 63% of all samples in
+`Activation.AttrMirrorSetRowCount`. The attribute image's `AttrMirrorPut`
+probed with `while (true)` and only an EMPTY slot ended it; occupancy is
+partly told by the module's fresh-insert flags, and once it drifted low the
+table filled up and the probe cycled forever, in the host, where no safe
+point is. Probes are one pass now, and a full pass rebuilds the image and
+retries. What makes the count drift is not identified.
+
+After all of it, no diagnostics, best of an ABBA round, the tier wins every
+case:
+
+| case | Tier-0 AOT | wasm tier AOT | |
+|---|---:|---:|---:|
+| queens10ff x5 | 935 ms | 436 ms | 2.1x |
+| sendmore x2 | 53 ms | 40 ms | 1.3x |
+| queens16 x2 | 476 ms | 400 ms | 1.2x |
+| queens24 x2 | 935 ms | 641 ms | 1.5x |
+| sudoku x1 | 4740 ms | 1355 ms | 3.5x |
+| factorial x10 | 207 ms | 128 ms | 1.6x |
+
+The grain set did not move: nrev 14x, tak 13x, zebra 8.5x, queens 8 (clpfd)
+1.6-2x over AOT Tier-0 in the lazy mode; clpr stays at parity (0.7-1.2x),
+which is its own open question. What is left on queens10ff+sendmore after
+changes 2 and 3 (browser counters, diagnostic build): 459 deopts, of which 175
+are an attributed variable bound to a value inside get_value (a wakeup, the
+host's) and 104 a restore that has to unwind the extra trail; the two walks
+of changes 4 and 5 take another 8,100 builtin exits off the 13,898.
+
+Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
+above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native
+module is 23.8 MB raw, 4.5 MB brotli, 6.6 MB for the whole `_framework`
+download against 2.9 MB interpreted; the runtime is up 6.2 s after navigation
+cold and 3.4 s warm, on localhost. Toolchain: SDK 10.0.401, wasm-tools 10.0.112,
+Emscripten 3.1.56 are the newest .NET ships (the 11 previews carry the same
+Emscripten).
+
+Any new `try/finally` on the Tier-0 dispatch path reopens this, and nothing but
+the AOT profile catches it: a headless run of `#wasmgrain` with
+`-p:RunAOTCompilation=true` is the regression check.
+
+## Reproducing
+
+```
+dotnet publish src/Shumway.Web/ -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
+powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 8099 -Collect out.txt
+msedge --headless=new --user-data-dir=<scratch> \
+       "http://localhost:8099/index.html#wasmsplit=10000000x5"
+```
+
+The page posts its report to `/collect`: a page cannot write to disk, and
+reading it out of the DOM depends on when the browser is asked. Kill only the
+browsers started with that `--user-data-dir` — never by process name, which
+takes the user's own windows with it.

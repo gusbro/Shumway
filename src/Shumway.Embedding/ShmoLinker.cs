@@ -378,6 +378,10 @@ public static class ShmoLinker
         // dispatch to them, and the unfold must never shrink the linked set.
         foreach (var (mod, pred) in ltoPublicWrappers)
             roots.Add((mod, pred, $"lto wrapper in '{mod}'"));
+        if (config.Library)
+            foreach (var obj in objects)
+                foreach (var d in obj.Defined)
+                    roots.Add((obj.ModuleName, d.Indicator, "library"));
 
         // ----- 6. Reachability walk -----
         var reached = new HashSet<(string, PredicateRef)>();
@@ -915,7 +919,11 @@ public static class ShmoLinker
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
-                    dialect: obj.Dialect));
+                    dialect: obj.Dialect,
+                    // Only a source-less entry needs its raw clauses (a
+                    // source-carrying one is re-consulted); --strip drops them.
+                    clauseTerms: config.StripSource || entrySource.Length > 0
+                        ? null : obj.ClauseTerms));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1070,6 +1078,33 @@ public static class ShmoLinker
                 // fail for reasons (operator ordering, prelude
                 // assumptions) that the linker shouldn't second-guess.
                 bytes = SerialiseBundle(bundle);
+            }
+
+            // The bundle's wasm tier (--wasm): baked from the bundle as it
+            // ships, and serialised again with the module in its trailer.
+            if (config.WasmBaker is not null)
+            {
+                if (config.StripWam)
+                {
+                    Emit(LinkSeverity.Error, "wasm_needs_wam",
+                        "--wasm needs the bytecode --strip-wam drops: a bundle's wasm "
+                        + "module resumes into it at every choice point and builtin.");
+                    success = false;
+                }
+                else
+                {
+                    byte[]? module = config.WasmBaker(bundle);
+                    if (module is not null)
+                    {
+                        bundle = bundle.WithWasmModules(new[] { module });
+                        bytes = SerialiseBundle(bundle);
+                        Emit(LinkSeverity.Info, "wasm_module",
+                            $"wasm module: {module.Length} bytes.");
+                    }
+                    else
+                        Emit(LinkSeverity.Warning, "wasm_module",
+                            "--wasm: no predicate compiled; the bundle carries no wasm module.");
+                }
             }
 
             // Stage 10: dump the WAM each entry actually SHIPS — its final
@@ -2104,6 +2139,13 @@ public static class ShmoLinker
             WriteString(bw, member.FileName);
             bw.Write((uint)member.ShmoBytes.Length);
             bw.Write(member.ShmoBytes);
+        }
+        // Wasm-modules trailer (--wasm). Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.WasmModules.Count);
+        foreach (var module in bundle.WasmModules)
+        {
+            bw.Write((uint)module.Length);
+            bw.Write(module);
         }
         bw.Flush();
         // compress the body (everything after magic+version).

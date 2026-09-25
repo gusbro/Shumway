@@ -100,12 +100,13 @@ public sealed partial class Activation
     /// variable for the life of the query, and because the record is a GC root
     /// it holds the variable's whole term with it — which is what made a lazy
     /// DCG retain every window it had already consumed.</para></summary>
-    private void DropDeadAttrRecord(int home)
+    private bool DropDeadAttrRecord(int home)
     {
         // Still an attributed variable — the binding was undone, or this entry
         // was about something else at the same address. Nothing to drop.
-        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return;
-        _attrTable.Remove(home);
+        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return false;
+        AttrDropRecord(home);
+        return true;
     }
 
     private static void Validate(ActivationConfig c)
@@ -318,6 +319,9 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact-above idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
+            Diagnostics.CommitTrace.Note(_cellsAllocated,
+                Diagnostics.CommitTrace.Kind.Trail,
+                (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
                 Type = TrailType.CatchFrame,
@@ -367,6 +371,9 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Trail,
+            (int)TrailType.CatchFrame, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
             Type = TrailType.CatchFrame,
@@ -403,6 +410,9 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
+            Diagnostics.CommitTrace.Note(_cellsAllocated,
+                Diagnostics.CommitTrace.Kind.Trail,
+                (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
                 Type = TrailType.CatchFrame,
@@ -474,15 +484,13 @@ public sealed partial class Activation
     /// logs is the truncation that lost the restore.</summary>
     public void DebugSweepAttrTable(string site)
     {
-        foreach (var kv in _attrTable)
+        foreach (var (home, module, value) in AttrAll())
         {
-            int home = kv.Key;
             if (home >= _heapTop || _heap[home].Tag != Tag.AttVar) continue;
-            foreach (var rec in kv.Value)
-                if (rec.Value >= _heapTop)
-                    System.Console.Error.WriteLine(
-                        $"[ATTR-SWEEP] {site}: var@{home} module={AtomTable.GetById(rec.Key)?.Name}"
-                        + $" attr->heap[{rec.Value}] >= heapTop={_heapTop}");
+            if (value >= _heapTop)
+                System.Console.Error.WriteLine(
+                    $"[ATTR-SWEEP] {site}: var@{home} module={AtomTable.GetById(module)?.Name}"
+                    + $" attr->heap[{value}] >= heapTop={_heapTop}");
         }
     }
 
@@ -801,6 +809,8 @@ public sealed partial class Activation
 
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Push, _b, _stackTop);
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
         if (CpPushRing is { } cpRing)
@@ -935,6 +945,8 @@ public sealed partial class Activation
     /// </summary>
     public void Cut(int barrier)
     {
+        Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Kind.Cut, _b, barrier);
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));
         // a stale barrier (above current B) means the
@@ -1095,6 +1107,18 @@ public sealed partial class Activation
     /// would occupy in the compacted binding trail, preserving the relative ordering that
     /// <see cref="UnwindTrails"/> relies on.
     /// </summary>
+    /// <summary>Whether an AttrModify entry survives the cut's compaction,
+    /// which is decided by the attribute RECORD's home and not by the
+    /// entry's own field. Named so the one read into managed state that a
+    /// module-side compaction would have to reach is visible as such.
+    /// </summary>
+    private bool AttrModifySurvives(int logIndex, int effectiveFloor,
+                                    ref bool diagSaw)
+    {
+        diagSaw = true;
+        return _attrTrailLog[logIndex].Home < effectiveFloor;
+    }
+
     private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
     {
         // ADR-035 D5+ — under a debug session the trail IS the debugger's history: Set
@@ -1116,6 +1140,10 @@ public sealed partial class Activation
         // deterministic cut pay O(catch frames) for nothing).
         if (parentBindingTop == _bindingTrailTop && parentExtraTop == _extraTrailTop)
             return;
+        Diagnostics.CompactCensus.NoteWalk();
+        int beforeExtra = _extraTrailTop, beforeBind = _bindingTrailTop;
+        bool diagReadLog = false, diagWroteLog = false,
+             diagDroppedRecord = false, diagClippedFrame = false;
 
         // A cut's "young entry" drop reasons about BACKTRACKING: anything
         // above the parent CP's heap top is truncated by any outer
@@ -1194,7 +1222,9 @@ public sealed partial class Activation
                 // external trail log, not the heap — a backtrack to an ancestor
                 // above the cut must still restore the host-level value.
                 TrailType.MutableSet => true,
-                TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < effectiveFloor,
+                TrailType.AttrModify => AttrModifySurvives(entry.HeapIdx,
+                                                          effectiveFloor,
+                                                          ref diagReadLog),
                 _ => entry.HeapIdx < effectiveFloor,
             };
             if (survives)
@@ -1202,9 +1232,9 @@ public sealed partial class Activation
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
             }
-            else if (_attrTable.Count > 0 && entry.Type == TrailType.ValueChange)
+            else if (AttrRecordTotal > 0 && entry.Type == TrailType.ValueChange)
             {
-                DropDeadAttrRecord(entry.HeapIdx);
+                diagDroppedRecord |= DropDeadAttrRecord(entry.HeapIdx);
             }
             else if (entry.Type == TrailType.AttrModify)
             {
@@ -1217,7 +1247,11 @@ public sealed partial class Activation
                 // old attribute). Dead records are skipped by mark/relocate
                 // and physically reclaimed when an unwind truncates past them.
                 if ((uint)entry.HeapIdx < (uint)_attrTrailLog.Count)
+                {
+                    diagWroteLog = true;
                     _attrTrailLog[entry.HeapIdx] = (int.MinValue, 0, 0);
+                    AttrLogMirrorSet(entry.HeapIdx, int.MinValue);
+                }
             }
             extraRead++;
         }
@@ -1255,8 +1289,12 @@ public sealed partial class Activation
                 f.SnapExtraTrailTop = _extraTrailTop;
                 changed = true;
             }
-            if (changed) _catchFrames[i] = f;
+            if (changed) { _catchFrames[i] = f; diagClippedFrame = true; }
         }
+        Diagnostics.CompactCensus.NoteReach(diagReadLog, diagWroteLog,
+                                            diagDroppedRecord, diagClippedFrame);
+        Diagnostics.CompactCensus.NoteDropped(
+            _extraTrailTop != beforeExtra || _bindingTrailTop != beforeBind);
     }
 
 }

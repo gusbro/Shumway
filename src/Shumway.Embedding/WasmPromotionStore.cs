@@ -16,7 +16,18 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 {
     /// <summary>Dispatches before a compile is attempted. 0 disables the
     /// tier.</summary>
-    public int Threshold { get; set; }
+    public int Threshold
+    {
+        get => _threshold;
+        set
+        {
+            bool wasEnabled = Enabled;
+            _threshold = value;
+            if (wasEnabled != Enabled && ReferenceEquals(ilStore.Wasm, this))
+                ilStore.WasmEnabledChanged();
+        }
+    }
+    private int _threshold;
 
     /// <summary>Builds the delegate for a predicate: compile the module,
     /// bind it to an <see cref="IWasmActivationRunner"/>, wrap the verdict
@@ -39,7 +50,55 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// pause the tier imposes, and it is worth a line.</summary>
     public System.Action<int>? BatchStarting { get; set; }
 
-    /// <summary>wasm_compile(all): compile the whole static program as it is
+    /// <summary>Installs one relocatable wasm module shipped in a bundle
+    /// (<c>shumway-link --wasm</c>) into the host's world, against the
+    /// engine's CURRENT static link, and returns the functors it installed
+    /// with a note (the count, or why nothing was installed). Wired by the
+    /// host that owns a world; without it the modules stay queued.</summary>
+    public System.Func<PrologEngine, byte[], (IReadOnlyList<int> Installed, string Note)>?
+        BundleInstaller { get; set; }
+
+    /// <summary>The functors running from a bundle's wasm module: a status
+    /// report folds them into one count so the user's own promotions show.
+    /// A relink that evicts one drops it here too.</summary>
+    public HashSet<int> BundleFids { get; } = new();
+
+    /// <summary>What became of the last bundle module offered to <see
+    /// cref="BundleInstaller"/>.</summary>
+    public string BundleInstallNote { get; private set; } = "no bundle modules";
+
+    /// <summary>Installs every queued bundle module (<see
+    /// cref="IlPromotionStore.PendingWasmModules"/>). Called by the query
+    /// setup right after it links the static program, so a bundle's wasm is
+    /// live before the first goal that could dispatch into it, and by the
+    /// host's tick. Needs a link: with none it runs the throwaway goal that
+    /// builds one. Returns how many predicates were installed.</summary>
+    public int InstallPendingBundles(PrologEngine engine)
+    {
+        var pending = ilStore.PendingWasmModules;
+        if (pending.Count == 0 || BundleInstaller is null) return 0;
+        if (engine._staticLink is null)
+        {
+            engine.Query("true.");
+            // The setup of that query drained the queue through this method.
+            if (pending.Count == 0) return _lastBundleInstalled;
+        }
+        var modules = pending.ToArray();
+        pending.Clear();
+        int installed = 0;
+        foreach (var module in modules)
+        {
+            var (fids, note) = BundleInstaller(engine, module);
+            foreach (int fid in fids) BundleFids.Add(fid);
+            installed += fids.Count;
+            BundleInstallNote = note;
+        }
+        _lastBundleInstalled = installed;
+        return installed;
+    }
+    private int _lastBundleInstalled;
+
+    /// <summary>jit_compile(all): compile the whole static program as it is
     /// CONSULTED, not when the user's first query happens to need the link —
     /// deferring the batch would bill that query for every compile at once.
     /// While set, <see cref="CompileAllTick"/> re-runs the batch after any
@@ -96,8 +155,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>Fires after <see cref="ReconcileWithLink"/> evicts stale
     /// delegates, with the evicted functor ids: the tier drops its group
-    /// members and baked bookkeeping for them.</summary>
-    public System.Action<IReadOnlyList<int>>? StaleEvicted { get; set; }
+    /// members and baked bookkeeping for them, and answers with everything
+    /// that left the tier, the baked callers its registry dragged along
+    /// included (<see cref="IWasmExecutionWorld.Evict"/>); those lose their
+    /// delegates here too.</summary>
+    public System.Func<IReadOnlyList<int>, IReadOnlyList<int>>? StaleEvicted { get; set; }
 
     /// <summary>Fires with the fresh (functor -> live address) map after a
     /// relink moved code: the tier hands it to its execution worlds, whose
@@ -109,15 +171,15 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public int RelinkEvictions { get; private set; }
 
     /// <summary>A wasm module bakes its members' linked ADDRESSES: deopt
-    /// pcs, resume markers, BP encodings. ANY consult relinks the whole
-    /// static program and moves every address (measured: two plain facts
-    /// shifted all ~530 prelude predicates), after which a stale build
-    /// address reaching the interpreter's SetPc runs what is now different
-    /// code: "bytecode corruption" crashes. The bytecode itself only MOVES
-    /// (hashes equal), so the builds stay valid: this refreshes the worlds'
-    /// live-address maps (the boundary translation does the rest) and
-    /// evicts only a delegate whose predicate was REDEFINED or dropped,
-    /// which falls back to bytecode until re-promoted.</summary>
+    /// pcs, resume markers, BP encodings, and a stale one reaching the
+    /// interpreter's SetPc runs what is now different code: "bytecode
+    /// corruption" crashes. A relink moves an address when the space below
+    /// it closes up — a predicate that disappeared, and in time a deliberate
+    /// compaction — while what stays keeps its address. The bytecode itself
+    /// only MOVES (hashes equal), so the builds stay valid: this refreshes
+    /// the worlds' live-address maps (the boundary translation does the
+    /// rest) and evicts only a delegate whose predicate was REDEFINED or
+    /// dropped, which falls back to bytecode until re-promoted.</summary>
     public int ReconcileWithLink(PrologEngine engine)
     {
         if (_installed.Count == 0) return 0;
@@ -140,16 +202,28 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         }
         if (stale is not null)
         {
-            foreach (int fid in stale)
-            {
-                ilStore.EvictDelegate(fid);
-                _installed.Remove(fid);
-            }
-            RelinkEvictions += stale.Count;
-            StaleEvicted?.Invoke(stale);
+            Displaced(stale);
+            var gone = StaleEvicted?.Invoke(stale);
+            if (gone is not null) Displaced(gone);
         }
         if (moved) LiveRefreshed?.Invoke(liveAddr);
         return stale?.Count ?? 0;
+    }
+
+    /// <summary>Drops the delegates of functors the tier no longer covers
+    /// -- evicted, or displaced by a takeover (<see
+    /// cref="IWasmExecutionWorld.InstallGroup"/>) -- so they run on
+    /// bytecode and can be promoted again. Idempotent: a functor already
+    /// dropped counts nothing.</summary>
+    public void Displaced(IReadOnlyList<int> functorIds)
+    {
+        foreach (int fid in functorIds)
+        {
+            if (!_installed.Remove(fid)) continue;
+            BundleFids.Remove(fid);
+            ilStore.EvictDelegate(fid);
+            RelinkEvictions++;
+        }
     }
 
     /// <summary>Runs the relink reconciliation and, under
@@ -166,6 +240,16 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// </summary>
     public int BatchTicksWorked { get; private set; }
 
+    /// <summary>Makes the next <see cref="CompileAllTick"/> do the work
+    /// even though the program has not changed. Turning the batch ON is such
+    /// a moment: the tick's early-out asks whether the PROGRAM moved, and
+    /// what moved here is the MODE. Without this, jit_compile(all) compiled
+    /// nothing and the batch ran later, triggered by predicates crossing the
+    /// threshold during the user's next query -- which therefore ran
+    /// interpreted. Measured in the browser: 107 s for the first goal, 1.8 s
+    /// for the same goal after.</summary>
+    public void ForceNextBatch() => _lastLink = null;
+
     public int CompileAllTick(PrologEngine engine)
     {
         // Only a change to the STATIC program can add candidates or move
@@ -174,11 +258,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // compare.
         if (engine._staticLink is not null
             && ReferenceEquals(engine._staticLink, _lastLink)
-            && _pendingBatch.Count == 0) return 0;
+            && _pendingBatch.Count == 0
+            && ilStore.PendingWasmModules.Count == 0) return 0;
         bool anythingToDo = _installed.Count > 0
-            || (CompileAllOnConsult && BatchPromoter is not null);
+            || (CompileAllOnConsult && BatchPromoter is not null)
+            || ilStore.PendingWasmModules.Count > 0;
         if (!anythingToDo) return 0;
         if (engine._staticLink is null) engine.Query("true.");
+        InstallPendingBundles(engine);
         _lastLink = engine._staticLink;
         BatchTicksWorked++;
         // Evict the stale BEFORE the batch, so it recompiles them against
@@ -205,7 +292,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>Every static predicate of <paramref name="engine"/>'s linked
     /// program through <see cref="BatchPromoter"/> in one build: the
-    /// wasm_compile(all) path. Skips what is already promoted, already
+    /// jit_compile(all) path. Skips what is already promoted, already
     /// refused, or excluded from promotion (query wrappers). Returns how
     /// many predicates were newly compiled, or -1 when there is no batch
     /// promoter or no linked program to read.</summary>
@@ -232,6 +319,33 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // predicates", which is noise that also happens to be false.
         BatchStarting?.Invoke(candidates.Count);
         return BatchPromoter(candidates);
+    }
+
+    /// <summary>Every static predicate of the linked program through
+    /// <see cref="Promoter"/>, one module each: the per-predicate twin of
+    /// <see cref="PromoteAllStatics"/>, for measuring the two grains against
+    /// each other. Returns how many were newly installed, or -1 without a
+    /// promoter or a linked program.</summary>
+    public int PromoteAllStaticsIndividually(PrologEngine engine)
+    {
+        if (Promoter is null) return -1;
+        if (engine._staticLink is null) engine.Query("true.");
+        var link = engine._staticLink;
+        if (link is null) return -1;
+        var already = new HashSet<int>(ilStore.PromotedFunctorIds());
+        int installed = 0;
+        foreach (var (addr, pred) in link.PredicatesByAddress)
+        {
+            int fid = pred.FunctorId;
+            if (_unpromotable.Contains(fid) || already.Contains(fid)) continue;
+            if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
+            var del = Promoter(pred, addr);
+            if (del is null) { _unpromotable.Add(fid); continue; }
+            ilStore.RegisterBoundDelegate(fid, del);
+            NoteInstalled(fid, addr, pred);
+            installed++;
+        }
+        return installed;
     }
 
     private readonly Dictionary<int, int> _counters = new();

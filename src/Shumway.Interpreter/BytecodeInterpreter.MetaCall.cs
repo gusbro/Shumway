@@ -310,8 +310,7 @@ public sealed partial class BytecodeInterpreter
                 int fIdx = c.AsHeapIndex;
                 var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
                     _engine.GetHeap(fIdx).AsFunctorId);
-                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
-                        is "," or ";" or "->" or "*->")
+                if (IsControlConstruct(aid, ar))
                     return IsBodyConvertible(_engine.GetHeap(fIdx + 1))
                         && IsBodyConvertible(_engine.GetHeap(fIdx + 2));
                 return true;
@@ -337,8 +336,7 @@ public sealed partial class BytecodeInterpreter
                 int fIdx = c.AsHeapIndex;
                 var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
                     _engine.GetHeap(fIdx).AsFunctorId);
-                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
-                        is "," or ";" or "->" or "*->")
+                if (IsControlConstruct(aid, ar))
                 {
                     CheckBodyConvertible(_engine.GetHeap(fIdx + 1), whole);
                     CheckBodyConvertible(_engine.GetHeap(fIdx + 2), whole);
@@ -428,6 +426,7 @@ public sealed partial class BytecodeInterpreter
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
             _engine.CurrentBuiltinName = entry.Name;
             _engine.CurrentBuiltinArity = entry.Arity;
+            Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
             try { return entry.Impl(_engine); }
             catch (PrologRuntimeException re)
             { re.StampBuiltin(entry.Name, entry.Arity); throw; }
@@ -562,6 +561,18 @@ public sealed partial class BytecodeInterpreter
         }
 
         int totalArity = goalArity + extraCount;
+        // The key the MODULE can form. It reads the goal off the heap, so
+        // for a compound it knows the functor id and, statically, how many
+        // arguments this call/N appends; it cannot derive the RESOLVED
+        // functor, whose arity is wider.
+        //
+        // An ATOM goal has no functor to read -- interning (name, 0) is a
+        // search and a module can only index -- so it keys by the atom id
+        // instead, flagged, because atom ids and functor ids overlap.
+        bool observedAtomGoal = goalArity == 0;
+        int observedGoalKey = observedAtomGoal
+            ? atomId
+            : FunctorTable.Intern(atomId, goalArity);
         for (int i = 0; i < goalArity; i++)
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
         for (int i = 0; i < extraCount; i++)
@@ -586,8 +597,7 @@ public sealed partial class BytecodeInterpreter
         // are both type_error(callable, (fail,3)), and `fail` must not
         // execute first. Checked here (not after the route cache) so the
         // cached path is covered too.
-        if (totalArity == 2 && Shumway.Core.AtomTable.GetById(atomId)?.Name
-                is "," or ";" or "->" or "*->")
+        if (IsControlConstruct(atomId, totalArity))
             Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
                 _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
@@ -681,6 +691,8 @@ public sealed partial class BytecodeInterpreter
         {
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.True, 0);
+            PublishBuiltinResolution(functorId, resolutionModule, observedGoalKey,
+                                     extraCount, observedAtomGoal);
             _engine.AdvancePc(9);
             return true;
         }
@@ -688,6 +700,8 @@ public sealed partial class BytecodeInterpreter
         {
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Fail, 0);
+            PublishBuiltinResolution(functorId, resolutionModule, observedGoalKey,
+                                     extraCount, observedAtomGoal);
             return TryBacktrack();
         }
 
@@ -702,9 +716,14 @@ public sealed partial class BytecodeInterpreter
         // defines no such local (nor imports one) falls through to the builtin.
         if (resolutionModule >= 0 && addresses is not null)
         {
-            int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+            int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+            {
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    mangledFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, mangledAddr);
+            }
             // ADR-038 — the module's import table: a bare goal it doesn't define
             // locally resolves to Source$name before the bare-global namespace.
             var importMap = _engine.CurrentImportMap;
@@ -712,7 +731,12 @@ public sealed partial class BytecodeInterpreter
                 && importMap.TryGetValue(
                     ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
                 && addresses.TryGetValue(importedFid, out int importedAddr))
+            {
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    importedFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, importedAddr);
+            }
         }
 
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
@@ -734,11 +758,38 @@ public sealed partial class BytecodeInterpreter
                         ? Shumway.Core.MetaRouteKind.DollarCall
                         : Shumway.Core.MetaRouteKind.Builtin,
                     builtinId);
+            // A DIRECT builtin is one a compiled module can request itself;
+            // the $call helpers need this dispatcher, so they stay its.
+            if (!builtin.IsDollarCall)
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    functorId, observedAtomGoal, builtinId);
             return InvokeBuiltinGoal(builtinId);
         }
 
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
         {
+            // A module-tagged goal whose functor is ALREADY qualified lands
+            // here, not in the mangled branch above: mangling it again would
+            // ask for clpfd$clpfd$pneq/2. Measured, this is where every one
+            // of clpfd's meta-calls resolves -- 2,728 of them against 0 in
+            // the two branches that look like they should have it.
+            //
+            // It resolves to ITSELF, and that is worth caching all the same:
+            // what the reader of the cache needs is permission to jump, and
+            // the pair (module, functor) is what it has to ask under.
+            // ONLY a plain jump. By here functorId may have been REWRITTEN:
+            // a control construct (`,`, `;`, `->`, `*->`) is dispatched to a
+            // helper WITH THE CUT BARRIER IN X2, which is dispatcher
+            // knowledge a compiled module does not have -- it copies the
+            // goal's own arguments and jumps. Publishing one of those would
+            // send the module into the helper without a barrier and with the
+            // wrong register layout, and $call_conj re-dispatches the
+            // conjunction forever. That hang is how this was found.
+            if (resolutionModule >= 0 && userKind == Shumway.Core.MetaRouteKind.Jump)
+                _engine.MetaResolutionObserver?.Invoke(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    functorId, observedAtomGoal, -1);
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(userKind, address);
             return JumpToUserGoal(code, pc, address);
@@ -765,12 +816,25 @@ public sealed partial class BytecodeInterpreter
     /// <summary>Invokes a builtin reached as a runtime meta-call goal
     /// (shared by DispatchCall's slow path and its cached
     /// Builtin/DollarCall routes).</summary>
+    /// <summary>true/0 and fail/0 are decided here before the registry is
+    /// asked, but a compiled module can only act on what the cache says:
+    /// published as the registry builtins they also are.</summary>
+    private void PublishBuiltinResolution(int functorId, int resolutionModule,
+                                          int goalKey, int appended, bool atomGoal)
+    {
+        if (resolutionModule < 0 || _engine.MetaResolutionObserver is null) return;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int id))
+            _engine.MetaResolutionObserver(_engine.CurrentFunctorAddresses,
+                resolutionModule, goalKey, appended, functorId, atomGoal, id);
+    }
+
     private bool InvokeBuiltinGoal(int builtinId)
     {
         var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         _engine.CurrentBuiltinName = builtin.Name;
         _engine.CurrentBuiltinArity = builtin.Arity;
         bool ok;
+        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
         try { ok = builtin.Impl(_engine); }
         catch (PrologRuntimeException re)
         { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }
@@ -918,13 +982,6 @@ public sealed partial class BytecodeInterpreter
 
     /// <summary>Builds the mangled <c>module$name/arity</c> functor id used to
     /// resolve a bare meta-goal against its meta-caller's module locals.</summary>
-    private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
-    {
-        string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
-        string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
-        int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
-        return FunctorTable.Intern(mangledAtom, arity);
-    }
 
     /// <summary>Dereferences a cell, following REF chains to the term it
     /// names (or to an unbound REF / ATTVAR).</summary>

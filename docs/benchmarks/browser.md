@@ -8,10 +8,84 @@ is the tier's measurement: a tiered engine against a plain Tier-0 engine in
 the same browser, correctness cross-checked first.
 
 Reached at `#wasmbench` (or `#wasmbench=<rounds>`; `#wasmtier` keeps the
-older three-program probe with its time-split diagnostics). Each figure is
+older three-program probe with its time-split diagnostics). See
+[Running these in a browser](#running-these-in-a-browser) for the publish
+flag every one of them needs, and for the full list of hooks. Each figure is
 the best of five runs (a min, the standard defence against scheduler noise).
 Chrome, threads on, one desktop machine. These are wall-clock ratios in one
 browser, not the deterministic `--alloc` metric the desktop harness uses.
+
+
+## Running these in a browser
+
+Tier performance is measured HERE and nowhere else. The desktop world copies
+the engine's areas into a private image on every crossing and the browser
+world pins them, so the two disagree on direction, not just size: clpr came
+out 5x slower on the desktop and 1.1-2.2x faster in the browser. Counts
+(deopts, builtin exits, hops) are the same in both; times are not.
+
+### Publish and serve
+
+```bash
+# TWO flags, and leaving out either one fails quietly.
+#
+#   ShumwayWasmTier: the tier is OPT-IN. Without it a published
+#   WebShumway is Tier-0, every hook below still runs, and the times
+#   measure the interpreter.
+#
+#   ShumwayDiag: the counters are [Conditional("SHUMWAY_DIAG")]. Without
+#   it they compile to nothing and read ZERO -- chains, hops, switches,
+#   deopts, builtin exits and BOTH rankings. A page reporting "deopts=0"
+#   then means "not counted", not "none", and the output cannot tell the
+#   two apart.
+dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
+
+# Serves that publish with the cross-origin-isolation headers (COOP/COEP)
+# sent for real, so there is no service-worker synthesis and no
+# first-visit reload. -Collect writes any report the page POSTs.
+powershell -File src/Shumway.Web/WebShumwayServe.ps1               # port 8080
+powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 9000 -Collect out.txt
+```
+
+The tell for a missing ShumwayDiag is the time line: `delegate=0` and a
+NEGATIVE `glue`, since glue is what remains after subtracting a delegate
+figure nothing ever counted. `inWasm` and `stage` are plain stopwatches in
+`BrowserWasmWorld` and survive a stock build, so a page can show a credible
+time split beside a table of zeroed counters.
+
+Ship neither flag in anything a user runs: a diagnostic build is not a
+release.
+
+The tier flag needs the `wasm-tools` workload, and the build FAILS without it
+rather than shipping a runtime with no shim -- which used to die later at
+`DllNotFoundException` the first time a module registered.
+`Shumway.Web` is not in the solution, so `dotnet build` never builds it.
+
+Confirm the tier is live before believing any number: `jit_compile(status).`
+at the top level. "the capability is off in this build" means the flag was
+missing from the publish.
+
+### The hooks
+
+Every one is a URL fragment on the published page, and every one POSTs its
+report to `/collect`. **Most close their own window when done** -- that
+looks like a hang and is not.
+
+| hook | what it is |
+|---|---|
+| `#selftest` | The browser's own test suite. ADR-042 makes it the only automatic test that reaches this layer. |
+| `#wasmcompilecheck` | End to end on the `jit_compile` pseudo-goal over the live session engine: attach, run something hot, and status must show the promotion. A test, not a measurement. |
+| `#wasmbench[=rounds]` | The five-program benchmark this page reports. |
+| `#wasmtier[=rounds]` | The older three-program probe, kept for its time-split diagnostics. |
+| `#wasmgrain[=rounds[xqueens][:cell]]` | The many-modules measurement: batch, eager, lazy and Tier-0 side by side, with module count, bytes, compile and registration cost, and the per-run hop/switch/deopt tally INCLUDING the ranking of deopt sites. The instrument for "what is still leaving the module". |
+| `#wasmscalar[=iterationsxrounds]` | Design probe: locals or imported globals for the WAM's scalars. Locals are registers but need a prologue and an epilogue; globals need neither and may not be registers. |
+| `#wasmthread` | Design probe: is engine work pinned to one thread? A module registers in the calling thread's own table, so a pool that hands out a different thread makes every module pay registration again. |
+| `#wasmspike[=NxM]` | Phase-0 spike, kept as the reproducer for `browser-spike.md`. |
+| `#wasmsplit[=hopsxrounds]` | Phase-0 spike (the `return_call_indirect` Go/No-Go), kept as the reproducer for `wasm-split-spike.md`. |
+
+Pass `rounds=1` unless you know why you want more. The wall figure is the
+MIN across rounds and the tick breakdowns SUM, so a higher count makes the
+two disagree -- once to the point of reporting a negative setup time.
 
 ## The benchmark: five programs
 

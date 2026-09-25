@@ -587,8 +587,8 @@ WAM state.
           whose head functor appears as a CONSTRUCTED constant anywhere in the bytecode
           (`put_atom` / `put_structure[_r]` / write-mode `unify_atom` / `unify_structure`,
           names DEMANGLED since a constructed goal carries the bare source name) is excluded
-          from the prune and keeps its standalone form — exactly the user's model "(los
-          menos) serán WAM si no se pudo armar región ni IL". Over-approximate (a
+          from the prune and keeps its standalone form — exactly the intended model: the
+          few that remain are WAM, for want of a region or IL. Over-approximate (a
           functor-shaped term used purely as data also keeps its predicate) but sound: it
           only ever keeps MORE standalone forms, never strips a live one.
        `CollectConstructedFunctors` (the guard) + the in-compile prune live in

@@ -1076,7 +1076,7 @@ internal sealed class ConsultPipeline
             if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
                 return E.TryResolveLibrary(lib.Name, out _)
                     || CompatLibraries.TryGet(lib.Name, out _)
-                    || lib.Name is "clpfd" or "clpr" or "coroutining";
+                    || LibraryBundles.IsEngineLibrary(lib.Name);
             if (spec is AtomTerm f)
                 return System.IO.File.Exists(f.Name) || System.IO.File.Exists(f.Name + ".pl");
             return false;
