@@ -1943,6 +1943,9 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
 } else if (location.hash === '#clpzvar') {
+  // The #clpz* and #wasmclpz hooks fetch 'scryerlib/': Scryer's library tree
+  // served beside the page from a LOCAL checkout (gitignored). It is used as
+  // input, never vendored; in a clean checkout these hooks just 404.
   // use_module(library(clpz)) reports success and loads NOTHING on a
   // page-created collection. Not the registration (re-creating does not
   // help) and not a dialect pack (scryer has no clpz entry). The two
