@@ -71,13 +71,21 @@ public sealed partial class Activation
         }
     }
 
-    /// <summary>Counts a row a MODULE inserted into the image. The host
-    /// never sees the insert -- its own AttrMirrorPut finds the key
-    /// already there and only updates the value -- so the occupancy has
-    /// to be told, or the table drifts past its load factor and never
-    /// rebuilds. Only a FRESH slot counts, exactly as in AttrMirrorPut.
-    /// </summary>
-    internal void AttrMirrorNoteModuleInsert() => _attrMirrorUsed++;
+    /// <summary>Counts the empty slots a MODULE took, once its chain is
+    /// out. Only where the image is SHARED (the browser pins this array
+    /// into linear memory): there the host's own AttrMirrorPut finds the
+    /// module's rows already present and counts nothing, so the occupancy
+    /// has to be told or the table drifts past its load factor. The number
+    /// is the budget the module spent, which it spends on every empty slot
+    /// it takes, value rows and count rows alike. (A flag per parked write
+    /// used to carry it, and a promotion's count row never had one: on
+    /// queens 24 the drift filled the table and every probe walked it.)
+    /// A world that COPIES the image gets the rows back through the host's
+    /// own puts, which count for themselves.</summary>
+    internal void AttrMirrorNoteModuleInserts(int emptySlotsTaken)
+    {
+        if (emptySlotsTaken > 0) _attrMirrorUsed += emptySlotsTaken;
+    }
 
     /// <summary>The probe's starting slot. Multiply, add, xor, shift: each
     /// step is one wasm instruction, because the module recomputes this exact
@@ -273,11 +281,17 @@ public sealed partial class Activation
                 return $"count row var@{kv.Key} image={got} store={kv.Value.Count}";
         }
         long[] rows = _attrMirror;
-        int inImage = 0;
+        int inImage = 0, occupied = 0;
         for (int slot = 0; slot <= _attrMirrorMask; slot++)
         {
             long k = rows[slot * 2];
-            if (k == AttrMirrorEmpty || k == AttrMirrorTomb) continue;
+            if (k == AttrMirrorEmpty) continue;
+            // The load factor is measured against this count, tombstones
+            // included, and a module's inserts reach it by a different
+            // path than the host's own: a count that drifts low lets the
+            // table fill, and a full table is a probe that never ends.
+            occupied++;
+            if (k == AttrMirrorTomb) continue;
             inImage++;
             int home = (int)(k >> 32) - 1;
             int module = (int)k;
@@ -295,6 +309,8 @@ public sealed partial class Activation
             if (AttrValueAt(home, module) != (int)rows[slot * 2 + 1])
                 return $"stale row var@{home} module={module}";
         }
+        if (occupied != _attrMirrorUsed)
+            return $"occupancy {occupied} slots in the image, {_attrMirrorUsed} counted";
         return inImage == live ? null
             : $"{inImage} rows for {live} attributes";
     }

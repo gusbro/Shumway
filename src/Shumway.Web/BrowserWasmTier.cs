@@ -268,7 +268,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 FunctorReverseBase: FunctorReverseAddress(),
                 FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
                 GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
-                GlobalVarCount: globalPairs);
+                GlobalVarCount: globalPairs,
+                AttrImageShared: true);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");

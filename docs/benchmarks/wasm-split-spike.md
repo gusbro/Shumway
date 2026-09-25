@@ -644,7 +644,20 @@ probed with `while (true)` and only an EMPTY slot ended it; occupancy is
 partly told by the module's fresh-insert flags, and once it drifted low the
 table filled up and the probe cycled forever, in the host, where no safe
 point is. Probes are one pass now, and a full pass rebuilds the image and
-retries. What makes the count drift is not identified.
+retries.
+
+The drift itself, found by asserting occupancy against the count at every
+staging of a diagnostic build: a parked attribute write carried one
+fresh-slot flag, the value row's, and a promotion inserts a COUNT row too,
+so every variable the module attributed for the first time left one slot
+uncounted. The module spends its insert budget on every empty slot it
+takes, value and count rows alike, so the budget it has left on the way
+out is the exact number; the host adds that where the image is SHARED
+(the browser pins the engine's array into linear memory) and nothing
+where the image is a copy (the desktop world), whose rows come back
+through the host's own puts and count for themselves. The occupancy check
+stays in the diagnostic disagreement test, where the flag path would have
+failed on the first promotion.
 
 After all of it, no diagnostics, best of an ABBA round, the tier wins every
 case:

@@ -71,6 +71,11 @@ public sealed partial class Activation
         /// <summary>Base and pair count of the global-variable image.</summary>
         long GlobalVarBase = 0,
         int GlobalVarCount = 0,
+        /// <summary>Whether the attribute image at AttrTableBase IS the
+        /// engine's own array (pinned into linear memory) rather than a copy
+        /// of it. Decides who counts the module's inserts: see
+        /// AttrMirrorNoteModuleInserts.</summary>
+        bool AttrImageShared = false,
         /// <summary>Base and capacity of the dropped-record ring.</summary>
         long AttrDropBase = 0,
         int AttrDropLimit = 0,
@@ -121,6 +126,12 @@ public sealed partial class Activation
 
     private int[]? _wasmAttrDrops;
 
+    // Whether the image staged last is the engine's own array, and the
+    // insert budget it was staged with: the difference on the way back is
+    // how many empty slots the module took.
+    private bool _attrImageShared;
+    private int _attrMirrorBudgetStaged;
+
     /// <summary>Drops the records a compaction found dead. Re-checked rather
     /// than trusted: DropDeadAttrRecord asks again whether the cell is still
     /// an attributed variable, and between the module's decision and here a
@@ -154,17 +165,12 @@ public sealed partial class Activation
             int moduleId = _wasmAttrWrites[at + WasmAbi.AttrWriteModule];
             int oldValue = _wasmAttrWrites[at + WasmAbi.AttrWriteOld];
             int newValue = _wasmAttrWrites[at + WasmAbi.AttrWriteNew];
-            bool fresh = _wasmAttrWrites[at + WasmAbi.AttrWriteFresh] != 0;
 
             // The log record goes in the order the module RESERVED it,
             // because the trail entries it wrote carry those indices.
             int logIndex = _attrTrailLog.Count;
             _attrTrailLog.Add((home, moduleId, oldValue));
             AttrLogMirrorAppend(logIndex, home);
-            // A fresh slot the module took is occupancy the image knows
-            // about and the store does not: the funnel below finds the key
-            // already present and will not count it.
-            if (fresh) AttrMirrorNoteModuleInsert();
 
             switch (op)
             {
@@ -336,6 +342,8 @@ public sealed partial class Activation
         m[WasmAbi.AttrRecordCount] = AttrTableCount;
         m[WasmAbi.GlobalVarBase] = bases.GlobalVarBase;
         m[WasmAbi.GlobalVarCount] = bases.GlobalVarCount;
+        _attrImageShared = bases.AttrImageShared;
+        _attrMirrorBudgetStaged = bases.AttrMirrorBudget;
 
         // What a compaction owes the catch frames, as three numbers. They
         // cannot change inside a chain: a frame is pushed and deactivated by
@@ -382,6 +390,14 @@ public sealed partial class Activation
         // path -- and leaving it unadopted would silently undo the
         // compaction on the way out.
         _extraTrailTop = (int)m[WasmAbi.ExtraTrailTop];
+        // The empty slots the module took, before the drain: a put in the
+        // drain that crosses the load factor rebuilds and recounts, and
+        // the recount must see them as occupied.
+        if (_attrImageShared)
+        {
+            AttrMirrorNoteModuleInserts(_attrMirrorBudgetStaged - (int)m[WasmAbi.AttrMirrorBudget]);
+            _attrMirrorBudgetStaged = (int)m[WasmAbi.AttrMirrorBudget];
+        }
         // Writes BEFORE orphans, and the order is load-bearing: a
         // compaction in the same chain can have orphaned a record this
         // write created, and clearing an index the log does not hold yet
