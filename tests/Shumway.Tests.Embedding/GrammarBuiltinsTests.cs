@@ -71,16 +71,23 @@ public class GrammarBuiltinsTests
     }
 
     [Fact]
-    public void BarWithoutTheOp_StaysASyntaxError()
+    public void BarIsTheDcgOperator_AndOpCanRemoveIt()
     {
-        // Strict ISO: no bar operator in the default table (the deliberate
-        // omission the operator table documents); op/3 may register it.
+        // TS 13211-3: `op(1105, xfy, '|')` is in the default table, so a DCG
+        // body with an alternative reads anywhere, a plain clause calling
+        // phrase/2 included; op/3 may remove it, and then the bar is a
+        // syntax error, in a grammar rule as anywhere else.
         var e = new PrologEngine();
-        Assert.True(e.Query(
-            "catch(atom_to_term('(a | b)', _, _), error(syntax_error(_), _), true).").Success);
-        Assert.True(e.Query("op(1105, xfy, '|').").Success);
+        e.ConsultString("g --> [x].\nh --> [y].\nalt --> g | h.\nboth(L) :- phrase((g | h), L).\n");
+        Assert.True(e.Query("phrase(alt, [y]), both([x]), \\+ both([z]).").Success);
         var t = e.Query("atom_to_term('(a | b)', T, _), T = (X | Y), X == a, Y == b.");
         Assert.True(t.Success);
+        Assert.True(e.Query("op(0, xfy, '|').").Success);
+        // `(G, fail)` under the catch: true only when the error is raised.
+        Assert.True(e.Query(
+            "catch((atom_to_term('(a | b)', _, _), fail), error(syntax_error(_), _), true).").Success);
+        Assert.True(e.Query(
+            "catch((atom_to_term('(a --> b | c)', _, _), fail), error(syntax_error(_), _), true).").Success);
     }
 
     // ---------- phrase/2 + phrase/3 ----------
