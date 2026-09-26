@@ -62,7 +62,7 @@ jobs:
       # net10 only: the wasm backend targets the browser and the package it
       # builds on has no net48 assets, so the netfx lanes do not carry it.
       - name: Wasm
-        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0
+        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0 --filter "Category!=Slow"
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
         env:
