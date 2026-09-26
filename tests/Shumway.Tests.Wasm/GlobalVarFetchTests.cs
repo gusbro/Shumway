@@ -7,9 +7,11 @@ namespace Shumway.Tests.Wasm;
 /// <summary>'$fetch_global_var'/2 answered from the global-variable image
 /// when the key holds a cell live for this activation, the way clp(Z) reads
 /// its current propagator on every step (bb_get lowers to it: 5,101 exits
-/// on queens, a third of all builtin exits). A key the image lacks -- unset,
-/// or a snapshot the host has to re-emit -- still goes to the host, which
-/// also owns the failure.</summary>
+/// on queens, a third of all builtin exits). The image is complete, so a
+/// key it lacks is UNSET and the read fails in the module too (clp(Z) reads
+/// its current propagator before anything has set it, 6,400 times on
+/// queens24); only a snapshot the host has to re-emit goes to the host.
+/// </summary>
 public sealed class GlobalVarFetchTests(ITestOutputHelper o)
 {
     private const string Corpus = """
@@ -21,6 +23,9 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
         loop2(0) :- !.
         loop2(N) :- '$fetch_global_var'(snap, f(X)), X == a, N1 is N - 1, loop2(N1).
         snap(N) :- nb_setval(snap, f(a)), loop2(N).
+        loop3(0) :- !.
+        loop3(N) :- ( '$fetch_global_var'(nokey, _) -> fail ; true ), N1 is N - 1, loop3(N1).
+        others(N) :- b_setval(other, 1), nb_setval(other2, f(b)), loop3(N).
         """;
 
     [Fact]
@@ -29,7 +34,8 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
         var plain = new PrologEngine();
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
-        foreach (string goal in new[] { "go(50).", "unset.", "undone.", "snap(50)." })
+        foreach (string goal in new[] { "go(50).", "unset.", "undone.", "snap(50).", "loop3(50).",
+                                        "others(50)." })
         {
             Assert.True(plain.Query(goal).Success, goal);
             Assert.True(tiered.Query(goal).Success, goal + " under the module");
@@ -66,5 +72,26 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
         o.WriteLine($"snapshot: fetch exits={FetchExits()} deopts={WasmTierDelegate.DiagDeopts}");
         Assert.True(FetchExits() >= 300,
             $"{FetchExits()} fetch exits for a snapshot: the corpus stopped reaching the host");
+    }
+
+    /// <summary>An unset key fails in the module: the image is complete,
+    /// so absence IS the answer -- with other keys live (a cell and a
+    /// snapshot) as well as with none at all, the empty image being the
+    /// shape that used to send every read out.</summary>
+    [DiagFact]
+    public void AnUnsetKeyFailsInTheModule()
+    {
+        var (engine, _) = TieredEngine.Build(Corpus);
+        Assert.True(engine.Query("loop3(3).").Success);
+        Assert.True(engine.Query("others(3).").Success);
+        foreach (string goal in new[] { "loop3(300).", "others(300)." })
+        {
+            WasmTierDelegate.ResetDiag();
+            Assert.True(engine.Query(goal).Success, goal);
+            o.WriteLine($"{goal} fetch exits={FetchExits()} deopts={WasmTierDelegate.DiagDeopts}");
+            Assert.True(FetchExits() == 0,
+                $"{goal}: {FetchExits()} fetch exits for an unset key: the module asked the host");
+            Assert.Equal(0, WasmTierDelegate.DiagDeopts);
+        }
     }
 }

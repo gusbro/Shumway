@@ -271,9 +271,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             // The global-variable image, per staging: the store is a handful
             // of keys, and a b_setval inside a builtin has to be visible on
-            // re-entry.
+            // re-entry. An EMPTY image is published too (base set, count 0):
+            // it says every key is unset, which the module answers itself.
             int globalPairs = _engine.Host is Shumway.Builtins.IGlobalVarHost gvHost
-                ? gvHost.GlobalVars.WriteLiveCells(_globalRows, _engine.InstanceId) : 0;
+                ? gvHost.GlobalVars.WriteLiveCells(_globalRows, _engine.InstanceId) : -1;
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
 
@@ -311,7 +312,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrDropLimit: attrDrops.Length,
                 FunctorReverseBase: _funRevAt,
                 FunctorReverseMask: FunctorReverseTable.Mask,
-                GlobalVarBase: globalPairs > 0 ? _globalAt : 0,
+                GlobalVarBase: globalPairs >= 0 ? _globalAt : 0,
                 GlobalVarCount: globalPairs);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(

@@ -15,11 +15,11 @@ the gates that had to pass before any of it was worth building.
 
 | gate | asks | result |
 |---|---|---|
-| G0 | 10⁷ hops per round in bounded stack | **PASS** — 5 rounds, 50 M hops, no growth |
-| G1 | ≤ 100 ns per hop | **PASS** — 6.1 ns best, ~6.3 ns median |
-| G3 | the test library executes the hop | **PASS** — so xUnit can exercise it |
+| G0 | 10⁷ hops per round in bounded stack | **PASS**: 5 rounds, 50 M hops, no growth |
+| G1 | ≤ 100 ns per hop | **PASS**: 6.1 ns best, about 6.3 ns median |
+| G3 | the test library executes the hop | **PASS**: xUnit can exercise it |
 | G4 | a module reaches slots added later | **PASS** |
-| G2 | incremental compile ≤ 1.5× batch | **PASS** — 0.76×, i.e. cheaper |
+| G2 | incremental compile ≤ 1.5× batch | **PASS**: 0.76×, cheaper |
 
 ```
 ping: 139 bytes, registered at index 7874 on thread 7
@@ -34,30 +34,30 @@ round 4: 10000000 hops in 70.6 ms = 7.1 ns/hop
 
 ## What each gate settled
 
-**G0 — is it really a tail call.** This is the one that could have killed the
+**G0: is it really a tail call.** This is the one that could have killed the
 arc outright, and it is a property rather than a speed. A Prolog program makes
-millions of calls, and in the WAM a call IS a jump: the continuation lives in
+millions of calls, and in the WAM a call is a jump: the continuation lives in
 CP, not on the host stack. Had V8 compiled `return_call_indirect` as an
 ordinary call, the stack would have grown per hop and there was no fallback
 design. Fifty million hops without unwinding says it does not.
 
-**G1 — 6.1 ns against 4,000–15,000 ns.** That range is what a cross-module
+**G1: 6.1 ns against 4,000 to 15,000 ns.** That range is what a cross-module
 switch costs today: decode the marker, probe a dictionary, close the chain, let
-the interpreter re-dispatch, open another chain — all in C# that the browser
+the interpreter re-dispatch, open another chain, all of it C# that the browser
 runs interpreted. Same crossing, 650× to 2,400× cheaper, because it never
 leaves wasm.
 
-**G4 — the table is live, not a snapshot.** `ping` was registered at index 7874
+**G4: the table is live, not a snapshot.** `ping` was registered at index 7874
 and `pong` at 7875, so `pong` did not exist when `ping` was instantiated, and
 `ping` still reaches it. A table import is by reference. Without that, every
 new module would have meant re-instantiating the ones that call it.
 
-**G3 — the arc is testable without a browser.** The emitter library executes
+**G3: the arc is testable without a browser.** The emitter library executes
 `return_call_indirect` through an imported table, so `tests/Shumway.Tests.Wasm`
 can exercise the hop. Had it not, every cross-module path would have been
 browser-only to test, which changes the cost of the whole arc.
 
-## G2 — compiling one at a time is CHEAPER
+## G2: compiling one at a time is cheaper
 
 818 predicates of the prelude and clpfd, compile time only (instantiation and
 per-thread registration are the browser's):
@@ -69,8 +69,8 @@ ratio          : 0.76x time, 1.53x bytes
 per predicate  : median 0.31 ms, max 35.74 ms
 ```
 
-The gate asked for no worse than 1.5x. It is 0.76x — separate modules are
-*faster* to compile, because a group pays work that is superlinear in its
+The gate asked for no worse than 1.5x. It is 0.76x: separate modules are
+faster to compile, because a group pays work that is superlinear in its
 member count: numbering global cursors, building the br_table, cutting
 partitions. Incremental promotion does not pay a toll here, it collects one.
 
@@ -80,7 +80,7 @@ a batch mode at all.
 
 The cost has moved to **bytes: 1.53x**. Every module repeats the dispatcher,
 the fail/proceed resolver and the general unifier, so 818 of them carry 2.2 MB
-more wasm than one group — and the browser compiles all of it. That is the same
+more wasm than one group, and the browser compiles all of it. That is the same
 currency the resume table just saved 26.8% of, so it does not sink the arc, but
 it names the next fight: either modules share those functions through imports,
 or predicates are grouped a few at a time rather than one each.
@@ -91,8 +91,8 @@ safety valve rather than deleting them.
 
 ## The grain: 16 predicates a module, not one
 
-The 1.53x above is entirely fixed furniture -- the dispatcher, the fail/proceed
-resolver and the general unifier -- repeated per module. Measured on the same
+The 1.53x above is entirely fixed furniture, the dispatcher, the fail/proceed
+resolver and the general unifier, repeated per module. Measured on the same
 818 predicates:
 
 ```
@@ -109,9 +109,9 @@ one group       : 4,095,932 bytes
 A one-byte predicate yields a 3 KB module, so the floor is ~3 KB and the median
 one-predicate module is more than half furniture.
 
-At 16 per module the overhead is 2%. That keeps what the arc actually wants --
-adding a predicate recompiles sixteen, not eight hundred -- without asking the
-browser to compile 2.2 MB more. "One module per predicate" was the intuitive
+At 16 per module the overhead is 2%. That keeps what the arc actually wants,
+adding a predicate recompiles sixteen and not eight hundred, without asking
+the browser to compile 2.2 MB more. "One module per predicate" was the intuitive
 phrasing and is the worst of the measured options.
 
 Untried, and possibly better than either: put the three shared functions in
@@ -167,9 +167,9 @@ prelude predicates a small program never calls, and the first run is not
 faster for it. Lazy compiles 1–7 modules for the three classic programs, 101
 for the clpfd one, and its first run lands 0.4–0.5 s after the consult: a
 promotion costs ~7 ms of mono-interpreted compile plus ~0.5 ms of registration.
-Whether the batch machinery stays is the phase 6 question. **Read the next
-section before answering it: the cost this paragraph charges the batch is
-the prelude, and the bake stopped charging it.**
+Whether the batch machinery stays is the phase 6 question. The next section
+revises this: the cost charged to the batch here is the prelude, and the bake
+stopped charging it.
 
 **clpfd is not a hop problem.** queens 12 is 1.1–1.3x in both grains because
 a run is 524,030 short chains that exit to a builtin 626,930 times and deopt
@@ -193,11 +193,11 @@ builtin exits (of 32,872, 24 distinct)      deopt sites (of 5,073)
      968  (3%)  $dom_new/3
 ```
 
-Half the exits are TYPE TESTS: `integer/1` alone is 47% and `var/1`
+Half the exits are type tests: `integer/1` alone is 47% and `var/1`
 another 3%, each a one-instruction check on a tagged cell that the module
 leaves the chain to ask the host about. They are the cheapest thing in the
-list to open-code and the largest share of it, which is the answer the
-ranking was added to give. The attribute pair (`get_attr/3`, `put_attr/3`)
+list to open-code and the largest share of it, which is what the ranking
+was added to show. The attribute pair (`get_attr/3`, `put_attr/3`)
 and the domain helpers are the next band, and those are real work.
 
 ## The same question once the prelude is baked
@@ -216,7 +216,7 @@ nrev 200 x5       50.7     9.6     8.3       10.5     8.9     8.3   ms
 tak 18,12,6        7.5     7.3    40.8        6.5    11.6     6.8
 zebra x10         32.1    22.6    50.1       45.1    23.4    22.3
 
-predicates compiled at the consult: 5, 5, 7 -- the user's, in every mode
+predicates compiled at the consult: 5, 5, 7 (the user's, in every mode)
 compile cost: batch 69-1,334 ms, eager 40-86 ms, lazy 13-97 ms
 modules: batch 2 (the baked stdlib + one), eager and lazy 2-8
 switches: 0 everywhere; deopts identical across the three
@@ -226,20 +226,20 @@ switches: 0 everywhere; deopts identical across the three
 column fell from 4.4-8.1 s to tens or hundreds of milliseconds, because the
 535 stdlib predicates arrive baked and every mode starts with them installed
 (`promoted` is ~540 in all three). The batch and the lazy grain now differ by
-a handful of predicates, so the old argument against the batch -- that it
-pays seconds for code the program never calls -- is void.
+a handful of predicates, so the old argument against the batch, that it
+pays seconds for code the program never calls, is void.
 
 **The run times do not separate the grains.** Every per-program ordering
 flips between the two runs (nrev's batch 50.7 then 10.5; tak's lazy 40.8 then
 6.8), which is the signature of wall-clock noise in a browser rather than of
 an effect. What repeats is zebra, where the batch is slower than either fine
 grain in both runs (32.1/45.1 against 22.3-23.4) despite its 447,750 hops a
-run being the ones it does NOT pay: worth its own look, not a conclusion
+run being the ones it does not pay: worth its own look, not a conclusion
 here.
 
-**So the batch stays**, and for a different reason than it was kept before.
-Not because it is faster, but because after the bake it costs almost nothing
-and is the only grain that leaves one module and no hops. The machinery it
+So the batch stays, for a different reason than before: not because it is
+faster, but because after the bake it costs almost nothing and it is the only
+grain that leaves one module and no hops. The machinery it
 needs is a flag and a tick.
 
 ## The desktop world is not a stopwatch
@@ -273,9 +273,9 @@ clpr x200      1,166 ms   924 (1.3x)    533 (2.2x)    551 (2.1x)
 clpr x400      1,552 ms  1,158 (1.3x) 1,365 (1.1x)  1,174 (1.3x)
 ```
 
-The tier WINS, 1.1 to 2.2x. Same code, same counters (43,206 chains and
-72,594 builtin exits at x200 either way) -- the desktop figure was
-measuring the harness.
+The tier wins by 1.1 to 2.2x. Same code, same counters (43,206 chains and
+72,594 builtin exits at x200 either way): the desktop figure was measuring
+the harness.
 
 **What the browser says is left.** The time split the probe now reports
 puts most of it at the boundary rather than inside the module:
@@ -288,13 +288,13 @@ clpr x400 lazy:   inWasm 442 ms    stage 1,128 ms
 Staging is ~70% of the accounted time even where it pins instead of
 copying, and it is paid per crossing: 216 chain entries per iteration of a
 program whose body is four constraints. That is what makes open-coding a
-builtin worth doing -- not the work of the builtin, which is trivial, but
+builtin worth doing: not the work of the builtin, which is trivial, but
 the crossing it avoids.
 
-**And the browser is where you find out whether it applied.** The
-one-argument type tests were open-coded, measured on the desktop and
-committed; the browser's ranking still read `var/1` and `number/1` at the
-top afterwards. The decision was being lost in the RELOCATING compile env,
+**The browser is also where a change proves it applied.** The one-argument
+type tests were open-coded, measured on the desktop and committed; the
+browser's ranking still read `var/1` and `number/1` at the top afterwards.
+The decision was being lost in the relocating compile env,
 which the bake uses and which had not been taught the new hook, so it
 inherited the interface's default answer of no. Every baked module kept
 its exits, and baked modules are what the browser's libraries run from:
@@ -324,7 +324,7 @@ The batch and the lazy grain differ in two things at once: what gets
 compiled (everything, or what runs) and how it is cut (one module, or one
 per predicate). This isolates the cut. `eager` compiles the same 827
 predicates as the batch, one module each, at the same boundary tick; the
-`b*` rows first compile the prelude as ONE module (what a page boots from)
+`b*` rows first compile the prelude as one module (what a page boots from)
 and then cut only the 293 predicates of the clpfd program. queens 12, Edge
 headless, Release publish, best of 5, two runs of each cell back to back.
 
@@ -340,7 +340,7 @@ beager  (prelude + 293 in 293) 4,545  4,735   7.5-7.9 s   157-160 ms  294 / 5,52
 Per run both cuts count the same 524,030 chains, 95,140 deopts and 626,930
 builtin exits; the only counter that moves is hops: 0 against 1,499,135 for
 the whole program, 9,560 against 1,487,575 with the prelude fused. So the
-clpfd program crosses between ITS OWN predicates 1.5 million times per run,
+clpfd program crosses between its own predicates 1.5 million times per run,
 and the cut costs 0.5 s for it: about 300 ns per hop on chains this short,
 where the hop is a large fraction of the chain. zebra's 447,750 hops did not
 show because its chains are long.
@@ -358,7 +358,7 @@ Once the libraries are baked as groups the hops inside clpfd vanish from both.
 
 ## Where the scalars live, and what a crossing really costs
 
-The WAM's scalars live in LOCALS, loaded from the mailbox on entry and spilled
+The WAM's scalars live in locals, loaded from the mailbox on entry and spilled
 on exit. That prologue and epilogue are ~1,198 of a small module's ~3,234 byte
 floor, and every crossing pays them, so three alternatives were measured.
 
@@ -375,7 +375,7 @@ Memory (mailbox) 2.49 ns/access    7.8x
 Keeping the scalars in imported globals and reading them directly is 8x per
 access, on values like `H` that move on every allocation. And an imported
 global costs the same as a mailbox slot (2.57 against 2.49), so using globals
-as the home and caching them in locals at the boundaries — the second variant —
+as the home and caching them in locals at the boundaries, the second variant,
 buys nothing either: the prologue would read fifteen globals instead of fifteen
 memory slots at the same price. Note it is *importing* that costs: a module's
 own global is 1.05 ns, but a private global cannot be shared state.
@@ -405,16 +405,16 @@ crossings.
 
 ## What the spike caught
 
-The module addressed linear memory absolutely — slots 0, 8, 16 — instead of
-relative to the base the host passes it. On the desktop that is invisible,
+The module addressed linear memory absolutely, at slots 0, 8 and 16, instead
+of relative to the base the host passes it. On the desktop that is invisible,
 because the test image is private and the harness writes at those same
 addresses. In a browser address 0 belongs to the runtime, so the module read
 garbage and wrote over memory that was not its own.
 
-It announced itself as a wrong *parity*: with two hops the run must end in half
-B, and it reported half A. The timing was nonsense too — ten million hops in
-"0.0 ms" — but the parity is what identified it. Worth remembering: a
-measurement that is too good is a bug report.
+It showed as a wrong parity: with two hops the run must end in half B, and it
+reported half A. The timing was nonsense too, ten million hops in "0.0 ms",
+but the parity is what identified it. A measurement that is too good is a bug
+report.
 
 ## What is not settled
 
@@ -422,8 +422,8 @@ measurement that is too good is a bug report.
 SpiderMonkey implemented tail calls separately, so G0 is genuinely open there.
 
 **Tablets.** iPad and Android are untested. The fallback if a device lacks tail
-calls is Tier-0, which already works; how to detect it — by feature probe at
-boot, or by user agent after a report — is a decision for when there is one.
+calls is Tier-0, which already works; how to detect it, by feature probe at
+boot or by user agent after a report, is a decision for when there is one.
 
 **The 1.53× in bytes.** Every module repeating the dispatcher, the resolver and
 the unifier is the one number that got worse, and the browser compiles all of
@@ -434,7 +434,7 @@ predicates per module, is the obvious answer and neither has been tried.
 
 `#wasmgrain=1`, Release publish with both flags, one desktop machine. Taken
 once the meta-call forms landed, as the reference point for the work that
-follows. Times are one round and swing; the COUNTS do not, and they are what
+follows. Times are one round and swing; the counts do not, and they are what
 this table is for.
 
 | program | tier0 | best tier | inWasm | stage | builtins | interp+glue |
@@ -457,7 +457,7 @@ The two shapes this splits into:
 ```
 
 **Builtin-exit bound.** queens deopts 462 times and leaves for a builtin
-**23,594** times, which is 403 ms of its 849 -- more than the module spends
+**23,594** times, which is 403 ms of its 849, more than the module spends
 executing. Three functions are most of it:
 
 ```
@@ -469,8 +469,8 @@ Mono-interpreted C#. That is the same fact this whole arc started from: a
 crossing cost 4-15 us because the code on the other side is interpreted, not
 because crossing wasm is expensive. Per exit here it works out around 17 us.
 
-A third of the builtin exits in clpr are calls that always fail --
-`$cyclic_spine/1` 400 of 400, `get_attr/3` 400 of 400 -- one host round trip
+A third of the builtin exits in clpr are calls that always fail,
+`$cyclic_spine/1` 400 of 400 and `get_attr/3` 400 of 400: one host round trip
 each to be told no.
 
 **Read the counts, not the ratios.** Over one round the batch/eager/lazy
@@ -484,17 +484,17 @@ times.
 
 | program | deopts | what changed |
 |---|---:|---|
-| clpr x200 | 804 -> 403 -> **4** | first the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to -- $wake_call/1 left the ranking, its 401 round trips became in-wasm hops. Then the inline =/2's step-aside became a leaf builtin request, chain open: the 400 attvar binds show as =/2 exits now. The 4 left are one-off trail growths. |
-| queens 12 | 462 -> 262 -> **133** | same two changes. What remains is named and stays: 60 at a Trust whose restore would unwind the extra trail, 67 at get_value ops meeting attvars -- those cannot take the leaf escape, because it needs the goal's arguments in X0/X1 and a get_value pair lives in registers the clause still reads. |
+| clpr x200 | 804 -> 403 -> **4** | first the verify_attributes hooks went module-local (ADR-040): static, marked, jumped to; $wake_call/1 left the ranking, its 401 round trips became in-wasm hops. Then the inline =/2's step-aside became a leaf builtin request, chain open: the 400 attvar binds show as =/2 exits now. The 4 left are one-off trail growths. |
+| queens 12 | 462 -> 262 -> **133** | same two changes. What remains is named and stays: 60 at a Trust whose restore would unwind the extra trail, 67 at get_value ops meeting attvars; those cannot take the leaf escape, because it needs the goal's arguments in X0/X1 and a get_value pair lives in registers the clause still reads. |
 
 get_attr/3 on a plain variable also left the builtin rankings (400 exits in
 clpr, 12 in queens), answered inside the module.
 
 What remains is fully attributed and is the wakeup machinery itself: guard 25
-(binding an attributed variable through a meta-called =/2 -- the wakeup is
+(binding an attributed variable through a meta-called =/2; the wakeup is
 the host's by design), guard 23 (a restore that would unwind the extra
-trail), and a few trail growths. Irreducible in COUNT; the open lever is the
-cost per exit -- a meta-call that must hand its goal to the host still leaves
+trail), and a few trail growths. Irreducible in count; the open lever is the
+cost per exit: a meta-call that must hand its goal to the host still leaves
 by full deopt rather than by the cheaper builtin-request exit.
 
 ### RunAOTCompilation: measured and rejected
@@ -519,12 +519,12 @@ method on the arithmetic path falling back to Mono's interpreter under AOT.
 
 ### The split, explained: a `finally` in the dispatch frame
 
-The fallback hypothesis was REFUTED by the AOT compiler's own log
+The fallback hypothesis was refuted by the AOT compiler's own log
 (`-p:WasmAOTCompilerVerbose=true -v:d`): every engine method, the whole
 arithmetic stack included, is compiled; the 26 Shumway methods left to the
 interpreter are cold (resource loading, gsharedvt generics). Isolated
 microbenchmarks in the same publish showed thread-static access, cross-assembly
-calls and the arithmetic eval stack all 1.5-2.5x FASTER under AOT, so the
+calls and the arithmetic eval stack all 1.5-2.5x faster under AOT, so the
 cost was somewhere the microbenchmarks did not reach.
 
 Profiling tak under AOT with V8's sampler (`--js-flags="--prof"`, engine
@@ -613,12 +613,12 @@ exits, 1,142 foreign exits. In order of what they cost:
 2. **guard 25, 4,963 deopts (61%).** clpz's `state(queue(_,_,_,Aux))` matches
    the live queue whose last slot is an attributed variable: two bound
    compounds, so the pair reached the module's unifier, which stepped aside
-   at any ATTVAR. The engine's rule for an attributed variable against a plain
+   at any attributed variable. The engine's rule for one against a plain
    unbound one is to bind the plain one to Ref(home) and wake nothing; the
    unifier does that now, in both orientations. The site went to zero.
 3. **guard 9, 2,771 deopts.** The meta cache only ever held resolutions that
    end in a jump, so `call(G)` with G a builtin, `true` or `fail` missed every
-   time. A direct builtin now has a NEGATIVE call marker, -(id + 1), published
+   time. A direct builtin now has a negative call marker, -(id + 1), published
    for every builtin up front and by the host when it resolves one; the module
    requests it with the goal's arguments in the registers, the exit a
    call_builtin site makes. A goal that is a compound with an arity-zero
@@ -640,7 +640,7 @@ exits, 1,142 foreign exits. In order of what they cost:
 And a hang: queens24 on the tier never finished, in any build, with the
 cancel unable to land. Named profile: 63% of all samples in
 `Activation.AttrMirrorSetRowCount`. The attribute image's `AttrMirrorPut`
-probed with `while (true)` and only an EMPTY slot ended it; occupancy is
+probed with `while (true)` and only an empty slot ended it; occupancy is
 partly told by the module's fresh-insert flags, and once it drifted low the
 table filled up and the probe cycled forever, in the host, where no safe
 point is. Probes are one pass now, and a full pass rebuilds the image and
@@ -648,11 +648,11 @@ retries.
 
 The drift itself, found by asserting occupancy against the count at every
 staging of a diagnostic build: a parked attribute write carried one
-fresh-slot flag, the value row's, and a promotion inserts a COUNT row too,
+fresh-slot flag, the value row's, and a promotion inserts a count row too,
 so every variable the module attributed for the first time left one slot
 uncounted. The module spends its insert budget on every empty slot it
 takes, value and count rows alike, so the budget it has left on the way
-out is the exact number; the host adds that where the image is SHARED
+out is the exact number; the host adds that where the image is shared
 (the browser pins the engine's array into linear memory) and nothing
 where the image is a copy (the desktop world), whose rows come back
 through the host's own puts and count for themselves. The occupancy check
@@ -724,6 +724,61 @@ are an attributed variable bound to a value inside get_value (a wakeup, the
 host's) and 104 a restore that has to unwind the extra trail; the two walks
 of changes 4 and 5 take another 8,100 builtin exits off the 13,898.
 
+### Who asks: two reads that left the module for nothing
+
+The exit ranking names the builtin; the next question is who is asking, and
+the answer names a clause. A desktop probe (the caller ranking,
+`WasmTierDelegate.BuiltinCallerRanking`, plus the caller's bytecode through
+`PredicateDisassembler.Format`) put a shape under each of the two largest
+entries of queens24 x2 in the browser (17,349 builtin exits in all):
+
+1. **`var/1`, 6,899 exits, from clpz's `include/3`.** `variables_same_queue`
+   runs `include(var, Vs0, Vs)`, and include meta-calls `call(clpz:var, X)`:
+   an ATOM goal plus one argument this site appends. The inline forms at the
+   request were keyed by the goal's functor cell, which an atom has not, and
+   which under `'$mqual'` is the wrapper's, so `var/1` left as a request
+   whatever the marker said. The forms run on the registers now, where the
+   callee's arguments already are whatever shape the goal took, keyed by the
+   builtin's id out of the marker, and a form that cannot decide declines
+   to the request itself, never to the host's re-dispatch of the
+   instruction (X0 no longer holds the goal by then).
+2. **`$fetch_global_var/2`, 6,400 exits, from `bb_get/2`.** clpz's
+   `trigger_prop` reads `'$clpz_current_propagator'` on every trigger, and
+   only a global-constraint propagator ever sets it: the key is unset on
+   queens, every time. The image held the live cells only, so a key it lacked
+   still went to the host, and an empty store published no image at all. The
+   image is complete now: a snapshot the host re-emits is in it under a
+   sentinel cell (a functor cell, which no value is), the desktop world
+   publishes the empty image too, and a key the image lacks fails in the
+   module. Sound because the image is rewritten at every host boundary, and
+   every write is one.
+
+The desktop count for one queens24 went from 3,473 builtin exits to 822.
+The browser, no diagnostics, best of three ABBA rounds:
+
+| case | Tier-0 AOT | wasm tier AOT | |
+|---|---:|---:|---:|
+| queens10ff x5 | 537 ms | 206 ms | 2.6x |
+| sendmore x2 | 52 ms | 32 ms | 1.6x |
+| queens16 x2 | 425 ms | 173 ms | 2.5x |
+| queens24 x2 | 791 ms | 436 ms | 1.8x |
+| sudoku x1 | 2411 ms | 936 ms | 2.6x |
+| factorial x10 | 162 ms | 116 ms | 1.4x |
+
+What is left on queens24 x2, in order: `clpz_neq/2`, 2,760 foreign exits
+(95% of them), a `:- dynamic` predicate with source clauses that the tier
+does not compile, so every `#\=` posting runs in the interpreter (23 us a
+call against 5 on Tier-0 in `#wasmexits`; the ADR-023 snapshot is the
+model); `sort/2`, 2,760 requests, `variables_same_queue` sorting queue
+terms (14 us a request); 152 deopts, 115 of them an attributed variable
+bound to a value inside get_value, which is a wakeup and the host's.
+
+Two instruments not to trust here. V8's `--prof` ran the tier 4.5x slower than
+Tier-0 on the same publish that has the tier 1.8x faster, so its ticks do
+not rank the tier's own code; the counters do. And `node --prof-process`
+stops at a code state it does not know (`o+`, a newer V8 than node's):
+rewrite the tag to `+` before processing.
+
 Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
 above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native
 module is 23.8 MB raw, 4.5 MB brotli, 6.6 MB for the whole `_framework`
@@ -747,5 +802,5 @@ msedge --headless=new --user-data-dir=<scratch> \
 
 The page posts its report to `/collect`: a page cannot write to disk, and
 reading it out of the DOM depends on when the browser is asked. Kill only the
-browsers started with that `--user-data-dir` — never by process name, which
+browsers started with that `--user-data-dir`, never by process name, which
 takes the user's own windows with it.

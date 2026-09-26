@@ -51,12 +51,15 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     /// stale image from a current one without walking it.</summary>
     public int Version { get; private set; }
 
-    /// <summary>The entries a compiled module may answer a read from: the
-    /// cells LIVE for <paramref name="ownerId"/>, as (atom id, cell) pairs
-    /// in <paramref name="rows"/>. A payload (a snapshot the host re-emits)
-    /// is not among them, and neither is another activation's backtrackable
-    /// write, so a key the rows lack still goes to the host. Returns the
-    /// pair count, or -1 when the rows cannot hold them all.</summary>
+    /// <summary>Every key a read by <paramref name="ownerId"/> would find,
+    /// as (atom id, cell) pairs in <paramref name="rows"/>: a cell LIVE for
+    /// it as itself, a payload (a snapshot the host re-emits) as
+    /// <see cref="WasmAbi.GlobalVarPayloadSentinel"/>. Another activation's
+    /// backtrackable write is not among them, and the read side drops it
+    /// too. The rows are complete, so a compiled module answers an ABSENT
+    /// key with failure and only a sentinel sends a read to the host.
+    /// Returns the pair count, or -1 when the rows cannot hold them all.
+    /// </summary>
     public int WriteLiveCells(long[] rows, int ownerId)
     {
         int n = 0;
@@ -66,6 +69,13 @@ public sealed class GlobalVarStore : IExternalTrailTarget
             if (n * 2 + 2 > rows.Length) return -1;
             rows[n * 2] = atomId;
             rows[n * 2 + 1] = cell.Data;
+            n++;
+        }
+        foreach (int atomId in _payloads.Keys)
+        {
+            if (n * 2 + 2 > rows.Length) return -1;
+            rows[n * 2] = atomId;
+            rows[n * 2 + 1] = WasmAbi.GlobalVarPayloadSentinel;
             n++;
         }
         return n;

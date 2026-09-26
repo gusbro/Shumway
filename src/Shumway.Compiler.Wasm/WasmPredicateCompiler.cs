@@ -4869,7 +4869,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant(-1));
                 Op(new LocalSet(LMetaArity));
                 EmitReadBarrier();
-                EmitMetaTailOrRequest(compoundGoal: false);
+                EmitMetaTailOrRequest();
             }
             CloseNested();
 
@@ -5421,21 +5421,72 @@ public static class WasmPredicateCompiler
             // chain stays open for the host to resume at pc + 9. The frame
             // is the one the jump arm would build, for the same reason it
             // builds it: pc + 9 pops one.
-            void EmitMetaTailOrRequest(bool compoundGoal)
+            void EmitMetaTailOrRequest()
             {
                 Op(new LocalGet(LAtVal));
                 Op(new Int32Constant(0));
                 Op(new Int32LessThanSigned());
                 OpenIf();
                 {
-                    // The forms first: a builtin the module open-codes
-                    // (=/2, the comparisons, the type tests, get_attr/3)
-                    // is answered here and never leaves. Before the
-                    // markers named builtins these ran at the give-up
-                    // points and caught var/1; a request would have been
-                    // a step backwards -- measured, 9,372 of them on
-                    // queens under clp(Z).
-                    if (compoundGoal) EmitInlineGoalForm();
+                    // The forms first, on the REGISTERS: a builtin the
+                    // module open-codes (=/2, the comparisons, the type
+                    // tests, get_attr/3) is answered here and never leaves.
+                    // The arguments are X0.. whatever the goal's shape was
+                    // -- a compound, an atom this site appends to, either
+                    // one under '$mqual' -- and the builtin is named by the
+                    // marker, so the match is on its id; the goal's functor
+                    // cell is no use here, under '$mqual' it is the
+                    // wrapper's. Measured on clp(Z): include(var, Vs, ...)
+                    // meta-calls var/1 as an ATOM plus one argument, 6,899
+                    // requests on queens24 with the forms keyed by goal.
+                    //
+                    // A form that cannot decide declines to the REQUEST,
+                    // never to $slow: X0 no longer holds the goal, and the
+                    // host's re-dispatch of this instruction would read the
+                    // first argument as it.
+                    void Request(int builtinId)
+                    {
+                        if (ownFrame)
+                        {
+                            EmitAllocateFrame(0, pc);
+                            _metaFrameResume.Add(pc + 9);
+                        }
+                        StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                            _env.EncodeBuiltinId(builtinId, tail ? 0 : envTrim))));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                            tail ? -1 : _env.EncodeAddress(pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    }
+                    foreach (var (_, builtinId) in _env.MetaCallableBuiltins)
+                    {
+                        Action body;
+                        if (_env.IsInlineUnify(builtinId))
+                            body = () => EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc,
+                                                      () => Request(builtinId));
+                        else if (_env.IsInlineCompare(builtinId, out bool negated))
+                            body = () => EmitInlineCompare(pc, negated, () => Request(builtinId));
+                        else if (_env.TryGetInlineTypeTest(builtinId, out var test)
+                                 && test != WasmTypeTest.None)
+                            body = () => EmitInlineTypeTest(test, pc);
+                        else if (_env.IsInlineGetAttr(builtinId))
+                            body = () => EmitInlineGetAttr(pc, () => Request(builtinId));
+                        else
+                            continue;
+                        Op(new LocalGet(LAtVal));
+                        Op(new Int32Constant(-(builtinId + 1)));
+                        Op(new Int32Equal());
+                        OpenIf();
+                        {
+                            body();
+                            if (ownFrame)
+                            {
+                                EmitAllocateFrame(0, pc);
+                                _metaFrameResume.Add(pc + 9);
+                            }
+                            GoTo(pc + 9);
+                        }
+                        CloseNested();
+                    }
                     if (ownFrame)
                     {
                         EmitAllocateFrame(0, pc);
@@ -5459,7 +5510,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
 
-            EmitMetaTailOrRequest(compoundGoal: true);
+            EmitMetaTailOrRequest();
 
             CloseNested();                                  // $slow
             EmitDeopt(pc, DeoptStamped);
@@ -7182,15 +7233,22 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LT2));                          // pairs left
             Op(new LocalGet(LT2));
             Op(new Int32Constant(0));
-            Op(new Int32LessThanOrEqualSigned());
-            Op(new BranchIf(0));                            // empty, or overflowed -> $slow
+            Op(new Int32LessThanSigned());
+            Op(new BranchIf(0));                            // overflowed -> $slow
 
             OpenBlock();                                    // $found
             OpenLoop();                                     // $scan
             {
+                // The image is complete (every key the host would answer
+                // is in it), so a key it lacks is UNSET and the read
+                // fails here. Measured on clp(Z): trigger_prop reads its
+                // current propagator before anything has set it, 6,400
+                // times on queens24, and every one left the module.
                 Op(new LocalGet(LT2));
                 Op(new Int32EqualZero());
-                Op(new BranchIf(2));                        // not in the image -> $slow
+                OpenIf();
+                GoFail();
+                CloseNested();
                 Op(new LocalGet(LT0));
                 Op(new Int64Load());
                 Op(new Int32WrapInt64());
@@ -7216,6 +7274,12 @@ public static class WasmPredicateCompiler
             }
             CloseNested();                                  // $scan
             CloseNested();                                  // $found
+
+            // A snapshot: the host re-emits it as a term of the heap.
+            Op(new LocalGet(LU0));
+            Op(new Int64Constant(WasmAbi.GlobalVarPayloadSentinel));
+            Op(new Int64Equal());
+            Op(new BranchIf(0));                            // -> $slow
 
             // Value against the cell. A pair the inline unify cannot decide
             // leaves as the request itself, which the host answers by the

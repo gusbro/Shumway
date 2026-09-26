@@ -503,10 +503,20 @@ public static class WasmAbi
     public const int AttrMirrorBudget = 68;
 
     /// <summary>Base and pair count of the global-variable image: (atom id,
-    /// cell) pairs for the keys a module may read itself. A zero base or a
-    /// count below one means every read goes to the host.</summary>
+    /// cell) pairs, one per key the host would answer a read of -- a live
+    /// cell as itself, a snapshot the host re-emits as
+    /// <see cref="GlobalVarPayloadSentinel"/>. The image is COMPLETE, so a
+    /// key it lacks is unset and the module fails the read itself; it is
+    /// rewritten at every host boundary, which is where every write
+    /// happens. A zero base or a negative count (the pairs did not fit)
+    /// means every read goes to the host.</summary>
     public const int GlobalVarBase = 74;
     public const int GlobalVarCount = 75;
+
+    /// <summary>The image's cell for a key whose value is a snapshot: a
+    /// functor cell is never a term's value, so no live cell reads as one.
+    /// </summary>
+    public const long GlobalVarPayloadSentinel = (long)Tag.Functor << Cell.TagShift;
 
     /// <summary>The cut compaction's watermark: the barrier and parent tops
     /// the last compaction was made against, and the tops it left. A cut to

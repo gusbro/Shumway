@@ -20,7 +20,8 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     // inside a module it travels as '$mqual'(mc, G), which is the cached
     // path, and in user it is the bare path with the atom table.
     private const string Corpus = """
-        :- module(mc, [go/1, goa/1, goc/1, gob/2, gof/1, gon/1, gov/1]).
+        :- module(mc, [go/1, goa/1, goc/1, gob/2, gof/1, gon/1, gov/1, gova/1, gou/1, cxm/1, c2/2]).
+        c2(G, A) :- call(G, A).
         loop(0, _) :- !.
         loop(N, G) :- call(G), N1 is N - 1, loop(N1, G).
         go(N) :- loop(N, true).
@@ -32,6 +33,13 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         gob(N, R) :- loopb(N, succ(1), R).
         gof(N) :- ( loop(N, fail) -> fail ; true ).
         gon(N) :- loop(N, call(true)).
+        loopv(0, _) :- !.
+        loopv(N, G) :- call(G, _), N1 is N - 1, loopv(N1, G).
+        gova(N) :- loopv(N, var).
+        loopu(0, _) :- !.
+        loopu(N, G) :- call(G, X), X == a, N1 is N - 1, loopu(N1, G).
+        gou(N) :- loopu(N, =(a)).
+        cxm(G) :- call(G), fail.
         """;
 
     private const string UserCorpus = """
@@ -42,6 +50,12 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         ugc(N) :- uloop(N, atom_codes(abc, _)).
         ugv(N) :- uloop(N, var(_)).
         ugnv :- \+ uloop(1, var(a)).
+        uloopv(0, _) :- !.
+        uloopv(N, G) :- call(G, _), N1 is N - 1, uloopv(N1, G).
+        ugva(N) :- uloopv(N, var).
+        cx(G) :- call(G), fail.
+        cxa :- put_attr(X, m, 1), \+ cx(X = 1).
+        cxb :- put_attr(X, m, 1), \+ cxm(X = 1).
         """;
 
     /// <summary>The meta cache key a guard-9 stamp carries, in words:
@@ -74,10 +88,34 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         var (tiered, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);
         foreach (string goal in new[] { "go(30).", "goa(30).", "goc(30).", "gob(30, R), R == 2.",
                                         "gof(30).", "gon(30).", "gov(30).", "ugo(30).", "uga(30).",
-                                        "ugc(30).", "ugv(30).", "ugnv." })
+                                        "ugc(30).", "ugv(30).", "ugnv.", "gova(30).", "gou(30).",
+                                        "ugva(30).", "\\+ c2(var, a).", "c2(var, _).",
+                                        "\\+ c2(=(a), b).", "c2(=(a), X), X == a." })
         {
             Assert.True(plain.Query(goal).Success, goal);
             Assert.True(tiered.Query(goal).Success, goal + " under the module");
+        }
+    }
+
+    /// <summary>A form that cannot decide, once the callee's arguments are
+    /// in the registers, declines to the REQUEST: X0 holds the first
+    /// argument by then, so the host's re-dispatch of the instruction is no
+    /// longer an option. The pair here is one the module's unifier hands
+    /// over, an attributed variable against a value, meta-called from a
+    /// module and from user; the answer is the interpreter's, and the
+    /// binding wakes nothing (the module has no hook).</summary>
+    [Fact]
+    public void AFormDeclinesToTheRequestNotToTheHost()
+    {
+        var plain = new PrologEngine();
+        plain.ConsultString(Corpus);
+        plain.ConsultString(UserCorpus);
+        var (tiered, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);
+        foreach (string goal in new[] { "cxa.", "cxb." })
+        {
+            Assert.True(plain.Query(goal).Success, goal);
+            for (int i = 0; i < 3; i++)          // promoted on the first call, then run there
+                Assert.True(tiered.Query(goal).Success, goal + " under the module");
         }
     }
 
@@ -102,9 +140,14 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
             Assert.True(engine.Query(goal).Success, goal);
             o.WriteLine($"{what}: builtin requests={WasmTierDelegate.DiagBuiltins} "
                         + $"deopts={WasmTierDelegate.DiagDeopts}");
-            Assert.True(WasmTierDelegate.DiagBuiltins >= requests - 1,   // the first resolves, then the cache serves
-                $"{what}: {WasmTierDelegate.DiagBuiltins} builtin requests, so the goal did not "
-                + "leave as a request");
+            if (requests == 0)
+                Assert.True(WasmTierDelegate.DiagBuiltins == 0,
+                    $"{what}: {WasmTierDelegate.DiagBuiltins} builtin requests for a goal the module "
+                    + "answers itself");
+            else
+                Assert.True(WasmTierDelegate.DiagBuiltins >= requests - 1,   // the first resolves, then the cache serves
+                    $"{what}: {WasmTierDelegate.DiagBuiltins} builtin requests, so the goal did not "
+                    + "leave as a request");
             Assert.True(WasmTierDelegate.DiagDeopts <= 1,
                 $"{what}: {WasmTierDelegate.DiagDeopts} deopts, so the module keeps asking the host");
         }
@@ -116,6 +159,8 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         Check("ugc(300).", "call(atom_codes(abc, _)) in user", 300);
         Check("gov(300).", "call(var(_)) in a module: a type test, no exit", 0);
         Check("ugv(300).", "call(var(_)) in user: a type test, no exit", 0);
+        Check("gova(300).", "call(var, X) in a module: an atom goal plus one argument, no exit", 0);
+        Check("gou(300).", "call(=(a), X) in a module: the unify form on the registers, no exit", 0);
 
         WasmTierDelegate.ResetDiag();
         Assert.True(engine.Query("gon(300).").Success);
