@@ -56,6 +56,36 @@ public class ErrorContextConformance
     }
 
     [Fact]
+    public void ThePredicateTheProgramCalledIsTheOneNamed()
+    {
+        // sub_atom/5 runs as a prelude wrapper over an enumerator builtin;
+        // the error names sub_atom/5, not the helper.
+        Succeeds("catch(sub_atom(_, _, _, _, _), error(instantiation_error, C), true), "
+            + "C == sub_atom/5.");
+        Succeeds("catch(sub_atom(abc, a, _, _, _), error(type_error(integer, a), C), true), "
+            + "C == sub_atom/5.");
+        Succeeds("catch(sub_atom(abc, _, _, _, 1), error(type_error(atom, 1), C), true), "
+            + "C == sub_atom/5.");
+    }
+
+    [Fact]
+    public void AnUnboundTextArgumentIsAnInstantiationError()
+    {
+        // A variable where an atom is due is an instantiation error, not a
+        // type error about a variable; a non-atom names itself.
+        Succeeds("catch(atom_to_term(_, _, _), error(instantiation_error, C), true), "
+            + "C == atom_to_term/3.");
+        Succeeds("catch(atom_to_term(f(x), _, _), error(type_error(atom, f(x)), C), true), "
+            + "C == atom_to_term/3.");
+        Succeeds("catch(read_term_from_atom(_, _, []), error(instantiation_error, C), true), "
+            + "C == read_term_from_atom/3.");
+        Succeeds("catch(read_term_from_atom(_, _), error(instantiation_error, C), true), "
+            + "C == read_term_from_atom/2.");
+        Succeeds("catch(read_term_from_atom(1, _, []), error(type_error(atom, 1), C), true), "
+            + "C == read_term_from_atom/3.");
+    }
+
+    [Fact]
     public void AProgramsOwnBallKeepsItsVariables()
     {
         // The catcher unifies with a COPY of the ball (7.8.10), so its
