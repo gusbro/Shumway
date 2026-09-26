@@ -147,6 +147,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => Modules.Evict(functorIds);
 
+    /// <summary>ADR-054: out of new calls, kept for the calls running in it.
+    /// </summary>
+    public bool Retire(int functorId) => Modules.Retire(functorId);
+
     public bool Contains(int functorId) => Modules.Contains(functorId);
 
     public bool TryResolve(int functorId, int address, out WasmTarget target)

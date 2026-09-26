@@ -89,12 +89,23 @@ public sealed partial class PrologEngine
     /// <see cref="InvalidateDynamicCache"/>).</summary>
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildDynamicSnapshot(int fid)
     {
-        if (!_dynStore.TryGetClauses(fid, out var raw) || raw.Count == 0) return null;
-        if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)) return null;
-        var own = new List<Clause>(entry.Clauses.Count);
-        for (int i = 0; i < entry.Clauses.Count; i++)
-            if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
+        // Mutated since the last setup: the sources below may not show it.
+        if (_snapshotStaleFids.Contains(fid)) return null;
+        // The clauses the setup compiled the predicate from, in its order: a
+        // predicate declared dynamic in a MODULE keeps its source clauses in
+        // the module (the static rewrite), and what was asserted since is in
+        // the store (the dynamic rewrite), after them.
+        var own = new List<Clause>();
+        if (_staticRewriteClauses is { } sources
+            && _staticRewriteHeadFids is { } sourceHeads && sourceHeads.Contains(fid))
+            foreach (var c in sources)
+                if (HeadFunctorIdOf(c) == fid) own.Add(c);
+        if (_dynamicRewriteCache.TryGetValue(fid, out var entry))
+            for (int i = 0; i < entry.Clauses.Count; i++)
+                if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
         if (own.Count == 0) return null;
+        var raw = new List<Clause>(DynamicClausesFor(fid));
+        raw.AddRange(StaticClausesFor(fid));
         var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
                 enableIndexing: true, isDynamic: false, failStubAddr: 0);
@@ -110,6 +121,63 @@ public sealed partial class PrologEngine
                 break;
             }
         return snap;
+    }
+
+    /// <summary>ADR-054: the snapshot of a dynamic predicate linked into
+    /// <paramref name="engine"/>'s code space as a SHADOW region, for the wasm
+    /// tier. A module can hand any instruction back to the interpreter, which
+    /// then needs the bytecode it came from at a real address; the shadow is
+    /// that bytecode, appended the way a mid-query assert appends, and never
+    /// moved until the code space is built again.
+    ///
+    /// <para>The shadow is linked under a functor of its own, so a call inside
+    /// it to the predicate itself resolves to the predicate's live
+    /// enter_dynamic chain, not to the shadow: a recursive call that starts
+    /// after a mutation reaches the predicate as it is then. No name maps to
+    /// the shadow's address. The snapshot returned keeps the predicate's own
+    /// functor, which is what the module is installed under.</para></summary>
+    /// <summary>Dynamic functors mutated since the last query setup rebuilt
+    /// the rewrite caches: until then those caches may not reflect the
+    /// mutation, so no snapshot is taken from them. Cleared by the setup.
+    /// </summary>
+    internal readonly HashSet<int> _snapshotStaleFids = new();
+
+    internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid)
+    {
+        // Its float literals would be read from the bundle's pool, and the
+        // snapshot is compiled against the engine's.
+        if (_precompiledFloatPool.ContainsKey(fid))
+            return new DynamicShadow(null, 0, "dynamic with a precompiled float pool");
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
+            || engine.SwitchTables is not { } switchTables)
+            return new DynamicShadow(null, 0);
+        var snap = BuildDynamicSnapshot(fid);
+        if (snap is null) return new DynamicShadow(null, 0);
+
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        int shadowFid = FunctorTable.Intern(
+            AtomTable.Intern("$snapshot$" + name, permanent: true).Id, arity);
+        var clone = new Shumway.Compiler.Wam.CompiledPredicate(
+            snap.Bytecode, shadowFid, snap.Arity, snap.ClauseCount, snap.CallSites,
+            snap.DispatchSites, snap.SwitchTables, snap.SwitchTableIdSites,
+            snap.SourcePosition, snap.ClauseSourcePositions)
+        { PoolsRef = snap.PoolsRef };
+
+        ResyncOwnerAppendPosition(engine);
+        bool ownsHost = EngineOwnsHostBuffer(engine);
+        int loadOffset = engine.ProgramLength;
+        var link = new Shumway.Compiler.Wam.Linker().Link(
+            new[] { clone }, loadOffset,
+            externalSymbols: addrMap,
+            switchTableIdBase: switchTables.Count);
+        int at = engine.AppendCode(link.Bytecode);
+        switchTables.AddRange(link.SwitchTables);
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
+        RefreshLiteralPoolsIfGrown(engine);
+        engine.BumpProgramGeneration();
+        return new DynamicShadow(snap, at);
     }
 
     /// <summary>ADR-023 build-time persist (for <c>--with-compiled-il</c> / <c>--exe</c>

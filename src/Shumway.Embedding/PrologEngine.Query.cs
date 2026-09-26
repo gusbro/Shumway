@@ -953,6 +953,9 @@ public sealed partial class PrologEngine
         // clauses have no inherent module so user is the conventional
         // home. Multi-module hosts with per-module dynamic-clause
         // namespacing are a more invasive change parked for later.
+        // From here the rewrite caches describe the database as it is, so a
+        // snapshot may be taken from them again (ADR-023, ADR-054).
+        _snapshotStaleFids.Clear();
         if (_dynStore.ClauseFunctorCount > 0)
         {
             // per-functor transform cache. A functor's entry
@@ -1432,6 +1435,9 @@ public sealed partial class PrologEngine
         bool builtPersistentNow = _persistentProgram is null || _dynamicLink is null;
         if (builtPersistentNow)
         {
+            // The code appended after the dynamic region goes with the old
+            // buffer, dynamic snapshots' shadow regions included (ADR-054).
+            IlPromotion.Wasm?.OnPersistentRebuilt();
             int dynamicLoadOffset = prefix.Length + staticLink.Bytecode.Length;
             _dynamicLink = new Linker().Link(
                 dynamicPreds,
@@ -1938,7 +1944,7 @@ public sealed partial class PrologEngine
         // bytecode-PC the interpreter has into the functor the store
         // wants.
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
-            IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile);
+            IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine);
 
         // PGO phase-2 pass. Once per query setup, off the
         // hot path: any promoted, instrumented predicate that has

@@ -52,7 +52,7 @@ breaking one, stop and write/amend an ADR before proceeding. The headline rules:
 - Opcode 0x00 = Invalid; opcodes stay contiguous (dense jump table); fixed-size encoding.
 - Two trails, HB check, young-to-old binding; `assertz`/`retract` are NOT trailed — extra
   backtracking re-runs side effects and is a correctness bug.
-- Dynamic predicates execute on Tier 0 (the ADR-023/034 snapshot model is the one sanctioned
+- Dynamic predicates execute on Tier 0 (the snapshot model of ADR-023/034, and its wasm form ADR-054, is the one sanctioned
   exception); compiled IL is engine-agnostic; promotion swaps are atomic.
 - Logical update view: a call sees the database as of when its goal began (ViewGen + born/died).
 - Zero build warnings, enforced mechanically.
@@ -326,6 +326,7 @@ When proposing changes:
 | CLP(FD) domains live on the heap | ADR-051 |
 | The attribute table observes, it does not retain | ADR-052 |
 | The foreign table is swept, not truncated | ADR-053 |
+| Dynamic predicates in the wasm tier (shadow snapshot) | ADR-054 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

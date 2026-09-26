@@ -244,7 +244,13 @@ public static class WasmPredicateCompiler
             for (int sec = 0; sec < _members.Count; sec++)
             {
                 var m = _members[sec];
-                _entryByFid[m.Predicate.FunctorId] = m.Bias;
+                // A dynamic predicate's snapshot is never jumped to directly,
+                // itself included: its calls go through the entry row, which
+                // a mutation clears (ADR-054), so a call that starts after the
+                // mutation reaches the predicate as it is then. A baked jump
+                // would run the old snapshot for it.
+                if (!m.Predicate.IsDynamicSnapshot)
+                    _entryByFid[m.Predicate.FunctorId] = m.Bias;
                 foreach (var site in m.Predicate.CallSites)
                     _callee[m.Bias + site.OpcodeOffset] = site.CalleeFunctorId;
                 DecodeSection(sec);

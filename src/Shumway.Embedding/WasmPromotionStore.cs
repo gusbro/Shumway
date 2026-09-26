@@ -391,7 +391,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// synchronous -- the browser wraps the promoter's instantiation half
     /// asynchronously and returns null until it lands.</summary>
     public PredicateDelegate? RecordDispatch(int functorId, CompiledPredicate predicate,
-        int linkedAddress)
+        int linkedAddress, Activation? engine = null)
     {
         if (!Enabled || _unpromotable.Contains(functorId)) return null;
         // The synthetic __query__ wrappers have a different body per query
@@ -403,10 +403,19 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             return null;
         }
         if (ilStore.PromotionsSuspended) return null;
+        // ADR-054: a dynamic predicate promotes as a snapshot, when the host
+        // can retire one. Anywhere else it goes the old way, and the compiler
+        // refuses its enter_dynamic body.
+        bool shadow = engine is not null && ShadowRetired is not null
+            && StaleEvicted is not null && ilStore.ShadowSnapshotProvider is not null
+            && OpensDynamic(predicate);
+        if (shadow && ilStore.DynamicChurnPinned(functorId)) return null;
         _counters.TryGetValue(functorId, out int count);
         count++;
         _counters[functorId] = count;
         if (count < Threshold) return null;
+        // A snapshot is a module of its own, so it never waits for a batch.
+        if (shadow) return PromoteShadow(functorId, engine!);
 
         // Under the batch, a straggler must NOT build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
@@ -431,4 +440,92 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         NoteInstalled(functorId, linkedAddress, predicate);
         return del;
     }
+
+    private static bool OpensDynamic(CompiledPredicate predicate)
+        => predicate.Bytecode.Length > 0
+           && predicate.Bytecode[0] == (byte)Opcode.EnterDynamic;
+
+    /// <summary>ADR-054: takes a dynamic predicate's snapshot out of new
+    /// calls and keeps it for the calls running in it. Wired by a host that
+    /// can (<see cref="WasmModuleRegistry.Retire"/>); without it, dynamic
+    /// predicates are not promoted at all.</summary>
+    public System.Func<int, bool>? ShadowRetired { get; set; }
+
+    // Promoted snapshots: functor -> the shadow region's address. And the
+    // ones retired since the code space was last built, whose resume rows
+    // are still live in the world.
+    private readonly Dictionary<int, int> _shadows = new();
+    private readonly HashSet<int> _retiredShadows = new();
+
+    /// <summary>Snapshots promoted and retired, for the status report.</summary>
+    public int ShadowPromotions { get; private set; }
+    public int ShadowRetirements { get; private set; }
+
+    /// <summary>Whether a dynamic predicate runs as a promoted snapshot now.
+    /// </summary>
+    public bool HasShadow(int functorId) => _shadows.ContainsKey(functorId);
+
+    private PredicateDelegate? PromoteShadow(int functorId, Activation engine)
+    {
+        var shadow = ilStore.ShadowSnapshotProvider!(engine, functorId);
+        if (shadow.Snapshot is null)
+        {
+            // No refusal: no visible clause yet, so a later call retries.
+            if (shadow.Refusal is not null) MarkUnpromotable(functorId, shadow.Refusal);
+            return null;
+        }
+        var del = Promoter!(shadow.Snapshot, shadow.Address);
+        if (del is null)
+        {
+            _unpromotable.Add(functorId);
+            return null;
+        }
+        ilStore.RegisterBoundDelegate(functorId, del);
+        _shadows[functorId] = shadow.Address;
+        ShadowPromotions++;
+        return del;
+    }
+
+    /// <summary>The predicate changed (assert, retract, abolish, a consult
+    /// redefining it). A snapshot of it leaves new calls, which reach the
+    /// predicate as it is now, and stays for the calls running in it; the
+    /// next promotion waits for the threshold again. The IL store's own
+    /// eviction runs first, in the caller.</summary>
+    public void OnMutated(int functorId)
+    {
+        if (!_shadows.Remove(functorId)) return;
+        ShadowRetired?.Invoke(functorId);
+        _retiredShadows.Add(functorId);
+        _counters.Remove(functorId);
+        ShadowRetirements++;
+    }
+
+    /// <summary>The persistent code space was built again, and the shadow
+    /// regions with it are gone: every snapshot is evicted, retired ones
+    /// included, and promotes again on demand. Not a mutation, so it does
+    /// not count toward the churn pin.</summary>
+    public void OnPersistentRebuilt()
+    {
+        if (_shadows.Count == 0 && _retiredShadows.Count == 0) return;
+        var all = new List<int>(_shadows.Keys);
+        foreach (int fid in _retiredShadows)
+            if (!_shadows.ContainsKey(fid)) all.Add(fid);
+        foreach (int fid in _shadows.Keys)
+        {
+            ilStore.EvictDelegate(fid, mutation: false);
+            _counters.Remove(fid);
+        }
+        _shadows.Clear();
+        _retiredShadows.Clear();
+        var gone = StaleEvicted?.Invoke(all);
+        if (gone is not null) Displaced(gone);
+    }
 }
+
+/// <summary>A dynamic predicate's snapshot linked into the running code
+/// space (ADR-054): the snapshot under the predicate's own functor, and the
+/// address of its shadow region. A null snapshot with no
+/// <see cref="Refusal"/> means no visible clause yet (retry); with one, the
+/// predicate cannot be promoted this way.</summary>
+public readonly record struct DynamicShadow(CompiledPredicate? Snapshot, int Address,
+    string? Refusal = null);

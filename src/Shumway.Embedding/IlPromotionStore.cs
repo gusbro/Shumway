@@ -148,7 +148,12 @@ public sealed class IlPromotionStore
     /// the next call falls back to the in-place-patched Tier-0 chain and the
     /// predicate re-warms. Counts toward the churn limit only when a delegate was
     /// actually present.</summary>
-    public void EvictDelegate(int functorId)
+    public void EvictDelegate(int functorId) => EvictDelegate(functorId, mutation: true);
+
+    /// <summary>Evicts, counting toward the churn pin only when
+    /// <paramref name="mutation"/>: a code space rebuilt under a snapshot is
+    /// not the predicate changing.</summary>
+    internal void EvictDelegate(int functorId, bool mutation)
     {
         EvictionStamp++;
         // A mutation breaks the churn-pinned mutation-free streak and invalidates
@@ -157,15 +162,53 @@ public sealed class IlPromotionStore
         _churnQuietCalls.Remove(functorId);
         _mutationStamp.TryGetValue(functorId, out int stamp);
         _mutationStamp[functorId] = stamp + 1;
+        // Kept for resumes only: a call that began before the eviction
+        // finishes on the delegate it began with (ADR-054).
+        if (_delegates.TryGetValue(functorId, out var retiring))
+            _retiredResume[functorId] = (engine, cursor) => retiring(engine, cursor);
         if (!_delegates.Remove(functorId)) return;
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
         _counters.Remove(functorId);
         _pgoProfileKeys.Remove(functorId);
         _pgoOptimized.Remove(functorId);
+        if (!mutation) return;
         _evictions.TryGetValue(functorId, out int e);
         _evictions[functorId] = e + 1;
     }
+
+    private readonly Dictionary<int, Func<Activation, int, bool>> _retiredResume = new();
+
+    /// <summary>The delegate a functor had when it was last evicted, for a
+    /// resume into a call that began before (ADR-054); null when none. The
+    /// interpreter asks only for a cursor past the entry, and only when the
+    /// functor has no delegate now.</summary>
+    internal Func<Activation, int, bool>? TryGetRetiredResumeWrapper(int functorId)
+        => _retiredResume.TryGetValue(functorId, out var w) ? w : null;
+
+    /// <summary>ADR-023's churn pin, for any tier promoting a dynamic
+    /// snapshot: true while a predicate evicted <see cref="EvictionChurnLimit"/>
+    /// times has not yet gone <see cref="ChurnRearmCalls"/> calls without a
+    /// mutation. Each call here counts toward that streak.</summary>
+    internal bool DynamicChurnPinned(int functorId)
+    {
+        if (!_evictions.TryGetValue(functorId, out int ev) || ev < EvictionChurnLimit)
+            return false;
+        _churnQuietCalls.TryGetValue(functorId, out int quiet);
+        quiet++;
+        if (quiet < ChurnRearmCalls)
+        {
+            _churnQuietCalls[functorId] = quiet;
+            return true;   // pinned (not via _unpromotable — re-armable)
+        }
+        _churnQuietCalls.Remove(functorId);
+        _evictions[functorId] = EvictionChurnLimit - 1;
+        return false;
+    }
+
+    /// <summary>ADR-054: links a dynamic predicate's snapshot into the running
+    /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
+    internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
 
     // ADR-023 priming: a dynamic/visible predicate declared WITH source clauses is
     // read-hot and mutation-cold — promote on its first call (still fully evictable).
@@ -394,18 +437,7 @@ public sealed class IlPromotionStore
         // clauses; mutation evicts it. Churn-pinned predicates stay Tier-0 until
         // the re-arm streak completes.
         bool isDynamic = IsExcludedByLayout(predicate);
-        if (isDynamic && _evictions.TryGetValue(functorId, out int ev) && ev >= EvictionChurnLimit)
-        {
-            _churnQuietCalls.TryGetValue(functorId, out int quiet);
-            quiet++;
-            if (quiet < ChurnRearmCalls)
-            {
-                _churnQuietCalls[functorId] = quiet;
-                return null;   // pinned (not via _unpromotable — re-armable)
-            }
-            _churnQuietCalls.Remove(functorId);
-            _evictions[functorId] = EvictionChurnLimit - 1;
-        }
+        if (isDynamic && DynamicChurnPinned(functorId)) return null;
 
         _counters.TryGetValue(functorId, out int count);
         count++;

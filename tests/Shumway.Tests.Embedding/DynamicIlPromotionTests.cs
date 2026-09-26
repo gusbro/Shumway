@@ -196,6 +196,31 @@ public sealed class DynamicIlPromotionTests
         Assert.Contains(snap.Predicates, p => p.Arity == 1);   // d/1 snapshot present
     }
 
+    // A predicate declared dynamic in a MODULE keeps its source clauses in
+    // the module, not in the dynamic store; its snapshot is taken from them
+    // (and from what the store holds since). An assert lands in the store:
+    // until the next setup the module's clauses alone would make a snapshot
+    // without it, so none is taken, and a call later in the same query must
+    // still find the new clause.
+    [Fact]
+    public void ModuleDeclaredDynamic_PromotesAndSeesAnAssertInTheSameQuery()
+    {
+        var e = Activation("""
+            :- module(mdi, [mc/1, mcs/1]).
+            :- dynamic(mc/1).
+            mc(red).
+            mc(green).
+            mcs(L) :- findall(X, mc(X), L).
+            """);
+        int fid = Fid("mc", 1);
+        for (int i = 0; i < 5; i++)
+            Assert.True(e.Query("mc(green).").Success);
+        Assert.True(e.IlPromotion.IsPromoted(fid), "a module's dynamic predicate was not promoted");
+        Assert.True(e.Query("assertz(mc(blue)), mc(green), mc(red), mcs(L), L == [red, green, blue].").Success);
+        Assert.True(e.Query("retract(mc(red)), mc(green), mcs(L), L == [green, blue].").Success);
+        Assert.True(e.Query("mcs(L), L == [green, blue].").Success);
+    }
+
     [Fact]
     public void LogicalUpdateView_HoldsThroughIlSnapshot()
     {

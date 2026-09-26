@@ -21,15 +21,24 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // engine-lifetime wrappers, not per-query closures.
     private readonly Dictionary<int, Func<Activation, bool>> _dispatchCache = new();
 
+    // The activation this query runs on: a dynamic predicate's snapshot is
+    // linked into its code space when it promotes (ADR-054).
+    private readonly Activation? _engine;
+
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
         IReadOnlyDictionary<int, CompiledPredicate> predicatesByAddress,
-        JitIndexProfile jitProfile)
+        JitIndexProfile jitProfile,
+        Activation? engine = null)
     {
         _store = store;
         _predicatesByAddress = predicatesByAddress;
         _jitProfile = jitProfile;
+        _engine = engine;
     }
+
+    public Func<Activation, int, bool>? ResolveRetiredResume(int functorId)
+        => _store.TryGetRetiredResumeWrapper(functorId);
 
     // Functor-keyed view for IL CanCompile's callee inspection. Built lazily: only a
     // dispatch that reaches a compile decision needs it.
@@ -99,7 +108,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // The wasm tier counts the same dispatches; its install lands in the
         // store's table, so the wrapper below is the ordinary one.
         if (_store.Wasm is { Enabled: true } wasm
-            && wasm.RecordDispatch(functorId, pred, targetAddress) is not null)
+            && wasm.RecordDispatch(functorId, pred, targetAddress, _engine) is not null)
         {
             var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
             _dispatchCache[targetAddress] = wrappedWasm;

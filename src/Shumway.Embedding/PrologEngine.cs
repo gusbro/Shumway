@@ -956,6 +956,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
+        IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
 
         // Consult the internal prelude — Prolog-level definitions of

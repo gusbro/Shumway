@@ -607,6 +607,11 @@ public sealed partial class BytecodeInterpreter
                 var del = ilTable is not null && (uint)functorId < (uint)ilTable.Length
                     ? ilTable[functorId] : null;
                 del ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                // A resume into a call that began before its predicate was
+                // evicted: the call finishes on the code it began with
+                // (ADR-054). A fresh call (cursor 0) never takes this.
+                if (del is null && cursor > 0)
+                    del = Tier1Dispatcher?.ResolveRetiredResume(functorId);
                 if (del is null)
                 {
                     // cursor 0 = a forward CALL to this functor (an IL caller

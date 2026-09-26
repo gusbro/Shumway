@@ -126,10 +126,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   a cached IL delegate. Enforced at promotion: a predicate whose bytecode
   opens with `enter_dynamic` is permanently excluded
   (`IlPromotionStore.IsExcludedByLayout`). The ONE sanctioned exception is
-  ADR-023's snapshot model: a STATIC-style IL snapshot of a dynamic predicate
-  may run only under eviction-on-mutation plus clause-entry staleness tests
-  (ADR-034); anything else must decline to Tier 0. (Historically "the
-  chunk-159 invariant".)
+  the snapshot model: a STATIC-style snapshot of a dynamic predicate may run
+  in IL only under eviction-on-mutation plus clause-entry staleness tests
+  (ADR-023, ADR-034), and in the wasm tier only as a shadow region retired on
+  the first mutation, with no direct jump to it (ADR-054); anything else must
+  decline to Tier 0. (Historically "the chunk-159 invariant".)
 - **Compiled IL is engine-agnostic**: it takes the activation as a parameter;
   the code cache is shared across engines. Persisted IL is name-relative
   (sentinel ids patched at load). (ADR-011, Phase 17.)

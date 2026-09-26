@@ -53,6 +53,10 @@ internal static class TieredEngine
                 }
             },
         };
+        // As the browser wires it: a relink's stale members leave the world,
+        // and a dynamic predicate's snapshot retires on a mutation (ADR-054).
+        store.Wasm.StaleEvicted = world.Evict;
+        store.Wasm.ShadowRetired = world.Retire;
         engine.ConsultString(corpus);
         return (engine, members, world);
     }

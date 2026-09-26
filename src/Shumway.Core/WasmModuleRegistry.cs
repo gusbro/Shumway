@@ -123,6 +123,7 @@ public sealed class WasmModuleRegistry
         foreach (int fid in entryCursorByFid.Keys)
         {
             _byFid[fid] = m;
+            _retired.Remove(fid);
             _entryAddressByFid[fid] = entryAddressByFid[fid];
             _installedByEntry[entryAddressByFid[fid]] = fid;
         }
@@ -155,9 +156,40 @@ public sealed class WasmModuleRegistry
     public IReadOnlyList<int> Evict(IEnumerable<int> functorIds)
     {
         var gone = new HashSet<int>();
-        foreach (int fid in functorIds) Leave(fid, gone);
+        foreach (int fid in functorIds)
+        {
+            // A retired member's rows go too: whatever made the caller evict
+            // (a rebuilt code space) ends the calls they served.
+            if (_retired.Remove(fid)) Table.ClearFunctor(fid);
+            Leave(fid, gone);
+        }
         return new List<int>(gone);
     }
+
+    /// <summary>Takes a member out of NEW calls and keeps it for the calls
+    /// already running in it (ADR-054): its entry row and call markers are
+    /// cleared, so a fresh call no longer resolves here and goes to the
+    /// bytecode, while its resume rows stay, so a choice point or a
+    /// continuation inside it still lands in the module it came from. A
+    /// dynamic predicate's snapshot is retired this way on a mutation: the
+    /// call in flight finishes on the clauses it began with. No caller
+    /// bakes a jump to a snapshot member, so there is nothing to cascade.
+    /// Returns false when the functor has no member here.</summary>
+    public bool Retire(int functorId)
+    {
+        if (!_byFid.TryGetValue(functorId, out _)) return false;
+        _byFid.Remove(functorId);
+        Table.Clear(Activation.EncodeResumeMarker(functorId, 0));
+        Table.ClearCallMarker(functorId);
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        if (arity == 0) Table.ClearAtomCallMarker(atomId);
+        _retired.Add(functorId);
+        return true;
+    }
+
+    // Functors retired and not installed again: their resume rows are live
+    // until an eviction clears them.
+    private readonly HashSet<int> _retired = new();
 
     /// <summary>Takes the functor out of its module together with every
     /// member that reaches it by baked jumps, transitively. A worklist, not

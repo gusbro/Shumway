@@ -35,4 +35,13 @@ public interface ITier1Dispatcher
     /// <c>CallIl</c> site finds no delegate (evicted since the site was
     /// rewritten): the site goes back to a plain <c>Call</c>.</summary>
     int AddressOfFunctor(int functorId);
+
+    /// <summary>The delegate a functor had before it was evicted, for a
+    /// RESUME only (a cursor past the entry): a choice point or a
+    /// continuation left in a call that began before the eviction. That
+    /// call finishes on the code it began with, which is the logical update
+    /// view when the eviction was a mutation (ADR-054). Never for a fresh
+    /// call, which must reach the predicate as it is now. Null when the
+    /// functor never had one.</summary>
+    Func<Activation, int, bool>? ResolveRetiredResume(int functorId);
 }

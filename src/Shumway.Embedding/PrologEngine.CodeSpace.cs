@@ -361,6 +361,7 @@ public sealed partial class PrologEngine
         // auto-compaction mutation counter ticks.
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
+        _snapshotStaleFids.Add(functorId);
         DropDynamicPredicateCacheEntry(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
         // is stale: evict it, and clear every LIVE query interpreter's direct
@@ -397,6 +398,8 @@ public sealed partial class PrologEngine
     internal void InvalidateIlForFunctor(int functorId)
     {
         IlPromotion.EvictDelegate(functorId);
+        // ADR-054: a wasm snapshot of it leaves new calls too.
+        IlPromotion.Wasm?.OnMutated(functorId);
         for (int i = _liveInterps.Count - 1; i >= 0; i--)
         {
             if (!_liveInterps[i].TryGetTarget(out var li))

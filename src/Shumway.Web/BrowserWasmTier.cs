@@ -128,6 +128,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
     public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => _modules.Evict(functorIds);
 
+    /// <summary>ADR-054: out of new calls, kept for the calls running in it.
+    /// </summary>
+    public bool Retire(int functorId) => _modules.Retire(functorId);
+
     public bool Contains(int functorId) => _modules.Contains(functorId);
 
     public bool TryResolve(int functorId, int address, out WasmTarget target)
@@ -1083,6 +1087,9 @@ internal static class BrowserWasmTier
         // baked callers of each go with it. The modules stay: a re-promotion
         // compiles a fresh one against live addresses.
         store.Wasm.StaleEvicted = world.Evict;
+        // A dynamic predicate's snapshot (ADR-054) leaves new calls on its
+        // first mutation and stays for the calls running in it.
+        store.Wasm.ShadowRetired = world.Retire;
         // A relink moved the code: the world translates at its boundaries.
         store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
         // A loaded bundle's wasm module (shumway-link --wasm) installs into
@@ -1956,6 +1963,10 @@ internal static partial class WebShumwayApp
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
+                        : "")
+                    + (w.ShadowPromotions > 0
+                        ? $"%   dynamic snapshots: {w.ShadowPromotions} promoted, "
+                          + $"{w.ShadowRetirements} retired by a mutation\n"
                         : "")
                     + $"%   promoted ({promoted.Count}"
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")

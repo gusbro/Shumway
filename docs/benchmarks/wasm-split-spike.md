@@ -802,6 +802,37 @@ the clp(Z) table above does not move outside its noise (queens16's best of
 three swung from 173 to 361 ms between two runs of the same publish), which
 is what 7% of the run looks like from a browser's clock.
 
+### Dynamic predicates as snapshots (ADR-054)
+
+The largest thing left was `clpz_neq/2`: 2,760 foreign exits on queens24 x2,
+each one a closed chain, an interpreter run and a new chain. It is declared
+`:- dynamic` and never mutated, and the tier compiled no dynamic predicate.
+ADR-054 promotes one as a snapshot of its clauses, linked into the code
+space as a shadow region so a deopt has bytecode to continue in, and
+retires it on the first mutation while the call in flight finishes in it.
+
+The first measurement promoted nothing: `clpz_neq/2`'s 18 clauses are
+source clauses of clp(Z)'s MODULE, which keeps them there, and the
+snapshot builder read the dynamic store only, where that predicate has
+none. It never had a snapshot for IL either. It now reads the module's
+clauses too, in the order the chain is compiled from.
+
+Desktop counts, one queens24: foreign exits 552 to 0, chains 7,575 to 123.
+The browser, no diagnostics, best of three ABBA rounds, all 72 runs checked
+against the oracle:
+
+| case | Tier-0 AOT | wasm tier AOT | | before (tier) |
+|---|---:|---:|---:|---:|
+| queens10ff x5 | 552 ms | 174 ms | 3.2x | 206 ms, 2.6x |
+| sendmore x2 | 50 ms | 29 ms | 1.7x | 32 ms, 1.6x |
+| queens16 x2 | 403 ms | 91 ms | 4.4x | 173 ms, 2.5x |
+| queens24 x2 | 918 ms | 177 ms | 5.2x | 436 ms, 1.8x |
+| sudoku x1 | 2615 ms | 761 ms | 3.4x | 936 ms, 2.6x |
+| factorial x10 | 172 ms | 73 ms | 2.4x | 116 ms, 1.4x |
+
+Three dynamic predicates of clp(Z) promote this way per run, and no
+mutation retires any of them.
+
 Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
 above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native
 module is 23.8 MB raw, 4.5 MB brotli, 6.6 MB for the whole `_framework`

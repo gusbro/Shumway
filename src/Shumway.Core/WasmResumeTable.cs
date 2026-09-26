@@ -379,6 +379,13 @@ public sealed class WasmResumeTable
     /// in the table, and eviction is rare — the alternative is a per-module
     /// index that would have to be kept correct for a case that almost never
     /// runs.</summary>
+    /// <summary>Clears one row: the marker no longer resolves here.</summary>
+    public void Clear(int marker)
+    {
+        int i = marker - Activation.ResumeMarkerBase;
+        if ((uint)i < (uint)_rows.Length) _rows[i] = 0;
+    }
+
     public void ClearModule(int moduleId)
     {
         long tag = (long)(moduleId + 1) << 32;

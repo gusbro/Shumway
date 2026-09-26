@@ -265,5 +265,6 @@ public class Chunk41Tests
             engine => _del(engine, 0);
         public Func<Activation, int, bool>? ResolveByFunctorId(int functorId) => null;
         public int AddressOfFunctor(int functorId) => -1;
+        public Func<Activation, int, bool>? ResolveRetiredResume(int functorId) => null;
     }
 }

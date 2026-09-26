@@ -1,8 +1,8 @@
-# ADR-054: Dynamic Predicates in the wasm Tier (shadow snapshot + evict-on-mutation)
+# ADR-054: Dynamic Predicates in the wasm Tier (shadow snapshot + retire-on-mutation)
 
 ## Status
 
-Proposed (2026-09-26). Extends [ADR-023](023-dynamic-predicates-in-il.md) to
+Accepted (2026-09-26). Extends [ADR-023](023-dynamic-predicates-in-il.md) to
 the wasm backend of [ADR-050](050-wasm-tier1-backend.md).
 
 ## Context
@@ -37,82 +37,107 @@ address, or every deopt inside it lands nowhere.
 ## Decision
 
 A dynamic predicate promotes to the wasm tier as a snapshot, the way ADR-023
-promotes it to IL, with one addition: the snapshot's bytecode is linked into
-the persistent program as a SHADOW region, so the interpreter can run it.
+promotes it to IL, with two additions: the snapshot's bytecode is linked
+into the persistent program as a SHADOW region, so the interpreter can run
+it, and a mutation RETIRES the member rather than evicting it, so the call
+in flight can finish in it.
 
 1. **Candidate.** `WasmPromotionStore.RecordDispatch` receives the live
-   `enter_dynamic` predicate (the dispatcher adapter hands every dispatch
-   over). When its bytecode opens with `enter_dynamic`, the store asks
-   `IlPromotionStore.DynamicSnapshotProvider` (that is
-   `PrologEngine.BuildDynamicSnapshot`) for the snapshot instead of compiling
-   the chain. No visible clauses is a retry, as in ADR-023; the ADR-023
-   churn limit applies unchanged, through the IL store's eviction count.
-2. **Shadow region.** The engine links the snapshot alone,
-   `Linker.Link([clone], loadOffset: end of the persistent program,
-   externalSymbols: the persistent address map)`, and appends the bytes with
-   `Activation.AppendCode`, the path mid-query `assertz` already uses. The
-   clone carries a synthetic functor (`name$snapshot/arity`) so the region
-   claims no name a call could resolve to: calls keep going to the
-   `enter_dynamic` chain, which is the logical update view. The snapshot
-   handed to the wasm compiler keeps the REAL functor id, so the member's
-   entry marker is the one callers resolve. The region's address is the
-   member's bias; deopt pcs translate into it.
-3. **Install.** The member installs as any static member does; the store
-   records `fid -> (synthetic fid, shadow address)`. `ReconcileWithLink`
-   compares a shadow member against its clone's address and code hash, not
-   against the real functor's (which the static link never lists), and the
-   live-address map handed to the world carries the real fid at the shadow
-   address.
-4. **Evict on mutation.** `PrologEngine.InvalidateIlForFunctor` (every
-   mutation funnels through it) also tells the wasm store. The store evicts
-   the member from the world through the registry's cascade (baked callers
-   included), retires the shadow (dead, kept in place: the layout is
-   append-only), and drops its record. New calls dispatch the
-   `enter_dynamic` chain from that moment: the delegate table entry is gone,
-   the per-query `IlByFunctorId` slots are cleared, and the resume table
-   has no entry marker for the functor.
-5. **Open chains.** A chain suspended in a builtin request (the `assertz`
-   itself, or anything the mutation runs under) resumes after the eviction
-   with rows it can no longer resolve. The delegate treats that exactly as
-   it already treats an entry evicted under an open marker: it closes the
-   chain and continues in bytecode at the translated return address. For a
-   chain inside the snapshot, that address is in the shadow region, which
-   is linked and live, so the call that began before the mutation finishes
-   on the clauses it began with. That is the logical update view, and it is
-   why the shadow has to be real bytecode.
-6. **Persistent rebuild.** A consult or abolish rebuilds the persistent
-   program, and the shadows with it; every shadow member is evicted then and
-   promotes again on demand. The static-layout stability of ADR-015's
-   append-only layout is what keeps a shadow's address valid between
-   rebuilds, relinks included.
+   `enter_dynamic` predicate and the running activation (the dispatcher
+   adapter hands both over). When its bytecode opens with `enter_dynamic`
+   and the host can retire a snapshot (it wires `ShadowRetired` and
+   `StaleEvicted`, as the browser and the test harness do), the store asks
+   the engine for a shadow snapshot instead of compiling the chain. No
+   visible clause is a retry, as in ADR-023, and so is ADR-023's churn pin,
+   shared with the IL store (`DynamicChurnPinned`). A host that wires
+   neither keeps the old behaviour: the compiler refuses the chain.
+2. **The clauses.** A dynamic predicate's clauses have two homes. What was
+   asserted is in the dynamic store; the SOURCE clauses of a predicate
+   declared dynamic in a module stay in the module, and the query setup
+   compiles both into one chain, the module's first. `BuildDynamicSnapshot`
+   read the store only, so it never had a snapshot for a module's dynamic
+   predicate, for IL either: `clpz_neq/2` is one, its 18 clauses in
+   clp(Z)'s module and none in the store. It now takes the module's clauses
+   from the setup's static rewrite and the store's after them, the chain's
+   own order. A mutation leaves those sources stale until the next setup,
+   so a functor mutated since then gets no snapshot until it runs.
+3. **Shadow region.** `PrologEngine.BuildShadowSnapshot` takes that
+   snapshot, links it alone,
+   `Linker.Link([clone], loadOffset: end of the code space, externalSymbols:
+   the running address map)`, and appends the bytes with
+   `Activation.AppendCode`, the path a mid-query `assertz` uses; its switch
+   tables join the program's. The clone carries a functor of its own
+   (`$snapshot$name/arity`), so a call inside it to the predicate itself
+   links to the live `enter_dynamic` chain and not to the shadow: after a
+   deopt, a recursive call from the shadow's bytecode reaches the predicate
+   as it is then. No name maps to the shadow's address. The snapshot handed
+   to the wasm compiler keeps the predicate's own functor, which is what the
+   member is installed under, and the shadow's address is its bias.
+4. **Install.** The member is a module of its own, never part of a batch,
+   and no module bakes a direct jump to it, itself included: every call to
+   it goes through its entry row. The store keeps it apart from the
+   relink bookkeeping (`ReconcileWithLink` never sees it); the translation
+   of a build pc leaves a shadow address as it is, since a shadow never
+   moves.
+5. **Retire on mutation.** `PrologEngine.InvalidateIlForFunctor`, which
+   every mutation reaches, evicts the IL store's delegate and then tells the
+   wasm store, which RETIRES the member (`WasmModuleRegistry.Retire`): its
+   entry row and call markers are cleared, so a new call from a module or
+   from the interpreter goes to the `enter_dynamic` chain, and its resume
+   rows stay, so a choice point or a continuation inside the old module
+   still lands there. The next promotion waits for the threshold again.
+6. **The call in flight.** A call that began before the mutation finishes
+   on the clauses it began with, which is the logical update view. Inside a
+   chain its resumes resolve through the rows the retirement kept. From the
+   interpreter, a resume marker needs a delegate for its functor, and the
+   IL store's is gone: `EvictDelegate` now keeps the evicted delegate for
+   RESUMES only (`ITier1Dispatcher.ResolveRetiredResume`), which the
+   interpreter asks for when a marker's cursor is past the entry and no
+   delegate is bound. A fresh call never takes it. Before this, that case
+   threw ("a Tier-1 promotion must have unwired itself mid-query").
+7. **Code space rebuilt.** A consult or an abolish builds the persistent
+   program again, and the shadow regions go with the old buffer: at that
+   point every snapshot, retired ones included, is evicted from the world
+   (its rows cleared) and promotes again on demand. That eviction does not
+   count toward the churn pin.
 
 ## Consequences
 
 - A `:- dynamic` predicate with source clauses runs in the wasm tier between
-  mutations, in-module, with markers like any static member: the foreign
-  exit and the two chain boundaries it cost are gone.
-- The shadow costs its bytecode once per promotion, and a mutation under a
-  hot snapshot costs a cascade eviction plus a re-promotion; the churn limit
-  bounds how often that repeats, as it does for IL.
-- The delegate's resume-after-builtin path stops throwing on an unresolved
-  return address and falls back to bytecode instead; the diag counters
-  report those closes, so a silent slow path stays visible.
-- Nothing changes for the interpreter, the IL tier, or a program that never
-  promotes a dynamic predicate.
+  mutations, in-module, reached through its entry row like any member: the
+  foreign exit and the two chain boundaries it cost are gone.
+- A shadow costs its bytecode once per promotion, appended and never
+  reclaimed until the code space is rebuilt; a mutation costs a retirement
+  and, on demand, a re-promotion; the churn pin bounds how often that
+  repeats.
+- A retired module's resume rows stay until the next rebuild, so the calls
+  running in it can finish; they are unreachable once those calls end.
+- The interpreter's resume path gains one fallback, taken only where it
+  used to throw; it also covers an IL delegate evicted under an open
+  continuation.
+- The IL tier promotes a module's dynamic predicates too, under ADR-023's
+  rules, since it reads the same snapshot.
 
 ## Tests
 
-- Answers under mutation: a snapshot promoted, then `assertz`/`retract`
-  from inside a promoted caller and from the top level, with the answers
-  of Tier-0 in every order, including the in-flight call finishing on the
-  old view.
-- Counters: `clpz_neq/2`'s foreign exits go to zero on queens; a mutation
-  evicts exactly the member and its baked callers; a re-promotion follows;
-  the churn limit pins.
-- Relink and rebuild: a consult after a shadow promotion evicts it and the
-  next call re-promotes; a relink that moves nothing keeps it installed.
-- Two engines in one process, same program, one mutating: the other's
-  shadow is untouched.
+`DynamicShadowTests`, every answer checked against Tier-0: the snapshot is
+promoted; a mutation reaches the next call; the call in flight finishes on
+the clauses it began with; a call that starts after the mutation sees it,
+from inside the snapshot's own recursion; a deopt continues in the shadow's
+bytecode, and a recursive call from there reaches the live predicate; a
+mutation-heavy predicate is pinned; a rebuilt code space evicts the
+snapshot and the next call promotes it again; and, with the diagnostic
+counters, a promoted caller reaches the snapshot with no foreign exit
+where a host that cannot retire leaves on every call. A predicate declared
+dynamic in a module promotes and sees an assert and a retract of its source
+clauses, on the wasm tier (`DynamicShadowTests`) and on IL
+(`DynamicIlPromotionTests`). Three of these fail
+when their fix is undone: without the retired resume the in-flight call
+throws, with a baked self-jump the new call misses the new clause, and a
+shadow linked under the predicate's own functor breaks the recursion after
+a deopt. The staleness guard of point 2 turns no test red: neither tier
+promotes a predicate again inside the query that mutated it. It stays,
+because a snapshot of stale sources would be a silent wrong answer.
 
 ## Out of scope
 
