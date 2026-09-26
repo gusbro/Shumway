@@ -16,7 +16,14 @@ namespace Shumway.Embedding;
 /// </summary>
 public sealed class ShumwayPrologException : Exception
 {
-    public Term Term { get; }
+    public Term Term { get; private set; }
+
+    /// <summary>Names the builtin that raised this ball, when the ball was
+    /// built by <see cref="IsoError"/> without an engine and the engine
+    /// has one running; every other ball is left alone. Called where the
+    /// ball surfaces, and idempotent.</summary>
+    internal void CloseContext(Shumway.Core.Activation engine)
+        => Term = IsoError.CloseContext(Term, engine);
 
     /// <summary>True when the error was raised by host-side machinery
     /// between goals (the clause/goal-expansion processor), so whatever

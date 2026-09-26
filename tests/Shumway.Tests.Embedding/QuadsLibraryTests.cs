@@ -205,12 +205,13 @@ public sealed class QuadsLibraryTests
         var (e, _) = Loaded();
         Assert.True(e.Query("current_op(1200, xfx, ?-).").Success);
         // The bar sits ABOVE `;` so `A ; B | C` is a sequence and an
-        // alternative, not an answer swallowed by the bar (SWI's priority,
-        // and what a transcript's alternatives need).
+        // alternative, not an answer swallowed by the bar: the TS 13211-3
+        // priority, which the default table already carries.
         Assert.True(e.Query("current_op(1105, xfy, '|').").Success);
-        // A fresh engine without the import keeps the strict default.
+        // A fresh engine without the import keeps the default table: no
+        // `?-` operator, and the bar at its TS priority.
         var bare = new PrologEngine { Out = new System.IO.StringWriter() };
         Assert.False(bare.Query("current_op(_, xfx, ?-).").Success);
-        Assert.False(bare.Query("current_op(_, _, '|').").Success);
+        Assert.True(bare.Query("current_op(1105, xfy, '|').").Success);
     }
 }

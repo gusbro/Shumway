@@ -66,9 +66,13 @@ public sealed partial class PrologEngine
             // one. Lets the top-level skip the `;` prompt + trailing
             // `false` for a deterministic goal, matching other Prologs.
             int baseB = engine.B;
+            // A ball raised outside any builtin must not be named after the
+            // last builtin a previous query ran: the name lives only while
+            // this query runs.
+            engine.CurrentBuiltinName = null;
             try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
-            catch (ShumwayPrologException pex) { if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
+            catch (ShumwayPrologException pex) { pex.CloseContext(engine); if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
             catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
 
             while (!halted && result == InterpreterResult.Halted)
@@ -85,7 +89,7 @@ public sealed partial class PrologEngine
                 if (isLast) break;
                 try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
                 catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
-                catch (ShumwayPrologException pex) { if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
+                catch (ShumwayPrologException pex) { pex.CloseContext(engine); if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
                 catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
             }
         }
@@ -128,6 +132,11 @@ public sealed partial class PrologEngine
             }
             catch (ShumwayPrologException ex)
             {
+                // The builtin that raised it is named here, before any
+                // catcher sees the ball: the ball was built where the
+                // engine was not in hand, and the engine still says which
+                // builtin was running.
+                ex.CloseContext(engine);
                 int addr = TryCatch(engine, ex.Term, out _, IsResourceBall(ex.Term));
                 if (addr < 0) throw;
                 if (CatchDiag)

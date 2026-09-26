@@ -207,13 +207,15 @@ side:
   matches SWI-on-Windows and GNU, and Logtalk's cbor parses the printed
   form expecting the sign.
 - **Operator scoping** (1 test): the suite imports `library(dcgs)`, whose
-  export list declares `op(1105, xfy, '|')`, with that operator declared,
-  accepting `(a|b)` is what ISO Cor.2 requires, and Shumway does. The test
-  still expects a syntax error because Scryer's operator declarations are
-  *module-scoped* (their extension; ISO `op/3` is global, which Shumway
-  follows). With no bar operator declared, Shumway rejects `(a|b)` exactly
-  as strict ISO demands: that case is inside the Neumerkel syntax suite's
-  365/365.
+  export list declares `op(1105, xfy, '|')`. Shumway has that operator in
+  its default table, as TS 13211-3 (DCGs) requires, so `(a|b)` reads
+  whether or not the library is loaded. The test still expects a syntax
+  error because Scryer's operator declarations are *module-scoped* (their
+  extension; ISO `op/3` is global, which Shumway follows). The same
+  operator is why row #285 of the Neumerkel Part 1 syntax suite (`X=[(a|b)]`
+  a syntax error with the Part 1 table) is the one row Shumway does not
+  pass: the Part 1 table has no bar, the DCG standard adds it, and a system
+  with DCGs built in cannot have both.
 
 ## Regenerate the validation
 

@@ -13,8 +13,11 @@ public static partial class MetaBuiltins
     public static bool AtomToTerm(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
         if (atomCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", MaterializeRegister(engine, 0)));
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
@@ -1467,8 +1470,11 @@ public static partial class MetaBuiltins
     public static bool ReadTermFromAtom(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
         string source = TextArgToString(engine, atomCell)
-            ?? throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+            ?? throw new ShumwayPrologException(
+                IsoError.TypeError("atom", MaterializeRegister(engine, 0)));
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
@@ -1488,8 +1494,11 @@ public static partial class MetaBuiltins
     public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
         string source = TextArgToString(engine, atomCell)
-            ?? throw new PrologRuntimeException("type_error", "atom");
+            ?? throw new ShumwayPrologException(
+                IsoError.TypeError("atom", MaterializeRegister(engine, 0)));
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the

@@ -236,8 +236,18 @@ public static class MultiSolutionHelpers
     /// correct under both tiers automatically.</para></summary>
     public static bool SubAtomEnum(Activation engine)
     {
+        // This is sub_atom/5's implementation behind a prelude wrapper: an
+        // error names the predicate the program called, not the helper.
+        // The stamp is first come, so the dispatch's own stamp afterwards
+        // changes nothing.
+        try { return SubAtomEnumCore(engine); }
+        catch (PrologRuntimeException e) { e.StampBuiltin("sub_atom", 5); throw; }
+    }
+
+    private static bool SubAtomEnumCore(Activation engine)
+    {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
-        if (atomCell.Tag == Tag.Ref)
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         string name;
         if (atomCell.Tag == Tag.Atom) name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";

@@ -443,4 +443,55 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(call_nth(member(_, [a]), -1), "
             + "error(domain_error(not_less_than_zero, -1), _), true).");
     }
+
+    /// <summary>post-N288 p.p.9.3: the count is judged before the goal. The
+    /// errors for the goal (instantiation, callable) hold only when Nth is
+    /// not zero, so a count of zero asks for no solution at all and simply
+    /// fails; a count that is not an integer, or is negative, is decided
+    /// without looking at the goal.</summary>
+    [Fact]
+    public void CallNth_JudgesTheCountBeforeTheGoal()
+    {
+        // Zero: no solution is asked for, so the goal is never judged.
+        Succeeds("\\+ call_nth(1, 0).");
+        Succeeds("\\+ call_nth(_, 0).");
+        Succeeds("\\+ call_nth(true, 0).");
+        // And not existence_error(procedure, inex/0) either.
+        Succeeds("\\+ call_nth(inex, 0).");
+
+        // Negative and non-integer counts are decided before the goal: the
+        // goal here would be a type_error(callable, 1) if it were judged first.
+        Succeeds("catch(call_nth(1, -1), "
+            + "error(domain_error(not_less_than_zero, -1), _), true).");
+        Succeeds("catch(call_nth(1, foo), error(type_error(integer, foo), _), true).");
+        Succeeds("catch(call_nth(true, 1.0), error(type_error(integer, 1.0), _), true).");
+        Succeeds("catch(call_nth(true, 1+1), error(type_error(integer, 1+1), _), true).");
+
+        // With a count that can be satisfied, the goal is judged as before.
+        Succeeds("catch(call_nth(1, _), error(type_error(callable, 1), _), true).");
+        Succeeds("catch(call_nth(_, 1), error(instantiation_error, _), true).");
+
+        // The count and the goal may share a variable: the goal binds it,
+        // and the unification with the counter then decides.
+        Succeeds("call_nth(N = 1, N), N == 1.");
+        Succeeds("\\+ call_nth(N = -1, N).");
+
+        Succeeds("call_nth(true, Nth), Nth == 1.");
+        Succeeds("call_nth(length(L, N), 3), N == 2, L = [_, _].");
+    }
+
+    /// <summary>post-N288 p.p.9.1 b': with Nth bound there is no value
+    /// greater than the counter left to unify with it, so the goal stops
+    /// being re-executed. An endless generator must therefore terminate,
+    /// and a count no generator can reach must fail rather than run on.</summary>
+    [Fact]
+    public void CallNth_StopsOnceTheCountIsReached()
+    {
+        Succeeds("call_nth(repeat, 3).");
+        Succeeds("call_nth(( repeat, X = z ), 3), X == z.");
+        Succeeds("\\+ call_nth(member(_, [a,b]), 5).");
+        Succeeds("\\+ call_nth(member(_, [a,b,c]), 12345678901234567890).");
+        // Nested counters are independent.
+        Succeeds("call_nth(call_nth(member(X, [a,b,c]), M), 2), X == b, M == 2.");
+    }
 }

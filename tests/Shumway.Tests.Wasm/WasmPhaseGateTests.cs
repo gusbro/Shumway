@@ -11,7 +11,11 @@ namespace Shumway.Tests.Wasm;
 /// Tier-0's interpretation there).</summary>
 public class WasmPhaseGateTests
 {
+    // A wall-clock ratio: true on a quiet machine, not on a shared runner
+    // (CI measured 1.2x where the reference machine gives 4.7x). Slow keeps
+    // it out of the routine gate and of CI; the full gate still runs it.
     [Fact]
+    [Trait("Category", "Slow")]
     public void TheCompiledCounterStaysAheadOfTier0()
     {
         const long N = 2_000_000;

@@ -63,26 +63,50 @@ public class OperatorTableAlignmentConformance
     }
 
     [Fact]
-    public void BarIsNotAnOperatorUntilDeclared()
+    public void BarIsTheDcgOperatorOfTheDefaultTable()
     {
-        // ISO Cor.2: `|` may be declared infix with priority > 1000, and then
-        // `a|b` denotes '|'(a,b) — NOT ';'(a,b). Undeclared it is a syntax
-        // error, which is what the conformity suite pins (and what Scryer
-        // does); GNU and SWI declare it up front as an extension.
-        Succeeds("catch(atom_to_term('(a|b)', _, _), error(syntax_error(_), _), true).");
-        Succeeds("catch(op(999, xfy, '|'), "
+        // TS 13211-3 puts `op(1105, xfy, '|')` in the table, above `;`, and
+        // `a|b` denotes '|'(a,b), never ';'(a,b) (Cor.2). The Part 1 table
+        // alone has no bar, and the Neumerkel Part 1 suite's row #285
+        // (`X=[(a|b)]` a syntax error by default) is knowingly lost, as GNU
+        // and SWI lose it. Cor.2 still governs op/3: infix above 1000 only.
+        Succeeds("current_op(1105, xfy, '|').");
+        Succeeds("atom_to_term('(a|b;c)', T, _), T == '|'(a, ';'(b, c)).");
+        Succeeds("atom_to_term('(a|b)', T, _), T \\== (a ; b).");
+        // `(G, fail)` under the catch: the query succeeds only when the
+        // error is raised, never because G quietly succeeded.
+        Succeeds("catch((op(999, xfy, '|'), fail), "
             + "error(permission_error(create, operator, '|'), _), true).");
+        // Removed, the bar is a syntax error everywhere, DCG bodies included.
         var engine = new PrologEngine();
         Assert.True(engine.Query(
-            "op(1105, xfy, '|'), atom_to_term('(a|b;c)', T, _), "
-            + "T = '|'(a, ';'(b, c)).").Success);
+            "op(0, xfy, '|'), "
+            + "catch((atom_to_term('(a|b)', _, _), fail), error(syntax_error(_), _), true), "
+            + "catch((atom_to_term('(a --> b | c)', _, _), fail), error(syntax_error(_), _), true), "
+            + "op(1105, xfy, '|'), atom_to_term('(a --> b | c)', T, _), T = (_ --> '|'(b, c)).").Success);
+    }
+
+    [Fact]
+    public void BarAsAGoalIsAnUndefinedProcedure()
+    {
+        // The operator makes `a :- b | c.` read, as the term '|'(b, c) in
+        // the body; nothing makes it run. ISO has no '|'/2 control
+        // construct, so calling it is the existence error any undefined
+        // procedure raises, and not a disjunction.
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic(a/0).\nb.\nc.\na :- b | c.\n");
+        Assert.True(engine.Query("clause(a, B), B == '|'(b, c).").Success);
+        // ('|')/2: an operator atom as an operand takes parentheses (6.3.1.3).
+        Assert.True(engine.Query(
+            "catch(a, error(existence_error(procedure, ('|')/2), _), true).").Success);
     }
 
     [Fact]
     public void BarIsTheAlternationConnectiveInsideDcgRules()
     {
-        // TS 13211-3: inside a DCG rule `|` is alternation, whether or not it
-        // is a declared operator — and it stays out of ordinary bodies.
+        // TS 13211-3: inside a DCG rule `|` is alternation, through the
+        // declared operator; in a plain body the same operator reads the
+        // same term, which nothing there runs (see the test above).
         var engine = new PrologEngine();
         engine.ConsultString(
             "greeting --> [hello] | [hi].\n"
@@ -92,9 +116,7 @@ public class OperatorTableAlignmentConformance
         Assert.True(engine.Query("phrase(greeting, [hello]).").Success);
         Assert.True(engine.Query("phrase(opt, []).").Success);
         Assert.True(engine.Query("phrase(pair(_), [x]).").Success);
-        // Not in a plain body: `|` there is still a syntax error.
         Assert.True(engine.Query(
-            "catch(atom_to_term('(p :- q | r)', _, _), "
-            + "error(syntax_error(_), _), true).").Success);
+            "atom_to_term('(p :- q | r)', T, _), T == (p :- '|'(q, r)).").Success);
     }
 }

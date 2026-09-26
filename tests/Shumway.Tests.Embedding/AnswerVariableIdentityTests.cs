@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.RegularExpressions;
 using Shumway.Embedding;
 using Shumway.TopLevel;
 using Xunit;
@@ -27,50 +26,39 @@ public sealed class AnswerVariableIdentityTests
         return run.Format(200);
     }
 
-    /// <summary>The engine name that <paramref name="shape"/> makes visible,
-    /// where {0} stands for a plain variable. Derived rather than assumed, and
-    /// derived from the SAME query shape on a FRESH engine: the heap address a
-    /// variable lands on depends on everything asked before it, so a name
-    /// lifted from a different query (or from the same engine a second time)
-    /// would not collide and the test would pass without reproducing
-    /// anything.</summary>
-    private static string EngineNameIn(string shape)
-    {
-        string answer = Answer(Engine(), string.Format(shape, "Placeholder"));
-        var m = Regex.Match(answer, @"_G\d+");
-        Assert.True(m.Success, $"no engine variable name in `{answer}`");
-        return m.Value;
-    }
 
     [Fact]
     public void AQueryVariableSpelledLikeAnEngineOne_IsNotTheEngineOne()
     {
-        // The reported query, with the collision made certain.
-        const string shape = "length(L, 1), [{0}] = _Any.";
-        string engineName = EngineNameIn(shape);
-        string answer = Answer(Engine(), string.Format(shape, engineName));
+        // The user names a variable `_G11`, spelled exactly like the engine's
+        // own name for a heap cell. The bug (#120) chained L to it and read
+        // `L = _Any`; the engine variable now takes a fresh alphabetical name
+        // instead, so the two never print alike and cannot be confused.
+        string answer = Answer(Engine(), "length(L, 1), [_G11] = _Any.");
 
-        // ANTI-VACUITY: the collision has to be real, or nothing is proven.
-        Assert.Contains(engineName, answer);
-        // The bug: L and _Any were chained, so the answer read `L = _Any`.
         Assert.DoesNotContain("_Any", answer);
         Assert.StartsWith("L = [", answer);
+        // The engine variable is alphabetized, not the raw heap spelling and
+        // not the mangled `_G11_` the old fix produced.
+        Assert.DoesNotContain("_G11", answer);
+        Assert.Matches(@"L = \[_[A-Z]\d*\]", answer);
     }
 
-    /// <summary>And the user's spelling stays the user's: it is the ENGINE's
-    /// variable that gives way, so both can be told apart on the page.</summary>
+    /// <summary>And the user's spelling stays the user's: a genuinely separate
+    /// engine variable is renamed, while the variable the user named `_G11`
+    /// keeps that name, so both can be told apart on the page.</summary>
     [Fact]
     public void TheUsersSpellingSurvives_TheEngineVariableMoves()
     {
-        const string shape = "length(L, 1), X = {0}.";
-        string engineName = EngineNameIn(shape);
-        string answer = Answer(Engine(), string.Format(shape, engineName));
+        string answer = Answer(Engine(), "length(L, 1), X = _G11.");
 
-        // Not Contains: `_G11` is a prefix of the moved `_G11_`, so the check
-        // has to end at the name.
-        Assert.Matches($"X = {Regex.Escape(engineName)}(?![0-9_])", answer);
-        // L's element is a different variable and must not claim that name.
-        Assert.DoesNotContain($"[{engineName}]", answer);
+        // The user's spelling is preserved verbatim (ended at the name so a
+        // trailing digit or underscore would fail).
+        Assert.Matches(@"X = _G11(?![0-9_])", answer);
+        // L's element is a different, anonymous variable: alphabetized, and
+        // NOT claiming the user's `_G11`.
+        Assert.DoesNotContain("[_G11]", answer);
+        Assert.Matches(@"L = \[_[A-Z]\d*\]", answer);
     }
 
     /// <summary>Elision is the other way two values come out looking alike.

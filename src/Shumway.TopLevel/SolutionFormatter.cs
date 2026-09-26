@@ -114,8 +114,13 @@ public static class SolutionFormatter
             Term? onlyResiduals = solution[QueryWrapper.ResidualVarName];
             var loose = ResidualProjection.ListElements(onlyResiduals).ToList();
             if (loose.Count > 0)
+            {
+                var alpha = AlphabetizeEngineVars(
+                    loose, elide, System.Array.Empty<string>(), null);
                 return string.Join(",\n", loose.Select(g => AstTermRenderer.Render(
-                    Elide(g, elide), 1200, ops, quoted: true, portrayText: true)));
+                    Elide(ResidualProjection.SubstituteVarNames(g, alpha), elide),
+                    1200, ops, quoted: true, portrayText: true)));
+            }
             return onlyResiduals is not null || solution.Bindings.Count == 0
                 ? "true" : solution.ToString(width);
         }
@@ -130,17 +135,10 @@ public static class SolutionFormatter
 
         // A query variable can be SPELLED like an engine one: `_G11` typed by
         // the user, and the engine's name for heap cell 11, are two different
-        // variables that would print alike. The engine's is the one that gives
-        // way, because the user's name belongs to the user. Skipped when the
-        // name is already a key above, which is the case where the two ARE one
-        // variable and printing them alike is right.
-        foreach (string name in userVars)
-        {
-            if (!IsEngineVarName(name) || displayName.ContainsKey(name)) continue;
-            string moved = name + "_";
-            while (userVars.Contains(moved)) moved += "_";
-            displayName[name] = moved;
-        }
+        // variables that would print alike. The engine's gives way to a fresh
+        // alphabetical name in the pass below (it renames every engine
+        // variable regardless of spelling), so the two never collide in the
+        // answer and no name-mangling is needed here.
 
         // Copy-name -> the name the answer shows, from the copies binding (a list
         // `[Copy1, Copy2, …]` aligned with userVars), walking each copy against the
@@ -237,6 +235,38 @@ public static class SolutionFormatter
                 }
                 foreach (Term a in ct.Args) walk.Add(a);
             }
+        }
+
+        // Issue #120 follow-up (Neumerkel): every unbound engine variable
+        // shown in the answer takes a clean alphabetical name — _A, _B, …, _Z,
+        // _A1, … — in order of appearance, the way Scryer does, rather than the
+        // engine's heap-address spelling (_G10, _G12) with its gaps. A name
+        // that would collide with a user variable, an already-mapped display
+        // name, or a cycle name is skipped; no bare `_` is ever used, so a
+        // variable shown once is still named.
+        //
+        // Folded into displayName so the value / residual / cycle
+        // substitutions below all pick it up. The terms are gathered in the
+        // order the emit loop shows them — a variable's own value or residuals,
+        // then interior-cycle owners, then unattached residuals — and a
+        // lone-unbound variable's value is left out because its binding is
+        // omitted; so the numbering follows the reading order and names only
+        // what the answer shows.
+        {
+            var reserved = new List<string>(userVars);
+            reserved.AddRange(displayName.Values);
+            if (cycleNames is not null) reserved.AddRange(cycleNames.Values);
+            var shown = new List<Term>();
+            foreach (string name in userVars)
+            {
+                if (residualsByVar.TryGetValue(name, out var rs)) shown.AddRange(rs);
+                else if (solution[name] is { } val && val is not VarTerm) shown.Add(val);
+            }
+            if (interiorCycles is not null)
+                foreach (var (_, owner) in interiorCycles) shown.Add(owner);
+            shown.AddRange(unattachedResiduals);
+            foreach (var kv in AlphabetizeEngineVars(shown, elide, reserved, displayName))
+                displayName[kv.Key] = kv.Value;
         }
 
         // SWI-style binding display: user vars whose values are identical are
@@ -360,6 +390,53 @@ public static class SolutionFormatter
         for (int i = 2; i < name.Length; i++)
             if (name[i] < '0' || name[i] > '9') return false;
         return true;
+    }
+
+    /// <summary>Scryer-style renaming of the answer's unbound engine variables
+    /// (<c>_G</c> + heap address) to <c>_A, _B, …, _Z, _A1, …</c> in order of
+    /// first appearance across <paramref name="shown"/>. Skips any name a user
+    /// variable or cycle name already holds (<paramref name="reserved"/>) and
+    /// any engine variable a user name already owns
+    /// (<paramref name="alreadyMapped"/>). Walks the ELIDED terms — an answer is
+    /// user data of any depth and a StackOverflow is uncatchable — so it names
+    /// exactly what the display shows. No bare <c>_</c>: a variable shown once
+    /// is still named.</summary>
+    private static Dictionary<string, string> AlphabetizeEngineVars(
+        IEnumerable<Term> shown, int elide, IEnumerable<string> reserved,
+        IReadOnlyDictionary<string, string>? alreadyMapped)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        var taken = new HashSet<string>(reserved, StringComparer.Ordinal);
+        int seq = 0;
+        string Next()
+        {
+            while (true)
+            {
+                int i = seq++;
+                string s = "_" + (char)('A' + i % 26)
+                    + (i < 26 ? "" : (i / 26).ToString());
+                if (taken.Add(s)) return s;
+            }
+        }
+        var stack = new Stack<Term>();
+        foreach (Term t in shown)
+        {
+            stack.Push(Elide(t, elide));
+            while (stack.Count > 0)
+            {
+                Term x = stack.Pop();
+                if (x is VarTerm v)
+                {
+                    if (!v.IsCycleBack && IsEngineVarName(v.Name)
+                        && !map.ContainsKey(v.Name)
+                        && (alreadyMapped is null || !alreadyMapped.ContainsKey(v.Name)))
+                        map[v.Name] = Next();
+                }
+                else if (x is CompoundTerm c)
+                    for (int i = c.Args.Length - 1; i >= 0; i--) stack.Push(c.Args[i]);
+            }
+        }
+        return map;
     }
 
     /// <summary>Structural equality of two answer values, on an EXPLICIT

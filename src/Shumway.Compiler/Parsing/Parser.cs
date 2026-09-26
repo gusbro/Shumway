@@ -197,18 +197,11 @@ public sealed class Parser
             if (tok.Kind == TokenKind.Bar)
             {
                 if (_suppressBar) break;
-                // Strict ISO has no bar operator: `(a|b)` is a syntax error
-                // unless op/3 registered `|` (infix > 1000, Cor.2). Two
-                // sanctioned exceptions get the classic xfy 1100: a DCG rule
-                // body, where `|` is the TS 13211-3 alternation connective,
-                // and dialect leniency (SWI / Scryer / Arity sources).
-                if (!_operators.TryGetInfix("|", out int barPrec, out OperatorType barType))
-                {
-                    if (!_sawDcgArrow && !_flags.LenientBareOperatorOperands
-                        && !_flags.ArityCompat)
-                        break;
-                    barPrec = 1100; barType = OperatorType.Xfy;
-                }
+                // The table decides: `|` is predefined infix at 1105 (TS
+                // 13211-3), and op/3 may remove it or move it above 1000
+                // (Cor.2). Without it `(a|b)` is a syntax error, in a DCG
+                // body as anywhere else.
+                if (!_operators.TryGetInfix("|", out int barPrec, out OperatorType barType)) break;
                 if (!TryApplyInfix("|", barPrec, barType, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }

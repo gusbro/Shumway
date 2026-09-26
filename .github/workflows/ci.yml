@@ -67,7 +67,7 @@ jobs:
       # deopt accounted for). Without the flag those 21 tests SKIP, and a
       # gate that skips its instruments is not a gate.
       - name: Wasm
-        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0 -p:ShumwayDiag=true
+        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0 -p:ShumwayDiag=true --filter "Category!=Slow"
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
         env:
