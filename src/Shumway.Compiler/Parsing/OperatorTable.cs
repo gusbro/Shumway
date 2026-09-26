@@ -224,12 +224,13 @@ public sealed class OperatorTable
         // parses without parens (SWI declares the same fx 1150 operator).
         t.Define("initialization", 1150, OperatorType.Fx);
 
-        // Control. NOTE: `|` is deliberately NOT in the default table —
-        // strict ISO has no bar operator (Neumerkel #167/#285: after
-        // `op(0,xfy,'|')`, and by default, `(a|b)` is a syntax error). The
-        // parser still accepts `|` in DCG rule bodies (TS 13211-3
-        // alternation) and under dialect leniency, and `op/3` can register
-        // it as infix with priority > 1000 (ISO Cor.2).
+        // Control. `|` is the DCG operator of TS 13211-3, at the priority the
+        // TS gives it, above `;`. The Part 1 table alone has no bar, and the
+        // Neumerkel Part 1 suite's row #285 (`X=[(a|b)]` a syntax error by
+        // default) is knowingly lost to it, as GNU and SWI lose it. op/3
+        // may remove it (then `(a|b)` is a syntax error, DCG bodies too) or
+        // re-declare it infix above 1000 (Cor.2).
+        t.Define("|", 1105, OperatorType.Xfy);
         t.Define(";", 1100, OperatorType.Xfy);
         t.Define("->", 1050, OperatorType.Xfy);
         t.Define("*->", 1050, OperatorType.Xfy);

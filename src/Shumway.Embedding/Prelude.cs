@@ -1872,8 +1872,8 @@ internal static class Prelude
         '$dcg_translate'((A ; B), S0, S, (GA ; GB)) :- !,
             '$dcg_translate'(A, S0, S, GA),
             '$dcg_translate'(B, S0, S, GB).
-        % '|'(A,B) written canonically: `|` is only an operator inside a DCG
-        % rule body (strict ISO has no bar operator).
+        % '|'(A,B) written canonically, so the prelude reads under any
+        % operator table (op/3 may remove the bar).
         '$dcg_translate'('|'(A, B), S0, S, (GA ; GB)) :- !,
             '$dcg_translate'(A, S0, S, GA),
             '$dcg_translate'(B, S0, S, GB).
