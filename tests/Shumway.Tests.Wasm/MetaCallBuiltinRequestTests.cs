@@ -20,12 +20,13 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     // inside a module it travels as '$mqual'(mc, G), which is the cached
     // path, and in user it is the bare path with the atom table.
     private const string Corpus = """
-        :- module(mc, [go/1, goa/1, goc/1, gob/2, gof/1, gon/1]).
+        :- module(mc, [go/1, goa/1, goc/1, gob/2, gof/1, gon/1, gov/1]).
         loop(0, _) :- !.
         loop(N, G) :- call(G), N1 is N - 1, loop(N1, G).
         go(N) :- loop(N, true).
         goa(N) :- loop(N, atom(a)).
         goc(N) :- loop(N, atom_codes(abc, _)).
+        gov(N) :- loop(N, var(_)).
         loopb(0, _, _) :- !.
         loopb(N, G, R) :- call(G, R), N1 is N - 1, loopb(N1, G, R).
         gob(N, R) :- loopb(N, succ(1), R).
@@ -39,6 +40,8 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         ugo(N) :- uloop(N, true).
         uga(N) :- uloop(N, atom(a)).
         ugc(N) :- uloop(N, atom_codes(abc, _)).
+        ugv(N) :- uloop(N, var(_)).
+        ugnv :- \+ uloop(1, var(a)).
         """;
 
     /// <summary>The meta cache key a guard-9 stamp carries, in words:
@@ -70,7 +73,8 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         plain.ConsultString(UserCorpus);
         var (tiered, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);
         foreach (string goal in new[] { "go(30).", "goa(30).", "goc(30).", "gob(30, R), R == 2.",
-                                        "gof(30).", "gon(30).", "ugo(30).", "uga(30).", "ugc(30)." })
+                                        "gof(30).", "gon(30).", "gov(30).", "ugo(30).", "uga(30).",
+                                        "ugc(30).", "ugv(30).", "ugnv." })
         {
             Assert.True(plain.Query(goal).Success, goal);
             Assert.True(tiered.Query(goal).Success, goal + " under the module");
@@ -110,6 +114,8 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         Check("gob(300, _).", "call(succ(1), R) in a module", 300);
         Check("ugo(300).", "call(true) in user", 300);
         Check("ugc(300).", "call(atom_codes(abc, _)) in user", 300);
+        Check("gov(300).", "call(var(_)) in a module: a type test, no exit", 0);
+        Check("ugv(300).", "call(var(_)) in user: a type test, no exit", 0);
 
         WasmTierDelegate.ResetDiag();
         Assert.True(engine.Query("gon(300).").Success);

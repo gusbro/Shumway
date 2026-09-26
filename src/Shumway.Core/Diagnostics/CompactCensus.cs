@@ -23,6 +23,10 @@ public static class CompactCensus
     private const string Symbol = "SHUMWAY_DIAG";
 
     public static long Walks, Dropped;
+    /// <summary>Trail entries a walk read, both trails. Linear in the cuts
+    /// when the watermark works and quadratic when it does not, which is
+    /// the difference a test can pin.</summary>
+    public static long Visited;
     /// <summary>Judged an AttrModify entry, which reads the record's home
     /// out of the attribute trail log.</summary>
     public static long ReadTheLog;
@@ -41,8 +45,12 @@ public static class CompactCensus
     public static long ReachableByAnImage;
 
     [Conditional(Symbol)]
+    public static void NoteVisited(long entries) => Visited += entries;
+
+    [Conditional(Symbol)]
     public static void Reset()
     {
+        Visited = 0;
         Walks = 0; Dropped = 0; ReadTheLog = 0; WroteTheLog = 0;
         DroppedARecord = 0; ClippedAFrame = 0; ReachableByAnImage = 0;
         OrphansCleared = 0; AttrPutUpdate = 0; AttrPutInsert = 0;

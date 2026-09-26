@@ -1004,8 +1004,22 @@ public sealed partial class Activation
             parentHeapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
         }
 
-        CompactTrails(parentBindingTop, parentExtraTop, parentHeapTop);
+        CompactTrails(_b, parentBindingTop, parentExtraTop, parentHeapTop);
     }
+
+    // The compaction watermark: the barrier and parent tops the last walk
+    // was made against, and the tops it left. Staged into the mailbox and
+    // adopted back, so a module's walk and the host's continue each other.
+    // -2 is no walk yet (a barrier is -1 or a stack index).
+    private int _compactBarrier = -2;
+    private int _compactParentBinding, _compactParentExtra;
+    private int _compactedBinding, _compactedExtra;
+
+    internal int CompactBarrier { get => _compactBarrier; set => _compactBarrier = value; }
+    internal int CompactParentBinding { get => _compactParentBinding; set => _compactParentBinding = value; }
+    internal int CompactParentExtra { get => _compactParentExtra; set => _compactParentExtra = value; }
+    internal int CompactedBinding { get => _compactedBinding; set => _compactedBinding = value; }
+    internal int CompactedExtra { get => _compactedExtra; set => _compactedExtra = value; }
 
     /// <summary>Copies the current <see cref="B0"/> into <c>Y[slot]</c> of the current
     /// environment frame. Used by the WAM <c>get_level</c> instruction to capture the
@@ -1119,7 +1133,8 @@ public sealed partial class Activation
         return _attrTrailLog[logIndex].Home < effectiveFloor;
     }
 
-    private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
+    private void CompactTrails(int barrier, int parentBindingTop, int parentExtraTop,
+                               int parentHeapTop)
     {
         // ADR-035 D5+ — under a debug session the trail IS the debugger's history: Set
         // Next Statement's rewind marks index positions in it, and TrailEverything grew it
@@ -1131,14 +1146,37 @@ public sealed partial class Activation
         // Hb: the optimisation stands down while a debugger needs the past.
         if (_trailEverything) return;
 
-        // I5 — fast no-op cut: when nothing was trailed since the
-        // parent CP both tops already equal the parent's, so both compaction
-        // walks are empty and — since the trail only grows between CPs — no
-        // catch-frame snapshot can sit above the (unchanged) top. The whole
-        // body is a no-op, INCLUDING the O(_catchFrames) snapshot-clip loop
-        // that otherwise runs on every cut (deep catch nesting made every
+        // Where the walk starts. A cut to the SAME parent, over a trail
+        // that only grew since the last walk, starts where that walk
+        // stopped: the entries below were judged against the same parent
+        // and a surviving entry survives again, so re-reading them buys
+        // nothing -- and cost everything, because a backtrackable global
+        // write survives every cut, and clp(Z) makes two per propagator and
+        // a cut per if-then-else: quadratic in a propagation burst. The
+        // watermark keys on the barrier AND the parent tops (a choice point
+        // pushed later at the same stack address has other tops), and a
+        // trail that shrank below the mark (a backtrack between the cuts)
+        // starts from the parent again. Starting late can only KEEP an
+        // entry a full walk would drop, which is always sound.
+        int startBinding = parentBindingTop, startExtra = parentExtraTop;
+        if (barrier == _compactBarrier
+            && parentBindingTop == _compactParentBinding
+            && parentExtraTop == _compactParentExtra
+            && _bindingTrailTop >= _compactedBinding
+            && _extraTrailTop >= _compactedExtra)
+        {
+            startBinding = _compactedBinding;
+            startExtra = _compactedExtra;
+        }
+
+        // I5 — fast no-op cut: when nothing was trailed since the start
+        // both tops already equal it, so both compaction walks are empty
+        // and — since the trail only grows between CPs — no catch-frame
+        // snapshot can sit above the (unchanged) top. The whole body is a
+        // no-op, INCLUDING the O(_catchFrames) snapshot-clip loop that
+        // otherwise runs on every cut (deep catch nesting made every
         // deterministic cut pay O(catch frames) for nothing).
-        if (parentBindingTop == _bindingTrailTop && parentExtraTop == _extraTrailTop)
+        if (startBinding == _bindingTrailTop && startExtra == _extraTrailTop)
             return;
         Diagnostics.CompactCensus.NoteWalk();
         int beforeExtra = _extraTrailTop, beforeBind = _bindingTrailTop;
@@ -1167,10 +1205,10 @@ public sealed partial class Activation
                 effectiveFloor = cf.SnapHeapTop;
         }
 
-        int bindingRead = parentBindingTop;
-        int bindingWrite = parentBindingTop;
-        int extraRead = parentExtraTop;
-        int extraWrite = parentExtraTop;
+        int bindingRead = startBinding;
+        int bindingWrite = startBinding;
+        int extraRead = startExtra;
+        int extraWrite = startExtra;
 
         while (extraRead < _extraTrailTop)
         {
@@ -1265,8 +1303,15 @@ public sealed partial class Activation
             bindingRead++;
         }
 
+        Diagnostics.CompactCensus.NoteVisited(
+            (beforeExtra - startExtra) + (beforeBind - startBinding));
         _bindingTrailTop = bindingWrite;
         _extraTrailTop = extraWrite;
+        _compactBarrier = barrier;
+        _compactParentBinding = parentBindingTop;
+        _compactParentExtra = parentExtraTop;
+        _compactedBinding = bindingWrite;
+        _compactedExtra = extraWrite;
 
         // catch frames captured snapshots of the trail
         // tops at push time. The compaction above just dropped some

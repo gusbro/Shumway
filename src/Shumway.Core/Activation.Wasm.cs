@@ -344,6 +344,11 @@ public sealed partial class Activation
         m[WasmAbi.GlobalVarCount] = bases.GlobalVarCount;
         _attrImageShared = bases.AttrImageShared;
         _attrMirrorBudgetStaged = bases.AttrMirrorBudget;
+        m[WasmAbi.CompactBarrier] = _compactBarrier;
+        m[WasmAbi.CompactParentBinding] = _compactParentBinding;
+        m[WasmAbi.CompactParentExtra] = _compactParentExtra;
+        m[WasmAbi.CompactedBinding] = _compactedBinding;
+        m[WasmAbi.CompactedExtra] = _compactedExtra;
 
         // What a compaction owes the catch frames, as three numbers. They
         // cannot change inside a chain: a frame is pushed and deactivated by
@@ -405,6 +410,12 @@ public sealed partial class Activation
         DrainPendingAttrWrites((int)m[WasmAbi.AttrWriteTop]);
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
+        // The compaction watermark, which a module's walk moves.
+        _compactBarrier = (int)m[WasmAbi.CompactBarrier];
+        _compactParentBinding = (int)m[WasmAbi.CompactParentBinding];
+        _compactParentExtra = (int)m[WasmAbi.CompactParentExtra];
+        _compactedBinding = (int)m[WasmAbi.CompactedBinding];
+        _compactedExtra = (int)m[WasmAbi.CompactedExtra];
         _e = (int)m[WasmAbi.EnvTop];
         _b = (int)m[WasmAbi.ChoiceTop];
         _hb = (int)m[WasmAbi.HeapBacktrack];

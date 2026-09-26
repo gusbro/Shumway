@@ -1068,7 +1068,7 @@ public static class WasmPredicateCompiler
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
             // The cut compaction's bank, and the fourteen the attribute
             // WRITE and =../2 need beside it. Appended last, same rule.
-            new Local { Count = 28, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 30, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2464,7 +2464,40 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
 
-            // Nothing trailed since the barrier: both walks would be empty
+            // The watermark (WasmAbi.CompactBarrier): a cut to the same
+            // parent over a trail that only grew since the last walk starts
+            // where that walk stopped. The host keeps the same mark, so the
+            // two walks continue each other. The parent's own tops are kept
+            // aside: they are the KEY the mark is written under.
+            Op(new LocalGet(LKPB)); Op(new LocalSet(LKPB0));
+            Op(new LocalGet(LKPE)); Op(new LocalSet(LKPE0));
+            LoadSlot32(WasmAbi.CompactBarrier);
+            Op(new LocalGet(LKBar));
+            Op(new Int32Equal());
+            LoadSlot32(WasmAbi.CompactParentBinding);
+            Op(new LocalGet(LKPB));
+            Op(new Int32Equal());
+            Op(new Int32And());
+            LoadSlot32(WasmAbi.CompactParentExtra);
+            Op(new LocalGet(LKPE));
+            Op(new Int32Equal());
+            Op(new Int32And());
+            Op(new LocalGet(LTR));
+            LoadSlot32(WasmAbi.CompactedBinding);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new Int32And());
+            Op(new LocalGet(LKETop));
+            LoadSlot32(WasmAbi.CompactedExtra);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new Int32And());
+            OpenIf();
+            {
+                LoadSlot32(WasmAbi.CompactedBinding); Op(new LocalSet(LKPB));
+                LoadSlot32(WasmAbi.CompactedExtra); Op(new LocalSet(LKPE));
+            }
+            CloseNested();
+
+            // Nothing trailed since the start: both walks would be empty
             // and no catch snapshot can sit above an unchanged top, so the
             // whole thing is a no-op. This is the common case.
             Op(new LocalGet(LKPE));
@@ -2812,6 +2845,12 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LTR));
             StoreSlot64(WasmAbi.ExtraTrailTop,
                         () => { Op(new LocalGet(LKEW)); Op(new Int64ExtendInt32Signed()); });
+            // The mark this walk leaves, under the parent it was made against.
+            StoreSlotFromI32Local(WasmAbi.CompactBarrier, LKBar);
+            StoreSlotFromI32Local(WasmAbi.CompactParentBinding, LKPB0);
+            StoreSlotFromI32Local(WasmAbi.CompactParentExtra, LKPE0);
+            StoreSlotFromI32Local(WasmAbi.CompactedBinding, LKBW);
+            StoreSlotFromI32Local(WasmAbi.CompactedExtra, LKEW);
             Op(new Branch(1));                              // -> $done
 
             CloseNested();                                  // $slow
@@ -4830,7 +4869,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant(-1));
                 Op(new LocalSet(LMetaArity));
                 EmitReadBarrier();
-                EmitMetaTailOrRequest();
+                EmitMetaTailOrRequest(compoundGoal: false);
             }
             CloseNested();
 
@@ -5382,13 +5421,21 @@ public static class WasmPredicateCompiler
             // chain stays open for the host to resume at pc + 9. The frame
             // is the one the jump arm would build, for the same reason it
             // builds it: pc + 9 pops one.
-            void EmitMetaTailOrRequest()
+            void EmitMetaTailOrRequest(bool compoundGoal)
             {
                 Op(new LocalGet(LAtVal));
                 Op(new Int32Constant(0));
                 Op(new Int32LessThanSigned());
                 OpenIf();
                 {
+                    // The forms first: a builtin the module open-codes
+                    // (=/2, the comparisons, the type tests, get_attr/3)
+                    // is answered here and never leaves. Before the
+                    // markers named builtins these ran at the give-up
+                    // points and caught var/1; a request would have been
+                    // a step backwards -- measured, 9,372 of them on
+                    // queens under clp(Z).
+                    if (compoundGoal) EmitInlineGoalForm();
                     if (ownFrame)
                     {
                         EmitAllocateFrame(0, pc);
@@ -5412,7 +5459,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
 
-            EmitMetaTailOrRequest();
+            EmitMetaTailOrRequest(compoundGoal: true);
 
             CloseNested();                                  // $slow
             EmitDeopt(pc, DeoptStamped);
@@ -9717,6 +9764,8 @@ public static class WasmPredicateCompiler
         private const uint LKOrph2 = 84; // i32: dead records parked
         private const uint LKDot = 85;   // i32: composing a CONS, not a Str
         private const uint LAtKind = 86; // i32: Attr is a COMPOUND, not a constant
+        private const uint LKPB0 = 87;   // i32: the parent's binding top, before the watermark
+        private const uint LKPE0 = 88;   // i32: the parent's extra top, before the watermark
         private const uint LAtRow = 73;  // i32: the attribute row's address
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer

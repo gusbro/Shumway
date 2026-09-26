@@ -115,8 +115,12 @@ public static class GlobalVarsBuiltins
         var store = Globals(engine);
         // Trail the previous value FIRST so unwinding past this write puts it
         // back (Scryer's bb_b_put contract — clpz rewinds its propagation
-        // state through exactly this on labeling backtracks).
-        bool had = store.TryGet(nameId, out Cell old);
+        // state through exactly this on labeling backtracks). A previous
+        // value another activation wrote is not one to put back: the read
+        // side already treats it as unset, and trailing it here resurrected
+        // a dead query's value on the unwind.
+        Cell old = default;
+        bool had = store.IsLiveFor(nameId, engine.InstanceId) && store.TryGet(nameId, out old);
         engine.TrailExternal(store, nameId, old, had);
         store.Set(nameId, value, backtrackable: true, ownerId: engine.InstanceId);
         return true;

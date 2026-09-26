@@ -673,7 +673,52 @@ case:
 
 The grain set did not move: nrev 14x, tak 13x, zebra 8.5x, queens 8 (clpfd)
 1.6-2x over AOT Tier-0 in the lazy mode; clpr stays at parity (0.7-1.2x),
-which is its own open question. What is left on queens10ff+sendmore after
+which is its own open question.
+
+### The cut's compaction was quadratic in backtrackable global writes
+
+Pricing the remaining exits turned up something that was not an exit. A
+loop of `bb_b_put` then `bb_get` (`#wasmexits`, the "bb put+get" case) took
+5,585 ms for 20,000 iterations on Tier-0 and 6,412 on the tier, and 100 s
+for 100,000: quadratic. The profile: 29% in `Activation.CompactTrails`, 36%
+in the module's own compaction. A cut compacts the trails from the parent
+choice point's tops to the current tops, and a backtrackable global write
+leaves an entry that survives every cut, so a run of writes under one
+parent had every cut re-read every earlier write. clp(Z) is that run: two
+`bb_b_put` per propagator and a cut per if-then-else, hundreds of times
+between two labeling choice points.
+
+The compaction keeps a watermark now, on both sides of the mailbox: the
+barrier and parent tops the last walk was made against, and the tops it
+left. A cut to the same parent over a trail that only grew since starts
+from the compacted tops. Starting late can only keep an entry a full walk
+would have dropped, so it is sound by construction; a trail that shrank
+below the mark (a backtrack in between) starts from the parent again.
+The loop: 142-164 ms on Tier-0, 169-176 on the tier, linear. Same
+publish, one ABBA round of the clpz set: queens10ff Tier-0 935 to 609 ms
+and the tier 436 to 251; sudoku Tier-0 4,740 to 2,571.
+
+Two things found on the way. `b_setval` trailed a previous value another
+activation had written, and the unwind put it back: a dead query's value
+resurrected. It trails only a live one now, the rule the read side already
+applied. And the builtin markers of change 3 had regressed the type tests:
+`call(var(X))` used to reach the inline forms at the cache's give-up point
+and never leave; with a marker naming `var/1` it left as a request, 9,372
+times on queens. The forms run before the request now.
+
+Where it stands, no diagnostics, best of three ABBA rounds:
+
+| case | Tier-0 AOT | wasm tier AOT | | this morning, Tier-0 interpreted |
+|---|---:|---:|---:|---:|
+| queens10ff x5 | 494 ms | 294 ms | 1.7x | 5340 ms |
+| sendmore x2 | 54 ms | 26 ms | 2.1x | 377 ms |
+| queens16 x2 | 455 ms | 390 ms | 1.2x | 3973 ms |
+| queens24 x2 | 881 ms | 592 ms | 1.5x | 7125 ms |
+| sudoku x1 | 2399 ms | 1057 ms | 2.3x | 19709 ms |
+| factorial x10 | 192 ms | 117 ms | 1.6x | 1663 ms |
+
+The grain set, same publish, lazy mode over AOT Tier-0: nrev 15.6x, tak
+22x, zebra 7.2x, queens 8 (clpfd) 2.8x, clpr 1.0-1.2x. What is left on queens10ff+sendmore after
 changes 2 and 3 (browser counters, diagnostic build): 459 deopts, of which 175
 are an attributed variable bound to a value inside get_value (a wakeup, the
 host's) and 104 a restore that has to unwind the extra trail; the two walks

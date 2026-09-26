@@ -508,7 +508,20 @@ public static class WasmAbi
     public const int GlobalVarBase = 74;
     public const int GlobalVarCount = 75;
 
-    public const int SlotCount = 76;
+    /// <summary>The cut compaction's watermark: the barrier and parent tops
+    /// the last compaction was made against, and the tops it left. A cut to
+    /// the same parent over a trail that only grew since walks from the
+    /// compacted tops, not from the parent's: the entries below were judged
+    /// already, and re-judging them made a run of backtrackable global
+    /// writes quadratic. Shared with the host, which keeps the same mark.
+    /// </summary>
+    public const int CompactBarrier = 76;
+    public const int CompactParentBinding = 77;
+    public const int CompactParentExtra = 78;
+    public const int CompactedBinding = 79;
+    public const int CompactedExtra = 80;
+
+    public const int SlotCount = 81;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 
