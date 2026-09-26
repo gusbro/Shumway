@@ -9,15 +9,13 @@ namespace Shumway.Embedding;
 /// <see cref="ShumwayPrologException"/> wrapping one of these so the
 /// resulting term lines up with what other ISO Prologs report.
 ///
-/// <para>The <c>Context</c> slot is impl-defined (§7.12.2). When a
-/// factory is called with an <see cref="Activation"/> whose
-/// <see cref="Activation.CurrentBuiltinName"/> is set — i.e. from inside a
-/// builtin's Impl, which is when contract violations originate — the
-/// slot is filled with the <c>Name/Arity</c> indicator of the offending
-/// builtin. With no engine in hand the slot stays a fresh anonymous
-/// variable, the Phase-1 behaviour, which preserves backwards
-/// compatibility for the few static error constructions outside of
-/// builtin dispatch.</para>
+/// <para>The <c>Context</c> slot is impl-defined (§7.12.2) and holds the
+/// <c>Name/Arity</c> indicator of the builtin that raised the error. A
+/// factory called with an <see cref="Activation"/> fills it at once from
+/// <see cref="Activation.CurrentBuiltinName"/>; one called without leaves
+/// <see cref="OpenContext"/>, which the engine fills the same way when the
+/// ball surfaces (<see cref="CloseContext"/>), so a builtin need not thread
+/// its engine through every check to be named.</para>
 /// </summary>
 public static class IsoError
 {
@@ -134,6 +132,34 @@ public static class IsoError
                 new AtomTerm(name),
                 new IntTerm(engine.CurrentBuiltinArity),
             });
-        return new VarTerm("_");
+        return OpenContext;
+    }
+
+    /// <summary>The context of a ball built with no engine in hand: one
+    /// shared variable, recognised by identity when the ball surfaces
+    /// (<see cref="CloseContext"/>), so the builtin that raised it is named
+    /// then. A ball from <c>throw/1</c> never carries this instance, so a
+    /// user's own variables stay as they are.</summary>
+    internal static readonly VarTerm OpenContext = new("_");
+
+    /// <summary>The ball with its context filled in, when the context is
+    /// still <see cref="OpenContext"/> and the engine names a running
+    /// builtin: <c>error(Kind, Name/Arity)</c>. Any other ball comes back
+    /// as it is.</summary>
+    internal static Term CloseContext(Term ball, Activation engine)
+    {
+        if (ball is not CompoundTerm { Functor: "error", Args.Length: 2 } e
+            || !ReferenceEquals(e.Args[1], OpenContext)
+            || engine.CurrentBuiltinName is not string name)
+            return ball;
+        return new CompoundTerm("error", new Term[]
+        {
+            e.Args[0],
+            new CompoundTerm("/", new Term[]
+            {
+                new AtomTerm(name),
+                new IntTerm(engine.CurrentBuiltinArity),
+            }),
+        }) { Position = e.Position };
     }
 }
