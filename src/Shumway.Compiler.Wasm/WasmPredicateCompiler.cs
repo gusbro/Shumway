@@ -233,6 +233,7 @@ public static class WasmPredicateCompiler
         private int ArithIndex => _parts.Count + 4;     // and K+4 the evaluator
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
+        private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -464,6 +465,7 @@ public static class WasmPredicateCompiler
                 case Opcode.ExecuteBuiltin:
                     if (BuiltinHasInlineForm(ins.I0)) _compilable[sec]++;
                     else _sureExits[sec]++;      // a guaranteed host crossing
+                    if (_env.IsInlineSort(ins.I0)) _usesSort = true;
                     return;
                 default:
                     _compilable[sec]++;          // runs in the module
@@ -485,6 +487,7 @@ public static class WasmPredicateCompiler
             || _env.IsInlineGround(builtinId)
             || _env.IsInlineGlobalFetch(builtinId)
             || _env.IsInlineAcyclic(builtinId)
+            || _env.IsInlineSort(builtinId)
             || _env.IsInlineDomSame(builtinId)
             || _env.IsInlineDomEmpty(builtinId)
             || _env.IsInlineDomContains(builtinId)
@@ -734,6 +737,7 @@ public static class WasmPredicateCompiler
 
         private List<Instruction> _code = new();
         private int _extraDepth;    // If/Block/Loop opened inside the current case
+        private bool _usesSort;     // a member calls sort/2: the comparator is emitted, not its stub
         private int _caseIndex;     // which case body is being emitted
 
         private void Op(Instruction i) => _code.Add(i);
@@ -902,7 +906,8 @@ public static class WasmPredicateCompiler
             // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier; K+3: term
             // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
-            // K+6: acyclic_term/1's. All internal but run.
+            // K+6: acyclic_term/1's; K+7: the standard order of two terms.
+            // All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -915,6 +920,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
+            module.Functions.Add(new Function { Type = 1 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -971,6 +977,25 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildAcyclicBody(),
             });
+            // The comparator is furniture only a module that sorts needs;
+            // every other module carries a stub in its slot, so the fixed
+            // cost of a one-predicate module does not grow for a builtin
+            // it never calls (IncrementalCompileCostTests gates that).
+            module.Codes.Add(_usesSort
+                ? new FunctionBody
+                {
+                    Locals =
+                    [
+                        new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
+                        new Local { Count = 5, Type = WebAssemblyValueType.Int64 },
+                    ],
+                    Code = BuildCompareBody(),
+                }
+                : new FunctionBody
+                {
+                    Locals = [],
+                    Code = [new Int32Constant(3), new End()],
+                });
 
             // A diagnostic build names its functions, so a browser profile
             // reads "p12:clpz$state/3" instead of "wasm-function[12]".
@@ -1069,6 +1094,9 @@ public static class WasmPredicateCompiler
             // The cut compaction's bank, and the fourteen the attribute
             // WRITE and =../2 need beside it. Appended last, same rule.
             new Local { Count = 30, Type = WebAssemblyValueType.Int32 },
+            // sort/2's bank: the two arrays, the count, the merge width
+            // and its cursors. Appended last, same rule.
+            new Local { Count = 10, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -1955,6 +1983,18 @@ public static class WasmPredicateCompiler
                         });
                         return false;
                     }
+                    if (_env.IsInlineSort(ins.I0))
+                    {
+                        EmitInlineSort(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineUniv(ins.I0))
                     {
                         EmitInlineUniv(ins.Pc, () =>
@@ -2189,6 +2229,18 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineAcyclic(ins.I0))
                     {
                         EmitInlineWalk(AcyclicIndex, ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineSort(ins.I0))
+                    {
+                        EmitInlineSort(ins.Pc, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -4183,6 +4235,18 @@ public static class WasmPredicateCompiler
                 if (_env.IsInlineAcyclic(builtinId))
                 {
                     EmitInlineWalk(AcyclicIndex, ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
+                    return false;
+                }
+                if (_env.IsInlineSort(builtinId))
+                {
+                    EmitInlineSort(ins.Pc, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
                             () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
@@ -7295,6 +7359,286 @@ public static class WasmPredicateCompiler
         private void EmitInlineGround(int pc, Action emitBuiltinExit)
             => EmitInlineWalk(GroundIndex, pc, emitBuiltinExit);
 
+        /// <summary><c>sort(L1, L2)</c> answered inside the module: L1's
+        /// elements are copied above the stack top, merge-sorted with the
+        /// module's comparator, deduplicated, and built as a fresh list on
+        /// the heap for L2. Everything the module cannot settle goes to the
+        /// host BEFORE anything is written, as the request itself: a pair
+        /// the comparator declines, a spine that is not a proper list, an
+        /// L2 that is no partial list (the host owes the type error), and a
+        /// heap or a stack without the room. clp(Z) sorts a list of queue
+        /// terms on every constraint it posts.</summary>
+        private void EmitInlineSort(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            int doneDepth = _extraDepth;
+            OpenBlock();                                    // $slow
+            int slowDepth = _extraDepth;
+            void GoSlow() => Op(new Branch((uint)(_extraDepth - slowDepth)));
+            void GoDone() => Op(new Branch((uint)(_extraDepth - doneDepth)));
+            long nil = _env.AtomCell(AtomTable.EmptyListId);
+            void ByteAddr(uint baseLocal, uint indexLocal)
+            {
+                Op(new LocalGet(baseLocal));
+                Op(new LocalGet(indexLocal));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+            }
+
+            // L2: a partial list, or the host owes the type error.
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            OpenBlock();                                    // $l2ok
+            OpenLoop();                                     // $l2
+            {
+                TagOfC0(); Op(new LocalSet(LT0));
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32Equal());
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                Op(new Int32Or());
+                Op(new LocalGet(LC0)); Op(new Int64Constant(nil)); Op(new Int64Equal());
+                Op(new Int32Or());
+                Op(new BranchIf(1));                        // -> $l2ok
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Lis)); Op(new Int32NotEqual());
+                OpenIf(); GoSlow(); CloseNested();
+                Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+                CellLoadDyn(LHeapB, LT1, 1); Op(new LocalSet(LC0)); Deref();
+                Op(new Branch(0));                          // -> $l2
+            }
+            CloseNested();                                  // $l2
+            CloseNested();                                  // $l2ok
+
+            // L1's elements, dereferenced, into an array above the stack
+            // top; a second array beside it is the merge's other half, and
+            // the comparator's worklist sits above both.
+            ByteAddr(LStackB, LST); Op(new LocalSet(LSrtA));
+            Op(new LocalGet(LStackB)); LoadSlot32(WasmAbi.StackLimit);
+            Op(new Int32Constant(3)); Op(new Int32ShiftLeft()); Op(new Int32Add());
+            Op(new LocalSet(LSrtE));                        // the stack's limit, for now
+            Op(new Int32Constant(0)); Op(new LocalSet(LSrtN));
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            OpenBlock();                                    // $counted
+            OpenLoop();                                     // $count
+            {
+                TagOfC0(); Op(new Int32Constant((int)Tag.Lis)); Op(new Int32NotEqual());
+                Op(new BranchIf(1));                        // -> $counted
+                // Room for this element in both arrays and a page for the
+                // comparator, or the host.
+                Op(new LocalGet(LSrtA));
+                Op(new LocalGet(LSrtN)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new Int32Constant(4)); Op(new Int32ShiftLeft()); Op(new Int32Add());
+                Op(new Int32Constant(256)); Op(new Int32Add());
+                Op(new LocalGet(LSrtE)); Op(new Int32GreaterThanSigned());
+                OpenIf(); GoSlow(); CloseNested();
+                Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int32WrapInt64()); Op(new LocalSet(LT1));      // the head's index
+                CellLoadDyn(LHeapB, LT1, 1); Op(new LocalSet(LC2));   // the tail, kept
+                CellLoadDyn(LHeapB, LT1); Op(new LocalSet(LC0)); Deref();
+                ByteAddr(LSrtA, LSrtN); Op(new LocalGet(LC0)); Op(new Int64Store());
+                Op(new LocalGet(LSrtN)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LSrtN));
+                Op(new LocalGet(LC2)); Op(new LocalSet(LC0)); Deref();
+                Op(new Branch(0));                          // -> $count
+            }
+            CloseNested();                                  // $count
+            CloseNested();                                  // $counted
+            // Only a spine ending in [] is ours: a variable, a packed
+            // string, an improper end are the host's, and so is its error.
+            Op(new LocalGet(LC0)); Op(new Int64Constant(nil)); Op(new Int64NotEqual());
+            OpenIf(); GoSlow(); CloseNested();
+
+            // One element or none: sorted already, and L2 is L1.
+            Op(new LocalGet(LSrtN)); Op(new Int32Constant(2)); Op(new Int32LessThanSigned());
+            OpenIf();
+            {
+                EmitUnifyTwo(() => RegLoad(1), () => RegLoad(0), pc, emitEscape: emitBuiltinExit);
+                GoDone();
+            }
+            CloseNested();
+
+            ByteAddr(LSrtA, LSrtN); Op(new LocalSet(LSrtB));
+            StoreSlot64(WasmAbi.StackTop, () =>
+            {
+                Op(new LocalGet(LST));
+                Op(new LocalGet(LSrtN)); Op(new Int32Constant(1)); Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Unsigned());
+            });
+
+            // The comparator over the cells at two addresses, into LT0; 3
+            // is a pair only the host orders.
+            void Compare(uint leftAddr, uint rightAddr)
+            {
+                Op(new LocalGet(leftAddr)); Op(new Int64Load());
+                Op(new LocalGet(rightAddr)); Op(new Int64Load());
+                Op(new LocalGet(0));
+                Op(new WebAssembly.Instructions.Call((uint)CompareIndex));
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LT0)); Op(new Int32Constant(3)); Op(new Int32Equal());
+                OpenIf(); GoSlow(); CloseNested();
+            }
+            // [dst] = [src]; both advance a cell.
+            void Take(uint src, uint dst)
+            {
+                Op(new LocalGet(dst)); Op(new LocalGet(src)); Op(new Int64Load()); Op(new Int64Store());
+                Op(new LocalGet(src)); Op(new Int32Constant(8)); Op(new Int32Add()); Op(new LocalSet(src));
+                Op(new LocalGet(dst)); Op(new Int32Constant(8)); Op(new Int32Add()); Op(new LocalSet(dst));
+            }
+            // A + 8 * min(I + k * W, N) into outLocal.
+            void RunEnd(int k, uint outLocal)
+            {
+                Op(new LocalGet(LSrtI)); Op(new LocalGet(LSrtW));
+                if (k == 2) { Op(new Int32Constant(1)); Op(new Int32ShiftLeft()); }
+                Op(new Int32Add()); Op(new LocalSet(LT1));
+                Op(new LocalGet(LT1)); Op(new LocalGet(LSrtN)); Op(new Int32GreaterThanSigned());
+                OpenIf(); Op(new LocalGet(LSrtN)); Op(new LocalSet(LT1)); CloseNested();
+                ByteAddr(LSrtA, LT1); Op(new LocalSet(outLocal));
+            }
+
+            // Bottom-up merge sort between the two arrays, the width
+            // doubling each pass; a tie takes the left element, so the sort
+            // is stable and the earlier of two equal elements survives the
+            // deduplication below, as the host's does.
+            Op(new Int32Constant(1)); Op(new LocalSet(LSrtW));
+            OpenBlock();                                    // $sorted
+            OpenLoop();                                     // $widths
+            {
+                Op(new LocalGet(LSrtW)); Op(new LocalGet(LSrtN)); Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $sorted
+                Op(new Int32Constant(0)); Op(new LocalSet(LSrtI));
+                OpenBlock();                                // $runsDone
+                OpenLoop();                                 // $runs
+                {
+                    Op(new LocalGet(LSrtI)); Op(new LocalGet(LSrtN)); Op(new Int32GreaterThanOrEqualSigned());
+                    Op(new BranchIf(1));                    // -> $runsDone
+                    ByteAddr(LSrtA, LSrtI); Op(new LocalSet(LSrtL));
+                    RunEnd(1, LSrtM);
+                    RunEnd(2, LSrtE);
+                    Op(new LocalGet(LSrtM)); Op(new LocalSet(LSrtR));
+                    ByteAddr(LSrtB, LSrtI); Op(new LocalSet(LSrtO));
+                    OpenBlock();                            // $merged
+                    OpenLoop();                             // $merge
+                    {
+                        Op(new LocalGet(LSrtL)); Op(new LocalGet(LSrtM)); Op(new Int32Equal());
+                        OpenIf();
+                        {
+                            Op(new LocalGet(LSrtR)); Op(new LocalGet(LSrtE)); Op(new Int32Equal());
+                            Op(new BranchIf(2));            // both spent -> $merged
+                            Take(LSrtR, LSrtO);
+                            Op(new Branch(1));              // -> $merge
+                        }
+                        CloseNested();
+                        Op(new LocalGet(LSrtR)); Op(new LocalGet(LSrtE)); Op(new Int32Equal());
+                        OpenIf();
+                        {
+                            Take(LSrtL, LSrtO);
+                            Op(new Branch(1));              // -> $merge
+                        }
+                        CloseNested();
+                        Compare(LSrtL, LSrtR);
+                        Op(new LocalGet(LT0)); Op(new Int32Constant(2)); Op(new Int32Equal());
+                        OpenIf(); Take(LSrtR, LSrtO); OpenElse(); Take(LSrtL, LSrtO); CloseNested();
+                        Op(new Branch(0));                  // -> $merge
+                    }
+                    CloseNested();                          // $merge
+                    CloseNested();                          // $merged
+                    Op(new LocalGet(LSrtI));
+                    Op(new LocalGet(LSrtW)); Op(new Int32Constant(1)); Op(new Int32ShiftLeft());
+                    Op(new Int32Add()); Op(new LocalSet(LSrtI));
+                    Op(new Branch(0));                      // -> $runs
+                }
+                CloseNested();                              // $runs
+                CloseNested();                              // $runsDone
+                Op(new LocalGet(LSrtA)); Op(new LocalSet(LT1));
+                Op(new LocalGet(LSrtB)); Op(new LocalSet(LSrtA));
+                Op(new LocalGet(LT1)); Op(new LocalSet(LSrtB));
+                Op(new LocalGet(LSrtW)); Op(new Int32Constant(1)); Op(new Int32ShiftLeft());
+                Op(new LocalSet(LSrtW));
+                Op(new Branch(0));                          // -> $widths
+            }
+            CloseNested();                                  // $widths
+            CloseNested();                                  // $sorted
+
+            // Deduplicate in place: an element stays when it differs from
+            // the last one kept.
+            Op(new LocalGet(LSrtA)); Op(new Int32Constant(8)); Op(new Int32Add()); Op(new LocalSet(LSrtO));
+            Op(new LocalGet(LSrtO)); Op(new LocalSet(LSrtR));
+            ByteAddr(LSrtA, LSrtN); Op(new LocalSet(LSrtE));
+            OpenBlock();                                    // $deduped
+            OpenLoop();                                     // $dedupe
+            {
+                Op(new LocalGet(LSrtR)); Op(new LocalGet(LSrtE)); Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $deduped
+                Op(new LocalGet(LSrtO)); Op(new Int32Constant(8)); Op(new Int32Subtract());
+                Op(new LocalSet(LSrtL));                    // the last kept
+                Compare(LSrtR, LSrtL);
+                Op(new LocalGet(LT0)); Op(new Int32EqualZero());
+                Op(new Int32EqualZero());
+                OpenIf();
+                {
+                    Op(new LocalGet(LSrtO)); Op(new LocalGet(LSrtR)); Op(new Int64Load()); Op(new Int64Store());
+                    Op(new LocalGet(LSrtO)); Op(new Int32Constant(8)); Op(new Int32Add()); Op(new LocalSet(LSrtO));
+                }
+                CloseNested();
+                Op(new LocalGet(LSrtR)); Op(new Int32Constant(8)); Op(new Int32Add()); Op(new LocalSet(LSrtR));
+                Op(new Branch(0));                          // -> $dedupe
+            }
+            CloseNested();                                  // $dedupe
+            CloseNested();                                  // $deduped
+            Op(new LocalGet(LSrtO)); Op(new LocalGet(LSrtA)); Op(new Int32Subtract());
+            Op(new Int32Constant(3)); Op(new Int32ShiftRightUnsigned()); Op(new LocalSet(LSrtN));
+            StoreSlotFromI32Local(WasmAbi.StackTop, LST);   // the scratch is spent
+
+            // Room for 2N + 1 cells, or the host.
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LSrtN)); Op(new Int32Constant(1)); Op(new Int32ShiftLeft()); Op(new Int32Add());
+            Op(new Int32Constant(1)); Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark); Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf(); GoSlow(); CloseNested();
+
+            // heap[H] = Lis(H + 1), heap[H + 1] = the element, pair after
+            // pair, then [] -- the shape BuildList writes on the host.
+            Op(new LocalGet(LH)); Op(new LocalSet(LSrtI));  // start
+            Op(new Int32Constant(0)); Op(new LocalSet(LT1));
+            OpenBlock();                                    // $built
+            OpenLoop();                                     // $build
+            {
+                Op(new LocalGet(LT1)); Op(new LocalGet(LSrtN)); Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $built
+                CellStoreDyn(LHeapB, LH, 0, () =>
+                {
+                    Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                    Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                    Op(new Int64ExtendInt32Unsigned());
+                    Op(new Int64Or());
+                });
+                CellStoreDyn(LHeapB, LH, 1, () => { ByteAddr(LSrtA, LT1); Op(new Int64Load()); });
+                Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add()); Op(new LocalSet(LH));
+                Op(new LocalGet(LT1)); Op(new Int32Constant(1)); Op(new Int32Add()); Op(new LocalSet(LT1));
+                Op(new Branch(0));                          // -> $build
+            }
+            CloseNested();                                  // $build
+            CloseNested();                                  // $built
+            CellStoreDyn(LHeapB, LH, 0, () => Op(new Int64Constant(nil)));
+            Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add()); Op(new LocalSet(LH));
+
+            // The answer is Lis(start + 1), against L2. A pair the inline
+            // unify cannot decide leaves as the request, which the host
+            // answers by the same unification over a list it builds again.
+            EmitUnifyTwo(() => RegLoad(1), () =>
+            {
+                Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                Op(new LocalGet(LSrtI)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+            }, pc, emitEscape: emitBuiltinExit);
+            GoDone();
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
         /// <summary>A one-argument test answered by one of the module's
         /// walkers over X0 -- 0 fails, 1 succeeds, 2 declines to the host.
         /// </summary>
@@ -9830,6 +10174,16 @@ public static class WasmPredicateCompiler
         private const uint LAtKind = 86; // i32: Attr is a COMPOUND, not a constant
         private const uint LKPB0 = 87;   // i32: the parent's binding top, before the watermark
         private const uint LKPE0 = 88;   // i32: the parent's extra top, before the watermark
+        private const uint LSrtA = 89;   // i32: sort/2's array, the sorted one at the end
+        private const uint LSrtB = 90;   // i32: the merge's other array
+        private const uint LSrtN = 91;   // i32: the element count
+        private const uint LSrtW = 92;   // i32: the merge width
+        private const uint LSrtI = 93;   // i32: the run's start; then the list's start
+        private const uint LSrtL = 94;   // i32: the left cursor
+        private const uint LSrtR = 95;   // i32: the right cursor
+        private const uint LSrtM = 96;   // i32: where the left run ends
+        private const uint LSrtE = 97;   // i32: where the right run ends
+        private const uint LSrtO = 98;   // i32: the output cursor
         private const uint LAtRow = 73;  // i32: the attribute row's address
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
@@ -10837,6 +11191,248 @@ public static class WasmPredicateCompiler
             }
             OEnd();
             I32(1);
+            O(new End());
+            return code;
+        }
+
+        /// <summary>The standard order of two terms, walked by the module:
+        /// 0 equal, 1 the first is smaller, 2 greater, 3 a pair the host
+        /// orders. Variables by address, integers by value, compounds by
+        /// arity, then functor, then arguments left to right, over a
+        /// worklist above the stack top. Two DIFFERENT atoms (ordered by
+        /// name), a float, a bigint, a rational and a packed string on
+        /// either side are the host's. A pair of cyclic terms never ends
+        /// here, so a step budget hands it to the host's cycle check.
+        /// </summary>
+        private static List<Instruction> BuildCompareBody()
+        {
+            const uint PA = 0, PB = 1, MB = 2;
+            const uint HEAPB = 3, FTABB = 4, WL = 5, WLBASE = 6, WLLIM = 7,
+                       DA = 8, DB = 9, K = 10, KA = 11, KB = 12, STEPS = 13;
+            const uint CA = 14, CB = 15, C1 = 16, FA = 17, FB = 18;
+            const int StepBudget = 1 << 18;
+
+            var code = new List<Instruction>();
+            int depth = 0;
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void I64(long v) => O(new Int64Constant(v));
+            void OIf() { O(new If(BlockType.Empty)); depth++; }
+            void OElse() => O(new Else());
+            void OEnd() { O(new End()); depth--; }
+            void OBlock() { O(new Block(BlockType.Empty)); depth++; }
+            void OLoop() { O(new Loop(BlockType.Empty)); depth++; }
+            void Continue() => O(new Branch((uint)(depth - 1)));
+
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Ret(int v) { I32(v); O(new Return()); }
+            void HeapLoad(uint idxLocal)
+            {
+                LG(HEAPB); LG(idxLocal); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+            }
+            void TagOf(uint cel) { LG(cel); I64(60); O(new Int64ShiftRightUnsigned()); }
+            void TagIs(uint cel, long tag) { TagOf(cel); I64(tag); O(new Int64Equal()); }
+            void Deref(uint cel, uint home)
+            {
+                OBlock(); OLoop();
+                TagOf(cel); I64(0); O(new Int64NotEqual()); O(new BranchIf(1));
+                LG(cel); O(new Int32WrapInt64()); LSet(home);
+                HeapLoad(home); LSet(C1);
+                LG(C1); LG(cel); O(new Int64Equal()); O(new BranchIf(1));
+                LG(C1); LSet(cel); O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            // The order class of a cell, or 4 for a tag no term carries.
+            void OrderOf(uint cel, uint outLocal)
+            {
+                I32(4); LSet(outLocal);
+                TagIs(cel, 0); TagIs(cel, (long)Tag.AttVar); O(new Int32Or());
+                OIf(); I32(0); LSet(outLocal); OEnd();
+                TagIs(cel, (long)Tag.Int); TagIs(cel, (long)Tag.Float); O(new Int32Or());
+                TagIs(cel, (long)Tag.BigInt); O(new Int32Or());
+                TagIs(cel, (long)Tag.Rational); O(new Int32Or());
+                OIf(); I32(1); LSet(outLocal); OEnd();
+                TagIs(cel, (long)Tag.Atom);
+                OIf(); I32(2); LSet(outLocal); OEnd();
+                TagIs(cel, (long)Tag.Str); TagIs(cel, (long)Tag.Lis); O(new Int32Or());
+                TagIs(cel, (long)Tag.Pstr); O(new Int32Or());
+                OIf(); I32(3); LSet(outLocal); OEnd();
+            }
+            // 1 when a < b, else 2: the callers know the two differ.
+            void RetLess(uint a, uint b)
+            {
+                LG(a); LG(b); O(new Int32LessThanSigned());
+                OIf(); Ret(1); OEnd();
+                Ret(2);
+            }
+            // A pair of cells onto the worklist; popped last in, first out.
+            void PushPair(System.Action a, System.Action b)
+            {
+                LG(WL); I32(16); O(new Int32Add()); LG(WLLIM); O(new Int32GreaterThanSigned());
+                OIf(); Ret(3); OEnd();
+                LG(WL); a(); O(new Int64Store());
+                LG(WL); b(); O(new Int64Store { Offset = 8 });
+                LG(WL); I32(16); O(new Int32Add()); LSet(WL);
+            }
+            // heap[idx + plus] as a REF cell to that slot: the worklist
+            // holds references, and the deref above follows them.
+            System.Action RefTo(uint idxLocal, uint plusLocal, int plus) => () =>
+            {
+                LG(idxLocal);
+                if (plusLocal != uint.MaxValue) { LG(plusLocal); O(new Int32Add()); }
+                if (plus != 0) { I32(plus); O(new Int32Add()); }
+                O(new Int64ExtendInt32Unsigned());
+            };
+            void Arity(uint functorLocal, uint outLocal)
+            {
+                LG(FTABB);
+                LG(functorLocal); I64(Cell.PayloadMask); O(new Int64And());
+                O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+                O(new Int32WrapInt64()); LSet(outLocal);
+            }
+            void Signed(uint cel)
+            {
+                LG(cel); I64(4); O(new Int64ShiftLeft()); I64(4); O(new Int64ShiftRightSigned());
+            }
+
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.FunctorTableBase, FTABB);
+            SlotToI32(WasmAbi.StackBase, DA);
+            LG(DA);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackTop) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLBASE);
+            LG(DA);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackLimit) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLLIM);
+            LG(WLBASE); LSet(WL);
+            I32(0); LSet(STEPS);
+            PushPair(() => LG(PA), () => LG(PB));
+
+            OLoop();
+            {
+                LG(WL); LG(WLBASE); O(new Int32Equal());
+                OIf(); Ret(0); OEnd();                      // every pair agreed: equal
+                LG(WL); I32(16); O(new Int32Subtract()); LSet(WL);
+                LG(WL); O(new Int64Load()); LSet(CA);
+                LG(WL); O(new Int64Load { Offset = 8 }); LSet(CB);
+                LG(STEPS); I32(1); O(new Int32Add()); LSet(STEPS);
+                LG(STEPS); I32(StepBudget); O(new Int32GreaterThanSigned());
+                OIf(); Ret(3); OEnd();
+                Deref(CA, DA);
+                Deref(CB, DB);
+
+                // The same cell is the same term.
+                LG(CA); LG(CB); O(new Int64Equal());
+                OIf(); Continue(); OEnd();
+
+                OrderOf(CA, KA);
+                OrderOf(CB, KB);
+                LG(KA); I32(4); O(new Int32Equal());
+                LG(KB); I32(4); O(new Int32Equal());
+                O(new Int32Or());
+                OIf(); Ret(3); OEnd();
+                LG(KA); LG(KB); O(new Int32NotEqual());
+                OIf(); RetLess(KA, KB); OEnd();
+
+                // Variables: by address. An ATTVAR cell's address is its
+                // payload, the home it stands for.
+                LG(KA); I32(0); O(new Int32Equal());
+                OIf();
+                {
+                    TagIs(CA, (long)Tag.AttVar);
+                    OIf(); LG(CA); O(new Int32WrapInt64()); LSet(DA); OEnd();
+                    TagIs(CB, (long)Tag.AttVar);
+                    OIf(); LG(CB); O(new Int32WrapInt64()); LSet(DB); OEnd();
+                    LG(DA); LG(DB); O(new Int32Equal());
+                    OIf(); Continue(); OEnd();
+                    RetLess(DA, DB);
+                }
+                OEnd();
+
+                // Numbers: two integers by value; a float, a bigint or a
+                // rational on either side is the host's.
+                LG(KA); I32(1); O(new Int32Equal());
+                OIf();
+                {
+                    TagIs(CA, (long)Tag.Int); TagIs(CB, (long)Tag.Int); O(new Int32And());
+                    O(new Int32EqualZero());
+                    OIf(); Ret(3); OEnd();
+                    Signed(CA); Signed(CB); O(new Int64Equal());
+                    OIf(); Continue(); OEnd();
+                    Signed(CA); Signed(CB); O(new Int64LessThanSigned());
+                    OIf(); Ret(1); OEnd();
+                    Ret(2);
+                }
+                OEnd();
+
+                // Two different atoms: by name, the host's.
+                LG(KA); I32(2); O(new Int32Equal());
+                OIf(); Ret(3); OEnd();
+
+                // Compounds. A packed string is a list the engine unpacks.
+                TagIs(CA, (long)Tag.Pstr); TagIs(CB, (long)Tag.Pstr); O(new Int32Or());
+                OIf(); Ret(3); OEnd();
+                // The arity first: a list is '.'/2, a structure's is in
+                // the functor table's mirror.
+                TagIs(CA, (long)Tag.Lis);
+                OIf(); I32(2); LSet(KA);
+                OElse();
+                LG(CA); O(new Int32WrapInt64()); LSet(DA);
+                HeapLoad(DA); LSet(FA);
+                Arity(FA, KA);
+                OEnd();
+                TagIs(CB, (long)Tag.Lis);
+                OIf(); I32(2); LSet(KB);
+                OElse();
+                LG(CB); O(new Int32WrapInt64()); LSet(DB);
+                HeapLoad(DB); LSet(FB);
+                Arity(FB, KB);
+                OEnd();
+                LG(KA); LG(KB); O(new Int32NotEqual());
+                OIf(); RetLess(KA, KB); OEnd();
+                // Two lists: the tail first, so the head is compared first.
+                TagIs(CA, (long)Tag.Lis); TagIs(CB, (long)Tag.Lis); O(new Int32And());
+                OIf();
+                {
+                    LG(CA); O(new Int32WrapInt64()); LSet(DA);
+                    LG(CB); O(new Int32WrapInt64()); LSet(DB);
+                    PushPair(RefTo(DA, uint.MaxValue, 1), RefTo(DB, uint.MaxValue, 1));
+                    PushPair(RefTo(DA, uint.MaxValue, 0), RefTo(DB, uint.MaxValue, 0));
+                    Continue();
+                }
+                OEnd();
+                // A list against a structure of arity 2, or two structures
+                // of different functors: the names order them, the host's.
+                TagIs(CA, (long)Tag.Str); TagIs(CB, (long)Tag.Str); O(new Int32And());
+                O(new Int32EqualZero());
+                OIf(); Ret(3); OEnd();
+                LG(FA); LG(FB); O(new Int64NotEqual());
+                OIf(); Ret(3); OEnd();
+                // The same functor: the arguments, the first on top.
+                LG(KA); LSet(K);
+                OBlock(); OLoop();
+                {
+                    LG(K); I32(0); O(new Int32LessThanOrEqualSigned());
+                    O(new BranchIf(1));
+                    PushPair(RefTo(DA, K, 0), RefTo(DB, K, 0));
+                    LG(K); I32(1); O(new Int32Subtract()); LSet(K);
+                    O(new Branch(0));
+                }
+                OEnd(); OEnd();
+                Continue();
+            }
+            OEnd();
+            I32(0);                      // unreachable fallthrough
             O(new End());
             return code;
         }

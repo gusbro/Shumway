@@ -214,6 +214,12 @@ public interface IWasmCompileEnv
     /// check clp(Z) makes on every expression it parses.</summary>
     bool IsInlineAcyclic(int builtinId) => false;
 
+    /// <summary>Whether the builtin is sort/2, which the compiled code
+    /// answers itself over the module's standard-order comparator: the
+    /// sort clp(Z) makes of a queue list on every constraint it posts.
+    /// </summary>
+    bool IsInlineSort(int builtinId) => false;
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps

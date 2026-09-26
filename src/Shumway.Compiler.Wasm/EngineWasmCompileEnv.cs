@@ -37,6 +37,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "acyclic_term" && entry.Arity == 1;
     }
 
+    public bool IsInlineSort(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "sort" && entry.Arity == 2;
+    }
+
     public bool IsInlineGlobalFetch(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

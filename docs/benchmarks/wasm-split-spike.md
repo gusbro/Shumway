@@ -779,6 +779,29 @@ not rank the tier's own code; the counters do. And `node --prof-process`
 stops at a code state it does not know (`o+`, a newer V8 than node's):
 rewrite the tag to `+` before processing.
 
+### sort/2 in the module
+
+`variables_same_queue` sorts a list of queue terms on every constraint
+clp(Z) posts, 2,760 requests on queens24 x2 at 11 to 16 us each in
+`#wasmexits`. The module sorts it now: the elements are copied above the
+stack top, merge-sorted with a comparator of the module's own (a worklist
+walker like ground/1's: variables by address, integers by value, compounds
+by arity, functor and arguments), deduplicated, and built as a fresh list
+on the heap. Everything the comparator cannot order is the host's, decided
+before anything is written: two different atoms (ordered by name), a
+float, a bigint, a rational, a packed string, and a pair of cyclic terms
+past a step budget. A spine that is no proper list and a second argument
+that is no partial list go to the host too, which owns those errors.
+
+The comparator is furniture only a module that sorts carries; every other
+module has a stub in its slot, so the fixed cost of a one-predicate module
+does not grow (the byte-ratio gate reads 1.90x, as before). Priced in
+`#wasmexits`: 0.4 to 0.5 us an iteration in the module against 3 to 4 on
+Tier-0 and 11 to 16 as a request. On queens24 the 2,760 requests are gone;
+the clp(Z) table above does not move outside its noise (queens16's best of
+three swung from 173 to 361 ms between two runs of the same publish), which
+is what 7% of the run looks like from a browser's clock.
+
 Cost of shipping AOT: `wasm-opt` runs fine (the one-off `error parsing wasm`
 above did not reproduce; no `-p:WasmRunWasmOpt=false` needed). The native
 module is 23.8 MB raw, 4.5 MB brotli, 6.6 MB for the whole `_framework`
