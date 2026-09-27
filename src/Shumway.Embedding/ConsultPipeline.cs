@@ -368,14 +368,97 @@ internal sealed class ConsultPipeline
     // numbering the '$te_after' hook guards use). Null when none.
     private List<(int Fid, int SlotIdx, int Pos)>? _dynRoutedThisConsult;
 
+    /// <summary>Stores a clause term_expansion produced for a dynamic predicate
+    /// at its source position <paramref name="local"/> of this consult: after
+    /// the clauses the main loop stored from lines before it, before those
+    /// from lines after it. Returns false for any other clause.</summary>
+    private bool TryStoreProducedDynamic(Clause produced, int local, string moduleName,
+        HashSet<int>? pendingMultifile, Func<ModuleRewrite.Context> multifileCtx)
+    {
+        Clause routed = produced;
+        // A grammar rule is routed by its TRANSLATED head, as in the main loop.
+        if (routed.Kind == ClauseKind.DcgRule)
+        {
+            var dcgT = Shumway.Compiler.Parsing.DcgTransform.Apply(
+                new[] { routed }, failFast: !E._flags.DebugCodegen);
+            if (dcgT.Count == 1 && dcgT[0].Kind != ClauseKind.DcgRule) routed = dcgT[0];
+        }
+        if (!PrologEngine.TryExtractHead(routed, out string n, out int a)) return false;
+        int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+        if (!E._dynStore.IsDynamic(fid)) return false;
+        // The first clause the main loop stored from a LATER line marks the
+        // place; the ones after it move up by one.
+        int insertAt = -1;
+        if (_dynRoutedThisConsult is { } routedList)
+            foreach (var (rf, slotIdx, pos) in routedList)
+                if (rf == fid && pos > local && (insertAt < 0 || slotIdx < insertAt))
+                    insertAt = slotIdx;
+        bool isMultifile = pendingMultifile?.Contains(fid) == true;
+        int at = StoreDynamicClause(routed, fid, moduleName, isMultifile, multifileCtx, insertAt);
+        if (insertAt >= 0 && _dynRoutedThisConsult is { } shifted)
+            for (int i = 0; i < shifted.Count; i++)
+            {
+                var (rf, slotIdx, pos) = shifted[i];
+                if (rf == fid && slotIdx >= at) shifted[i] = (rf, slotIdx + 1, pos);
+            }
+        return true;
+    }
+
+    /// <summary>A clause of a dynamic predicate enters the dynamic store, where
+    /// assert, retract and clause/2 all find it, whichever way the consult met
+    /// it: read from the source, or produced by term_expansion. At the end of
+    /// the slot, or at <paramref name="insertAt"/> when that is not -1.
+    /// Returns the position it landed at.</summary>
+    private int StoreDynamicClause(Clause c, int fid, string moduleName, bool isMultifile,
+        Func<ModuleRewrite.Context> multifileCtx, int insertAt)
+    {
+        if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
+            c = ModuleRewrite.Rewrite(c, multifileCtx());
+        // §7.6.2: a source-declared clause for a dynamic predicate enters the
+        // database in its CONVERTED form, exactly as an assertz'd one does.
+        c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
+        int at;
+        if (insertAt < 0)
+        {
+            E._dynStore.AppendClause(fid, c);
+            at = E._dynStore[fid].Count - 1;
+        }
+        else
+        {
+            E._dynStore.InsertClauseAt(fid, insertAt, c);
+            at = insertAt;
+        }
+        // ADR-023: a CONSULT-borne clause is a mutation of the dynamic
+        // predicate exactly like a runtime assertz, and must invalidate the
+        // same things: the promoted snapshot, every live interpreter's
+        // IlByFunctorId slot, the caller-inlined-snapshot staleness set, the
+        // caches. Without this, Logtalk's '$lgt_current_object_'/11, whose
+        // registrations are consulted generated facts, kept serving a
+        // pre-consult snapshot under promotion.
+        E.InvalidateDynamicCache(fid);
+        // ADR-023 priming: a `:- dynamic`/`:- visible` predicate declared WITH
+        // source clauses runs as its snapshot from the first call.
+        E.IlPromotion.MarkPrime(fid);
+        // A clause from a named module is rewritten under that module's
+        // context at query setup, so its body calls to module-locals mangle as
+        // the module's static clauses do. A multifile clause is already
+        // rewritten above and gets no seed module: a later contributor from
+        // another module would hijack the context.
+        if (moduleName != PrologEngine.DefaultModuleName && !isMultifile)
+            E._dynamicSeedModule[fid] = moduleName;
+        return at;
+    }
+
     private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
-        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
+        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks,
+        string moduleName, HashSet<int>? pendingMultifile,
+        Func<ModuleRewrite.Context> multifileCtx)
     {
         long profT0 = PrologEngine.LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try
         {
             ReExpandInFileHooksCore(manifest, baseOffset, count, pendingDiscontiguous,
-                firstHookIndex, inFileGoalHooks);
+                firstHookIndex, inFileGoalHooks, moduleName, pendingMultifile, multifileCtx);
         }
         finally
         {
@@ -389,7 +472,9 @@ internal sealed class ConsultPipeline
     }
 
     private void ReExpandInFileHooksCore(ModuleManifest manifest, int baseOffset, int count,
-        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
+        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks,
+        string moduleName, HashSet<int>? pendingMultifile,
+        Func<ModuleRewrite.Context> multifileCtx)
     {
         bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
             || E.HasPrologTermExpansion6;
@@ -440,7 +525,17 @@ internal sealed class ConsultPipeline
                     // the main loop). Its own goals have not been expanded yet.
                     changed = true;
                     foreach (var t in pexp)
-                        rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(Clause.From(t)) : Clause.From(t));
+                    {
+                        var produced = hasGoalExp ? E.ExpandClauseGoals(Clause.From(t)) : Clause.From(t);
+                        // A clause of a dynamic predicate goes where the main
+                        // loop sends one read from the source: the dynamic
+                        // store, at the place its source line held. Kept here,
+                        // retract/1 and a qualified clause/2 never saw it.
+                        if (TryStoreProducedDynamic(produced, local, moduleName,
+                                pendingMultifile, multifileCtx))
+                            continue;
+                        rebuilt.Add(produced);
+                    }
                 }
                 else if (hasGoalExp)
                 {
@@ -1641,47 +1736,14 @@ internal sealed class ConsultPipeline
                     if (E._dynStore.IsDynamic(fid))
                     {
                         bool isMultifile = pendingMultifile?.Contains(fid) == true;
-                        if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
-                            c = ModuleRewrite.Rewrite(c, MultifileCtx());
-                        // §7.6.2 — a source-declared clause for a dynamic
-                        // predicate enters the database in its CONVERTED form,
-                        // exactly as an assertz'd one does.
-                        c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
-                        E._dynStore.AppendClause(fid, c);
+                        int at = StoreDynamicClause(c, fid, moduleName, isMultifile,
+                            MultifileCtx, insertAt: -1);
                         // In-file goal_expansion applies to this clause too —
                         // recorded for the post-commit re-expansion pass, with
                         // the position hooks are numbered against (the count of
                         // KEPT clauses before it, since guard indices are
                         // assigned over the final kept list).
-                        (_dynRoutedThisConsult ??= new()).Add(
-                            (fid, E._dynStore[fid].Count - 1, keptClauses.Count));
-                        // ADR-023 — a CONSULT-borne clause is a mutation of the
-                        // dynamic predicate exactly like a runtime assertz, and
-                        // must invalidate the same things: the promoted IL
-                        // snapshot (evict), every live interpreter's
-                        // IlByFunctorId slot, the caller-inlined-snapshot
-                        // staleness set, the caches. Without this, Logtalk's
-                        // '$lgt_current_object_'/11 — whose registrations are
-                        // consulted generated facts, not runtime asserts — kept
-                        // serving a pre-consult snapshot under promotion and
-                        // the load failed silently on the missing objects.
-                        E.InvalidateDynamicCache(fid);
-                        // ADR-023 priming — a `:- dynamic`/`:- visible`
-                        // predicate declared WITH source clauses runs as its
-                        // Tier-1 IL snapshot from the first call (evictable on
-                        // the first mutation).
-                        E.IlPromotion.MarkPrime(fid);
-                        // clauses routed here from a named
-                        // module (a source-carrying bundle entry, or an
-                        // explicit `:- module/1` source) must be rewritten
-                        // under that module's context at query setup so
-                        // their body calls to module-locals mangle the
-                        // same way the module's static clauses do.
-                        // (A multifile clause is already rewritten above and
-                        // must NOT get a seed module — a later contributor
-                        // from another module would hijack the context.)
-                        if (moduleName != PrologEngine.DefaultModuleName && !isMultifile)
-                            E._dynamicSeedModule[fid] = moduleName;
+                        (_dynRoutedThisConsult ??= new()).Add((fid, at, keptClauses.Count));
                         // Mid-query consult (consult/1 from a live query): the
                         // clause is already in E._dynStore.Slots (above), so
                         // clause/2 — which reads the live store — sees it in the
@@ -2024,7 +2086,10 @@ internal sealed class ConsultPipeline
         // consult — see ReExpandInFileHooks for how it isolates that state.
         if (inFileHooks)
             ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
-                pendingDiscontiguous, firstHookIndex, inFileGoalHooks);
+                pendingDiscontiguous, firstHookIndex, inFileGoalHooks,
+                moduleName, pendingMultifile,
+                () => new ModuleRewrite.Context(moduleName,
+                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors));
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO

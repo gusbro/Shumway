@@ -290,8 +290,9 @@ internal static class Prelude
         % twice. The GOALS it returned run free: they are where a frozen
         % user goal lives, and their alternatives are the point of ADR-049.
         '$wake_one'('$wake'(M, AttrVal, Other)) :-
-            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals) ->
+            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals, Proxy) ->
                 '$wake_call'(HookGoal), !,
+                '$wake_settle'(Proxy, Other),
                 '$wake_goals'(Goals)
             ; true ).   % hookless module: the bind already happened
         % A hook's Goals may come back unbound (none) or as a proper list.

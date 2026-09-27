@@ -217,8 +217,10 @@ public sealed partial class BytecodeInterpreter
                 int v4 = v3 >= 0 ? -1 : _engine.Verify4FunctorId(moduleId);
                 int goalsVarIdx = _engine.AllocateHeapUnbound();
                 Cell verifyGoal;
+                int proxy = -1;
                 if (v3 >= 0)
-                    verifyGoal = BuildVerify3Goal(v3, moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                    verifyGoal = BuildVerify3Goal(v3, moduleId, attrValueIdx, otherIdx, goalsVarIdx,
+                        out proxy);
                 else if (v4 >= 0)
                     verifyGoal = BuildVerifyGoal(v4, moduleId, attrValueIdx, otherIdx, goalsVarIdx);
                 else
@@ -229,6 +231,7 @@ public sealed partial class BytecodeInterpreter
                     continue;
                 }
                 if (!MetaCallInEngine(code, verifyGoal)) return false;
+                if (proxy >= 0) _engine.SettleWakeProxy(proxy, otherIdx);
                 goalLists[i] = Cell.Ref(goalsVarIdx);
             }
             for (int i = 0; i < batch.Count; i++)
@@ -266,9 +269,10 @@ public sealed partial class BytecodeInterpreter
     /// (the common case) work; ones that narrow the bound variable's own attributes
     /// in-place do not.</para></summary>
     private Cell BuildVerify3Goal(
-        int v3Functor, int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
+        int v3Functor, int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx,
+        out int proxy)
     {
-        int proxy = _engine.AllocateHeapUnbound();
+        proxy = _engine.AllocateHeapUnbound();
         _engine.PutAttr(proxy, moduleId, attrValueIdx);
         int f = _engine.AllocateHeap(4);
         _engine.SetHeap(f,     Cell.Functor(v3Functor));

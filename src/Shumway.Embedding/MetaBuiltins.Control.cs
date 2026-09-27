@@ -1830,7 +1830,9 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$wake_hook_goal'(+Module, +AttrVal, +Other, -HookGoal,
-    /// -Goals)</c> — ADR-049 driver support. Resolves the module's
+    /// -Goals, -Proxy)</c> — ADR-049 driver support. <c>Proxy</c> is the
+    /// variable a /3 hook receives (<c>[]</c> for a /4 hook), which
+    /// <c>'$wake_settle'/2</c> binds once the hook accepts. Resolves the module's
     /// <c>verify_attributes</c> hook (its own /3 first, then /4 with the
     /// bare fallback, per ADR-040) and builds the hook invocation the driver
     /// then runs through <c>call/1</c>; <c>Goals</c> is the fresh variable
@@ -1868,10 +1870,12 @@ public static partial class MetaBuiltins
 
         int goalsVar = engine.AllocateHeapUnbound();
         Cell hookGoal;
+        Cell proxyCell = Cell.Atom(AtomTable.EmptyListId);
         if (v3 >= 0)
         {
             int proxy = engine.AllocateHeapUnbound();
             engine.PutAttr(proxy, moduleId, attrValIdx);
+            proxyCell = Cell.Ref(proxy);
             int f = engine.AllocateHeap(4);
             engine.SetHeap(f,     Cell.Functor(v3));
             engine.SetHeap(f + 1, Cell.Ref(proxy));
@@ -1890,7 +1894,28 @@ public static partial class MetaBuiltins
             hookGoal = Cell.Str(f);
         }
         return engine.UnifyRegisterWithCell(3, hookGoal)
-            && engine.UnifyRegisterWithHeapAt(4, goalsVar);
+            && engine.UnifyRegisterWithHeapAt(4, goalsVar)
+            && engine.UnifyRegisterWithCell(5, proxyCell);
+    }
+
+    /// <summary><c>'$wake_settle'(+Proxy, +Other)</c> — binds a
+    /// verify_attributes/3 hook's proxy to the term its variable was bound
+    /// to (<see cref="Activation.SettleWakeProxy"/>); a no-op for
+    /// <c>[]</c>.</summary>
+    public static bool WakeSettle(Activation engine)
+    {
+        Cell p = engine.GetRegister(0);
+        if (p.Tag is not (Tag.Ref or Tag.AttVar)) return true;
+        Cell o = engine.GetRegister(1);
+        int otherIdx;
+        if (o.Tag is Tag.Ref or Tag.AttVar) otherIdx = o.AsHeapIndex;
+        else
+        {
+            otherIdx = engine.AllocateHeap(1);
+            engine.SetHeap(otherIdx, o);
+        }
+        engine.SettleWakeProxy(p.AsHeapIndex, otherIdx);
+        return true;
     }
 
     /// <summary><c>'$dif_check'(X, Y, Out)</c> — the C# core of

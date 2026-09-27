@@ -2327,6 +2327,23 @@ public sealed partial class Activation
     /// a <see cref="TrailType.ValueChange"/> carrying the original
     /// ATTVAR cell, so backtracking restores the attributed variable
     /// (not a bare unbound REF).</summary>
+    /// <summary>A <c>verify_attributes/3</c> hook receives a proxy standing
+    /// for the variable the unifier already bound. Once the hook accepts,
+    /// the proxy becomes what that variable became: bound to the same term,
+    /// trailed, waking nothing. Left attributed, it would outlive the hook
+    /// as a live constraint the top level reports; and a goal the hook
+    /// returned that names it sees the value, as it would the variable.</summary>
+    public void SettleWakeProxy(int proxyAddr, int otherIdx)
+    {
+        int home = Deref(proxyAddr);
+        if (_heap[home].Tag != Tag.AttVar) return;
+        int otherHome = Deref(otherIdx);
+        if (otherHome == home) return;
+        Cell other = _heap[otherHome];
+        BindAttVarToValue(home, otherHome,
+            other.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(otherHome) : other);
+    }
+
     private void BindAttVarToValue(int attAddr, int valueAddr, Cell valueCell)
     {
         Cell newCell = valueCell.Tag is Tag.Str or Tag.Lis or Tag.Pstr

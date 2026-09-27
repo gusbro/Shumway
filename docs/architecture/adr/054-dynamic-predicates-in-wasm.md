@@ -51,16 +51,18 @@ in flight can finish in it.
    visible clause is a retry, as in ADR-023, and so is ADR-023's churn pin,
    shared with the IL store (`DynamicChurnPinned`). A host that wires
    neither keeps the old behaviour: the compiler refuses the chain.
-2. **The clauses.** A dynamic predicate's clauses have two homes. What was
-   asserted is in the dynamic store; the SOURCE clauses of a predicate
-   declared dynamic in a module stay in the module, and the query setup
-   compiles both into one chain, the module's first. `BuildDynamicSnapshot`
-   read the store only, so it never had a snapshot for a module's dynamic
-   predicate, for IL either: `clpz_neq/2` is one, its 18 clauses in
-   clp(Z)'s module and none in the store. It now takes the module's clauses
-   from the setup's static rewrite and the store's after them, the chain's
-   own order. A mutation leaves those sources stale until the next setup,
-   so a functor mutated since then gets no snapshot until it runs.
+2. **The clauses.** The query setup compiles a dynamic predicate's chain
+   from two sources, the module's clauses first and the dynamic store's
+   after them, and `BuildDynamicSnapshot` read the store only. The two
+   disagreed for `clpz_neq/2`: its 18 clauses, produced by a
+   `term_expansion` hook of clp(Z)'s own file, were left among the module's
+   clauses by the consult's re-expansion pass, where the chain ran them but
+   `retract/1` and a module-qualified `clause/2` never saw them. That pass
+   now stores them in the dynamic store like any other clause of a dynamic
+   predicate (`ExpandedDynamicClausesTests`). The snapshot still reads both
+   sources, the chain's own order, so it is the chain whatever the consult
+   does. A mutation leaves those sources stale until the next setup, so a
+   functor mutated since then gets no snapshot until it runs.
 3. **Shadow region.** `PrologEngine.BuildShadowSnapshot` takes that
    snapshot, links it alone,
    `Linker.Link([clone], loadOffset: end of the code space, externalSymbols:

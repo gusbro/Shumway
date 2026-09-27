@@ -350,8 +350,10 @@ public sealed partial class PrologEngine
             // $countall C natives; setup_call_cleanup & co are native here.
             ["iso_ext"] = new[] { "$register_cleanup" },
             // TREALLA library(charsio): rides $char_type/$get_chars natives;
-            // the engine's charsio surface is builtin.
-            ["charsio"] = new[] { "$char_type" },
+            // the engine's charsio surface is builtin. Not $char_type as the
+            // marker: Scryer's charsio.pl calls it too, and loads as it is
+            // (the scryer shim provides it), read_from_chars/2 & co included.
+            ["charsio"] = new[] { "$get_chars" },
             // TREALLA library(error): rides $first_non_octet; must_be/can_be
             // are native + prelude.
             ["error"] = new[] { "$first_non_octet" },
@@ -476,12 +478,14 @@ public sealed partial class PrologEngine
     }
 
     // The trealla-dialect frozen/2 wrapper (see LoadNativeOverride "freeze").
-    // Reads the native coroutining attribute directly; the freeze: module
-    // prefix in the answer is DATA (their format), never called here.
+    // The goals come from the native frozen/2, which hands them back as they
+    // were written: the attribute stores each one wrapped. The freeze:
+    // module prefix in the answer is DATA (their format), never called here.
     private const string TreallaFreezeShim = """
         :- module(trealla_freeze, [frozen/2]).
         frozen(X, G) :-
-            (   var(X), get_attr(X, coroutining, frozen(G0)) ->
+            (   var(X), get_attr(X, coroutining, frozen(_)) ->
+                coroutining:frozen(X, G0),
                 G = freeze:freeze(X, G0)
             ;   G = true
             ).

@@ -29,6 +29,25 @@ public class Adr046ModuleOperatorTests
     }
 
     [Fact]
+    public void AnOperatorErrorInsideAModuleNamesTheBuiltinTheProgramCalled()
+    {
+        // op/3 and current_op/3 in module code run as module-aware
+        // rewrites; their errors still name op/3 and current_op/3 (Scryer's
+        // conformity suite catches error(_, op/3)).
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(m46e, []).\n"
+            + "bad_op :- op(1000, xfy, ',').\n"
+            + "bad_current :- current_op(1201, xfx, _).\n");
+        Assert.True(e.Query(
+            "catch((m46e:bad_op, fail), "
+            + "error(permission_error(modify, operator, ','), op/3), true).").Success);
+        Assert.True(e.Query(
+            "catch((m46e:bad_current, fail), "
+            + "error(domain_error(operator_priority, 1201), current_op/3), true).").Success);
+    }
+
+    [Fact]
     public void UserQualifiedOp_IsGlobalFromInsideAModule()
     {
         var e = new PrologEngine();

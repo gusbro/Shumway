@@ -1077,6 +1077,9 @@ public static partial class MetaBuiltins
         string mod = modCell.Tag == Tag.Atom
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
+        // An error names op/3: the program wrote op/3, not this rewrite.
+        engine.CurrentBuiltinName = "op";
+        engine.CurrentBuiltinArity = 3;
         return OpCore(engine, host, regBase: 1, host.ModuleOperatorLayer(mod));
     }
 
@@ -1092,6 +1095,9 @@ public static partial class MetaBuiltins
         string mod = modCell.Tag == Tag.Atom
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
+        // An error names current_op/3, as '$op_ctx' names op/3.
+        engine.CurrentBuiltinName = "current_op";
+        engine.CurrentBuiltinArity = 3;
         ValidateCurrentOpArgs(engine, regBase: 1);
         var ops = FilterOpsByBoundArgs(
             engine, host.ModuleOperatorLayer(mod).Enumerate().ToArray(), regBase: 1);

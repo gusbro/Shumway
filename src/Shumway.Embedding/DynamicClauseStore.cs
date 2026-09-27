@@ -383,6 +383,17 @@ internal sealed class DynamicClauseStore
         if (_indexes.TryGetValue(fid, out var ix)) ix.Prepend(c);
     }
 
+    /// <summary>Inserts at a dense position: a consult placing a clause that
+    /// term_expansion produced where its source line stood. The index is
+    /// dropped rather than patched, as for <see cref="ReplaceClauseAt"/>;
+    /// this runs at consult time only.</summary>
+    public void InsertClauseAt(int fid, int index, Clause c)
+    {
+        var slot = Slot(fid);
+        NotifyInsertAt(fid, index);
+        slot.Insert(index, c);
+        _indexes.Remove(fid);
+    }
     /// <summary>Retires the clause at <paramref name="index"/> (a PHYSICAL
     /// position). The slot becomes a tombstone, so no position moves: a
     /// window is told first only when the slot is INSIDE it, because its view
