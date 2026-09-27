@@ -65,6 +65,33 @@ Confirm the tier is live before believing any number: `jit_compile(status).`
 at the top level. "the capability is off in this build" means the flag was
 missing from the publish.
 
+### Running a hook headless
+
+`WebShumwayHook.ps1` does the whole round without opening a window: it serves
+the publish, opens the page on the hook in a headless Chrome (or Edge) with a
+throwaway profile, waits until the collected report matches `-Done`, prints it,
+and kills the browser and the server whether the run finished or not.
+
+```bash
+powershell -File src/Shumway.Web/WebShumwayHook.ps1 \
+    -Hook '#wasmprobe=exits&n=100000' -Done 'probe exits: done|CRASHED' \
+    -Out report.txt -TimeoutSec 900
+```
+
+It exits non-zero when nothing matched `-Done` in time. Three things that
+cost time before they were known:
+
+- **The report path.** The server appends to `-Collect` from its own
+  process; a path it cannot resolve answers every POST with 500, and the
+  hook runs with nothing recorded. The script resolves `-Out` itself,
+  POSIX-style paths from a bash shell (`/c/...`) included.
+- **Fingerprinted scripts.** The publish names every module with a hash
+  (`main.<hash>.js`, `measure.<hash>.js`) and an import map resolves the
+  plain names, so looking for `measure.js` in the publish finds nothing and
+  that is not a missing file.
+- **A throwaway probe** needs no republish: a `.pl` dropped into
+  `publish/wwwroot/probes/` is served as it is.
+
 ### The hooks
 
 Every one is a URL fragment on the published page, and every one POSTs its
@@ -82,6 +109,47 @@ looks like a hang and is not.
 | `#wasmthread` | Design probe: is engine work pinned to one thread? A module registers in the calling thread's own table, so a pool that hands out a different thread makes every module pay registration again. |
 | `#wasmspike[=NxM]` | Phase-0 spike, kept as the reproducer for `browser-spike.md`. |
 | `#wasmsplit[=hopsxrounds]` | Phase-0 spike (the `return_call_indirect` Go/No-Go), kept as the reproducer for `wasm-split-spike.md`. |
+| `#wasmclpz[=rounds[:case,...]]` | Triska's CLP(Z) examples over Scryer's real `clpz.pl`, Tier-0 against the tier, with an oracle per case; the case list narrows the run. Needs [Scryer's library](#scryers-library). |
+| `#wasmprobe=<file>[&n=N][&rounds=R][&trace=ch,...][&budget=s]` | The generic probe: the goals `wwwroot/probes/<file>.pl` declares, Tier-0 against the tier, best time, ratio and the tier's counters per goal. See [Probes](#probes). |
+
+### Probes
+
+A new measurement is a Prolog file, not a new hook. `wwwroot/probes/<file>.pl`
+is consulted as it is; two kinds of comment lines drive `#wasmprobe`:
+
+```prolog
+%uses scryer                      % load Scryer's library tree first
+%probe b_getval: b_setval(mbk, 1), mb_bget({N}).
+```
+
+Each `%probe` goal runs in both tiers, ABBA within each round, every timed run
+after a discarded warm one (a cold run measures the promotion). `{N}` is the
+`n` option. `trace=` arms diagnostic channels around the tier's timed runs and
+posts their dumps: `trace`, `attrs`, `shapes`, `cells`, `builtins`,
+`commits`, and the dump-only `live` and `seq`. They cost real time, so leave
+them off for a timing. `probes/exits.pl` prices one kind of module exit per
+goal (`#wasmprobe=exits&n=100000`). The helpers the hooks share (library
+load, bounded goal, tier switch, counters, traces) are in `wwwroot/measure.js`.
+
+### Scryer's library
+
+`#wasmclpz` and any probe with `%uses scryer` load Scryer's library tree
+from `wwwroot/scryerlib/`. It is not in the repository (it is theirs; the
+page loads it at run time; `.gitignore` keeps it out), so regenerate it in
+each checkout:
+
+```bash
+mkdir -p src/Shumway.Web/wwwroot/scryerlib
+cp <scryer>/lib/*.pl src/Shumway.Web/wwwroot/scryerlib/
+(cd src/Shumway.Web/wwwroot/scryerlib && ls *.pl > manifest.txt)
+```
+
+`#wasmclpz` also needs `scryerlib/cases.pl`, its benchmark program: the
+examples of `clpz.pl`'s own documentation with an oracle per case. Being
+theirs, it stays out of the repository with the tree and is copied in
+beside it. A missing tree now stops the hook with an error; it used to load
+one garbage file and let this engine's own clpfd answer, measuring the wrong
+library without saying so.
 
 Pass `rounds=1` unless you know why you want more. The wall figure is the
 MIN across rounds and the tick breakdowns SUM, so a higher count makes the

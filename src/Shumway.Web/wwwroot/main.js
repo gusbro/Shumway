@@ -2370,8 +2370,14 @@ if (persistMode) {
     emit(text + '\n', 'error');
     mark(text);
   }
+} else if (location.hash.startsWith('#wasmprobe')) {
+  // #wasmprobe=<file>&n=..&rounds=..&trace=..: the goals probes/<file>.pl
+  // declares, Tier-0 against the tier. Format and options in measure.js.
+  await (await import('./measure.js')).wasmProbe(
+    { session, libraries, emit, hash: location.hash });
 } else if (location.hash.startsWith('#wasmclpz')) {
-  // #wasmclpz, or #wasmclpz=<rounds>: Triska's canonical CLP(Z) examples over
+  // #wasmclpz, #wasmclpz=<rounds> or #wasmclpz=<rounds>:<case>,<case>...:
+  // Triska's canonical CLP(Z) examples over
   // the REAL clpz.pl from the Scryer tree (served beside the page, never
   // vendored), Tier-0 against the wasm tier, ABBA within each round so drift
   // cancels. Wall-clock is legitimate here and ONLY here: the wasm tier is
@@ -2385,27 +2391,18 @@ if (persistMode) {
   // a WARM loop. Promotion happens at a dispatch threshold, so a cold timed
   // loop measures the promotion instead of the solve -- measured at 11x on
   // the desktop before this was fixed.
-  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  const m = await import('./measure.js');
+  const mark = m.mark;
   try {
-    const spec = /^#wasmclpz=(\d+)$/.exec(location.hash);
+    const spec = /^#wasmclpz=(\d+)(?::([\w,]+))?$/.exec(location.hash);
     const rounds = spec ? Number(spec[1]) : 1;
+    const onlyCases = spec && spec[2] ? spec[2].split(',') : null;
     emit(`--- wasm clpz: Triska examples, tier0 vs tier1, x${rounds} rounds ---\n`);
 
     // 1. Scryer's library tree into a 'scryer' collection.
-    const t0 = performance.now();
-    const manifest = await (await fetch('scryerlib/manifest.txt')).text();
-    const files = manifest.split('\n').map(x => x.trim()).filter(Boolean);
-    const collection = 'scryer_clpz';
-    await libraries.remove(collection);
-    await libraries.create(collection, 'scryer');
-    let bytes = 0;
-    for (const f of files) {
-      const text = await (await fetch('scryerlib/' + f)).text();
-      bytes += text.length;
-      await libraries.write(collection, f, text);
-    }
-    const tWrite = performance.now() - t0;
-    mark(`clpz: wrote ${files.length} files, ${bytes} chars, ${Math.round(tWrite)}ms`);
+    const lib = await m.loadScryerLibrary(libraries, 'scryer_clpz');
+    const files = { length: lib.files }, bytes = lib.bytes, tWrite = lib.ms;
+    mark(`clpz: wrote ${lib.files} files, ${bytes} chars, ${Math.round(tWrite)}ms`);
 
     // 2. clpz + the benchmark program. The load is itself a number.
     const cases = await (await fetch('scryerlib/cases.pl')).text();
@@ -2416,21 +2413,11 @@ if (persistMode) {
     if (err) { emit('consult failed: ' + err + '\n', 'error'); mark('clpz: CONSULT FAILED ' + err); }
     mark(`clpz: consulted clpz + cases in ${Math.round(tLoad)}ms`);
 
-    async function goal(g, budget) {
-      const t = performance.now();
-      const e0 = await session.start(g);
-      if (e0) return { ms: -1, ok: false, text: 'start error: ' + e0 };
-      const r = await session.next(budget ?? 120);
-      return { ms: performance.now() - t, ok: r.tag === 's' || r.tag === 'l', text: r.text };
-    }
-
-    async function mode(m) {
-      const t = performance.now();
-      const rep = await session.exports().JitCompileControl(m);
-      // A queued jit_compile(off) eviction applies at the NEXT query setup.
-      await session.start('true.'); await session.next(5);
-      return { ms: performance.now() - t, rep };
-    }
+    const goal = (g, budget) => m.timedGoal(session, g, budget ?? 120);
+    const mode = async (mo) => {
+      const r = await m.setTierMode(session, mo);
+      return { ms: r.ms, rep: r.reply };
+    };
 
     // Counts are the desktop/Scryer ones divided by SCALE: browser Tier-0
     // runs about 40x slower than the desktop tier, so the desktop counts
@@ -2440,32 +2427,40 @@ if (persistMode) {
     const CASES = [['queens10ff', 50], ['sendmore', 20], ['queens16', 20],
                    ['queens24', 20], ['sudoku', 5], ['factorial', 100]]
                   .map(([c, n]) => [c, Math.max(1, Math.round(n / SCALE))]);
+    if (onlyCases) CASES.splice(0, CASES.length, ...CASES.filter(([c]) => onlyCases.includes(c)));
     const best = {}, ok = {};
     const note = (k, ms, good) => {
       if (ms >= 0 && (!(k in best) || ms < best[k])) best[k] = ms;
       ok[k] = (ok[k] ?? true) && good;
     };
     const switchMs = {};
+    // Reading the counters resets them, so the report shows the tier's own
+    // figures for one 'all' pass rather than Tier-0's and the tier's mixed.
+    let tierStatus = null;
     for (let r = 0; r < rounds; r++) {
-      for (const m of ['off', 'all', 'all', 'off']) {
-        const sw = await mode(m);
-        switchMs[m] = Math.max(switchMs[m] ?? 0, sw.ms);
-        mark(`clpz: round ${r} jit_compile(${m}) ${Math.round(sw.ms)}ms :: ${sw.rep}`);
+      for (const mo of ['off', 'all', 'all', 'off']) {
+        const sw = await mode(mo);
+        switchMs[mo] = Math.max(switchMs[mo] ?? 0, sw.ms);
+        mark(`clpz: round ${r} jit_compile(${mo}) ${Math.round(sw.ms)}ms :: ${sw.rep}`);
+        await m.readCounters(session);   // the counters restart at the mode boundary
         for (const [c, n] of CASES) {
           // Warm first (discarded), then the timed loop.
           const w = await goal(`loop(${c}, ${n}).`);
-          if (!w.ok) { mark(`clpz: WARM FAILED ${c} ${m}: ${w.text}`); }
+          if (!w.ok) { mark(`clpz: WARM FAILED ${c} ${mo}: ${w.text}`); }
           const res = await goal(`loop(${c}, ${n}).`);
           // The oracle, separately: a fast wrong answer must not pass.
           const orc = await goal(`\\+ \\+ check(${c}).`);
-          note(`${c} ${m}`, res.ms, res.ok && orc.ok);
-          mark(`clpz: round ${r} ${m} ${c} x${n} -> ${Math.round(res.ms)}ms `
+          note(`${c} ${mo}`, res.ms, res.ok && orc.ok);
+          mark(`clpz: round ${r} ${mo} ${c} x${n} -> ${Math.round(res.ms)}ms `
              + `${res.ok ? 'ok' : 'BAD'} oracle=${orc.ok ? 'ok' : 'WRONG'}`);
         }
+        const after = await m.readCounters(session);
+        if (mo === 'all') tierStatus = after.status;
+        mark(`clpz: counters after ${mo}, round ${r}: ${after.line}`);
       }
     }
 
-    const status = await session.exports().JitCompileControl('status');
+    const status = tierStatus ?? (await m.readCounters(session)).status;
     const rows = CASES.map(([c, n]) => {
       const off = best[`${c} off`], all = best[`${c} all`];
       const good = ok[`${c} off`] && ok[`${c} all`];
@@ -2639,7 +2634,7 @@ if (persistMode) {
     const rounds = spec ? Number(spec[1]) : 5;
     const queens = spec && spec[2] !== undefined ? Number(spec[2]) : 12;
     emit(`--- wasm grain: x${rounds} rounds, queens ${queens} ---\n`);
-    mark('grain: starting rounds=' + rounds);
+    mark('grain: starting rounds=' + rounds + ' boot=' + Math.round(performance.now()) + 'ms');
     const report = await session.exports().WasmGrainProbe(rounds, queens, only);
     emit(report);
     const pre = document.createElement('pre');
