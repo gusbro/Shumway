@@ -320,4 +320,18 @@ public sealed class FlagAndCleanupTests
         Assert.True(e.Query("catch((setup_call_cleanup(true, true, 3), fail), "
             + "error(type_error(callable, 3), _), true).").Success);
     }
+
+    /// <summary>A flag current_prolog_flag/2 enumerates exists, so setting
+    /// it to its own value is accepted or refused with a permission error,
+    /// never a domain error (8.17.1.3).</summary>
+    [Fact]
+    public void EveryListedFlag_IsSettableOrReadOnly_NeverUnknown()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query("current_prolog_flag(tabling, _).").Success);
+        Assert.True(e.Query("\\+ ( current_prolog_flag(F, V), "
+            + "catch((set_prolog_flag(F, V), R = ok), error(R, _), true), "
+            + "R = domain_error(prolog_flag, _) ).").Success,
+            "a listed flag raised domain_error(prolog_flag, F)");
+    }
 }

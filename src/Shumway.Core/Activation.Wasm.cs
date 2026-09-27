@@ -281,6 +281,8 @@ public sealed partial class Activation
         FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
     private static readonly int PreludeModuleAtomId =
         AtomTable.Intern("$prelude", permanent: true).Id;
+    private static readonly int UserModuleAtomId =
+        AtomTable.Intern("user", permanent: true).Id;
     private static readonly int MqualTagFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
@@ -294,7 +296,9 @@ public sealed partial class Activation
     {
         _goalHasMetaArgs = false;
         if (MetaArgSpecOf is not { } specOf) return;
-        if (moduleAtomId == PreludeModuleAtomId) return;
+        // user's predicates are global, so its goals need no module; wrapped,
+        // call(',', fail, 3) reported (user:fail, user:3) as its culprit.
+        if (moduleAtomId == PreludeModuleAtomId || moduleAtomId == UserModuleAtomId) return;
         // The module's own predicate of that name is what the goal reaches.
         string? local = CurrentFunctorAddresses is { } addresses
             && addresses.TryGetValue(ModuleQualify.Mangle(moduleAtomId, atomId, totalArity), out _)

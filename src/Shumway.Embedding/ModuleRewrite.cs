@@ -378,6 +378,11 @@ public static class ModuleRewrite
     /// else, a variable included, takes the module.</summary>
     private static bool NeedsContext(Term a, int extra, Context ctx)
     {
+        // In user, whose own predicates are global, a control construct needs
+        // the module only through a sub-goal that does. Wrapped anyway, the
+        // module shows in an ISO error's culprit, (user:fail, user:3), and a
+        // `;` no longer sees the if-then-else it is handed.
+        bool inUser = ctx.ModuleName == PrologEngine.DefaultModuleName;
         string name;
         int arity;
         switch (a)
@@ -389,13 +394,19 @@ public static class ModuleRewrite
                 // (A, B) there is a conjunction, not ','/4.
                 if (IsControlFlow(ct.Functor, ct.Args.Length)
                     || (ct.Functor == "{}" && ct.Args.Length == 1))
-                    return true;
+                {
+                    if (!inUser) return true;
+                    foreach (Term sub in ct.Args)
+                        if (NeedsContext(sub, 0, ctx)) return true;
+                    return false;
+                }
                 name = ct.Functor;
                 arity = ct.Args.Length + extra;
                 break;
             default: return false;
         }
-        if (IsControlFlow(name, arity) || MetaGoalPositions(name, arity) is not null)
+        if (IsControlFlow(name, arity)) return !inUser;
+        if (MetaGoalPositions(name, arity) is not null)
             return true;
         if (IsDynamic(name, arity, ctx)) return false;
         bool local = IsLocal(name, arity, ctx);

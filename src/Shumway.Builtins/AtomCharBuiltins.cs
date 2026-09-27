@@ -957,7 +957,8 @@ public static class AtomCharBuiltins
             {
                 // ISO §8.16.8.3.d: an element that is not a character code —
                 // an atom, a compound, an out-of-range integer alike — is
-                // representation_error(character_code). The chars side keeps
+                // representation_error(character_code), Number bound or not
+                // (Schimpf's number_codes(1, [[]])). The chars side keeps
                 // its own type_error(character, E) (§8.16.7.3): the standard
                 // is asymmetric here on purpose.
                 if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))

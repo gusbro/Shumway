@@ -338,7 +338,8 @@ public static class AtomListBuiltins
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // With BOTH arguments bound the list is still type-checked
             // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
-            // representation_error(character_code), not a silent failure.
+            // representation_error(character_code), not a silent failure,
+            // as number_codes/2 is with its Number bound.
             // Only a PROPER list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
             if (ListCursor.IsProperListCell(engine, codesCell))
@@ -393,7 +394,8 @@ public static class AtomListBuiltins
             // ISO §8.16.5.3.d: any bound element that is not a character
             // code — wrong type or out of range alike — is
             // representation_error(character_code). An astral code appends
-            // its surrogate pair.
+            // its surrogate pair. Not type_error(integer, E): ISO names no
+            // such error for a codes list, whatever other systems raise.
             if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");

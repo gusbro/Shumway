@@ -112,6 +112,7 @@ public static partial class MetaBuiltins
             case "max_procedure_arity":
             case "dialect":
             case "argv":
+            case "tabling":
                 throw new ShumwayPrologException(IsoError.PermissionError(
                     "modify", "flag", new AtomTerm(flagName), engine));
         }

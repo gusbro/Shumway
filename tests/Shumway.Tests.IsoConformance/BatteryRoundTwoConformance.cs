@@ -276,8 +276,19 @@ public class BatteryRoundTwoConformance
         // With BOTH arguments bound the list is still type-checked
         // (§8.16.4/8.16.5) — but only when it is fully ground: a partial
         // list, or one holding unbound elements, is the generate
-        // direction and must unify.
+        // direction and must unify. A bad element is
+        // representation_error(character_code) in both codes predicates, the
+        // first argument bound or not (8.16.5.3, 8.16.8.3; Neumerkel's
+        // number_codes(1, [[]])): ISO names no type_error(integer, E) here.
         Succeeds("catch(atom_codes(abc, [a,b,c]), "
+            + "error(representation_error(character_code), _), true).");
+        Succeeds("catch(atom_codes(abc, [-1]), "
+            + "error(representation_error(character_code), _), true).");
+        Succeeds("catch(atom_codes(_, [a]), "
+            + "error(representation_error(character_code), _), true).");
+        Succeeds("catch(number_codes(123, [0'1, 0'2, 0'3, '4']), "
+            + "error(representation_error(character_code), _), true).");
+        Succeeds("catch(number_codes(12, [0'1, -1]), "
             + "error(representation_error(character_code), _), true).");
         Succeeds("catch(atom_codes('ABC', [66|67]), "
             + "error(type_error(list, [66|67]), _), true).");

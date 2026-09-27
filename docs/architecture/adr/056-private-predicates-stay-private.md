@@ -61,14 +61,18 @@ same rule.
      that resolves the same from any module stays as written: one naming
      a global or builtin predicate that is neither a control construct
      nor a meta-predicate. In `user`, whose own predicates are global,
-     that leaves variables and imports to qualify. A call to the module's
+     that leaves variables and imports to qualify, and a control construct
+     only through a sub-goal that needs it: wrapped anyway, the module
+     showed in an ISO error's culprit (`call(',', fail, 3)` reported
+     `(user:fail, user:3)`). A call to the module's
      own predicate is not qualified: its clauses resolve in the same
      module, and whatever they pass on to another module is qualified
      there, at the crossing. Qualifying it would wrap a library's
      recursion (`maplist` calling itself) once per step.
    - At run time, a goal dispatched with a module (a variable goal a
      clause of `m` meta-calls, or `m:Goal`) passes the module to its
-     meta-arguments the same way.
+     meta-arguments the same way. `user` passes none: its predicates are
+     global.
    - `M:Goal`, at compile time or at run time, makes `M` the context of
      Goal's meta-arguments, so `hof:apply_to(ok, X)` looks for `ok` in
      `hof`, as in Scryer.

@@ -87,7 +87,7 @@ Shumway; only that one selector borrows SWI's name.
   compiler needs, is native.
 
 - **The `tests/prolog` ISO conformity battery** (192 testers, 4,304
-  counted tests): **4,257 passed / 47 failed**, every tester reporting
+  counted tests): **4,258 passed / 46 failed**, every tester reporting
   (measured 2026-09; baseline before the 2026-08 campaign: 2,096 / 933).
   The five `unicode/` testers run with no skips: `directives/encoding_1`
   3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
@@ -107,20 +107,42 @@ Shumway; only that one selector borrows SWI's name.
   (integers accepted, identity for the rounding functions): the SWI/Scryer
   library ecosystems this engine certifies against rely on it, and Scryer
   (the strictest of the modern systems) accepts it too. The four
-  `unbounded` failures build terms of enormous arity with `functor/3`,
-  which Shumway refuses with `resource_error(finite_memory)`.
+  `unbounded` failures build terms of enormous arity with `functor/3`:
+  a term's arity has no limit of its own here (`max_arity` is
+  `unbounded`), so running into the memory it would take is
+  `resource_error(finite_memory)`.
 
   `\e`, `\s`, `\d` in quoted tokens and a lone `0''` are SWI extensions,
   not ISO: GNU Prolog rejects them too, and Shumway's reader accepts them
   only inside the swi dialect load scope, because the strict reading is
   what the Neumerkel conformance suite pins.
 
-  Still open: six `length_2` tests (`length(a, N)` and other non-lists
-  are expected to raise `type_error(list, ...)` where Shumway fails), six
-  in `read_term_3`, two each in `stream_property_2`, `at_end_of_stream_1`
-  and `atom_codes_2`, and one each in `number_codes_2`,
-  `current_input_1`, `current_output_1`, `set_prolog_flag_2` and
-  `syntax/numbers`.
+  The rest follow the standard, or the conformance cases that read it,
+  where these `lgt_*` and `commons_*` tests record what several other
+  systems do:
+
+  - `length_2` (6): `length(a, N)` and other non-lists fail rather than
+    raise `type_error(list, ...)`, as Neumerkel's `length/2` cases have
+    it (`length(2, 0)` is false).
+  - `read_term_3` (6): `variables/1`, `variable_names/1` and
+    `singletons/1` are output options, so a value that cannot unify
+    (`variables(a)`) makes the read fail; it is not a
+    `domain_error(read_option, ...)` (Cor.3, Neumerkel's cases).
+  - `current_input_1`, `current_output_1`, `stream_property_2` (4) and
+    `at_end_of_stream_1` (2): asking about a closed stream, or asking
+    whether an output stream is at its end, fails; the error tables of
+    8.11 list no error for those cases.
+  - `atom_codes_2` (2) and `number_codes_2` (1): a list element that is
+    not a character code is `representation_error(character_code)`, the
+    error 8.16.5.3 and 8.16.8.3 name, whether or not the first argument
+    is bound. The tests expect `type_error(integer, E)`; the battery's
+    own note in `number_codes_2` says the standard specifies the
+    representation error, and its `lgt_number_codes_2_26` and `_28`
+    accept either.
+
+  The one `syntax/numbers` failure is the lone `0''` above
+  (`lgt_number_30`, which the battery itself marks de facto rather than
+  standard). No failure is left open.
 
 ## Notes
 

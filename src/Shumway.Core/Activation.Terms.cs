@@ -730,7 +730,11 @@ public sealed partial class Activation
 
     /// <summary>True when the heap cell at <paramref name="addr"/> is an
     /// (unbound) attributed variable.</summary>
-    public bool IsAttVarAt(int addr) => GetHeap(addr).Tag == Tag.AttVar;
+    public bool IsAttVarAt(int addr)
+        // The attribute table keeps rows for variables backtracking freed
+        // (ADR-052), and the heap array keeps their stale cells: an address
+        // at or above the top is dead whatever its cell still reads.
+        => (uint)addr < (uint)_heapTop && GetHeap(addr).Tag == Tag.AttVar;
 
     /// <summary>Attaches (or replaces) the attribute for
     /// <paramref name="moduleId"/> on the variable at

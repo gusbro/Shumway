@@ -207,6 +207,26 @@ public class AttrMirrorTests
         Agrees(e, "after undoing the promotion");
     }
 
+    /// <summary>A row the table keeps for a variable the heap no longer
+    /// holds is not a live attributed variable, whatever the stale cell above
+    /// the top still reads. The top level's residual projection took such a
+    /// row for live and read its value from cells a later write had reused
+    /// (a packed-string buffer, which no term walker can materialize).</summary>
+    [Fact]
+    public void AnAddressAboveTheHeapTop_IsNotALiveAttvar()
+    {
+        var e = new Activation();
+        int floor = e.HeapTop;
+        int x = e.AllocateHeapUnbound();
+        e.PutAttr(x, ModA, Value(e, 50));
+        Assert.True(e.IsAttVarAt(x));
+
+        e.SetHeapTop(floor);
+
+        Assert.Equal(Tag.AttVar, e.GetHeap(x).Tag);   // the stale cell remains
+        Assert.False(e.IsAttVarAt(x));
+    }
+
     [Fact]
     public void HeapGc_RekeysTheImage()
     {
