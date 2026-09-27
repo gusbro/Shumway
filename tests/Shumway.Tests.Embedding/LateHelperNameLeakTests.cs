@@ -10,8 +10,7 @@ namespace Shumway.Tests.Embedding;
 /// module-mangled 'mod$$disj_12', always a '$' right before the last
 /// segment. A user local like 'test_326' fits the letters_digits shape by
 /// accident; registering it (bare, first-compile-wins) leaked it through
-/// the module wall — resolving cross-module ahead of both the
-/// existence_error and the consult-direct fallback's ambiguity check.</summary>
+/// the module wall, resolving cross-module ahead of the existence_error.</summary>
 public sealed class LateHelperNameLeakTests
 {
     [Fact]
@@ -31,7 +30,7 @@ public sealed class LateHelperNameLeakTests
                 dep_7.
                 """);
             File.WriteAllText(Path.Combine(dir, "lhl_top.pl"), """
-                :- module(lhl_top, []).
+                :- module(lhl_top, [touch/0]).
                 :- use_module('lhl_dep.pl').
                 touch :- lhl_pub.
                 """);
@@ -39,26 +38,23 @@ public sealed class LateHelperNameLeakTests
             e.ConsultFile(Path.Combine(dir, "lhl_top.pl"));
             Assert.True(e.Query("touch.").Success);
             Assert.True(e.Query(
-                "catch(dep_7, error(existence_error(procedure, dep_7/0), _), true).")
+                "catch((dep_7, fail), error(existence_error(procedure, dep_7/0), _), true).")
                 .Success);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public void ShapedDuplicates_HitTheAmbiguityCheck_NotFirstCompileWins()
+    public void ShapedDuplicates_StayPrivate_NotFirstCompileWins()
     {
-        // Two directly consulted modules define dup_1/0: the consult-direct
-        // fallback must raise the ambiguity ball. Before the fix, the
-        // first-compiled module's dup_1 registered bare in the late-helper
-        // registry and PREEMPTED it — the bare call silently ran whichever
-        // module compiled first.
+        // Two modules define dup_1/0 as a private: a bare call reaches
+        // neither. The first-compiled module's dup_1 must not register bare
+        // in the late-helper registry, or the call silently runs it.
         var e = new PrologEngine();
         e.ConsultString(":- module(lhl_a, []).\ndup_1 :- throw(ran_a).\n");
         e.ConsultString(":- module(lhl_b, []).\ndup_1 :- throw(ran_b).\n");
         Assert.True(e.Query(
-            "catch(dup_1, error(existence_error(procedure, dup_1/0), "
-            + "shumway(ambiguous_module_local, [lhl_a, lhl_b])), true).").Success);
+            "catch(dup_1, error(existence_error(procedure, dup_1/0), _), true).").Success);
     }
 
     [Fact]

@@ -235,7 +235,14 @@ public sealed partial class BytecodeInterpreter
                 goalLists[i] = Cell.Ref(goalsVarIdx);
             }
             for (int i = 0; i < batch.Count; i++)
-                if (!RunGoalList(code, goalLists[i])) return false;
+            {
+                // A hook's goals run in its attribute's module (ADR-056); a
+                // lazy goal already carries the module it was written in.
+                int moduleId = batch[i].Item1;
+                if (!RunGoalList(code, goalLists[i],
+                        moduleId == Shumway.Core.Activation.LazyAttrModuleId ? -1 : moduleId))
+                    return false;
+            }
         }
         return true;
     }
@@ -285,13 +292,22 @@ public sealed partial class BytecodeInterpreter
     /// <summary>Meta-calls every goal in a hook's returned list, in
     /// order. An unbound or empty list runs nothing; a non-list term is
     /// a malformed hook result and fails.</summary>
-    private bool RunGoalList(ProgramView code, Cell listCell)
+    private bool RunGoalList(ProgramView code, Cell listCell, int moduleId)
     {
         Cell cursor = DerefCell(listCell);
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;
-            if (!MetaCallInEngine(code, _engine.GetHeap(headIdx))) return false;
+            Cell goal = _engine.GetHeap(headIdx);
+            if (moduleId >= 0)
+            {
+                int q = _engine.AllocateHeap(3);
+                _engine.SetHeap(q, Cell.Functor(ColonFunctorId));
+                _engine.SetHeap(q + 1, Cell.Atom(moduleId));
+                _engine.SetHeap(q + 2, goal.Tag == Tag.AttVar ? Cell.Ref(headIdx) : goal);
+                goal = Cell.Str(q);
+            }
+            if (!MetaCallInEngine(code, goal)) return false;
             cursor = DerefCell(_engine.GetHeap(headIdx + 1));
         }
         // [] or an unbound tail → no (more) goals; anything else is malformed.
@@ -451,14 +467,6 @@ public sealed partial class BytecodeInterpreter
             return RunGoalInEngine(code, lateAddr);
         }
 
-        // The consult-direct fallback: a directly consulted module's local.
-        int fbAddr = _engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
-        if (fbAddr >= 0)
-        {
-            if (JumpDiag) CheckJumpTarget(code, fbAddr, functorId, "consult_local");
-            return RunGoalInEngine(code, fbAddr);
-        }
-
         // honour the `unknown` flag (throws on error).
         return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
     }
@@ -581,6 +589,8 @@ public sealed partial class BytecodeInterpreter
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
         for (int i = 0; i < extraCount; i++)
             _engine.SetRegister(goalArity + i, extra[i]);
+        if (resolutionModule >= 0)
+            _engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
         // route cache. A repeat goal functor skips the intern,
         // the control-construct compares and the registry/address probes.
@@ -723,7 +733,7 @@ public sealed partial class BytecodeInterpreter
             int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
             {
-                _engine.MetaResolutionObserver?.Invoke(
+                _engine.PublishMetaResolution(
                     addresses, resolutionModule, observedGoalKey, extraCount,
                     mangledFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, mangledAddr);
@@ -736,7 +746,7 @@ public sealed partial class BytecodeInterpreter
                     ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
                 && addresses.TryGetValue(importedFid, out int importedAddr))
             {
-                _engine.MetaResolutionObserver?.Invoke(
+                _engine.PublishMetaResolution(
                     addresses, resolutionModule, observedGoalKey, extraCount,
                     importedFid, observedAtomGoal, -1);
                 return JumpToUserGoal(code, pc, importedAddr);
@@ -765,7 +775,7 @@ public sealed partial class BytecodeInterpreter
             // A DIRECT builtin is one a compiled module can request itself;
             // the $call helpers need this dispatcher, so they stay its.
             if (!builtin.IsDollarCall)
-                _engine.MetaResolutionObserver?.Invoke(
+                _engine.PublishMetaResolution(
                     addresses, resolutionModule, observedGoalKey, extraCount,
                     functorId, observedAtomGoal, builtinId);
             return InvokeBuiltinGoal(builtinId);
@@ -791,7 +801,7 @@ public sealed partial class BytecodeInterpreter
             // wrong register layout, and $call_conj re-dispatches the
             // conjunction forever. That hang is how this was found.
             if (resolutionModule >= 0 && userKind == Shumway.Core.MetaRouteKind.Jump)
-                _engine.MetaResolutionObserver?.Invoke(
+                _engine.PublishMetaResolution(
                     addresses, resolutionModule, observedGoalKey, extraCount,
                     functorId, observedAtomGoal, -1);
             if (routeCacheable)
@@ -802,12 +812,6 @@ public sealed partial class BytecodeInterpreter
         // Last chance: materialize a cross-activation runtime-assert helper.
         int lateHelper = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
         if (lateHelper >= 0) return JumpToUserGoal(code, pc, lateHelper);
-
-        // The consult-direct fallback: a directly consulted module's local.
-        // Uncached — an assertz later in the query may create the bare
-        // dynamic, which must win from then on.
-        int consultLocal = _engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
-        if (consultLocal >= 0) return JumpToUserGoal(code, pc, consultLocal);
 
         // No negative caching: an unresolved functor can become resolvable
         // later in the same query (auto-promotion).
@@ -828,7 +832,7 @@ public sealed partial class BytecodeInterpreter
     {
         if (resolutionModule < 0 || _engine.MetaResolutionObserver is null) return;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int id))
-            _engine.MetaResolutionObserver(_engine.CurrentFunctorAddresses,
+            _engine.PublishMetaResolution(_engine.CurrentFunctorAddresses,
                 resolutionModule, goalKey, appended, functorId, atomGoal, id);
     }
 
@@ -1049,12 +1053,6 @@ public sealed partial class BytecodeInterpreter
         // DIFFERENT activation — materialize it into this one on demand.
         int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
         if (late >= 0) return late;
-        // The consult-direct fallback: a directly consulted module's local
-        // (the map's refused bare alias above lands here too — the fallback
-        // re-resolves it with the ambiguity check, instead of trusting the
-        // alias's first-come-wins pick).
-        int consultLocal = _engine.ResolveModuleLocalFallback?.Invoke(fid) ?? -1;
-        if (consultLocal >= 0) return consultLocal;
         // honour the `unknown` flag — error throws here,
         // fail/warning hand the caller the fail sentinel.
         if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))

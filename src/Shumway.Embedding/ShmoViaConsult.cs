@@ -150,6 +150,15 @@ public static class ShmoViaConsult
             var dynamicSet = new HashSet<PredicateRef>();
             foreach (int fid in manifest.DynamicFunctors) dynamicSet.Add(RefOf(fid));
             var raw = new List<Clause>(manifest.Clauses);
+            // ADR-055: what this module gave user (user:Head) is, in a linked
+            // program, a public of this module: global, its body still run
+            // here, where the module's own qualification is redundant.
+            foreach (var (fsrc, ftgt, fclause) in e._foreignClauses)
+                if (ftgt == PrologEngine.DefaultModuleName && fsrc == "module:" + name)
+                {
+                    raw.Add(WithoutOwnQualification(fclause, name));
+                    publicSet.Add(RefOf(ConsultPipeline.HeadFunctorIdOf(fclause)));
+                }
             foreach (int fid in e._dynStore.Functors)
                 if (dynOwner.TryGetValue(fid, out var owner) && owner == name)
                 {
@@ -186,7 +195,8 @@ public static class ShmoViaConsult
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,
-                dialect: manifest.Dialect);
+                dialect: manifest.Dialect,
+                metaArgSpec: e.MetaArgSpec);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)
@@ -220,6 +230,25 @@ public static class ShmoViaConsult
     /// baked-in libraries' source, so a dependency with no <c>.pl</c> is dated
     /// against the runtime that produced it. <see cref="System.DateTime.UtcNow"/>
     /// as a last resort forces regeneration.</summary>
+    /// <summary><paramref name="clause"/> with each body goal written
+    /// <c>module:Goal</c> back to <c>Goal</c>, through the control
+    /// constructs: the consult qualified it for running outside the
+    /// module.</summary>
+    private static Clause WithoutOwnQualification(Clause clause, string module)
+    {
+        if (clause.Term is not CompoundTerm { Functor: ":-", Args: [var head, var body] } rule)
+            return clause;
+        Term stripped = Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(body,
+            c => c.Args.Length == 2 && c.Functor is "," or ";" or "->" or "*->",
+            g => g is CompoundTerm { Functor: ":", Args: [AtomTerm m, var inner] } && m.Name == module
+                ? inner : g);
+        return ReferenceEquals(stripped, body)
+            ? clause
+            : new Clause(clause.Kind,
+                new CompoundTerm(":-", new[] { head, stripped }) { Position = rule.Position },
+                clause.Position);
+    }
+
     private static System.DateTime BakedSourceTimeUtc()
     {
         try

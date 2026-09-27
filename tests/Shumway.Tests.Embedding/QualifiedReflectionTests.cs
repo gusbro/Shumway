@@ -178,10 +178,10 @@ public sealed class QualifiedReflectionTests
             sees_own_clause :- clause(loc(X), true), X == here.
             sees_own_prop  :- predicate_property(loc(_), static).
             """);
-        Assert.True(e.Query("sees_own_cp.").Success);
-        Assert.True(e.Query("sees_global_cp.").Success);
-        Assert.True(e.Query("sees_own_clause.").Success);
-        Assert.True(e.Query("sees_own_prop.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_cp.").Success);
+        Assert.True(e.Query("qr_ctx:sees_global_cp.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_clause.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_prop.").Success);
     }
 
     [Fact]
@@ -194,8 +194,8 @@ public sealed class QualifiedReflectionTests
             reads_s(X) :- clause(qr_s:loc(X), true).
             counts_s(N) :- findall(T, current_predicate(qr_s:T/1), L), length(L, N).
             """);
-        Assert.True(e.Query("reads_s(1).").Success);
-        var sol = e.Query("counts_s(N).");
+        Assert.True(e.Query("qr_x:reads_s(1).").Success);
+        var sol = e.Query("qr_x:counts_s(N).");
         Assert.True(sol.Success);
         Assert.Equal("1", sol["N"]!.ToString());
     }

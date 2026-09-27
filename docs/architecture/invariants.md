@@ -74,6 +74,10 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   qualification** — all its predicates mangle `Name$x`; resolution is
   local → imports → bare-global, identically at compile time and runtime.
   (ADR-038.)
+- **A module's private predicate is reached only by qualifying** (`m:p(X)`)
+  from outside the module: the top level, another module and a file without
+  a module directive all get `existence_error` for the bare name, as the
+  linker does. (ADR-056.)
 - **Static predicates are immutable once compiled.** `assertz`/`retract` on a
   static predicate is an error.
 - **Dynamic predicates** are declared with `:- dynamic foo/N` or auto-promoted

@@ -411,6 +411,9 @@ public static class ShmoLinker
         var pendingArityMeta =
             new Dictionary<PredicateRef, List<(string Module, PredicateRef Caller)>>();
         var qrefHandledModules = new HashSet<string>();
+        // ADR-056: what a written M:Goal reaches, a private included. Called by
+        // name from outside its module, it keeps a standalone form.
+        var qualifiedTargets = new HashSet<(string Module, PredicateRef Pred)>();
         var queue = new Queue<(string Module, PredicateRef Pred)>();
         foreach (var r in roots)
             queue.Enqueue((r.Module, r.Pred));
@@ -438,16 +441,19 @@ public static class ShmoLinker
                         missing.Add(target);
                         continue;
                     }
-                    if (!moduleDefined[qr.Module].TryGetValue(target, out var vis)
-                        || vis != PredicateVisibility.Public)
+                    // ADR-056: qualifying is how a program reaches another
+                    // module's private, so any predicate the module defines
+                    // answers the call, as it does at run time.
+                    if (!moduleDefined[qr.Module].ContainsKey(target))
                     {
                         Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                             "missing_predicate",
                             $"Qualified call {qr} from '{curMod}': '{qr.Module}' does not "
-                            + $"export {target} as :- public.", curMod);
+                            + $"define {target}.", curMod);
                         missing.Add(target);
                         continue;
                     }
+                    qualifiedTargets.Add((qr.Module, target));
                     queue.Enqueue((qr.Module, target));
                 }
             }
@@ -564,7 +570,7 @@ public static class ShmoLinker
         // (Stage 9b); for now we compute + report + expose it. A soundness
         // over-approximation, never under.
         var stage9Seeds = ComputeExternallyReachableSeeds(
-            roots.Select(r => (r.Module, r.Pred)), reached, moduleDefined);
+            roots.Select(r => (r.Module, r.Pred)).Concat(qualifiedTargets), reached, moduleDefined);
         Emit(LinkSeverity.Info, "prune_seeds",
             $"code pruning: {stage9Seeds.Count} of {reached.Count} reached predicate(s) "
             + "are callable by name from outside and keep a standalone compiled form.");
@@ -1140,8 +1146,9 @@ public static class ShmoLinker
     /// because they are callable BY NAME from outside a region's <c>br</c>-absorption,
     /// so the dead-region prune must NEVER drop them. The set:
     /// <list type="bullet">
-    ///   <item>the entry-point and <c>:- ensure_linked</c> roots
-    ///     (<paramref name="reachedRoots"/>) — invoked by name by the runtime;</item>
+    ///   <item>the entry-point and <c>:- ensure_linked</c> roots, and every
+    ///     predicate a written <c>M:Goal</c> reaches, a private included
+    ///     (<paramref name="reachedRoots"/>): invoked by name at run time;</item>
     ///   <item>every reached PUBLIC predicate — the global namespace; another module or
     ///     the embedding host can call it by name;</item>
     ///   <item>every reached DYNAMIC predicate — called by name + asserted/retracted, and

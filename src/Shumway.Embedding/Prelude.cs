@@ -293,12 +293,16 @@ internal static class Prelude
             ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals, Proxy) ->
                 '$wake_call'(HookGoal), !,
                 '$wake_settle'(Proxy, Other),
-                '$wake_goals'(Goals)
+                '$wake_goals'(Goals, M)
             ; true ).   % hookless module: the bind already happened
         % A hook's Goals may come back unbound (none) or as a proper list.
-        '$wake_goals'(Gs) :- var(Gs), !.
-        '$wake_goals'([]).
-        '$wake_goals'([G|Gs]) :- '$wake_call'(G), '$wake_goals'(Gs).
+        % They run in the attribute's module, which may name its own
+        % private predicates in them (ADR-056). Tagged '$mqual', not M:G:
+        % the wasm tier resolves the tag in place, and a ':'/2 goal leaves
+        % the module on every wakeup.
+        '$wake_goals'(Gs, _) :- var(Gs), !.
+        '$wake_goals'([], _).
+        '$wake_goals'([G|Gs], M) :- '$wake_call'('$mqual'(M, G)), '$wake_goals'(Gs, M).
 
         %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
         % \+ (Condition, \+ Action). Condition and Action run in the LIVE engine
@@ -439,6 +443,8 @@ internal static class Prelude
                 '$bagof_next'(Kind, Witness-Bag)
             ).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
+        % A caller's Vs^G arrives module-qualified (ADR-056): the ^ is inside.
+        '$bagof_parts'(M:G, '$mqual'(M, S), Q) :- atom(M), !, '$bagof_strip'(G, S, Q).
         '$bagof_parts'(G, S, Q) :- '$bagof_strip'(G, S, Q).
         '$bagof_strip'(V, S, Q) :- nonvar(V), V = Vs ^ G, !, Q = [Vs|Q1], '$bagof_strip'(G, S, Q1).
         '$bagof_strip'(G, G, []).
@@ -714,16 +720,21 @@ internal static class Prelude
             % Cleanup must be callable NOW (WG17): an unbound Cleanup is an
             % instantiation_error even if Goal would bind it later; the check
             % runs after Setup so setup_call_cleanup(X=true, true, X) is fine.
-            (   var(Cleanup) ->
+            % Judged without its module: a caller's X arrives as M:X (ADR-056).
+            '$scc_cleanup_body'(Cleanup, Body),
+            (   var(Body) ->
                 throw(error(instantiation_error, setup_call_cleanup/3))
-            ;   callable(Cleanup) -> true
-            ;   throw(error(type_error(callable, Cleanup), setup_call_cleanup/3))
+            ;   callable(Body) -> true
+            ;   throw(error(type_error(callable, Body), setup_call_cleanup/3))
             ),
             '$scc_register'(Ref, Cleanup),
             assertz('$cleanup_pending'(Ref, Cleanup)),
             '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
             '$scc'(Goal, Ref, Cleanup),
             '$catch_end'.
+        '$scc_cleanup_body'(C, B) :-
+            nonvar(C), C = M:C1, atom(M), !, '$scc_cleanup_body'(C1, B).
+        '$scc_cleanup_body'(C, C).
 
         '$scc'(Goal, Ref, Cleanup) :-
             '$choice_level'(B0),
@@ -1869,6 +1880,10 @@ internal static class Prelude
             '$dcg_terminal_check'(T, [H|T]),
             '$dcg_terminal_concat'([H|T], S, List).
         '$dcg_translate'(!, S0, S, (!, S0 = S)) :- !.
+        % M:Body: the body's nonterminals are M's, so the translated goal
+        % runs in M (ADR-056).
+        '$dcg_translate'(M:B, S0, S, M:G) :- !,
+            '$dcg_translate'(B, S0, S, G).
         '$dcg_translate'((A, B), S0, S, (GA, GB)) :- !,
             '$dcg_translate'(A, S0, S1, GA),
             '$dcg_translate'(B, S1, S, GB).

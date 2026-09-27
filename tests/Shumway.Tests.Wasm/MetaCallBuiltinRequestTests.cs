@@ -58,6 +58,11 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         cxb :- put_attr(X, m, 1), \+ cxm(X = 1).
         """;
 
+    /// <summary>The tiered engine reads the user corpus INTO module mc, whose
+    /// privates its predicates then are (ADR-056): the query names them
+    /// through the module.</summary>
+    private static string UnderTheModule(string goal) => $"mc:({goal.TrimEnd('.')}).";
+
     /// <summary>The meta cache key a guard-9 stamp carries, in words:
     /// module atom + 1 above bit 36, the atom-goal flag at 35, the appended
     /// count at 32, the goal's functor or atom id below.</summary>
@@ -93,7 +98,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
                                         "\\+ c2(=(a), b).", "c2(=(a), X), X == a." })
         {
             Assert.True(plain.Query(goal).Success, goal);
-            Assert.True(tiered.Query(goal).Success, goal + " under the module");
+            Assert.True(tiered.Query(UnderTheModule(goal)).Success, goal + " under the module");
         }
     }
 
@@ -115,7 +120,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         {
             Assert.True(plain.Query(goal).Success, goal);
             for (int i = 0; i < 3; i++)          // promoted on the first call, then run there
-                Assert.True(tiered.Query(goal).Success, goal + " under the module");
+                Assert.True(tiered.Query(UnderTheModule(goal)).Success, goal + " under the module");
         }
     }
 
@@ -131,7 +136,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     {
         var (engine, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);
         foreach (string goal in new[] { "go(3).", "goa(3).", "goc(3).", "gob(3, _).",
-                                        "ugo(3).", "ugc(3).", "gon(3)." })
+                                        UnderTheModule("ugo(3)."), UnderTheModule("ugc(3)."), "gon(3)." })
             Assert.True(engine.Query(goal).Success, goal);
 
         void Check(string goal, string what, int requests)
@@ -155,10 +160,10 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         Check("goa(300).", "call(atom(a)) in a module: an inline form, no exit", 0);
         Check("goc(300).", "call(atom_codes(abc, _)) in a module", 300);
         Check("gob(300, _).", "call(succ(1), R) in a module", 300);
-        Check("ugo(300).", "call(true) in user", 300);
-        Check("ugc(300).", "call(atom_codes(abc, _)) in user", 300);
+        Check(UnderTheModule("ugo(300)."), "call(true) in user", 300);
+        Check(UnderTheModule("ugc(300)."), "call(atom_codes(abc, _)) in user", 300);
         Check("gov(300).", "call(var(_)) in a module: a type test, no exit", 0);
-        Check("ugv(300).", "call(var(_)) in user: a type test, no exit", 0);
+        Check(UnderTheModule("ugv(300)."), "call(var(_)) in user: a type test, no exit", 0);
         Check("gova(300).", "call(var, X) in a module: an atom goal plus one argument, no exit", 0);
         Check("gou(300).", "call(=(a), X) in a module: the unify form on the registers, no exit", 0);
 

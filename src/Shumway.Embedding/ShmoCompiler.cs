@@ -268,6 +268,9 @@ public static class ShmoCompiler
         // list-name forms expanded) so they travel .shmo → .shum and
         // LoadBundle replays them into the runtime operator table.
         var operatorDefs = new List<ShmoOperatorDef>();
+        // ADR-056: this file's meta_predicate declarations, so its module
+        // qualifies the closures it passes to them.
+        var fileMetaTemplates = new Dictionary<int, Term>();
 
         foreach (var clause in allClauses)
         {
@@ -275,6 +278,8 @@ public static class ShmoCompiler
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
+                if (d.Args[0] is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
+                    ModuleRewrite.RecordMetaTemplate(fileMetaTemplates, metaDir.Args[0]);
                 if (d.Args[0] is CompoundTerm nd && nd.Functor == "$native_decls"
                     && nd.Args.Length == 1 && nd.Args[0] is StringTerm ndText)
                 {
@@ -412,7 +417,10 @@ public static class ShmoCompiler
             nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet,
             operatorDefs, multifileSet,
             isExportQualified: isExportQualified, exports: exportSet,
-            imports: importEntries, libraryDeps: libraryDeps);
+            imports: importEntries, libraryDeps: libraryDeps,
+            metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(t)
+                : ModuleRewrite.DefaultMetaArgSpec(fid, local));
     }
 
     /// <summary>the compile back-half, shared by
@@ -445,7 +453,8 @@ public static class ShmoCompiler
         IReadOnlyCollection<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
-        string? dialect = null)
+        string? dialect = null,
+        Func<int, string?, int[]?>? metaArgSpec = null)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -771,7 +780,8 @@ public static class ShmoCompiler
                     Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
                     imp.Pred.Arity)] = imp.Source;
         var rewriteCtx = new ModuleRewrite.Context(
-            moduleName, localFids, dynamicFids, importFidMap);
+            moduleName, localFids, dynamicFids, importFidMap)
+        { MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec };
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));

@@ -633,6 +633,9 @@ public sealed partial class PrologEngine
         /// whose qualified goals now resolve differently.</summary>
         public required Dictionary<(string Mod, string Name, int Arity), string?>?
             QualifiedResolutions;
+        /// <summary>ADR-056: the meta-argument specs the transform looked up,
+        /// revalidated per reuse like the qualified resolutions.</summary>
+        public required Dictionary<(int Fid, string? Local), int[]?>? MetaArgLookups;
         public required List<Clause> Rewritten;
         public required HashSet<int> Locals;
         public required HashSet<int> HeadFids;

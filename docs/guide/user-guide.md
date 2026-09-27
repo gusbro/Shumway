@@ -1195,17 +1195,20 @@ executable (bundles carry every module's import table):
    non-exported locals: `call(mymod:internal(X))` works, SWI-style) →
    **M's import table** → fall through.
 4. The **C# builtin** registry.
-5. The **global namespace**: bare names of `user` and legacy-module
-   predicates, publics, dynamics, the prelude.
+5. The **global namespace**: `user`'s predicates, publics, dynamics, the
+   prelude.
 6. Still nothing → the `unknown` flag, as above.
 
-One asymmetry to be aware of: a *runtime* `M:Goal` reaches `M`'s
-non-exported locals, while a `Module:goal(...)` written *statically* in a
-compiled module is checked by the linker against the target module's
-public surface.
+An `M:Goal`, written in the code or built at run time, reaches `M`'s
+predicates whether `M` exports them or not, in the REPL and in a linked
+program alike: qualifying is how code outside `M` calls one of its private
+predicates.
 
 **Rules of thumb.** Nearest context wins: own module > imports > global.
-Dynamics are always global. Builtins are shadowed only by a module that
+A module's predicate that it does not export or declare public is private:
+from outside the module it is reached only as `m:p(X)`. A goal or closure a
+module passes to a meta-predicate (`maplist(check, L)`, `freeze(X, G)`)
+still runs in that module. Dynamics are always global. Builtins are shadowed only by a module that
 *defines* the name itself. The prelude is always visible without imports.
 Consulting a `:- module/2` file directly auto-imports its exports into
 `user`; loading it as a `use_module` dependency does not.

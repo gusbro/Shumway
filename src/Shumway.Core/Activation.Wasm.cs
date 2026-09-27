@@ -257,6 +257,73 @@ public sealed partial class Activation
     /// a DIRECT builtin (one a module can request), -1 for a predicate.</para>
     public System.Action<object?, int, int, int, int, bool, int>? MetaResolutionObserver;
 
+    /// <summary>Reports a module-tagged meta-call resolution to
+    /// <see cref="MetaResolutionObserver"/>, unless the goal's predicate has
+    /// meta-arguments: a cached row would jump straight to the callee and
+    /// skip their qualification the next time.</summary>
+    public void PublishMetaResolution(object? addresses, int module, int goalKey,
+        int appended, int functorId, bool atomGoal, int builtinId)
+    {
+        if (_goalHasMetaArgs) return;
+        MetaResolutionObserver?.Invoke(addresses, module, goalKey, appended,
+            functorId, atomGoal, builtinId);
+    }
+
+    /// <summary>ADR-056: the meta-argument positions of the predicate a goal
+    /// resolves to (per argument, how many arguments the callee adds, or -1),
+    /// by its bare functor id and, when it is the module's own predicate,
+    /// the module's name. Set by the embedding at query setup.</summary>
+    public Func<int, string?, int[]?>? MetaArgSpecOf { get; set; }
+
+    private bool _goalHasMetaArgs;
+
+    private static readonly int ColonQualFunctorId =
+        FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+    private static readonly int PreludeModuleAtomId =
+        AtomTable.Intern("$prelude", permanent: true).Id;
+    private static readonly int MqualTagFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
+
+    /// <summary>ADR-056: a goal meta-called with a module context passes
+    /// that module to its meta-arguments, which sit in the argument
+    /// registers: <c>G = maplist(ok, L), call(G)</c> in module <c>m</c> runs
+    /// <c>maplist(m:ok, L)</c>, since maplist's clauses cannot see
+    /// <c>m</c>'s private <c>ok</c>. The compile-time twin is
+    /// ModuleRewrite's meta-argument qualification.</summary>
+    public void QualifyMetaArgRegisters(int moduleAtomId, int atomId, int totalArity)
+    {
+        _goalHasMetaArgs = false;
+        if (MetaArgSpecOf is not { } specOf) return;
+        if (moduleAtomId == PreludeModuleAtomId) return;
+        // The module's own predicate of that name is what the goal reaches.
+        string? local = CurrentFunctorAddresses is { } addresses
+            && addresses.TryGetValue(ModuleQualify.Mangle(moduleAtomId, atomId, totalArity), out _)
+            ? AtomTable.GetById(moduleAtomId)?.Name
+            : null;
+        int[]? spec = specOf(FunctorTable.Intern(atomId, totalArity), local);
+        if (spec is null || spec.Length != totalArity) return;
+        _goalHasMetaArgs = true;
+        for (int i = 0; i < totalArity; i++)
+        {
+            if (spec[i] < 0) continue;
+            Cell c = GetRegister(i);
+            Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
+            if (d.Tag == Tag.Str)
+            {
+                int f = GetHeap(d.AsHeapIndex).AsFunctorId;
+                if (f == ColonQualFunctorId || f == MqualTagFunctorId) continue;
+            }
+            // An attributed variable copied out of the goal term keeps its
+            // one home: the new cell refers to it.
+            if (c.Tag == Tag.AttVar) c = Cell.Ref(c.AsHeapIndex);
+            int h = AllocateHeap(3);
+            SetHeap(h, Cell.Functor(ColonQualFunctorId));
+            SetHeap(h + 1, Cell.Atom(moduleAtomId));
+            SetHeap(h + 2, c);
+            SetRegister(i, Cell.Str(h));
+        }
+    }
+
     /// <summary>False when the activation is in a mode the compiled code does
     /// not honour (trail-everything, occurs_check) -- the tier delegate then
     /// falls back to the predicate's bytecode for the entry.</summary>

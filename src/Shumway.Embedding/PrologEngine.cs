@@ -338,6 +338,55 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// wrapped for the calling context.</summary>
     internal readonly Dictionary<int, Term> _metaPredicateTemplates = new();
 
+    /// <summary>ADR-056: the meta-argument positions of the predicate a call
+    /// resolves to, by its bare functor id. <paramref name="localModule"/>
+    /// names the calling module when the call resolves to that module's own
+    /// predicate: then only that module's own <c>meta_predicate</c>
+    /// declaration counts, since a program's <c>partition/4</c> is not the
+    /// prelude's. Otherwise the declared template, else the prelude's
+    /// undeclared higher-order predicates. Null for a predicate with
+    /// none.</summary>
+    internal int[]? MetaArgSpec(int fid, string? localModule)
+    {
+        _metaPredicateTemplates.TryGetValue(fid, out Term? template);
+        var key = (fid, localModule);
+        if (_metaArgSpecCache.TryGetValue(key, out var cached)
+            && ReferenceEquals(cached.Template, template))
+            return cached.Spec;
+        int[]? spec;
+        if (localModule is not null)
+            spec = template is not null
+                   && _metaPredicateDeclarers.TryGetValue(fid, out var declarers)
+                   && declarers.Contains(localModule)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(template)
+                : null;
+        else if (template is not null) spec = ModuleRewrite.MetaArgSpecOfTemplate(template);
+        else
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string? name = AtomTable.GetById(atomId)?.Name;
+            spec = name is null ? null : ModuleRewrite.LibraryMetaArgSpec(name, arity);
+        }
+        _metaArgSpecCache[key] = (template, spec);
+        return spec;
+    }
+
+    /// <summary>The modules whose consult declared a
+    /// <c>meta_predicate</c> template, by functor id.</summary>
+    internal readonly Dictionary<int, HashSet<string>> _metaPredicateDeclarers = new();
+
+    // An entry answers only while the template it was computed from is still
+    // the declared one.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(int, string?), (Term? Template, int[]? Spec)>
+        _metaArgSpecCache = new();
+
+    /// <summary>ADR-055: the clauses a source defined for ANOTHER module
+    /// (<c>M:Head :- Body</c>), by source (its module for a module file, its
+    /// file or string buffer otherwise) and target module. A reload withdraws
+    /// its source's entries; a module replaced by its own reload keeps the
+    /// entries other sources gave it.</summary>
+    internal readonly List<(string Source, string Target, Clause Clause)> _foreignClauses = new();
+
     /// <summary>The control constructs' meta-templates. They are not
     /// predicates, so no <c>:- meta_predicate</c> directive can name them
     /// (`','(0,0)` in a directive reads as the conjunction-of-specs form),

@@ -213,19 +213,319 @@ internal sealed class ConsultPipeline
         return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _);
     }
 
+    // ---- ADR-055: clauses for another module ------------------------------
+
+    /// <summary>The key a source's contributions to other modules are kept
+    /// under: its module for a module file, its file (or the string buffer)
+    /// otherwise.</summary>
+    private string ForeignSourceKey(string moduleName, bool isModuleSource)
+        => isModuleSource ? "module:" + moduleName : "file:" + (E._currentLoadFile ?? "");
+
+    /// <summary><c>M:Head :- Body</c>, <c>M:Head</c> or <c>M:Head --&gt; Body</c>
+    /// with <c>M</c> an atom: the innermost qualifying module and the clause
+    /// without it. False for any other clause.</summary>
+    private static bool TrySplitForeignHead(Clause clause, out string target, out Clause local)
+    {
+        target = "";
+        local = clause;
+        Term term = clause.Term;
+        Term head;
+        Term? body = null;
+        string? wrapper = null;
+        if (term is CompoundTerm { Functor: ":-" or "-->", Args.Length: 2 } rule)
+        {
+            head = rule.Args[0];
+            body = rule.Args[1];
+            wrapper = rule.Functor;
+        }
+        else head = term;
+        if (head is not CompoundTerm { Functor: ":", Args: [AtomTerm, _] }) return false;
+        while (head is CompoundTerm { Functor: ":", Args: [AtomTerm mod, var inner] })
+        {
+            target = mod.Name;
+            head = inner;
+        }
+        if (head is not (AtomTerm or CompoundTerm)) return false;
+        Term newTerm = wrapper is null
+            ? head
+            : new CompoundTerm(wrapper, new[] { head, body! }) { Position = term.Position };
+        local = new Clause(clause.Kind, newTerm, clause.Position);
+        return true;
+    }
+
+    /// <summary>The clauses a foreign definition compiles to, their bodies run
+    /// in <paramref name="sourceModule"/>: a grammar rule is translated first,
+    /// since its non-terminals are goals of the source module too.</summary>
+    private List<Clause> PrepareForeignClauses(Clause local, string sourceModule)
+    {
+        var result = new List<Clause>();
+        IReadOnlyList<Clause> parts = local.Kind == ClauseKind.DcgRule
+            ? Shumway.Compiler.Parsing.DcgTransform.Apply(new[] { local }, failFast: !E._flags.DebugCodegen)
+            : new[] { local };
+        foreach (var c in parts)
+        {
+            if (c.Term is CompoundTerm { Functor: ":-", Args: [var h, var b] } r)
+                result.Add(new Clause(ClauseKind.Rule,
+                    new CompoundTerm(":-", new[] { h, QualifyBody(b, sourceModule) })
+                        { Position = r.Position },
+                    c.Position));
+            else result.Add(c);
+        }
+        return result;
+    }
+
+    /// <summary>A body whose goals resolve in <paramref name="module"/>
+    /// wherever the clause is compiled: each goal written <c>module:Goal</c>,
+    /// through the control constructs (the cut left as it is) and into the
+    /// goal arguments of the meta-predicates. A builtin is global and is not
+    /// qualified itself; a goal already qualified keeps its own module.</summary>
+    private Term QualifyBody(Term body, string module)
+        => Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(body,
+            c => c.Args.Length == 2 && c.Functor is "," or ";" or "->" or "*->",
+            g => QualifyGoal(g, module));
+
+    private Term QualifyGoal(Term goal, string module)
+    {
+        Term Q(Term t) => new CompoundTerm(":", new[] { (Term)new AtomTerm(module), t })
+            { Position = t.Position };
+        switch (goal)
+        {
+            case VarTerm:
+                return Q(goal);
+            case AtomTerm { Name: "!" }:
+                return goal;
+            case CompoundTerm { Functor: ":", Args: [AtomTerm, _] }:
+                return goal;
+            case AtomTerm a:
+                return IsGlobalGoal(a.Name, 0) ? goal : Q(goal);
+            case CompoundTerm c:
+            {
+                Term[]? args = null;
+                var spec = MetaArgumentSpec(c.Functor, c.Args.Length);
+                if (spec is not null)
+                    for (int i = 0; i < c.Args.Length; i++)
+                    {
+                        Term q = spec[i] switch
+                        {
+                            MetaArg.Goal => QualifyBody(c.Args[i], module),
+                            MetaArg.Caret => QualifyUnderCaret(c.Args[i], module),
+                            MetaArg.Closure => c.Args[i] is CompoundTerm { Functor: ":", Args: [AtomTerm, _] }
+                                ? c.Args[i] : Q(c.Args[i]),
+                            _ => c.Args[i],
+                        };
+                        if (ReferenceEquals(q, c.Args[i])) continue;
+                        args ??= (Term[])c.Args.Clone();
+                        args[i] = q;
+                    }
+                Term g2 = args is null ? c : new CompoundTerm(c.Functor, args) { Position = c.Position };
+                return IsGlobalGoal(c.Functor, c.Args.Length) ? g2 : Q(g2);
+            }
+            default:
+                return goal;
+        }
+    }
+
+    // bagof/setof: `V^Goal` keeps its variables outside the qualification.
+    private Term QualifyUnderCaret(Term t, string module)
+    {
+        if (t is CompoundTerm { Functor: "^", Args: [var v, var g] } caret)
+            return new CompoundTerm("^", new[] { v, QualifyUnderCaret(g, module) })
+                { Position = caret.Position };
+        return QualifyBody(t, module);
+    }
+
+    private enum MetaArg { None, Goal, Caret, Closure }
+
+    /// <summary>The goal-carrying arguments of a goal: from its
+    /// <c>meta_predicate</c> declaration when it has one, else from the ISO
+    /// meta-predicates. A spec 0 argument is a goal; 1 to 9 a closure called
+    /// with extra arguments; <c>^</c> a bagof/setof goal.</summary>
+    private MetaArg[]? MetaArgumentSpec(string name, int arity)
+    {
+        int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+        if (E._metaPredicateTemplates.TryGetValue(fid, out Term? template)
+            && template is CompoundTerm t && t.Args.Length == arity)
+        {
+            var spec = new MetaArg[arity];
+            bool any = false;
+            for (int i = 0; i < arity; i++)
+            {
+                spec[i] = t.Args[i] switch
+                {
+                    IntTerm { Value: 0 } => MetaArg.Goal,
+                    IntTerm { Value: > 0 and <= 9 } => MetaArg.Closure,
+                    AtomTerm { Name: "^" } => MetaArg.Caret,
+                    _ => MetaArg.None,
+                };
+                any |= spec[i] != MetaArg.None;
+            }
+            return any ? spec : null;
+        }
+        MetaArg G = MetaArg.Goal, N = MetaArg.None;
+        return (name, arity) switch
+        {
+            ("\\+", 1) or ("once", 1) or ("ignore", 1) or ("not", 1) or ("call", 1) => new[] { G },
+            ("call", >= 2 and <= 8) => Prepend(MetaArg.Closure, arity),
+            ("findall", 3) => new[] { N, G, N },
+            ("findall", 4) => new[] { N, G, N, N },
+            ("bagof", 3) or ("setof", 3) => new[] { N, MetaArg.Caret, N },
+            ("aggregate_all", 3) => new[] { N, G, N },
+            ("forall", 2) => new[] { G, G },
+            ("catch", 3) => new[] { G, N, G },
+            ("call_cleanup", 2) => new[] { G, G },
+            ("setup_call_cleanup", 3) => new[] { G, G, G },
+            _ => null,
+        };
+        static MetaArg[] Prepend(MetaArg first, int n)
+        {
+            var a = new MetaArg[n];
+            a[0] = first;
+            return a;
+        }
+    }
+
+    /// <summary>A goal whose name means the same in every module: a builtin, a
+    /// control construct, one of the ISO meta-predicates the compiler lowers
+    /// itself. Qualifying it would only hide it from those lowerings.</summary>
+    private static bool IsGlobalGoal(string name, int arity)
+    {
+        if ((name, arity) is ("true", 0) or ("fail", 0) or ("false", 0) or ("\\+", 1)
+            or ("call", >= 1 and <= 8) or ("findall", 3) or ("findall", 4) or ("bagof", 3)
+            or ("setof", 3) or ("forall", 2) or ("catch", 3) or ("once", 1) or ("ignore", 1)
+            or ("not", 1) or ("aggregate_all", 3))
+            return true;
+        int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+        return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _);
+    }
+
+    /// <summary>Adds this source's static foreign clauses to their modules'
+    /// manifests (a missing module is created), after withdrawing what the
+    /// same source gave before when <paramref name="withdraw"/> (a reload).
+    /// A clause for a protected procedure in the global module is refused
+    /// as it is in a file of that module.</summary>
+    private void CommitForeignClauses(string sourceKey, bool withdraw,
+        List<(string Target, Clause Clause)>? foreign, bool globalModuleProtected)
+    {
+        bool changed = false;
+        if (withdraw)
+            for (int i = E._foreignClauses.Count - 1; i >= 0; i--)
+            {
+                var (src, tgt, old) = E._foreignClauses[i];
+                if (src != sourceKey) continue;
+                if (E._modules.TryGetValue(tgt, out var tm))
+                    for (int k = tm.Clauses.Count - 1; k >= 0; k--)
+                        if (ReferenceEquals(tm.Clauses[k], old)) { tm.Clauses.RemoveAt(k); break; }
+                E._foreignClauses.RemoveAt(i);
+                changed = true;
+            }
+        if (foreign is not null)
+        {
+            var byTarget = new Dictionary<string, List<Clause>>();
+            foreach (var (tgt, c) in foreign)
+            {
+                if (!byTarget.TryGetValue(tgt, out var list)) byTarget[tgt] = list = new List<Clause>();
+                list.Add(c);
+            }
+            foreach (var (tgt, list0) in byTarget)
+            {
+                var list = DropProtectedHeads(list0,
+                    globalModule: globalModuleProtected && tgt == PrologEngine.DefaultModuleName);
+                if (list.Count == 0) continue;
+                if (!E._modules.TryGetValue(tgt, out var tm))
+                    E._modules[tgt] = tm = new ModuleManifest(tgt);
+                // A predicate another source defined in tgt is redefined, as
+                // SICStus does: its clauses go. A multifile (or dynamic) one
+                // never gets here, it accumulates in the dynamic store.
+                var defined = new HashSet<int>();
+                foreach (var c in list) defined.Add(HeadFunctorIdOf(c));
+                foreach (int fid in defined)
+                    if (RemoveDefinitionFromOtherSources(tm, fid, sourceKey) is { } previous)
+                        WarnRedefined(tgt, fid, sourceKey, previous);
+                foreach (var c in list)
+                {
+                    tm.Clauses.Add(c);
+                    E._foreignClauses.Add((sourceKey, tgt, c));
+                }
+                changed = true;
+            }
+        }
+        if (!changed) return;
+        E._skipCompileMergedCache = null;
+        E._staticLink = null;
+        E._staticHeadFunctorsCache = null;
+        E._hookIndexValid = false;
+        if (E._liveConsultEngine is null) E.InvalidatePersistent();
+    }
+
+    /// <summary>Removes the clauses of <paramref name="fid"/> in
+    /// <paramref name="target"/> that a source other than
+    /// <paramref name="sourceKey"/> gave it, the target's own included.
+    /// Returns a description of the source they came from, or null when
+    /// there were none.</summary>
+    private string? RemoveDefinitionFromOtherSources(ModuleManifest target, int fid, string sourceKey)
+    {
+        string? previous = null;
+        for (int k = target.Clauses.Count - 1; k >= 0; k--)
+        {
+            Clause c = target.Clauses[k];
+            if (c.Kind == ClauseKind.Directive || HeadFunctorIdOf(c) != fid) continue;
+            int entry = E._foreignClauses.FindIndex(f => ReferenceEquals(f.Clause, c));
+            string from = entry >= 0 ? E._foreignClauses[entry].Source : "module:" + target.Name;
+            if (from == sourceKey) continue;
+            target.Clauses.RemoveAt(k);
+            if (entry >= 0) E._foreignClauses.RemoveAt(entry);
+            previous = from;
+        }
+        return previous;
+    }
+
+    /// <summary>Removes the clauses other sources gave <paramref name="target"/>
+    /// for the predicates <paramref name="ownDefinitions"/> names: the
+    /// target's own source now defines them, and redefines them.</summary>
+    private void DropForeignDefinitions(ModuleManifest target, HashSet<int> ownDefinitions,
+        string ownSource)
+    {
+        var warned = new HashSet<int>();
+        for (int i = E._foreignClauses.Count - 1; i >= 0; i--)
+        {
+            var (src, tgt, c) = E._foreignClauses[i];
+            if (tgt != target.Name || src == ownSource) continue;
+            int fid = HeadFunctorIdOf(c);
+            if (!ownDefinitions.Contains(fid)) continue;
+            target.Clauses.Remove(c);
+            E._foreignClauses.RemoveAt(i);
+            if (warned.Add(fid)) WarnRedefined(target.Name, fid, ownSource, src);
+        }
+    }
+
+    private void WarnRedefined(string module, int fid, string bySource, string previousSource)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        E.Warn($"warning: {module}:{name}/{arity} redefined by {DescribeSource(bySource)}; "
+            + $"the clauses from {DescribeSource(previousSource)} are replaced");
+    }
+
+    private static string DescribeSource(string sourceKey)
+        => sourceKey.StartsWith("module:", StringComparison.Ordinal)
+            ? "module " + sourceKey.Substring("module:".Length)
+            : sourceKey.Length > "file:".Length
+                ? System.IO.Path.GetFileName(sourceKey.Substring("file:".Length))
+                : "a consulted text";
+
     /// <summary>A clause with a module-qualified head <c>M:Head</c> (a bound atom
     /// <c>M</c>) defines <c>Head</c> in module <c>M</c> — e.g. atts.pl's
     /// <c>user:term_expansion(...)</c>. Returns the module name and the clause with
     /// the <c>M:</c> stripped from its head; <c>false</c> for an ordinary clause.</summary>
-    // A clause head `M:term_expansion(_,_)` or `M:goal_expansion(_,_)` — the only
-    // module-qualified clause heads real libraries use: atts.pl and dcgs.pl install
-    // `user:term_expansion/2` and `user:goal_expansion/2` to register the global
-    // expansion hooks. We strip the `M:` and keep the clause in the CONSULTING
+    // A clause head `M:term_expansion(_,_)` or `M:goal_expansion(_,_)`: atts.pl
+    // and dcgs.pl install `user:term_expansion/2` and `user:goal_expansion/2` to
+    // register the global expansion hooks. We strip the `M:` and keep the clause
+    // in the CONSULTING
     // file's module. The hook functor is pinned global (IsGlobalHookFunctor), so it
     // still installs the single global hook; but its BODY resolves against the file
     // module's own predicates (dcgs' `dcg_rule`, atts' `expand_terms`) — routing the
     // whole clause into module M instead would leave those body calls unresolved.
-    // Any OTHER `M:Head` is left untouched (none occur in practice).
+    // Any OTHER `M:Head` defines Head in M (ADR-055, TrySplitForeignHead).
     private static bool TryStripHookHead(Clause clause, out Clause stripped)
     {
         stripped = clause;
@@ -1026,9 +1326,10 @@ internal sealed class ConsultPipeline
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         var clauses = new List<Clause>();
-        // A clause whose head is module-qualified (`M:Head :- Body`, e.g. atts.pl's
-        // `user:term_expansion/2`) is routed to module M rather than this file's
-        // module. Collected here, merged into each M's manifest at consult end.
+        // ADR-055: the clauses this source defines for ANOTHER module
+        // (`M:Head :- Body`), static ones, by target. They join M's manifest
+        // at the commit; a dynamic one joins `clauses`, bound for the store.
+        List<(string Target, Clause Clause)>? foreignStatic = null;
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
@@ -1279,6 +1580,28 @@ internal sealed class ConsultPipeline
                 // stays global regardless).
                 if (TryStripHookHead(clause, out Clause stripped))
                     clause = stripped;
+                else if (TrySplitForeignHead(clause, out string target, out Clause local))
+                {
+                    // ADR-055: `M:Head` defines Head in M, with its body run
+                    // in this file's module.
+                    if (target != moduleName)
+                    {
+                        foreach (var fc in PrepareForeignClauses(local, moduleName))
+                        {
+                            CheckProcedureArity(fc);
+                            // A dynamic predicate is global (ADR-008): the
+                            // clause takes the ordinary road to the store.
+                            if (PrologEngine.TryExtractHead(fc, out string fn, out int fa)
+                                && E._dynStore.IsDynamic(FunctorTable.Intern(
+                                    AtomTable.Intern(fn, permanent: true).Id, fa)))
+                                clauses.Add(fc);
+                            else
+                                (foreignStatic ??= new()).Add((target, fc));
+                        }
+                        continue;
+                    }
+                    clause = local;
+                }
                 CheckProcedureArity(clause);
                 clauses.Add(clause);
                 if (!sawInFileHook && IsHookClauseHead(clause)) sawInFileHook = true;
@@ -1424,7 +1747,7 @@ internal sealed class ConsultPipeline
                 // goal argument needs wrapping for the calling context. Execution
                 // still ignores it: our meta-call resolution already threads the
                 // caller's module through variable meta-args ($mqual + MetaTransform).
-                RecordMetaPredicateTemplates(metaDir.Args[0]);
+                RecordMetaPredicateTemplates(metaDir.Args[0], moduleName);
             }
             else if (body is CompoundTerm { Functor: "autoload" } autoDir
                      && (autoDir.Args.Length == 1 || autoDir.Args.Length == 2))
@@ -1679,7 +2002,8 @@ internal sealed class ConsultPipeline
                 => multifileCtx ??= new ModuleRewrite.Context(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    E._dynStore.Functors);
+                    E._dynStore.Functors)
+                { MetaArgSpec = E.MetaArgSpec };
 
             // Reconsult: the predicates this source defines are REPLACED, not
             // extended. Done here rather than by scanning the text first,
@@ -1929,6 +2253,18 @@ internal sealed class ConsultPipeline
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
+            // ADR-055: what OTHER sources defined for this module stays,
+            // except a predicate this module's own source now defines.
+            {
+                string ownSource = ForeignSourceKey(moduleName, isModuleSource: true);
+                var own = new HashSet<int>();
+                foreach (var c in manifest.Clauses)
+                    if (c.Kind != ClauseKind.Directive) own.Add(HeadFunctorIdOf(c));
+                foreach (var (fsrc, ftgt, fclause) in E._foreignClauses)
+                    if (ftgt == moduleName && fsrc != ownSource)
+                        manifest.Clauses.Add(fclause);
+                DropForeignDefinitions(manifest, own, ownSource);
+            }
             // Record where this module's source came from (the .pl being
             // consulted, or null for an embedded-string load) so the
             // separate-compilation tool can date its .shmo for incremental rebuilds.
@@ -1945,12 +2281,6 @@ internal sealed class ConsultPipeline
             // so they are callable bare right after loading.
             if (isExportQualified && E._useModuleLoadDepth == 0)
                 E.ImportAllExportsIntoUser(moduleName);
-            // ...and its LOCALS become reachable through the consult-direct
-            // bare-call fallback (ResolveDirectConsultLocal): consulting a
-            // source means being able to call its predicates, module
-            // directive or not. A use_module dependency never joins.
-            if (moduleDirectiveSeen && E._useModuleLoadDepth == 0)
-                E._directlyConsultedModules.Add(moduleName);
         }
         else
         {
@@ -1958,6 +2288,15 @@ internal sealed class ConsultPipeline
             // a single rolling 'user' module — matches the historic behaviour
             // from before the module system landed.
             var existing = E._modules[PrologEngine.DefaultModuleName];
+            // ADR-055: a predicate a module gave user through user:Head is
+            // redefined by this source defining it.
+            if (E._foreignClauses.Count > 0)
+            {
+                var own = new HashSet<int>();
+                foreach (var c in clauses)
+                    if (c.Kind != ClauseKind.Directive) own.Add(HeadFunctorIdOf(c));
+                DropForeignDefinitions(existing, own, ForeignSourceKey(moduleName, isModuleSource: false));
+            }
             committedManifest = existing;
             consultBaseOffset = existing.Clauses.Count;
             existing.Clauses.AddRange(clauses);
@@ -1981,6 +2320,14 @@ internal sealed class ConsultPipeline
                     else
                         existing.ModeDeclarations[fid] = modes;
                 }
+        }
+
+        // ADR-055: the clauses this source defined for other modules.
+        {
+            bool moduleSource = moduleDirectiveSeen || moduleName != PrologEngine.DefaultModuleName;
+            CommitForeignClauses(ForeignSourceKey(moduleName, moduleSource),
+                withdraw: moduleSource || reconsult, foreignStatic,
+                globalModuleProtected: !preludeSource && !librarySource);
         }
 
         // ADR-038 — record the module this consult defined so an enclosing
@@ -2089,7 +2436,8 @@ internal sealed class ConsultPipeline
                 pendingDiscontiguous, firstHookIndex, inFileGoalHooks,
                 moduleName, pendingMultifile,
                 () => new ModuleRewrite.Context(moduleName,
-                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors));
+                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors)
+                { MetaArgSpec = E.MetaArgSpec });
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO
@@ -2173,16 +2521,17 @@ internal sealed class ConsultPipeline
     /// <c>Module:Template</c> (stored under the bare name: that is the form a
     /// <c>predicate_property/2</c> query resolves). A malformed element is
     /// skipped rather than failing the consult — the directive is advisory.</summary>
-    private void RecordMetaPredicateTemplates(Term spec)
+    private void RecordMetaPredicateTemplates(Term spec, string moduleName)
     {
         switch (spec)
         {
             case CompoundTerm { Functor: ",", Args.Length: 2 } conj:
-                RecordMetaPredicateTemplates(conj.Args[0]);
-                RecordMetaPredicateTemplates(conj.Args[1]);
+                RecordMetaPredicateTemplates(conj.Args[0], moduleName);
+                RecordMetaPredicateTemplates(conj.Args[1], moduleName);
                 break;
             case CompoundTerm { Functor: ":", Args.Length: 2 } qual:
-                RecordMetaPredicateTemplates(qual.Args[1]);
+                RecordMetaPredicateTemplates(qual.Args[1],
+                    qual.Args[0] is AtomTerm qm ? qm.Name : moduleName);
                 break;
             case CompoundTerm template:
             {
@@ -2190,6 +2539,10 @@ internal sealed class ConsultPipeline
                     AtomTable.Intern(template.Functor, permanent: true).Id,
                     template.Args.Length);
                 E._metaPredicateTemplates[fid] = template;
+                // ADR-056: whose predicate the template describes.
+                if (!E._metaPredicateDeclarers.TryGetValue(fid, out var declarers))
+                    E._metaPredicateDeclarers[fid] = declarers = new HashSet<string>();
+                declarers.Add(moduleName);
                 break;
             }
         }

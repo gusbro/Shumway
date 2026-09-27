@@ -327,6 +327,8 @@ When proposing changes:
 | The attribute table observes, it does not retain | ADR-052 |
 | The foreign table is swept, not truncated | ADR-053 |
 | Dynamic predicates in the wasm tier (shadow snapshot) | ADR-054 |
+| Clauses for another module (`M:Head :- Body`) | ADR-055 |
+| A module's private predicates stay private | ADR-056 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

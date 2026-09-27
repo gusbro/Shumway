@@ -53,21 +53,33 @@ public class ModuleSystemTests
     }
 
     [Fact]
-    public void ExplicitModule_LocalCallableAfterDirectConsult()
+    public void ExplicitModule_LocalPredicateNotCallableFromUser()
     {
-        // p/1 is local to 'parser', but the module was consulted DIRECTLY —
-        // consulting a source means being able to call its predicates, so the
-        // bare call resolves through the consult-direct fallback (see
-        // DirectConsultLocalTests; a use_module dependency's locals stay
-        // private).
+        // p/1 is local to 'parser', so a query in the user context can't
+        // reach it — calling the bare 'p/1' raises existence_error, just
+        // like any other undefined predicate.
         var engine = new PrologEngine();
         engine.ConsultString("""
             :- module(parser).
             p(a).
             """);
-        var sol = engine.Query("p(X).");
-        Assert.True(sol.Success);
-        Assert.Equal("a", sol["X"]!.ToString());
+        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(X)."));
+        Assert.Equal("existence_error", ex.Kind);
+    }
+
+    [Fact]
+    public void AQualifiedNegationRunsTheNegatedGoalInThatModule()
+    {
+        // \+ is lowered inline, so there is no \+/1 predicate for a written
+        // M:(\+ G) to resolve to: it must reach M's predicates through G.
+        var engine = new PrologEngine();
+        engine.ConsultString("""
+            :- module(negm, []).
+            p(a).
+            """);
+        Assert.True(engine.Query("user:(\\+ fail).").Success);
+        Assert.True(engine.Query("negm:(\\+ p(b)).").Success);
+        Assert.False(engine.Query("negm:(\\+ p(a)).").Success);
     }
 
     [Fact]

@@ -258,6 +258,8 @@ public sealed partial class IlPredicateCompiler
                 engine.SetRegister(i, engine.GetHeap(argBase + i));
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
+            if (resolutionModule >= 0)
+                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // §7.8.3 — a control construct's arguments must convert
             // BEFORE any of it runs. Same spot as the bytecode twin:
@@ -437,12 +439,6 @@ public sealed partial class IlPredicateCompiler
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
                 {
-                    // The consult-direct fallback: a directly consulted
-                    // module's local. Returned UNCACHED — an assertz later in
-                    // the query may create the bare dynamic, which must win.
-                    int consultLocal =
-                        engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
-                    if (consultLocal >= 0) return consultLocal;
                     // honour the `unknown` flag (throws on error).
                     if (UnknownProcedure.Fails(engine, functorId))
                         return SyncFail;

@@ -21,7 +21,7 @@ public class Adr046ModuleOperatorTests
             + ":- op(700, xfx, ~~~>).\n"
             + "seen(X) :- X = (a ~~~> b).\n");
         // The module's own clause parsed with the op…
-        Assert.True(e.Query("seen('~~~>'(a, b)).").Success);
+        Assert.True(e.Query("m46a:seen('~~~>'(a, b)).").Success);
         // …but user-level reading does not see it.
         Assert.False(e.Query("current_op(700, xfx, '~~~>').").Success);
         Assert.False(e.Query(
@@ -91,7 +91,7 @@ public class Adr046ModuleOperatorTests
             + ":- op(0, xfx, ==).\n"
             + "probe(ok) :- \\+ current_op(_, xfx, ==).\n");
         // Inside the module, == is gone (tombstone hides the user def)…
-        Assert.True(e.Query("probe(ok).").Success);
+        Assert.True(e.Query("m46c:probe(ok).").Success);
         // …outside it is untouched.
         Assert.True(e.Query("current_op(700, xfx, ==).").Success);
     }

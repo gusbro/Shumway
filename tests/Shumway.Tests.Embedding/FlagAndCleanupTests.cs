@@ -300,4 +300,24 @@ public sealed class FlagAndCleanupTests
         Assert.Equal(1, n);
         Assert.Single(e.QueryAll("cc2(ok)."));
     }
+
+    /// <summary>WG17: a Cleanup unbound at the call is an instantiation
+    /// error. A clause's X reaches setup_call_cleanup/3 module-qualified
+    /// (ADR-056), so the check must look past the qualifier; a user clause,
+    /// a module clause and a query all see the error.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(":- module(sccm, [probe/0]).\n")]
+    public void Cleanup_UnboundInAClause_IsAnInstantiationError(string header)
+    {
+        var e = new PrologEngine();
+        e.ConsultString(header
+            + "probe :- catch((setup_call_cleanup(true, X = true, X), fail), "
+            + "error(instantiation_error, _), true).\n");
+        Assert.True(e.Query("probe.").Success);
+        Assert.True(e.Query("catch((setup_call_cleanup(true, X = true, X), fail), "
+            + "error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query("catch((setup_call_cleanup(true, true, 3), fail), "
+            + "error(type_error(callable, 3), _), true).").Success);
+    }
 }

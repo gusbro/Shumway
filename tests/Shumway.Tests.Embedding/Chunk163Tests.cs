@@ -297,9 +297,10 @@ public class Chunk163Tests
     }
 
     [Fact]
-    public void Link_QualifiedRef_TargetNotPublic_Missing()
+    public void Link_QualifiedRef_TargetNotPublic_LinksAsAnExternalSeed()
     {
-        // lib defines secret/0 as LOCAL; app tries qualified call.
+        // lib defines secret/0 as LOCAL; app calls it qualified, which is how
+        // code outside lib reaches it (ADR-056), so it keeps a standalone form.
         var lib = Compile("""
             :- module(lib).
             secret.
@@ -314,8 +315,9 @@ public class Chunk163Tests
             Objects = new[] { lib, app },
             EntryPoints = new[] { new PredicateRef("main", 0) },
         });
-        Assert.False(result.Success);
-        Assert.Contains(result.Diagnostics, d => d.Code == "missing_predicate");
+        Assert.True(result.Success);
+        Assert.Contains(new QualifiedPredicateRef("lib", "secret", 0),
+            result.ExternallyReachableSeeds);
     }
 
     [Fact]

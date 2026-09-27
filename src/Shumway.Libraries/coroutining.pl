@@ -62,8 +62,13 @@ frozen(X, G) :-
 % The goals as they were written, without the wrapper the store adds.
 '$co_unwrap'(G, Out) :- var(G), !, Out = G.
 '$co_unwrap'((A, B), (A1, B1)) :- !, '$co_unwrap'(A, A1), '$co_unwrap'(B, B1).
-'$co_unwrap'('$co_goal'(G), G) :- !.
+'$co_unwrap'('$co_goal'(G0), G) :- !, '$co_shown'(G0, G).
 '$co_unwrap'(G, G).
+
+% A goal frozen in user is stored user:G, since it runs there; the top
+% level shows it without the module it was typed in.
+'$co_shown'(G0, G) :- nonvar(G0), G0 = user:G1, !, G = G1.
+'$co_shown'(G, G).
 
 %! when(+Condition, :Goal) | Coroutining | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these.
 when(Condition, Goal) :-
@@ -388,7 +393,8 @@ co_project((A, B), V, Goals, Tail) :-
     !,
     co_project(A, V, Goals, Mid),
     co_project(B, V, Mid, Tail).
-co_project('$co_goal'(G), V, Goals, Tail) :- !, co_project(G, V, Goals, Tail).
+co_project('$co_goal'(G0), V, Goals, Tail) :- !,
+    '$co_shown'(G0, G), co_project(G, V, Goals, Tail).
 co_project('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
     !,
     ( Alive \== dead, '$co_owner'((X, Y), V)

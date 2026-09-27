@@ -4993,6 +4993,49 @@ public static class WasmPredicateCompiler
                 CellLoadDyn(LHeapB, LT2, 2);
                 Op(new LocalSet(LC0));
                 Deref();
+
+                // A tag inside a tag: a tagged call of a goal that already
+                // carries its module (the prelude's wakeup driver). The
+                // innermost module wins, as on the host; keyed by the outer
+                // one the probe never hits. One level is the shape that
+                // occurs; a deeper one still resolves, on the host.
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LT2));
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        CellLoadDyn(LHeapB, LT2, 1);
+                        Op(new LocalSet(LC0));
+                        Deref();
+                        TagOfC0();
+                        Op(new Int32Constant((int)Tag.Atom));
+                        Op(new Int32NotEqual());
+                        OpenIf();
+                        {
+                            MetaGuard(6);
+                            GoSlow();
+                        }
+                        CloseNested();
+                        Op(new LocalGet(LC0));
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LT0));              // the inner module
+                        CellLoadDyn(LHeapB, LT2, 2);
+                        Op(new LocalSet(LC0));
+                        Deref();
+                    }
+                    CloseNested();
+                }
+                CloseNested();
                 TagOfC0();
                 Op(new Int32Constant((int)Tag.Str));
                 Op(new Int32Equal());

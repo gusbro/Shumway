@@ -1569,7 +1569,8 @@ public sealed partial class PrologEngine
         var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
-        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports);
+        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports)
+        { MetaArgSpec = MetaArgSpec };
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));
@@ -2111,8 +2112,8 @@ public sealed partial class PrologEngine
         // name is a mangled USER local, and a user predicate named like
         // 'mod$test_326' fits the letters_digits shape by accident: register
         // it (under its bare name, first-compile-wins) and the module wall
-        // leaks — a bare test_326 resolved cross-module, preempting both the
-        // existence_error and the consult-direct fallback's ambiguity check.
+        // leaks: a bare test_326 resolved cross-module instead of raising
+        // existence_error (ADR-056).
         if (last > 0 && name[last - 1] != '$') return false;
         // NEVER register the query-stub's own '$q…' helpers: their ids are
         // deliberately REUSED query-to-query (MetaTransform.HelperPrefix "$q"),

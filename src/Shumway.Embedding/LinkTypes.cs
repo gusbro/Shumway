@@ -285,7 +285,8 @@ public sealed class LinkResult
     /// <summary>Stage 9 (dead-region elimination) — the externally-reachable SEED set:
     /// the reached predicates that must keep a standalone (trampoline-callable) form
     /// because they are callable BY NAME from outside a region's <c>br</c>-absorption
-    /// (entry / ensure_linked roots + every reached public / dynamic predicate). The
+    /// (entry / ensure_linked roots, every predicate a written <c>M:Goal</c> reaches, and
+    /// every reached public / dynamic predicate). The
     /// seeds the linker feeds to <c>RegionReachability</c> once the bundle is
     /// region-compiled; see <see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>.</summary>
     public IReadOnlyList<QualifiedPredicateRef> ExternallyReachableSeeds { get; }

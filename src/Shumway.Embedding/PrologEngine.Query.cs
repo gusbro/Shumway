@@ -824,7 +824,8 @@ public sealed partial class PrologEngine
                     && mte.DebugCodegen == _flags.DebugCodegen
                     && mte.InlineIte == EnableInlineIte
                     && mte.BundleLocalsCount == bundleLocalsCount
-                    && QualifiedResolutionsStillValid(mte.QualifiedResolutions))
+                    && QualifiedResolutionsStillValid(mte.QualifiedResolutions)
+                    && MetaArgLookupsStillValid(mte.MetaArgLookups))
                 {
                     allRewritten.AddRange(mte.Rewritten);
                     if (name == DefaultModuleName) userLocalsCache = mte.Locals;
@@ -862,7 +863,7 @@ public sealed partial class PrologEngine
                 moduleLocalsCache[name] = locals;
 
                 var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports)
-                { QualifiedStaticResolver = ResolveQualifiedStatic };
+                { QualifiedStaticResolver = ResolveQualifiedStatic, MetaArgSpec = MetaArgSpec };
                 // ADR-035 — a library's HELPERS are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -900,6 +901,7 @@ public sealed partial class PrologEngine
                     InlineIte = EnableInlineIte,
                     BundleLocalsCount = bundleLocalsCount,
                     QualifiedResolutions = ctx.QualifiedResolutions,
+                    MetaArgLookups = ctx.MetaArgLookups,
                     Rewritten = moduleRewritten,
                     Locals = locals,
                     HeadFids = moduleHeadFids,
@@ -990,7 +992,8 @@ public sealed partial class PrologEngine
                         fidCtx = new ModuleRewrite.Context(
                             seedModule,
                             seedLocals ?? EmptyLocalsSentinel,
-                            _dynStore.Functors);
+                            _dynStore.Functors)
+                        { MetaArgSpec = MetaArgSpec };
                         namedDynCtx[seedModule] = fidCtx;
                     }
                 }
@@ -1356,11 +1359,11 @@ public sealed partial class PrologEngine
                 ? new ModuleRewrite.Context(
                     DefaultModuleName, userLocals,
                     _dynStore.Functors, userManifest.Imports)
-                { QualifiedStaticResolver = ResolveQualifiedStatic }
+                { QualifiedStaticResolver = ResolveQualifiedStatic, MetaArgSpec = MetaArgSpec }
                 : new ModuleRewrite.Context(
                     DefaultModuleName, userLocals,
                     _dynStore.Functors)
-                { QualifiedStaticResolver = ResolveQualifiedStatic };
+                { QualifiedStaticResolver = ResolveQualifiedStatic, MetaArgSpec = MetaArgSpec };
             queryClauses = new List<Clause>(queryTransformed.Count);
             foreach (var clause in queryTransformed)
                 queryClauses.Add(ModuleRewrite.Rewrite(clause, ctx));
@@ -1631,6 +1634,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
+            if (!IsHelperAliasName(name, dollar)) continue;
             int bareFid = FunctorTable.Intern(
                 AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
             if (!addressMap.ContainsKey(bareFid))
@@ -1652,6 +1656,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
+            if (!IsHelperAliasName(name, dollar)) continue;
             int bareFid = FunctorTable.Intern(
                 AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
             if (!addressMap.ContainsKey(bareFid))
@@ -1756,8 +1761,8 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.MetaArgSpecOf = MetaArgSpec;
         engine.JitControl = IlPromotion.SetJitThreshold;
-        engine.ResolveModuleLocalFallback = fid => ResolveDirectConsultLocal(engine, fid);
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads
         // _currentPredicatesByAddress at call time (set later in this setup).
@@ -2189,6 +2194,32 @@ public sealed partial class PrologEngine
         return dollar;
     }
 
+    /// <summary>ADR-056: which module-local predicates keep a bare alias.
+    /// <c>user</c>'s do, since user is the global module and its predicates
+    /// are reachable from everywhere; so does a compiler-generated helper
+    /// (<c>m$'$neg_3'</c>), whose callers name it unqualified. Any other
+    /// module's local is private: an alias would let a runtime call/1
+    /// anywhere reach it.</summary>
+    private static bool IsHelperAliasName(string mangledName, int dollar)
+        => (dollar + 1 < mangledName.Length && mangledName[dollar + 1] == '$')
+           || (dollar == DefaultModuleName.Length
+               && string.CompareOrdinal(mangledName, 0, DefaultModuleName, 0, dollar) == 0);
+
+    /// <summary>True when every meta-argument spec a cached transform used
+    /// is still what the engine would answer.</summary>
+    private bool MetaArgLookupsStillValid(Dictionary<(int Fid, string? Local), int[]?>? lookups)
+    {
+        if (lookups is null) return true;
+        foreach (var ((fid, local), seen) in lookups)
+        {
+            int[]? now = MetaArgSpec(fid, local);
+            if (seen is null ? now is not null
+                : now is null || !System.MemoryExtensions.SequenceEqual<int>(seen, now))
+                return false;
+        }
+        return true;
+    }
+
     private void AddBareLocalAliasesCore(
         Func<int, bool> containsKey, Action<int, int> add,
         IReadOnlyDictionary<int, int> entries, HashSet<int>? recordAdded)
@@ -2200,6 +2231,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(mangledName);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
+            if (!IsHelperAliasName(mangledName, dollar)) continue;
             int bareFunctorId = FunctorTable.Intern(
                 AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
                 arity);
