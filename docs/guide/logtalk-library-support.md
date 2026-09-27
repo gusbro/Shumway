@@ -11,22 +11,22 @@ beyond the classic data-structure set.
 
 ## Headline numbers
 
-- **100% of the structurally supported set: 204 suites, all fully green:
-  11,417 tests, 0 failures** (plus 124 tests the suites skip themselves on
-  any backend).
-- **5 more suites pass sequentially** (+157 tests): the compute-heavy ML
-  classifiers time out under a 4-worker parallel sweep on a 4-core machine
-  and are green run alone. Treat those timeouts as machine-load sensitivity,
-  not failures.
+- **100% of the structurally supported set: 214 suites, all fully green:
+  11,634 tests, 0 failures** (plus 123 tests the suites skip themselves on
+  any backend; measured 2026-09).
+- The compute-heavy ML classifiers can time out under a 4-worker parallel
+  sweep on a 4-core machine and are green run alone (in the 2026-09 sweep
+  one did, `lof_anomaly_detector`, 27/27 alone). Treat those timeouts as
+  machine-load sensitivity, not failures.
 - **3 suites are structurally N/A**: `process` (spawns OS processes), `redis`
   (network sockets), `java` (an in-process JVM). Their testers run under the
   announced dialect and would fail honestly, but they measure the host
   platform gap, not Prolog conformance: the sweep harness skips them with a
   distinct marker instead of mis-scoring them.
-- **~22 suites declare themselves not applicable** (the sockets/HTTP service
-  stack, `git`/`memcached` needing external binaries, the `iso_*` data
-  libraries gated on the `encoding_directive` feature) and a couple remain
-  genuinely too slow to score (`isolation_forest_anomaly_detector`,
+- **23 suites declare themselves not applicable** (the sockets/HTTP service
+  stack, and `git`, `memcached`, `linda`, `gravatar`, `open_ai`, `open_id`,
+  `rest`, `s3`, which need external binaries or network services) and a
+  couple remain genuinely too slow to score (`isolation_forest_anomaly_detector`,
   `simulated_annealing`: 30+ minutes even alone).
 
 Highlights among the green suites: **random 216/216**, **types 149/149**,
