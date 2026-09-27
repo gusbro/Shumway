@@ -1426,6 +1426,11 @@ public sealed partial class PrologEngine
             // against this fresh link, before any site below is rewritten.
             if (IlPromotion.PendingWasmModules.Count > 0)
                 IlPromotion.Wasm?.InstallPendingBundles(this);
+            // A relink may have moved promoted code. The tier learns the live
+            // addresses HERE, before this query can deopt into them: a host
+            // tick after the query is too late, and a lazy-mode host never
+            // ticks at all (a consult, then clpfd deopting into dead code).
+            IlPromotion.Wasm?.ReconcileWithLink(this);
         }
         // The product built before any static link existed patches its
         // reference to the one just built — they are consistent by

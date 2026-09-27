@@ -735,12 +735,16 @@ export async function run(session, emit, out, editor, workspace) {
   // promoted — and keep answering exactly what Tier-0 answered above.
   {
     const on = await session.exports().JitCompileControl('1');
-    const attached = on.includes('attached') || on.includes('threshold=1');
+    // Threshold 1 is the batch mode, which answers "jit_compile: all -- ...".
+    const attached = on.includes('attached') || on.includes('threshold=1')
+                     || on.includes('jit_compile: all');
     check('jit_compile attaches', attached
           || on.includes('capability is off'), true);
     if (attached) {
       await session.consult(
         'wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+      // Batch mode compiles at the boundary the page ticks after a consult.
+      await session.exports().JitCompileAllTick();
       check('promoted code still answers', await solutions('wloop(50000).'), 'true');
       const status = await session.exports().JitCompileControl('status');
       check('jit_compile status shows a promotion',
