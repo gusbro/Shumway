@@ -15,7 +15,8 @@ param(
   [string]$Out = 'hook-report.txt',          # where the report is collected
   [int]$Port = 9031,
   [int]$TimeoutSec = 900,
-  [string]$Browser = ''                      # chrome.exe or msedge.exe; found if empty
+  [string]$Browser = '',                     # chrome.exe or msedge.exe; found if empty
+  [string]$Root = ''                         # the site to serve; the last publish if empty
 )
 $ErrorActionPreference = 'Stop'
 
@@ -37,10 +38,12 @@ if (-not $Browser) {
 }
 
 $shell = (Get-Process -Id $PID).Path
-$server = Start-Process $shell -PassThru -WindowStyle Hidden -ArgumentList @(
+$serveArgs = @(
   '-NoProfile', '-ExecutionPolicy', 'Bypass',
   '-File', (Join-Path $PSScriptRoot 'WebShumwayServe.ps1'),
   '-Port', $Port, '-Collect', $Out)
+if ($Root) { $serveArgs += @('-Root', $Root) }
+$server = Start-Process $shell -PassThru -WindowStyle Hidden -ArgumentList $serveArgs
 $profileDir = Join-Path ([System.IO.Path]::GetTempPath()) ('webshumway-hook-' + [guid]::NewGuid().ToString('N'))
 $page = $null
 $ok = $false

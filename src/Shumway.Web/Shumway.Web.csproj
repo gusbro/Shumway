@@ -135,25 +135,37 @@
          place of the ~6 s browser-side compile of wasm_compile(all). The
          wasm compiler is then an input of the bake. -->
     <StdlibWasmFlag Condition="'$(ShumwayWasmTier)' == 'true'">--wasm</StdlibWasmFlag>
-    <StdlibBakeInputs>boot.pl;..\Shumway.Embedding\Prelude.cs</StdlibBakeInputs>
-    <StdlibBakeInputs Condition="'$(ShumwayWasmTier)' == 'true'">$(StdlibBakeInputs);..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</StdlibBakeInputs>
+    <!-- What the bake RUNS: the linker, and the wasm compiler beside it (its
+         own copy, not the compiler project's output). -->
+    <StdlibBakeInputs>boot.pl;..\Shumway.Embedding\Prelude.cs;$(ShumwayLinkDll)</StdlibBakeInputs>
+    <StdlibBakeInputs Condition="'$(ShumwayWasmTier)' == 'true'">$(StdlibBakeInputs);..\Shumway.Link\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</StdlibBakeInputs>
   </PropertyGroup>
+
+  <!-- A target of its own, and unconditional: the bake's Inputs are compared
+       when THAT target starts, so the CLIs must be rebuilt before it. Built
+       inside it, a change to the wasm compiler was seen one publish late: the
+       bundle carried the previous compiler's code, which the engine refuses
+       (another evidence stamp) or, with the same stamp, runs.
+
+       Ordering without a ProjectReference: a browser-wasm app is self-contained
+       and may not reference a framework-dependent executable (NETSDK1150), so
+       the two CLIs are built explicitly here instead.
+
+       RESTORE as well as Build: a ProjectReference would have been restored
+       with this project, and these are not — so on a machine that has never
+       built them (a CI runner, a fresh clone) Build failed for want of
+       project.assets.json. It passed here only because they were already
+       built. -->
+  <Target Name="BuildStdlibBakers" BeforeTargets="PrepareForBuild">
+    <MSBuild Projects="..\Shumway.Compile\Shumway.Compile.csproj;..\Shumway.Link\Shumway.Link.csproj"
+             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
+  </Target>
 
   <Target Name="BakeStdlibBundle"
           BeforeTargets="PrepareForBuild"
+          DependsOnTargets="BuildStdlibBakers"
           Inputs="$(StdlibBakeInputs)"
           Outputs="$(StdlibBundle)">
-    <!-- Ordering without a ProjectReference: a browser-wasm app is self-contained
-         and may not reference a framework-dependent executable (NETSDK1150), so
-         the two CLIs are built explicitly here instead.
-
-         RESTORE as well as Build: a ProjectReference would have been restored
-         with this project, and these are not — so on a machine that has never
-         built them (a CI runner, a fresh clone) Build failed for want of
-         project.assets.json. It passed here only because they were already
-         built. -->
-    <MSBuild Projects="..\Shumway.Compile\Shumway.Compile.csproj;..\Shumway.Link\Shumway.Link.csproj"
-             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(StdlibDir)" />
     <Exec Command="dotnet &quot;$(ShumwayCompileDll)&quot; boot.pl -o &quot;$(StdlibDir)boot.shmo&quot;" />
     <Exec Command="dotnet &quot;$(ShumwayLinkDll)&quot; &quot;$(StdlibDir)boot.shmo&quot; --stdlib --no-compress $(StdlibWasmFlag) --entry web_boot/0 -o &quot;$(StdlibBundle)&quot;" />

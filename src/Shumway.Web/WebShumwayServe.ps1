@@ -5,7 +5,7 @@
 #   dotnet publish src/Shumway.Web -c Release
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1            # port 8080
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 9000
-#   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Root <otro wwwroot>
+#   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Root <another wwwroot>
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Collect out.txt
 #       ...also accepts POST /collect and writes the body to that file, which
 #       is how a headless run hands a measurement back (a page cannot write to

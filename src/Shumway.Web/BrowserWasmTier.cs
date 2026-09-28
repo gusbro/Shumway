@@ -2021,7 +2021,7 @@ internal static partial class WebShumwayApp
                     + $"deopts={WasmTierDelegate.DiagDeopts} "
                     + $"builtinExits={WasmTierDelegate.DiagBuiltins} "
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
-                    + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
+                    + $"%   modules={BrowserWasmTier.ModuleCount()} bytes={BrowserWasmTier.ModuleBytes():N0}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
                     + BrowserWasmTier.ForeignRankingReport(engine) + BrowserWasmTier.BuiltinCallerReport() + BrowserWasmTier.AreaReport() + BrowserWasmTier.TimingReport() + BrowserWasmTier.CompactReport() + BrowserWasmTier.ExhaustionReport()
                     + BrowserWasmTier.BuiltinRankingReport()
