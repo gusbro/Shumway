@@ -60,6 +60,8 @@ Detailed designs referenced from the code:
 - [cross-engine-comparison.md](benchmarks/cross-engine-comparison.md) — Shumway vs GNU Prolog, Scryer, and SWI across Van Roy, clp(Z), and Logtalk.
 - [analysis.md](benchmarks/analysis.md) — the curated Van Roy analysis & hotspots.
 - [baseline.md](benchmarks/baseline.md) — the current auto-generated baseline.
+- [browser.md](benchmarks/browser.md): the wasm tier against Tier-0 in a browser, the hooks and how to run them headless.
+- [wasm-tier-baseline.md](benchmarks/wasm-tier-baseline.md): the reference figures to compare a tier change against.
 
 ## History (`history/`)
 

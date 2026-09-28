@@ -1,11 +1,15 @@
 # WebShumway: wasm Tier-1 vs the interpreted Tier-0
 
-The browser runs the engine on Mono's wasm interpreter (no `Reflection.Emit`,
-so no IL Tier-1). The wasm Tier-1 (`docs/design/wasm-tier1-plan.md`) compiles
+The browser runs the engine AOT-compiled to wasm by default (a publish with
+`-p:RunAOTCompilation=false` runs it on Mono's IL interpreter instead), and in
+neither form is there `Reflection.Emit`, so no IL Tier-1. The wasm Tier-1 (`docs/design/wasm-tier1-plan.md`) compiles
 a hot predicate to a WebAssembly module and runs it natively, keeping the
 engine's own heap, stack, trail and registers as its working memory. This page
 is the tier's measurement: a tiered engine against a plain Tier-0 engine in
 the same browser, correctness cross-checked first.
+
+The current reference figures, to compare a change against, are in
+[wasm-tier-baseline.md](wasm-tier-baseline.md).
 
 Reached at `#wasmbench` (or `#wasmbench=<rounds>`; `#wasmtier` keeps the
 older three-program probe with its time-split diagnostics). See
@@ -18,7 +22,7 @@ browser, not the deterministic `--alloc` metric the desktop harness uses.
 
 ## Running these in a browser
 
-Tier performance is measured HERE and nowhere else. The desktop world copies
+Tier performance is measured here and nowhere else. The desktop world copies
 the engine's areas into a private image on every crossing and the browser
 world pins them, so the two disagree on direction, not just size: clpr came
 out 5x slower on the desktop and 1.1-2.2x faster in the browser. Counts
@@ -27,15 +31,15 @@ out 5x slower on the desktop and 1.1-2.2x faster in the browser. Counts
 ### Publish and serve
 
 ```bash
-# TWO flags, and leaving out either one fails quietly.
+# Two flags, and leaving out either one fails quietly.
 #
-#   ShumwayWasmTier: the tier is OPT-IN. Without it a published
+#   ShumwayWasmTier: the tier is opt-in. Without it a published
 #   WebShumway is Tier-0, every hook below still runs, and the times
 #   measure the interpreter.
 #
 #   ShumwayDiag: the counters are [Conditional("SHUMWAY_DIAG")]. Without
-#   it they compile to nothing and read ZERO -- chains, hops, switches,
-#   deopts, builtin exits and BOTH rankings. A page reporting "deopts=0"
+#   it they compile to nothing and read zero -- chains, hops, switches,
+#   deopts, builtin exits and both rankings. A page reporting "deopts=0"
 #   then means "not counted", not "none", and the output cannot tell the
 #   two apart.
 dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
@@ -47,16 +51,15 @@ powershell -File src/Shumway.Web/WebShumwayServe.ps1               # port 8080
 powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 9000 -Collect out.txt
 ```
 
-The tell for a missing ShumwayDiag is the time line: `delegate=0` and a
-NEGATIVE `glue`, since glue is what remains after subtracting a delegate
-figure nothing ever counted. `inWasm` and `stage` are plain stopwatches in
-`BrowserWasmWorld` and survive a stock build, so a page can show a credible
-time split beside a table of zeroed counters.
+The tell for a missing ShumwayDiag is the time line: every bucket reads
+zero. The clocks are diagnostic too, and not only for tidiness: one clock
+read costs 2 to 2.4 us in the browser, and a chain crosses several, so a
+stock build that timed its chains paid for it on every one.
 
 Ship neither flag in anything a user runs: a diagnostic build is not a
 release.
 
-The tier flag needs the `wasm-tools` workload, and the build FAILS without it
+The tier flag needs the `wasm-tools` workload, and the build fails without it
 rather than shipping a runtime with no shim -- which used to die later at
 `DllNotFoundException` the first time a module registered.
 `Shumway.Web` is not in the solution, so `dotnet build` never builds it.
@@ -104,7 +107,7 @@ looks like a hang and is not.
 | `#wasmcompilecheck` | End to end on the `jit_compile` pseudo-goal over the live session engine: attach, run something hot, and status must show the promotion. A test, not a measurement. |
 | `#wasmbench[=rounds]` | The five-program benchmark this page reports. |
 | `#wasmtier[=rounds]` | The older three-program probe, kept for its time-split diagnostics. |
-| `#wasmgrain[=rounds[xqueens][:cell]]` | The many-modules measurement: batch, eager, lazy and Tier-0 side by side, with module count, bytes, compile and registration cost, and the per-run hop/switch/deopt tally INCLUDING the ranking of deopt sites. The instrument for "what is still leaving the module". |
+| `#wasmgrain[=rounds[xqueens][:cell]]` | The many-modules measurement: batch, eager, lazy and Tier-0 side by side, with module count, bytes, compile and registration cost, and the per-run hop/switch/deopt tally including the ranking of deopt sites. The instrument for "what is still leaving the module". |
 | `#wasmscalar[=iterationsxrounds]` | Design probe: locals or imported globals for the WAM's scalars. Locals are registers but need a prologue and an epilogue; globals need neither and may not be registers. |
 | `#wasmthread` | Design probe: is engine work pinned to one thread? A module registers in the calling thread's own table, so a pool that hands out a different thread makes every module pay registration again. |
 | `#wasmspike[=NxM]` | Phase-0 spike, kept as the reproducer for `browser-spike.md`. |
@@ -145,7 +148,7 @@ it and every predicate the tier does not cover. The report ends with a
 `clock` line, the cost of one clock read in this browser. Every bucket is a
 difference of reads, a chain takes several, and a read costs microseconds
 (2.2 to 2.4 us measured in headless Chrome), so the split is only as sharp
-as that line allows. For the ratio itself, publish WITHOUT the diagnostic
+as that line allows. For the ratio itself, publish without the diagnostic
 build: its counters and clocks cost time on every chain.
 
 ### Scryer's library
@@ -169,12 +172,12 @@ one garbage file and let this engine's own clpfd answer, measuring the wrong
 library without saying so.
 
 Pass `rounds=1` unless you know why you want more. The wall figure is the
-MIN across rounds and the tick breakdowns SUM, so a higher count makes the
+min across rounds and the tick breakdowns sum, so a higher count makes the
 two disagree -- once to the point of reporting a negative setup time.
 
 ## The benchmark: five programs
 
-Each program gets its OWN pair of engines (so its group module is its own):
+Each program gets its own pair of engines (so its group module is its own):
 the tiered one has the wasm store attached at threshold 1, the plain one is
 untouched Tier-0. A correctness cross-check runs first on both -- it doubles
 as the warmup that promotes the group. counter, nrev and tak are the tier
@@ -196,21 +199,21 @@ times are small and swing with the scheduler; the Tier-0 baselines are
 steady, so the ratios move run to run. The orders of magnitude do not.
 
 crypt and zebra did not start there. The first run of this page measured
-crypt at **0.03x** -- thirty-one times SLOWER than the interpreter -- and
+crypt at **0.03x** -- thirty-one times slower than the interpreter -- and
 zebra at 0.9x, and the per-program diagnostics attributed both on the spot:
 
 1. **crypt: 182,990 builtin exits.** Every `\==/2` in its digit-picking
    chains left the chain for the host, at ~0.18 ms per exit in the browser.
-   Fix: **==/2 and \==/2 are open-coded for ATOMIC cells** -- two
+   Fix: **==/2 and \==/2 are open-coded for atomic cells** -- two
    dereferenced Atom/Int cells are identical exactly when they are the same
    cell, so the test is one 64-bit compare inside the module. Floats stay
    out (a float is boxed, equal values live in different cells) and anything
    non-atomic still exits to the real builtin. Exits: 182,990 to zero.
 2. **Then crypt still lost (0.1x), and zebra with it -- 283k and 61k chain
-   RE-ENTRIES with zero exits.** The diagnostics showed crypt/5 and zebra/3
+   re-entries with zero exits.** The diagnostics showed crypt/5 and zebra/3
    never promoted at all: each was reached only through its promoted caller,
    and a wasm caller's forward call to an out-of-group callee entered the
-   callee's bytecode directly, so the dispatch was never COUNTED and the
+   callee's bytecode directly, so the dispatch was never counted and the
    promotion counters starved. Every backtracking step then crossed the
    tier boundary. Fix: the interpreter's forward-marker fallback now routes
    through the same `OnDispatch` a plain call uses -- one cached probe on a
@@ -219,7 +222,7 @@ zebra at 0.9x, and the per-program diagnostics attributed both on the spot:
    crypt: 283k entries to 5; zebra: 61k to 5.
 
 The verdict diagnostics pin the mechanism for the originals too: one
-`nrev(200)` is 2 chain entries with ZERO module switches, and `tak(14,10,4)`
+`nrev(200)` is 2 chain entries with zero module switches, and `tak(14,10,4)`
 is 37 entries (all of them trail-growth deopts) with zero switches and zero
 builtin exits -- both run natively end to end.
 
@@ -229,15 +232,15 @@ The first working tier used a **per-entry model**: every entry into a module
 pinned the four engine arrays, filled the 24-slot mailbox from engine state,
 called, and synced back. Its numbers were counter ~200x but nrev 1.3x and tak
 unrunnable -- and a verdict-tally + time-split diagnostic attributed the cost
-precisely: nrev ran ENTIRELY in wasm (zero deopts, zero builtin crossings,
+precisely: nrev ran entirely in wasm (zero deopts, zero builtin crossings,
 2 ms of wasm execution) while the per-entry staging cost 90 ms, about 150 us
 per entry. The reason is specific to the browser: all of that staging is C#
 executed by Mono's interpreter, roughly 100x slower than the same code JITted.
-The enemy was not the boundary crossing (~0.3 us) but every LINE of
+The enemy was not the boundary crossing (~0.3 us) but every line of
 interpreted C# on the per-entry path.
 
 That dictated the **chain model** that replaced it. A `PredicateDelegate`
-invocation now opens a CHAIN: stage once (pin + fill), then hop
+invocation now opens a *chain*: stage once (pin + fill), then hop
 module-to-module on the mailbox the wasm itself keeps synced -- a cross-functor
 tail call or a callee's proceed into a wasm caller is a marker decode, a
 dictionary probe and a raw call. One `nrev(200)` is 2 chains and 600 in-chain
@@ -253,8 +256,8 @@ than by guesswork:
    compounds through the general unifier, attvars still deopt), at all four
    call-site shapes (call/execute, pre- and post-linker).
 2. **A deopt storm that was also a soundness bug.** With =/2 inline, every tak
-   leaf DEOPTED: the trail had hit its guard limit and stayed there. The bind
-   emission stored the heap cell BEFORE checking trail space, so the full-trail
+   leaf deopted: the trail had hit its guard limit and stayed there. The bind
+   emission stored the heap cell before checking trail space, so the full-trail
    deopt left an untrailed bind behind; the interpreter's re-run found the
    variable already bound, never trailed, never grew the trail, and the next
    leaf deopted again -- 14,912 times. An untrailed bind that survives
@@ -266,14 +269,14 @@ than by guesswork:
 The chain still left tak at 3.4x and nrev at ~35x, both bounded by the
 interpreted per-switch cost (~4-15 us) of hopping between per-predicate
 modules. The fourth design removed the hops themselves: **group modules**.
-Every promoted predicate compiles into ONE module over a unified pc space
+Every promoted predicate compiles into one module over a unified pc space
 (each member's bias is its linked base), so a cross-member call -- tail or
-NON-tail -- is an internal dispatch jump, the same mechanism the self-tail
+non-tail -- is an internal dispatch jump, the same mechanism the self-tail
 always used. A non-tail call bakes its resume marker as a constant and the
 callee's proceed compares Cp against the group's known markers and jumps
 straight back; backtracking across members stays native the same way (the
 shared fail case knows every member's BP markers). Markers encode (functor,
-ADDRESS) rather than cursor ordinals, so they survive the group rebuild
+address) rather than cursor ordinals, so they survive the group rebuild
 that each new promotion triggers. nrev: ~35x to ~75x; tak: 3.4x to ~77x.
 
 ## Reading what remains
@@ -281,7 +284,7 @@ that each new promotion triggers. nrev: ~35x to ~75x; tak: 3.4x to ~77x.
 - All three cases now sit within the same order of magnitude of the
   counter's ceiling; what separates them is real work (nrev's allocation,
   tak's trail-growth deopts) plus the per-chain staging, which amortises.
-- The remaining glue in the diagnostics is the chain OPEN/CLOSE around each
+- The remaining glue in the diagnostics is the chain open/close around each
   query goal and the builtin path -- both once-per-boundary costs, not
   per-call ones.
 
