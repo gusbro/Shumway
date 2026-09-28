@@ -336,6 +336,12 @@ public sealed partial class Activation
     /// <summary>Fills the mailbox from the live state. False means
     /// <see cref="WasmModeCompatible"/> is false -- the caller must stay on
     /// the interpreter for this entry.</summary>
+    /// <summary>Time the staging's diagnostic checks took (the attribute
+    /// mirror and log verified against their stores, whole). A timing split
+    /// has to take it out of the staging: it grows with the attribute table
+    /// and a release build does not pay it. Diagnostic.</summary>
+    public static long DiagStagingVerifyTicks;
+
     public bool TryFillWasmMailbox(System.Span<long> m, in WasmMailboxBases bases)
     {
         if (!WasmModeCompatible) return false;
@@ -444,8 +450,14 @@ public sealed partial class Activation
         // handover, and the image is what the module reads. A divergence
         // from the store is a module computing on a lie, and this is the
         // last moment it costs nothing to catch. Diagnostic builds only.
+#if SHUMWAY_DIAG
+        long tv = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
         AttrMirrorVerify("wasm staging");
         AttrLogMirrorAssert();
+#if SHUMWAY_DIAG
+        DiagStagingVerifyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tv;
+#endif
         m[WasmAbi.CatchHeapFloor] = catchFloor;
         m[WasmAbi.CatchSnapBindingMax] = snapBind;
         m[WasmAbi.CatchSnapExtraMax] = snapExtra;

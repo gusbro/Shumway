@@ -214,7 +214,12 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// visible at the restaging that follows it.</summary>
         private void Stage()
         {
+            // Diagnostic builds only, like every clock read on this path: in
+            // a browser one read costs microseconds (the probe's `clock` line
+            // measures it), and a chain crosses here and Call on every entry.
+#if SHUMWAY_DIAG
             long t0 = Stopwatch.GetTimestamp();
+#endif
             _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
             _engine.AttrMirrorEnable();
             _engine.MetaResolutionObserver = _w._modules.NoteMetaResolution;
@@ -278,7 +283,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
             _engineAuthoritative = false;
+#if SHUMWAY_DIAG
             DiagStageTicks += Stopwatch.GetTimestamp() - t0;
+#endif
         }
 
         /// <summary>The '$fd_dom' functor table's address (ADR-051). Pinned
@@ -554,10 +561,14 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         public WasmVerdict Call(WasmTarget target)
         {
+#if SHUMWAY_DIAG
             long t0 = Stopwatch.GetTimestamp();
+#endif
             int v = WebShumwayApp.WasmCall(_w._registrations[target.ModuleId].Index.Value,
                                            _mailboxAt, target.Cursor);
+#if SHUMWAY_DIAG
             DiagCallTicks += Stopwatch.GetTimestamp() - t0;
+#endif
             return (WasmVerdict)v;
         }
 
@@ -722,8 +733,16 @@ internal static class BrowserWasmTier
         double inw = BrowserWasmWorld.DiagCallTicks * f;
         double stg = BrowserWasmWorld.DiagStageTicks * f;
         double bti = WasmTierDelegate.DiagBuiltinTicks * f;
-        return $"%   delegate {del:F1} ms = inWasm {inw:F1} + stage {stg:F1}"
+        // The interpreter's run brackets the delegate (it dispatches into
+        // it), so what it spent on its own is the difference: the bytecode a
+        // deopt hands it, and every predicate the tier does not cover.
+        double run = Shumway.Interpreter.BytecodeInterpreter.DiagRunTicks * f;
+        // The staging's own diagnostic checks, which walk the whole attribute
+        // table: a cost of this build, not of the tier, so it is shown apart.
+        double ver = Activation.DiagStagingVerifyTicks * f;
+        return $"%   delegate {del:F1} ms = inWasm {inw:F1} + stage {stg - ver:F1}"
              + $" + builtins {bti:F1} + glue {del - inw - stg - bti:F1}"
+             + $" + verify {ver:F1}; interp {run - del:F1} ms"
              + System.Environment.NewLine;
     }
 
@@ -1905,6 +1924,23 @@ internal static partial class WebShumwayApp
                 return "% compact census: reset" + System.Environment.NewLine;
             }
 
+            if (command == "clock")
+            {
+                // What ONE read of the clock costs here. Every time bucket
+                // the diagnostic build reports is a difference of reads, and
+                // in a browser a read may cross into the host: a bucket
+                // measured per chain carries a few of them, so a small one
+                // can be mostly clock.
+                const int reads = 100_000;
+                long sink = 0;
+                long c0 = Stopwatch.GetTimestamp();
+                for (int i = 0; i < reads; i++) sink += Stopwatch.GetTimestamp();
+                long c1 = Stopwatch.GetTimestamp();
+                double ns = (c1 - c0) * 1e9 / Stopwatch.Frequency / reads;
+                return $"% clock: {ns:F0} ns per Stopwatch read ({reads} reads, "
+                     + $"frequency {Stopwatch.Frequency}, checksum {sink & 1})\n";
+            }
+
             if (command == "status")
             {
                 if (store.Wasm is not { } w)
@@ -2011,6 +2047,10 @@ internal static partial class WebShumwayApp
                 // the last query, and 136 module builds accumulated over a
                 // session of them looks exactly like one query gone wrong.
                 WasmTierDelegate.ResetDiag();
+                BrowserWasmWorld.DiagCallTicks = 0;
+                BrowserWasmWorld.DiagStageTicks = 0;
+                Shumway.Interpreter.BytecodeInterpreter.ResetRunTicks();
+                Activation.DiagStagingVerifyTicks = 0;
                 BrowserWasmTier.DiagCompileTicks = 0;
                 BrowserWasmTier.DiagCompileBuilds = 0;
                 BrowserWasmWorld.DiagRegisterTicks = 0;

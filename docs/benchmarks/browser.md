@@ -131,6 +131,23 @@ them off for a timing. `probes/exits.pl` prices one kind of module exit per
 goal (`#wasmprobe=exits&n=100000`). The helpers the hooks share (library
 load, bounded goal, tier switch, counters, traces) are in `wwwroot/measure.js`.
 
+Under a diagnostic publish (`-p:ShumwayDiag=true`) each goal's row carries a
+second line, where the tier's best run went:
+
+```
+delegate 1399.3 ms = inWasm 109.4 + stage 549.2 + builtins 28.5 + glue 497.6 + verify 214.7; interp 842.5 ms
+```
+
+`verify` is the staging's own consistency checks (the attribute mirror and
+log against their stores), a cost of the diagnostic build that is kept out of
+`stage`. `interp` is the interpreter's own share: the bytecode a deopt hands
+it and every predicate the tier does not cover. The report ends with a
+`clock` line, the cost of one clock read in this browser. Every bucket is a
+difference of reads, a chain takes several, and a read costs microseconds
+(2.2 to 2.4 us measured in headless Chrome), so the split is only as sharp
+as that line allows. For the ratio itself, publish WITHOUT the diagnostic
+build: its counters and clocks cost time on every chain.
+
 ### Scryer's library
 
 `#wasmclpz` and any probe with `%uses scryer` load Scryer's library tree

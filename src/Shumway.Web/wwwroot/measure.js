@@ -84,7 +84,8 @@ export async function setTierMode(session, mode) {
 export async function readCounters(session) {
   const status = await session.exports().JitCompileControl('status');
   const line = (status.match(/chains=\S+ switches=\S+ hops=\S+ foreignExits=\S+ deopts=\S+ builtinExits=\S+ tailExits=\S+/) || [''])[0];
-  return { status, line };
+  const time = (status.match(/delegate .*; interp \S+ ms/) || [''])[0];
+  return { status, line, time };
 }
 
 /** Diagnostic channels that arm, disarm and dump; and two that only dump. */
@@ -124,7 +125,8 @@ export async function withTraces(session, channels, label, fn) {
  *   %probe <name>: <goal>        one measured goal; {N} stands for n
  *
  * Reports, per goal, the best time of each tier, their ratio, and the tier's
- * counters for the timed run (chains, hops, deopts, exits). With trace=, the
+ * counters for the timed run (chains, hops, deopts, exits) and where its time
+ * went (inside the delegate, in the interpreter). With trace=, the
  * tier's timed runs carry those channels and post their dumps.
  */
 export async function wasmProbe({ session, libraries, emit, hash }) {
@@ -149,6 +151,9 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
     if (probes.length === 0) throw new Error(`probes/${file}.pl declares no %probe line`);
     emit(`--- ${label}: ${probes.length} goals, n=${n}, x${rounds} rounds ---\n`);
     mark(`${label}: start, ${probes.length} goals, n=${n}, rounds=${rounds}`);
+    // The time split is made of clock reads; say what one costs here.
+    const clock = (await session.exports().JitCompileControl('clock')).trim();
+    mark(`${label}: ${clock}`);
 
     if (usesScryer) {
       const lib = await loadScryerLibrary(libraries, 'scryer_probe');
@@ -157,7 +162,7 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
     const err = await session.consult(source);
     if (err) throw new Error('consult failed: ' + err);
 
-    const best = {}, ok = {}, counts = {};
+    const best = {}, ok = {}, counts = {}, times = {};
     for (let r = 0; r < rounds; r++) {
       for (const mode of ['off', 'all', 'all', 'off']) {
         await setTierMode(session, mode);
@@ -168,9 +173,12 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
             ? await withTraces(session, channels, `${label} ${name}`,
                                () => timedGoal(session, goal, budget))
             : await timedGoal(session, goal, budget);
-          const { line } = await readCounters(session);
+          const { line, time } = await readCounters(session);
           const key = `${name} ${mode}`;
-          if (run.ok && (!(key in best) || run.ms < best[key])) best[key] = run.ms;
+          if (run.ok && (!(key in best) || run.ms < best[key])) {
+            best[key] = run.ms;
+            times[key] = time;
+          }
           ok[key] = (ok[key] ?? true) && run.ok;
           if (mode === 'all') counts[name] = line;
           mark(`${label}: round ${r} ${mode.padEnd(3)} ${name} -> ${Math.round(run.ms)}ms `
@@ -186,9 +194,13 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
       const bad = ok[`${name} off`] && ok[`${name} all`] ? '' : '  FAILED';
       return `${name.padEnd(width)}  tier0 ${String(Math.round(off ?? -1)).padStart(7)}ms`
            + `  tier1 ${String(Math.round(all ?? -1)).padStart(7)}ms  ${ratio.padStart(6)}`
-           + `${bad}  ${counts[name] ?? ''}`;
+           + `${bad}  ${counts[name] ?? ''}`
+           // Where the tier's best run went: the delegate's four buckets and
+           // the interpreter's own share; the rest of the wall is the query's
+           // setup and its answer.
+           + (times[`${name} all`] ? `\n${''.padEnd(width)}  ${times[`${name} all`].trim()}` : '');
     });
-    const report = `${label} (n=${n}, best of ${rounds} ABBA rounds)\n${rows.join('\n')}\n`;
+    const report = `${label} (n=${n}, best of ${rounds} ABBA rounds)\n${rows.join('\n')}\n${clock}\n`;
     emit(report);
     const pre = document.createElement('pre');
     pre.id = 'wasmprobe';
