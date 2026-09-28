@@ -18,6 +18,8 @@ namespace Shumway.Tests.Embedding;
 /// entries added since need looking at. What the check DEFENDS is untouched
 /// -- a chain describing a rebuilt buffer still fails the buffer-identity
 /// test and still falls back to the store.</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class AssertChainVerificationTests
 {
     /// <summary>COUNTED, not timed: building n facts verifies O(n) entries in

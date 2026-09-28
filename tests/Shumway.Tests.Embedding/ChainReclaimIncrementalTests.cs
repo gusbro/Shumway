@@ -19,6 +19,8 @@ namespace Shumway.Tests.Embedding;
 /// Re-threading follows the range of positions whose links a removal actually
 /// dirtied, and anything the tracking does not model widens that range to
 /// everything, which is the old full pass.</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class ChainReclaimIncrementalTests
 {
     private const string Program = """

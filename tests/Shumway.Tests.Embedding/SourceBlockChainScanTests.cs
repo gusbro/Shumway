@@ -14,6 +14,8 @@ namespace Shumway.Tests.Embedding;
 /// <para>It is invisible until the predicate is large: under 32,000 clauses
 /// the other costs hide it, and at 128,000 it was 18 of the 28 seconds of a
 /// drain. It is a count, maintained as entries come and go.</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class SourceBlockChainScanTests
 {
     private const string Program = """
