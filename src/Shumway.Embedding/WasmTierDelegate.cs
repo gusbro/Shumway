@@ -633,6 +633,10 @@ public sealed class WasmTierDelegate
                 ? _world.LiveEntryAddressOf(_functorId)
                 : (int)_world.TranslatePcToLive(_functorId, address));
             engine.IlTailCallPending = true;
+            // The interpreter must RUN that pc: as a plain tail call it would
+            // dispatch it back through the tier, which refuses it again, forever
+            // (a debug session's trail-everything made every call spin).
+            engine.SignalIlDeopt();
             return true;
         }
         CountEntry();
@@ -651,6 +655,7 @@ public sealed class WasmTierDelegate
                     ? _world.LiveEntryAddressOf(_functorId)
                     : (int)_world.TranslatePcToLive(_functorId, address));
                 engine.IlTailCallPending = true;
+                engine.SignalIlDeopt();
                 return true;
             }
             while (true)

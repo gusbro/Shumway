@@ -1954,7 +1954,10 @@ public sealed partial class PrologEngine
         // bytecode-PC the interpreter has into the functor the store
         // wants.
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
-            IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine);
+            IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine)
+        {
+            WasmSuspended = _debugEvalDepth > 0,
+        };
 
         // PGO phase-2 pass. Once per query setup, off the
         // hot path: any promoted, instrumented predicate that has

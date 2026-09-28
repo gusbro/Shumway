@@ -137,6 +137,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         CompiledPredicate predicate)
         => _installed[functorId] = (linkedAddress, CodeHash(predicate));
 
+    /// <summary>Whether the predicate's delegate is a wasm one, baked or
+    /// compiled.</summary>
+    public bool Covers(int functorId) => _installed.ContainsKey(functorId);
+
     // FNV-1a over the linked bytecode and call sites: equal hashes mean the
     // predicate merely MOVED; a redefinition changes them.
     private static ulong CodeHash(CompiledPredicate pred)

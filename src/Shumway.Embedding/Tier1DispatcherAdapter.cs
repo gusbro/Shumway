@@ -37,6 +37,17 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         _engine = engine;
     }
 
+    /// <summary>A debug evaluation's query runs its wasm-covered predicates
+    /// on bytecode and promotes none to wasm (IL is unaffected: ADR-035's
+    /// per-predicate rule stands). The browser evaluates on a pool thread
+    /// while the stop holds the engine thread, and entering or promoting a
+    /// wasm module there waits on that thread until the evaluation times
+    /// out.</summary>
+    public bool WasmSuspended { get; init; }
+
+    private bool SuspendsWasm(int functorId)
+        => WasmSuspended && _store.Wasm is { } wasm && wasm.Covers(functorId);
+
     public Func<Activation, int, bool>? ResolveRetiredResume(int functorId)
         => _store.TryGetRetiredResumeWrapper(functorId);
 
@@ -57,7 +68,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     }
 
     public Func<Activation, int, bool>? ResolveByFunctorId(int functorId)
-        => _store.TryGetResumeWrapper(functorId);
+        => SuspendsWasm(functorId) ? null : _store.TryGetResumeWrapper(functorId);
 
     // Built on the first miss only: a CallIl site losing its delegate is an
     // eviction between queries, not a per-dispatch event.
@@ -98,6 +109,12 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
         int functorId = pred.FunctorId;
 
+        if (SuspendsWasm(functorId))
+        {
+            _dispatchCache[targetAddress] = null!;
+            return null;
+        }
+
         var existing = _store.TryGetDispatchWrapper(functorId);
         if (existing is not null)
         {
@@ -107,7 +124,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
         // The wasm tier counts the same dispatches; its install lands in the
         // store's table, so the wrapper below is the ordinary one.
-        if (_store.Wasm is { Enabled: true } wasm
+        if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm
             && wasm.RecordDispatch(functorId, pred, targetAddress, _engine) is not null)
         {
             var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
