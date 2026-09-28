@@ -55,7 +55,7 @@ public sealed class ScryerCharsioShimTests : IDisposable
     [Fact]
     public void ReadFromChars_SyntaxError_IsCatchable()
     {
-        // The message is OUR reader's (not Scryer's error vocabulary), but the
+        // The message is our reader's (not Scryer's error vocabulary), but the
         // syntax_error(_) shape is, so a generic catcher works.
         Assert.True(_e.Query(
             "atom_chars('f(x,', Cs), catch(rfc(Cs, _), error(syntax_error(_), _), true).")

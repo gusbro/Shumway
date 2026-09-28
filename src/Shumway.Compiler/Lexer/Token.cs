@@ -41,10 +41,10 @@ public readonly record struct Token(
     /// <c>foo</c> followed by a parenthesised term.</summary>
     public bool HasLeadingWhitespace { get; init; }
 
-    /// <summary>True for atom tokens produced from a QUOTED source form
+    /// <summary>True for atom tokens produced from a quoted source form
     /// (<c>'...'</c>, or the Arity <c>$...$</c> form). The parser uses
     /// this to keep quoting-sensitive surface syntax honest:
-    /// the Arity snip opener <c>[!</c> requires a BARE <c>!</c> — a
+    /// the Arity snip opener <c>[!</c> requires a bare <c>!</c> — a
     /// quoted <c>'!'</c> after <c>[</c> is an ordinary list element
     /// (<c>['!', X]</c> is a two-element list, not a snip).</summary>
     public bool WasQuoted { get; init; }

@@ -14,8 +14,8 @@ public static class StandardBuiltins
 
     public static void EnsureRegistered()
     {
-        // Cheap lock-free guard on the way IN; the flag goes up on the way
-        // OUT. Claiming it first (Interlocked.Exchange) let a second caller
+        // Cheap lock-free guard on the way in; the flag goes up on the way
+        // out. Claiming it first (Interlocked.Exchange) let a second caller
         // through while the registry was still half-populated — it saw
         // "already done" and then could not find a builtin the first caller
         // had not reached yet. Every caller now either does the work or waits.
@@ -388,7 +388,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$time_start", 1, ControlBuiltins.TimeStart);
         BuiltinsRegistry.Register("$time_report", 1, ControlBuiltins.TimeReport);
 
-        // List manipulation extras. member/2 is intentionally NOT here —
+        // List manipulation extras. member/2 is intentionally not here —
         // it lives in the Prolog prelude so it enumerates solutions via
         // standard backtracking rather than being a one-shot
         // first-solution builtin; ListBuiltins.Member is unreachable from

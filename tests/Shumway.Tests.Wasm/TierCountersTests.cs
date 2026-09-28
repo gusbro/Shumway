@@ -7,7 +7,7 @@ namespace Shumway.Tests.Wasm;
 /// <summary>time/1's tallies must survive promotion. A module dispatches its
 /// goals and claims its heap cells without touching a managed counter, so a
 /// run that stays inside wasm used to report a handful of inferences for
-/// millions of goals -- and heap cells are the DETERMINISTIC metric the
+/// millions of goals -- and heap cells are the deterministic metric the
 /// performance tests compare, which makes a blind counter worse than a
 /// cosmetic bug.</summary>
 public sealed class TierCountersTests(ITestOutputHelper o)
@@ -30,7 +30,7 @@ public sealed class TierCountersTests(ITestOutputHelper o)
     private const string Goal =
         "numlist(1, 40, L), findall(P, pairs(L, P), Ps), length(Ps, _)";
 
-    // Cells claimed BY THE MODULE: structure building in promoted Prolog,
+    // Cells claimed by the module: structure building in promoted Prolog,
     // with no builtin in the loop to claim them on the managed side. Without
     // this the cell half of the assertion holds even with the tally gone.
     private const string CellGoal = "chew(200, _)";
@@ -65,8 +65,8 @@ public sealed class TierCountersTests(ITestOutputHelper o)
         var (i1, c1) = Measure(tiered, Goal);
         o.WriteLine($"tier0 inf={i0} cells={c0} | wasm inf={i1} cells={c1}");
 
-        // ANTI-VACUITY: nothing is being asserted about the tier unless the
-        // corpus is ON it, and unless Tier-0 itself counted a real workload.
+        // Anti-vacuity: nothing is being asserted about the tier unless the
+        // corpus is on it, and unless Tier-0 itself counted a real workload.
         Assert.NotEmpty(members);
         Assert.True(i0 > 1000 && c0 > 1000, $"the oracle counted too little: {i0}/{c0}");
 

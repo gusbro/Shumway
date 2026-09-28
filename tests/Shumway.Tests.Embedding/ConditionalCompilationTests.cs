@@ -62,7 +62,7 @@ public sealed class ConditionalCompilationTests
     public void Nested_InnerSkipped_WhenOuterSkipped()
     {
         var e = new PrologEngine();
-        // Outer is false → the whole block (including the inner if's TRUE branch)
+        // Outer is false → the whole block (including the inner if's true branch)
         // is skipped.
         e.ConsultString("""
             :- if(fail).

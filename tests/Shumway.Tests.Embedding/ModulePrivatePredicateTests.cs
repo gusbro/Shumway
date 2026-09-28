@@ -31,7 +31,7 @@ public sealed class ModulePrivatePredicateTests
     private static void Succeeds(PrologEngine e, string goal)
         => Assert.True(e.Query(goal).Success, goal);
 
-    // `, fail` inside: a goal that SUCCEEDS must not pass for one that raised.
+    // `, fail` inside: a goal that succeeds must not pass for one that raised.
     private static void RaisesExistence(PrologEngine e, string goal, string indicator)
         => Succeeds(e, $"catch(({goal}, fail), error(existence_error(procedure, {indicator}), _), true).");
 

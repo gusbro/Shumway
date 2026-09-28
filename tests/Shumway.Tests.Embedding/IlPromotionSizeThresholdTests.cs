@@ -119,7 +119,7 @@ big(80).
         e.IlPromotion.Threshold = 1;     // promote eagerly
         e.IlPromotion.MaxIlPromotionBytecodeBytes = 256;  // tiny — every realistic preds exceeds this
         // Phase 33 L2 — background promotion (now the default) uses its own
-        // higher cap (L3); pin that one down too so the size GATE is what's
+        // higher cap (L3); pin that one down too so the size gate is what's
         // under test, not the mode.
         e.IlPromotion.MaxIlPromotionBytecodeBytesBackground = 256;
 
@@ -129,7 +129,7 @@ big(80).
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("big(42).").Success);
 
-        // Tier-1 promotion should NOT have happened.
+        // Tier-1 promotion should not have happened.
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("big", permanent: true).Id, 1);
         Assert.False(e.IlPromotion.IsPromoted(fid),
@@ -154,14 +154,14 @@ big(80).
         Assert.True(e.Query("greet(X).").Success);
         // Hard to assert IsPromoted=true reliably (depends on the
         // predicate's IL eligibility); but importantly the predicate
-        // must not have been parked by the SIZE threshold.
+        // must not have been parked by the size threshold.
         // The IL-eligibility check (IsExcludedBySize false → may
         // still be unpromotable via CanCompile false) is what we're
         // pinning.
         var canCompile = !e.IlPromotion.IsUnpromotable(
             Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern("greet", permanent: true).Id, 1));
-        // It's allowed to be unpromotable for OTHER reasons (e.g.
+        // It's allowed to be unpromotable for other reasons (e.g.
         // CanCompile rejected the shape), but the size guard alone
         // shouldn't park it. Either it's actually promoted or it's
         // unpromotable for a non-size reason — both fine.

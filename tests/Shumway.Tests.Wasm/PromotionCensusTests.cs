@@ -9,7 +9,7 @@ namespace Shumway.Tests.Wasm;
 /// crossings dominate its compilable work is refused at compile time and
 /// stays on Tier-0. The motivating shape is catch/3 around a recursive call
 /// (perftest1.pl's deep3): promoted, every level paid two crossings for one
-/// `is`, and it ran an order of magnitude SLOWER than the interpreter. The
+/// `is`, and it ran an order of magnitude slower than the interpreter. The
 /// census is a by-product of the decode pass, so refusing costs nothing at
 /// run time -- which is why it is static and not measured.</summary>
 public sealed class PromotionCensusTests
@@ -36,7 +36,7 @@ public sealed class PromotionCensusTests
         Assert.True(e.Query("deep3(300, true).").Success);
         // Neither deep3 nor its $catchgoal_ helper promoted: the helper
         // carries the crossings, and the caller inherits them (a call to a
-        // $catchgoal_ IS the caller's catch).
+        // $catchgoal_ is the caller's catch).
         Assert.DoesNotContain(members, m => NameOf(m).Contains("deep3"));
         Assert.DoesNotContain(members, m => NameOf(m).Contains("$catchgoal_"));
         // And refusing changed no answer.
@@ -71,7 +71,7 @@ public sealed class PromotionCensusTests
     {
         // Straight to the compiler: the refusal is a WasmCompileException
         // whose message carries the counts, so a reader of the diag log can
-        // see WHY a predicate stayed behind without re-deriving the census.
+        // see why a predicate stayed behind without re-deriving the census.
         var e = new PrologEngine();
         e.ConsultString("""
             :- public crosser/1.

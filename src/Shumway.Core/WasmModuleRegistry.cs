@@ -19,7 +19,7 @@ public readonly record struct WasmTarget(int ModuleId, int Cursor);
 /// any foreign one. Modules are never removed: an open chain may be inside
 /// one, and a module every functor has left simply owns no rows.</para>
 ///
-/// <para>INVARIANT: a baked in-module jump never lands in code the table no
+/// <para>Invariant: a baked in-module jump never lands in code the table no
 /// longer owns. A member calls a sibling of its own module by a baked jump,
 /// not a probe (the hot path pays nothing), so when a functor leaves a
 /// module, every member of that module that reaches it by baked jumps,
@@ -96,7 +96,7 @@ public sealed class WasmModuleRegistry
     /// the caller registers its runtime handle under it. <paramref
     /// name="callEdges"/> are the (caller, callee) pairs the module was
     /// compiled with; the member-to-member ones are its baked jumps.
-    /// <paramref name="displaced"/> are the functors of OTHER modules this
+    /// <paramref name="displaced"/> are the functors of other modules this
     /// install pushed to bytecode: the baked callers the taken-over functors
     /// drag along (see the class remarks).</summary>
     public Module Install(
@@ -166,7 +166,7 @@ public sealed class WasmModuleRegistry
         return new List<int>(gone);
     }
 
-    /// <summary>Takes a member out of NEW calls and keeps it for the calls
+    /// <summary>Takes a member out of new calls and keeps it for the calls
     /// already running in it (ADR-054): its entry row and call markers are
     /// cleared, so a fresh call no longer resolves here and goes to the
     /// bytecode, while its resume rows stay, so a choice point or a
@@ -230,7 +230,7 @@ public sealed class WasmModuleRegistry
         }
         // The callee may be a name with no code of its own -- a closure built
         // in one module and called from another resolves to a bare functor --
-        // whose address map entry is the ENTRY of one that does have code.
+        // whose address map entry is the entry of one that does have code.
         // Only an entry (address 0) can be aliased this way: a resume point
         // inside a body belongs to the body it was compiled from.
         if (address != 0 || _byFid.ContainsKey(functorId)) return false;
@@ -247,7 +247,7 @@ public sealed class WasmModuleRegistry
     public int EntryAddressOf(int functorId) => _entryAddressByFid[functorId];
 
     /// <summary>Records what the host resolved, naming the functor that
-    /// actually HAS the code.
+    /// actually has the code.
     ///
     /// <para>A closure built in one module and called from another resolves
     /// to a bare functor: <c>maplist(unwrap_with(bare_integer), ...)</c> is
@@ -255,13 +255,13 @@ public sealed class WasmModuleRegistry
     /// up relative to lists and lands on <c>unwrap_with/3</c> -- which names
     /// no predicate of its own. The interpreter follows the address map and
     /// runs the right code; the module cannot, because its jump target is a
-    /// MARKER and markers are minted per functor. So it read zero and the
+    /// marker and markers are minted per functor. So it read zero and the
     /// chain closed, 2.9 million times in one clp(Z) goal.</para>
     ///
-    /// <para>The two names share an ADDRESS, and that is what makes this
+    /// <para>The two names share an address, and that is what makes this
     /// sound rather than a guess: the callee is renamed only when the map
     /// sends it to the exact entry of an installed functor, so it is the
-    /// same code either way. Nothing here changes what a goal MEANS -- that
+    /// same code either way. Nothing here changes what a goal means -- that
     /// question is meta_predicate's, and the interpreter already answers
     /// it.</para></summary>
     public void NoteMetaResolution(
@@ -277,8 +277,8 @@ public sealed class WasmModuleRegistry
         if (_byFid.ContainsKey(functorId)) return functorId;
         if (addressMap is not IReadOnlyDictionary<int, int> map) return functorId;
         if (!map.TryGetValue(functorId, out int address)) return functorId;
-        // Remembered even when nothing is installed there YET. Promotion is
-        // lazy, so a closure's first resolution usually happens BEFORE its
+        // Remembered even when nothing is installed there yet. Promotion is
+        // lazy, so a closure's first resolution usually happens before its
         // callee is compiled -- and the interpreter caches the route, so it
         // never asks again. Renaming only here would freeze that first,
         // uninstalled answer for the rest of the run.

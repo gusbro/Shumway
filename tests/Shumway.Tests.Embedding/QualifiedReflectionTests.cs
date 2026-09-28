@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Stage 2 of the M:P story — the reflection side.
 /// <c>clause(M:H, B)</c> and <c>predicate_property(M:H, P)</c> resolve the
-/// head from M's VIEWPOINT (own definition; else the import's source, with
+/// head from M's viewpoint (own definition; else the import's source, with
 /// <c>imported_from(Source)</c>; else the bare-global/builtin everyone
 /// sees); <c>listing(M:Spec)</c> lists what M defines. And inside a module,
 /// the unqualified forms see the module's own predicates: ModuleRewrite
@@ -48,7 +48,7 @@ public sealed class QualifiedReflectionTests
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(qr_d/1).");
         Assert.True(e.Query("assertz(qr_d(7)).").Success);
-        // ANY module qualifier reaches the shared store — dynamics have no wall.
+        // Any module qualifier reaches the shared store — dynamics have no wall.
         Assert.True(e.Query("clause(qr_s:qr_d(X), true), X == 7.").Success);
         Assert.True(e.Query("clause(user:qr_d(X), true), X == 7.").Success);
     }

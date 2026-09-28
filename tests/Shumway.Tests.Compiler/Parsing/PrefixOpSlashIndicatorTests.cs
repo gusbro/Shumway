@@ -7,7 +7,7 @@ namespace Shumway.Tests.Compiler.Parsing;
 
 /// <summary>
 /// ISO §6.3.4 disambiguation: an atom that is both a prefix operator
-/// (e.g. <c>not</c> fy 900, <c>dynamic</c> fx 1150) AND a valid plain
+/// (e.g. <c>not</c> fy 900, <c>dynamic</c> fx 1150) and a valid plain
 /// atom collides with the predicate-indicator notation <c>name/N</c>.
 /// Without the disambiguation, <c>[not/1]</c> parses as the prefix
 /// operator <c>not</c> applied to the standalone atom <c>'/'</c>,
@@ -42,7 +42,7 @@ public class PrefixOpSlashIndicatorTests
     public void IndicatorListMixedPrefixOps_AllResolve()
     {
         // [not/1, catch/3, ifthen/2, dynamic/2].
-        // dynamic and ifthen are NOT prefix operators in the default
+        // dynamic and ifthen are not prefix operators in the default
         // table; not and catch (no, catch is not prefix either). Only
         // 'not' triggers the disambiguation here, but the others
         // exercise the indicator-list shape end to end.
@@ -85,7 +85,7 @@ public class PrefixOpSlashIndicatorTests
     {
         // :- public '#='/2. — the clpfd shape. '#=' is a quoted
         // atom (TokenKind.Atom text "#="), registered as xfx 700
-        // infix elsewhere. The disambiguation must NOT trip here:
+        // infix elsewhere. The disambiguation must not trip here:
         // 'public' is acting as the fx-1150 prefix operator and its
         // operand is '#='/2.
         var t = Parse(":- public '#='/2.");
@@ -106,7 +106,7 @@ public class PrefixOpSlashIndicatorTests
     {
         // 'not member(X, L)' — the operand starts with an alpha atom
         // (member), the / disambiguation does not engage, and the
-        // prefix form binds the conjunction. `not` must be DECLARED an
+        // prefix form binds the conjunction. `not` must be declared an
         // operator first (the default table keeps it a plain atom, like
         // ISO/GNU/SWI; Arity sources get it via arity_compat).
         var ops = OperatorTable.Default();

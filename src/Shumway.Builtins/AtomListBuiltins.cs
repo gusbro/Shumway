@@ -109,7 +109,7 @@ public static class AtomListBuiltins
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
-            // drive the split off. Do NOT raise instantiation_error: the PURE
+            // drive the split off. Do not raise instantiation_error: the pure
             // append/3 enumerates solutions by unification, and the classic
             // difference-list idiom `append(Open, [], Open)` (closing an open
             // list's tail hole) must succeed at the first solution. Enumerate
@@ -141,7 +141,7 @@ public static class AtomListBuiltins
         {
             if (m > elems.Count) return false;
             int split = elems.Count - m;
-            // L2 is BUILT here rather than shared with L3's spine, which is
+            // L2 is built here rather than shared with L3's spine, which is
             // what the enumerating path below does. Sharing means walking to
             // the split point, and this mode's common shape is a long prefix
             // with a short L2 (`append(_, [Last], L)`): the walk would cost a
@@ -156,16 +156,16 @@ public static class AtomListBuiltins
             .Start(engine);
     }
 
-    /// <summary>The suffix at every split point, for the ENUMERATING path.
+    /// <summary>The suffix at every split point, for the enumerating path.
     ///
-    /// <para>Every split hands L2 a suffix of L3, and that suffix ALREADY
+    /// <para>Every split hands L2 a suffix of L3, and that suffix already
     /// exists inside L3's spine, so there is nothing to build for it: sharing
     /// it is what the two-clause Prolog <c>append/3</c> does when it reaches
     /// <c>append([], L, L)</c>. One walk of the spine, and each of the n + 1
     /// solutions reads one entry instead of building a list, which is what
     /// takes the enumeration from two lists per solution down to one.</para>
     ///
-    /// <para>Only worth it when there ARE n + 1 solutions to amortise it over:
+    /// <para>Only worth it when there are n + 1 solutions to amortise it over:
     /// the deterministic split builds its single L2 instead.</para></summary>
     private static List<Cell> CollectSuffixes(Activation engine, int count)
     {
@@ -262,12 +262,12 @@ public static class AtomListBuiltins
             _k = k + 1;
             engine.PushBuiltinChoicePoint(Resume, arity: 3);
 
-            // L1 = [V1..Vk] (fresh vars, closed). Unify FIRST so the shared
+            // L1 = [V1..Vk] (fresh vars, closed). Unify first so the shared
             // var cells pick up L1's actual elements before L3 sees them.
             int l1Heap = BuildFreshVarList(engine, k);
             if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
 
-            // L3 = [V1..Vk | L2] — the SAME var cells (now possibly bound),
+            // L3 = [V1..Vk | L2] — the same var cells (now possibly bound),
             // tail = L2's current cell.
             Cell l2 = engine.GetRegister(1);
             int l3Heap;
@@ -336,11 +336,11 @@ public static class AtomListBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            // With BOTH arguments bound the list is still type-checked
+            // With both arguments bound the list is still type-checked
             // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
             // representation_error(character_code), not a silent failure,
             // as number_codes/2 is with its Number bound.
-            // Only a PROPER list is validated-and-compared: a partial
+            // Only a proper list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
             if (ListCursor.IsProperListCell(engine, codesCell))
                 return ReadCodesString(engine, codesCell) == name;
@@ -378,7 +378,7 @@ public static class AtomListBuiltins
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
-            // A packed run of CODES is consumed in bulk; a chars run falls
+            // A packed run of codes is consumed in bulk; a chars run falls
             // through to the element loop and raises the ISO element error
             // from its own head's tag (ADR-047).
             if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
@@ -426,7 +426,7 @@ public static class AtomListBuiltins
 
         if (aCell.Tag == Tag.Atom && bCell.Tag == Tag.Atom)
         {
-            // §8.16.2.3.c: a BOUND non-atom result argument is
+            // §8.16.2.3.c: a bound non-atom result argument is
             // type_error(atom, A3), not a silent unification failure. An SWI
             // caller keeps SWI's compare-as-text (silent fail) for atomics.
             Cell resCell = Resolve(engine, engine.GetRegister(2));
@@ -441,7 +441,7 @@ public static class AtomListBuiltins
 
         // Both arguments instantiated but not both atoms (a number/string in
         // concat mode): ISO §8.16.2 raises type_error(atom). SWI instead coerces
-        // any atomic to text. Honour that ONLY when the caller lives in an SWI
+        // any atomic to text. Honour that only when the caller lives in an SWI
         // module — and only here, on the path that was going to raise anyway, so
         // the strict case pays nothing.
         if (SwiLenient.IsBoundAtomic(aCell) && SwiLenient.IsBoundAtomic(bCell)
@@ -454,7 +454,7 @@ public static class AtomListBuiltins
         }
 
         Cell cCell = Resolve(engine, engine.GetRegister(2));
-        // §8.16.2.3: a BOUND non-atom in A or B is type_error(atom, X)
+        // §8.16.2.3: a bound non-atom in A or B is type_error(atom, X)
         // with that argument as culprit, before the C-driven split.
         foreach (Cell abc in stackalloc Cell[] { aCell, bCell })
             if (abc.Tag is not (Tag.Ref or Tag.AttVar) && abc.Tag != Tag.Atom
@@ -463,7 +463,7 @@ public static class AtomListBuiltins
         if (cCell.Tag != Tag.Atom)
         {
             // ISO §8.16.2: if C is var, neither direction can drive
-            // synthesis unless BOTH A and B are atoms. If C is var and
+            // synthesis unless both A and B are atoms. If C is var and
             // either A or B is var, raise instantiation_error. If C
             // is bound to a non-atom, raise type_error(atom, C).
             if (cCell.Tag is Tag.Ref or Tag.AttVar
@@ -509,7 +509,7 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(aId));
         }
 
-        // Same mode analysis one step further: A and B ALIASED (the same
+        // Same mode analysis one step further: A and B aliased (the same
         // unbound variable, `atom_concat(X, X, aaaa)`) pins the split just as
         // firmly as a bound argument does — only the even split can match, and
         // only when the two halves are equal. One candidate, checked directly,
@@ -552,7 +552,7 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
-            // A split point inside a surrogate pair is not a CHARACTER
+            // A split point inside a surrogate pair is not a character
             // boundary: cutting there manufactured two lone-surrogate atoms
             // ('😀x' used to enumerate 4 splits instead of 3).
             while (splitIdx > 0 && splitIdx < _cName.Length

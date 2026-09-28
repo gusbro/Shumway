@@ -15,7 +15,7 @@ public sealed class ClauseOrError
     public SourcePosition ErrorPosition { get; }
     public bool IsError => ErrorMessage is not null;
 
-    /// <summary>True when the clause was not read because a LIMIT was reached
+    /// <summary>True when the clause was not read because a limit was reached
     /// rather than because the text is wrong — a term nested deeper than the
     /// reader's stack. The text may be perfectly good Prolog, so a caller that
     /// says "syntax error" about the rest must not say it about this one.</summary>

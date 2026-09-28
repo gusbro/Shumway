@@ -55,7 +55,7 @@ public static class PredicateDoc
     }
 
     /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.
-    /// The field separator is a pipe WITH surrounding whitespace, so a
+    /// The field separator is a pipe with surrounding whitespace, so a
     /// template may itself contain a bare cons pipe — <c>[+File|+Files]</c> —
     /// without splitting the line early.</summary>
     private static readonly Regex DocComment = new(
@@ -189,7 +189,7 @@ public static class PredicateDoc
         sb.Append("Each template names its parameters and their mode: `+` bound at call, ");
         sb.Append("`-` an output, `?` either, `@` not modified, `:` a meta-called goal.\n");
 
-        // Contents — this is a reference people land in looking for ONE
+        // Contents — this is a reference people land in looking for one
         // predicate; a section row beats scrolling 27 headings. Anchors follow
         // the GitHub slug rule: lowercase, spaces to hyphens, punctuation
         // dropped.

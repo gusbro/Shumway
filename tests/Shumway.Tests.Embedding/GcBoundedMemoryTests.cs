@@ -15,7 +15,7 @@ namespace Shumway.Tests.Embedding;
 /// <item>Orphaned attr-trail-log records: a cut's trail compaction dropped
 ///   young AttrModify entries but left their side-log records, and the GC
 ///   rooted every record's Home/OldValue — a lazy phrase_from_file retained
-///   its ENTIRE consumed input (one orphan per chunk). Dropped entries now
+///   its entire consumed input (one orphan per chunk). Dropped entries now
 ///   dead-mark their records.</item>
 /// </list>
 /// </summary>

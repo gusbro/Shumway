@@ -4,13 +4,13 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary><c>=../2</c> with the term BOUND, built inside the module.
+/// <summary><c>=../2</c> with the term bound, built inside the module.
 ///
 /// <para>All 81 of clp(Z)'s remaining univ calls come from one walker, and
 /// the shape is the same every time: a term in hand, a list wanted. The
 /// layout is the builtin's, cell for cell.</para>
 ///
-/// <para>Arguments are copied verbatim, which is what makes an UNBOUND one
+/// <para>Arguments are copied verbatim, which is what makes an unbound one
 /// come out right: a variable's cell is a reference to where it lives, so
 /// the copy refers to the same variable rather than making a new one. The
 /// test that pins this binds through the list and reads the term.</para>
@@ -113,23 +113,23 @@ public sealed class InlineUnivTests(ITestOutputHelper o)
         => Assert.True(ExitsOf("single(T), T == lonely.") > 0,
             "a one-element list was composed in the module");
 
-    /// <summary>A functor nobody has interned is a ONE-SHOT: composing it
+    /// <summary>A functor nobody has interned is a one-shot: composing it
     /// interns it, so the second call finds it and the warm measurement
     /// every other test here uses would see nothing. Measured on the first
     /// call for that reason, which is also why the name is built at run
     /// time -- written literally, the parser interns it at consult.
     ///
     /// <para>What it guards is the worst answer this code could give: a
-    /// module that invented an id would build a term of the wrong NAME, and
+    /// module that invented an id would build a term of the wrong name, and
     /// no test of shape would catch it.</para></summary>
     [DiagFact]
     public void AFunctorNobodyInternedIsTheEngines()
     {
         var (tiered, _) = TieredEngine.Build(Corpus);
-        // Warmed on a name that DOES exist, so the promotion itself is not
+        // Warmed on a name that does exist, so the promotion itself is not
         // what is being measured.
-        // Warmed on ANOTHER fresh name, so the predicate is promoted and
-        // the measured call is still the first sighting of ITS functor.
+        // Warmed on another fresh name, so the predicate is promoted and
+        // the measured call is still the first sighting of its functor.
         // Warming on the same one would intern it and measure nothing.
         Assert.True(tiered.Query("fresh('_warm', T), functor(T, _, 2).").Success);
         WasmTierDelegate.ResetDiag();

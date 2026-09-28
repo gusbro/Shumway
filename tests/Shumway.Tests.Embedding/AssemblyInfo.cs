@@ -1,4 +1,4 @@
-// Test collections RUN IN PARALLEL here — deliberately. The engine is
+// Test collections run in parallel here — deliberately. The engine is
 // advertised as multi-engine and thread-agile (single-threaded activations,
 // thread-safe global tables), and this suite is where that claim gets
 // exercised for real: a few engines living concurrently on different threads

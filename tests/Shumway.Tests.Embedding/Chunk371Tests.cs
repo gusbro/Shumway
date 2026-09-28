@@ -9,7 +9,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 371 (Phase 29, region compilation — Stage 2): the cursor PLANNER
+/// Chunk 371 (Phase 29, region compilation — Stage 2): the cursor planner
 /// (<see cref="IlRegionPlanner"/>). Assigns a region's cursor space — cursor 0 is
 /// the root entry, and each non-tail Call site gets the next cursor (intra-region
 /// → a return continuation reached by `br` then a dispatch-switch return;
@@ -32,7 +32,7 @@ public class Chunk371Tests
     private static Dictionary<int, CompiledPredicate> Map(params CompiledPredicate[] ps)
         => ps.ToDictionary(p => p.FunctorId);
 
-    // Chunk 402 adds one MemberEntry cursor per NON-root member, appended AFTER every
+    // Chunk 402 adds one MemberEntry cursor per NON-root member, appended after every
     // other cursor (so the pre-402 consumption order is untouched). These tests assert
     // the call/alt cursor structure, so they filter the entry cursors out — and a
     // dedicated test below pins the MemberEntry tail itself.
@@ -102,7 +102,7 @@ public class Chunk371Tests
         Assert.Equal(2, entries.Count);
         Assert.Equal(new[] { 3, 4 }, entries.Select(s => s.Cursor).ToArray());
         Assert.Equal(new[] { 1, 2 }, entries.Select(s => s.MemberIndex).ToArray());
-        // They are the LAST cursors in the plan.
+        // They are the last cursors in the plan.
         Assert.Equal(plan.TotalCursors - 1, entries[^1].Cursor);
     }
 

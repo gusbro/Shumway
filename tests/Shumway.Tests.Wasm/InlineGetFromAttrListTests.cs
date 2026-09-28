@@ -80,7 +80,7 @@ public sealed class InlineGetFromAttrListTests(ITestOutputHelper o)
         => Assert.Equal(0L, ExitsOf(goal));
 
     /// <summary>A constant Attr is answered inside too: an atom or an
-    /// integer keys on ITSELF, which one cell comparison asks -- the same
+    /// integer keys on itself, which one cell comparison asks -- the same
     /// comparison the host makes of an atom's identity or an integer's
     /// value.</summary>
     [DiagTheory]
@@ -89,9 +89,9 @@ public sealed class InlineGetFromAttrListTests(ITestOutputHelper o)
     public void AConstantAttrIsAnsweredInside(string goal)
         => Assert.Equal(0L, ExitsOf(goal));
 
-    /// <summary>The counterproof, in red: an UNBOUND Attr owes an
+    /// <summary>The counterproof, in red: an unbound Attr owes an
     /// instantiation error, and errors are the engine's. Reached through the
-    /// corpus predicate, because a builtin named in the QUERY text runs
+    /// corpus predicate, because a builtin named in the query text runs
     /// interpreted and proves nothing about the module.</summary>
     [DiagFact]
     public void AnUnboundAttrStaysTheEngines()

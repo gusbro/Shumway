@@ -12,7 +12,7 @@ namespace Shumway.Tests.Wasm;
 /// read, and the module has both.</para>
 ///
 /// <para>An unbound index is a different predicate: with an SWI-dialect
-/// caller it ENUMERATES, which leaves a choice point this form cannot
+/// caller it enumerates, which leaves a choice point this form cannot
 /// leave. That, and every error shape, steps aside.</para></summary>
 public sealed class InlineArgTests(ITestOutputHelper o)
 {
@@ -82,7 +82,7 @@ public sealed class InlineArgTests(ITestOutputHelper o)
     public void AnIndexedCallDoesNotLeaveTheModule(string goal)
         => Assert.Equal(0L, ExitsOf(goal));
 
-    /// <summary>The counterproof, in red: the shapes that owe an ERROR still
+    /// <summary>The counterproof, in red: the shapes that owe an error still
     /// leave. Without it the test above would pass just as well with a form
     /// that answered calls whose answer is a throw.</summary>
     [DiagTheory]

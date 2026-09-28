@@ -209,7 +209,7 @@ public class CutCompilationTests
         // p(a).                % alternative — would succeed if reached
         // q(a).                % q(b) won't match
         //
-        // ?- p(a). With cut, the failure of q(b) does NOT retry p's clause 2
+        // ?- p(a). With cut, the failure of q(b) does not retry p's clause 2
         // because the cut already discarded p's try_me_else CP. Final result
         // is Failed.
         var module = new ModuleCompiler().Compile(
@@ -231,7 +231,7 @@ public class CutCompilationTests
     public void EndToEnd_WithoutCut_BacktrackingDoesReachAlternative()
     {
         // Same shape but without the cut — clause 1 still fails on q(b),
-        // but now backtracking IS allowed, so clause 2 succeeds.
+        // but now backtracking is allowed, so clause 2 succeeds.
         var module = new ModuleCompiler().Compile(
             new ClauseReader("p(a) :- q(b).\np(a).\nq(a).\n").ReadAll());
         int atomA = AtomTable.Intern("a", permanent: true).Id;

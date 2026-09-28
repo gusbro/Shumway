@@ -6,15 +6,15 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>==/2 and \==/2 decided inside the module.
 ///
-/// <para>The old inline form needed Atom or Int on BOTH sides, so two
-/// VARIABLES always left. That is where the exits were: queens 12 leaves for
+/// <para>The old inline form needed Atom or Int on both sides, so two
+/// variables always left. That is where the exits were: queens 12 leaves for
 /// ==/2 16,793 times per run and 16,763 of those fail, 42% of all its builtin
 /// exits, because clpfd compares attributed variables and an attributed
 /// variable is not atomic.</para>
 ///
 /// <para>Correctness first, and the sharp edge is the PSTR: a zero-length one
-/// IS its own tail, so it is identical to the atom [] despite the tags. The
-/// cases below pin every way of reaching that pair from Prolog -- and NONE of
+/// is its own tail, so it is identical to the atom [] despite the tags. The
+/// cases below pin every way of reaching that pair from Prolog -- and none of
 /// them reaches it with the PSTR still packed, because a literal "" parses
 /// straight to [] and unification materialises a walked tail before the
 /// comparison sees it. The emitter declines PSTR pairs anyway; that guard is
@@ -30,7 +30,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
     }
 
     /// <summary>The trap: an empty PSTR normalises to its tail, so `"" == []`
-    /// is TRUE even though one side is a string and the other an atom. The
+    /// is true even though one side is a string and the other an atom. The
     /// module must decline this pair rather than decide it by tags.</summary>
     [Fact]
     public void AnEmptyStringIsIdenticalToTheEmptyList()
@@ -50,11 +50,11 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
         Assert.False(tiered.Query("X = \"\", Y = [], diff(X, Y).").Success);
 
         // A non-empty PSTR against a cons list: whatever the answer is, the
-        // two engines have to give the SAME one. The oracle decides it, not
+        // two engines have to give the same one. The oracle decides it, not
         // this test -- a hard-coded expectation here would just move the
         // goalposts for both. (It depends on the double_quotes flag: a string
-        // is a list of CHARS, so a list of CODES is a different term.)
-        // The empty PSTR that actually EXISTS as a cell: the tail left after
+        // is a list of chars, so a list of codes is a different term.)
+        // The empty PSTR that actually exists as a cell: the tail left after
         // a packed string has been walked to its end. A literal "" is parsed
         // straight to the atom [], so it never reaches the comparison as a
         // PSTR and proves nothing about the guard.
@@ -124,7 +124,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
 
         var plain = new PrologEngine();
         plain.ConsultString(Program);
-        // The expectation is checked against the INTERPRETER first: a wrong
+        // The expectation is checked against the interpreter first: a wrong
         // InlineData would otherwise just move the goalposts for both.
         Assert.Equal(identical, plain.Query(eq).Success);
         Assert.Equal(!identical, plain.Query(ne).Success);
@@ -159,7 +159,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
     }
 
     /// <summary>Two compounds no longer leave -- the module carries a
-    /// comparator now -- but a BIGNUM inside one still does. Two equal
+    /// comparator now -- but a bignum inside one still does. Two equal
     /// bignums can wear different cells, so cell identity is not term
     /// identity there and the walk must decline rather than answer. The
     /// count must be NON-zero, or the module is taking pairs it has no
@@ -175,7 +175,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
         WasmTierDelegate.ResetDiag();
 
         Assert.True(engine.Query(
-            // SEPARATELY computed: two Refs to one variable deref to one cell,
+            // Separately computed: two Refs to one variable deref to one cell,
             // and the walk would never see two bignum cells at all.
             "B1 is 2 ^ 200, B2 is 2 ^ 200, X = f(B1), Y = f(B2), spin(20, X, Y).").Success);
 
@@ -184,7 +184,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
             "a bignum inside was decided by cell identity");
     }
 
-    /// <summary>And the counterproof to THAT: without the bignum the same
+    /// <summary>And the counterproof to that: without the bignum the same
     /// clause decides inside the module. Otherwise the test above would pass
     /// just as well with the comparator switched off.</summary>
     [DiagFact]

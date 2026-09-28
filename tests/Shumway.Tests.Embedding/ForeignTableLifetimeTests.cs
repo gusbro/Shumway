@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-053, end to end: a foreign object survives exactly as long
-/// as a FOREIGN cell naming it is reachable. The mechanism is pinned in
+/// as a foreign cell naming it is reachable. The mechanism is pinned in
 /// Shumway.Tests.Core.ForeignTableSweepTests; this is the Prolog-level
 /// contract, over the two producers a program can actually reach.</summary>
 public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
@@ -33,7 +33,7 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
             "a reftype slot held across a collection stopped resolving");
     }
 
-    /// <summary>And the slot is still WRITABLE afterwards: materializing
+    /// <summary>And the slot is still writable afterwards: materializing
     /// reads the object, but a swept-then-resurrected slot could read once
     /// and be empty next time.</summary>
     [Fact]
@@ -57,7 +57,7 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
     /// statistics/0 cannot see it.
     ///
     /// <para>Ids are positional, so a fresh id after a collection that swept
-    /// everything is LOW again. Before ADR-053 the id kept climbing with the
+    /// everything is low again. Before ADR-053 the id kept climbing with the
     /// loop, which is the leak stated as something a program can observe.
     /// </para></summary>
     [Fact]
@@ -77,10 +77,10 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
         slots(N) :- '$new_reftype_slot'(_), M is N - 1, slots(M).
         """;
 
-    /// <summary>The id the engine hands to the NEXT slot after the prefix
+    /// <summary>The id the engine hands to the next slot after the prefix
     /// goal. A foreign cell renders as the compound '$foreign'(N) in a
     /// binding, which is the only place the raw id is observable -- it does
-    /// not UNIFY with that form, it is only written as one.</summary>
+    /// not unify with that form, it is only written as one.</summary>
     private static long FreshSlotId(PrologEngine e, string prefix)
     {
         var r = e.Query(prefix + "'$new_reftype_slot'(S).");
@@ -91,7 +91,7 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
         return long.Parse(m.Groups[1].Value);
     }
 
-    /// <summary>ANTI-VACUITY: the loop really does allocate. Without a
+    /// <summary>Anti-vacuity: the loop really does allocate. Without a
     /// collection the id climbs with it, so the test above is measuring
     /// reclamation and not a loop that allocated nothing.</summary>
     [Fact]
@@ -105,7 +105,7 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
             $"only {id} ids were handed out for 3,000 slots");
     }
 
-    /// <summary>A slot reachable only through a COMPOUND, not a variable:
+    /// <summary>A slot reachable only through a compound, not a variable:
     /// the id has to be recorded from the trace, not only from the roots.
     /// </summary>
     [Fact]
@@ -123,7 +123,7 @@ public sealed class ForeignTableLifetimeTests(ITestOutputHelper o)
             "a reftype slot reachable only inside a compound was swept");
     }
 
-    /// <summary>ADR-052 and ADR-053 COMPOSE: an attributed variable's
+    /// <summary>ADR-052 and ADR-053 compose: an attributed variable's
     /// attribute can hold a foreign object, and then the only path to the
     /// foreign id runs through the attribute table -- which ADR-052 just
     /// made a weak root.

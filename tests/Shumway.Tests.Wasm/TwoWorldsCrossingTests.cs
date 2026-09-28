@@ -14,7 +14,7 @@ namespace Shumway.Tests.Wasm;
 /// <para>It is the shape the many-modules arc is about. Today a call that
 /// leaves a module closes the chain, goes back through the interpreter and
 /// opens another one; the arc replaces that with a tail call inside wasm. So
-/// this fixture pins down what the crossing DOES before anything changes, and
+/// this fixture pins down what the crossing does before anything changes, and
 /// counts how often it happens -- because the counts are the only thing that
 /// can tell the two designs apart. Answers cannot: a crossing is correct
 /// either way.</para></summary>
@@ -34,7 +34,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         chase(X, Y) :- both(X), hi(Y), Y >= X.
         """;
 
-    /// <summary>Installs the corpus across TWO worlds, splitting the predicates
+    /// <summary>Installs the corpus across two worlds, splitting the predicates
     /// by the caller's choice, and returns the engine.</summary>
     private static (PrologEngine Engine, int InA, int InB) TwoWorlds(
         System.Func<string, bool> goesToA)
@@ -46,9 +46,9 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         engine.Query("true.");                      // materialise the static link
 
         var env = new EngineWasmCompileEnv();
-        // Siblings of ONE engine: one memory, one function table, one resume
+        // Siblings of one engine: one memory, one function table, one resume
         // table. That is what lets a module discover a marker is another's
-        // AND reach it without going out to the host.
+        // and reach it without going out to the host.
         // Lives as long as the engine does: the worlds are bound into it.
         var space = new DesktopWasmSpace();
         var worldA = new DesktopWasmWorld(space);
@@ -78,7 +78,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         return (engine, inA.Count, inB.Count);
     }
 
-    // The count is NOT written here: Tier-0 is the oracle, so a wrong
+    // The count is not written here: Tier-0 is the oracle, so a wrong
     // expectation cannot quietly become the thing being asserted.
     private const string Goal = "findall(X-Y, chase(X, Y), L), length(L, N).";
 
@@ -93,7 +93,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
     }
 
     /// <summary>The crossing answers exactly what one world answers. This is
-    /// the part that CANNOT regress silently, and also the part that proves
+    /// the part that cannot regress silently, and also the part that proves
     /// nothing about cost.</summary>
     [Fact]
     public void TwoWorldsAnswerWhatOneWorldAnswers()
@@ -113,9 +113,9 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         Assert.Equal(oracle, Answer(split));
     }
 
-    /// <summary>What the crossing COSTS, stated as a count. A call, a return
+    /// <summary>What the crossing costs, stated as a count. A call, a return
     /// or a backtrack whose target lives in the other module is resolved
-    /// through the shared table and taken as a tail call INSIDE wasm: a hop.
+    /// through the shared table and taken as a tail call inside wasm: a hop.
     /// It must not close the chain (a foreign exit), nor go out to the host
     /// and back (a switch), nor deopt. So the split costs exactly the chains
     /// one world costs, plus hops; and one world takes no hop at all.
@@ -158,13 +158,13 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
             o.WriteLine($"  switch {name}/{ar} @0x{addr:X} x{hits}");
         }
 
-        // ANTI-VACUITY: the tier has to have run at all.
+        // Anti-vacuity: the tier has to have run at all.
         Assert.True(wholeEntries > 0, "nothing entered the tier");
         // One module: every target resolves in the chain, and there is
         // nowhere to hop to.
         Assert.Equal(0, wholeForeign);
         Assert.Equal(0, wholeHops);
-        // Two modules: the crossings happened (ANTI-VACUITY: as hops), and
+        // Two modules: the crossings happened (anti-vacuity: as hops), and
         // none of them left wasm in any of the three ways it could.
         Assert.True(WasmTierDelegate.DiagInWasmHops > 0, "the split never hopped");
         Assert.Equal(0, splitForeign);

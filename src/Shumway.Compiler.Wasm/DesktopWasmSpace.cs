@@ -3,14 +3,14 @@ using WebAssembly.Runtime;
 
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>What the modules of ONE engine share on the desktop: the linear
+/// <summary>What the modules of one engine share on the desktop: the linear
 /// memory they all run against, the function table they reach each other
 /// through, and the resume table that says which of them owns a marker.
 /// The browser gets all three from emscripten, per thread; here they are made
 /// explicitly so the same emitted code works in both.
 ///
 /// <para>The memory has to be shared, not just the tables: a hop tail-calls
-/// another module's <c>run</c> with a mailbox ADDRESS, and an address only
+/// another module's <c>run</c> with a mailbox address, and an address only
 /// means something in the memory it was written to. A callee with a memory of
 /// its own reads stale scalars and deopts on entry.</para></summary>
 public sealed class DesktopWasmSpace : IDisposable

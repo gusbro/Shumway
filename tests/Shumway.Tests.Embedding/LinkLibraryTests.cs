@@ -99,7 +99,7 @@ public sealed class LinkLibraryTests
     [Fact]
     public void ExplicitObject_WinsOverLibrary()
     {
-        // hello/1 is provided BOTH by an explicit object (module ex) and by a
+        // hello/1 is provided both by an explicit object (module ex) and by a
         // library member (module libg). The explicit one satisfies the call,
         // so the library member is never pulled — and there is no
         // duplicate_public, because only one hello/1 enters the link.
@@ -132,9 +132,9 @@ public sealed class LinkLibraryTests
     [Fact]
     public void ForeignPredicate_IsNotPulledFromALibrary()
     {
-        // A library member exports c247_double/2 — the SAME indicator a foreign
+        // A library member exports c247_double/2 — the same indicator a foreign
         // DLL (C247Math) provides. With the foreign assembly given, the linker
-        // resolves the call to the foreign and must NOT pull the library member
+        // resolves the call to the foreign and must not pull the library member
         // (a foreign is "already available", like a builtin).
         string testDll = typeof(C247Math).Assembly.Location;
         var app = Obj(

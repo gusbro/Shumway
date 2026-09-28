@@ -8,18 +8,18 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-035 — the POSITION-COVERAGE invariant: every source line that carries a
+/// <summary>ADR-035 — the position-coverage invariant: every source line that carries a
 /// user goal must have a debug stop site after the whole transform pipeline ran.
 ///
 /// <para>Positions are what every debugger feature hangs off — stop sites, call-stack
-/// lines, rewind marks, Set Next Statement targets — and the transform pipeline REBUILDS
+/// lines, rewind marks, Set Next Statement targets — and the transform pipeline rebuilds
 /// goals (DCG expansion, phrase expansion, meta lowering, mode specialization, native
 /// blocks). A transform that drops <c>Position</c> while rebuilding does not fail any
-/// functional test: the goal still RUNS — it just silently disappears from the debugger
+/// functional test: the goal still runs — it just silently disappears from the debugger
 /// (the PhraseTransform report: <c>phrase(g(X), L)</c> expanded without its position, so
 /// the call had no site, its frame showed line 0, and the DCG re-enter had no anchor).
 /// This suite is the tripwire: one representative program per transform shape, asserting
-/// site presence LINE BY LINE.</para></summary>
+/// site presence line by line.</para></summary>
 [Collection("debugger")]
 public class Adr035PositionCoverageTests
 {
@@ -28,9 +28,9 @@ public class Adr035PositionCoverageTests
 
     /// <summary>Consults <paramref name="program"/> in debug mode (line 1 is the flag
     /// directive, so the program's own lines start at 2) and asserts each of
-    /// <paramref name="stoppableLines"/> owns at least one stop site ON that very line —
+    /// <paramref name="stoppableLines"/> owns at least one stop site on that very line —
     /// no snapping, which is exactly how a dropped position hides. The program goes
-    /// through a UNIQUE temp file, never the shared "&lt;string&gt;" pseudo-file: the
+    /// through a unique temp file, never the shared "&lt;string&gt;" pseudo-file: the
     /// site table is global and keyed (file, line), so with every test on
     /// "&lt;string&gt;" a sibling's goal on the same line satisfied the assert and a
     /// genuinely dropped position only surfaced when the test ran alone.</summary>
@@ -76,7 +76,7 @@ public class Adr035PositionCoverageTests
 
     [Fact]
     public void PhraseCalls_KeepTheirLine() => AssertStoppable(
-        // The reported bug: the phrase/2 and phrase/3 EXPANSIONS must keep the line.
+        // The reported bug: the phrase/2 and phrase/3 expansions must keep the line.
         //  2: run(X) :-
         //  3:     phrase(g(X), [a]),
         //  4:     phrase(g(X), [a], []).
@@ -100,10 +100,10 @@ public class Adr035PositionCoverageTests
     [Fact]
     public void DcgCompoundHeadArg_BodyLinesStayStoppable() => AssertStoppable(
         // Under debug codegen the fail-fast lowering (leading-terminal hoist +
-        // compound-head-arg defer) is OFF: the compound arg stays in the head
+        // compound-head-arg defer) is off: the compound arg stays in the head
         // (no body goal, so line 2 binds forward like any rule head — see
         // AHitNamesTheBreakpointTheUserDrew) and the first terminal keeps its
-        // own body goal ON line 3 — the site the hoist used to erase.
+        // own body goal on line 3 — the site the hoist used to erase.
         //  2: g(f(X)) -->
         //  3:     [a],
         //  4:     nt(X).

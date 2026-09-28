@@ -128,7 +128,7 @@ public class Chunk69Tests
     public void NonLeafCallee_NotInlined_StillWorksViaSubcall()
     {
         // foo :- m. where m :- a, b. — m has a non-tail Call inside,
-        // so it's NOT a leaf. The caller's Call must NOT inline; it
+        // so it's not a leaf. The caller's Call must not inline; it
         // falls back to the IlCallHelper thunk so m's choice points
         // and continuation get the standard sub-call treatment.
         var engine = new PrologEngine();

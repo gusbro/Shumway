@@ -10,7 +10,7 @@ namespace Shumway.Tests.Wasm;
 /// this says where the valve actually sits.
 ///
 /// <para>Measured over the 823 compilable predicates of the prelude plus
-/// clpfd: compiled ONE a module, not a single one is cut (the largest,
+/// clpfd: compiled one a module, not a single one is cut (the largest,
 /// $prelude$$must_be_ok/2 at 2170 bytecode bytes, still fits in one
 /// function). The whole program as one group takes 7. At a grain of 16 or
 /// 64 predicates a module, no module is ever cut.</para>

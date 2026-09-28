@@ -43,7 +43,7 @@ public sealed class BuiltinEntry
     /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
     ///
-    /// <para>DERIVED, not declared: <see cref="BacktrackableDetector"/> walks the
+    /// <para>Derived, not declared: <see cref="BacktrackableDetector"/> walks the
     /// implementation's IL for a transitive call to a CP-creating sink, so a new
     /// cursor builtin can't be silently forgotten (the old hand-maintained name
     /// list was exactly that footgun). Read only by the IL compiler — a non-AOT

@@ -45,12 +45,12 @@ public sealed class DeepTermRenderingTests
         e.Out = text;
         Assert.True(e.Query($"nest({Deep}, X), {goal}.").Success,
                     $"{goal} did not survive a {Deep}-deep term");
-        // ANTI-VACUITY: it wrote the whole thing, not a refusal or an elision.
+        // Anti-vacuity: it wrote the whole thing, not a refusal or an elision.
         Assert.True(text.ToString().Length > Deep,
                     $"only {text.ToString().Length} chars came out");
     }
 
-    /// <summary>ANTI-VACUITY: the guard fires on depth, not on everything. A
+    /// <summary>Anti-vacuity: the guard fires on depth, not on everything. A
     /// term a stack comfortably holds still renders, and renders exactly.
     /// </summary>
     [Fact]
@@ -65,8 +65,8 @@ public sealed class DeepTermRenderingTests
         Assert.EndsWith(new string(')', 100), shown);
     }
 
-    /// <summary>The answer display goes through the OTHER renderer, which is
-    /// iterative, so with elision off it RENDERS the whole thing rather than
+    /// <summary>The answer display goes through the other renderer, which is
+    /// iterative, so with elision off it renders the whole thing rather than
     /// refusing. Safe is not the goal; capable is.</summary>
     [Fact]
     public void TheAnswerDisplayRendersAnyDepth()

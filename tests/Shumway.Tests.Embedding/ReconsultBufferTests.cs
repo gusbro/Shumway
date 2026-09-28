@@ -66,7 +66,7 @@ public sealed class ReconsultBufferTests
     [Fact]
     public void DcgRulesAreReplacedToo()
     {
-        // A DCG rule's real head is the TRANSLATED one (g//0 defines g/2);
+        // A DCG rule's real head is the translated one (g//0 defines g/2);
         // the replacement scan read the whole rule as '-->'/2, which
         // abolished nothing — reloading a grammar buffer duplicated its
         // rules. WebShumway's Consult button and the REPL buffer both take

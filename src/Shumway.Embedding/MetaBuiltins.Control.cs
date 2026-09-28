@@ -16,7 +16,7 @@ public static partial class MetaBuiltins
     /// the next time that clause is reached you are standing in it.</para>
     ///
     /// <para>With no debugger attached it does nothing and succeeds — a program can be left
-    /// with these in it. And the snapshot is written FIRST, so that by the time the debugger
+    /// with these in it. And the snapshot is written first, so that by the time the debugger
     /// has the process, the Prolog stack it is about to show is already in memory.</para>
     /// </summary>
     public static bool DebuggerBreak(Activation engine)
@@ -24,11 +24,11 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException("debugger_break/0 requires a PrologEngine host.");
 
-        // The attached session decides HOW to stop: the channel session (VS) takes the
+        // The attached session decides how to stop: the channel session (VS) takes the
         // managed Debugger.Break() path, gated on a debugger actually being attached; a
         // direct-attach session (the web page, the tests) stops in place. With no debug
         // session at all this is a no-op that succeeds — a program can be left with these
-        // in it. (The old code hard-wired the VS path AND gated the whole builtin on
+        // in it. (The old code hard-wired the VS path and gated the whole builtin on
         // Debugger.IsAttached, so debugger_break never stopped a frontend-driven session.)
         if (engine.Debug is Shumway.Embedding.Debugging.DebugService svc)
             svc.RaiseDebuggerBreak(engine);
@@ -216,7 +216,7 @@ public static partial class MetaBuiltins
 
     private static void ArmRepeat(Activation engine, int returnPc)
     {
-        // The CP re-arms with ONE cached delegate (held on the cursor) rather
+        // The CP re-arms with one cached delegate (held on the cursor) rather
         // than a fresh closure per backtrack — repeat drives unbounded
         // failure-driven loops (`repeat, Goal, fail`), so a per-backtrack
         // closure was ~100 bytes of Gen0 garbage per iteration, the same
@@ -274,7 +274,7 @@ public static partial class MetaBuiltins
         if (cell.Tag != Tag.Atom)
             throw new Shumway.Core.PrologRuntimeException("type_error", "atom", engine, cell);
         string source = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
-        // Trealla semantics: load_text does NOT auto-import a loaded module's
+        // Trealla semantics: load_text does not auto-import a loaded module's
         // exports (ops included) into user — unlike a direct consult. Loading
         // at depth > 0 keeps the SWI-style auto-import off (the same way a
         // use_module dependency loads).
@@ -331,10 +331,10 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>consult(user)</c> / <c>[user]</c> — the classic interactive
-    /// entry: clauses are read from CURRENT INPUT until end of input (Ctrl-Z,
+    /// entry: clauses are read from current input until end of input (Ctrl-Z,
     /// or a Ctrl-D character on a Windows console), or a line consisting of
     /// <c>end_of_file.</c> — then the collected text is consulted like any
-    /// source file. NO prompt is written here: the <c>|: </c> belongs to the
+    /// source file. No prompt is written here: the <c>|: </c> belongs to the
     /// interactive input source (the REPL's user_input reader prints it per
     /// refilled line, same as for read/1), so a piped script correctly sees
     /// none and an interactive session sees exactly one per line.</summary>
@@ -428,7 +428,7 @@ public static partial class MetaBuiltins
         // The whole difference from consult/1.
         if (host.IsLoadedAndUnchanged(path)) return true;
 
-        // Loaded but CHANGED: reloading has to REPLACE what the file defines,
+        // Loaded but changed: reloading has to replace what the file defines,
         // not append to it — otherwise the stale clauses stay and the file is
         // effectively loaded twice, which is the one thing this predicate
         // exists to prevent.
@@ -519,7 +519,7 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>restore/0</c> — Arity-compatible destructive REPLACE:
+    /// <summary><c>restore/0</c> — Arity-compatible destructive replace:
     /// wipes every user dynamic predicate's clauses and re-installs the last
     /// <c>save/0</c> snapshot (no snapshot = wipe only). Declarations and
     /// static predicates are untouched. See
@@ -675,7 +675,7 @@ public static partial class MetaBuiltins
         string hn = head is AtomTerm ha ? ha.Name : ((CompoundTerm)head).Functor;
         int harity = head is CompoundTerm hc ? hc.Args.Length : 0;
         // '-->'/2 belongs here too: a DCG rule is source syntax the loader
-        // TRANSLATES — an asserted '-->'/2 clause would be stored, listed and
+        // translates — an asserted '-->'/2 clause would be stored, listed and
         // never dispatched (Neumerkel's phrase case 24; GNU agrees).
         if ((harity == 0 && hn == "!")
             || (harity == 1 && hn == ":-")
@@ -684,7 +684,7 @@ public static partial class MetaBuiltins
                 "modify", "static_procedure",
                 new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) }),
                 engine));
-        // stc#70: terms are unbounded, PROCEDURES are not — asserting a
+        // stc#70: terms are unbounded, procedures are not — asserting a
         // head wider than the cap is refused (the proposal's own example
         // is exactly functor/3 one past the cap followed by asserta/1).
         if (harity > Shumway.Core.RuntimeCaps.MaxProcedureArity)
@@ -712,7 +712,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>asserta(Clause, -Ref)</c> / <c>assertz(Clause, -Ref)</c> —
-    /// the de-facto clause-reference forms. Ref must be UNBOUND
+    /// the de-facto clause-reference forms. Ref must be unbound
     /// (uninstantiation_error otherwise) and binds to the opaque
     /// <c>'$clause_ref'(Id)</c> for the freshly asserted clause.</summary>
     public static bool AssertaRef(Activation engine) => AssertRefImpl(engine, prepend: true);
@@ -734,7 +734,7 @@ public static partial class MetaBuiltins
 
 
     /// <summary><c>'$clause_refs_of'(+Head, -Refs)</c> — the list of
-    /// <c>'$clause_ref'(Id)</c> terms for Head's predicate's CURRENT
+    /// <c>'$clause_ref'(Id)</c> terms for Head's predicate's current
     /// clauses (call-time snapshot; clause/3's enumeration walks it).</summary>
     public static bool ClauseRefsOf(Activation engine)
     {
@@ -775,7 +775,7 @@ public static partial class MetaBuiltins
             ? rule.Args[0] : clause.Term;
         Term body = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule2
             ? rule2.Args[1] : new AtomTerm("true");
-        // ONE materialization of the whole (Head :- Body) pair so the
+        // One materialization of the whole (Head :- Body) pair so the
         // clause's variables stay shared between the two unifications.
         Cell pair = Materializer.MaterializeAsCell(engine,
             new CompoundTerm(":-", new[] { head, body }));
@@ -849,7 +849,7 @@ public static partial class MetaBuiltins
     /// (ISO's logical-update view).</summary>
     /// <summary><c>'$retractall_modifiable'(Head)</c> — retractall/1's guard
     /// (see <see cref="PrologEngine.IsRetractAllModifiable"/>): succeeds when
-    /// Head's predicate is dynamic (run the retract loop), FAILS when it is
+    /// Head's predicate is dynamic (run the retract loop), fails when it is
     /// undefined (retractall is a no-op), and raises
     /// <c>permission_error(modify, static_procedure)</c> for a static procedure
     /// or builtin.</summary>
@@ -885,14 +885,14 @@ public static partial class MetaBuiltins
         // check (above) so type errors win precedence.
         // Same triage as retractall: dynamic → run the retract loop;
         // static/builtin → permission_error (thrown by the check);
-        // UNDEFINED → plain failure, not an error.
+        // undefined → plain failure, not an error.
         if (!host.IsRetractAllModifiable(patternFid)) return false;
 
-        // scan the PHYSICAL clause list directly — no snapshot copy, and no
+        // scan the physical clause list directly — no snapshot copy, and no
         // compaction either: retract is the one reader that skips a tombstone
         // itself instead of paying a pass to close it up. Sound for the first
         // step because the scan runs to completion before anything can mutate
-        // the list; a choice point keeps the rest of the view as a WINDOW
+        // the list; a choice point keeps the rest of the view as a window
         // into that same list, copied out only if a later mutation would
         // disturb it.
         IReadOnlyList<Clause> candidates = host.PhysicalClausesFor(patternFid);
@@ -908,13 +908,13 @@ public static partial class MetaBuiltins
         // pop, so the resume reads a stale REF and binds the
         // pattern's var to the entire candidate STR instead of its
         // arg. The pattern itself, on the other hand, lives at a
-        // heap address that's BELOW the CP's saved heap top — so
+        // heap address that's below the CP's saved heap top — so
         // it survives the backtrack truncation. Capturing it once
         // here side-steps the register-clobber.
-        // §7.6.2 — the stored clause is the CONVERTED one, so the pattern has
+        // §7.6.2 — the stored clause is the converted one, so the pattern has
         // to be converted the same way or `retract((p(X) :- X, call(X)))` would
         // stop matching what `assertz` of the same text just stored. A body
-        // that is a bare VARIABLE stays as it is: it is the pattern's wildcard
+        // that is a bare variable stays as it is: it is the pattern's wildcard
         // (`retract((p(_) :- Body))`), not a goal to convert. GNU and SWI both
         // behave exactly this way.
         patternHeap = ConvertRetractPattern(engine, patternHeap);
@@ -1033,16 +1033,16 @@ public static partial class MetaBuiltins
         AtomTable.Intern(":", permanent: true).Id;
 
     /// <summary>Reads the pattern's head functor id, peeling any top-level
-    /// <c>Module:</c> qualifier chain IN PLACE first: dynamics are
+    /// <c>Module:</c> qualifier chain in place first: dynamics are
     /// flat-global, so the qualifier validates and drops, and
-    /// <paramref name="patternHeap"/> moves to the inner subterm ITSELF —
+    /// <paramref name="patternHeap"/> moves to the inner subterm itself —
     /// the caller's variables keep their identity (a re-materialized copy
     /// would silently stop binding them). Covers <c>retract(m:Head)</c> and
     /// <c>retract(m:(H :- B))</c>; the head-qualified rule spelling stays on
     /// the normal path (its ':'/2 head is not a dynamic predicate —
     /// permission_error, as for any non-dynamic). The unqualified fast path
-    /// pays ONE extra int compare on the functor lookup it already did.</summary>
-    /// <summary>The first-argument key the retract PATTERN selects, or null
+    /// pays one extra int compare on the functor lookup it already did.</summary>
+    /// <summary>The first-argument key the retract pattern selects, or null
     /// when the pattern rules nothing out and every clause stays a candidate:
     /// an unbound first argument, a shape no key describes (a float, a big
     /// integer), or a head with no arguments at all.
@@ -1050,7 +1050,7 @@ public static partial class MetaBuiltins
     /// <para>Module qualification has already been stripped from
     /// <paramref name="patternHeap"/> by <see cref="ReadPatternHeadFunctorId"/>;
     /// the rule form is descended into here, because a rule pattern keys on
-    /// its HEAD exactly as a stored clause does.</para></summary>
+    /// its head exactly as a stored clause does.</para></summary>
     private static DynFirstArgKey? PatternFirstArgKey(
         Activation engine, int patternHeap)
     {
@@ -1132,7 +1132,7 @@ public static partial class MetaBuiltins
         AtomTable.Intern(":-", permanent: true).Id;
 
     /// <summary>Removes the first clause that unifies with the retract
-    /// pattern — the entry step, scanning the LIVE clause list
+    /// pattern — the entry step, scanning the live clause list
     /// (no snapshot copy; nothing can mutate the list before this scan
     /// completes). When later candidates remain it leaves a choice point
     /// whose resume retracts the following match — that is what makes
@@ -1165,7 +1165,7 @@ public static partial class MetaBuiltins
         // Push the choice point before the real unification below, so a
         // backtrack's trail unwind peels off exactly this solution's
         // bindings before the resume retracts the next match.
-        // More CANDIDATES, not merely more clauses. With a keyed pattern the
+        // More candidates, not merely more clauses. With a keyed pattern the
         // index can say that nothing after the match could ever unify, and
         // then retract is deterministic: no choice point, so no view to keep
         // and no copy to make. `retract(p(K))` over a predicate keyed on K is
@@ -1176,13 +1176,13 @@ public static partial class MetaBuiltins
         if (morePending)
         {
             // The remaining candidates are the enumeration's logical update
-            // view, and they are NOT copied: the cursor holds a window into
+            // view, and they are not copied: the cursor holds a window into
             // the live list and the store reports anything that would disturb
             // it. A mutation inside the window copies it out first; our own
             // removal of the clause just matched is below the window and only
             // shifts it, so a drain never copies for itself.
             //
-            // The resume + onPrune delegates live on ONE cursor (allocated
+            // The resume + onPrune delegates live on one cursor (allocated
             // here, re-pushed unchanged on every backtrack) rather than a
             // fresh pair per matching clause. patternHeap is re-read from
             // register 0 on resume, so the cursor need not close over it; the
@@ -1211,7 +1211,7 @@ public static partial class MetaBuiltins
         bool unifyResult = engine.Unify(patternHeap, candSlot);
         RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
 
-        // the first step's candidates ARE the live list, so
+        // the first step's candidates are the live list, so
         // matchIndex is the live index — pass it through to skip the
         // O(N) IndexOf.
         host.RemoveDynamicByReference(engine, patternFid, candidate,
@@ -1225,7 +1225,7 @@ public static partial class MetaBuiltins
     /// cached <c>Resume</c> + <c>OnPrune</c> delegates (allocated once per
     /// enumeration, re-pushed unchanged on each backtrack).
     ///
-    /// <para>The remaining candidates are held as a WINDOW [start, end) into
+    /// <para>The remaining candidates are held as a window [start, end) into
     /// the live clause list, not as a copy. The window is this enumeration's
     /// logical-update view, and the store reports every mutation of the
     /// predicate so it can stay one: a change below the window shifts it, a
@@ -1277,7 +1277,7 @@ public static partial class MetaBuiltins
 
         public void BeforeRemoveAt(int index)
         {
-            // A removal is a TOMBSTONE now: no position moves, so a slot
+            // A removal is a tombstone now: no position moves, so a slot
             // below or above the window changes nothing it can see. One
             // inside it is a clause this view still owes -- copy out while
             // the clause is still in the slot.
@@ -1350,7 +1350,7 @@ public static partial class MetaBuiltins
             // the window out, which switches both the list and the bound.
             IReadOnlyList<Clause> src = _snap is not null ? _snap : _live;
             int endExclusive = _snap is not null ? _snapCount : _end;
-            // The index is over the LIVE list, so it serves a window but not a
+            // The index is over the live list, so it serves a window but not a
             // copied-out snapshot, whose positions no longer mean anything.
             DynamicClauseIndex? index = null;
             DynFirstArgKey key = default;
@@ -1374,14 +1374,14 @@ public static partial class MetaBuiltins
                 ? index.FirstCandidateFrom(key, matchIndex + 1) is var nx
                   && nx >= 0 && nx < endExclusive
                 : matchIndex + 1 < endExclusive;
-            // Advance PAST the match before removing it, so the tombstone
+            // Advance past the match before removing it, so the tombstone
             // lands below the window and costs nothing -- including on the
             // last candidate, where the window goes empty.
             bool wasWindow = _snap is null;
             _start = matchIndex + 1;
             if (morePending)
             {
-                // Re-arm with the SAME cursor and delegates.
+                // Re-arm with the same cursor and delegates.
                 RetractTrace.PrePush(engine);
                 engine.PushBuiltinChoicePoint(Resume, arity: 1, OnPrune);
                 RetractTrace.PostPush(engine);
@@ -1398,7 +1398,7 @@ public static partial class MetaBuiltins
             bool unifyResult = engine.Unify(patternHeap, candSlot);
             RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
 
-            // In window mode the match index IS the live index, so the O(N)
+            // In window mode the match index is the live index, so the O(N)
             // IndexOf is not needed; a copied-out snapshot's indices do not
             // map onto the live list, so that path still passes -1.
             _host.RemoveDynamicByReference(engine, _patternFid, candidate,
@@ -1416,17 +1416,17 @@ public static partial class MetaBuiltins
     /// caller re-does it for the chosen candidate after its choice point
     /// is in place.
     ///
-    /// <para>each trial used to materialise the WHOLE candidate
+    /// <para>each trial used to materialise the whole candidate
     /// clause onto the engine heap before unifying — for a keyed retract
     /// over a long predicate (Blint's <c>retract(saved_cur_line_i(Line,_))</c>
     /// over ~125 clauses) that is ~K clause materialisations per call, all
     /// but one rolled back. <see cref="DefiniteMismatch"/> now skips a
-    /// candidate on a PROVEN structural mismatch (distinct atoms / ints /
+    /// candidate on a proven structural mismatch (distinct atoms / ints /
     /// functors at the same position) with zero allocation; only candidates
     /// it cannot refute pay the materialise-and-unify trial.</para></summary>
     /// <summary>True when the retract pattern on the heap is the rule form
     /// <c>(Head :- Body)</c>. A rule-form pattern must also match stored
-    /// FACTS — ISO treats a fact as <c>(Head :- true)</c> — so candidates
+    /// facts — ISO treats a fact as <c>(Head :- true)</c> — so candidates
     /// are normalized with <see cref="RuleFormCandidate"/> before the trial
     /// unification.</summary>
     private static bool IsRuleFormPattern(Activation engine, int patternHeap)
@@ -1457,7 +1457,7 @@ public static partial class MetaBuiltins
         // With an index, the walk visits only the clauses whose first argument
         // does not rule them out, in clause order; without one it visits every
         // clause. Either way the trial unification below decides, so the index
-        // can only ever skip a clause it has PROVEN cannot match.
+        // can only ever skip a clause it has proven cannot match.
         for (int i = startIndex; i < endExclusive; i++)
         {
             if (index is not null)
@@ -1494,13 +1494,13 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>true only when the pattern at
-    /// <paramref name="heapIdx"/> PROVABLY cannot unify with the candidate
+    /// <paramref name="heapIdx"/> provably cannot unify with the candidate
     /// AST <paramref name="ast"/>: distinct atoms, distinct inline ints,
     /// distinct principal functors, or an atomic vs a compound. Anything
     /// uncertain — variables on either side, big integers, floats vs the
     /// float table, partial strings, foreigns, depth exhausted — returns
     /// false and the caller falls back to the real materialise-and-unify
-    /// trial, so this can only SKIP work, never change the outcome.</summary>
+    /// trial, so this can only skip work, never change the outcome.</summary>
     private static bool DefiniteMismatch(Activation engine, int heapIdx, Term ast, int depth)
     {
         if (depth <= 0 || ast is VarTerm) return false;
@@ -1512,7 +1512,7 @@ public static partial class MetaBuiltins
                 return ast switch
                 {
                     // cached id — this used to re-intern the
-                    // candidate's atom by name on EVERY retract trial.
+                    // candidate's atom by name on every retract trial.
                     AtomTerm a => a.ResolveAtomId() != c.AsAtomId,
                     IntTerm or FloatTerm or CompoundTerm or BigIntTerm => true,
                     _ => false,
@@ -1626,10 +1626,10 @@ public static partial class MetaBuiltins
     public static bool CopyTerm3Prep(Activation engine)
     {
         // Distinct attributed variables reachable from the term at X[0] —
-        // TRANSITIVELY: an attribute value can reference further attributed
+        // transitively: an attribute value can reference further attributed
         // variables (a clpz propagator's partner variable, tuples_in's
         // relation variable carrying clpz_relation), and projecting a hook
-        // over the copy needs THEIR copied attributes too. The list is a
+        // over the copy needs their copied attributes too. The list is a
         // worklist: scanning a value may append more variables.
         var attvars = new System.Collections.Generic.List<int>();
         var seen = new System.Collections.Generic.HashSet<int>();
@@ -1676,24 +1676,24 @@ public static partial class MetaBuiltins
     /// <paramref name="seenVars"/> deduplicates the variables;
     /// <paramref name="seenStructs"/> guards against a cyclic term looping.
     ///
-    /// <para>The two sets must stay SEPARATE. An unbound variable inside a
+    /// <para>The two sets must stay separate. An unbound variable inside a
     /// list or structure lives in the argument cell itself, so once it gains
-    /// an attribute the attvar's address IS the compound's — sharing one set
+    /// an attribute the attvar's address is the compound's — sharing one set
     /// makes the compound's own visited-mark swallow the variable. That is
     /// the whole of <c>Qs ins 1..N</c> projecting no domains at all.</para>
     ///
-    /// <para>Internal: the debugger's attvar transplant walks a SUSPENDED
+    /// <para>Internal: the debugger's attvar transplant walks a suspended
     /// activation with the same collector.</para></summary>
     internal static void CollectAttvars(Activation engine, Cell cell,
         System.Collections.Generic.List<int> addrs,
         System.Collections.Generic.HashSet<int> seenVars,
         System.Collections.Generic.HashSet<int> seenStructs)
     {
-        // ITERATIVE over the list spine. Recursing once per element cost one C#
+        // Iterative over the list spine. Recursing once per element cost one C#
         // frame per element: a thousand-element list overflowed the stack in a
         // browser (where it is small) and a hundred thousand did on the desktop.
         // A list continues the loop; only a nested compound goes on the work
-        // list, so the memory used tracks the term's SHAPE, not its length.
+        // list, so the memory used tracks the term's shape, not its length.
         System.Collections.Generic.Stack<Cell>? pending = null;
         while (true)
         {
@@ -1735,12 +1735,12 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$dbg_fix_foreign'(+Term)</c> — ADR-035 attvar transplant support.
     /// A transplanted attribute value travels to the evaluation activation as compiled
-    /// term-building code, where a FOREIGN payload (clpfd's native domain object) can
+    /// term-building code, where a foreign payload (clpfd's native domain object) can
     /// only arrive as its <c>'$foreign'(N)</c> round-trip form — and N indexes the
-    /// SUSPENDED activation's per-activation foreign table. This walks the term IN
-    /// PLACE on the evaluation activation, re-registers each such object here
+    /// suspended activation's per-activation foreign table. This walks the term in
+    /// place on the evaluation activation, re-registers each such object here
     /// (<see cref="Activation.MakeForeign"/>) and overwrites the compound's referring
-    /// cell with the real FOREIGN cell. The source activation is read through
+    /// cell with the real foreign cell. The source activation is read through
     /// <see cref="PrologEngine.DebugTransplantSource"/>; with none set the term is left
     /// alone (and a native consumer will say so loudly).</summary>
     public static bool DbgFixForeign(Activation engine)
@@ -1817,7 +1817,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>term_attvars(+Term, -Vars)</c> — unifies <c>Vars</c> with
     /// the list of the distinct attributed variables reachable from
-    /// <c>Term</c>, first-occurrence order. The list holds the REAL
+    /// <c>Term</c>, first-occurrence order. The list holds the real
     /// variables (references to their heap cells), not copies — binding one
     /// of them fires its hooks.</summary>
     public static bool TermAttvars(Activation engine)
@@ -1938,7 +1938,7 @@ public static partial class MetaBuiltins
         if (!engine.UnifyRegisterWithHeapAt(2, BuildRefList(engine, boundVars)))
             return false;
         // The canonical pair when the unifier is one binding: `V-Value`, which
-        // IS the whole constraint. `no` when it is not, and the caller keeps
+        // is the whole constraint. `no` when it is not, and the caller keeps
         // the terms as written. Built from the cells themselves — no copy, so
         // the pair names the very variables the caller passed in.
         if (soleVar < 0)
@@ -1953,7 +1953,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>?=(X, Y)</c> — succeeds iff the (in)equality of X and Y is
-    /// already DECIDED: they are identical, or they cannot unify. Further
+    /// already decided: they are identical, or they cannot unify. Further
     /// instantiation cannot change the outcome. (SWI/SICStus §; the condition
     /// <c>when/2</c> waits on.) Implemented as a fully-rolled-back trial
     /// unification: cannot unify → decided; unifiable with no bindings → they
@@ -2026,14 +2026,14 @@ public static partial class MetaBuiltins
     /// C# half of <c>call_residue_vars/2</c>, paired with
     /// <c>'$attv_new_since'/2</c>.
     ///
-    /// <para>The set holds raw HEAP ADDRESSES and lives in the engine's
+    /// <para>The set holds raw heap addresses and lives in the engine's
     /// object table, which the heap collector does not walk. It is therefore
     /// one of the holders a collector that runs with attributed variables live
     /// would have to relocate.</para></summary>
     public static bool AttvSnapshot(Activation engine)
     {
-        // Only LIVE attributed variables enter the snapshot. The table
-        // keeps ORPHAN rows for homes whose promotion was backtracked
+        // Only live attributed variables enter the snapshot. The table
+        // keeps orphan rows for homes whose promotion was backtracked
         // (PutAttr overwrites them on re-promotion); snapshotting an
         // orphan made a variable RE-constrained inside the goal read as
         // "already constrained before it" — a second findall iteration
@@ -2085,10 +2085,10 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(0, BuildRefList(engine, live));
     }
 
-    /// <summary>Records WHICH variables were live, and under which
+    /// <summary>Records which variables were live, and under which
     /// attribute modules, the moment the engine decided.
     ///
-    /// <para>Two tiers copying a different NUMBER of attributes says one
+    /// <para>Two tiers copying a different number of attributes says one
     /// of them holds a variable the other does not; it does not say
     /// which. Taken here rather than from outside because this is where
     /// the engine itself decides what is live, so the dump cannot
@@ -2110,7 +2110,7 @@ public static partial class MetaBuiltins
                 first = false;
                 try { sb.Append(AtomTable.GetById(m)?.Name ?? m.ToString()); }
                 catch (System.Exception) { sb.Append(m); }
-                // And WHAT it carries. A variable a solver really
+                // And what it carries. A variable a solver really
                 // constrained holds that solver's attribute term; a
                 // record nothing reaches holds something else, and the
                 // two are indistinguishable by count or by address.
@@ -2201,7 +2201,7 @@ public static partial class MetaBuiltins
     /// <see cref="PrologEngine._consultExpandPos"/> is -1 (any consult other than
     /// the one that defined the hook — the hook always applies then) or greater
     /// than HookIndex (during that consult's re-expansion pass — the hook applies
-    /// only to clauses AFTER its own definition, matching SWI/Scryer).</summary>
+    /// only to clauses after its own definition, matching SWI/Scryer).</summary>
     public static bool TeAfter(Activation engine)
     {
         if (engine.Host is not PrologEngine host || host._consultExpandPos < 0)

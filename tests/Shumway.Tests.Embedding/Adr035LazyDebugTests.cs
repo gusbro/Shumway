@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-035 D5+ — LAZY full debug (<see cref="DebugOptions.ActivateOnAttach"/>):
+/// <summary>ADR-035 D5+ — lazy full debug (<see cref="DebugOptions.ActivateOnAttach"/>):
 /// a debug-COMPILED program whose runtime debug machinery (ports, trail-everything, LCO
 /// off) stays off — near-release Tier-0 speed — until a debugger attaches or the host
 /// calls <see cref="ChannelDebugSession.ActivateFullDebug"/>. Compile-time debuggability
@@ -52,7 +52,7 @@ public class Adr035LazyDebugTests
         var session = new ChannelDebugSession(engine, notify) { ActivateOnAttach = true };
         engine.DebugFullyArmed = false;
         engine.DebugLcoWhenArmed = false;   // LCO off once armed, like the default
-        engine.SetDebugLastCall(true);      // and ON while lazy
+        engine.SetDebugLastCall(true);      // and on while lazy
         return session;
     }
 
@@ -128,12 +128,12 @@ public class Adr035LazyDebugTests
     [Fact]
     public void ActivateFullDebug_InTheArmPublishWindow_StillArms()
     {
-        // The arm-publish race, pinned DETERMINISTICALLY: ActivateFullDebug
+        // The arm-publish race, pinned deterministically: ActivateFullDebug
         // from a watcher thread sets the flag and requests an arm on
         // LiveActivation. A query starting at that exact moment used to fall
         // in the window between reading the flag (activation construction)
         // and publishing itself as LiveActivation — the arm request landed
-        // on the PREVIOUS, dead activation and was silently lost: the query
+        // on the previous, dead activation and was silently lost: the query
         // ran unarmed to the end (the CI hang that ran its full billion
         // iterations with a breakpoint that never fired). The window is
         // microseconds wide — blind thread-stressing never hits it (60
@@ -162,7 +162,7 @@ public class Adr035LazyDebugTests
             engine.TestHookBeforeActivationPublish = null;   // this query only
             var armer = new System.Threading.Thread(() => session!.ActivateFullDebug());
             armer.Start();
-            armer.Join();   // the watcher's whole dance completes IN the window
+            armer.Join();   // the watcher's whole dance completes in the window
         };
         using (session)
         {
@@ -187,9 +187,9 @@ public class Adr035LazyDebugTests
         //  7: loop.
         //  8: tick(30000) :- !, assertz(log(seen)).
         //  9: tick(_).
-        // NO timing calibration: the loop's bound is effectively infinite, the
-        // breakpoint sits on a clause hit at EVERY iteration once the arm
-        // lands, and the FIRST stop cancels the query — so the test's wall
+        // No timing calibration: the loop's bound is effectively infinite, the
+        // breakpoint sits on a clause hit at every iteration once the arm
+        // lands, and the first stop cancels the query — so the test's wall
         // time is the arm latency plus a handful of iterations, whatever the
         // machine. (Its predecessor raced a fixed trigger iteration against
         // the armer's sleep; on a contended CI runner the armer's wakeup

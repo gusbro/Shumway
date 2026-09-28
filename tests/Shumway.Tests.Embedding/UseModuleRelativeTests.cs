@@ -4,9 +4,9 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// A buffer loaded as TEXT that pulls in a sibling file. There is no file for
+/// A buffer loaded as text that pulls in a sibling file. There is no file for
 /// the text itself, so there is no directory to resolve against but the current
-/// one — which is how a page whose workspace IS the current directory expects
+/// one — which is how a page whose workspace is the current directory expects
 /// `:- use_module('other.pl')` to work.
 /// </summary>
 [Collection("exclusive")]

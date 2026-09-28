@@ -91,8 +91,8 @@ internal static class TermConverters
         }
         if (typeof(T) == typeof(string))
         {
-            // A .NET string is text as a VALUE, and text as a value is an atom
-            // (ADR-047 decision 6). A caller who wants text as a SEQUENCE asks
+            // A .NET string is text as a value, and text as a value is an atom
+            // (ADR-047 decision 6). A caller who wants text as a sequence asks
             // for a list; there is no third thing at the boundary.
             result = new AtomTerm((string)(object)value!);
             return true;

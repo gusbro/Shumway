@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-// ADR-022 follow-ups from real Arity sources (WINDOWS.pl's string_buf_long/1):
+// ADR-022 follow-ups from real Arity sources (windows.pl's string_buf_long/1):
 // (1) the MakeCString length argument types its Prolog variable as an integer, so
 // a variable that is also used elsewhere in the block no longer fails inference;
 // (2) a faulty native block's error names the predicate and the line.
@@ -76,7 +76,7 @@ public sealed class NativeErrorAndLengthTests
     [Fact]
     public void MakeCStringLengthArg_TypesItsVariableAsInteger()
     {
-        // string_buf_long pattern: Len is MakeCString's length arg AND used in
+        // string_buf_long pattern: Len is MakeCString's length arg and used in
         // arithmetic. Its type is known (integer); inference must not fail.
         var e = new PrologEngine();
         e.ConsultString("""

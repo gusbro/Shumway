@@ -8,17 +8,17 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Opt-in survey (gated on <c>SHUMWAY_SWI_LIB</c>): for EACH SWI library,
+/// <summary>Opt-in survey (gated on <c>SHUMWAY_SWI_LIB</c>): for each SWI library,
 /// compile it (+ its use_module deps) through the consult pipeline in the swi
-/// dialect and LINK it, harvesting the linker's <c>missing_predicate</c>
-/// diagnostics — the predicates it REFERENCES but nothing (a builtin, the prelude,
+/// dialect and link it, harvesting the linker's <c>missing_predicate</c>
+/// diagnostics — the predicates it references but nothing (a builtin, the prelude,
 /// or a linked dependency) defines. This is the signal the load-sweep cannot give:
-/// a referenced-but-undefined predicate only errors when CALLED, so a library that
+/// a referenced-but-undefined predicate only errors when called, so a library that
 /// merely mentions it still "loads cleanly". Per-library isolation (a fresh engine
 /// each) — loading all 129 into one engine cascades (125/129 fail on shared state).
 ///
-/// <para>Real engine/shim gaps = (union of all libraries' missing) MINUS (union of
-/// all libraries' DEFINED) — a predicate one SWI library defines is not a gap even
+/// <para>Real engine/shim gaps = (union of all libraries' missing) minus (union of
+/// all libraries' defined) — a predicate one SWI library defines is not a gap even
 /// if another references it without importing it. Ranked by how many libraries
 /// reference each gap: the shim priority list. Writes to <c>SHUMWAY_TRIAGE_OUT</c>
 /// when set. Never fails (a clone without the libraries is a logged no-op).</para></summary>
@@ -140,8 +140,8 @@ public sealed class SwiMissingPredicateSurvey
                 "print_message_lines/3", "message_to_codes/3",
             };
 
-            // Real gaps: referenced-but-undefined AND not defined by any library
-            // AND not provided by the runtime shim.
+            // Real gaps: referenced-but-undefined and not defined by any library
+            // and not provided by the runtime shim.
             var gaps = missingRefs
                 .Where(kv => !definedByAny.Contains(kv.Key) && !shimProvided.Contains(kv.Key))
                 .OrderByDescending(kv => kv.Value.Count)
@@ -153,7 +153,7 @@ public sealed class SwiMissingPredicateSurvey
                 .Select(kv => kv.Key)
                 .ToList();
 
-            // Libraries fully unblocked: those referenced by NO real gap (every
+            // Libraries fully unblocked: those referenced by no real gap (every
             // predicate they reference is defined, provided by another library,
             // or provided by the runtime shim).
             var libsWithGap = new HashSet<string>(StringComparer.Ordinal);

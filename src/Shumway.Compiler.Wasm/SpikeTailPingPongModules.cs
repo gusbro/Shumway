@@ -9,9 +9,9 @@ namespace Shumway.Compiler.Wasm;
 /// control to each other with <c>return_call_indirect</c> through a table they
 /// both import, never returning to the host.
 ///
-/// <para>What it has to prove is a PROPERTY, not a speed: that the transfer is
+/// <para>What it has to prove is a property, not a speed: that the transfer is
 /// a real tail call. A Prolog program makes millions of calls, and in the WAM a
-/// call IS a jump — the continuation lives in CP, not on the host stack. If a
+/// call is a jump — the continuation lives in CP, not on the host stack. If a
 /// browser quietly compiles <c>return_call_indirect</c> as an ordinary call,
 /// the stack grows per hop and the whole design is dead, with no fallback.
 /// Millions of hops with a bounded stack is the only evidence for that.</para>
@@ -29,7 +29,7 @@ public static class SpikeTailPingPongModules
     public const int HopsDoneSlot = 1;
 
     /// <summary>Where the host writes each half's function-table index, in
-    /// cells. A module reads the OTHER half's index from here rather than
+    /// cells. A module reads the other half's index from here rather than
     /// having it baked in, because the index is whatever addFunction hands out
     /// at run time and the two halves refer to each other. That indirection is
     /// also what production needs, so the spike exercises the real shape.
@@ -49,7 +49,7 @@ public static class SpikeTailPingPongModules
     /// cell where the host leaves the other half's table index.
     ///
     /// <para>The body: decrement the counter; when it reaches zero, count
-    /// itself done and RETURN to the host with the slot's id (so the harness
+    /// itself done and return to the host with the slot's id (so the harness
     /// can tell which half finished); otherwise tail-call the other half. The
     /// only non-tail exit is the last one.</para></summary>
     /// <summary>Slots standing in for the WAM's mutable scalars, so a hop can
@@ -63,14 +63,14 @@ public static class SpikeTailPingPongModules
     {
         var module = new Module();
         // Type 0 is the production signature, on purpose: return_call_indirect
-        // requires the callee's type to match the caller's RESULT type, and
+        // requires the callee's type to match the caller's result type, and
         // using the real one means a Go here transfers to the real emitter.
         module.Types.Add(new WebAssemblyType
         {
             Parameters = [WebAssemblyValueType.Int32, WebAssemblyValueType.Int32],
             Returns = [WebAssemblyValueType.Int32],
         });
-        // The memory import goes FIRST: WasmSharedMemory.Patch walks the
+        // The memory import goes first: WasmSharedMemory.Patch walks the
         // import section for it, and while that walk does skip a table import
         // correctly, keeping the order it has always seen is the cheap way to
         // stay out of its way.
@@ -81,7 +81,7 @@ public static class SpikeTailPingPongModules
             Type = new Memory(1, 65536),
         });
         // Minimum 2, no maximum: the host may grow the table, and a module
-        // reaches slots added AFTER it was instantiated because a table
+        // reaches slots added after it was instantiated because a table
         // import is by reference. That is G4.
         module.Imports.Add(new Import.Table(TableModule, TableField, 2, null));
         module.Functions.Add(new Function { Type = 0 });
@@ -91,7 +91,7 @@ public static class SpikeTailPingPongModules
         });
 
         var code = new List<Instruction>();
-        // EVERY address is relative to the base the host passes in local 0.
+        // Every address is relative to the base the host passes in local 0.
         // Absolute offsets would work against a private image and corrupt the
         // runtime's own linear memory in a browser, where address 0 belongs to
         // someone else -- and would read garbage back, which is exactly how
@@ -119,7 +119,7 @@ public static class SpikeTailPingPongModules
         code.Add(new Return());
         code.Add(new End());
 
-        // ...otherwise hand control to the other half and DO NOT come back.
+        // ...otherwise hand control to the other half and do not come back.
         code.Add(new LocalGet(0));                  // mailbox, passed along
         code.Add(new LocalGet(1));                  // cursor, passed along
         // Optionally do what a real crossing does: spill the mutable scalars

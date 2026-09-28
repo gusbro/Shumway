@@ -10,13 +10,13 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-035 phase D1 — <c>:- disable_debug.</c> / <c>:- enable_debug.</c>. The two
-/// directives are POSITIONAL: each sets the debuggability of the clauses that
+/// directives are positional: each sets the debuggability of the clauses that
 /// follow it, until the next one or the end of the file. So debuggability is a
 /// property of a predicate, not of a module, and a file can hand the debugger the
 /// predicates worth stepping through while the rest keeps release codegen.
 ///
 /// <para>A non-debuggable predicate records no stop sites, so no breakpoint binds
-/// inside it — it is one opaque step. Crucially it stays COHERENT: a debuggable
+/// inside it — it is one opaque step. Crucially it stays coherent: a debuggable
 /// predicate it calls is debugged normally, because the two compile independently
 /// and the machine's environment chain runs through both.</para>
 /// </summary>
@@ -164,7 +164,7 @@ public class Adr035DisableDebugTests
         var hits = HitsFor(engine, "opaque(A).", out int solutions);
 
         Assert.Equal(1, solutions);
-        Assert.Equal(new[] { 6 }, hits);   // stopped in leaf/1, reached THROUGH the opaque call
+        Assert.Equal(new[] { 6 }, hits);   // stopped in leaf/1, reached through the opaque call
     }
 
     [Fact]

@@ -5,10 +5,10 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>The character-code range is every Unicode SCALAR VALUE
+/// <summary>The character-code range is every Unicode scalar value
 /// (0..0x10FFFF minus the surrogate block) — the astral-unicode arc widened
 /// it from the BMP. What the builders must never do is what they once did
-/// silently: truncate a code to 16 bits and build a DIFFERENT character
+/// silently: truncate a code to 16 bits and build a different character
 /// (0x10400 → 0x400). Astral codes now build the real character; the values
 /// that name no character (negatives, surrogates, above 0x10FFFF) still
 /// raise <c>representation_error</c>.</summary>
@@ -26,7 +26,7 @@ public sealed class BmpCharacterCodeTests
     [Fact]
     public void NumberCodesPath_AstralCode_IsAValidCharButNoDigit()
     {
-        // The astral code is a legitimate CHARACTER now; what fails is the
+        // The astral code is a legitimate character now; what fails is the
         // number parse — a syntax_error, not a representation_error.
         var e = new PrologEngine();
         var ex = Assert.ThrowsAny<Exception>(
@@ -76,7 +76,7 @@ public sealed class BmpCharacterCodeTests
             "X = 'a\\x1F600\\b', atom_length(X, 3), "
             + "sub_atom(X, 1, 1, 1, C), char_code(C, 0x1F600).").Success);
         // The same escape inside a double-quoted string consults, and the
-        // packed list counts CODE POINTS: three characters.
+        // packed list counts code points: three characters.
         e.ConsultString("p(\"a\\x10400\\b\").");
         Assert.True(e.Query("p(L), length(L, 3).").Success);
         // A surrogate escape names no character — still an error.
@@ -101,7 +101,7 @@ public sealed class BmpCharacterCodeTests
         // A BMP escape still builds the character...
         Assert.True(e.Query(
             "X = '\\x1b\\', char_code(X, 27).").Success);
-        // ...and 0'\x…\ denotes an INTEGER code, where an astral
+        // ...and 0'\x…\ denotes an integer code, where an astral
         // value is a perfectly good integer — no atom is built.
         Assert.True(e.Query("X is 0'\\x1F600\\, X =:= 128512.").Success);
     }

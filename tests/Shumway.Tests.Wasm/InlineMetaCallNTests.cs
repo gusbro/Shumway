@@ -6,7 +6,7 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>call/1 has had an inline form since the tier shipped. Every
 /// wider arity stepped aside, and a meta-call builtin cannot be requested
-/// directly either, so each one DEOPTED.
+/// directly either, so each one deopted.
 ///
 /// <para>That is not a corner. <c>maplist/3</c> is <c>call(G, X, Y)</c> in a
 /// loop, so a library built on maplist deopts once per element: measured on
@@ -14,7 +14,7 @@ namespace Shumway.Tests.Wasm;
 /// 100% -- at one site, <c>lists$maplist/3</c>.</para>
 ///
 /// <para>This pins the question the emitter asks. Which arities it then
-/// serves is the emitter's business, but the ANSWER has to name call/N and
+/// serves is the emitter's business, but the answer has to name call/N and
 /// say how many arguments it appends, or the two halves drift.</para>
 /// </summary>
 public sealed class InlineMetaCallNTests
@@ -23,7 +23,7 @@ public sealed class InlineMetaCallNTests
     // has to exist before call/N has an id at all.
     static InlineMetaCallNTests() => _ = new Shumway.Embedding.PrologEngine();
 
-    // The registry is keyed by FUNCTOR, so the id comes the way the
+    // The registry is keyed by functor, so the id comes the way the
     // emitter's own call sites get it.
     private static int BuiltinId(string name, int arity)
     {
@@ -48,7 +48,7 @@ public sealed class InlineMetaCallNTests
         Assert.Equal(appended, n);
     }
 
-    /// <summary>call/1 keeps its OWN form, which takes the goal as it
+    /// <summary>call/1 keeps its own form, which takes the goal as it
     /// stands. Answering yes here would send it down the appending path
     /// with nothing to append.</summary>
     [Fact]
@@ -73,7 +73,7 @@ public sealed class InlineMetaCallNTests
             $"call/{arity} answers to both inline forms");
     }
 
-    /// <summary>ANTI-VACUITY: something that is NOT call/N is rejected, so
+    /// <summary>Anti-vacuity: something that is not call/N is rejected, so
     /// the predicate means "call/N" and not "any builtin".</summary>
     [Theory]
     [InlineData("=", 2)]

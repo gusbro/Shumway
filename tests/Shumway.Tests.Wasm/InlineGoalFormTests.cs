@@ -10,12 +10,12 @@ namespace Shumway.Tests.Wasm;
 /// <para>=/2 is the case that shows why this was missing. Written in a body
 /// it is not a call at all -- the WAM lowers it to get/unify -- so the
 /// module's inline form only ever saw the static one. Arriving through
-/// call/1 it is a TERM that nobody compiled, the host dispatches it by
+/// call/1 it is a term that nobody compiled, the host dispatches it by
 /// functor, and no call marker names it because it is not a predicate. The
 /// meta-call knew one trick, jump to a predicate, and so it left.</para>
 ///
 /// <para>The interpreter is the oracle throughout: these assert that the two
-/// engines AGREE, never what the answer should be.</para></summary>
+/// engines agree, never what the answer should be.</para></summary>
 public sealed class InlineGoalFormTests(ITestOutputHelper o)
 {
     private const string Corpus = """
@@ -131,7 +131,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     }
 
     /// <summary>==/2 and \==/2 as meta-called goals. The corpus covers the
-    /// pairs the inline form DECIDES and the pairs it declines -- two bound
+    /// pairs the inline form decides and the pairs it declines -- two bound
     /// compounds, a float -- because declining is a path of its own and it
     /// hands the instruction back to the host, which re-reads the goal out
     /// of X0.</summary>
@@ -200,7 +200,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     public void GetAttrAsAMetaCalledGoalAgrees(string goal)
         => AgreeOnSuccess(goal);
 
-    /// <summary>A form that DECLINES must leave X0 holding the goal. It does
+    /// <summary>A form that declines must leave X0 holding the goal. It does
     /// not, if the arguments are copied into the registers first -- the host
     /// then re-dispatches this instruction, reads the goal's first argument
     /// where the goal should be, and raises. Two bound compounds are the

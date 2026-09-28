@@ -18,11 +18,11 @@ namespace Shumway.Builtins;
 /// </list>
 ///
 /// <para>Two shelves, and a key lives on exactly one of them. A
-/// BACKTRACKABLE write stores the live cell: the write is undone by the
+/// backtrackable write stores the live cell: the write is undone by the
 /// trail, so it cannot outlive the heap state it was taken from, and the
 /// sharing is what a propagation queue driven through
 /// <c>bb_b_put/2</c> relies on. A NON-backtrackable write stores a
-/// heap-independent PAYLOAD instead (<see cref="SetPayload"/>) — it has to
+/// heap-independent payload instead (<see cref="SetPayload"/>) — it has to
 /// survive the backtracking it is defined to survive, and a raw cell does
 /// not: once the heap unwinds past the write, the address holds whatever
 /// came later. An immediate (an integer, an atom) is its own payload and
@@ -31,7 +31,7 @@ namespace Shumway.Builtins;
 ///
 /// <para>The store survives across queries on the hosting engine.</para>
 ///
-/// <para>Keyed by ATOM ID, not name string — the id is what the builtin
+/// <para>Keyed by atom id, not name string — the id is what the builtin
 /// already has in hand, and keying by string paid a name lookup plus a
 /// string hash per access on hot nb_getval loops. Atom ids are stable
 /// for the lifetime of the atom (ADR-003); the lifetime itself is
@@ -52,11 +52,11 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     public int Version { get; private set; }
 
     /// <summary>Every key a read by <paramref name="ownerId"/> would find,
-    /// as (atom id, cell) pairs in <paramref name="rows"/>: a cell LIVE for
+    /// as (atom id, cell) pairs in <paramref name="rows"/>: a cell live for
     /// it as itself, a payload (a snapshot the host re-emits) as
     /// <see cref="WasmAbi.GlobalVarPayloadSentinel"/>. Another activation's
     /// backtrackable write is not among them, and the read side drops it
-    /// too. The rows are complete, so a compiled module answers an ABSENT
+    /// too. The rows are complete, so a compiled module answers an absent
     /// key with failure and only a sentinel sends a read to the host.
     /// Returns the pair count, or -1 when the rows cannot hold them all.
     /// </summary>

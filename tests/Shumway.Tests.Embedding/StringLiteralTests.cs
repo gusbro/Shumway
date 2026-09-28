@@ -11,7 +11,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class StringLiteralTests
 {
-    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // A double-quoted literal reaches C# as the list it is (ADR-047 decision 6):
     // the representation is not observable at the boundary, so what arrives is
     // the same whether or not the engine stored it packed.
     private static Term Str(string s)

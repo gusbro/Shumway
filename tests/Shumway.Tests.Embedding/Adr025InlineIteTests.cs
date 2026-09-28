@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-025 — the inline if-then-else / disjunction lowering (`jump` opcode +
 /// try_me_else/cut/trust_me in the host clause), gated by
-/// <see cref="PrologEngine.EnableInlineIte"/> (stage (c): default OFF).
-/// Every semantic case runs with the flag ON; the differential test checks the
+/// <see cref="PrologEngine.EnableInlineIte"/> (stage (c): default off).
+/// Every semantic case runs with the flag on; the differential test checks the
 /// flag-OFF (helper) form computes identical answers.
 /// </summary>
 public class Adr025InlineIteTests
@@ -61,7 +61,7 @@ public class Adr025InlineIteTests
             q(b).
             first(R) :- (q(X) -> R = X ; R = none).
             """);
-        // ISO ->/2 commits the condition's FIRST solution.
+        // ISO ->/2 commits the condition's first solution.
         Assert.True(e.Query("findall(R, first(R), L), L == [a].").Success);
     }
 
@@ -141,7 +141,7 @@ public class Adr025InlineIteTests
         Assert.True(e.Query("n(-1, R), R == neg.").Success);
     }
 
-    // ---- flag OFF (default): identical answers via the helper form ----
+    // ---- flag off (default): identical answers via the helper form ----
 
     [Fact]
     public void Differential_InlineVsHelper_SameAnswers()
@@ -171,7 +171,7 @@ public class Adr025InlineIteTests
         }
     }
 
-    // ---- Tier-1 interaction: the shape is rejected GRACEFULLY (stays Tier-0)
+    // ---- Tier-1 interaction: the shape is rejected gracefully (stays Tier-0)
     //      until ADR-025 stage (b) lands IL support. ----
 
     [Fact]

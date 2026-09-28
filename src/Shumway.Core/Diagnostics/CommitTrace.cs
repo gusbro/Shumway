@@ -14,12 +14,12 @@ namespace Shumway.Core.Diagnostics;
 /// three events that answer it.</para>
 ///
 /// <para>A caveat that has to be read with the output, not discovered
-/// afterwards: the wasm tier pushes and cuts INSIDE the module, writing B
+/// afterwards: the wasm tier pushes and cuts inside the module, writing B
 /// in shared memory without calling anything here, so its own commits do
 /// not appear. What does appear is every one the host performs, and the
 /// host sees the tier's B because the chain syncs it. So a cut present on
-/// one side and absent on the other is evidence about WHERE the commit
-/// happened, not proof that it did not happen -- while a BACKTRACK is
+/// one side and absent on the other is evidence about where the commit
+/// happened, not proof that it did not happen -- while a backtrack is
 /// recorded on both, because the extra trail cannot be unwound inside wasm
 /// at all.</para></summary>
 public static class CommitTrace
@@ -27,7 +27,7 @@ public static class CommitTrace
     private const string Symbol = "SHUMWAY_DIAG";
     private const int Capacity = 60_000;
 
-    /// <summary>Trail records an APPEND to the extra trail, whose
+    /// <summary>Trail records an append to the extra trail, whose
     /// `from` is the TrailType: an unwind's target is a top, and a top
     /// only means something once you know what is under it.</summary>
     public enum Kind : byte { Push, Cut, Unwind, Trail }

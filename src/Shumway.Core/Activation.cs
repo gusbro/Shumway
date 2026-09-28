@@ -79,11 +79,11 @@ public sealed partial class Activation
     // Backtracking reverts the ATTVAR cell to a plain REF (via the
     // ValueChange trail); the orphaned record is left in place and is
     // overwritten outright if the heap slot is later reused.
-    // Written ONLY through the AttrStore funnel below (Activation.Attrs.cs).
+    // Written only through the AttrStore funnel below (Activation.Attrs.cs).
     // Named with the underscore-store suffix so a direct use reads as the
     // exception it is: the funnel exists so a derived view -- today the
     // GC's scan, tomorrow a linear-memory mirror the wasm tier can read --
-    // can be kept in step from ONE place per mutation. Handing out the inner
+    // can be kept in step from one place per mutation. Handing out the inner
     // record would defeat that, so the funnel never returns it.
     private readonly Dictionary<int, Dictionary<int, int>> _attrStore = new();
     // Side log for AttrModify trail entries: each records (attvar home
@@ -107,19 +107,19 @@ public sealed partial class Activation
     // (TrailType.CatchFrame) so backtracking restores the stack. The throw
     // handler walks it from the top to find a matching catcher.
     private readonly List<CatchFrame> _catchFrames = new();
-    // Where to start looking for the top-most ACTIVE catch frame. Only ever
-    // an UPPER BOUND: too high costs a few steps and never a wrong answer, so
+    // Where to start looking for the top-most active catch frame. Only ever
+    // an upper bound: too high costs a few steps and never a wrong answer, so
     // nothing's correctness depends on it. It exists because a frame is never
     // popped, only marked inactive, so a scan from the top walks every frame
     // an ascent already closed -- 100,000 nested catch/3 spent n(n+1)/2 steps
-    // there. Anything that ACTIVATES a frame raises it; only deactivating
+    // there. Anything that activates a frame raises it; only deactivating
     // lowers it.
     private int _catchScanFrom = -1;
 
     // ----- pooled scratch for the embedding layer's term
     // walkers (Materializer — findall runs it once per solution). Cleared on
     // use rather than allocated per call. The depth counter guards
-    // re-entrancy: only the OUTERMOST walk uses the pooled instance; a nested
+    // re-entrancy: only the outermost walk uses the pooled instance; a nested
     // walk (e.g. a findall nested inside another findall's collect) allocates
     // a fresh one. Engines are single-threaded internally, so no
     // synchronisation is needed.
@@ -208,7 +208,7 @@ public sealed partial class Activation
 
     /// <summary>ADR-035 — for each program address whose opcode byte has been
     /// patched to <see cref="Opcode.Break"/>, the byte that was there. Owned by
-    /// the debug service (which does the patching) and shared BY REFERENCE — which is
+    /// the debug service (which does the patching) and shared by reference — which is
     /// what lets a breakpoint armed while this query is already running be decoded by
     /// it. Null only when there is no debug session at all; an empty table is not the
     /// same thing as no table, because the next port may fill it.</summary>
@@ -306,7 +306,7 @@ public sealed partial class Activation
 
     /// <summary>Which buffer last raised resource_error(memory). The ISO
     /// term says only "memory", which is right for a program and useless
-    /// for finding out WHY an engine ran out where another did not.
+    /// for finding out why an engine ran out where another did not.
     /// Diagnostic: last writer wins, no synchronisation.</summary>
     public static string? LastExhausted;
 
@@ -319,9 +319,9 @@ public sealed partial class Activation
 
         long newSize = buffer.Length;
         while (newSize < required) newSize *= 2;
-        // Exhaustion is a CATCHABLE resource_error(memory), not a .NET
+        // Exhaustion is a catchable resource_error(memory), not a .NET
         // exception: catch/3's unwind resets the tops, after which the
-        // engine is fully usable (the guard runs BEFORE any mutation, so
+        // engine is fully usable (the guard runs before any mutation, so
         // nothing is half-done). length(L, 2_000_000_000) inside catch/3
         // must leave the query alive.
         if (maxSize > 0 && newSize > maxSize)
@@ -344,7 +344,7 @@ public sealed partial class Activation
         // buffer is untouched (Resize allocates before copying), so it maps
         // to the same catchable, fully-recoverable resource_error. This is
         // what makes length(L,L)'s enumeration end in the ISO-sanctioned
-        // outcome on ANY machine, not only ones with 16 GB to burn.
+        // outcome on any machine, not only ones with 16 GB to burn.
         try { Array.Resize(ref buffer, (int)newSize); }
         catch (OutOfMemoryException)
         {
@@ -637,7 +637,7 @@ public sealed partial class Activation
         return target.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(addr) : target;
     }
 
-    /// <summary>A zero-length PSTR carries no elements, so it IS its own tail —
+    /// <summary>A zero-length PSTR carries no elements, so it is its own tail —
     /// which is how <c>UnifyPstr</c> already treats it. Collapsing it here means
     /// every comparison, type test and ordering downstream sees the empty list
     /// as the atom <c>[]</c> (or as the variable it is open on), instead of as a
@@ -664,7 +664,7 @@ public sealed partial class Activation
         if (c.Tag == Tag.Lis)
         {
             int idx = c.AsHeapIndex;
-            // An ATTVAR cell names its own slot — the payload IS its key in the
+            // An ATTVAR cell names its own slot — the payload is its key in the
             // attribute table — so it leaves here as a REF to that slot. A
             // caller storing the peeled cell somewhere else (append/3 rebuilding
             // a spine, say) would otherwise plant a second cell claiming a home
@@ -713,11 +713,11 @@ public sealed partial class Activation
     public Cell NormalizeListCell(Cell c) => c.Tag == Tag.Pstr ? NormalizeEmptyPstr(c) : c;
 
     /// <summary>Compares the leading code units of two PSTRs (<see cref="Tag.Pstr"/>)
-    /// — the packed (possibly partial) char-code sequence, NOT the tail. A PSTR is
+    /// — the packed (possibly partial) char-code sequence, not the tail. A PSTR is
     /// a code sequence with a tail; <see cref="AppendPstrChain"/> walks the full Pstr
     /// chain (incl. lazy-concat continuation segments) and stops at the first
     /// non-Pstr tail. Two PSTRs are equal iff their materialized leading code units
-    /// are equal AND their final tails are structurally equal; the caller
+    /// are equal and their final tails are structurally equal; the caller
     /// (<see cref="StructuralCompareIterative"/>) compares the tails as an ordinary
     /// pending pair, so this returns only the code-sequence verdict. Cell-based —
     /// <see cref="AppendPstrChain"/> reads the cell, not a header index.</summary>
@@ -817,8 +817,8 @@ public sealed partial class Activation
     /// the target with <see cref="IsChoicePointInChain"/> first.</summary>
     public void SetB(int b) => _b = b;
 
-    /// <summary>ADR-035 D5+ — the debugger moved the next-statement pointer DURING a stop.
-    /// The interpreter's dispatch loop holds the stopped instruction in LOCALS (pc,
+    /// <summary>ADR-035 D5+ — the debugger moved the next-statement pointer during a stop.
+    /// The interpreter's dispatch loop holds the stopped instruction in locals (pc,
     /// opByte): without this flag it would execute that instruction anyway when the stop
     /// returns, clobbering the move. Every port-hook site checks it right after the hook
     /// and, when set, abandons the pending instruction and re-enters the loop at the
@@ -876,7 +876,7 @@ public sealed partial class Activation
 
 /// <summary>shared mutable holder for the host's dynamic-database
 /// generation (the ADR-015 logical-update-view clock). The embedding layer
-/// keeps ONE box per <c>PrologEngine</c>, increments <c>Value</c> wherever it
+/// keeps one box per <c>PrologEngine</c>, increments <c>Value</c> wherever it
 /// bumps the generation, and hands the same box to every <see cref="Activation"/>
 /// it sets up — so the <c>enter_dynamic</c> opcode samples the generation with
 /// a plain field read instead of invoking a <c>Func&lt;long&gt;</c> per

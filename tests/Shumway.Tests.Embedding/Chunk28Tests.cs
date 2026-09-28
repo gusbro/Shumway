@@ -95,7 +95,7 @@ public class Chunk28Tests
         var engine = new PrologEngine();
         var sol = engine.Query("atom_string(hello, S).");
         Assert.True(sol.Success);
-        // atom_string/2 produces text as a SEQUENCE, which crosses as the list
+        // atom_string/2 produces text as a sequence, which crosses as the list
         // it is (ADR-047 decision 6).
         Assert.True(sol["S"]!.TryAsText(out string s));
         Assert.Equal("hello", s);

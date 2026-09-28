@@ -108,7 +108,7 @@ public class UnifyTests
         Assert.Equal(s, engine.Deref(v));   // deref lands on the STR cell
     }
 
-    // ---------- ATOM ↔ ATOM ----------
+    // ---------- atom ↔ atom ----------
 
     [Fact]
     public void Unify_TwoIdenticalAtoms_Succeeds()

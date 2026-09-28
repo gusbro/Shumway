@@ -48,7 +48,7 @@ public static class UnifyBuiltins
         // Unwind any bindings (whether the unify succeeded or partially
         // failed). Restore the heap top so trial-allocated cells are released,
         // and put Hb back to its original value. Wakeups the trial queued are
-        // discarded WITH the bindings — the wrapper's meta path re-runs the
+        // discarded with the bindings — the wrapper's meta path re-runs the
         // unification for real when they matter.
         engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
         engine.SetHeapTop(savedHeapTop);

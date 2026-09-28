@@ -10,7 +10,7 @@ namespace Shumway.Tests.Wasm;
 /// attributes included. If a tier leaves them, the variable is still
 /// constrained afterwards -- the answers stay right, because the constraint
 /// is merely redundant, and the cost lands somewhere that looks unrelated:
-/// the TOP LEVEL then has residual goals to project, and projection walks
+/// the top level then has residual goals to project, and projection walks
 /// them with clp(Z)'s <c>unwrap_with/3</c>.</para>
 ///
 /// <para>That is where the browser's runaway actually is. Attributed to the
@@ -40,7 +40,7 @@ public sealed class NegationRestoresAttributesTests(ITestOutputHelper o)
             ( '$unattributed_var'(X) -> R = bare ; R = attributed ).
         """;
 
-    /// <summary>The variable is constrained OUTSIDE the negation here, so
+    /// <summary>The variable is constrained outside the negation here, so
     /// both tiers must report it attributed: an anti-vacuity check that the
     /// probe can tell the two apart at all.</summary>
     [Fact]

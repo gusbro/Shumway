@@ -6,7 +6,7 @@ using Xunit;
 namespace Shumway.Tests.IsoConformance;
 
 /// <summary>Regression pins for the engine fixes the 2026-08/09 conformance
-/// arc produced. Every query here is OUR OWN formulation of the fixed
+/// arc produced. Every query here is our own formulation of the fixed
 /// behavior — the conformity batteries themselves (Neumerkel's length,
 /// phrase, number_chars, setup_call_cleanup and variable_names sets) run
 /// from tests/conformity, which fetches the author's data from the live
@@ -44,7 +44,7 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void Length_CyclicSpine_IsARefusalNotAHangNorAFailure() =>
         // Issue #108 (length#26): quiet failure was declaratively cute but
         // non-conforming -- the classical definition loops here, and the
-        // conforming shortcut is the length(L, L) refusal. A CONCRETE
+        // conforming shortcut is the length(L, L) refusal. A concrete
         // candidate length still fails (length#27, uniform).
         True("X = [x,y|X], catch(length(X, _), "
             + "error(resource_error(finite_memory), _), true), "
@@ -57,7 +57,7 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void Length_NonListFails() =>
         True("\\+ length(foo, _), \\+ length([p|q], _).");
     [Fact] public void Length_SelfAliasedIsAResourceErrorAtOnce() =>
-        // length(L, L) cannot be answered: binding the tail binds the LENGTH
+        // length(L, L) cannot be answered: binding the tail binds the length
         // to a list, never an integer, so every candidate fails and there are
         // infinitely many. The answer is the resource error the enumeration
         // used to reach with the heap at the ceiling, which is a sanctioned
@@ -128,7 +128,7 @@ public sealed class ConformanceArcRegressionTests
         // the term-reader fallback once read "(1)" through to 1.
         Raises("number_chars(_, ['(','1',')'])", "syntax_error(_)");
     [Fact] public void NumberChars_FloatOverflowIsAboveMaxFloat() =>
-        // Perfect syntax, unrepresentable VALUE (issue #42, number_chars #82):
+        // Perfect syntax, unrepresentable value (issue #42, number_chars #82):
         // a representation error, not a syntax error and never an infinity.
         // Also pins the lexer's TryParse path: .NET Framework's double.Parse
         // throws where Core returns Infinity — both must land here.
@@ -140,7 +140,7 @@ public sealed class ConformanceArcRegressionTests
     // ---- operator atom as an operand (issue #66, upcoming s#378) ----
     // ISO 6.3.1.3: a bare operator atom cannot be the operand of an
     // operator — the predicate-indicator shape included: `--> /2` reads
-    // only as `(-->)/2`. Delimited ARGUMENT positions still admit the
+    // only as `(-->)/2`. Delimited argument positions still admit the
     // bare atom (`f(-->)`, list elements), as does a whole term.
 
     [Fact] public void OperatorAtom_BareIndicatorIsASyntaxError() =>
@@ -160,7 +160,7 @@ public sealed class ConformanceArcRegressionTests
            + "atom_to_term('is/2', T, _), T =.. ['/', A, 2], A == (is).");
 
     // ---- negative zero (issue #44, syntax conformity #364) ----
-    // ISO's float value set has ONE zero: -0.0 denotes 0.0 wherever a float
+    // ISO's float value set has one zero: -0.0 denotes 0.0 wherever a float
     // is born (the literal, number_chars, arithmetic), so writeq finally
     // agrees with ==/2 and compare/3, which already equated the two.
 
@@ -177,13 +177,13 @@ public sealed class ConformanceArcRegressionTests
         True("msort([-0.0, 0.0], L), "
            + "with_output_to(atom(A), writeq(L)), A == '[0.0,0.0]'.");
     [Fact] public void NumberChars_QuotedMinusStillReads() =>
-        // the term-reader fallback exists FOR this shape.
+        // the term-reader fallback exists for this shape.
         True("number_chars(N, ['''','-','''','3']), N == -3.");
     [Fact] public void NumberChars_TrailingCommentIsSyntaxError() =>
         // Issue #25 (UWN): "0%0'" read through to 0 — the old trailing-junk
         // sniff skipped its comment check whenever the text contained 0'.
         // The rule is positional now: the number token must end exactly
-        // where the chars end, so NO trailing text of any kind — comment
+        // where the chars end, so no trailing text of any kind — comment
         // (terminated or not), layout, anything — survives. GNU agrees on
         // every case here.
         Raises("number_chars(_, ['0','%','0',''''])", "syntax_error(_)");
@@ -191,12 +191,12 @@ public sealed class ConformanceArcRegressionTests
         // "0'a%x" — same bypass, char-code spelling.
         Raises("number_chars(_, ['0','''','a','%','x'])", "syntax_error(_)");
     [Fact] public void NumberChars_TerminatedTrailingCommentStillErrs() =>
-        // "3%\n" — a COMPLETE comment after the number is trailing text too.
+        // "3%\n" — a complete comment after the number is trailing text too.
         Raises("number_chars(_, ['3','%','\\n'])", "syntax_error(_)");
     [Fact] public void NumberChars_TrailingLayoutStillErrs() =>
         Raises("number_chars(_, ['1',' '])", "syntax_error(_)");
     [Fact] public void NumberChars_InteriorCommentAndLeadingLayoutStillFine() =>
-        // Comments BETWEEN sign and digits are part of the term-reader
+        // Comments between sign and digits are part of the term-reader
         // fallback's contract; leading layout is ISO.
         True("number_chars(A, ['-',' ','/','*','*','/','1']), A == -1, "
            + "number_chars(B, [' ','1']), B == 1, "
@@ -209,7 +209,7 @@ public sealed class ConformanceArcRegressionTests
 
     [Fact] public void NumberChars_DigitSeparatorSpansLayout() =>
         // Issue #43 (UWN): a separator is an underscore followed by layout
-        // TEXT, so "0_<newline>01" is one number — the shape that lets a
+        // text, so "0_<newline>01" is one number — the shape that lets a
         // large integer be written across lines.
         True("number_chars(N, ['0','_','\\n','0','1']), N == 1, "
            + "number_chars(M, ['1','_',' ','0','0','0']), M == 1000.");
@@ -271,7 +271,7 @@ public sealed class ConformanceArcRegressionTests
         True("catch(nth0(x, _, _, _), error(type_error(integer, x), _), true), "
            + "catch(nth1(-2, _, _, _), error(domain_error(not_less_than_zero, -2), _), true).");
     [Fact] public void Nth3_GeneratesPartialLists() =>
-        // An integer index against an unbound list EXTENDS it, and a
+        // An integer index against an unbound list extends it, and a
         // variable index enumerates past any partial prefix ad infinitum.
         True("nth0(2, L, z), L = [_,_,z|_], "
            + "nth1(2, K, y), K = [_,y|_], "

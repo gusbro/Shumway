@@ -8,7 +8,7 @@ namespace Shumway.Embedding.Debugging;
 /// session. Every field has the default the REPL's <c>--debug</c> uses, so the common case
 /// is <c>engine.EnableDebugging()</c> with no options at all.
 ///
-/// <para>The point of the method is to make Shumway debuggable when it is EMBEDDED — a
+/// <para>The point of the method is to make Shumway debuggable when it is embedded — a
 /// Prolog engine that is one part of a larger .NET application, in the application's own
 /// process, rather than the standalone REPL. A debugger attached to that process then sets
 /// breakpoints in the <c>.pl</c> files the engine consults, steps, shows the mixed
@@ -17,7 +17,7 @@ namespace Shumway.Embedding.Debugging;
 /// </summary>
 public sealed class DebugOptions
 {
-    /// <summary>The <c>.pl</c> files the engine is ABOUT to consult, announced up front so a
+    /// <summary>The <c>.pl</c> files the engine is about to consult, announced up front so a
     /// breakpoint drawn on one of them before the process has stopped anywhere still binds
     /// the first time it stops. Optional: every file is also announced to the debugger as it
     /// is consulted, so a host that just calls <see cref="PrologEngine.ConsultFile"/> as it
@@ -25,15 +25,15 @@ public sealed class DebugOptions
     /// Relative paths are resolved against the current directory.</summary>
     public IReadOnlyList<string>? SourceFiles { get; set; }
 
-    /// <summary>Last-call optimisation while debugging. OFF by default: LCO reclaims a
+    /// <summary>Last-call optimisation while debugging. Off by default: LCO reclaims a
     /// caller's frame before the last call, and a frame that is gone is a frame the debugger
     /// cannot show — so a tail-recursive predicate would collapse to a single stack frame.
     /// Set it true to see the stack the release build would really have. (Overridden by the
     /// <c>SHUMWAY_DEBUG_LCO</c> environment pin when that is set.)</summary>
     public bool LastCallOptimisation { get; set; } = false;
 
-    /// <summary>Block the calling thread until a debugger has attached AND finished arming
-    /// the breakpoints it wants — the case for a process launched IN ORDER to be debugged
+    /// <summary>Block the calling thread until a debugger has attached and finished arming
+    /// the breakpoints it wants — the case for a process launched in order to be debugged
     /// from its first goal (the REPL's <c>--debug-wait</c>). Leave false for a host that runs
     /// normally and may be attached to at any moment; then this returns immediately and the
     /// debugger connects whenever it does.</summary>
@@ -48,15 +48,15 @@ public sealed class DebugOptions
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_DAP_PORT"), out int p)
             && p > 0 ? p : null;
 
-    /// <summary>LAZY full debug: when true, the session opens with the RUNTIME debug
-    /// machinery off — no ports raised, no trail-everything, last-call optimisation ON —
+    /// <summary>Lazy full debug: when true, the session opens with the runtime debug
+    /// machinery off — no ports raised, no trail-everything, last-call optimisation on —
     /// so a debug-compiled program runs at near-release Tier-0 speed, and the machinery
-    /// arms itself the moment a debugger actually ATTACHES (or the host calls
+    /// arms itself the moment a debugger actually attaches (or the host calls
     /// <see cref="ChannelDebugSession.ActivateFullDebug"/>). What arming cannot recover
-    /// is the PAST: frames LCO already reclaimed stay gone, and Set Next Statement can
+    /// is the past: frames LCO already reclaimed stay gone, and Set Next Statement can
     /// only rewind to points recorded after the attach. Code is compiled debuggable
-    /// either way — debuggability of CODE is decided at compile time; this flag decides
-    /// when the runtime starts PAYING for it.
+    /// either way — debuggability of code is decided at compile time; this flag decides
+    /// when the runtime starts paying for it.
     ///
     /// <para>The default comes from the <c>SHUMWAY_DEBUG_ACTIVATION</c> environment
     /// variable — <c>attach</c> for lazy, anything else (or unset) for full-from-startup

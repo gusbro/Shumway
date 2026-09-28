@@ -37,7 +37,7 @@ public static class WasmBundleTier
                 before.Add(pred.FunctorId);
             engine.LoadBundle(bundle);
         }
-        // What the bundle registered, read BEFORE the query that links: that
+        // What the bundle registered, read before the query that links: that
         // setup mints helpers for the bundle's dynamic clauses (a library's
         // attribute_goals/4 hook) under per-process numbers, and a member
         // the loading engine names differently refuses the whole module.

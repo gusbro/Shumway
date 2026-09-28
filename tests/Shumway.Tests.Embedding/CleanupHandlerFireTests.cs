@@ -7,12 +7,12 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The cut hook asks which cleanup handlers a barrier reaches, and it
 /// asks far more often than it gets a yes. Walking every live handler each
-/// time made a NEST of setup_call_cleanup quadratic: 4,000 deep spent
+/// time made a nest of setup_call_cleanup quadratic: 4,000 deep spent
 /// 25,749,670 steps in that loop, about 1.6n squared.
 ///
 /// <para>Registration level rises with registration order unless something
 /// registers after backtracking below an older handler, which is noticed as it
-/// happens. While it holds, the handlers a barrier can reach are a SUFFIX, so
+/// happens. While it holds, the handlers a barrier can reach are a suffix, so
 /// binary search finds where they start and the scan runs forward from there
 /// -- forward, so the order they are enqueued in, which is the order they run
 /// in, is exactly what it was.</para></summary>
@@ -33,7 +33,7 @@ public sealed class CleanupHandlerFireTests
         return e;
     }
 
-    /// <summary>ANTI-VACUITY first, because it is the thing that could break:
+    /// <summary>Anti-vacuity first, because it is the thing that could break:
     /// cleanups run, exactly once each, in the order they did before --
     /// innermost out.</summary>
     [Fact]
@@ -43,7 +43,7 @@ public sealed class CleanupHandlerFireTests
         Assert.True(e.Query("ord(5).").Success);
         var sols = e.QueryAll("findall(N, fired(N), L).").ToList();
         Assert.Single(sols);
-        // ToString is the canonical form; the ORDER is what this pins.
+        // ToString is the canonical form; the order is what this pins.
         Assert.Equal(".(1,.(2,.(3,.(4,.(5,[])))))",
             sols[0]["L"]!.ToString()!.Replace(" ", ""));
     }
@@ -65,8 +65,8 @@ public sealed class CleanupHandlerFireTests
             + "assertz(fired(oncut))) -> true ; true ), fired(oncut).").Success);
     }
 
-    /// <summary>NOT here: a shape test on a nest of setup_call_cleanup. The
-    /// scan this fixes was one of TWO quadratics in that workload, and the
+    /// <summary>Not here: a shape test on a nest of setup_call_cleanup. The
+    /// scan this fixes was one of two quadratics in that workload, and the
     /// other one is still standing -- the implementation asserts a
     /// '$cleanup_pending' clause per level and retracts it on the way out, and
     /// a call to a dynamic predicate costs O(clauses) whatever its first

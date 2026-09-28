@@ -130,7 +130,7 @@ public sealed class CallSiteTierChangeTests
     }
 
     /// <summary>The lazy mode's relink: the tick evicts the redefined
-    /// delegate AFTER the throwaway query rewrote its sites to CallIl, and
+    /// delegate after the throwaway query rewrote its sites to CallIl, and
     /// nothing recompiles it. Before the healing this threw "CallIl: no IL
     /// delegate ... invariant violated" at the first call.</summary>
     [DiagFact]

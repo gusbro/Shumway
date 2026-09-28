@@ -56,7 +56,7 @@ public sealed class ModuleManifest
 
     /// <summary>ADR-038 — set when the module was declared with the two-arg
     /// <c>:- module(Name, [Exports])</c> directive. An export-qualified module
-    /// contributes NOTHING to the bare-global namespace: every one of its
+    /// contributes nothing to the bare-global namespace: every one of its
     /// predicates is mangled <c>Name$x</c> (so <see cref="PublicFunctors"/> stays
     /// empty and two such modules can export the same name), and only the
     /// functors in <see cref="ExportFunctors"/> are importable by other
@@ -71,7 +71,7 @@ public sealed class ModuleManifest
     public HashSet<int> ExportFunctors { get; }
 
     /// <summary>ADR-038 — this module's import table: a bare functor id
-    /// <c>p/N</c> this module imported → the NAME of the export-qualified module
+    /// <c>p/N</c> this module imported → the name of the export-qualified module
     /// that provides it. A call to <c>p/N</c> that misses this module's own
     /// locals resolves through here to <c>Source$p/N</c> before falling back to
     /// the bare-global namespace. Built from <c>:- use_module/1,2</c>.</summary>

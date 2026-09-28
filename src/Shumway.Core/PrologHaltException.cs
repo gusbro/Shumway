@@ -9,7 +9,7 @@ namespace Shumway.Core;
 /// <para>Unlike <see cref="PrologRuntimeException"/> this never
 /// translates into an ISO <c>error/2</c> term — a <c>halt</c> is a
 /// terminating action, not a recoverable error, and <c>catch/3</c>
-/// does NOT intercept it.</para>
+/// does not intercept it.</para>
 /// </summary>
 public sealed class PrologHaltException : Exception
 {

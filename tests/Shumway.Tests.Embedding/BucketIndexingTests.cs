@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// ADR-028 — sibling-argument + structure-keyed indexing inside a value bucket,
 /// end-to-end in all three tiers. Covers: the atom sibling nested in a ground
 /// arg0 bucket; the structure-keyed sub on a list head; and — critically — the
-/// ADR-027 soundness fix, where an UNBOUND discriminator must still enumerate the
+/// ADR-027 soundness fix, where an unbound discriminator must still enumerate the
 /// whole bucket (a var-headed clause present) rather than only the wildcards.
 /// </summary>
 public class BucketIndexingTests
@@ -16,7 +16,7 @@ public class BucketIndexingTests
     private const string Program =
         ":- public p/2, h/3, rr/2.\n"
         // ADR-027/028 soundness: struct sub-arg (e/... vs a var-headed clause).
-        // p(f(Y), R) with Y unbound must yield f(a)->1, f(b)->2 AND the var clause.
+        // p(f(Y), R) with Y unbound must yield f(a)->1, f(b)->2 and the var clause.
         + "p(f(a),1).\np(f(b),2).\np(X,3).\n"
         // Atom sibling inside the ground arg0='a' bucket (3 clauses, arg1 x/y/z).
         + "h(a,x,1).\nh(a,y,2).\nh(a,z,3).\nh(b,w,9).\n"

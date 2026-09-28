@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// for the importer, a stateful term_expansion turns each quad into inert
 /// facts (a transcript is not a program — its expected blocks would
 /// otherwise define ;/2), and run_quads/0 checks every loaded quad's goal
-/// outcome against its sanctioned classes. The quad text here is SYNTHETIC,
+/// outcome against its sanctioned classes. The quad text here is synthetic,
 /// mirroring the published format — the real files live outside the
 /// repo.</summary>
 public sealed class QuadsLibraryTests
@@ -79,7 +79,7 @@ public sealed class QuadsLibraryTests
     public void ATranscriptIsNotAProgram()
     {
         // The expected block `L = 3.` must never define =/2 — and a normal
-        // consult AFTER a quad file stays untouched (the pending slot is
+        // consult after a quad file stays untouched (the pending slot is
         // keyed by file, so nothing leaks).
         var (e, _) = Loaded();
         string f = QuadFile("1 ?- atom_length(abc, L).\n      L = 3.\n");
@@ -157,11 +157,11 @@ public sealed class QuadsLibraryTests
     [Fact]
     public void AnOutputsExpectationClassifiesByItsOutcome()
     {
-        // `outputs(Text), Outcome` says the goal writes Text and THEN
+        // `outputs(Text), Outcome` says the goal writes Text and then
         // behaves as Outcome. Unclassified, such an alternative fell through
         // to the lenient catch-all and the test passed whatever happened.
         // Both halves are checked now, so both goals here really do write
-        // the text and only the OUTCOME tells the two quads apart.
+        // the text and only the outcome tells the two quads apart.
         var (e, w) = Loaded();
         string f = QuadFile(
             "1 ?- put_char(x), atom_length(_A, _).\n"
@@ -204,7 +204,7 @@ public sealed class QuadsLibraryTests
     {
         var (e, _) = Loaded();
         Assert.True(e.Query("current_op(1200, xfx, ?-).").Success);
-        // The bar sits ABOVE `;` so `A ; B | C` is a sequence and an
+        // The bar sits above `;` so `A ; B | C` is a sequence and an
         // alternative, not an answer swallowed by the bar: the TS 13211-3
         // priority, which the default table already carries.
         Assert.True(e.Query("current_op(1105, xfy, '|').").Success);

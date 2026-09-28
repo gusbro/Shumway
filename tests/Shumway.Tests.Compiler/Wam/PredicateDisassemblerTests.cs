@@ -58,7 +58,7 @@ public class PredicateDisassemblerTests
     [Fact]
     public void IfThenElse_DisassemblesToTheSynthesizedHelper()
     {
-        // The disassembler runs the SAME transform pipeline as the engine
+        // The disassembler runs the same transform pipeline as the engine
         // (ClausePipeline: DCG + MetaTransform + phrase + modes), so a control
         // construct shows the lowered helper it actually compiles to — not the
         // raw `;`/`->`. `p :- (C -> T ; E)` becomes `p :- $disj_N` plus a
@@ -74,7 +74,7 @@ public class PredicateDisassemblerTests
     [Fact]
     public void Release_OmitsDbgInfo_Debug_IncludesIt()
     {
-        // compile_mode=release (the default) emits NO meta dbg_info markers at
+        // compile_mode=release (the default) emits no meta dbg_info markers at
         // all — not per-clause, not per-predicate; debug includes one per clause.
         const string src = "p(a).\np(b).\np([H|T]) :- p(T).";
         string release = PredicateDisassembler.Disassemble(src).Single().Text;

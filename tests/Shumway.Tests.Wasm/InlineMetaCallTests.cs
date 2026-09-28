@@ -8,7 +8,7 @@ namespace Shumway.Tests.Wasm;
 /// module instead of stepping aside.
 ///
 /// <para>This was the largest deopt source there is. Every call the emitter
-/// bakes names its callee by a MARKER, and a marker is interned by the host
+/// bakes names its callee by a marker, and a marker is interned by the host
 /// from a (functor, address) pair, so it cannot be computed from a functor a
 /// module meets at run time -- a meta-call had no target and always stepped
 /// aside. Measured in a browser, clpfd's propagation loop
@@ -36,7 +36,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
         """;
 
     /// <summary>The arguments have to land in the right registers, in order.
-    /// A goal that merely SUCCEEDS proves nothing -- p3 reports what it
+    /// A goal that merely succeeds proves nothing -- p3 reports what it
     /// received, so a copy that shifted or reversed the arguments shows
     /// up.</summary>
     [Fact]
@@ -52,7 +52,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "the widest meta-call the module takes lost an argument");
     }
 
-    /// <summary>Execution has to CONTINUE after the meta-call. A jump that
+    /// <summary>Execution has to continue after the meta-call. A jump that
     /// forgot the continuation would leave the goal's success looking like
     /// the clause's.</summary>
     [Fact]
@@ -70,7 +70,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
     }
 
     /// <summary>The shapes the module declines still answer the way the
-    /// builtin does: an ATOM goal (no functor id to look up), an unbound goal
+    /// builtin does: an atom goal (no functor id to look up), an unbound goal
     /// (an error), a goal of a predicate that does not exist.</summary>
     [Fact]
     public void TheShapesItDeclinesStillAnswer()
@@ -87,7 +87,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "an unbound goal must raise, and the host must be the one to do it");
     }
 
-    /// <summary>Backtracking THROUGH a meta-call. The goal leaves a choice
+    /// <summary>Backtracking through a meta-call. The goal leaves a choice
     /// point; redoing it has to come back into the caller correctly.</summary>
     [Fact]
     public void BacktrackingThroughAMetaCallWorks()
@@ -109,7 +109,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "backtracking through a meta-call lost solutions");
     }
 
-    /// <summary>Backtracking INTO a goal reached through a meta-call in a
+    /// <summary>Backtracking into a goal reached through a meta-call in a
     /// clause that has no environment frame of its own.
     ///
     /// <para>This is the pairing the frame fix has to survive. A clause whose
@@ -122,7 +122,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
     /// and leaning on it is not the same as having tested it.</para>
     ///
     /// <para>The deterministic version of this passes either way. Only the
-    /// solutions AFTER the first say whether the frame survived.</para>
+    /// solutions after the first say whether the frame survived.</para>
     /// </summary>
     [DiagFact]
     public void BacktrackingIntoAFramelessMetaCall()
@@ -149,16 +149,16 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "backtracking through a frameless meta-call lost solutions");
         o.WriteLine($"frameless redo: deopts={WasmTierDelegate.DiagDeopts} "
             + $"chains={WasmTierDelegate.DiagEntries}");
-        // The point of the test is the INLINE path. A run that stepped aside
+        // The point of the test is the inline path. A run that stepped aside
         // would prove the interpreter right and say nothing about the frame.
         Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
     }
 
-    /// <summary>The frame the module built must survive being written OVER.
+    /// <summary>The frame the module built must survive being written over.
     ///
     /// <para>The plain redo tests do not discriminate, and the reason is worth
     /// stating: reclaiming a frame only lowers the stack top, so a frame
-    /// popped too eagerly still HOLDS its contents and a redo reads them back
+    /// popped too eagerly still holds its contents and a redo reads them back
     /// intact. The fault only surfaces when something allocates over that
     /// space first. So this one calls a predicate with an environment of its
     /// own between the meta-call and the redo -- which is what lands on the
@@ -252,7 +252,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
         o.WriteLine($"nested: deopts={WasmTierDelegate.DiagDeopts}");
     }
 
-    /// <summary>A cut inside the meta-called goal cuts the GOAL, not the
+    /// <summary>A cut inside the meta-called goal cuts the goal, not the
     /// caller: call/1 is opaque to cut. If the barrier were inherited instead
     /// of refreshed, the cut would prune the caller's choice points too.
     /// </summary>
@@ -277,18 +277,18 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             "the cut inside a meta-called goal pruned the caller");
     }
 
-    /// <summary>A resolution belongs to the ADDRESS MAP it was made against,
+    /// <summary>A resolution belongs to the address map it was made against,
     /// and the cache is dropped when that map changes.
     ///
     /// <para>This is the failure answers would never show, and the worst
     /// kind: a stale entry names a predicate that is still on the tier and
     /// still takes that many arguments, so the module jumps to it and
-    /// ANSWERS. The arity check does not save it -- the arities match. Only
+    /// answers. The arity check does not save it -- the arities match. Only
     /// the lifetime does, which is why the engine's own meta-route cache
     /// carries the same stamp (see MetaRoute.cs).</para>
     ///
     /// <para>Tested at the mechanism rather than end to end, deliberately:
-    /// in this harness a redefined predicate is stale for a DIRECT call too,
+    /// in this harness a redefined predicate is stale for a direct call too,
     /// so an end-to-end test would pass or fail on the harness's eviction
     /// rather than on this stamp, and would keep passing if the stamp were
     /// deleted.</para></summary>
@@ -302,7 +302,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
         table.NoteMetaResolution(mapA, moduleAtomId: 7, goalKey: 11, appended: 0, resolvedFid: 42);
         Assert.Equal(42, table.MetaLookup(7, 11));
 
-        // A second resolution against the SAME map joins it.
+        // A second resolution against the same map joins it.
         table.NoteMetaResolution(mapA, moduleAtomId: 7, goalKey: 12, appended: 0, resolvedFid: 43);
         Assert.Equal(42, table.MetaLookup(7, 11));
         Assert.Equal(43, table.MetaLookup(7, 12));
@@ -318,7 +318,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
     /// <summary>The counters: the propagation shape stops deopting. The
     /// program below is clpfd_run/1 with the library taken out of it.
     ///
-    /// <para>A cache is COLD once. The module cannot resolve a module-tagged
+    /// <para>A cache is cold once. The module cannot resolve a module-tagged
     /// goal, so the first call of each distinct (module, goal functor) pair
     /// steps aside, the host resolves it -- which is what it was doing every
     /// time before -- and fills the cache on its way through. Three distinct
@@ -347,14 +347,14 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             + $"chains={WasmTierDelegate.DiagEntries} "
             + $"hops={WasmTierDelegate.DiagInWasmHops}");
         Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
-        // The goals did not stop running: they cross INSIDE wasm now, which
+        // The goals did not stop running: they cross inside wasm now, which
         // is the whole point. Zero deopts with zero hops would mean the
         // meta-calls vanished, not that they got faster.
         Assert.True(WasmTierDelegate.DiagInWasmHops >= 10,
             $"only {WasmTierDelegate.DiagInWasmHops} in-wasm hops for 10 goals");
     }
 
-    /// <summary>An ATOM goal still steps aside, and the count says so: a zero
+    /// <summary>An atom goal still steps aside, and the count says so: a zero
     /// here would mean the module took a shape it cannot resolve.</summary>
     [DiagFact]
     public void AnAtomGoalStillStepsAside()

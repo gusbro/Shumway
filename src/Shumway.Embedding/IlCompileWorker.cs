@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace Shumway.Embedding;
 
-/// <summary>ONE persistent large-stack IL-compile worker for the
+/// <summary>One persistent large-stack IL-compile worker for the
 /// whole process, replacing the previous thread-create + <c>Join</c> per compile
 /// (a fresh 16 MB-stack thread per promotion, spawned on the query thread).
 /// Sigil's recursive validation needs the big stack (see
@@ -13,7 +13,7 @@ namespace Shumway.Embedding;
 /// promotion mode, and the PGO / bundle compile paths), just without the
 /// per-compile thread cost. <see cref="RunAsync"/> is the opt-in background mode
 /// (<c>IlPromotionStore.BackgroundCompilation</c>): the completion callback runs
-/// ON THE WORKER and must only hand the result to a thread-safe queue.</para></summary>
+/// on the worker and must only hand the result to a thread-safe queue.</para></summary>
 internal static class IlCompileWorker
 {
     private const int StackBytes = 16 * 1024 * 1024;
@@ -45,7 +45,7 @@ internal static class IlCompileWorker
 
     /// <summary>Runs <paramref name="work"/> on the shared large-stack worker and
     /// waits for the result; exceptions propagate to the caller. Work submitted
-    /// FROM the worker itself runs inline (a nested sync compile would otherwise
+    /// from the worker itself runs inline (a nested sync compile would otherwise
     /// deadlock the single worker).</summary>
     public static T RunSync<T>(Func<T> work)
     {
@@ -87,7 +87,7 @@ internal static class IlCompileWorker
             catch
             {
                 // A failed Start (e.g. the 16 MB stack reservation on a
-                // fragmented 32-bit address space) must NOT leave the dead
+                // fragmented 32-bit address space) must not leave the dead
                 // thread published: every later enqueue would feed a queue
                 // nobody drains — the silent zero-promotions state.
                 _thread = null;
@@ -109,7 +109,7 @@ internal static class IlCompileWorker
             if (item.Done is not null) item.Done.Set();
             else
             {
-                // A throwing completion callback must not kill the ONLY
+                // A throwing completion callback must not kill the only
                 // worker — that would strand every later compile as
                 // pending-forever. Count and report instead.
                 try { item.OnCompleted?.Invoke(item.Result, item.Error); }

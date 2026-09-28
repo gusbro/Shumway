@@ -35,13 +35,13 @@ public static partial class MetaBuiltins
         var names = new List<string>();
         CollectNamedVars(parsed, names, new Dictionary<string, int>());
 
-        // Bindings vars must BE the term's vars (SWI contract — and what
+        // Bindings vars must be the term's vars (SWI contract — and what
         // singleton computation and read_term_from_chars build on). Build
         // '=(Name, Var)' pairs whose Var slots share names with the parsed
-        // term, then materialise term and pairs TOGETHER so the
+        // term, then materialise term and pairs together so the
         // Materializer's varMap resolves each name to one shared heap cell.
         // (Materialising the term separately first handed register 1 a copy
-        // DETACHED from the bindings — the trap this comment guards.)
+        // detached from the bindings — the trap this comment guards.)
         var pairs = new List<Term>(names.Count);
         foreach (string name in names)
         {
@@ -90,7 +90,7 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.InstantiationError(engine));
         Term flagTerm = MaterializeRegister(engine, 0);
         Term valueTerm = MaterializeRegister(engine, 1);
-        // §8.17.1.3: the flag-value domain error's culprit is the PAIR
+        // §8.17.1.3: the flag-value domain error's culprit is the pair
         // Flag+Value, not the value alone.
         Term FlagValuePair() =>
             new CompoundTerm("+", new[] { flagTerm, valueTerm });
@@ -101,7 +101,7 @@ public static partial class MetaBuiltins
 
         // A flag that exists but is not user-settable raises
         // permission_error(modify, flag, F) (§8.17.1.3 c) — checked
-        // BEFORE the value's type, since the flag itself is the fault.
+        // before the value's type, since the flag itself is the fault.
         switch (flagName)
         {
             case "bounded":
@@ -195,7 +195,7 @@ public static partial class MetaBuiltins
         if (flagName == "lenient_escapes")
         {
             // Non-ISO escape sequences (SWI's fixed-width unicode escapes
-            // and friends) in ALL subsequent reads. Strict ISO rejects them
+            // and friends) in all subsequent reads. Strict ISO rejects them
             // (the conformance suite checks), so this is opt-in — the
             // Logtalk adapter sets it, matching the reference backend.
             if (valueName != "true" && valueName != "false")
@@ -216,7 +216,7 @@ public static partial class MetaBuiltins
         {
             // Arity/Prolog32 compatibility mode. The parse-time
             // features ($...$ atoms, #line, directive annotations) apply to
-            // SUBSEQUENT consults; the ClauseReader's directive pre-pass
+            // subsequent consults; the ClauseReader's directive pre-pass
             // handles a mid-file flip.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
@@ -228,7 +228,7 @@ public static partial class MetaBuiltins
                 // explicit set_prolog_flag(unknown, _) afterwards overrides.
                 host.Flags.Unknown = "fail";
                 engine.OnUnknown = Shumway.Core.UnknownAction.Fail;
-                // Arity's double-quoted literals are CODE lists. The engine
+                // Arity's double-quoted literals are code lists. The engine
                 // default went to chars (ADR-047 decision 4), so the dialect
                 // has to say so — and its DCGs pack just the same, since both
                 // presentations are packed.
@@ -253,7 +253,7 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.OccursCheck = valueName;
-            // Applies from the NEXT unification, not the next query: the
+            // Applies from the next unification, not the next query: the
             // engine snapshot exists for query setup, but a program that
             // sets the flag mid-body means it — leaving the running
             // activation on the old mode would be the very "set it and
@@ -396,7 +396,7 @@ public static partial class MetaBuiltins
                 return engine.UnifyRegisterWithCell(1,
                     Cell.Int(System.Environment.ProcessId));
 
-            // SWI's platform flags: each EXISTS only on its platform (reading
+            // SWI's platform flags: each exists only on its platform (reading
             // it elsewhere fails silently), which is what portable code's
             // `( current_prolog_flag(windows, true) -> ... ; ... )` relies on.
             case "windows":
@@ -427,7 +427,7 @@ public static partial class MetaBuiltins
             case "bounded":
                 return UnifyAtom(engine, 1, "false");
 
-            // The engine HAS tabling (semi-naive, phase 7); Trealla programs
+            // The engine has tabling (semi-naive, phase 7); Trealla programs
             // probe the flag before using `:- table` (their dcg_tabling).
             case "tabling":
                 return UnifyAtom(engine, 1, "true");
@@ -477,10 +477,10 @@ public static partial class MetaBuiltins
 
             case "min_integer":
             case "max_integer":
-                // ISO 7.11.1: these flags carry a value only on a BOUNDED
+                // ISO 7.11.1: these flags carry a value only on a bounded
                 // processor, and Shumway is unbounded (BigInt past the
-                // inline fixnum). The names are still RECOGNISED — they are
-                // ISO-spec flags, so no domain_error — but the query FAILS,
+                // inline fixnum). The names are still recognised — they are
+                // ISO-spec flags, so no domain_error — but the query fails,
                 // exactly Trealla's model. That failure is also what keeps
                 // portable probes sound: Logtalk arbitrary's integer edge
                 // cases call current_prolog_flag(max_integer, _) unguarded
@@ -491,13 +491,13 @@ public static partial class MetaBuiltins
             case "max_arity":
                 // ISO allows an integer or unbounded, and unbounded is the
                 // truth here (issue #106): a term's arity is limited only
-                // by address space, and running into THAT capacity answers
+                // by address space, and running into that capacity answers
                 // resource_error(finite_memory), not a flag-derived
                 // representation_error. SICStus reports the same.
                 return UnifyAtom(engine, 1, "unbounded");
 
             case "max_procedure_arity":
-                // stc#70: with max_arity unbounded, PROCEDURES may still be
+                // stc#70: with max_arity unbounded, procedures may still be
                 // capped. Terms of any width are fine; defining a predicate
                 // past this raises representation_error(max_procedure_arity).
                 return engine.UnifyRegisterWithCell(
@@ -591,7 +591,7 @@ public static partial class MetaBuiltins
     /// attribute records at all, in O(1).
     ///
     /// <para>The top level wraps every query in <c>copy_term/3</c> so it can
-    /// project residual constraints, which copies the WHOLE answer on the heap
+    /// project residual constraints, which copies the whole answer on the heap
     /// for every solution: measured, 4.6 of the 7.8 seconds an answer of 4.5
     /// million cells took. With no attributed variable anywhere there is no
     /// residual to find, and this says so without walking anything.</para></summary>
@@ -620,7 +620,7 @@ public static partial class MetaBuiltins
     /// <para>ADR-047: making a packed list indistinguishable from the cons list
     /// it denotes leaves someone debugging a memory problem with no way to ask
     /// what their text is costing. This answers the question they actually
-    /// have. It reports a RESOURCE, so unlike a boolean "is it packed?" there
+    /// have. It reports a resource, so unlike a boolean "is it packed?" there
     /// is nothing here for a program to branch on — which is what keeps the
     /// representation unobservable while still being measurable.</para></summary>
     public static bool TermCells(Activation engine)
@@ -638,7 +638,7 @@ public static partial class MetaBuiltins
                     int addr = engine.Deref(c.AsHeapIndex);
                     if (!seen.Add(addr)) break;
                     Cell target = engine.GetHeap(addr);
-                    // An unbound variable IS its cell; anything else continues.
+                    // An unbound variable is its cell; anything else continues.
                     if (target.Tag != Tag.Ref || target.AsHeapIndex != addr)
                         work.Add(target);
                     break;
@@ -755,7 +755,7 @@ public static partial class MetaBuiltins
     /// <summary><c>statistics/0</c> — writes a short report of where the time
     /// and the memory went, to the current output.
     ///
-    /// <para>The counters are the RUNNING activation's, which is the only place
+    /// <para>The counters are the running activation's, which is the only place
     /// they exist: an engine's heap and trails belong to the query in progress.
     /// So this reports what the query calling it is using at that moment —
     /// which is what someone typing <c>statistics.</c> after a run wants to
@@ -813,7 +813,7 @@ public static partial class MetaBuiltins
               .Append(AtomTable.SweepCount == 1 ? " sweep, " : " sweeps, ")
               .Append(Count(AtomTable.SweptAtoms)).Append(" atoms reclaimed)\n");
 
-        // The CURRENT output, so with_output_to/2 and set_output/1 capture
+        // The current output, so with_output_to/2 and set_output/1 capture
         // the report — which is also what the doc line always promised.
         engine.Out.Write(report.ToString());
         return true;
@@ -837,7 +837,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>prolog_load_context(?Key, ?Value)</c> — SWI/Scryer load-context
     /// introspection, the way a <c>term_expansion</c>/<c>goal_expansion</c> hook
-    /// reads the module it is expanding for (the module is NOT a hook argument).
+    /// reads the module it is expanding for (the module is not a hook argument).
     /// Keys: <c>module</c> (the module being loaded), <c>file</c> / <c>source</c>
     /// (its path), <c>directory</c> (its directory). Fails outside a consult, or
     /// for a key whose value is unknown.</summary>
@@ -1086,7 +1086,7 @@ public static partial class MetaBuiltins
 
     /// <summary>ADR-046 — <c>'$current_op_ctx'(Module, P, T, N)</c>: the
     /// compile-time rewrite of <c>current_op/3</c> inside module code —
-    /// enumerates the module's EFFECTIVE view (its layer over user).</summary>
+    /// enumerates the module's effective view (its layer over user).</summary>
     public static bool CurrentOpCtx(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1181,7 +1181,7 @@ public static partial class MetaBuiltins
         }
         if (Activation.IsListLike(nameCell))
         {
-            // Validate the WHOLE list before defining anything: a partial list
+            // Validate the whole list before defining anything: a partial list
             // or a bad element must leave the operator table untouched.
             var names = new List<string>();
             Cell cur = nameCell;
@@ -1263,8 +1263,8 @@ public static partial class MetaBuiltins
             (e, i) => CurrentOpUnify(e, ops, i));
     }
 
-    /// <summary>§8.14.4.3: a BOUND argument of current_op/3 is checked.
-    /// These are QUERY filters, so the standard uses domain_error for both
+    /// <summary>§8.14.4.3: a bound argument of current_op/3 is checked.
+    /// These are query filters, so the standard uses domain_error for both
     /// the priority and the specifier whatever the wrong term's type —
     /// current_op(a, T, N) is domain_error(operator_priority, a), not
     /// type_error(integer, a) as it would be for op/3.</summary>
@@ -1288,8 +1288,8 @@ public static partial class MetaBuiltins
                 IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 2)));
     }
 
-    /// <summary>Narrows the operator snapshot to the entries a BOUND argument
-    /// can still match, so the cursor enumerates SOLUTIONS rather than table
+    /// <summary>Narrows the operator snapshot to the entries a bound argument
+    /// can still match, so the cursor enumerates solutions rather than table
     /// positions — `current_op(P, T, xor)` is then deterministic instead of
     /// leaving a choice point over the rest of the table. Same principle
     /// stream_property/2 and atom_concat/3's mode analysis already follow.
@@ -1376,7 +1376,7 @@ public static partial class MetaBuiltins
         if (outCell.Tag is Tag.Ref or Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         // ISO §8.14.9.3.c-d: a bound argument that is not a one-char atom is
-        // representation_error(character) — NOT type_error; contrast
+        // representation_error(character) — not type_error; contrast
         // current_char_conversion/2 (§8.14.10.3), which uses type_error.
         if (inCell.Tag != Tag.Atom
             || AtomTable.GetById(inCell.AsAtomId)?.Name is not { } inName
@@ -1390,7 +1390,7 @@ public static partial class MetaBuiltins
                 "representation_error", "character");
         if (inName.Length != 1 || outName.Length != 1)
             // ADR-048: a character is one code point, but the conversion
-            // TABLE is keyed by UTF-16 unit — an astral mapping does not fit.
+            // table is keyed by UTF-16 unit — an astral mapping does not fit.
             throw new Shumway.Core.PrologRuntimeException(
                 "representation_error", "character");
         char ic = inName[0], oc = outName[0];
@@ -1446,7 +1446,7 @@ public static partial class MetaBuiltins
     /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
     /// arbitrary stream — this handles only the in-memory atom case,
     /// which is the use the embedding API actually needs.</summary>
-    /// <summary>The text of an atom OR a chars/codes list (packed or cons —
+    /// <summary>The text of an atom or a chars/codes list (packed or cons —
     /// TryUnconsListLike is the one sanctioned walker), for the read-from-text
     /// builtins. Null when the cell is neither.</summary>
     private static string? TextArgToString(Activation engine, Cell cell)

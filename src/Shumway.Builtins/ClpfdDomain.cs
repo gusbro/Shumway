@@ -27,7 +27,7 @@ public sealed class ClpfdDomain
     private ClpfdDomain(long[] iv) => _iv = iv;
 
     /// <summary>The flattened bounds, for the code that reads and writes the
-    /// HEAP form of a domain (ADR-051). Not to be mutated: a domain is
+    /// heap form of a domain (ADR-051). Not to be mutated: a domain is
     /// immutable and shared, and the array is the domain.</summary>
     internal long[] Bounds => _iv;
 

@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-052: a row in the attribute table does not keep its variable
 /// alive. The home is a weak key; the attribute value stays a strong
-/// reference FROM a live home, so an attributed variable nothing can reach
-/// is collected with its attributes, and one that IS reachable keeps them.
+/// reference from a live home, so an attributed variable nothing can reach
+/// is collected with its attributes, and one that is reachable keeps them.
 ///
 /// <para>Both directions are asserted here on purpose. "Nothing is retained"
 /// is trivially satisfiable by collecting too much, and collecting an
@@ -44,7 +44,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
         return long.Parse(r.Bindings["Used"].ToString()!);
     }
 
-    /// <summary>THE LEAK. Thirty rounds retained 54,570 of the 54,574 cells
+    /// <summary>The leak. Thirty rounds retained 54,570 of the 54,574 cells
     /// that survived a full collection, with no choice points and an empty
     /// binding trail: the attribute table held every one of them, because a
     /// row rooted its own variable. The heap therefore grew in proportion to
@@ -60,7 +60,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
                     + $"40 rounds {many:N0} bytes");
 
         // Eight times the rounds. Retained, that is eight times the heap;
-        // collected, it is flat. The bound sits between the two MEASURED
+        // collected, it is flat. The bound sits between the two measured
         // behaviours rather than at a tuned number.
         Assert.True(many < few * 2,
             $"40 rounds retained {many} bytes against {few} for 5: an "
@@ -68,7 +68,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
             + "own row in the attribute table");
     }
 
-    /// <summary>ANTI-VACUITY for the test above: the rounds really do build
+    /// <summary>Anti-vacuity for the test above: the rounds really do build
     /// the propagators whose absence it then measures. Without this, a
     /// clpfd that quietly stopped constraining would read as a fix.</summary>
     [Fact]
@@ -85,14 +85,14 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
             "the rounds do not actually constrain: the leak test is vacuous");
     }
 
-    /// <summary>THE COUNTER-PROOF, and the reason the ephemeron edge exists:
-    /// a variable reachable ONLY from a Y slot must keep its attributes
+    /// <summary>The counter-proof, and the reason the ephemeron edge exists:
+    /// a variable reachable only from a Y slot must keep its attributes
     /// across a collection.
     ///
     /// <para>With the home no longer a root but no edge from a live home to
     /// its attributes, this is exactly the case that breaks: the Y slot
     /// marks the variable, nothing marks its domain, and the collection
-    /// frees the domain under a live constraint. It fails RED against step 1
+    /// frees the domain under a live constraint. It fails red against step 1
     /// of ADR-052 alone.</para></summary>
     [Fact]
     public void AReachableAttributedVariableKeepsItsAttributesAcrossACollection()
@@ -115,7 +115,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
     }
 
     /// <summary>The same in the other direction: a constraint posted before a
-    /// collection still REFUSES what it should. A domain read as garbage
+    /// collection still refuses what it should. A domain read as garbage
     /// could enumerate correctly and still have stopped rejecting.</summary>
     [Fact]
     public void AReachableAttributedVariableStillRejectsAfterACollection()
@@ -134,7 +134,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
             "X #\\= 5 started rejecting 6 after a collection");
     }
 
-    /// <summary>A variable held by a CHOICE POINT rather than a frame: the
+    /// <summary>A variable held by a choice point rather than a frame: the
     /// other way an attributed variable stays reachable, and the one the
     /// conservative stack scan has to cover.</summary>
     [Fact]
@@ -157,7 +157,7 @@ public sealed class AttrTableWeakRootTests(ITestOutputHelper o)
 
     /// <summary>call_residue_vars/2 across a forced collection. Snapshots
     /// hold homes as raw addresses and are relocated, never marked; a home
-    /// whose variable died must be DROPPED, because RelocIndex on an
+    /// whose variable died must be dropped, because RelocIndex on an
     /// unmarked index lands on whatever live cell took that place, and the
     /// snapshot would then answer for an unrelated variable.</summary>
     [Fact]

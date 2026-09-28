@@ -49,7 +49,7 @@ public class Phase33Wave5Tests
         Assert.True(prunedPrelude.Defined.Count < fullPrelude.Defined.Count / 2);
         Assert.True(prunedPrelude.CompiledBytecode.Length < fullPrelude.CompiledBytecode.Length / 2);
 
-        // The pruned bundle RUNS: the reached prelude closure suffices.
+        // The pruned bundle runs: the reached prelude closure suffices.
         var e = PrologEngine.FromBundle(pruned);
         Assert.True(e.Query("main(L), L == 15.").Success);
     }
@@ -63,7 +63,7 @@ public class Phase33Wave5Tests
             .Defined.Select(d => d.Indicator).ToHashSet();
         var prunedSet = pruned.Entries.First(en => en.ModuleName.Contains("prelude"))
             .Defined.Select(d => d.Indicator).ToHashSet();
-        // Pick a PUBLIC prelude predicate the prune actually dropped (robust
+        // Pick a public prelude predicate the prune actually dropped (robust
         // against closure growth — msort, say, can come back via sort helpers).
         var dropped = fullSet.Except(prunedSet)
             .First(p => !p.Name.StartsWith('$') && p.Arity is 1 or 2);
@@ -166,7 +166,7 @@ public class Phase33Wave5Tests
     public void T3_PersistedIl_LoadsOncePerContent_AcrossEngines()
     {
         // Unique predicate name per run so the bundle content is guaranteed
-        // NOT already in the process-wide cache when the test starts.
+        // not already in the process-wide cache when the test starts.
         string pred = "t3p" + Guid.NewGuid().ToString("N")[..12];
         string src =
             $":- public {pred}/2.\n" +
@@ -178,7 +178,7 @@ public class Phase33Wave5Tests
             Objects = new[] { obj },
             EntryPoints = new[] { new PredicateRef(pred, 2) },
             IncludeCompiledIl = true,
-            // Strip the WAM bodies: execution HAS to go through the persisted
+            // Strip the WAM bodies: execution has to go through the persisted
             // IL delegates, so a broken cached binding cannot hide behind a
             // bytecode fallback.
             StripWam = true,
@@ -196,7 +196,7 @@ public class Phase33Wave5Tests
         int loadsAfterFirst = PrologEngine.PersistedIlLoadCount;
         Assert.True(loadsAfterFirst > loadsBefore, "first LoadBundle must really load");
 
-        // Two more engines on the SAME bundle: the cache serves the loaded
+        // Two more engines on the same bundle: the cache serves the loaded
         // assembly + bound delegates — and both engines run the stripped
         // (IL-only) predicate correctly.
         var e2 = new PrologEngine();
@@ -213,8 +213,8 @@ public class Phase33Wave5Tests
     [Fact]
     public void T4_StaticLink_SharedAcrossEngines_OnSameBundle()
     {
-        // Unique content so the first engine is guaranteed a cache MISS and
-        // the second a HIT on exactly this program (parallel tests caching
+        // Unique content so the first engine is guaranteed a cache miss and
+        // the second a hit on exactly this program (parallel tests caching
         // their own programs can't perturb the per-engine flag).
         string pred = "t4p" + Guid.NewGuid().ToString("N")[..12];
         string src =
@@ -237,7 +237,7 @@ public class Phase33Wave5Tests
         var e2 = PrologEngine.FromBundle(bundle);
         // This has failed intermittently on net48-x86 and left nothing behind
         // but "Assert.True() Failure" — so when it fails, say what is true
-        // AROUND it. Nothing runs on the passing path.
+        // around it. Nothing runs on the passing path.
         if (!e2.Query($"{pred}(c, X), X == 3.").Success)
             Assert.Fail(WhyDidTheSharedLinkNotAnswer(pred, bundle, e1, e2));
         Assert.True(e2.LastStaticLinkWasSharedHit,     // second engine reuses it
@@ -353,7 +353,7 @@ public class Phase33Wave5Tests
         Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
         var bundle = BundleReader.FromBytes(result.Bytes!);
 
-        // User entries carry ONLY their own predicates' IL; the prelude's
+        // User entries carry only their own predicates' IL; the prelude's
         // ~180 methods live once, in the $prelude entry.
         foreach (var en in bundle.Entries.Where(e => e.ModuleName != Prelude.ModuleName))
         {
@@ -366,7 +366,7 @@ public class Phase33Wave5Tests
         var preludeEntry = bundle.Entries.First(e => e.ModuleName == Prelude.ModuleName);
         Assert.True(preludeEntry.CompiledIl is { Length: > 0 });
 
-        // And the bundle RUNS: user IL reaches the prelude's IL cross-entry
+        // And the bundle runs: user IL reaches the prelude's IL cross-entry
         // (by-fid dispatch against the $prelude entry's delegates).
         var e = PrologEngine.FromBundle(bundle);
         Assert.True(e.Query("pa(X), X == a.").Success);
@@ -376,7 +376,7 @@ public class Phase33Wave5Tests
     [Fact]
     public void T7_PreludeDedup_UnderStripWam_StillRuns()
     {
-        // --strip-wam drops the IL-covered WAM bodies, so execution HAS to
+        // --strip-wam drops the IL-covered WAM bodies, so execution has to
         // flow through the deduplicated IL — user entry → $prelude entry.
         var obj = ShmoCompiler.CompileSource(
             ":- public go/1.\ngo(X) :- msort([f,e,d], L), L = [X|_].\n", moduleNameFallback: "t7strip");

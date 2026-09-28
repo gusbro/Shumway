@@ -7,7 +7,7 @@ namespace Shumway.Tests.Core;
 
 /// <summary>ADR-053, applied to the numeric side tables. `BigIntAlloc` and
 /// `RationalAlloc` reclaim a slot when backtracking unwinds past the
-/// allocation, which covers a SEARCH and covers nothing else: a
+/// allocation, which covers a search and covers nothing else: a
 /// deterministic loop never backtracks, and that loop is the shape this
 /// engine is deployed in. Measured before this: 20,000 transient big
 /// integers in a deterministic loop left 20,000 table entries standing
@@ -28,11 +28,11 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
 
     private static BigInteger Big(int n) => BigInteger.Pow(2, 70) + n;
 
-    /// <summary>THE LEAK: allocations nothing can reach, with no
+    /// <summary>The leak: allocations nothing can reach, with no
     /// backtracking to unwind them.
     ///
     /// <para>Asserted on the exact table count rather than on managed
-    /// memory. A memory assertion taken after a QUERY measures a dead
+    /// memory. A memory assertion taken after a query measures a dead
     /// activation, whose tables are collectable whatever the engine did,
     /// and an attempt at one read the same 43 MB with the sweep on and
     /// off.</para></summary>
@@ -54,9 +54,9 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
         Assert.Equal(0, e.BigIntTableCount);
     }
 
-    /// <summary>THE COUNTER-PROOF: a big integer a register still names must
+    /// <summary>The counter-proof: a big integer a register still names must
     /// survive, and still read back as itself. Without the Tag.BigInt case
-    /// in the trace this fails RED.</summary>
+    /// in the trace this fails red.</summary>
     [Fact]
     public void AReachableBigIntegerSurvivesAndKeepsItsValue()
     {
@@ -77,7 +77,7 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
     }
 
     /// <summary>One reached only through a compound on the heap: the id has
-    /// to be recorded from the TRACE, not only from the roots.</summary>
+    /// to be recorded from the trace, not only from the roots.</summary>
     [Fact]
     public void ABigIntegerNestedInAStructureSurvives()
     {
@@ -97,7 +97,7 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
         Assert.Equal(Big(7), e.AsBigInt(e.GetHeap(nf + 1)));
     }
 
-    /// <summary>A dead entry UNDER a live one is zeroed, not removed: the
+    /// <summary>A dead entry under a live one is zeroed, not removed: the
     /// live id has to keep meaning what it meant. Zeroing is what releases
     /// the BigInteger's internal magnitude array, which is the memory.
     /// </summary>
@@ -117,11 +117,11 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
 
         Assert.Equal(2, e.BigIntTableCount);
         Cell r0 = e.GetRegister(0);
-        Assert.Equal(1, r0.AsBigIntId);              // the live id did NOT move
+        Assert.Equal(1, r0.AsBigIntId);              // the live id did not move
         Assert.Equal(Big(2), e.AsBigInt(r0));
     }
 
-    /// <summary>The same for rationals (ADR-039), whose struct holds TWO
+    /// <summary>The same for rationals (ADR-039), whose struct holds two
     /// big integers, so a dead entry retains two magnitude arrays.</summary>
     [Fact]
     public void UnreachableRationalsAreReleasedAndAReachableOneSurvives()
@@ -134,7 +134,7 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
             e.MakeRational(Rational.Create(Big(i), 3));
         var keptValue = Rational.Create(Big(999), 3);
         Cell kept = e.MakeRational(keptValue);
-        // ANTI-VACUITY: Create REDUCES, and an exact quotient comes back as
+        // Anti-vacuity: Create reduces, and an exact quotient comes back as
         // an integer cell that never touches this table at all. 7 divided
         // Big(999) exactly and made the first draft of this test assert
         // nothing.

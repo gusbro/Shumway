@@ -79,7 +79,7 @@ public class Chunk152Tests
     public void CharConversion_NonAtomArg_RaisesRepresentationError()
     {
         // ISO §8.14.9.3.c: a bound argument that is not a one-char atom is
-        // representation_error(character) — NOT type_error; contrast
+        // representation_error(character) — not type_error; contrast
         // current_char_conversion/2 (§8.14.10.3), which uses type_error.
         var e = new PrologEngine();
         var sol = e.Query(
@@ -115,7 +115,7 @@ public class Chunk152Tests
     [Fact]
     public void LexerIntegration_DoesNotMap_InsideQuotedAtoms()
     {
-        // The conversion must NOT apply inside a quoted atom — 'A'
+        // The conversion must not apply inside a quoted atom — 'A'
         // should stay 'A' even when 'A' → 'a' is registered. The
         // dispatch in NextTokenInner explicitly skips conversion for
         // the leading quote char so ParseQuotedAtom sees raw bytes.

@@ -5,9 +5,9 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Chunk 265 — Arity-Prolog <c>:- visible foo/N.</c>. Arity's "visible table" is
-/// exported AND modifiable, so Shumway maps <c>visible</c> to <c>dynamic</c>: the
-/// predicate is ISO-mutable (assert/retract allowed). When it is declared WITH
-/// clauses (the common Arity shape), it ALSO gets a build-time WAM/IL snapshot
+/// exported and modifiable, so Shumway maps <c>visible</c> to <c>dynamic</c>: the
+/// predicate is ISO-mutable (assert/retract allowed). When it is declared with
+/// clauses (the common Arity shape), it also gets a build-time WAM/IL snapshot
 /// (ADR-023 priming) that runs from the first call and is evicted the instant it
 /// is mutated — so the predicate compiles (its WAM/IL is dumpable) yet stays
 /// mutable. <c>:- public</c> stays a truly static, immutable export.
@@ -30,7 +30,7 @@ public class VisibleDirectiveTests
     public void VisibleDirective_WithClauses_RunsAndStaysMutable()
     {
         // The real Arity shape: `:- public X. :- visible X.` on a predicate that
-        // HAS clauses. It runs (the clauses are live), AND it is ISO-mutable:
+        // has clauses. It runs (the clauses are live), and it is ISO-mutable:
         // assert/retract succeed and are visible (logical update view).
         var engine = new PrologEngine();
         engine.ConsultString("""

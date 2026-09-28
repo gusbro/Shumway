@@ -30,17 +30,17 @@ public sealed partial class Activation
     /// <summary>functor ids that a mid-query <c>consult/1</c>
     /// (from a live query, e.g. Logtalk's <c>'$lgt_load_prolog_code'</c>)
     /// live-linked into the running query's code space and made globally
-    /// visible. A Call/Execute site compiled at THIS query's setup — before
+    /// visible. A Call/Execute site compiled at this query's setup — before
     /// the consult — baked the undefined-procedure sentinel for these; the
-    /// dispatcher resolves such a sentinel to the live-linked STATIC address
+    /// dispatcher resolves such a sentinel to the live-linked static address
     /// only when the fid is on this set, so ordinary module-local
     /// invisibility is preserved for everything else. Null outside a
     /// live-consult query.</summary>
     public System.Collections.Generic.HashSet<int>? LiveConsultVisibleFids { get; set; }
 
-    /// <summary>functor ids DECLARED by a `:- discontiguous` or
+    /// <summary>functor ids declared by a `:- discontiguous` or
     /// `:- multifile` directive. Such a predicate is known even with no
-    /// clauses: calling it FAILS rather than raising existence_error,
+    /// clauses: calling it fails rather than raising existence_error,
     /// whatever the <c>unknown</c> flag says. Installed at query setup;
     /// null when nothing declared one.</summary>
     public System.Collections.Generic.HashSet<int>? DeclaredEmptyFids { get; set; }
@@ -54,7 +54,7 @@ public sealed partial class Activation
 
     /// <summary>ADR-034 — functor ids of dynamic predicates mutated
     /// (assert/retract/abolish) at any point in this host engine's lifetime.
-    /// A REFERENCE to the embedding layer's host-lifetime set (shared across
+    /// A reference to the embedding layer's host-lifetime set (shared across
     /// this host's per-query engines, single-threaded by the engine
     /// concurrency contract), installed at query setup. Compiled IL whose
     /// clause embeds an inlined dynamic-SNAPSHOT (a stable dynamic
@@ -73,7 +73,7 @@ public sealed partial class Activation
     /// per Tier-0 interpreter dispatch (Call / Execute / CallBuiltin and
     /// their Il/Bytecode/Builtin variants): the Shumway analogue of SWI's
     /// "inferences". A plain field increment, cheap enough to stay always-on
-    /// (A/B-verified). Under Tier-1 promotion the count UNDERCOUNTS —
+    /// (A/B-verified). Under Tier-1 promotion the count undercounts —
     /// intra-region calls are raw branches that never pass the interpreter —
     /// so it is honest for the (Tier-0 by default) REPL prototyping loop
     /// time/1 exists for.</summary>
@@ -213,13 +213,13 @@ public sealed partial class Activation
     private IReadOnlyDictionary<int, int>? _attrHookScanFor;
     private bool _hasAnyAttrHook;
 
-    /// <summary>True when SOME module defines an attribute-unification hook —
-    /// a bare or module-local <c>verify_attributes/3</c> OR <c>/4</c> (ADR-040:
+    /// <summary>True when some module defines an attribute-unification hook —
+    /// a bare or module-local <c>verify_attributes/3</c> or <c>/4</c> (ADR-040:
     /// the module-local <c>Module$verify_attributes/N</c> forms let two dialects'
     /// libraries coexist). Scanned once per distinct
     /// <see cref="CurrentFunctorAddresses"/> (attribute hooks are static, so it is
     /// stable for the query) and cached — gates the wakeup fast path so a hookless
-    /// attributed-variable program pays nothing. This gate MUST see the
+    /// attributed-variable program pays nothing. This gate must see the
     /// module-local forms, or a real hook's wakeups would be silently cleared.</summary>
     internal bool HasAnyAttributeHook
     {
@@ -256,7 +256,7 @@ public sealed partial class Activation
 
     private static int _lazyAttrModuleId = -1;
     /// <summary>The reserved attribute module <c>'$lazy'</c>, handled natively:
-    /// its attribute value IS a goal, and the wakeup drain meta-calls it
+    /// its attribute value is a goal, and the wakeup drain meta-calls it
     /// directly instead of resolving a <c>verify_attributes</c> hook. This is
     /// what lets the prelude's lazy-input predicates suspend on a variable
     /// without the coroutining library being loaded.</summary>
@@ -484,11 +484,11 @@ public sealed partial class Activation
     /// index) → the recovery's code address, or −1 when no frame at/above
     /// the floor catches. Installed by the embedding layer (it owns the
     /// catch-frame matching); the interpreter uses it to handle a
-    /// <c>throw/1</c> whose catcher lives in the SAME dispatch invocation
+    /// <c>throw/1</c> whose catcher lives in the same dispatch invocation
     /// with a plain PC jump instead of a .NET exception.</summary>
     public Func<int, int, int>? InlineThrowResolver { get; set; }
 
-    /// <summary>Resolves a thrown ball against catch/3 frames opened INSIDE a
+    /// <summary>Resolves a thrown ball against catch/3 frames opened inside a
     /// nested in-engine goal (a verify_attributes wakeup, a findall driver):
     /// given the C# exception and the frame-stack depth at the nested goal's
     /// entry, returns the recovery address after rolling the machine back to
@@ -496,7 +496,7 @@ public sealed partial class Activation
     /// to let the exception unwind to the outer driver. Installed by the host
     /// at query setup — the ball exception type lives above Core. Without
     /// this, a caught throw inside a wakeup unwound the nested C# dispatch
-    /// frame itself: the recovery resumed in the OUTER loop and the
+    /// frame itself: the recovery resumed in the outer loop and the
     /// interrupted unification's continuation was silently lost (clpz's
     /// with_local_attributes made the whole query "succeed" doing
     /// nothing).</summary>
@@ -504,8 +504,8 @@ public sealed partial class Activation
 
     /// <summary>Last-chance resolution of a functor the address map does not hold:
     /// the host materializes a runtime-assert MetaTransform helper (compiled by a
-    /// DIFFERENT activation's assert — see PrologEngine.TryMaterializeAssertHelper)
-    /// into THIS activation on demand. Returns the linked address, or -1. Consulted
+    /// different activation's assert — see PrologEngine.TryMaterializeAssertHelper)
+    /// into this activation on demand. Returns the linked address, or -1. Consulted
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
@@ -515,7 +515,7 @@ public sealed partial class Activation
     /// what already promoted to Tier-0, 1 promotes a predicate on its first
     /// call, N waits for N. Returns whether the mode was established.
     ///
-    /// <para>WHICH tier this is depends on the product, and there is only ever
+    /// <para>Which tier this is depends on the product, and there is only ever
     /// one: Tier-1 is the IL compiler in Shumway and the WebAssembly backend in
     /// WebShumway. A build with no Tier-1 at all leaves this null, where only
     /// "off" can be honoured -- it already holds.</para>
@@ -527,7 +527,7 @@ public sealed partial class Activation
     /// one".</para></summary>
     public Func<int, bool>? JitControl { get; set; }
 
-    /// <summary>Re-entrant semidet solve of a goal on THIS live activation, reusing
+    /// <summary>Re-entrant semidet solve of a goal on this live activation, reusing
     /// the already-linked program (no fresh transient-region link, no new machine) —
     /// the cheap host→Prolog path for a foreign predicate that calls back into Prolog
     /// mid-execution (<c>C#→Prolog</c> in the <c>C#→main→C#→predX</c> pattern). Wired by
@@ -564,19 +564,19 @@ public sealed partial class Activation
     /// dynamic chain, called at <c>enter_dynamic</c> with the trampoline's
     /// address. The host inspects the call's (dereferenced) first argument
     /// against the chain entries' first-arg keys and returns: an absolute
-    /// jump address (exactly ONE candidate clause — dispatch jumps there with
-    /// NO choice point), <c>-1</c> (ZERO candidates — the call fails without
+    /// jump address (exactly one candidate clause — dispatch jumps there with
+    /// no choice point), <c>-1</c> (zero candidates — the call fails without
     /// walking the chain), or <c>-2</c> (no selection: unbound argument,
     /// several candidates, indexed/unrecognised layout — the chain runs
     /// unchanged). Determinism must be uniform across tiers and JIT hotness;
     /// this hook is what makes the cold Tier-0 chain honour that.</summary>
     public Func<Activation, int, int>? DynChainSelect { get; set; }
 
-    /// <summary>ISO number_chars/number_codes reads the characters as a TERM that
+    /// <summary>ISO number_chars/number_codes reads the characters as a term that
     /// must be a number (§8.16.8) — so `'-'1` (a quoted prefix minus) reads as -1,
     /// as does `- /**/1`. The custom number-token parser in
     /// <c>AtomCharBuiltins.TryBuildPrologNumber</c> handles the common cases; this
-    /// host hook is the fallback that runs the FULL term reader when that fails,
+    /// host hook is the fallback that runs the full term reader when that fails,
     /// returning the boxed number (long / double / System.Numerics.BigInteger) or
     /// null when the chars are not a number. Wired by <c>PrologEngine</c> at query
     /// setup; kept as <c>object?</c> so <c>Shumway.Core</c> need not reference the
@@ -699,7 +699,7 @@ public sealed partial class Activation
     /// anything deeper.
     ///
     /// <para>Which is all a step needs, and the difference between a debugger and a
-    /// stopwatch. A step's condition compares the depth against the depth it was taken FROM,
+    /// stopwatch. A step's condition compares the depth against the depth it was taken from,
     /// so every port deeper than that is uninteresting — but counting it costs a walk of the
     /// whole environment chain, and a step over a goal that runs for a while passes millions
     /// of ports at whatever depth that goal reaches. Stepping over one Blint goal took 140
@@ -734,15 +734,15 @@ public sealed partial class Activation
     /// carries the environment its clause will run in.</summary>
     public IEnumerable<int> EnumerateCallReturnAddresses(int e, int cp)
     {
-        // The first frame to surface is the IMMEDIATE return target —
+        // The first frame to surface is the immediate return target —
         // cp is the caller's "next instruction after Call". After that
         // we walk env frames; each frame stores the *caller's* CP at
         // EnvCpOffset, and EnvCeOffset chains back to the next frame
         // up the call tree.
         //
-        // The first environment on the chain is the CURRENT clause's, when it has one, and
+        // The first environment on the chain is the current clause's, when it has one, and
         // `allocate` saved cp into it — so its stored CP duplicates the address just
-        // yielded. Only THAT one does: don't generalize the skip to a value comparison
+        // yielded. Only that one does: don't generalize the skip to a value comparison
         // anywhere on the chain — in a recursive predicate every frame stores the same
         // address, so all of them match and a 500-deep recursion collapses to a
         // two-frame stack. Skip the first if it duplicates; take the rest as they come.
@@ -759,7 +759,7 @@ public sealed partial class Activation
         }
     }
 
-    /// <summary>The environment chain as POSITIONS, innermost first, with the
+    /// <summary>The environment chain as positions, innermost first, with the
     /// return address each frame carries.
     ///
     /// <para>Diagnostic. <see cref="EnumerateCallReturnAddresses"/> answers
@@ -806,7 +806,7 @@ public sealed partial class Activation
     // observes it.
     public bool IlTailCallPending { get; set; }
 
-    // A DEOPT rides the same two signals as a tail call (Pc + the flag
+    // A deopt rides the same two signals as a tail call (Pc + the flag
     // above) and means the opposite: a tail call says "continue at this
     // target, and trying the tier there is right", while a deopt says "the
     // module could not run this instruction, so the interpreter must".
@@ -869,10 +869,10 @@ public sealed partial class Activation
     //
     // encoding. The original arithmetic encoding
     // (Base + functorId * 4096 + cursor) capped the functor id at ~262 143
-    // before markers overflowed int — a LIVE ceiling: the full test suite's
+    // before markers overflowed int — a live ceiling: the full test suite's
     // functor table crosses it (proven when a naming experiment minted fresh
     // helper atoms per query and marker users started failing mid-suite).
-    // Markers are now DENSE IDS into a process-global side table of
+    // Markers are now dense IDS into a process-global side table of
     // (functorId, cursor) pairs:
     //   marker = ResumeMarkerBase + denseId
     // The table is process-global because markers are baked as constants into
@@ -886,7 +886,7 @@ public sealed partial class Activation
     // address collides (the per-query overlay lives at
     // PersistentToQueryGap which is ~64 MB — markers start at 1 GB).
     // ResumeMarkerCursorStride is no longer part of the encoding; it
-    // survives only as the IL emitters' per-predicate cursor-count BUDGET
+    // survives only as the IL emitters' per-predicate cursor-count budget
     // (an emit-shape policy, not a correctness cap).
     public const int ResumeMarkerBase = 0x4000_0000;
     public const int ResumeMarkerCursorStride = 4096;
@@ -922,7 +922,7 @@ public sealed partial class Activation
             }
             pairs[id] = (functorId, cursor);
             _resumeMarkerCount = id + 1;
-            // Publish LAST: a reader that finds the id in the dictionary is
+            // Publish last: a reader that finds the id in the dictionary is
             // guaranteed to see the pair write (the dictionary write has
             // release semantics).
             _resumeMarkerByPair[key] = id;
@@ -931,7 +931,7 @@ public sealed partial class Activation
     }
 
     /// <summary>The marker of a pair that was already interned, without
-    /// interning it: a host lookup that MISSES (an address no module baked)
+    /// interning it: a host lookup that misses (an address no module baked)
     /// must not mint a marker nobody will ever resolve.</summary>
     public static bool TryGetResumeMarker(int functorId, int cursor, out int marker)
     {
@@ -947,7 +947,7 @@ public sealed partial class Activation
         => System.Threading.Volatile.Read(ref _resumeMarkerPairs)[address - ResumeMarkerBase];
 
     /// <summary>Region compilation — at a region member's proceed, decode
-    /// the continuation (<see cref="Cp"/>): if it is a resume marker INTO this
+    /// the continuation (<see cref="Cp"/>): if it is a resume marker into this
     /// region (functor id == <paramref name="regionRootFunctorId"/>) the member's
     /// proceed continues inside the region's IL method at the returned cursor (the
     /// emit does an intra-method <c>br</c>); otherwise (a different functor, or not
@@ -1025,11 +1025,11 @@ public sealed partial class Activation
     }
 
     /// <summary>ADR-037 — a resume delegate that always fails. <see cref="SoftCut"/>
-    /// swaps a neutralised inline-ITE ELSE choice point's delegate to this: when
+    /// swaps a neutralised inline-ITE else choice point's delegate to this: when
     /// backtracking later reaches that IL CP (after the condition's CPs above it
     /// are exhausted) it pops it and keeps backtracking instead of running the
-    /// ELSE branch — the IL-tier analogue of the dead-<c>BP</c> sentinel a Tier-0
-    /// ELSE CP carries.</summary>
+    /// else branch — the IL-tier analogue of the dead-<c>BP</c> sentinel a Tier-0
+    /// else CP carries.</summary>
     private static readonly Func<Activation, int, bool> SoftCutFailResume =
         static (_, _) => false;
 
@@ -1155,20 +1155,20 @@ public sealed partial class Activation
         UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
         AssignHb(savedHb);
-        // NOT cleared: only the wakes THIS guard queued are dead, and the
+        // Not cleared: only the wakes this guard queued are dead, and the
         // unwind above just reverted their attvar homes — TakePendingWakeups
-        // drops them by that mark. A wake belonging to an OLDER surviving
+        // drops them by that mark. A wake belonging to an older surviving
         // binding must outlive the guard's failure (blanket-clearing here
         // silently unhooked freeze/2 across a promoted predicate's clause
         // retries, the same defect TryBacktrack's clear had).
     }
 
     /// <summary>ADR-031 rare path (cases B and G) — pushes the
-    /// lazily-materialised clause choice point with the SAVED clause-entry
+    /// lazily-materialised clause choice point with the saved clause-entry
     /// marks. A binding guard has advanced the trails/heap by the time the
-    /// commit runs its wakeup flush — and a FRAMED guard-call clause (case G)
+    /// commit runs its wakeup flush — and a framed guard-call clause (case G)
     /// has additionally allocated its environment frame, moving <c>E</c> — so
-    /// a failing hook backtracking into this CP must restore the CLAUSE-ENTRY
+    /// a failing hook backtracking into this CP must restore the clause-entry
     /// state so the next clause sees the guard fully undone. The push itself
     /// records current state (argument registers are entry-identical — the
     /// emit saves/restores any the guard writes; <see cref="Hb"/> is left at
@@ -1191,7 +1191,7 @@ public sealed partial class Activation
     /// point's saved argument register <paramref name="index"/> with the
     /// clause-ENTRY value. A binding/call guard may have clobbered the live
     /// register with call staging by the time the lazy CP materializes at
-    /// the commit; the CP's saved args must be ENTRY state (the contract
+    /// the commit; the CP's saved args must be entry state (the contract
     /// <see cref="PushIlChoicePointWithMarks"/> documents) or a failing
     /// wakeup hook backtracks the next clause/bucket-node into the guard's
     /// staging values.</summary>
@@ -1219,7 +1219,7 @@ public sealed partial class Activation
 
     /// <summary>Drop IL choice-point entries the current <c>_b</c> has moved
     /// below. The wasm tier owns the memory-side choice-point stack and cuts,
-    /// trusts and backtracks over it WITHOUT touching this managed parallel
+    /// trusts and backtracks over it without touching this managed parallel
     /// stack -- so after a chain runs, an entry can name a B the wasm has
     /// already buried, and TopChoicePointIsIl would then miss the real IL CP
     /// under it and read its sentinel bp as a bytecode address (SetPc(-1), a
@@ -1272,7 +1272,7 @@ public sealed partial class Activation
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] pop-il-done _b={_b} _e={_e} _stackTop={_stackTop}");
         // Clear the delegate reference so the array doesn't pin it
-        // for GC after pop. The OnPrune is NOT
+        // for GC after pop. The OnPrune is not
         // invoked here — backtracking *into* the CP means the
         // delegate runs and handles its own cleanup (the non-det
         // bridge's MoveNext-returns-false path Disposes the

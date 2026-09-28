@@ -5,7 +5,7 @@ namespace Shumway.Core.Diagnostics;
 
 /// <summary>Builtin invocations by id, counted the same way on both tiers.
 ///
-/// <para>The tier already tallies the builtins it LEAVES THE CHAIN for, and
+/// <para>The tier already tallies the builtins it leaves the chain for, and
 /// that number answers a tier question: which builtin costs a crossing. It
 /// cannot answer a comparison, because the interpreter has no chain to
 /// leave and the tier open-codes some builtins outright -- so a tier tally
@@ -33,7 +33,7 @@ public static class BuiltinTally
         lock (Counts) { Counts.Clear(); _seq = 0; }
     }
 
-    /// <summary>The same calls IN ORDER, with the cells allocated at each.
+    /// <summary>The same calls in order, with the cells allocated at each.
     /// A tally says how many; only the sequence says where two runs first
     /// take different steps. Bounded, and it stops rather than wrapping,
     /// because the beginning is the part being compared.</summary>

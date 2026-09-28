@@ -47,7 +47,7 @@ public class SnipBehaviorTests
         // The `!` inside the snip cuts only to the snip boundary —
         // it must not cut the outer p(X) backtracking. We expect
         // both X=1 and X=2 to reach findall, each pinned to Y=a
-        // (q's backtracking IS cut by the inner !).
+        // (q's backtracking is cut by the inner !).
         var engine = new PrologEngine();
         engine.ConsultString("p(1). p(2). q(a). q(b).");
         var sol = engine.Query("findall(X-Y, (p(X), [! q(Y), ! !]), L).");

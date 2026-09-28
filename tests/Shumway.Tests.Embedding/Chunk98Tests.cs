@@ -182,7 +182,7 @@ public class Chunk98Tests
     [Fact]
     public void Listing_ListsStaticConsultedPredicates()
     {
-        // A consulted program — predicates that are NOT :- dynamic — must
+        // A consulted program — predicates that are not :- dynamic — must
         // still be listable; no `:- dynamic` header is printed for them.
         var engine = new PrologEngine();
         engine.ConsultString("""

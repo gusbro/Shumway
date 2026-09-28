@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>Every step-aside names its reason in the histogram the meta-call
-/// guards feed. Half of clpr's browser deopts read as ANONYMOUS because
+/// guards feed. Half of clpr's browser deopts read as anonymous because
 /// sites were stamped one at a time as each was suspected; EmitDeopt now
 /// requires the reason in its signature, so compiling at all proves no site
 /// was left out. These pin the codes for causes a corpus can force
@@ -28,7 +28,7 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
         return WasmTierDelegate.DiagMetaGuardHist;
     }
 
-    /// <summary>An attributed variable met by a STRUCTURE head match steps
+    /// <summary>An attributed variable met by a structure head match steps
     /// aside for the wakeup, and says so. Through get_value it lands in the
     /// general unifier instead, whose code covers attvars among its shapes,
     /// so the corpus goes through the head match on purpose.</summary>
@@ -60,10 +60,10 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
         // An int multiply whose result leaves the 60-bit cell: the inline
         // evaluator escalates to the host mid-expression. 2 ** 100 will not
         // do -- ** is a builtin request, not an inline operator. The warm
-        // run must NOT reach the overflow: a site that deopted while warm
+        // run must not reach the overflow: a site that deopted while warm
         // is learned from, and the measured run then never enters the
         // module at all -- observed as hist[26] = 1 with DiagDeopts = 0.
-        // The warm call runs over/2 once on Tier-0 with a SMALL operand,
+        // The warm call runs over/2 once on Tier-0 with a small operand,
         // which is what promotes it without teaching anyone about the
         // overflow; and the operand arrives in a variable because two
         // literal operands are folded at compile time, leaving no runtime
@@ -82,7 +82,7 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
             + "stepped aside without naming itself");
     }
 
-    /// <summary>Zero stays reserved: a module THIS compiler emits under
+    /// <summary>Zero stays reserved: a module this compiler emits under
     /// DebugMetaGuards never reads as anonymous, so a zero in a report can
     /// only mean a module compiled without stamps.</summary>
     [DiagFact]

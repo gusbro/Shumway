@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Core;
 
 /// <summary>The reverse of the functor mirror: a name and an arity give the
-/// id a Str cell carries. It is what lets a module PUT a term together, and
+/// id a Str cell carries. It is what lets a module put a term together, and
 /// the one image here that needs no funnel -- the functor table is
 /// append-only and its entries never change.</summary>
 public sealed class FunctorReverseTableTests
@@ -17,7 +17,7 @@ public sealed class FunctorReverseTableTests
         int f0 = FunctorTable.Intern(a, 0);
         Assert.Equal(f2, FunctorReverseTable.Lookup(a, 2));
         Assert.Equal(f0, FunctorReverseTable.Lookup(a, 0));
-        // And the pair really is keyed on BOTH halves.
+        // And the pair really is keyed on both halves.
         Assert.NotEqual(f2, f0);
     }
 

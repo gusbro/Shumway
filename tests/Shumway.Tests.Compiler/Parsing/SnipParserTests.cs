@@ -37,7 +37,7 @@ public class SnipParserTests
     [Fact]
     public void BareCut_AsSoleListElement_IsAList()
     {
-        // [!] -> '.'(!, []), NOT a snip.
+        // [!] -> '.'(!, []), not a snip.
         Assert.Equal(List(new AtomTerm("!")), Parse("[!]"));
     }
 
@@ -152,7 +152,7 @@ public class SnipParserTests
     public void CutAsOperandOfInfix_IsAList()
     {
         // [!-1, !-2] — the token after the '!' is an infix operator (or a
-        // sign-folded number), so the '!' is the LEFT OPERAND of a list
+        // sign-folded number), so the '!' is the left operand of a list
         // element, not a snip opener (ISO pairs with a cut key are legal;
         // the Logtalk conformity suite writes them).
         var t = Parse("[!-1, !-2]");

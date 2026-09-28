@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>read/1 raises at the character that PROVES no valid token can
+/// <summary>read/1 raises at the character that proves no valid token can
 /// follow (issue #37, conformity s#2): a quote followed by a raw newline
 /// can never be lexed, so ISO §8.14.1.1's as-if-character-by-character
 /// reading decides the syntax error right there — the old reader kept
@@ -14,7 +14,7 @@ namespace Shumway.Tests.Embedding;
 public sealed class ReadPoisonedInputTests
 {
     /// <summary>Yields the given text; one more read is the failure the
-    /// suite is hunting — past the poison there is NOTHING a conforming
+    /// suite is hunting — past the poison there is nothing a conforming
     /// reader may consume (a file's EOF would mask exactly this).</summary>
     private sealed class GuardReader(string text) : System.IO.TextReader
     {
@@ -45,7 +45,7 @@ public sealed class ReadPoisonedInputTests
     public void TheSentinelComesBackWhole()
     {
         // The page's dual-read form: after the error at the poisoning
-        // newline, the NEXT term on the stream must arrive intact — a
+        // newline, the next term on the stream must arrive intact — a
         // waiting reader would have swallowed it into the quoted atom.
         var e = WithInput(new System.IO.StringReader("'\nsentinel_ok.\n"));
         Assert.True(e.Query(

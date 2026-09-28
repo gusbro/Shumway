@@ -32,7 +32,7 @@ public class Chunk76Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        // Phase 33 L2 — these tests pin the PGO PHASE MECHANICS, whose sample
+        // Phase 33 L2 — these tests pin the PGO phase mechanics, whose sample
         // counts are only query-count-deterministic under synchronous
         // promotion (background promotion leaves early queries on Tier-0,
         // where no instrumentation samples accumulate).

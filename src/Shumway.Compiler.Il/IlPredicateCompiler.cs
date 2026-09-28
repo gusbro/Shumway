@@ -100,7 +100,7 @@ public sealed partial class IlPredicateCompiler
     private static readonly object IlDumpLock = new();
 
     /// <summary>env-gated shape diagnostics, stripped from normal
-    /// builds (Release AND Debug) via <c>[Conditional("SHUMWAY_DIAG")]</c>;
+    /// builds (Release and Debug) via <c>[Conditional("SHUMWAY_DIAG")]</c>;
     /// build with <c>-p:ShumwayDiag=true</c> to compile them in, then activate
     /// with <c>SHUMWAY_IL_SHAPE=&lt;level&gt;</c> at run time. The
     /// <paramref name="message"/> closure (and its captures) only exists in
@@ -113,15 +113,15 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>per-call output of <see cref="EmitPersistedMethod"/>: when
-    /// the method compiled as a REGION, the (memberFunctorName, arity, entryCursor)
+    /// the method compiled as a region, the (memberFunctorName, arity, entryCursor)
     /// table of its non-root members (the <see cref="RegionCursorKind.MemberEntry"/>
     /// cursors); null for a non-region method. <see cref="PersistedIlBuilder"/> persists
     /// it per entry so LoadBundle can alias a stripped member's functor to
     /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
     internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
 
-    // Sigil label names must be unique per METHOD,
-    // but a REGION method emits several member bodies with body-local pcs, so a
+    // Sigil label names must be unique per method,
+    // but a region method emits several member bodies with body-local pcs, so a
     // pc-keyed label name can collide across members (seen on the Arity corpus:
     // two members with a meta-call at the same body pc → "Label with name
     // 'metaCallThread_pc50' already exists"). A monotonic global sequence
@@ -149,8 +149,8 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>Persisted-path counterpart of <see cref="FinishEmit"/>: dumps the IL to
     /// <see cref="IlDumpPath"/> (when set) then finalizes into a <c>MethodBuilder</c>.
-    /// Used at the <see cref="EmitPersistedMethod"/> create sites so a LINKER dump
-    /// (<c>shumway-link --dump-il</c>) shows the EXACT IL the bundle ships — post-prune,
+    /// Used at the <see cref="EmitPersistedMethod"/> create sites so a linker dump
+    /// (<c>shumway-link --dump-il</c>) shows the exact IL the bundle ships — post-prune,
     /// region mode, forced roots — rather than the runtime all-as-roots superset.</summary>
     private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
         Sigil.Emit<PredicateDelegate> emit, string header)
@@ -211,7 +211,7 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.SetRegister), new[] { typeof(int), typeof(Cell) })!;
     // Float literals (get_float / put_float). MakeFloat allocates the 2-cell
     // heap float and returns the header index; Cell.Ref wraps it so the value
-    // unifies / binds exactly like the interpreter's float path. The float VALUE
+    // unifies / binds exactly like the interpreter's float path. The float value
     // is baked as an ldc.r8 constant (resolved from the predicate's pool at emit
     // time), so it is process-independent — no Phase-17 patch needed for persist.
     private static readonly MethodInfo EngineMakeFloatMethod =
@@ -296,7 +296,7 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Activation).GetMethod(nameof(Activation.CutToLevel), new[] { typeof(int) })!;
-    // ADR-037 — the inline ( Cond *-> Then ; Else ) commit: neutralise the ELSE
+    // ADR-037 — the inline ( Cond *-> Then ; Else ) commit: neutralise the else
     // choice point named by Y[slot], leaving the condition's CPs intact.
     private static readonly MethodInfo EngineSoftCutToLevelMethod =
         typeof(Activation).GetMethod(nameof(Activation.SoftCutToLevel), new[] { typeof(int) })!;
@@ -336,7 +336,7 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.PushIlChoicePointWithMarks),
             new[] { typeof(Func<Activation, int, bool>), typeof(int), typeof(int),
                     typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) })!;
-    // ADR-031 G2 — the counter-throttled cancellation poll (NO heap GC: a GC
+    // ADR-031 G2 — the counter-throttled cancellation poll (no heap GC: a GC
     // would move the heap under the guard's snapshot locals) emitted at the
     // back-edge of an inlined fail-direct callee's self-tail loop.
     private static readonly MethodInfo EngineBacktrackSafePointMethod =
@@ -350,7 +350,7 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.PopGuardContFail), Type.EmptyTypes)!;
     // indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
-    // so the same IL works under runtime promotion AND a persisted bundle
+    // so the same IL works under runtime promotion and a persisted bundle
     // loaded in a fresh process — the functor id is name-relative via
     // EmitFunctorId, and the resolver builds the dispatch model
     // lazily from the engine's linked code on first call.
@@ -394,7 +394,7 @@ public sealed partial class IlPredicateCompiler
     // ADR-025 stage (b) — the inline-ITE choice point's resume callback.
     private static readonly FieldInfo IlIteHelperResumeField =
         typeof(IlIteHelper).GetField(nameof(IlIteHelper.Resume))!;
-    // ADR-025 — capture CURRENT B (the inline-ITE barrier; see Opcode.GetLevelB).
+    // ADR-025 — capture current B (the inline-ITE barrier; see Opcode.GetLevelB).
     private static readonly MethodInfo EngineGetLevelBMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetLevelB), new[] { typeof(int) })!;
     // Was DEBUG-only (diagnostic dumps); ADR-031 case G reads E at clause entry
@@ -416,7 +416,7 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetProperty(nameof(Activation.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
-    // Theme-1 / WAM stripping: an IL caller dispatches a callee by FUNCTOR ID
+    // Theme-1 / WAM stripping: an IL caller dispatches a callee by functor id
     // (a resume marker with cursor 0 = entry), not by resolving it to a WAM
     // address. The dispatcher routes the marker to the callee's IL delegate
     // directly via IlByFunctorId when it has IL, or falls back to its WAM
@@ -585,7 +585,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>structural variant of
     /// <see cref="IsClauseBodyOpcode"/> for the memoized describers: a
-    /// <c>Call</c> site is always accepted and its callee fid RECORDED into
+    /// <c>Call</c> site is always accepted and its callee fid recorded into
     /// <paramref name="callFids"/> (−1 when the site has no metadata), making
     /// the describe result a pure function of the immutable predicate. The
     /// calleeMap-dependent rejection the original applied at each Call is
@@ -608,7 +608,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>True iff this predicate compiles to the full
     /// indexed-dispatch IL, whose delegate rebuilds its switch model lazily by
     /// reading the predicate's WAM bytecode at first call
-    /// (<see cref="IlIndexedDispatch"/>). Such a predicate's WAM body must NOT
+    /// (<see cref="IlIndexedDispatch"/>). Such a predicate's WAM body must not
     /// be stripped (--strip-wam) — it would crash on first dispatch. Every other
     /// IL shape (single-clause, indexed-atom, try-me-else / switched chain) bakes
     /// the whole dispatch into the IL and is safe to strip.</summary>
@@ -665,7 +665,7 @@ public sealed partial class IlPredicateCompiler
             }
             else if (op == Opcode.ExecuteBuiltin)
             {
-                // only a META tail builtin blocks.
+                // only a meta tail builtin blocks.
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(
                     BytecodeIO.ReadInt32(code, pc + 1));
                 if (e.IsCall || e.IsDollarCall)
@@ -696,7 +696,7 @@ public sealed partial class IlPredicateCompiler
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg => true,
         // the typed switch tables are dispatch skeleton too.
         // Leaving them out made DescribeRejection list "SwitchOnAtomArg" etc.
-        // for EVERY indexed predicate rejected for an unrelated reason (an
+        // for every indexed predicate rejected for an unrelated reason (an
         // unresolved Call, a poolless float literal), which mis-drove a whole
         // audit finding: the corpus census read 1 666 such rejects as "multi-
         // arg shapes not IL-describable" when 1 663 were masked
@@ -721,7 +721,7 @@ public sealed partial class IlPredicateCompiler
         DiagnoseInlineCandidates(predicate, calleeMap);
         DiagnoseRegion(predicate, calleeMap);
         // Region compilation (Stage 3, gated): emit the root + its local
-        // closure as ONE IL method when the region is in the minimal subset.
+        // closure as one IL method when the region is in the minimal subset.
         if (EffectiveRegionCompile && calleeMap is not null)
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
@@ -736,7 +736,7 @@ public sealed partial class IlPredicateCompiler
                     m => RegionBuiltinResumePcs(m, calleeMap));
                 return CompileRegion(region, rplan, calleeMap);
             }
-            // Explain why a predicate WITH a local closure didn't become a region —
+            // Explain why a predicate with a local closure didn't become a region —
             // the coverage gaps (a backtrackable-builtin member, etc.).
             DiagShape("1", region.MemberCount >= 2, () =>
                 $"[region-skip] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}"
@@ -851,7 +851,7 @@ public sealed partial class IlPredicateCompiler
         Opcode.PutListR => true,
         // ADR-025 stage (b) — inline if-then-else / disjunction. The mid-body
         // try_me_else is operand-gated in IsClauseBodyOpcode (arity 0 only);
-        // trust_me marks the ELSE entry (the CP pop happened at backtrack);
+        // trust_me marks the else entry (the CP pop happened at backtrack);
         // jump is a plain unconditional br; get_level_b captures current B.
         Opcode.TrustMe => true,
         Opcode.Jump => true,
@@ -898,9 +898,9 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         // Case-2 rule inline: each inlined rule body's own non-tail
-        // calls thread through THIS caller's forward-resume cursor space, so the
+        // calls thread through this caller's forward-resume cursor space, so the
         // resume-label array must be sized to include them. computed
-        // ONCE here and passed down (EmitSingleClauseMetaCpBody used to recompute).
+        // once here and passed down (EmitSingleClauseMetaCpBody used to recompute).
         var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
         int callSiteCount = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
             + CountRuleInlineExtraCursors(ruleInlineSites);
@@ -935,7 +935,7 @@ public sealed partial class IlPredicateCompiler
         _emitOwnerFid = predicate.FunctorId;
         // Self-tail-recursion → in-method loop: a self Execute
         // branches here (args already in registers) rather than the marker /
-        // dispatch-loop round trip. For a leaf the body start IS the cursor-0
+        // dispatch-loop round trip. For a leaf the body start is the cursor-0
         // entry (no cursor switch).
         var selfEntry = emit.DefineLabel("self_entry");
         emit.MarkLabel(selfEntry);
@@ -999,7 +999,7 @@ public sealed partial class IlPredicateCompiler
         // their standalone forms can be pruned. The region emit uses the
         // patchable functor-id / resume-marker helpers, so it patches cross-process like
         // every other persisted method. (Region compilation is off unless RegionCompile
-        // is set; with it on, EVERY predicate compiles as a region root — correct but
+        // is set; with it on, every predicate compiles as a region root — correct but
         // duplicative until the prune skips absorbed-only members.)
         if (EffectiveRegionCompile && calleeMap is not null)
         {

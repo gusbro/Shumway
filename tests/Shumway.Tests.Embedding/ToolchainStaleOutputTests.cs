@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A failed build leaves no artifact behind.
 ///
 /// <para>What a C toolchain does, and for the same reason: an object or a
-/// bundle sitting next to a source that does NOT compile is the one the next
+/// bundle sitting next to a source that does not compile is the one the next
 /// link picks up, and the build looks like it worked. Single-file compiles
 /// already removed theirs; the paths that compile through the consult
 /// pipeline — <c>shumway-compile --consult</c>, and every source path of
@@ -90,7 +90,7 @@ public class ToolchainStaleOutputTests
     [Fact]
     public void CompileViaConsult_ObjectNamedByTheModuleDirective_IsRemovedToo()
     {
-        // The object is named after the MODULE, not the file, and after a
+        // The object is named after the module, not the file, and after a
         // failed consult there is no loaded module to ask.
         if (!File.Exists(CompileExe)) return;
         using var dir = new TempDir();

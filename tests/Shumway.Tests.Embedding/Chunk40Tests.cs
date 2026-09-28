@@ -23,7 +23,7 @@ public class Chunk40Tests
 {
     private static Term Atom(string n) => new AtomTerm(n);
     private static Term Int(long v) => new IntTerm(v);
-    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // A double-quoted literal reaches C# as the list it is (ADR-047 decision 6):
     // the representation is not observable at the boundary, so what arrives is
     // the same whether or not the engine stored it packed.
     private static Term Pstr(string s)
@@ -86,7 +86,7 @@ public class Chunk40Tests
             :- public small/1.
             small(1). small(2). small(3).
             """);
-        // Find any member of [1,2,3,10] that is NOT a small/1.
+        // Find any member of [1,2,3,10] that is not a small/1.
         var sol = engine.Query("member(X, [1, 2, 3, 10]), \\+ small(X).");
         Assert.True(sol.Success);
         Assert.Equal(Int(10), sol["X"]);
@@ -154,7 +154,7 @@ public class Chunk40Tests
             foo(a).
             """);
         Assert.True(engine.Query("current_predicate(foo/1).").Success);
-        // A builtin is NOT a current_predicate (§8.8.2, GNU-verified);
+        // A builtin is not a current_predicate (§8.8.2, GNU-verified);
         // predicate_property/2 is the way to ask about one.
         Assert.True(engine.Query("\\+ current_predicate((is)/2).").Success);
         Assert.True(engine.Query("predicate_property(is(_, _), built_in).").Success);
@@ -164,7 +164,7 @@ public class Chunk40Tests
     public void CurrentPredicate_EnumeratesUserPredicatesOnly()
     {
         // §8.8.2 (GNU-verified): current_predicate/1 enumerates
-        // USER-DEFINED procedures. Builtins and prelude library
+        // user-defined procedures. Builtins and prelude library
         // predicates are excluded — predicate_property/2 answers for
         // those.
         var engine = new PrologEngine();

@@ -32,7 +32,7 @@ public sealed partial class Activation
     /// environment frame (Allocate stores E and CP), and points execution at
     /// the wake driver with CP = <see cref="WakeReturnCp"/> and a fresh cut
     /// barrier. Returns false when there is nothing to run (hookless queue —
-    /// cleared) or nothing to run it WITH (no linked driver, unknowable
+    /// cleared) or nothing to run it with (no linked driver, unknowable
     /// arity) — the caller then keeps its pre-ADR-049 drain.</summary>
     public bool TryWakeInterrupt(int arity, int resumePc)
     {
@@ -105,7 +105,7 @@ public sealed partial class Activation
     /// what a later re-entry through a wake alternative needs.
     ///
     /// <para>A resume point that is a forward resume marker (cursor 0) is a
-    /// callee about to be (re-)entered: its cut barrier is B as of NOW —
+    /// callee about to be (re-)entered: its cut barrier is B as of now —
     /// including any choice points the wake left, so a cut in the callee can
     /// never prune the wake's alternatives. Tier-0 gets the same for free by
     /// re-executing the call instruction, whose SetB0 runs post-wake.</para>

@@ -31,7 +31,7 @@ public class Chunk159Tests
     public void DynamicPredicate_HotInvocation_IlPromoted()
     {
         // ADR-023 supersedes the chunk-159 rule. A read-hot dynamic predicate with
-        // stable clauses is now promoted to Tier-1 IL as a SNAPSHOT of its visible
+        // stable clauses is now promoted to Tier-1 IL as a snapshot of its visible
         // clauses; the asserts here happen before the hot calls, so the predicate
         // is stable while it warms and promotes (a later mutation would evict it —
         // see DynamicIlPromotionTests).
@@ -60,7 +60,7 @@ public class Chunk159Tests
         e.Query("p(b).");
         // After the first call crosses threshold, the second
         // observes the promoted delegate. Either way, static
-        // predicate is NOT marked unpromotable.
+        // predicate is not marked unpromotable.
         Assert.False(e.IlPromotion.IsUnpromotable(Fid("p", 1)));
     }
 

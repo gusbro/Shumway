@@ -12,12 +12,12 @@ public class QueryAsyncTests
     private static PrologEngine WithCounter()
     {
         var e = new PrologEngine();
-        // No base case → a long-running FAILING search. Cancellation fires when
+        // No base case → a long-running failing search. Cancellation fires when
         // the heap GC watermark is crossed (not every goal — see
-        // Activation.MaybeCollectHeap), so the loop must ALLOCATE heap: this one does
+        // Activation.MaybeCollectHeap), so the loop must allocate heap: this one does
         // (a fresh N1 binding per call), so it crosses the watermark within
         // milliseconds and is promptly cancellable. A heap-bounded loop (e.g.
-        // `repeat, fail`) would NOT be cancellable by design.
+        // `repeat, fail`) would not be cancellable by design.
         e.ConsultString("count(N) :- N > 0, N1 is N - 1, count(N1).");
         return e;
     }
@@ -112,7 +112,7 @@ public class QueryAsyncTests
 
     // A failure-driven loop (between/fail, repeat/fail) makes progress by
     // backtracking and never crosses a call-boundary heap safe point, so without
-    // the TryBacktrack safe point it would be UNCANCELLABLE. These cover the
+    // the TryBacktrack safe point it would be uncancellable. These cover the
     // REPL's ESC-abort of exactly that shape. The huge / unbounded loops only
     // terminate because cancellation works — a tight timeout here surfaces a
     // regression as a fast failure rather than a multi-minute grind.

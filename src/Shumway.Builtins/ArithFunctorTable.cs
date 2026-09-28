@@ -6,14 +6,14 @@ using Shumway.Core;
 /// compiled wasm module can read: one i32 per functor id.
 ///
 /// <para>A module cannot compare strings, so "is this functor a plus" has to
-/// arrive as a number. The table is DERIVED from the evaluator's own name
+/// arrive as a number. The table is derived from the evaluator's own name
 /// resolvers rather than restated, because a second list of operator names
 /// is a second thing to get wrong -- and the failure would be silent, a
 /// module computing with the wrong operator rather than declining.</para>
 ///
 /// <para>Row: 0 means not evaluable, otherwise (arity &lt;&lt; 8) | op, where
 /// the op is the evaluator's own <c>BinOp</c> or <c>UnOp</c> code. Which of
-/// those the module actually IMPLEMENTS is the module's business: it applies
+/// those the module actually implements is the module's business: it applies
 /// what it can and declines the rest, and declining is always sound because
 /// the engine then evaluates the whole expression itself.</para>
 ///
@@ -26,7 +26,7 @@ public static class ArithFunctorTable
     private static readonly object Lock = new();
 
     /// <summary>Rows for every functor id interned so far. The array is
-    /// REPLACED on growth, so a caller re-reads it per staging.</summary>
+    /// replaced on growth, so a caller re-reads it per staging.</summary>
     public static int[] Rows { get { lock (Lock) { Fill(); return _rows; } } }
 
     /// <summary>How many of them are live.</summary>

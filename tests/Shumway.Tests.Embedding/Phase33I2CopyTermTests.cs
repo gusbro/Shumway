@@ -24,7 +24,7 @@ public class Phase33I2CopyTermTests
     [Fact]
     public void UnboundVar_CopyIsFreshAndIndependent()
     {
-        // The copy is a NEW variable, not the original.
+        // The copy is a new variable, not the original.
         Assert.True(Holds("copy_term(X, Y), X \\== Y, var(X), var(Y)."));
         // Binding the copy does not bind the original.
         Assert.True(Holds("copy_term(X, Y), Y = 1, var(X)."));
@@ -33,7 +33,7 @@ public class Phase33I2CopyTermTests
     [Fact]
     public void SharedVariable_StaysShared()
     {
-        // Both occurrences of X map to ONE fresh var — so the two copy slots unify.
+        // Both occurrences of X map to one fresh var — so the two copy slots unify.
         Assert.True(Holds("copy_term(f(X, X), f(A, B)), A == B."));
         Assert.True(Holds("copy_term(f(X, X), C), C = f(1, V), V == 1."));
     }
@@ -57,7 +57,7 @@ public class Phase33I2CopyTermTests
     public void FloatAndBigInt_CopyByValue()
     {
         Assert.True(Holds("copy_term(pt(3.14, -2.5), C), C == pt(3.14, -2.5)."));
-        // A value well past the 60-bit inline range → BIGINT side table.
+        // A value well past the 60-bit inline range → bigint side table.
         Assert.True(Holds("copy_term(big(123456789012345678901234567890), C), " +
                           "C == big(123456789012345678901234567890)."));
     }
@@ -87,8 +87,8 @@ public class Phase33I2CopyTermTests
     public void CyclicTerm_Terminates()
     {
         // X = f(X) is a rational (cyclic) tree via occurs-check-off '='.
-        // copy_term must TERMINATE — the heap-to-heap copy preserves the cycle
-        // (register-before-recurse), and it did. Probe ONLY non-recursively:
+        // copy_term must terminate — the heap-to-heap copy preserves the cycle
+        // (register-before-recurse), and it did. Probe only non-recursively:
         // '==' on a cyclic term overflows AreStructurallyEqual, a pre-existing
         // engine limitation unrelated to the copy. functor/3 + arg/3 read one
         // level: the copy is f/1 and its argument is again f/1 (cycle intact).

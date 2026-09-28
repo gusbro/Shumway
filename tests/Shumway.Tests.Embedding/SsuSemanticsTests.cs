@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// SWI-faithful SSU (<c>Head =&gt; Body</c>) semantics — SWI is the only
 /// mainstream Prolog implementing <c>=&gt;</c>, so its behaviour is the
-/// reference: single-sided head MATCHING (a pattern never binds a variable
+/// reference: single-sided head matching (a pattern never binds a variable
 /// of the caller's goal), commit on match(+guard), and
 /// <c>existence_error(matching_rule, Goal)</c> when no rule applies.
 /// </summary>
@@ -23,9 +23,9 @@ public class SsuSemanticsTests
     public void Match_IsSingleSided_CallerVarStaysUnbound()
     {
         var e = Load("pat(s(X), R) => R = got(X).");
-        // An unbound caller argument cannot be bound BY the pattern:
+        // An unbound caller argument cannot be bound by the pattern:
         // no rule matches, and the caller's variable comes back intact.
-        // (The ball is a COPY per ISO catch/3, so the goal inside it carries
+        // (The ball is a copy per ISO catch/3, so the goal inside it carries
         // a fresh unbound var, not V itself.)
         Assert.True(e.Query(
             "catch(pat(V, _), error(E, _), true), var(V), "
@@ -59,7 +59,7 @@ public class SsuSemanticsTests
     [Fact]
     public void BodyFailure_AfterCommit_FailsWithoutError()
     {
-        // A matched rule COMMITS; its body failing is plain failure (SWI):
+        // A matched rule commits; its body failing is plain failure (SWI):
         // neither a later rule nor the no-match trailer runs.
         var e = Load("q(N, R) => N > 0, R = pos.\nq(_, R) => R = other.");
         Assert.False(e.Query("q(0, _).").Success);

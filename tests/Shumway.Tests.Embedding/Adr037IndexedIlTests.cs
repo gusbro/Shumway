@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-037 — an inline <c>( Cond *-> Then ; Else )</c> (and inline <c>-></c>) in a
-/// MULTI-CLAUSE, first-arg-indexed predicate. At runtime the full indexed-dispatch
+/// multi-clause, first-arg-indexed predicate. At runtime the full indexed-dispatch
 /// describer (tried first) handles it, so these promote. In a persisted bundle the
 /// full indexed is disabled (allowIndexedDispatch=false), so the fallback
 /// describers (IndexedAtom / SwitchedChain) decide — they used to reject any inline

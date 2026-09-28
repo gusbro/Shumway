@@ -61,7 +61,7 @@ public sealed class InlineFunctorTests(ITestOutputHelper o)
         Assert.Equal(0L, FunctorExitsOf("compound(N, A), A == 3."));
     }
 
-    /// <summary>The counterproof, in red: CONSTRUCTING still leaves. Without
+    /// <summary>The counterproof, in red: Constructing still leaves. Without
     /// it the test above would also pass with functor/3 refused wholesale,
     /// or inlined for shapes it has no business answering.</summary>
     [DiagFact]

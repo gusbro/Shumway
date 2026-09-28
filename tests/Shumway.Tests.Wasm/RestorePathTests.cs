@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>Backtracking must stay INSIDE the module. A retry or a trust
+/// <summary>Backtracking must stay inside the module. A retry or a trust
 /// restores its choice point in wasm; if that path steps aside instead, every
 /// backtrack leaves the tier, stages the whole image again and re-enters, and
 /// the run pays a boundary crossing per alternative while still answering
@@ -34,7 +34,7 @@ public sealed class RestorePathTests(ITestOutputHelper o)
         foreach (var (pc, hits) in WasmTierDelegate.DeoptRanking())
             o.WriteLine($"  0x{pc:X} {hits}");
 
-        // ANTI-VACUITY: the predicates must be on the tier and must actually
+        // Anti-vacuity: the predicates must be on the tier and must actually
         // have run, or "no deopts" is the answer to no question.
         Assert.NotEmpty(members);
         Assert.True(WasmTierDelegate.DiagEntries > 0, "nothing entered the tier");

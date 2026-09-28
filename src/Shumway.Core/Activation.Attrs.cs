@@ -2,14 +2,14 @@ using System.Collections.Generic;
 
 namespace Shumway.Core;
 
-/// <summary>The attributed-variable store's ONE set of writers.
+/// <summary>The attributed-variable store's one set of writers.
 ///
 /// <para>The store maps an attributed variable's heap home index to its
 /// record, itself a map from a module's atom id to the heap index of that
 /// module's attribute value. It used to be written from six places across
 /// three files, four of them through a reference to the inner record handed
 /// out by the table -- so a seventh writer could be added without anything
-/// noticing, and any DERIVED view of the store would silently fall out of
+/// noticing, and any derived view of the store would silently fall out of
 /// step. That is the exact shape of a bug this engine has already paid for
 /// once (a seeded clause that bypassed the dynamic-store mutation funnel and
 /// cost a library its hook, silently and depending on load order).</para>
@@ -23,7 +23,7 @@ namespace Shumway.Core;
 /// and nowhere else. Activation.AttrMirror.cs is that mirror, and every
 /// writer below ends by telling it what changed.</para>
 ///
-/// <para>Trailing is NOT here. A mutation's undo record belongs to the
+/// <para>Trailing is not here. A mutation's undo record belongs to the
 /// caller that knows the semantics (PutAttr promotes and trails a
 /// ValueChange; DelAttr may demote), and burying it here would make the
 /// funnel look like it guarantees more than it does.</para></summary>
@@ -36,7 +36,7 @@ public sealed partial class Activation
     private void AttrCreateRecord(int home)
     {
         // An orphan record's rows have to go with it: the slot is being
-        // reused, so a leftover row would answer for the NEW variable.
+        // reused, so a leftover row would answer for the new variable.
         if (_attrMirror is not null && _attrStore.TryGetValue(home, out var orphan))
             foreach (int moduleId in new List<int>(orphan.Keys))
                 AttrMirrorDelete(home, moduleId);
@@ -134,7 +134,7 @@ public sealed partial class Activation
     internal bool AttrHasRecordForTesting(int home) => AttrHasRecord(home);
 
     /// <summary>Whether a home carries a record at all. For the census
-    /// that asks whether a declined insert met an ORPHAN, which is the
+    /// that asks whether a declined insert met an orphan, which is the
     /// one shape the module refuses on purpose.</summary>
     public bool AttrHasAnyRecord(int home) => AttrHasRecord(home);
 
@@ -148,7 +148,7 @@ public sealed partial class Activation
     /// <summary>Queues a wakeup for every module attributed to
     /// <paramref name="home"/>, against <paramref name="otherIdx"/>.
     ///
-    /// <para>An OPERATION rather than a getter, and deliberately: this runs
+    /// <para>An operation rather than a getter, and deliberately: this runs
     /// on every binding of an attributed variable -- six call sites in the
     /// unify ops -- so handing out a snapshot would put an allocation on the
     /// hottest path attributes have. Iterating in place costs nothing, and
@@ -175,7 +175,7 @@ public sealed partial class Activation
     }
 
     /// <summary>ADR-052: marks the attribute values carried by
-    /// <paramref name="home"/>. THE one edge into a row.
+    /// <paramref name="home"/>. The one edge into a row.
     ///
     /// <para>The table is a weak key: a row is reached only through its own
     /// live variable, so the collector calls this when it marks an
@@ -197,7 +197,7 @@ public sealed partial class Activation
 
     /// <summary>ADR-052: drops every row the collector just disproved -- a
     /// home it did not mark is a variable nothing can reach again. Runs
-    /// after the trace and BEFORE relocation, because afterwards the index
+    /// after the trace and before relocation, because afterwards the index
     /// means nothing.
     ///
     /// <para>Goes through <see cref="AttrDropRecord"/>, one of the five

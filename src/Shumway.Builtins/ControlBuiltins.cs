@@ -21,9 +21,9 @@ public static class ControlBuiltins
     public static bool True(Activation engine) => true;
 
     /// <summary><c>'$type_error_callable'(Culprit)</c> — the runtime
-    /// thrower the clause compiler emits for a NON-CALLABLE in goal
+    /// thrower the clause compiler emits for a non-callable in goal
     /// position (<c>foo :- 4</c>, <c>{1^true}</c>): the error must be a
-    /// catchable type_error(callable, Culprit) raised when the goal RUNS,
+    /// catchable type_error(callable, Culprit) raised when the goal runs,
     /// never a compile-time crash.</summary>
     public static bool TypeErrorCallable(Activation engine)
         => throw new PrologRuntimeException("type_error", "callable",

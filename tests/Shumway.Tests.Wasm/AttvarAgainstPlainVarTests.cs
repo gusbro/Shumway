@@ -13,7 +13,7 @@ namespace Shumway.Tests.Wasm;
 public sealed class AttvarAgainstPlainVarTests(ITestOutputHelper o)
 {
     // st//1 is clpz's state//1. The pattern's last slot is a plain variable
-    // and the live state's is an attributed one; both sides are BOUND
+    // and the live state's is an attributed one; both sides are bound
     // compounds, so the pair reaches the general unifier and not the inline
     // =/2, which has its own escape.
     private const string Corpus = """
@@ -52,7 +52,7 @@ public sealed class AttvarAgainstPlainVarTests(ITestOutputHelper o)
 
     /// <summary>The counter: no unifier step-aside (reason 25) on a corpus
     /// that binds a plain variable to an attributed one on every iteration.
-    /// The anti-vacuity is the same shape with a BOUND value in the slot,
+    /// The anti-vacuity is the same shape with a bound value in the slot,
     /// which wakes a hook and so must still step aside at that very site:
     /// the counter sees the site, and only the case that needs the host
     /// leaves.</summary>

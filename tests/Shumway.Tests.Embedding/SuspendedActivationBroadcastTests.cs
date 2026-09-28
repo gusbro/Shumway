@@ -12,7 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// mutable code space gives that for free; a buffer per query does not.
 ///
 /// <para>The list of activations to tell was only ever added to, and weakly.
-/// So it also held every query that had already RETURNED and had not been
+/// So it also held every query that had already returned and had not been
 /// collected yet, and each of those took a full chain patch on every mutation
 /// — one wasted O(chain) walk per retract, for a query that can never resume.
 /// The list now drops an activation when its query ends, which leaves exactly
@@ -24,7 +24,7 @@ namespace Shumway.Tests.Embedding;
 /// list would pin that activation forever.</para></summary>
 public sealed class SuspendedActivationBroadcastTests
 {
-    /// <summary>COUNTED, not timed. Nothing is suspended while this drain
+    /// <summary>Counted, not timed. Nothing is suspended while this drain
     /// runs, so nothing is broadcast to — where before, every retract was
     /// broadcast to the finished query that had built the clauses.</summary>
     [Fact]
@@ -38,7 +38,7 @@ public sealed class SuspendedActivationBroadcastTests
             drain(0) :- !.
             drain(N) :- retract(cp(_)), !, M is N - 1, drain(M).
             """);
-        // A separate, COMPLETED query builds the clauses: its activation is
+        // A separate, completed query builds the clauses: its activation is
         // exactly the one that used to be broadcast to.
         Assert.True(e.Query("mk(8000).").Success);
         e.BroadcastTargets = 0;
@@ -47,7 +47,7 @@ public sealed class SuspendedActivationBroadcastTests
         Assert.False(e.Query("cp(_).").Success);
     }
 
-    /// <summary>ANTI-VACUITY: an activation that is still OPEN stays a
+    /// <summary>Anti-vacuity: an activation that is still open stays a
     /// broadcast target, and gets the mutation. A query that has merely been
     /// left mid-enumeration is exactly that — it can resume, so it must be
     /// told — and it is the case the counted test above would otherwise be
@@ -64,10 +64,10 @@ public sealed class SuspendedActivationBroadcastTests
             drain(N) :- retract(cp(_)), !, M is N - 1, drain(M).
             """);
         Assert.True(e.Query("mk(10).").Success);
-        // Left mid-enumeration, NOT disposed: still open, so still a target.
+        // Left mid-enumeration, not disposed: still open, so still a target.
         using var open = e.QueryAll("cp(X).").GetEnumerator();
         Assert.True(open.MoveNext());
-        // Enough asserts to force the next query onto a REBUILT buffer, so the
+        // Enough asserts to force the next query onto a rebuilt buffer, so the
         // open enumeration is left on a different one and the broadcast is the
         // only thing that can reach it.
         Assert.True(e.Query("mk(8000).").Success);

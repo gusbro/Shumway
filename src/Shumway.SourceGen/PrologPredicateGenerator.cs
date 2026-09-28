@@ -313,7 +313,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             switch (p.Mode)
             {
                 case ParamMode.Input:
-                    // Integer scalars read the register CELL
+                    // Integer scalars read the register cell
                     // directly (zero allocation; the Term path allocated one
                     // IntTerm per scalar arg per call). The helper raises the
                     // same instantiation_error on an unbound register and
@@ -495,7 +495,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
     }
 
     /// <summary>Emits the per-predicate "unify the current solution value"
-    /// step as a STATIC method: a static
+    /// step as a static method: a static
     /// method group has its delegate cached by the compiler, so handing it to
     /// <see cref="NonDetForeignCursor{T}"/> costs no per-call allocation. The
     /// cursor drives the MoveNext + CP-push + Dispose machinery.</summary>

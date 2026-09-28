@@ -178,15 +178,15 @@ public static class AtomTable
             // Lock-free fast path: a permanent
             // atom satisfies a permanent intern request directly; its
             // identity is stable and it is never collected. A transient
-            // hit must NOT short-circuit here — it needs
+            // hit must not short-circuit here — it needs
             // PromoteToPermanentLocked under the lock.
             if (_permanentByName.TryGetValue(name, out var perm))
                 return perm;
         }
-        // ONE lock-free by-name probe for the transient
+        // One lock-free by-name probe for the transient
         // (permanent:false) path — it used to probe _permanentByName first
         // (a guaranteed miss for a transient atom, paying a full string
-        // hash) and then _byName. Every live atom of EITHER tier has a
+        // hash) and then _byName. Every live atom of either tier has a
         // _byName entry, and a permanent's WeakReference target is strongly
         // held by _permanentById so TryGetTarget always succeeds for it —
         // so a single _byName hit satisfies a permanent:false request

@@ -28,7 +28,7 @@ public class Chunk417Tests
         // SWI: call(zzz(1)) raises existence_error (caught), assertz
         // defines it, the retry succeeds. The pre-scan used to pre-declare
         // zzz/1 from the assertz literal, turning the first call into a
-        // clean FAILURE (empty dynamic predicate) — catch then re-failed
+        // clean failure (empty dynamic predicate) — catch then re-failed
         // and the whole query was false.
         var e = Make();
         var s = e.Query(
@@ -52,7 +52,7 @@ public class Chunk417Tests
     public void UndefinedBeforeAssertz_RaisesEvenWithLaterAssertzLiteral()
     {
         // The pre-scan artifact must be unobservable: a goal sequenced
-        // before the assertz sees zzz/1 as UNDEFINED (error), not as an
+        // before the assertz sees zzz/1 as undefined (error), not as an
         // empty dynamic predicate (fail).
         var e = Make();
         Assert.Throws<Shumway.Core.PrologRuntimeException>(() =>
@@ -95,7 +95,7 @@ public class Chunk417Tests
     [Fact]
     public void UnknownFail_MetaCallFailsSilently_MidQuery()
     {
-        // set_prolog_flag takes effect MID-QUERY (the builtin updates the
+        // set_prolog_flag takes effect mid-query (the builtin updates the
         // live engine, not just the host flags for the next query).
         var e = Make();
         Assert.True(e.Query(
@@ -136,7 +136,7 @@ public class Chunk417Tests
     public void ExplicitDynamicEmpty_StillFailsUnderError()
     {
         // ISO: an explicitly declared dynamic predicate with no clauses
-        // FAILS — the unknown flag governs UNDECLARED procedures only.
+        // fails — the unknown flag governs undeclared procedures only.
         var e = Make(":- dynamic d/1.\nok.\n");
         Assert.False(e.Query("d(1).").Success);
         Assert.False(e.Query("call(d(1)).").Success);

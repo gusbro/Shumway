@@ -105,7 +105,7 @@ public sealed class DialectRegistryTests
         try
         {
             // "ab" → [a,b] only if the dir was tagged scryer (chars). The spec
-            // form "scryer:<dir>" is a LEADING dialect prefix — drive-letter safe
+            // form "scryer:<dir>" is a leading dialect prefix — drive-letter safe
             // (the "C" of a Windows path is never a dialect).
             File.WriteAllText(Path.Combine(dir, "slib.pl"),
                 ":- module(slib, [sval/1]).\nsval(\"ab\").\n");
@@ -135,7 +135,7 @@ public sealed class DialectRegistryTests
     {
         // D5.2 — two search dirs tagged with different dialects. A library that
         // writes "ab" parses to [a,b] (char atoms) under scryer/chars and to
-        // [97,98] (codes) under swi/codes — in the SAME engine. If per-dir
+        // [97,98] (codes) under swi/codes — in the same engine. If per-dir
         // threading did not work, both would parse the same (the engine default)
         // and one assertion would fail.
         string dir = Path.Combine(Path.GetTempPath(),

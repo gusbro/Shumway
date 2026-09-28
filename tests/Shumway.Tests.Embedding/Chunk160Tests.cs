@@ -33,7 +33,7 @@ public class Chunk160Tests
             },
             [new PredicateRef("helper", 2)] = new[]
             {
-                // chunk 441 — the per-edge META marker round-trips too.
+                // chunk 441 — the per-edge meta marker round-trips too.
                 new ShmoCallEdge(new PredicateRef("counter", 1), IsMeta: true),
             },
         };
@@ -181,7 +181,7 @@ public class Chunk160Tests
         //  + 1 buildMode                                 ← V2 addition
         //  + 1 arityCompat                               ← chunk 441
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
-        // Plus 12 bytes of generator version (3 × uint32), the FIRST body
+        // Plus 12 bytes of generator version (3 × uint32), the first body
         // field — see ShmoWriter.
         // visibility byte is at 4+4+1 + 12 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 49.
         bytes[49] = 99;

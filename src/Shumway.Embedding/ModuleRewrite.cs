@@ -135,7 +135,7 @@ public static class ModuleRewrite
         if (term is CompoundTerm directive && directive.Functor == ":-" && directive.Args.Length == 1)
             return term;
 
-        // Fact: the term IS the head. Mangle if local.
+        // Fact: the term is the head. Mangle if local.
         return RewriteHead(term, ctx);
     }
 
@@ -165,7 +165,7 @@ public static class ModuleRewrite
     {
         // A variable in a goal position (a clause body, a control-flow sub-goal)
         // is a runtime meta-call. Wrap it call('$mqual'(Module, Var)) so the
-        // live-engine dispatch resolves its bound goal against THIS module's
+        // live-engine dispatch resolves its bound goal against this module's
         // locals first — the same module-relative resolution a direct meta-arg
         // (findall/call) gets. The explicit call/1 keeps it compiling as a
         // meta-call (a bare variable body goal is call(Var) by ISO anyway).
@@ -194,7 +194,7 @@ public static class ModuleRewrite
 
         if (goal is CompoundTerm c)
         {
-            // A statically written Module:Goal resolves at COMPILE time when
+            // A statically written Module:Goal resolves at compile time when
             // the resolver is available — the runtime ':'/2 path costs a full
             // meta-dispatch per call (the atts goal_expansion emits one per
             // get_atts/put_atts, ~112k per queens(12) solve). Nested
@@ -246,10 +246,10 @@ public static class ModuleRewrite
                 return goal;   // control construct / unknown module → runtime ':'/2
             }
 
-            // Meta-predicate with a VARIABLE goal argument (a callable goal was
+            // Meta-predicate with a variable goal argument (a callable goal was
             // already inlined + mangled by MetaTransform): tag the variable with
             // the compile-time module so a runtime meta-call (findall/call/…)
-            // resolves the bare goal relative to THIS module's locals. The tag
+            // resolves the bare goal relative to this module's locals. The tag
             // travels with the goal term into the live-engine dispatch, where
             // DispatchCall / MetaCallInEngine unwrap it. Public / builtin goals
             // fall through the tag transparently (module$name lookup misses, then
@@ -281,7 +281,7 @@ public static class ModuleRewrite
                 && TryResolveImport(c.Functor, c.Args.Length, ctx, out string cSrc))
                 return new CompoundTerm(ImportedName(cSrc, c.Functor), c.Args)
                     { Position = c.Position };
-            // The module-sensitive reflection builtins: the TEXTUAL module is
+            // The module-sensitive reflection builtins: the textual module is
             // their context, stamped at compile time exactly as $mqual stamps
             // meta-goals — there is no runtime context register. Runs only
             // after the local/import resolution above, so a module defining
@@ -611,7 +611,7 @@ public static class ModuleRewrite
 
     private static string MangledName(string name, Context ctx) => ctx.ModuleName + "$" + name;
 
-    // ADR-038 — the mangled name of an imported predicate in its SOURCE module.
+    // ADR-038 — the mangled name of an imported predicate in its source module.
     private static string ImportedName(string sourceModule, string name) =>
         sourceModule + "$" + name;
 

@@ -21,7 +21,7 @@ public abstract class Term
     /// <summary>Reads this term as text: an atom's name, or the characters of a
     /// proper list of one-character atoms or of character codes.
     ///
-    /// <para>Text reaches C# as one of two things, decided by what it IS in
+    /// <para>Text reaches C# as one of two things, decided by what it is in
     /// Prolog and never by how it was stored (ADR-047 decision 6): text as a
     /// value is an atom, text as a sequence is a list. This is the one call
     /// that reads both, for the caller who wants the characters and does not
@@ -80,7 +80,7 @@ public sealed class AtomTerm : Term
 
     // Lazily-cached AtomTable id, stored as id+1 so the field's
     // default (0) can mean "not yet resolved" — atom id 0 itself is valid
-    // (it's "[]"). Deliberately NOT part of Equals/GetHashCode: two
+    // (it's "[]"). Deliberately not part of Equals/GetHashCode: two
     // AtomTerms with the same Name compare equal whether or not either
     // has resolved its id. Atom ids are stable for the atom's lifetime
     // (ADR-003), so a cached id never goes stale; racing writers from two
@@ -156,7 +156,7 @@ public sealed class IntTerm : Term
 /// onto the heap via the engine's BigInteger side-table (<c>Tag.BigInt</c>).
 /// Surfaces at the AST layer whenever an arithmetic operation overflows
 /// <see cref="IntTerm.Value"/>'s long range or whenever the heap is read back
-/// and finds a BIGINT cell.</summary>
+/// and finds a bigint cell.</summary>
 public sealed class BigIntTerm : Term
 {
     public System.Numerics.BigInteger Value { get; }
@@ -201,7 +201,7 @@ public sealed class RationalTerm : Term
 }
 
 /// <summary>A text literal the compiler will pack (ADR-047). It is not a string
-/// TYPE: it denotes the list of characters or of codes named by
+/// type: it denotes the list of characters or of codes named by
 /// <see cref="Kind"/>, and that is what it materialises into. The node exists so
 /// the compiler can carry a whole literal to the packer without building the
 /// cons list first.</summary>
@@ -240,7 +240,7 @@ public sealed class CompoundTerm : Term
 
     /// <summary>Constructor for builders that already hold the
     /// compound's interned functor id (e.g. <c>TermReader</c> reading a
-    /// FUNCTOR heap cell), seeding the cache.</summary>
+    /// functor heap cell), seeding the cache.</summary>
     public CompoundTerm(string functor, Term[] args, int functorId)
     {
         Functor = functor;
@@ -251,7 +251,7 @@ public sealed class CompoundTerm : Term
     /// <summary>Set by <c>TermReader</c> on a compound that is the target of
     /// one or more cycle back-edges: every descendant
     /// <see cref="VarTerm"/> whose <c>IsCycleBack</c> name equals this id
-    /// stands for THIS node. The tree stays acyclic (value equality and
+    /// stands for this node. The tree stays acyclic (value equality and
     /// every walker are unaffected); <c>Materializer</c> uses the pair to
     /// rebuild the rational tree on the heap. Excluded from value
     /// equality, like the cached functor id.</summary>

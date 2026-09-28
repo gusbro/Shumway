@@ -1,9 +1,9 @@
 namespace Shumway.Repl;
 
 /// <summary>The REPL's shared input buffer: text the user typed that no query
-/// has consumed yet. The top level takes SENTENCES from it (so
+/// has consumed yet. The top level takes sentences from it (so
 /// <c>write(a). nl.</c> on one line runs as two queries), and a goal reading
-/// <c>user_input</c> (<c>read/1</c>, <c>get_char/1</c>) drains the SAME
+/// <c>user_input</c> (<c>read/1</c>, <c>get_char/1</c>) drains the same
 /// buffer — <c>?- read(X). write(b).</c> binds <c>X = write(b)</c>, the
 /// stream-fed top-level behaviour (SWI). When the buffer runs dry mid-goal,
 /// more input is acquired from the console via the callback.</summary>

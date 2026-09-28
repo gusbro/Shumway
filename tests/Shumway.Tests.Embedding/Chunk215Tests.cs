@@ -51,7 +51,7 @@ public class Chunk215Tests
     {
         // helper/1 is a Call that overwrites the _b0 register. The cut in
         // g/1 must commit to g's entry barrier (captured by get_level
-        // before the call), discarding helper's remaining solutions AND
+        // before the call), discarding helper's remaining solutions and
         // the g(_) clause. If the cut used the clobbered register it would
         // either under- or over-cut.
         var engine = new PrologEngine();

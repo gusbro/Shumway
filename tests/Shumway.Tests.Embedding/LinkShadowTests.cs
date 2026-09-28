@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The C-linker symbol model for same-name predicates across linked
 /// modules: public + public is a hard error (duplicate_public, elsewhere);
-/// public + LOCAL is legal — the local wins inside its own module, like a C
+/// public + local is legal — the local wins inside its own module, like a C
 /// `static` shadowing a global — reported only as an opt-in
 /// <c>--warn-shadow</c> warning, and always listed in the <c>--map</c>.</summary>
 public sealed class LinkShadowTests

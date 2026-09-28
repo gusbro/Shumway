@@ -9,7 +9,7 @@ using Shumway.Embedding;
 // Phase 25 chunk 281 — multi-engine benchmark harness for the Van Roy
 // suite in benchmarks/vanroy/. Runs each .pl against:
 //   - Shumway, in-process.
-//   - GNU Prolog, COMPILED via gplc to a standalone console-subsystem
+//   - GNU Prolog, compiled via gplc to a standalone console-subsystem
 //     .exe under benchmarks/results/bin-gprolog/. Native code, no
 //     GUI fallback, no global-stack overflows at canonical iteration
 //     counts.
@@ -276,7 +276,7 @@ public static class VanRoyMultiEngine
     // (Turbo Boost, scheduler, background load) — a GProlog native exe was
     // observed swinging 4× run-to-run. To validate an allocation-affecting
     // change (e.g. the read-mode atomic-literal fast path in
-    // UnifyHeapWithCell) WITHOUT that noise, this mode measures the engine's
+    // UnifyHeapWithCell) without that noise, this mode measures the engine's
     // monotonic WAM-cell allocation counter, which is a pure function of the
     // executed code path + input: identical every run, on any machine, under
     // any load. Shumway-only (no gplc/swipl subprocess spawning).
@@ -545,10 +545,10 @@ public static class VanRoyMultiEngine
     }
 
     // Discovered once on first call: the MSVC vcvars64.bat that
-    // sets up PATH / INCLUDE / LIB for cl + link + lib. gplc shells
-    // out to those tools internally, and a stripped-down PATH that
+    // sets up path / include / LIB for cl + link + lib. gplc shells
+    // out to those tools internally, and a stripped-down path that
     // happens to put GNU coreutils' `link` first (typical with Git
-    // Bash / MSYS on PATH) breaks the gplc → link chain. We invoke
+    // Bash / MSYS on path) breaks the gplc → link chain. We invoke
     // gplc as `cmd /c "vcvars64.bat && gplc ..."` to inherit the
     // MSVC env in the child.
     private static string? _vcvarsCache;
@@ -590,7 +590,7 @@ public static class VanRoyMultiEngine
         // <basename>.exe next to the source, which lands where we
         // want. Avoids `-o`, which on some Windows toolchains causes
         // gplc to forward MSVC-style `/out:` flags to a GNU coreutils
-        // `link` that's first on PATH (which then rejects them).
+        // `link` that's first on path (which then rejects them).
         // atom_number/2 is a SWI/SICStus extension; not in gprolog 1.5.
         // atom_codes + number_codes is the ISO portable way.
         //
@@ -611,10 +611,10 @@ public static class VanRoyMultiEngine
         try
         {
             // Run via `cmd /c "<vcvars64.bat> >NUL && gplc.exe ..."` so
-            // gplc inherits the MSVC environment (PATH, INCLUDE, LIB) it
+            // gplc inherits the MSVC environment (path, include, LIB) it
             // needs to find cl.exe / link.exe / lib.exe. Without
             // vcvars64, gplc may find GNU coreutils' `link` first on
-            // PATH (from MSYS/Git Bash) and emit `/out:` flags it
+            // path (from MSYS/Git Bash) and emit `/out:` flags it
             // doesn't understand.
             string? vcvars = FindVcvars64();
             if (vcvars is null)
@@ -637,7 +637,7 @@ public static class VanRoyMultiEngine
                 WorkingDirectory = outDir,
                 Arguments = $"/c \"{sb}\"",
             };
-            // Make sure the gplc bin dir is on PATH too, for pl2wam /
+            // Make sure the gplc bin dir is on path too, for pl2wam /
             // ma2asm / yasm. vcvars64 doesn't touch it.
             if (gplcDir is not null)
                 psi.Environment["PATH"] = gplcDir + Path.PathSeparator +
@@ -748,9 +748,9 @@ public static class VanRoyMultiEngine
         return sw.Elapsed.TotalMilliseconds;
     }
 
-    // Tier-1 timing — the SHIPPED shape, not runtime promotion: each benchmark
+    // Tier-1 timing — the shipped shape, not runtime promotion: each benchmark
     // is compiled + linked once with persisted Tier-1 IL (the linker's default
-    // REGION layout — a predicate and its local closure share one IL method;
+    // region layout — a predicate and its local closure share one IL method;
     // runtime promotion cannot produce regions), exactly what
     // `shumway-link --with-compiled-il` bakes into a bundle or `--exe`. The
     // bundle is then loaded into a fresh engine and bench(N) is timed warm and
@@ -790,10 +790,10 @@ public static class VanRoyMultiEngine
         var engine = new PrologEngine();
         engine.LoadBundle(BundleReader.FromBytes(bundle));
         engine.Query("true.");
-        // Warm HARD: each measurement loads the persisted assembly fresh, and
+        // Warm hard: each measurement loads the persisted assembly fresh, and
         // .NET's own tiered JIT re-compiles the region method in the
         // background after enough calls — a bench(1) warmup left that
-        // re-JIT landing INSIDE the timed run (the qsort T1 cell measured
+        // re-JIT landing inside the timed run (the qsort T1 cell measured
         // 40 µs at its min and 115 µs at its median, stddev 50-90%). A tenth
         // of the real iteration count pushes every hot method through .NET's
         // tiering before the stopwatch starts.
@@ -944,8 +944,8 @@ public static class VanRoyMultiEngine
         return null;
     }
 
-    // Locate hyperfine: HYPERFINE_PATH env override, then PATH, then the
-    // per-user winget install location (its PATH entry isn't visible to a
+    // Locate hyperfine: HYPERFINE_PATH env override, then path, then the
+    // per-user winget install location (its path entry isn't visible to a
     // shell started before the install).
     private static string? ResolveHyperfine()
     {

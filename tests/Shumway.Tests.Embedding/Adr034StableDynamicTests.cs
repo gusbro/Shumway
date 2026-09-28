@@ -7,12 +7,12 @@ namespace Shumway.Tests.Embedding;
 /// ADR-034 — sound stable-dynamic inlining. A rule-bearing dynamic predicate
 /// (the Arity <c>:- visible</c> idiom: rules declared dynamic only for
 /// findall/setof meta-call visibility, never mutated in practice) may be
-/// inlined into a caller's CP-free guard as its ADR-023 snapshot — but ONLY
+/// inlined into a caller's CP-free guard as its ADR-023 snapshot — but only
 /// with a clause-entry staleness test: the first assert/retract on the
 /// predicate flips the caller to an un-inlined fallback path whose call
-/// dispatches against the LIVE dynamic. These tests pin:
+/// dispatches against the live dynamic. These tests pin:
 ///
-/// <para>1. THE BUG THAT MOTIVATED THE ADR (probe4, 2026-07-10): a persisted
+/// <para>1. The bug that motivated the ADR (probe4, 2026-07-10): a persisted
 /// IL bundle inlined a dynamic snapshot into a static caller with no eviction
 /// path — <c>assertz(r(-1)), g(-1, R)</c> answered the stale <c>no</c> where
 /// Tier-0/WAM answers <c>yes</c> (ISO logical update view).</para>
@@ -20,7 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// <para>2. Fact-only dynamics (the real assert targets) are never
 /// caller-inlined at all.</para>
 ///
-/// <para>3. A guard that could MUTATE the database is never combined with an
+/// <para>3. A guard that could mutate the database is never combined with an
 /// inlined snapshot (the staleness window).</para>
 /// </summary>
 public class Adr034StableDynamicTests
@@ -79,7 +79,7 @@ public class Adr034StableDynamicTests
         Assert.True(e.Query("g(5, R), R == yes.").Success);
         Assert.True(e.Query("g(-1, R), R == no.").Success);
         Assert.Single(e.QueryAll("g(5, R)."));
-        // THE BUG: assert a clause the snapshot doesn't have, same query —
+        // The bug: assert a clause the snapshot doesn't have, same query —
         // the caller must see it (ISO logical update view: the call to g —
         // and inside it, to r — begins after the assert).
         Assert.True(e.Query("assertz(r(-1)), g(-1, R), R == yes.").Success);
@@ -109,7 +109,7 @@ public class Adr034StableDynamicTests
     public void FactOnlyDynamic_NeverInlined_AssertVisible(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // f/1 is a FACT-ONLY dynamic — a real assert target. It must never be
+        // f/1 is a fact-only dynamic — a real assert target. It must never be
         // caller-inlined (neither by the guard tiers nor by the leaf/fact
         // inliners), so a later assert is visible with no staleness machinery.
         var e = Activation(m,
@@ -131,12 +131,12 @@ public class Adr034StableDynamicTests
     public void MutationInGuard_PlusSnapshot_NotCombined(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The staleness-window shape: the SAME guard asserts to r/1 and then
+        // The staleness-window shape: the same guard asserts to r/1 and then
         // calls it. The clause-entry test runs before the assert, so an
         // inlined snapshot would be stale by the call — the recogniser must
         // reject the combination and keep the clause on the plain path, where
         // the call dispatches live. k(-5): assertz(r(-5)) then r(-5) succeeds
-        // via the NEW fact (the shipped rule -5 > 0 fails).
+        // via the new fact (the shipped rule -5 > 0 fails).
         var e = Activation(m,
             ":- public k/2.\n"
             + ":- dynamic r/1.\n"
@@ -152,7 +152,7 @@ public class Adr034StableDynamicTests
     public void EmptyDynamic_StaysOnLiveDispatch(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // Empty-dynamic-as-fail was MEASURED AND REJECTED (see ADR-034): in
+        // Empty-dynamic-as-fail was measured and rejected (see ADR-034): in
         // any reasonable program the assert happens, so the steady state
         // would be the plain path plus a per-entry probe — a net cost. This
         // pins the plain behaviour: a guard call to an empty dynamic keeps
@@ -174,9 +174,9 @@ public class Adr034StableDynamicTests
     public void SnapshotInsideG3Inner_CollectedTransitively(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The dynamic is reached one level DOWN: the guard calls valid/1,
+        // The dynamic is reached one level down: the guard calls valid/1,
         // whose body calls the dynamic r/1 (a G3 inner). The staleness fid
-        // must be collected transitively so the CALLER clause carries the
+        // must be collected transitively so the caller clause carries the
         // test.
         var e = Activation(m,
             ":- public v/2.\n"

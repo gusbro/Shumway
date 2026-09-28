@@ -18,7 +18,7 @@ public static partial class MetaBuiltins
 
     public static void EnsureRegistered()
     {
-        // The flag goes up AFTER the registrations, not before. Claiming it
+        // The flag goes up after the registrations, not before. Claiming it
         // first let a second caller straight through while the registry was
         // still half-populated — it saw "already done" and then could not find
         // a builtin the first caller had not reached yet (`call/1 is not a
@@ -44,7 +44,7 @@ public static partial class MetaBuiltins
         const string Io = "Input / output";
 
         // findall/3 is a prelude predicate (live-engine collect loop over
-        // call/1), NOT a builtin — the old isolated-sub-engine builtin lacked
+        // call/1), not a builtin — the old isolated-sub-engine builtin lacked
         // the parent's bundle-precompiled definitions (a source-stripped
         // bundle's module-local goal was absent from the sub-engine) and hid
         // the goal's side effects. See Prelude findall/3. A statically-callable
@@ -64,7 +64,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
         BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
-        // (live-engine findall + fail-on-empty), NOT builtins — the old
+        // (live-engine findall + fail-on-empty), not builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled
         // definitions. A statically-callable bagof/setof is still rewritten by
         // MetaTransform with full witness grouping. See Prelude bagof/3, setof/3.
@@ -75,7 +75,7 @@ public static partial class MetaBuiltins
             Term, "copy_term(?Term, -Copy)",
             "Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy.");
         // Scryer system builtin (iso_ext's copy_term_nat/2 wraps it): a copy
-        // where attributed variables come out as fresh PLAIN variables — which
+        // where attributed variables come out as fresh plain variables — which
         // is exactly what HeapTermCopy-backed copy_term/2 produces.
         BuiltinsRegistry.Register("$copy_term_without_attr_vars", 2, CopyTerm);
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
@@ -437,8 +437,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("module_property", 2, ModuleProperty,
             Reflect, "module_property(?Module, ?Property)",
             "Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound.");
-        // with_output_to/2 itself is a PRELUDE predicate (the goal must run in
-        // the LIVE engine so its side effects — op/3, assertz — survive);
+        // with_output_to/2 itself is a prelude predicate (the goal must run in
+        // the live engine so its side effects — op/3, assertz — survive);
         // these are its redirection primitives.
         BuiltinsRegistry.Register("$wot_begin", 1, WotBegin,
             Io, "'$wot_begin'(+Sink)", "Internal: begins a with_output_to capture.");
@@ -506,7 +506,7 @@ public static partial class MetaBuiltins
             "Converts between Shumway's canonical '/'-separated path form and the "
             + "host's native form. Either argument may be the bound one; on a "
             + "system whose separator is already '/' the two forms are the same.");
-        // Unshadowable alias for shim internals: a loaded library may EXPORT
+        // Unshadowable alias for shim internals: a loaded library may export
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
         // name would loop through the very library it serves.
@@ -566,7 +566,7 @@ public static partial class MetaBuiltins
             + "(no consult history); restore_state/1 then merges them into "
             + "the engine's current state via assertz without resetting.");
         // Arity save/restore — dynamic-database snapshots with destructive
-        // REPLACE semantics (distinct from save_state's merge/replay family).
+        // replace semantics (distinct from save_state's merge/replay family).
         BuiltinsRegistry.Register("save", 0, Save0,
             Database, "save",
             "Snapshots the current user dynamic database (all dynamic "

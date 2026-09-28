@@ -40,7 +40,7 @@ public class ModuleQualifiedHeadTests
             user:term_expansion(src(X), Out) :- helper(X, Out).
             helper(X, dst(X)).
             """);
-        // A term the hook does NOT match must pass through unchanged (the hook
+        // A term the hook does not match must pass through unchanged (the hook
         // body simply fails, it must not error or drop the clause).
         e.ConsultString("""
             plain_fact(kept).

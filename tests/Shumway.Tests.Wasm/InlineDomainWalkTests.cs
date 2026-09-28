@@ -7,7 +7,7 @@ namespace Shumway.Tests.Wasm;
 /// <summary>ADR-051 phase 3: the module walks a domain's intervals.
 ///
 /// <para>That walk answers three things. $dom_contains outright.
-/// $dom_del for the case that removes NOTHING, which is most of them, by
+/// $dom_del for the case that removes nothing, which is most of them, by
 /// handing back the domain it was given. And $dom_singleton, which needs
 /// only the arity and the first two bounds.</para>
 ///
@@ -105,7 +105,7 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
 
     /// <summary>Tier-0 and the tier answer the same, case for case. The walk
     /// is emitted by hand and its branch depths are easy to get wrong, which
-    /// shows up as a wrong ANSWER rather than a crash.</summary>
+    /// shows up as a wrong answer rather than a crash.</summary>
     [Theory]
     [InlineData("run_contains(50)")]
     [InlineData("run_absent(50)")]
@@ -135,7 +135,7 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
     [InlineData("del_second(Out), Out == '$fd_dom'(1, 4, 7, 9)")]
     [InlineData("run_del_lo(100, Out), Out == '$fd_dom'(101, 900)")]
     [InlineData("run_del_lo(1, Out), Out == '$fd_dom'(2, 900)")]
-    // Counts that CHANGE: a split (one interval becomes two) and an empty
+    // Counts that change: a split (one interval becomes two) and an empty
     // (one interval disappears). Through predicates, so they are promoted.
     [InlineData("del_present(Out), Out == '$fd_dom'(1, 4, 6, 9)")]
     [InlineData("del_only(Out), Out == '$fd_dom_empty'")]

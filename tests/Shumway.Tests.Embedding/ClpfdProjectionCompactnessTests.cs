@@ -96,7 +96,7 @@ public sealed class ClpfdProjectionCompactnessTests
         // One unknown left is decided on the spot, and an impossible one fails.
         Assert.True(e.Query("X in 1..3, Y = 2, X #\\= Y + 1, X #\\= 2, X #= 1.").Success);
         Assert.False(e.Query("X = 1, Y = 1, X #\\= Y + 0.").Success);
-        // A repeated variable combines: X #\= 2*X - 3 IS X #\= 3.
+        // A repeated variable combines: X #\= 2*X - 3 is X #\= 3.
         Assert.False(e.Query("X in 0..9, X #\\= 2*X - 3, X #= 3.").Success);
         Assert.True(e.Query("X in 0..9, X #\\= 2*X - 3, X #= 4.").Success);
     }

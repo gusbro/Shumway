@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A clause is as big as the program that wrote it.
 ///
 /// <para>Generated Prolog reaches thousands of goals in one body, and reading
-/// and compiling one used to spend C# stack PER GOAL: the wall stood around
+/// and compiling one used to spend C# stack per goal: the wall stood around
 /// nine hundred, and hitting it was a .NET stack overflow — the process dies,
 /// mid-consult, with nothing to catch and nothing to report. The body's
 /// conjunction spine is now walked iteratively everywhere it is walked (the
@@ -21,7 +21,7 @@ namespace Shumway.Tests.Embedding;
 /// <c>DeepStackHost</c> — which the command-line tools run on — puts the
 /// ceiling where real programs do not reach it.</para>
 ///
-/// <para>These run on an xUnit thread with an ORDINARY stack, which is the
+/// <para>These run on an xUnit thread with an ordinary stack, which is the
 /// point: an embedding host gets no special thread either. A regression on
 /// the iterative paths does not fail politely, it takes the test run down —
 /// the honest signal.</para></summary>

@@ -26,7 +26,7 @@ public class Chunk179Tests
         var obj = ShmoCompiler.CompileSource(Src, "m", ShmoBuildMode.Debug);
         Assert.NotEqual("", obj.Source);
 
-        // Sanity: Debug bytecode HAS Meta.
+        // Sanity: Debug bytecode has Meta.
         var debugDecoded = CompiledModuleCodec.Decode(obj.Bytecode);
         bool debugHasMeta = false;
         foreach (var pred in debugDecoded.Predicates)

@@ -89,7 +89,7 @@ public class BuiltinsTests
     public void NotUnifiable_LeavesNoBindingsBehindOnTrial()
     {
         // X \= Y succeeds (they're both unbound — wait, actually X \= Y of two
-        // distinct unbound vars CAN be unified, so the test should fail).
+        // distinct unbound vars can be unified, so the test should fail).
         // Reformulate: X = 1, X \= 2 succeeds without leaving bindings beyond X = 1.
         var engine = new PrologEngine();
         var sol = engine.Query("X = 1, X \\= 2.");
@@ -128,7 +128,7 @@ public class BuiltinsTests
     [Fact]
     public void StructEq_UnboundVariableAgainstAtom_Fails()
     {
-        // Unlike =/2, ==/2 does NOT bind. X (unbound) is not structurally
+        // Unlike =/2, ==/2 does not bind. X (unbound) is not structurally
         // identical to atom foo.
         var engine = new PrologEngine();
         var sol = engine.Query("X == foo.");

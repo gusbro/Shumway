@@ -23,7 +23,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void SetupCallCleanup_FirstBallWins()
     {
-        // A cleanup that throws while ANOTHER exception is unwinding must
+        // A cleanup that throws while another exception is unwinding must
         // not replace it — nor surface later as a phantom second error.
         Succeeds(
             "catch((setup_call_cleanup(true, (_G = 1 ; _G = 2), throw(second)), "
@@ -44,7 +44,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void SetupCallCleanup_CleanupBindingsReachTheCaller()
     {
-        // The cut fires the cleanup on the LIVE term, so Y is bound after.
+        // The cut fires the cleanup on the live term, so Y is bound after.
         Succeeds(
             "setup_call_cleanup(true, "
             + "  setup_call_cleanup(true, (X = 1 ; X = 2), true), Y = 3), !, "
@@ -112,7 +112,7 @@ public class BatteryRoundTwoConformance
     public void ReadTermOptions_AreValidated()
     {
         Succeeds("catch(read_term(_, [foo]), error(domain_error(read_option, foo), _), true).");
-        // Cor.3: a recognised OUTPUT option's value unifies AFTER the read —
+        // Cor.3: a recognised output option's value unifies after the read —
         // a mismatch fails, it is never a domain_error. Pinned in
         // ConformanceArcRegressionTests; read_term_from_atom/3 is compat
         // and ignores these options, so it cannot carry the pin.
@@ -175,7 +175,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void Arg_ChecksTheTermFirst()
     {
-        // §8.5.2.3, verified against GNU: the TERM decides first — a
+        // §8.5.2.3, verified against GNU: the term decides first — a
         // non-compound is type_error(compound, T) whatever N is — then N's
         // type, then its sign.
         Succeeds("catch(arg(0, atom, _), error(type_error(compound, atom), _), true).");
@@ -200,7 +200,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void CurrentPredicate_IsUserPredicatesOnly()
     {
-        // §8.8.2: builtins and library predicates are NOT current
+        // §8.8.2: builtins and library predicates are not current
         // predicates (GNU agrees); predicate_property/2 answers for them.
         Succeeds("\\+ current_predicate(current_predicate/1).");
         Succeeds("\\+ current_predicate(atom/1).");
@@ -234,7 +234,7 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(functor(_, foo, -1), "
             + "error(domain_error(not_less_than_zero, -1), _), true).");
         // An arity past the limit raises. The battery writes 300 for it,
-        // which assumes a limit of the WAM-era 255; here the FLAG is
+        // which assumes a limit of the WAM-era 255; here the flag is
         // unbounded (issue #106) and what remains is address-space
         // capacity, answered as a resource error. So the test is asked
         // the way it means to be asked, against that capacity.
@@ -248,7 +248,7 @@ public class BatteryRoundTwoConformance
     public void SortFamily_ValidatesTheListArgument()
     {
         // §8.4.3.3: the list argument is checked as a whole, with the
-        // WHOLE argument as the culprit, before any element is inspected.
+        // whole argument as the culprit, before any element is inspected.
         Succeeds("catch(sort(3, _), error(type_error(list, 3), _), true).");
         Succeeds("catch(sort([a|b], _), error(type_error(list, [a|b]), _), true).");
         Succeeds("catch(msort([a,b|c], _), error(type_error(list, [a,b|c]), _), true).");
@@ -273,7 +273,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void AtomTextConversions_CheckBoundListsBothWays()
     {
-        // With BOTH arguments bound the list is still type-checked
+        // With both arguments bound the list is still type-checked
         // (§8.16.4/8.16.5) — but only when it is fully ground: a partial
         // list, or one holding unbound elements, is the generate
         // direction and must unify. A bad element is
@@ -304,7 +304,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void UnboundedIntegers_ReachSuccPlusAndFloatDomains()
     {
-        // succ/2 and plus/3 relate BIGNUMS, not just machine integers.
+        // succ/2 and plus/3 relate bignums, not just machine integers.
         Succeeds("succ(123456789012345678901234567890, N), "
             + "N =:= 123456789012345678901234567891.");
         Succeeds("succ(N, 123456789012345678901234567891), "
@@ -360,7 +360,7 @@ public class BatteryRoundTwoConformance
             + "error(domain_error(operator_priority, 1201), _), true).");
         Succeeds("catch(current_op(_, yfy, _), "
             + "error(domain_error(operator_specifier, yfy), _), true).");
-        // These are QUERY filters: whatever the wrong term's type, priority
+        // These are query filters: whatever the wrong term's type, priority
         // and specifier report domain_error (GNU-verified: current_op(1,2,_)
         // is domain_error(operator_specifier, 2) there too). Only the
         // operator name slot uses type_error(atom).
@@ -377,7 +377,7 @@ public class BatteryRoundTwoConformance
     [Fact]
     public void StandardOrder_AllFloatsPrecedeAllIntegers()
     {
-        // ISO §7.2.1: the TYPE decides between a float and an integer,
+        // ISO §7.2.1: the type decides between a float and an integer,
         // never the value — verified identical to GNU Prolog.
         Succeeds("compare(<, 1.1, 1).");
         Succeeds("compare(>, 1, 1.1).");

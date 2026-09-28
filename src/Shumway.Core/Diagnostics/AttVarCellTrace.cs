@@ -2,13 +2,13 @@ using System.Diagnostics;
 
 namespace Shumway.Core.Diagnostics;
 
-/// <summary>The life of an attributed variable CELL: when one comes into
+/// <summary>The life of an attributed variable cell: when one comes into
 /// being, when a write takes it away, and when an undo puts it back.
 ///
 /// <para>Every other trace here follows calls, and calls are where the two
 /// tiers were shown to agree exactly -- same builtins, same order, same
 /// allocation -- while still ending up with six cells attributed on one
-/// side and not the other. A cell changes that way through BINDING and
+/// side and not the other. A cell changes that way through binding and
 /// through the undo of binding, which is compiled code on one tier and the
 /// interpreter on the other and is not a call at all. That is the gap this
 /// closes.</para>

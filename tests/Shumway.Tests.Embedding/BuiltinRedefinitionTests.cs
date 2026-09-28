@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Redefining a procedure of the processor. ISO 7.5.2 makes every
-/// built-in predicate static; assertz/1 already refused them, but a CLAUSE
+/// built-in predicate static; assertz/1 already refused them, but a clause
 /// in a consulted file shadowed the builtin silently — `write(hello).` in a
 /// plain file left the engine unable to write, with no diagnostic. And a
 /// bundle-booted engine (WebShumway, every --exe) let assertz through as
@@ -34,7 +34,7 @@ public class BuiltinRedefinitionTests
     [Fact]
     public void AClauseForALibraryPredicate_ShadowsIt_AsEveryTutorialExpects()
     {
-        // The prelude's Prolog-defined predicates are deliberately NOT
+        // The prelude's Prolog-defined predicates are deliberately not
         // protected at consult time: defining append/3 or member/2 in a
         // plain file is ordinary Prolog, and the user's definition wins —
         // the SWI line between locked system predicates and redefinable
@@ -56,7 +56,7 @@ public class BuiltinRedefinitionTests
     [Fact]
     public void ANamedModulesClause_ShadowsLocally_AsBefore()
     {
-        // ADR-008: a module-local definition shadows the builtin INSIDE the
+        // ADR-008: a module-local definition shadows the builtin inside the
         // module; the rest of the program keeps the real one.
         var e = new PrologEngine { Warnings = new StringWriter() };
         e.ConsultString("""

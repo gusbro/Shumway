@@ -20,7 +20,7 @@ public class IfThenStringSearchTests
 
     [Fact]
     public void IfThen_ConditionFails_SucceedsWithoutThen()
-        // The Arity contract: ifthen SUCCEEDS when the condition fails —
+        // The Arity contract: ifthen succeeds when the condition fails —
         // unlike (P -> Q), which fails.
         => Assert.True(new PrologEngine().Query(
             "ifthen(fail, throw(never)), true.").Success);
@@ -58,7 +58,7 @@ public class IfThenStringSearchTests
     [Fact]
     public void StringTerm_TermToAtom_RendersWriteStyle()
     {
-        // write-style does NOT quote `foo bar` (special chars). Use a
+        // write-style does not quote `foo bar` (special chars). Use a
         // plain term to keep the test deterministic across renderer
         // quirks.
         var e = new PrologEngine();

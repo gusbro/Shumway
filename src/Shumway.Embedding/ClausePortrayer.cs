@@ -143,7 +143,7 @@ public static class ClausePortrayer
         }
 
         // A control construct with a ,-chain inside: the canonical functor
-        // form `;(A, B)` is exactly what a reader must NOT see — portray in
+        // form `;(A, B)` is exactly what a reader must not see — portray in
         // the standard alternative layout, if-then-else conditions included.
         if (goal is CompoundTerm ctrl && ctrl.Args.Length == 2
             && (ctrl.Functor == ";" || ctrl.Functor == "->" || ctrl.Functor == "*->"))
@@ -235,7 +235,7 @@ public static class ClausePortrayer
 
     /// <summary>One branch of the alternative layout, no trailing newline:
     /// an if-then splits at the arrow; a conjunction breaks one goal per
-    /// line WITHOUT the extra paren wrap (the enclosing construct's
+    /// line without the extra paren wrap (the enclosing construct's
     /// delimiters already bracket it).</summary>
     private static void WriteBranch(TextWriter w, Term branch, int indent)
     {
@@ -317,7 +317,7 @@ public static class ClausePortrayer
         public bool Changed;
     }
 
-    /// <summary>Rewrites an AST bottom-up WITHOUT the C# stack: a clause a
+    /// <summary>Rewrites an AST bottom-up without the C# stack: a clause a
     /// program asserted can hold a list of any length, and a recursive
     /// rewrite overflows — killing the process, not the goal — at some ten
     /// thousand elements. <paramref name="mapLeaf"/> maps non-compound

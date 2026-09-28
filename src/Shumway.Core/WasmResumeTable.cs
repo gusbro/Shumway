@@ -5,7 +5,7 @@ namespace Shumway.Core;
 ///
 /// <para>The index needs no computing. <see cref="Activation.EncodeResumeMarker"/>
 /// interns each (functor, address) pair and returns <c>Base + denseId</c>, so a
-/// marker IS a dense id and resolving one is a subscript. What that replaces is
+/// marker is a dense id and resolving one is a subscript. What that replaces is
 /// a chain of baked comparisons — <c>if (bp == c1) ... if (bp == c2) ...</c>,
 /// one per choice-point site — walked linearly on every failure.</para>
 ///
@@ -15,9 +15,9 @@ namespace Shumway.Core;
 /// is a bug with nowhere to show. Reading the same rows makes that class of bug
 /// impossible rather than unlikely.</para>
 ///
-/// <para>An instance belongs to ONE ENGINE, and every module of that engine
+/// <para>An instance belongs to one engine, and every module of that engine
 /// shares it. That is the whole point: a module resolving a marker has to be
-/// able to discover that it belongs to a DIFFERENT module and where that one
+/// able to discover that it belongs to a different module and where that one
 /// is, which it cannot do from a table only it can see.</para>
 ///
 /// <para>Engine, though, and never process-wide. Functor ids and the marker
@@ -51,10 +51,10 @@ public sealed class WasmResumeTable
 
     public int Length => _rows.Length;
 
-    /// <summary>Functor id -> the RESUME MARKER of that functor's fresh entry,
+    /// <summary>Functor id -> the resume marker of that functor's fresh entry,
     /// 0 for a functor no module here covers.
     ///
-    /// <para>This is what lets a module call a goal it only learns at RUN
+    /// <para>This is what lets a module call a goal it only learns at run
     /// time. A marker is interned by the host from a (functor, address) pair
     /// and handed back as Base + a dense id, so it cannot be computed from a
     /// functor -- which is why every call the emitter bakes needs a callee
@@ -70,18 +70,18 @@ public sealed class WasmResumeTable
 
     /// <summary>Bumped by every change to <see cref="CallMarkers"/>. The
     /// table changes only when a module is installed or evicted -- rare --
-    /// so a world that has to COPY it into its own memory can skip the copy
+    /// so a world that has to copy it into its own memory can skip the copy
     /// whenever this has not moved. The attribute image gets no such stamp
     /// and cannot: it changes on every put_attr.</summary>
     public int CallMarkerVersion { get; private set; }
 
     private int[] _callMarkers = new int[1024];
 
-    /// <summary>Atom id -> the fresh-entry marker of the ZERO-ARITY
+    /// <summary>Atom id -> the fresh-entry marker of the zero-arity
     /// predicate of that name, 0 when none is covered.
     ///
     /// <para>A second table and not a lookup, because the module cannot do
-    /// the lookup: it reads a goal that is a bare ATOM and has its atom id,
+    /// the lookup: it reads a goal that is a bare atom and has its atom id,
     /// but turning (atom, 0) into a functor id means searching the functor
     /// table, and the module can only index. Measured, this is a third of
     /// clpr's remaining deopts -- the control helpers the prelude expands
@@ -133,12 +133,12 @@ public sealed class WasmResumeTable
     }
 
     /// <summary>The meta-call inline cache: (module atom, goal functor) ->
-    /// the RESOLVED functor. Two i64 per slot, key
+    /// the resolved functor. Two i64 per slot, key
     /// <c>((module + 1) &lt;&lt; 32) | goalFid</c> then the resolved id;
     /// key 0 is an empty slot. Open-addressed on the same probe the
     /// attribute image uses, because a module walks it the same way.
     ///
-    /// <para>It holds the resolved FUNCTOR, not the marker, and that is the
+    /// <para>It holds the resolved functor, not the marker, and that is the
     /// point: the module reads the marker out of
     /// <see cref="CallMarkers"/> afterwards, so an eviction -- which already
     /// zeroes that row -- invalidates this cache without touching it. A cache
@@ -146,7 +146,7 @@ public sealed class WasmResumeTable
     /// thing worse than a slow meta-call is one that jumps into a module that
     /// no longer owns the predicate.</para>
     ///
-    /// <para>Filled by the HOST when it resolves, which it was doing anyway:
+    /// <para>Filled by the host when it resolves, which it was doing anyway:
     /// the module cannot resolve a module-tagged goal, since that is a lookup
     /// through a module's locals and imports.</para></summary>
     public long[] MetaCache => _metaCache;
@@ -191,7 +191,7 @@ public sealed class WasmResumeTable
     {
         if (moduleAtomId < 0 || goalKey < 0 || resolvedFid < 0) return;
         // call/N appends arguments, so the predicate it resolves to has a
-        // WIDER arity than the goal -- a different functor, which the
+        // wider arity than the goal -- a different functor, which the
         // module cannot derive from the goal's (ids are interned, not
         // computed). It probes with what it has, so that is the key.
         if ((uint)appended > MaxAppended) return;
@@ -236,13 +236,13 @@ public sealed class WasmResumeTable
         }
     }
 
-    /// <summary>Makes sure the module has SOMETHING to jump to for this
+    /// <summary>Makes sure the module has something to jump to for this
     /// functor.
     ///
     /// <para>A meta-call and an ordinary call end on the same instruction:
     /// stage a marker in <see cref="WasmAbi.Pc"/> and return
     /// SuccessTailCall. They differ only in where the marker comes from.
-    /// An ordinary call knows its callee when it is compiled and BAKES
+    /// An ordinary call knows its callee when it is compiled and bakes
     /// marker(callee, 0); a meta-call learns it at run time and has to read
     /// it out of this table.</para>
     ///
@@ -267,12 +267,12 @@ public sealed class WasmResumeTable
         SetCallMarker(functorId, Activation.EncodeResumeMarker(functorId, 0));
     }
 
-    /// <summary>A functor the host resolves to a DIRECT builtin gets a
-    /// NEGATIVE marker, -(builtin id + 1): the module reads it where it
+    /// <summary>A functor the host resolves to a direct builtin gets a
+    /// negative marker, -(builtin id + 1): the module reads it where it
     /// reads a predicate's marker and, instead of jumping, requests the
     /// builtin with the goal's arguments in the registers -- the same exit
     /// a call_builtin site makes. Zero stays "nobody covers this".
-    /// A zero-arity builtin is an ATOM goal, keyed by its atom too.</summary>
+    /// A zero-arity builtin is an atom goal, keyed by its atom too.</summary>
     public void PublishBuiltin(int functorId, int builtinId)
     {
         if (functorId < 0 || builtinId < 0) return;
@@ -299,8 +299,8 @@ public sealed class WasmResumeTable
     /// <summary>The key a slot holds. The module packs the same word, so
     /// the two move together or not at all.
     ///
-    /// <para>For a COMPOUND goal the key half is its functor id; for an
-    /// ATOM goal it is the atom id, and the two id spaces overlap, hence
+    /// <para>For a compound goal the key half is its functor id; for an
+    /// atom goal it is the atom id, and the two id spaces overlap, hence
     /// the flag. An atom goal cannot be keyed by functor at all: the
     /// callee is name/appended and a module cannot intern that id.</para>
     /// </summary>
@@ -346,7 +346,7 @@ public sealed class WasmResumeTable
 
     /// <summary>Forgets a functor's fresh-entry marker. The marker itself
     /// stays valid -- it is interned for the life of the process -- but its
-    /// ROW is cleared alongside, so a module that reads the marker anyway
+    /// row is cleared alongside, so a module that reads the marker anyway
     /// merely fails the resume probe and exits to the host. Clearing here is
     /// belt and braces, and cheap.</summary>
     public void ClearCallMarker(int functorId)

@@ -6,15 +6,15 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// A REGION for flat local code-space compilation
+/// A region for flat local code-space compilation
 /// (<c>docs/design/il-region-compilation.md</c>): a root predicate plus its
-/// transitively-reachable LOCAL callees, up to an IL-size budget. A later stage
-/// compiles the whole region into ONE IL method where each member is a labeled
-/// block emitted ONCE and an intra-region call is a <c>br</c> (a cheap
+/// transitively-reachable local callees, up to an IL-size budget. A later stage
+/// compiles the whole region into one IL method where each member is a labeled
+/// block emitted once and an intra-region call is a <c>br</c> (a cheap
 /// intra-method jump) — the flat local code space, replacing the body-duplication
 /// inliner for real programs.
 ///
-/// <para>This type is the STAGE 1 (discovery) artifact: the member set and the
+/// <para>This type is the stage 1 (discovery) artifact: the member set and the
 /// intra-region test. No IL is emitted here.</para>
 /// </summary>
 internal sealed class IlRegion
@@ -52,7 +52,7 @@ internal sealed class IlRegion
     }
 }
 
-/// <summary>Stage 1 — builds an <see cref="IlRegion"/> by walking LOCAL call edges
+/// <summary>Stage 1 — builds an <see cref="IlRegion"/> by walking local call edges
 /// from a root, breadth-first, until a member would push the region past its
 /// IL-size budget. A call to an already-included member (a cycle or a shared
 /// callee) is not re-expanded — at emit time it becomes a <c>br</c> to the existing
@@ -74,7 +74,7 @@ internal static class IlRegionBuilder
     /// that would push the region past it stays a trampoline boundary — i.e. a
     /// region that would otherwise overflow is pruned, and the un-pulled callees are
     /// treated as ordinary (visible) predicates reached by the trampoline. (A real
-    /// post-emit IL-size guard — fall back if the EMITTED method nears 64 KB — is a
+    /// post-emit IL-size guard — fall back if the emitted method nears 64 KB — is a
     /// later stage; this bytecode proxy is the first-line bound.)</summary>
     public static readonly int DefaultBudgetBytes =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_BUDGET"), out var b) && b > 0
@@ -116,7 +116,7 @@ internal static class IlRegionBuilder
         return new IlRegion(root, members, memberFids);
     }
 
-    /// <summary>A region member must be a static IL body: non-empty and NOT a
+    /// <summary>A region member must be a static IL body: non-empty and not a
     /// dynamic predicate (whose bytecode opens with <c>enter_dynamic</c> —
     /// mutation-driven dispatch must stay Tier 0). Public-vs-local and
     /// full IL-eligibility are the caller's <c>extraEligible</c> filter (it needs
@@ -141,18 +141,18 @@ internal enum RegionCursorKind
     /// clause dispatch pushes a choice point carrying this cursor; a backtrack
     /// re-enters the region method here to try the next clause.</summary>
     ClauseAlt,
-    /// <summary>A chain node of an INDEXED member (Stage 6c). The member's index
+    /// <summary>A chain node of an indexed member (Stage 6c). The member's index
     /// decision branches forward to a node's label; a bucket-chain backtrack pushes a
-    /// choice point carrying the NEXT node's cursor, re-entering the region method at
+    /// choice point carrying the next node's cursor, re-entering the region method at
     /// that node. One cursor per <see cref="IlIndexedDispatchInfo"/> node; the node
     /// index rides in <see cref="RegionCursorSite.ClauseIndex"/>.</summary>
     IndexNode,
-    /// <summary>A non-root member's ENTRY. Lets an EXTERNAL by-fid call
-    /// dispatch INTO the region at that member — the load path maps a stripped
+    /// <summary>A non-root member's entry. Lets an external by-fid call
+    /// dispatch into the region at that member — the load path maps a stripped
     /// member's functor to <c>EncodeResumeMarker(rootFid, thisCursor)</c> in
     /// <c>CurrentFunctorAddresses</c>, and the dispatch loop's marker route invokes
-    /// the region delegate at this cursor. The cursor's label IS the member's entry
-    /// label (no separate block); assigned AFTER all other cursors so the existing
+    /// the region delegate at this cursor. The cursor's label is the member's entry
+    /// label (no separate block); assigned after all other cursors so the existing
     /// site-consumption order is untouched.</summary>
     MemberEntry,
     /// <summary>The post-site resume point of a backtrackable builtin
@@ -177,10 +177,10 @@ internal readonly record struct RegionCursorSite(
 /// <summary>The cursor plan for a region (Stage 2 artifact): the assignment of the
 /// region's forward-resume / intra-return cursor space, in the exact order the emit
 /// (a later stage) will consume it — per member (region order), per non-tail call
-/// site (pc order). The plan IS the spec the emit follows, so the dispatch jump
+/// site (pc order). The plan is the spec the emit follows, so the dispatch jump
 /// table and the emit's cursor consumption agree by construction.
 ///
-/// <para>STAGE 2 scope: single-clause members' non-tail <c>Call</c> sites only.
+/// <para>Stage 2 scope: single-clause members' non-tail <c>Call</c> sites only.
 /// Multi-clause clause-alternative cursors and backtrackable-builtin resume cursors
 /// are added when those member shapes are handled (Stages 4+).</para></summary>
 internal sealed class IlRegionPlan
@@ -205,7 +205,7 @@ internal sealed class IlRegionPlan
 /// un-tailing.</summary>
 internal static class IlRegionPlanner
 {
-    /// <param name="indexNodeCount">For an INDEXED member, the number of dispatch
+    /// <param name="indexNodeCount">For an indexed member, the number of dispatch
     /// nodes (<see cref="IlIndexedDispatchInfo"/>.Nodes.Count) — each gets an
     /// <see cref="RegionCursorKind.IndexNode"/> cursor instead of the try_me_else
     /// chain's clause-alt cursors. Returns 0 for a non-indexed member. Null (the

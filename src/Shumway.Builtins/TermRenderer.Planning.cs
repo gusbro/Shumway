@@ -6,7 +6,7 @@ namespace Shumway.Builtins;
 
 /// <summary>The per-shape planners: what each kind of node writes now, and
 /// what it owes to jobs. Every branch is the recursive renderer's branch
-/// unchanged; only the descent became a push. Jobs are pushed in REVERSE of
+/// unchanged; only the descent became a push. Jobs are pushed in reverse of
 /// the order they must run, because the stack is LIFO.</summary>
 public static partial class TermRenderer
 {
@@ -32,8 +32,8 @@ public static partial class TermRenderer
             }
         }
 
-        // Curly-brace notation: '{}'(Body) is {Body}. UNLIKE list notation it
-        // does NOT survive ignore_ops(true) -- write_canonical prints the
+        // Curly-brace notation: '{}'(Body) is {Body}. Unlike list notation it
+        // does not survive ignore_ops(true) -- write_canonical prints the
         // functional {}(Body). The braces bracket the body, so it renders at
         // full priority.
         if (arity == 1 && name == "{}" && !options.IgnoreOps)
@@ -112,7 +112,7 @@ public static partial class TermRenderer
             && OperandOpenRightAt(engine, engine.GetHeap(functorIdx + 1), infixPrec, options);
         // The `,` operator renders tight and unquoted -- `a,b`. An operator in
         // operator position is written raw when its name is a valid bare token
-        // there (quoting `,` / `|` would be wrong); a name that is NOT (the
+        // there (quoting `,` / `|` would be wrong); a name that is not (the
         // empty atom `''` as an operator, or one with layout in it) must be
         // quoted or the output is unreadable.
         string itext = (name == "," || name == "|" || NeedsNoQuoting(name))
@@ -122,11 +122,11 @@ public static partial class TermRenderer
 
         if (options.TightSymbolicOperators)
         {
-            // Fuse-aware spacing for EVERY infix operator: adjacent tokens of
+            // Fuse-aware spacing for every infix operator: adjacent tokens of
             // the same character class fuse on re-read (`1=\\` lexes `=\\` as
             // one atom). The operands render into their own buffers so their
-            // edge chars are known, and a space goes in ONLY where the
-            // operator would fuse with one -- EXCEPT (symbolic operators only)
+            // edge chars are known, and a space goes in only where the
+            // operator would fuse with one -- except (symbolic operators only)
             // when the operand is an unbound variable, whose name is written
             // verbatim per 7.10.5 and is not spaced (`1+/*r*/V`).
             bool symbolic = IsSymbolicName(name);
@@ -170,15 +170,15 @@ public static partial class TermRenderer
         Cell argCell = engine.GetHeap(functorIdx + 1);
         bool needsParens = prefixPrec > maxPriority;
         // ISO writeq: prefix `-` applied to a term whose leftmost token is a
-        // non-negative number must parenthesise THE OPERAND -- `- 1` reads
+        // non-negative number must parenthesise the operand -- `- 1` reads
         // back as the negative-number literal -1, not the compound -(1).
         // `+`/`\` have no such literal, so only `-`.
         bool operandParens =
             (name == "-" && RendersLeadingDigit(engine, argCell, options))
             || IsBareOperatorAtomCell(engine, argCell, options)
             // Neumerkel vn #43: prefix `-` applied to an operand that is a
-            // LEFT-CLOSED operator of EQUAL priority is parenthesised --
-            // `- X^2` -> `- (X^2)`. ONLY for `-`. The >-priority case is
+            // left-closed operator of equal priority is parenthesised --
+            // `- X^2` -> `- (X^2)`. Only for `-`. The >-priority case is
             // already parenthesised by argMax below.
             || (name == "-"
                 && OperandIsOperatorPriorityAtLeast(engine, argCell, prefixPrec, options));
@@ -255,7 +255,7 @@ public static partial class TermRenderer
         if (options.IgnoreOps)
         {
             // ISO 7.10.5 canonical form (write_canonical): a list is the
-            // compound '.'(H, T) and ignore_ops means FUNCTIONAL notation --
+            // compound '.'(H, T) and ignore_ops means functional notation --
             // `'.'(a,[])`, not `[a]`. The dot functor obeys the quoted option
             // like any other atom: write_term defaults quoted(false), so it
             // prints bare -- `.(a,[])`.
@@ -299,7 +299,7 @@ public static partial class TermRenderer
         Push(stack, new RenderJob
         {
             Op = RenderOp.ListStep, Cell = lisCell, Out = output, First = true,
-            // max_depth: the ENTRY cons already consumed one level (the node
+            // max_depth: the entry cons already consumed one level (the node
             // gate incremented); every further cons consumes another.
             ConsDepth = options.CurrentDepth, Spine = spine,
         });
@@ -316,8 +316,8 @@ public static partial class TermRenderer
         Resolve(engine, ref cursor);
 
         // Spine back-edge (a cyclic cons chain): the entry cons was gated by
-        // the caller; every FURTHER cons joins the path here, and a revisit
-        // elides IMMEDIATELY (the tail-position policy) -- `L = [a|L]` is
+        // the caller; every further cons joins the path here, and a revisit
+        // elides immediately (the tail-position policy) -- `L = [a|L]` is
         // `[a|...]`.
         if (!job.First && options.MaxDepth == 0 && cursor.Tag == Tag.Lis)
         {
@@ -339,7 +339,7 @@ public static partial class TermRenderer
                 return;
             }
             output.Write('|');                     // ISO: compact improper tail
-            // A revisited TAIL elides immediately -- [1|f([1|...])] ends at the
+            // A revisited tail elides immediately -- [1|f([1|...])] ends at the
             // second f, not with another unroll.
             if (options.MaxDepth == 0 && IsOnPath(options, cursor))
             {
@@ -364,7 +364,7 @@ public static partial class TermRenderer
             output.Write(',');                     // ISO: no layout between elements
         }
 
-        // The next cons runs AFTER this element, so it goes on first.
+        // The next cons runs after this element, so it goes on first.
         Push(stack, new RenderJob
         {
             Op = RenderOp.ListStep, Cell = tail, Out = output, First = false,
@@ -373,10 +373,10 @@ public static partial class TermRenderer
 
         // Each element is an argument-priority (999) position: a ','/2 element
         // must parenthesise (`[(a,b)]`, not `[a,b]`), as must any operator
-        // >= 1000. Plain Node, NOT Operand: an ATOM that is an operator is a
+        // >= 1000. Plain Node, not Operand: an atom that is an operator is a
         // legal argument bare (ISO 6.3.3 -- `[:-,-]`, not `[(:-),(-)]`); the
         // operand-position parens are only for operator operands. A revisited
-        // ELEMENT elides immediately (never unrolls) -- L = [L, a | b] prints
+        // element elides immediately (never unrolls) -- L = [L, a | b] prints
         // [...,a|b].
         Cell headResolved = head;
         Resolve(engine, ref headResolved);

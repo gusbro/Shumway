@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The <c>:- encoding/1</c> directive and its stream-side half
 /// (ADR-048 follow-up): consult decodes a source file per its BOM and its
-/// leading encoding directive — TOLERANTLY, so a file whose bytes are not
+/// leading encoding directive — tolerantly, so a file whose bytes are not
 /// valid under the default encoding still gets its directive found and is
 /// then re-decoded — and open/4 detects BOMs, takes UTF-16/32 encodings,
 /// and reports encoding/bom via stream_property/2.</summary>
@@ -33,7 +33,7 @@ public sealed class EncodingDirectiveTests : IDisposable
     [Fact]
     public void NoBomFileWithDirective_ConsultsWithoutBlowingUp()
     {
-        // UTF-16BE, NO BOM: read under the UTF-8 default this is NUL-laced
+        // UTF-16BE, no BOM: read under the UTF-8 default this is NUL-laced
         // garbage — the directive must still be found and the file re-read.
         var e = new PrologEngine();
         string f = Write("be.pl",
@@ -131,7 +131,7 @@ public sealed class EncodingDirectiveTests : IDisposable
     {
         var e = new PrologEngine();
         // Strict default: the escape is unknown (the conformance suites
-        // check). The flag flip and its use must be SEPARATE reads — a
+        // check). The flag flip and its use must be separate reads — a
         // query is parsed whole before it runs.
         Assert.ThrowsAny<Exception>(() => e.Query("X = 'a\\u0041b'."));
         Assert.True(e.Query("set_prolog_flag(lenient_escapes, true).").Success);

@@ -9,7 +9,7 @@ using System.Threading;
 namespace Shumway.Embedding.Debugging.Dap;
 
 /// <summary>
-/// ADR-036 — the debug ADAPTER: the small executable VS Code launches and speaks DAP
+/// ADR-036 — the debug adapter: the small executable VS Code launches and speaks DAP
 /// with over stdio (the declarative `program` field of the extension's debugger
 /// contribution — no extension code at all). It is protocol glue on the IDE side, never
 /// the debuggee: on <c>launch</c> it asks VS Code — the DAP <c>runInTerminal</c> reverse
@@ -33,7 +33,7 @@ public sealed class DapProxy
     /// (which cross with the client's own small numbers).</summary>
     internal const int InternalSeqBase = 1_000_000;
 
-    /// <summary>Reverse requests from the adapter to the CLIENT (runInTerminal) live at
+    /// <summary>Reverse requests from the adapter to the client (runInTerminal) live at
     /// and above this seq, distinct from both ranges above.</summary>
     internal const int ReverseSeqBase = 900_000;
 
@@ -90,7 +90,7 @@ public sealed class DapProxy
         string type = root.TryGetProperty("type", out JsonElement t)
             ? t.GetString() ?? "" : "";
 
-        // The client's answer to OUR runInTerminal: consume, wake the launch handler.
+        // The client's answer to our runInTerminal: consume, wake the launch handler.
         if (type == "response"
             && root.TryGetProperty("request_seq", out JsonElement rs)
             && rs.GetInt32() >= ReverseSeqBase)
@@ -113,7 +113,7 @@ public sealed class DapProxy
         {
             case "initialize":
                 // The backend does not exist yet; answer for it, with its capabilities —
-                // this list MIRRORS DapDebugServer's initialize response, and the two
+                // this list mirrors DapDebugServer's initialize response, and the two
                 // must say the same thing.
                 SendToClient(w =>
                 {
@@ -172,7 +172,7 @@ public sealed class DapProxy
             string? cwd = StringArg(args, "cwd");
             int port = IntArg(args, "port") ?? PickFreePort();
 
-            // --dap-wait, not --dap: a program LAUNCHED to be debugged holds its prompt
+            // --dap-wait, not --dap: a program launched to be debugged holds its prompt
             // until the client's breakpoints are armed (configurationDone) — otherwise a
             // goal typed in the first second runs past every breakpoint (the launch
             // race). Attach keeps the plain, non-blocking --dap.

@@ -79,7 +79,7 @@ public class MultiArgIndexingTests
     [Fact]
     public void BothArgsIndexable_EmitsBothSwitchOnTermAndSwitchOnArg()
     {
-        // Arg 0 discriminates (a/b) AND arg 1 discriminates (x/y).
+        // Arg 0 discriminates (a/b) and arg 1 discriminates (x/y).
         // Both levels are emitted: switch_on_term for arg 0, then
         // switch_on_arg for arg 1.
         var pred = CompilePredicate(

@@ -7,9 +7,9 @@ namespace Shumway.Tests.Wasm;
 /// <summary>A cut owes the trails a compaction, and the module pays what it
 /// can.
 ///
-/// <para>The interpreter's Cut lowers B and then COMPACTS, dropping trail
+/// <para>The interpreter's Cut lowers B and then compacts, dropping trail
 /// entries the cut has made unreachable. The module does the same walk in
-/// place. What it cannot do is WRITE the managed state a dropped entry
+/// place. What it cannot do is write the managed state a dropped entry
 /// sometimes owes -- an orphaned attribute record cleared, a dead record
 /// dropped from the store, a catch frame's snapshot clipped -- so a first
 /// pass decides whether any of that is coming and the walk only runs when
@@ -24,7 +24,7 @@ namespace Shumway.Tests.Wasm;
 /// survived, sat below a later choice point, and was unwound at the end of
 /// the goal -- putting twenty-five cells back to ATTVAR and leaving six
 /// attributed variables in an answer that should have had none. On
-/// SEND+MORE that was the difference between not finishing in 180 seconds
+/// send+more that was the difference between not finishing in 180 seconds
 /// and 868 ms.</para></summary>
 public sealed class CutCompactsOrStepsAsideTests(ITestOutputHelper o)
 {
@@ -47,14 +47,14 @@ public sealed class CutCompactsOrStepsAsideTests(ITestOutputHelper o)
         q(yes).
         """;
 
-    /// <summary>A narrowing's entries are DROPPED by the cut, which orphans
+    /// <summary>A narrowing's entries are dropped by the cut, which orphans
     /// a record and kills another, and the module does the whole walk
-    /// anyway: both of those are writes it PARKS for the host rather than
+    /// anyway: both of those are writes it parks for the host rather than
     /// hands the walk back for.
     ///
     /// <para>Pinned from both sides, because "no declines" alone would pass
     /// for a goal that never cut at all: the interpreter running the same
-    /// goal DOES walk, and the tier leaves the host nothing to walk.</para>
+    /// goal does walk, and the tier leaves the host nothing to walk.</para>
     /// </summary>
     [DiagFact]
     public void ACutWhoseDropsOweAWriteCompactsAnyway()

@@ -35,7 +35,7 @@ public enum WasmVerdict
     /// <summary>The compiled code met something it does not handle -- an
     /// attributed variable, an operand past the small-integer lane, a full
     /// trail -- and stepped aside: every scalar is synced and
-    /// <see cref="WasmAbi.Pc"/> holds the BYTECODE address of the very
+    /// <see cref="WasmAbi.Pc"/> holds the bytecode address of the very
     /// instruction that stepped, so the interpreter continues there as if the
     /// predicate had never been compiled. The state is the engine's own
     /// arrays, which is what makes deoptimising this cheap.</summary>
@@ -43,13 +43,13 @@ public enum WasmVerdict
 }
 
 /// <summary>The one contract between a compiled wasm predicate and the engine:
-/// a MAILBOX of 64-bit slots at a known address, and an exported function
+/// a mailbox of 64-bit slots at a known address, and an exported function
 /// <c>(mailbox: i32, cursor: i32) -&gt; i32</c> whose result is a
 /// <see cref="WasmVerdict"/>.
 ///
 /// <para>The module sees two things and no more: the memory it imports, which
-/// in the browser IS the runtime's own linear memory, and this mailbox inside
-/// it. On every entry the wrapper writes fresh BASES (the addresses of the
+/// in the browser is the runtime's own linear memory, and this mailbox inside
+/// it. On every entry the wrapper writes fresh bases (the addresses of the
 /// engine's pinned arrays) and the WAM scalars into the mailbox, calls, and
 /// copies the scalars back. The arrays can only be replaced by managed code,
 /// and managed code only runs once the wasm has returned, so a base cannot go
@@ -106,7 +106,7 @@ public static class WasmAbi
     /// <summary>CP -- the continuation (a bytecode address or a resume
     /// marker).</summary>
     public const int ContinuationPc = 16;
-    /// <summary>First stack index that does NOT fit: a frame or choice point
+    /// <summary>First stack index that does not fit: a frame or choice point
     /// that would cross it makes the code step aside instead.</summary>
     public const int StackLimit = 17;
     /// <summary>First binding-trail index that does not fit.</summary>
@@ -128,7 +128,7 @@ public static class WasmAbi
     /// <summary>Base of the functor table's mirror in linear memory: one
     /// i64 per functor id, packed <c>(atomId &lt;&lt; 32) | arity</c> exactly
     /// as FunctorTable keeps it. The table is managed state the module
-    /// cannot reach, and the mirror is deliberately an EXACT copy rather
+    /// cannot reach, and the mirror is deliberately an exact copy rather
     /// than the arity alone: a wasm-side value that diverges can then be
     /// named (this functor, that atom) instead of only counted.
     ///
@@ -138,12 +138,12 @@ public static class WasmAbi
     public const int FunctorTableBase = 24;
 
     /// <summary>Diagnostic scratch: a step-aside site may leave the two
-    /// values it compared here, so the host can see WHY it stepped aside
+    /// values it compared here, so the host can see why it stepped aside
     /// rather than only where. Never read by compiled code.</summary>
     public const int DiagA = 25;
     public const int DiagB = 26;
 
-    /// <summary>Goals dispatched and heap cells claimed INSIDE the module,
+    /// <summary>Goals dispatched and heap cells claimed inside the module,
     /// added to the engine's own tallies when a chain closes. Without these
     /// the module is invisible to time/1: every call it makes and every cell
     /// it claims never reaches a managed counter, and a run that stays in
@@ -152,7 +152,7 @@ public static class WasmAbi
     public const int GoalsRun = 27;
     public const int CellsClaimed = 28;
 
-    /// <summary>Base of the RESUME TABLE: one i64 per resume marker, indexed
+    /// <summary>Base of the resume table: one i64 per resume marker, indexed
     /// by <c>marker - Activation.ResumeMarkerBase</c>.
     ///
     /// <para>A marker is already a dense id — <c>EncodeResumeMarker</c> interns
@@ -162,20 +162,20 @@ public static class WasmAbi
     /// in the module.</para>
     ///
     /// <para>Row layout: <c>((moduleId + 1) &lt;&lt; 32) | cursor</c>. Zero means
-    /// the marker does not resolve HERE, which is the safe direction: the
+    /// the marker does not resolve here, which is the safe direction: the
     /// module returns the verdict and the host takes over, exactly as it did
     /// before there was a table.</para>
     ///
-    /// <para>PER WORLD, never global. Functor ids and the marker pool are
+    /// <para>Per world, never global. Functor ids and the marker pool are
     /// process-wide, but bytecode addresses belong to each engine's code space:
-    /// two engines running the same program mint the SAME markers for DIFFERENT
+    /// two engines running the same program mint the same markers for different
     /// code. Today that is safe only because resolution is per world, and a
     /// shared table would quietly lose it.</para></summary>
     public const int ResumeTableBase = 29;
     /// <summary>Rows in the resume table. A marker at or past this is newer
     /// than the table and resolves to the host.</summary>
     public const int ResumeTableLength = 30;
-    /// <summary>Base of the ATTRIBUTE TABLE's image: two i64 per slot, key
+    /// <summary>Base of the attribute TABLE's image: two i64 per slot, key
     /// <c>((home + 1) &lt;&lt; 32) | module</c> then the attribute value's heap
     /// index. Key 0 is an empty slot and ends a probe; -1 is a tombstone and
     /// does not.
@@ -190,7 +190,7 @@ public static class WasmAbi
     /// when the heap collector moves every index at once.</para></summary>
     public const int AttrTableBase = 31;
     /// <summary>Slots minus one: the image is a power of two, so a probe
-    /// wraps with an AND. Read only when the base is non-zero.</summary>
+    /// wraps with an and. Read only when the base is non-zero.</summary>
     public const int AttrTableMask = 33;
 
     /// <summary>Base of the moduleId -&gt; function-table index array the
@@ -215,13 +215,13 @@ public static class WasmAbi
     /// slow, and no answer-comparing test can tell.</summary>
     public const int HopCount = 38;
 
-    /// <summary>Base of the CALL MARKER table: one i32 per functor id, the
+    /// <summary>Base of the CALL marker table: one i32 per functor id, the
     /// resume marker of that functor's fresh entry, 0 for a functor no module
     /// covers. Zero base means no table, and a meta-call steps aside exactly
     /// as it did before there was one.
     ///
     /// <para>What it buys is the only thing a module could not do: call a
-    /// goal whose functor it learns at RUN time. A marker is interned by the
+    /// goal whose functor it learns at run time. A marker is interned by the
     /// host, so it cannot be computed from a functor; with the marker in hand
     /// the module takes the ordinary resume probe.</para></summary>
     public const int CallMarkerBase = 39;
@@ -229,8 +229,8 @@ public static class WasmAbi
     /// this is newer than the table and steps aside.</summary>
     public const int CallMarkerLength = 40;
 
-    /// <summary>Base of the META-CALL INLINE CACHE: two i64 per slot, key
-    /// <c>((moduleAtom + 1) &lt;&lt; 32) | goalFunctor</c> then the RESOLVED
+    /// <summary>Base of the meta-call inline cache: two i64 per slot, key
+    /// <c>((moduleAtom + 1) &lt;&lt; 32) | goalFunctor</c> then the resolved
     /// functor. Zero base means no cache and a module-tagged meta-call steps
     /// aside, as it always did.
     ///
@@ -241,7 +241,7 @@ public static class WasmAbi
     /// <summary>Slots minus one. Read only when the base is non-zero.</summary>
     public const int MetaCacheMask = 42;
 
-    /// <summary>Base of the ATOM marker table: one i32 per atom id, the
+    /// <summary>Base of the atom marker table: one i32 per atom id, the
     /// fresh-entry marker of the zero-arity predicate of that name. Zero
     /// base means none is staged and an atom goal steps aside.
     ///
@@ -254,13 +254,13 @@ public static class WasmAbi
 
     /// <summary>Non-zero while setup_call_cleanup/3 has live handlers.
     ///
-    /// <para>A cut may FIRE them, and running a cleanup is meta-calling a
+    /// <para>A cut may fire them, and running a cleanup is meta-calling a
     /// goal from inside the cut -- host work. So the module's inline cut
     /// declines whenever any is live, which is the common case being
     /// nothing.</para>
     ///
     /// <para>A slot of its own rather than a Flags bit: Flags makes the code
-    /// bail at the next safe point, and this must stop ONE emitted form, not
+    /// bail at the next safe point, and this must stop one emitted form, not
     /// the whole chain.</para></summary>
     public const int CleanupsPending = 45;
 
@@ -270,8 +270,8 @@ public static class WasmAbi
     public const string TableModule = "env";
     public const string TableField = "__indirect_function_table";
 
-    /// <summary>Base of the '$fd_dom' functor cells, indexed by INTERVAL
-    /// COUNT: entry k is the functor of a domain with k intervals, which has
+    /// <summary>Base of the '$fd_dom' functor cells, indexed by interval
+    /// count: entry k is the functor of a domain with k intervals, which has
     /// arity 2k (ADR-051). Zero means the table does not reach that far and
     /// the module exits to the host, the same safe direction an unwritten
     /// base gives everywhere else.
@@ -288,11 +288,11 @@ public static class WasmAbi
     /// </summary>
     public const int FdDomFunctorLength = 47;
 
-    /// <summary>TRACE MODE (diagnostic, off unless armed): a ring the
+    /// <summary>Trace mode (diagnostic, off unless armed): a ring the
     /// module writes one i64 per traced event into, and the cursor and
     /// capacity that bound it. Zero base means do not trace.
     ///
-    /// <para>It exists because the module commits and backtracks INSIDE
+    /// <para>It exists because the module commits and backtracks inside
     /// wasm without calling anything the engine can see, so no host-side
     /// instrument can compare those against Tier 0's. Writing to memory
     /// rather than calling out keeps the emitted code to a bounds check
@@ -305,7 +305,7 @@ public static class WasmAbi
     public const int TraceTop = 49;
     public const int TraceLimit = 50;
 
-    /// <summary>The attribute trail log's HOME column, one i32 per record,
+    /// <summary>The attribute trail log's home column, one i32 per record,
     /// and how many records there are.
     ///
     /// <para>A cut's compaction judges an AttrModify entry by the RECORD's
@@ -315,7 +315,7 @@ public static class WasmAbi
     /// same shape as the functor mirror -- the host writes, the module only
     /// reads -- so the list stays the single source of truth.</para>
     ///
-    /// <para>A record the compaction ORPHANED reads as int.MinValue, which is
+    /// <para>A record the compaction orphaned reads as int.MinValue, which is
     /// below every floor and so survives every test; that is the same answer
     /// the managed list gives, because a cleared record is (int.MinValue, 0,
     /// 0).</para></summary>
@@ -326,7 +326,7 @@ public static class WasmAbi
     /// SnapHeapTop among them, or 0 when there is none.
     ///
     /// <para>A cut drops trail entries that any outer backtrack would make
-    /// moot, but a THROW is a second unwind consumer that truncates only to
+    /// moot, but a throw is a second unwind consumer that truncates only to
     /// its own snapshot, so every mutation of a cell older than that must
     /// survive. One number, and it cannot change inside a chain: a catch
     /// frame is pushed by '$catch_begin'/2, which is a builtin, and a builtin
@@ -350,7 +350,7 @@ public static class WasmAbi
     /// which is an eight-byte cell sitting at a four-byte boundary.
     ///
     /// <para>Unaligned on purpose and harmless: a wasm i64.load's align
-    /// immediate is a hint, not a constraint. These are ASSERTED against the
+    /// immediate is a hint, not a constraint. These are asserted against the
     /// managed struct by a test, because a module bakes them and a silent
     /// layout change would have it read the wrong field rather than
     /// fail.</para></summary>
@@ -360,7 +360,7 @@ public static class WasmAbi
     public const int ExtraTrailOldValueOffset = 8;
     public const int ExtraTrailMarkerOffset = 16;
 
-    /// <summary>Where a compaction PARKS the attribute records it
+    /// <summary>Where a compaction parks the attribute records it
     /// orphaned, for the host to clear when the chain comes out.
     ///
     /// <para>A dropped AttrModify entry was the only reference into its
@@ -370,7 +370,7 @@ public static class WasmAbi
     /// used to hand the whole compaction back, 300 times in one clp(Z) goal
     /// and 47% of everything the module deopted for.</para>
     ///
-    /// <para>It is deferrable because it is HYGIENE and not semantics: the
+    /// <para>It is deferrable because it is hygiene and not semantics: the
     /// record is dead the moment its entry is dropped, nothing reads it
     /// again, and clearing it one chain later costs one chain of retention.
     /// A garbage collection in between marks it and moves on, which is the
@@ -396,25 +396,25 @@ public static class WasmAbi
 
     /// <summary>Where the expression evaluator leaves its answer: the value
     /// (a 60-bit integer, or the bits of a double) and which of the two it
-    /// is. It is a FUNCTION, so it cannot write the caller's locals.
+    /// is. It is a function, so it cannot write the caller's locals.
     /// </summary>
     public const int ArithValue = 62;
     public const int ArithKind = 63;
 
-    /// <summary>Where a module PARKS an attribute it wrote, for the host
+    /// <summary>Where a module parks an attribute it wrote, for the host
     /// to put in the store when the chain comes out. Entries are four i32:
     /// home, module, the value that was there, the value now.
     ///
-    /// <para>The module writes the IMAGE and the trail itself, because both
+    /// <para>The module writes the image and the trail itself, because both
     /// are in linear memory and both are order-sensitive: the trail entry
     /// has to sit between whatever else the chain trails, and a later read
     /// in the same chain has to see the new value. What it cannot write is
     /// the store and the attribute log, and those are what this carries.
-    /// Between the write and the drain the image LEADS the store, which is
+    /// Between the write and the drain the image leads the store, which is
     /// sound only because managed code never runs in between: every builtin
     /// request syncs first, and the drain is part of that sync.</para>
     ///
-    /// <para>Updates only. An INSERT would have to place a new key in an
+    /// <para>Updates only. An insert would have to place a new key in an
     /// open-addressed table and keep its load factor, and a module that got
     /// that wrong would leave a table that never rebuilds.</para></summary>
     /// <summary>One parked attribute write, six i32 and two of padding.
@@ -430,7 +430,7 @@ public static class WasmAbi
     public const int AttrWriteModule = 2;
     public const int AttrWriteOld = 3;
     public const int AttrWriteNew = 4;
-    /// <summary>1 when the module took a FRESH slot in the image, which is
+    /// <summary>1 when the module took a fresh slot in the image, which is
     /// occupancy the host has to count because its own put will not.
     /// </summary>
     public const int AttrWriteFresh = 5;
@@ -438,13 +438,13 @@ public static class WasmAbi
     /// <summary>Set a value on a row that exists, or on one the module
     /// placed.</summary>
     public const int AttrOpSet = 0;
-    /// <summary>The same, on a variable the module PROMOTED: the cell and
+    /// <summary>The same, on a variable the module promoted: the cell and
     /// its value change are already written and trailed, the record is
     /// not.</summary>
     public const int AttrOpPromote = 1;
     /// <summary>Take a row away; the record keeps others.</summary>
     public const int AttrOpRemove = 2;
-    /// <summary>Take the LAST row away. The module has already demoted the
+    /// <summary>Take the last row away. The module has already demoted the
     /// cell and trailed it.</summary>
     public const int AttrOpRemoveLast = 3;
 
@@ -453,25 +453,25 @@ public static class WasmAbi
     public const int AttrWriteLimit = 66;
 
     /// <summary>How many entries the extra trail can hold. It was never
-    /// needed while the module only ever READ the trail.</summary>
+    /// needed while the module only ever read the trail.</summary>
     public const int ExtraTrailLimit = 67;
 
-    /// <summary>How many rows the module may still INSERT into the
+    /// <summary>How many rows the module may still insert into the
     /// attribute image before it has to hand one back.
     ///
     /// <para>An insert into an open-addressed table is only dangerous
     /// because of what it does to the load factor: cross it and the table
     /// has to be rebuilt, which is not a thing a module can do. So the host
     /// says up front how much room there is to the threshold, and the module
-    /// spends it. When it runs out it declines ONE call, the host inserts
+    /// spends it. When it runs out it declines one call, the host inserts
     /// that one and rebuilds if it must, and the next staging hands over a
     /// fresh budget.</para>
     ///
-    /// <para>Only a FRESH slot costs budget. Reusing a tombstone lengthens
+    /// <para>Only a fresh slot costs budget. Reusing a tombstone lengthens
     /// no probe that was not already long, and the host's own insert does
     /// not count it either -- the two have to agree about this or the
     /// table's occupancy drifts.</para></summary>
-    /// <summary>Where a compaction PARKS the homes whose attribute record
+    /// <summary>Where a compaction parks the homes whose attribute record
     /// the engine has to drop.
     ///
     /// <para>A cut that drops a binding entry owes a record with it when the
@@ -489,7 +489,7 @@ public static class WasmAbi
     /// <summary>Base and mask of the reverse functor table: a name and an
     /// arity give the id a Str cell carries.
     ///
-    /// <para>What lets a module PUT a term together. The forward mirror
+    /// <para>What lets a module put a term together. The forward mirror
     /// answers the other direction, which is all taking one apart needs; a
     /// zero base means =../2's composing mode steps aside, as it did before
     /// this existed.</para></summary>
@@ -505,7 +505,7 @@ public static class WasmAbi
     /// <summary>Base and pair count of the global-variable image: (atom id,
     /// cell) pairs, one per key the host would answer a read of -- a live
     /// cell as itself, a snapshot the host re-emits as
-    /// <see cref="GlobalVarPayloadSentinel"/>. The image is COMPLETE, so a
+    /// <see cref="GlobalVarPayloadSentinel"/>. The image is complete, so a
     /// key it lacks is unset and the module fails the read itself; it is
     /// rewritten at every host boundary, which is where every write
     /// happens. A zero base or a negative count (the pairs did not fit)
@@ -551,8 +551,8 @@ public static class WasmAbi
 
     /// <summary>A fingerprint of this mailbox layout: every constant above,
     /// by name and value, plus the verdict codes. A baked wasm module reads
-    /// mailbox slots by the numbers that were constants AT BAKE TIME, so a
-    /// module loaded into an engine whose layout moved reads the WRONG slots
+    /// mailbox slots by the numbers that were constants at bake time, so a
+    /// module loaded into an engine whose layout moved reads the wrong slots
     /// and nothing else would notice -- no trap, no bad verdict, just wrong
     /// addresses. The stamp travels with every relocatable module and is
     /// compared on read. Computed, not hand-bumped: forgetting the bump was

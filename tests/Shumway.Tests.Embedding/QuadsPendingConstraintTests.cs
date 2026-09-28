@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>An answer may still stand on a CONSTRAINT, and a transcript says
+/// <summary>An answer may still stand on a constraint, and a transcript says
 /// so with <c>maybe</c>: `dif(X,Y), X = a` answers `X = a, maybe`, not
 /// `X = a`. Its absence is a claim too — an answer written without it stands
 /// on its own — which is what makes `X = a` a wrong description of that
@@ -135,7 +135,7 @@ public sealed class QuadsPendingConstraintTests
         Assert.Contains("quads: 1/1", RunQuads(
             "t\n?- setof(1, (Y=2 ; Y=1), L).\n" +
             "   Y = 2, L = [1]\n;  Y = 1, L = [1]\n|  other_answer_sequence.\n"));
-        // Without the marker the order IS claimed, and this one is wrong.
+        // Without the marker the order is claimed, and this one is wrong.
         Assert.Contains("quads: 0/1", RunQuads(
             "t\n?- setof(1, (Y=2 ; Y=1), L).\n" +
             "   Y = 2, L = [1]\n;  Y = 1, L = [1].\n"));

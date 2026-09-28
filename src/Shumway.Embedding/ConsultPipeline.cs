@@ -62,11 +62,11 @@ internal sealed class ConsultPipeline
         catch (Shumway.Compiler.Parsing.ParseException ex) { throw AsSyntaxError(ex); }
     }
 
-    /// <summary>A parse failure crossing OUT of a consult becomes a proper ISO
+    /// <summary>A parse failure crossing out of a consult becomes a proper ISO
     /// <c>syntax_error</c> ball (the position rides in the message), so the
     /// top level reports it as an error and <c>catch/3</c> can take it — it
     /// used to escape as the raw .NET exception, uncatchable from Prolog.
-    /// Only STRICT consults (compile-time tooling) let one out at all; a
+    /// Only strict consults (compile-time tooling) let one out at all; a
     /// runtime consult recovers per clause — see <see cref="ReadRecovering"/>.</summary>
     private static Exception AsSyntaxError(Shumway.Compiler.Parsing.ParseException ex)
         => ex.RepresentationFlaw is { } flaw
@@ -93,7 +93,7 @@ internal sealed class ConsultPipeline
     {
         E.NoteFileLoaded(path);
         // ISO include/1 — `:- include('lib/x.pl')` resolves relative to the
-        // INCLUDING file's directory, so consulting a file records its
+        // including file's directory, so consulting a file records its
         // directory for the duration of the consult (restored after: a
         // nested ConsultFile from an initialization goal must not leak).
         string? prevBase = E._consultBaseDir;
@@ -105,25 +105,25 @@ internal sealed class ConsultPipeline
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = E._debugFileId;
 
-        // THE FULL PATH, resolved against the ENGINE's directory — which is the only process
+        // The full path, resolved against the ENGINE's directory — which is the only process
         // that knows it. `shumway --debug Blint.pl` run in c:\temp consults c:\temp\Blint.pl,
         // and if a frame says only "Blint.pl" the debugger has to guess where that is: it
-        // resolves it against ITS OWN directory (Visual Studio's), finds no such file, matches
+        // resolves it against its own directory (Visual Studio's), finds no such file, matches
         // no module, and shows the frame grey — no language, no source, nothing to click. The
         // engine knows; it should say. (DebugSiteTable identifies a file by its base name, so
-        // a breakpoint the editor sets still binds — but the NAME it reports is now one anybody
+        // a breakpoint the editor sets still binds — but the name it reports is now one anybody
         // can find.)
         string debugPath = path;
         try { debugPath = Path.GetFullPath(path); }
         catch (Exception) { /* unresolvable — the name as given is the best we have */ }
         E._debugFileId = DebugSiteTable.InternFile(debugPath);
 
-        // And the debugger is TOLD about the file, now, whether or not anything ever stops in
-        // it. A breakpoint binds against a module and a module IS a file: until the debugger
+        // And the debugger is told about the file, now, whether or not anything ever stops in
+        // it. A breakpoint binds against a module and a module is a file: until the debugger
         // knows the name, the frames of that file have no module, so they are grey, carry no
         // language, and open nothing when clicked. It used to learn the names only from the
         // command line (a launch) or from the frames of a stop that had already happened — so
-        // a file consulted from the top level (`?- [blint].`) was invisible until the SECOND
+        // a file consulted from the top level (`?- [blint].`) was invisible until the second
         // time the program stopped. The engine knows which files it loaded; it should say so.
         if (E.DebugSession is not null)
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
@@ -162,9 +162,9 @@ internal sealed class ConsultPipeline
         }
     }
 
-    /// <summary>Rejects clauses whose head is a procedure of the PROCESSOR
+    /// <summary>Rejects clauses whose head is a procedure of the processor
     /// (see the call site): a control connective always; a builtin or prelude
-    /// predicate when the clause would land in the GLOBAL module — inside a
+    /// predicate when the clause would land in the global module — inside a
     /// named module the same head is an ADR-008 local that shadows the
     /// builtin for that module only, which stays legal. Reported through the
     /// warnings channel and dropped, so the rest of the file still loads —
@@ -191,24 +191,24 @@ internal sealed class ConsultPipeline
     private bool IsProtectedHead((string Name, int Arity) spec, bool globalModule)
     {
         // Control connectives can never be dispatched (the compiler lowers
-        // them inline unconditionally) — rejected in ANY module.
+        // them inline unconditionally) — rejected in any module.
         if (spec is (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0))
             return true;
         if (!globalModule) return false;
         int fid = FunctorTable.Intern(
             AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity);
-        // The global hooks are DESIGNED to be defined by user code.
+        // The global hooks are designed to be defined by user code.
         if (PrologEngine.IsGlobalHookFunctor(fid)) return false;
         // A predicate the user already made dynamic is theirs (a preceding
         // `:- dynamic` on a protected name raised its own error).
         if (E._dynStore.IsDynamic(fid)) return false;
         // ISO 7.5.2 makes every built-in static, and the REGISTRY's native
         // ones are protected here. The prelude's Prolog-defined library
-        // predicates are deliberately NOT: defining append/3 or member/2 in
+        // predicates are deliberately not: defining append/3 or member/2 in
         // a plain file is ordinary Prolog (every tutorial does it), and the
         // user's definition shadows the library's — the same line SWI draws
         // between locked system predicates and redefinable library ones.
-        // assertz/1 still refuses BOTH kinds: mutating a loaded library
+        // assertz/1 still refuses both kinds: mutating a loaded library
         // predicate at runtime is a different act from loading your own.
         return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _);
     }
@@ -520,12 +520,12 @@ internal sealed class ConsultPipeline
     // A clause head `M:term_expansion(_,_)` or `M:goal_expansion(_,_)`: atts.pl
     // and dcgs.pl install `user:term_expansion/2` and `user:goal_expansion/2` to
     // register the global expansion hooks. We strip the `M:` and keep the clause
-    // in the CONSULTING
+    // in the consulting
     // file's module. The hook functor is pinned global (IsGlobalHookFunctor), so it
-    // still installs the single global hook; but its BODY resolves against the file
+    // still installs the single global hook; but its body resolves against the file
     // module's own predicates (dcgs' `dcg_rule`, atts' `expand_terms`) — routing the
     // whole clause into module M instead would leave those body calls unresolved.
-    // Any OTHER `M:Head` defines Head in M (ADR-055, TrySplitForeignHead).
+    // Any other `M:Head` defines Head in M (ADR-055, TrySplitForeignHead).
     private static bool TryStripHookHead(Clause clause, out Clause stripped)
     {
         stripped = clause;
@@ -557,7 +557,7 @@ internal sealed class ConsultPipeline
     /// <summary>Early-activation clause surgery: a <c>term_expansion/2</c>
     /// clause is renamed to <paramref name="earlyName"/> (so only the directive
     /// probe consults it); a <c>goal_expansion/2</c> or <c>term_expansion/6</c>
-    /// clause is DROPPED (<paramref name="dropClause"/>) — a partial hook must
+    /// clause is dropped (<paramref name="dropClause"/>) — a partial hook must
     /// never reach the global aggregate. Returns false for ordinary clauses
     /// (helpers), which the hidden module keeps verbatim.</summary>
     private static bool TryRenameEarlyHookClause(
@@ -638,7 +638,7 @@ internal sealed class ConsultPipeline
     }
 
     // Wraps an in-file hook clause's body with the order guard '$te_after'(index),
-    // so the re-expansion pass fires it only for clauses AFTER position `index`
+    // so the re-expansion pass fires it only for clauses after position `index`
     // (its own definition). Inert for every later consult (pos = -1).
     private static Clause GuardHookClause(Clause c, int index)
     {
@@ -661,7 +661,7 @@ internal sealed class ConsultPipeline
     // this consult's committed clauses (the slice [baseOffset, baseOffset+count) of
     // the module's clause list), now that the file's own hooks are live. Each hook
     // is order-guarded, so it fires only for clauses after its definition. The hook
-    // compiles ONCE (first QueryAll) and is dispatched per clause — no per-clause
+    // compiles once (first QueryAll) and is dispatched per clause — no per-clause
     // recompile. Only rebuilds + invalidates when something actually expanded.
     // Clauses this consult routed into the dynamic store, for the re-expansion
     // pass: (functor, index in its store slot, position in the kept-clause
@@ -676,7 +676,7 @@ internal sealed class ConsultPipeline
         HashSet<int>? pendingMultifile, Func<ModuleRewrite.Context> multifileCtx)
     {
         Clause routed = produced;
-        // A grammar rule is routed by its TRANSLATED head, as in the main loop.
+        // A grammar rule is routed by its translated head, as in the main loop.
         if (routed.Kind == ClauseKind.DcgRule)
         {
             var dcgT = Shumway.Compiler.Parsing.DcgTransform.Apply(
@@ -686,7 +686,7 @@ internal sealed class ConsultPipeline
         if (!PrologEngine.TryExtractHead(routed, out string n, out int a)) return false;
         int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
         if (!E._dynStore.IsDynamic(fid)) return false;
-        // The first clause the main loop stored from a LATER line marks the
+        // The first clause the main loop stored from a later line marks the
         // place; the ones after it move up by one.
         int insertAt = -1;
         if (_dynRoutedThisConsult is { } routedList)
@@ -715,7 +715,7 @@ internal sealed class ConsultPipeline
         if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
             c = ModuleRewrite.Rewrite(c, multifileCtx());
         // §7.6.2: a source-declared clause for a dynamic predicate enters the
-        // database in its CONVERTED form, exactly as an assertz'd one does.
+        // database in its converted form, exactly as an assertz'd one does.
         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
         int at;
         if (insertAt < 0)
@@ -736,7 +736,7 @@ internal sealed class ConsultPipeline
         // registrations are consulted generated facts, kept serving a
         // pre-consult snapshot under promotion.
         E.InvalidateDynamicCache(fid);
-        // ADR-023 priming: a `:- dynamic`/`:- visible` predicate declared WITH
+        // ADR-023 priming: a `:- dynamic`/`:- visible` predicate declared with
         // source clauses runs as its snapshot from the first call.
         E.IlPromotion.MarkPrime(fid);
         // A clause from a named module is rewritten under that module's
@@ -778,7 +778,7 @@ internal sealed class ConsultPipeline
     {
         bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
             || E.HasPrologTermExpansion6;
-        // Re-applying goal_expansion is only needed when THIS file defined
+        // Re-applying goal_expansion is only needed when this file defined
         // goal_expansion clauses: for a pass-through clause the main loop
         // already applied every hook that was live then, and no new goal hook
         // means the re-apply is a no-op by construction — skip its QueryAlls.
@@ -793,7 +793,7 @@ internal sealed class ConsultPipeline
             for (int local = 0; local < count; local++)
             {
                 Clause c = manifest.Clauses[baseOffset + local];
-                // A clause at or before the FIRST in-file hook cannot be
+                // A clause at or before the first in-file hook cannot be
                 // affected: every in-file hook is order-guarded to fire only
                 // for clauses after its own position.
                 if (local <= firstHookIndex)
@@ -804,7 +804,7 @@ internal sealed class ConsultPipeline
                 if (c.Kind == ClauseKind.DcgRule)
                 {
                     // `-->` itself is core (DcgTransform) — no term_expansion.
-                    // But the rule's `{ Goal }` braces hold PLAIN goals that the
+                    // But the rule's `{ Goal }` braces hold plain goals that the
                     // in-file goal_expansion must rewrite (clpz's DCG bodies are
                     // full of `{ A cis_leq B }` macro goals); the grammar part
                     // (nonterminals, terminal lists) stays opaque.
@@ -840,7 +840,7 @@ internal sealed class ConsultPipeline
                 else if (hasGoalExp)
                 {
                     // Passed through term_expansion unchanged. Re-apply
-                    // goal_expansion: during a file's FIRST consult its OWN
+                    // goal_expansion: during a file's first consult its own
                     // goal_expansion/2 hooks were not live in the main loop
                     // (clauses commit at consult end), so a body using an in-file
                     // hook — clpz's `cis_leq`/`cis`/`get_attr` goal-expansion
@@ -863,7 +863,7 @@ internal sealed class ConsultPipeline
 
         // Dynamic-routed clauses see the in-file goal_expansion hooks too — the
         // same load-time semantics their static neighbours get (SWI/Trealla
-        // store the EXPANDED body; the split routing must not change that).
+        // store the expanded body; the split routing must not change that).
         // goal_expansion only: it is shape-preserving, so the store slot is
         // replaced in place. (term_expansion on a dynamic-predicate clause can
         // fan out to several clauses and is not re-applied here.)
@@ -938,7 +938,7 @@ internal sealed class ConsultPipeline
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);
-        // A PRECOMPILED (bundle) module carries no AST at load time — its
+        // A precompiled (bundle) module carries no AST at load time — its
         // predicates are the manifest's defined sets instead. Without these, a
         // baked prelude marked "non-debuggable" resolved zero functors, and a
         // debug-compiled program stepped into permutation/2 with the prelude's
@@ -1169,7 +1169,7 @@ internal sealed class ConsultPipeline
         // built_in instead of listing them among the program's own.
         if (librarySource) _pendingLibrarySource = true;
         // ADR-036 — serialized against AddBreakpoint (same gate as query setup): a
-        // debug session's idle watcher arms breakpoints from ITS OWN thread, and an
+        // debug session's idle watcher arms breakpoints from its own thread, and an
         // arm's EnsureCodeLinked racing this method's cache invalidation tears the
         // code space — predicates vanish (existence_error on a consulted predicate)
         // and stray bytes read as reserved_invalid opcodes. The launch flow made the
@@ -1185,7 +1185,7 @@ internal sealed class ConsultPipeline
             // No new Tier-1 promotions while program text is loading — a
             // predicate the load is still extending (the expansion hooks above
             // all) must not be snapshotted mid-consult. Nested consults keep it
-            // suspended until the OUTERMOST one finishes.
+            // suspended until the outermost one finishes.
             E.IlPromotion.PromotionsSuspended = true;
             // One operator-collection frame per consult: a `:- op` applied
             // during this source's parse is attributed to the module it
@@ -1219,7 +1219,7 @@ internal sealed class ConsultPipeline
         // snapshot.
         if (recordInHistory) E._consultHistory.Add(source);
         // The static program is about to change. The compiled-predicate cache
-        // is NOT cleared wholesale: the per-module transform cache fingerprints
+        // is not cleared wholesale: the per-module transform cache fingerprints
         // each manifest at the next product build and drops exactly the
         // changed modules' predicates — an unchanged library keeps its
         // compiled code across another file's consult. The merged view and
@@ -1227,17 +1227,17 @@ internal sealed class ConsultPipeline
         E._skipCompileMergedCache = null;
         E._staticLink = null;
         E.InvalidatePersistent();
-        // The clause stream. INCREMENTAL consult — like `:- op`, a directive
+        // The clause stream. Incremental consult — like `:- op`, a directive
         // takes effect for every clause that follows it in the same source: the
-        // stream is consumed LAZILY (below) so a `:- use_module` /
+        // stream is consumed lazily (below) so a `:- use_module` /
         // `:- set_prolog_flag` executed in the loop registers its operators /
-        // flags into E._operators before the NEXT clause is parsed. Two paths stay
+        // flags into E._operators before the next clause is parsed. Two paths stay
         // eager (materialised), neither of which needs mid-file operator ordering:
         // the cached one-time prelude parse, and any source using `:- include`
         // (whose textual splice, handled by IncludeExpander with its own op
         // ordering, needs the whole list).
         //
-        // ADR-035 — every position a consult produces knows which FILE it came
+        // ADR-035 — every position a consult produces knows which file it came
         // from; the FileId travels with the position because compilation happens
         // at query setup, long after this read.
         bool preludeSource = ReferenceEquals(source, Prelude.Source);
@@ -1252,7 +1252,7 @@ internal sealed class ConsultPipeline
         else if (preludeSource || librarySource || HasIncludeDirective(source))
         {
             // The prelude AST is cached process-wide (s_preludeClauses), so its
-            // parse must not depend on WHICH engine constructs first: default
+            // parse must not depend on which engine constructs first: default
             // flags and operators, never E._flags — an arity_compat engine's
             // lexer would read the prelude's `{G}` DCG clauses as ADR-022
             // native-goal blocks and every later engine would share the
@@ -1271,9 +1271,9 @@ internal sealed class ConsultPipeline
             { ModuleLayerProvider = preludeSource ? null : E.ModuleOperatorLayer };
             // A user file recovers per clause here too, so carrying an
             // `:- include` does not change how its own bad clauses read. The
-            // prelude and the libraries do NOT: they are engine-internal
+            // prelude and the libraries do not: they are engine-internal
             // sources, and one silently short of a clause is a broken engine.
-            // (Text pulled in BY an include still aborts the load — the
+            // (Text pulled in by an include still aborts the load — the
             // expander parses it in one go.)
             var list = (preludeSource || librarySource
                 ? reader.ReadAll()
@@ -1319,14 +1319,14 @@ internal sealed class ConsultPipeline
         bool moduleDirectiveSeen = false;
         var publics = new HashSet<int>();
         // ADR-038 — a `:- module(Name, [Exports])` module is export-qualified:
-        // its exports go here (mangled, importable) and NOT into `publics`, so it
+        // its exports go here (mangled, importable) and not into `publics`, so it
         // contributes nothing to the bare-global namespace. `pendingImports` maps
         // each imported bare functor id → the export-qualified module providing it.
         bool isExportQualified = false;
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         var clauses = new List<Clause>();
-        // ADR-055: the clauses this source defines for ANOTHER module
+        // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
         // at the commit; a dynamic one joins `clauses`, bound for the store.
         List<(string Target, Clause Clause)>? foreignStatic = null;
@@ -1343,7 +1343,7 @@ internal sealed class ConsultPipeline
         // captured `$native_decls` directives), parsed into the C symbol table
         // for the embedded native-block transform below.
         System.Text.StringBuilder? nativeDecls = null;
-        // ADR-035 — `:- disable_debug.` / `:- enable_debug.` are POSITIONAL: each
+        // ADR-035 — `:- disable_debug.` / `:- enable_debug.` are positional: each
         // one sets the debuggability of the clauses that follow it, until the
         // next such directive or the end of the file. So a module can hand the
         // debugger the predicates worth stepping through and keep the rest
@@ -1356,7 +1356,7 @@ internal sealed class ConsultPipeline
         // may turn one term into several (or drop it); goal_expansion rewrites each
         // body goal. C# hooks run first, then the Prolog `term_expansion/2` /
         // `goal_expansion/2` predicates (if defined and already compiled — i.e.
-        // loaded by a PRIOR consult; a hook defined LATER in this same file does not
+        // loaded by a prior consult; a hook defined later in this same file does not
         // yet apply here — pre-load the shim). Pre-scan for the `:- module` name so
         // a hook / prolog_load_context sees the file's module (the loop sets it too,
         // but only when it reaches the directive).
@@ -1374,14 +1374,14 @@ internal sealed class ConsultPipeline
         // Per-clause term_expansion / goal_expansion — applied inline in the loop
         // (not a pre-pass over the whole file) so it composes with incremental
         // consult: a raw clause is expanded with whatever hooks are live by the
-        // time the loop reaches it. `-->` is a CORE construct owned by DcgTransform
+        // time the loop reaches it. `-->` is a core construct owned by DcgTransform
         // (ClausePipeline) — it handles the full body grammar including a bare `->`
         // if-then — so a DCG rule is left untouched here even when a library's
         // term_expansion is loaded (Scryer's dcgs.pl throws representation_error on
         // a bare `->`; clpz's non-core `++>` still runs through its own hook).
         List<Clause> ExpandRawClause(Clause rc)
         {
-            // A mid-consult `:- use_module` can define a hook AFTER this was first
+            // A mid-consult `:- use_module` can define a hook after this was first
             // computed (clpz use_modules atts, whose term_expansion then expands
             // clpz's own later `:- attribute`). Re-check while still false — once a
             // hook exists it stays for the rest of the consult, so this settles to
@@ -1398,9 +1398,9 @@ internal sealed class ConsultPipeline
             IReadOnlyList<Term>? repl = null;
             if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
                 repl = pexp;
-            // Early in-file hooks intercept SAME-FILE DIRECTIVES only
+            // Early in-file hooks intercept same-file directives only
             // (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
-            // Their clauses live RENAMED in the hidden module, invisible to the
+            // Their clauses live renamed in the hidden module, invisible to the
             // global hook aggregate — an early hook may lack helpers defined
             // later in its file (clpz's goal_expansion calls list_goal_/3 from
             // further down), so it must never run against the file's own
@@ -1434,7 +1434,7 @@ internal sealed class ConsultPipeline
         // inactive branch are dropped at load. A stack of (Active, AnyTaken)
         // frames; "including" iff the top frame is active (a frame is active only
         // when its parent was, so the top's flag suffices). Conditions are
-        // evaluated by a small evaluator against the CURRENT engine state — not a
+        // evaluated by a small evaluator against the current engine state — not a
         // query, which cannot run mid-scan — covering the forms real programs use;
         // anything else warns and is treated as false (the branch is skipped).
         // Limitation: a `:- op` inside a skipped branch is still applied (the
@@ -1528,13 +1528,13 @@ internal sealed class ConsultPipeline
                 && TryCondCompile(condWrap.Args[0]))
                 continue;
             if (!CondIncluding()) continue;
-            // In-file term_expansion hooks + a SAME-FILE directive that needs
+            // In-file term_expansion hooks + a same-file directive that needs
             // them (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
-            // Hooks normally compile only when this consult COMMITS, so
+            // Hooks normally compile only when this consult commits, so
             // expansion could never intercept a directive of the same file. On
-            // the first directive after a hook clause, activate them EARLY:
+            // the first directive after a hook clause, activate them early:
             // commit the clause prefix seen so far as a hidden module. The
-            // term_expansion/2 clauses are RENAMED to a per-activation
+            // term_expansion/2 clauses are renamed to a per-activation
             // predicate — only the directive probe above consults them, so a
             // partial hook never joins the global aggregate — and its
             // goal_expansion clauses are dropped entirely. Removed again right
@@ -1559,7 +1559,7 @@ internal sealed class ConsultPipeline
                 earlyManifest.PublicFunctors.Add(FunctorTable.Intern(
                     AtomTable.Intern(earlyHookPredName, permanent: true).Id, 2));
                 // The prefix's helper bodies call predicates this consult
-                // IMPORTED (lazy_lists' error/apply imports) — mirror the
+                // imported (lazy_lists' error/apply imports) — mirror the
                 // import table accumulated so far, as the real commit will.
                 if (pendingImports is not null)
                     foreach (var (ifid, isrc) in pendingImports)
@@ -1629,9 +1629,9 @@ internal sealed class ConsultPipeline
                 E._currentLoadModule = name;   // prolog_load_context(module, _)
                 moduleDirectiveSeen = true;
                 // ADR-038 — the two-arg `:- module(Name, [p/N, ...])` form makes
-                // this an export-qualified module: EVERY predicate is mangled
+                // this an export-qualified module: Every predicate is mangled
                 // Name$x (nothing bare-global), and the export list is the
-                // importable surface. The exports go to `exports`, NOT `publics`,
+                // importable surface. The exports go to `exports`, not `publics`,
                 // so two export-qualified modules can export the same name.
                 if (moduleExports != null)
                 {
@@ -1643,7 +1643,7 @@ internal sealed class ConsultPipeline
                 // ADR-046 — record the op(P,T,N) entries of the export list
                 // so a later use_module of this module can install them in
                 // the importer's operator layer. (Parse-side activation for
-                // THIS file already happened in the ClauseReader.)
+                // this file already happened in the ClauseReader.)
                 if (body is CompoundTerm { Args: [_, var exportListTerm] })
                 {
                     var expOps = CollectExportedOps(exportListTerm);
@@ -1742,7 +1742,7 @@ internal sealed class ConsultPipeline
             {
                 // `:- meta_predicate(Spec)` (Spec is a template like `foo(0, ?, +)`,
                 // possibly a ','-conjunction of them; `0..9` mark meta args). The
-                // TEMPLATE is recorded and surfaced through predicate_property/2's
+                // template is recorded and surfaced through predicate_property/2's
                 // meta_predicate(T) — which is how Logtalk's compiler learns that a
                 // goal argument needs wrapping for the calling context. Execution
                 // still ignores it: our meta-call resolution already threads the
@@ -1754,7 +1754,7 @@ internal sealed class ConsultPipeline
             {
                 // SWI `:- autoload(library(X)[, Imports])` — lazy use_module.
                 // Loaded eagerly (SWI itself behaves as use_module/1,2 when
-                // autoloading is off), and crucially the IMPORT LIST is honoured:
+                // autoloading is off), and crucially the import list is honoured:
                 // no-op'ing it dropped the import table entry, so a bare call to
                 // an autoloaded name died with existence_error when it finally ran
                 // (record.pl autoloads current_type/3 from library(error); its
@@ -1794,7 +1794,7 @@ internal sealed class ConsultPipeline
             {
                 // ISO/SWI `:- initialization(Goal)` (the fx 1150 operator also
                 // admits the paren-less `:- initialization main.`). The goal
-                // runs AFTER this consult commits — SWI load-time semantics —
+                // runs after this consult commits — SWI load-time semantics —
                 // see the execution loop at the end of this method.
                 (initializationGoals ??= new List<Term>()).Add(initDir.Args[0]);
             }
@@ -1879,7 +1879,7 @@ internal sealed class ConsultPipeline
                 }
                 else if (!recognisedDeclaration)
                 {
-                    // ISO §7.4.2 — a directive `:- G` that is NOT one of the
+                    // ISO §7.4.2 — a directive `:- G` that is not one of the
                     // recognised declaration directives is a goal to execute
                     // during loading. Shumway commits a file's clauses as a
                     // batch after this scan, and a query cannot run safely
@@ -1910,8 +1910,8 @@ internal sealed class ConsultPipeline
         // ADR-024 — generic-term interop. The Arity term-interface predicates
         // (reftype_term, fill_par, …) are recognized by name and provided as
         // builtins; their prlg_ifce.pl source clauses (which use the reftype-struct
-        // tier — `->`, `..`, getargp, newreftype — that we deliberately do NOT
-        // compile) are dropped here, BEFORE the native transform sees their blocks.
+        // tier — `->`, `..`, getargp, newreftype — that we deliberately do not
+        // compile) are dropped here, before the native transform sees their blocks.
         // Also drops any redefinition of a Shumway builtin (e.g. make_c_string/4),
         // with a warning. Gated on arity_compat so a non-Arity program defining one
         // of these names is unaffected.
@@ -1924,15 +1924,15 @@ internal sealed class ConsultPipeline
                     $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
         }
 
-        // A clause whose head is a procedure of the PROCESSOR: a control
+        // A clause whose head is a procedure of the processor: a control
         // connective (`a,b.` reads as a clause for ','/2, which the compiler
         // lowers inline — the stored clause could never be dispatched), or —
-        // in the GLOBAL module — a builtin or prelude predicate (ISO 7.5.2:
+        // in the global module — a builtin or prelude predicate (ISO 7.5.2:
         // all built-in predicates are static; `write(hello).` in a plain
         // file used to shadow write/1 silently and leave the engine mute).
         // assertz/1 already refuses all of these (permission_error,
         // §8.9.2.3); consult reports the same and drops the clause, loading
-        // on. The prelude and the libraries are exempt — they DEFINE these
+        // on. The prelude and the libraries are exempt — they define these
         // predicates through this very pipeline — and a named module's
         // clause is an ADR-008 local shadow, which stays legal.
         clauses = DropProtectedHeads(clauses,
@@ -1943,7 +1943,7 @@ internal sealed class ConsultPipeline
         // clauses (a grammar operator like clpz's `++>`, all sharing one head
         // functor) look discontiguous now but become their real, contiguous heads
         // after the re-expansion pass. Defer the contiguity check to then.
-        // (Only the BOOLEAN is computed here — clause indices for the order
+        // (Only the boolean is computed here — clause indices for the order
         // guard are assigned later, at the guard site, because the list is
         // still mutated between here and there: native transform, dynamic-head
         // routing, tabled transform all replace/remove entries.)
@@ -1957,7 +1957,7 @@ internal sealed class ConsultPipeline
         // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
         // Vars)` dispatch and register the analysed block in this engine's block
         // table, using the C symbol table parsed from the accumulated `:- c`
-        // regions. Runs BEFORE the dynamic-clause routing below: a `:- dynamic` /
+        // regions. Runs before the dynamic-clause routing below: a `:- dynamic` /
         // `:- visible` predicate whose source clauses use native code must have its
         // blocks transformed too (declaring a predicate dynamic is about
         // assert/retract, not about whether its source clauses can compile) — the
@@ -1989,12 +1989,12 @@ internal sealed class ConsultPipeline
         // predicate would be invisible to retract/2 and clause/2.
         if (E._dynStore.FunctorCount > 0)
         {
-            // A MULTIFILE predicate accumulates clauses from SEVERAL modules,
+            // A multifile predicate accumulates clauses from several modules,
             // so the per-fid seed-module rewrite at query setup cannot work
             // (one module context would mis-mangle the other contributors'
             // module-local body calls — clpfd's verify_attributes/4 clauses
             // rewritten under clpr's context left clpfd_in_dom unmangled).
-            // Instead, a multifile clause is rewritten HERE, under its origin
+            // Instead, a multifile clause is rewritten here, under its origin
             // module's context, and stored pre-mangled; query setup then uses
             // the pass-through default context for the fid (no seed module).
             ModuleRewrite.Context? multifileCtx = null;
@@ -2005,7 +2005,7 @@ internal sealed class ConsultPipeline
                     E._dynStore.Functors)
                 { MetaArgSpec = E.MetaArgSpec };
 
-            // Reconsult: the predicates this source defines are REPLACED, not
+            // Reconsult: the predicates this source defines are replaced, not
             // extended. Done here rather than by scanning the text first,
             // because the heads are only knowable once the source's own
             // directives have run — a file that opens with
@@ -2016,7 +2016,7 @@ internal sealed class ConsultPipeline
             if (reconsult)
             {
                 // HeadFunctorIdOf, not TryExtractHead: a DCG rule's real head
-                // is the TRANSLATED one (g//0 defines g/2), and TryExtractHead
+                // is the translated one (g//0 defines g/2), and TryExtractHead
                 // read the whole rule as '-->'/2 — which abolished nothing, so
                 // reloading a grammar buffer duplicated its rules.
                 var redefined = new HashSet<int>();
@@ -2025,7 +2025,7 @@ internal sealed class ConsultPipeline
                         redefined.Add(HeadFunctorIdOf(c0));
                 foreach (int fid in redefined)
                 {
-                    // A `:- dynamic` in THIS source has already run; abolishing
+                    // A `:- dynamic` in this source has already run; abolishing
                     // would undo the declaration the file just made and route
                     // its own clauses as static. Only the clauses go — including
                     // whatever was asserted since the last load, which is what
@@ -2041,7 +2041,7 @@ internal sealed class ConsultPipeline
             foreach (var c0 in clauses)
             {
                 var c = c0;
-                // A DCG rule's REAL head is the translated one (f//2 -> f/4):
+                // A DCG rule's real head is the translated one (f//2 -> f/4):
                 // route by it, or a grammar rule for a dynamic predicate
                 // compiles into an invisible static twin. The translation is
                 // used only when it routes dynamic — the static path keeps the
@@ -2065,16 +2065,16 @@ internal sealed class ConsultPipeline
                         // In-file goal_expansion applies to this clause too —
                         // recorded for the post-commit re-expansion pass, with
                         // the position hooks are numbered against (the count of
-                        // KEPT clauses before it, since guard indices are
+                        // kept clauses before it, since guard indices are
                         // assigned over the final kept list).
                         (_dynRoutedThisConsult ??= new()).Add((fid, at, keptClauses.Count));
                         // Mid-query consult (consult/1 from a live query): the
                         // clause is already in E._dynStore.Slots (above), so
                         // clause/2 — which reads the live store — sees it in the
-                        // SAME query; direct-call dispatch picks it up on the
+                        // same query; direct-call dispatch picks it up on the
                         // next query's clean recompile of the predicate.
                         //
-                        // do NOT patch the live dispatch in place at
+                        // do not patch the live dispatch in place at
                         // this site. AppendDynamicClauseIncremental extends the
                         // dynamic predicate's compiled chain, and for a predicate
                         // whose dispatch lives in the *persistent* code region
@@ -2096,7 +2096,7 @@ internal sealed class ConsultPipeline
                         // the clause into the live dispatch so a later call in a
                         // subsequent sub-query sees it. Logtalk's runtime init
                         // depends on this — each built-in entity's compiled code
-                        // is CONSULTED (its `$lgt_current_protocol_` /
+                        // is consulted (its `$lgt_current_protocol_` /
                         // `$lgt_current_object_` registrations are generated
                         // dynamic facts), and a later entity's compilation
                         // direct-calls those registrations; without the in-place
@@ -2127,16 +2127,16 @@ internal sealed class ConsultPipeline
         {
             if (src is null) return;
             // ADR-046 — importing a module activates its exported operators
-            // for the REST of this file (both use_module forms: the syntax
+            // for the rest of this file (both use_module forms: the syntax
             // is a practical precondition for reading the importer at all,
             // so the filtered form does not filter ops — Scryer agrees).
             E.ApplyExportedOperators(src,
                 liveReader?.CurrentOperators ?? E._operators);
             ModuleManifest srcManifest = E._modules[src];
-            // First import of a name wins: a later use_module of a DIFFERENT module
+            // First import of a name wins: a later use_module of a different module
             // exporting the same name does not silently steal it (C-linker / SWI
             // conflict semantics). TryAdd is a no-op if the name is already bound.
-            // ExportProvider chases re-exports to the module that actually DEFINES
+            // ExportProvider chases re-exports to the module that actually defines
             // the predicate, and returns null for a re-exported bare-global
             // (builtin/prelude) — those get no mapping, so the call falls through.
             if (filter is null)
@@ -2190,8 +2190,8 @@ internal sealed class ConsultPipeline
             E._nonDebuggableFunctors.UnionWith(
                 ResolveNonDebuggableFids(nonDebuggable, moduleName));
 
-        // In-file term_expansion / goal_expansion: a hook defined in THIS file must
-        // apply to the file's OWN later clauses (SWI/Scryer order-sensitivity),
+        // In-file term_expansion / goal_expansion: a hook defined in this file must
+        // apply to the file's own later clauses (SWI/Scryer order-sensitivity),
         // which the main loop could not do — the hook is not live until the
         // manifest commits below. Guard each hook clause with '$te_after'(index)
         // (index = its position among this consult's clauses) and re-expand the
@@ -2199,7 +2199,7 @@ internal sealed class ConsultPipeline
         // guard fires the hook only for clauses after its own definition during
         // that pass, and always (pos = -1) for every later consult.
         // The guard indices and the re-expansion metadata (first hook position,
-        // whether goal_expansion hooks exist) are assigned HERE, over the FINAL
+        // whether goal_expansion hooks exist) are assigned here, over the final
         // clause list — the same indices the committed manifest slice and the
         // re-expansion pass use. Computing them earlier was a latent bug: the
         // list shrinks between (dynamic-head routing), shifting positions.
@@ -2227,9 +2227,9 @@ internal sealed class ConsultPipeline
             var manifest = new ModuleManifest(moduleName);
             committedManifest = manifest;
             consultBaseOffset = 0;
-            // ADR-040 — dialect library definitions REPLACED by the engine's
+            // ADR-040 — dialect library definitions replaced by the engine's
             // own (Scryer's VM-native setup_call_cleanup family): dropped
-            // BEFORE the manifest commits, so locals never include them and
+            // before the manifest commits, so locals never include them and
             // every resolution — internal callers, importers — falls through
             // to Shumway's builtin of the same ISO contract.
             if (E.ActiveLibraryDialect == "scryer")
@@ -2253,7 +2253,7 @@ internal sealed class ConsultPipeline
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
-            // ADR-055: what OTHER sources defined for this module stays,
+            // ADR-055: what other sources defined for this module stays,
             // except a predicate this module's own source now defines.
             {
                 string ownSource = ForeignSourceKey(moduleName, isModuleSource: true);
@@ -2275,7 +2275,7 @@ internal sealed class ConsultPipeline
             // stays unreachable bare (imports win) — tell the user (the
             // clpz-then-clpfd load order).
             E.WarnPublicShadowedByUserImports(moduleName, manifest);
-            // SWI-style auto-import: a module file loaded DIRECTLY (REPL
+            // SWI-style auto-import: a module file loaded directly (REPL
             // command line, consult/1, embedding ConsultFile/ConsultString —
             // not as a use_module dependency) imports its exports into `user`,
             // so they are callable bare right after loading.
@@ -2345,7 +2345,7 @@ internal sealed class ConsultPipeline
         }
 
         // Source clauses added to an already-cached dynamic predicate were
-        // invalidated PER FID as they were routed into the store (the
+        // invalidated per FID as they were routed into the store (the
         // consult-borne InvalidateDynamicCache call above) — no wholesale
         // dynamic-cache clear needed.
         // New static clauses just landed in E._modules — drop the head-functor
@@ -2354,12 +2354,12 @@ internal sealed class ConsultPipeline
         E._hookIndexValid = false;   // hook discriminator index reads the same clauses
 
         // Consult-cache invalidation. A directive that runs as a goal (an
-        // unrecognised `:- G`, e.g. `:- meta_predicate(...)`) or a NESTED
-        // `:- use_module` consult can trigger a query setup DURING this consult —
+        // unrecognised `:- G`, e.g. `:- meta_predicate(...)`) or a nested
+        // `:- use_module` consult can trigger a query setup during this consult —
         // and that setup caches the static rewrite + persistent link built from
-        // the manifest as it stood THEN, before this consult filled it in above.
+        // the manifest as it stood then, before this consult filled it in above.
         // Without re-invalidating here, the directive / initialization goals below
-        // AND the next top-level query reuse that stale cache and see none of this
+        // and the next top-level query reuse that stale cache and see none of this
         // file's predicates (existence_error on a predicate that current_predicate
         // reports as defined). The start-of-consult InvalidatePersistent can't
         // cover it: the clauses land only now. Skip the live-consult path, which
@@ -2374,12 +2374,12 @@ internal sealed class ConsultPipeline
         // their predicates link at the next query setup as always.
         if (E._liveConsultEngine is { } liveEng)
         {
-            // Dynamics FIRST — a static clause's body may call one, and the
+            // Dynamics first — a static clause's body may call one, and the
             // static link resolves such calls against the address map the
             // trampolines populate. A `:- dynamic`/`:- multifile` predicate
             // declared in this consult (Logtalk's hook predicates, e.g.
             // message_hook/4, declared then called before any clause is
-            // added) needs a live trampoline so the call FAILS rather than
+            // added) needs a live trampoline so the call fails rather than
             // existence_errors.
             E.EnsureLiveDynamicTrampolines(liveEng);
             // Statics next — `clauses` here is the static-only set (the
@@ -2387,7 +2387,7 @@ internal sealed class ConsultPipeline
             if (clauses.Count > 0)
             {
                 E.LinkConsultedStaticPredicatesLive(liveEng, clauses, moduleName);
-                // BROADCAST: a suspended outer engine (a nested
+                // Broadcast: a suspended outer engine (a nested
                 // deferred-init query consulted this file) must also reach
                 // the new predicates when it resumes — e.g. Logtalk's
                 // arbitrary.lgt compile (outer engine) statically binds to
@@ -2403,7 +2403,7 @@ internal sealed class ConsultPipeline
         }
 
         // Evict any promoted Tier-1 IL for the predicates this consult just
-        // (re)defined or EXTENDED. The global expansion hooks are the live case:
+        // (re)defined or extended. The global expansion hooks are the live case:
         // term_expansion/2 promoted during a big library's consult (dcgs crosses
         // the call threshold on its own ~50 clauses) kept serving the pre-append
         // IL, so a later library's hook clauses (atts' `:- attribute`) were
@@ -2416,19 +2416,19 @@ internal sealed class ConsultPipeline
         }
 
         // The code the debugger's breakpoints were waiting for has just arrived. Bind them
-        // BEFORE the initialization goals run — those goals ARE the program, and a breakpoint
+        // before the initialization goals run — those goals are the program, and a breakpoint
         // bound after them is a breakpoint that never fires.
         E.RebindPendingBreakpoints();
 
         // In-file term_expansion / goal_expansion re-expansion. Now that this
         // file's hooks are committed and compilable — with all their in-file
-        // dependencies present — apply them to the file's OWN clauses,
+        // dependencies present — apply them to the file's own clauses,
         // order-sensitively (the '$te_after' guard fires each hook only for
         // clauses after its definition). Runs before the directive /
         // initialization goals so they see the fully-expanded program.
         // Runs for nested library consults too (clpz, loaded via use_module,
         // defines and uses its own cis_leq/cis goal_expansion macros): a nested
-        // library that defines AND uses an in-file hook needs it applied to its
+        // library that defines and uses an in-file hook needs it applied to its
         // own clauses. The sub-queries this runs must not corrupt the outer
         // consult — see ReExpandInFileHooks for how it isolates that state.
         if (inFileHooks)
@@ -2462,7 +2462,7 @@ internal sealed class ConsultPipeline
                     foreach (var sol in E.QueryAll(QualifyGoalForModule(g, moduleName)))
                     { ok = sol.Success; break; }
 
-                    // halt/0-1 does NOT reach us as an exception: QueryAll catches it and
+                    // halt/0-1 does not reach us as an exception: QueryAll catches it and
                     // reports the goal as failed, leaving the code behind in
                     // E.LastHaltExitCode. So a goal that halted looked exactly like one that
                     // failed — the load went on, and the process it was told to end lived
@@ -2489,7 +2489,7 @@ internal sealed class ConsultPipeline
 
         // RESUME-boundary reconciliation: this consult (and the
         // nested queries its initialization goals spawned) may have mutated
-        // dynamic predicates through OTHER engines' views; before control
+        // dynamic predicates through other engines' views; before control
         // returns to the suspended caller, diff its dispatch view against
         // the store so no ghost clause (missed broadcast patch) survives
         // into its continuation. See ReconcileEngineDynamicView.
@@ -2505,14 +2505,14 @@ internal sealed class ConsultPipeline
     /// predicate — the classic <c>:- use_module</c> typo — surfaces as an
     /// <c>existence_error</c> warning instead of being silently dropped.</summary>
     // A `:- Goal` / `:- initialization(Goal)` in an export-qualified module runs
-    // in THAT module's context, so a call to one of its module-local predicates
+    // in that module's context, so a call to one of its module-local predicates
     // resolves (clpz's `:- initialization((generated_clauses(Cs), ...))` calls the
     // module-local generated_clauses/1). call('$mqual'(Module, Goal)) threads the
     // module through the meta-dispatch — the same mechanism a clause body's calls
     // get. The default `user` module needs no qualification (everything is bare).
-    // Whether the source has a `:- include(...)` textual-inclusion DIRECTIVE
+    // Whether the source has a `:- include(...)` textual-inclusion directive
     // (which forces the eager consult path — IncludeExpander needs the whole
-    // clause list). Matched precisely so the ordinary include/3 LIST predicate
+    // clause list). Matched precisely so the ordinary include/3 list predicate
     // (clpz calls it 6×) does not force clpz off the incremental path, where its
     // `:- use_module(library(atts))` must activate the `attribute` operator before
     // its later `:- attribute` line parses.
@@ -2560,7 +2560,7 @@ internal sealed class ConsultPipeline
     /// predicates of Edinburgh descent report and continue the same way.
     ///
     /// <para><see cref="PrologEngine.StrictConsultSyntax"/> restores the
-    /// all-or-nothing outcome for callers that COMPILE rather than load (the
+    /// all-or-nothing outcome for callers that compile rather than load (the
     /// bundle writer validating hand-built sources): there a clause that does
     /// not parse must fail the build, never bake a module quietly missing
     /// it.</para></summary>
@@ -2674,10 +2674,10 @@ internal sealed class ConsultPipeline
     {
         bool warnOnly = E.Flags.DiscontiguousCheck == "warning";
         // A module-qualified head (`prolog:message(X) --> …`) is a multifile
-        // contribution to ANOTHER module's predicate — inherently scattered
+        // contribution to another module's predicate — inherently scattered
         // among a file's own clauses (SWI hook idiom). All of them share the
         // head functor `:` — arity 2 for plain clauses, arity 4 for a
-        // qualified DCG head (HeadFunctorIdOf reports the OUTER functor at
+        // qualified DCG head (HeadFunctorIdOf reports the outer functor at
         // the DCG-expanded arity) — so keying contiguity on `:` produces
         // spurious errors; exempt it.
         int colonAtomId = AtomTable.Intern(":", permanent: true).Id;
@@ -2742,7 +2742,7 @@ internal sealed class ConsultPipeline
     }
 
     /// <summary>Whether this clause defines a predicate the scryer dialect
-    /// load REPLACES with Shumway's own (see
+    /// load replaces with Shumway's own (see
     /// <see cref="ScryerShim.ReplacedDefinitions"/>).</summary>
     private static bool IsReplacedDialectDefinition(string moduleName, Clause clause)
     {
@@ -3229,12 +3229,12 @@ internal sealed class ConsultPipeline
     {
         specs = new List<(string, int)>();
         // `visible` is Arity's spelling for a mutable, exported predicate. We
-        // map it to `dynamic`: an Arity `:- visible foo/N.` predicate WITH
+        // map it to `dynamic`: an Arity `:- visible foo/N.` predicate with
         // clauses stays ISO-mutable (assert/retract allowed), but — when it has
         // clauses — also gets a build-time WAM/IL snapshot that runs from the
         // first call and is evicted the instant it is mutated (ADR-023 priming).
         // `thread_local` is SWI's per-thread dynamic — Shumway activations are
-        // single-threaded, so thread-local IS engine-local: plain dynamic.
+        // single-threaded, so thread-local is engine-local: plain dynamic.
         if (body is not CompoundTerm c
             || (c.Functor != "dynamic" && c.Functor != "visible"
                 && c.Functor != "thread_local")
@@ -3242,7 +3242,7 @@ internal sealed class ConsultPipeline
             return false;
 
         Term arg = c.Args[0];
-        // SWI decoration over the WHOLE group: `:- dynamic (a/1, b/2) as
+        // SWI decoration over the whole group: `:- dynamic (a/1, b/2) as
         // volatile.` — strip it here; per-indicator `as` strips in
         // TryReadFunctorSpec.
         while (arg is CompoundTerm { Functor: "as", Args: [var g, _] }) arg = g;
@@ -3292,11 +3292,11 @@ internal sealed class ConsultPipeline
         while (term is CompoundTerm { Functor: "as", Args: [var decorated, _] })
             term = decorated;
         // A module-qualified indicator `Module:Name/Arity`
-        // (`:- multifile user:term_expansion/6.`). With `:` LOOSER than `/`
+        // (`:- multifile user:term_expansion/6.`). With `:` looser than `/`
         // — 600 vs 400, as in GNU/SWI/Scryer — it parses as
         // :(Module, /(Name, Arity)); strip the module, since
         // discontiguous/multifile group by the bare predicate. The Arity
-        // annotation form `PI:Ann` has the SAME shape, so tell them apart by
+        // annotation form `PI:Ann` has the same shape, so tell them apart by
         // what the right side looks like: an indicator means a qualifier.
         if (term is CompoundTerm { Functor: ":", Args: [_, var qualified] }
             && qualified is CompoundTerm { Functor: "/", Args.Length: 2 })
@@ -3316,7 +3316,7 @@ internal sealed class ConsultPipeline
             // arity_compat — Arity annotates directive indicators:
             // `:- public foo/8:far.` / `:- public f/2:system(...)`. With `:`
             // at xfy 200 (tighter than `/` 400) that parses as
-            // /(name, :(arity, Annotation)) — accept and IGNORE the
+            // /(name, :(arity, Annotation)) — accept and ignore the
             // annotation. The shape has no ISO meaning, so it is stripped
             // unconditionally rather than gated (a non-Arity program can't
             // reach it with valid syntax).

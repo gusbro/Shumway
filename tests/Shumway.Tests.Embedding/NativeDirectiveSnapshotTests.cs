@@ -1,8 +1,8 @@
 using Shumway.Embedding;
 using Xunit;
 
-// ADR-024 — the `:- native fn/N` directive wired end-to-end with the MANAGED
-// SNAPSHOT backend (no P/Invoke yet). A `:- native` function whose C# interop
+// ADR-024 — the `:- native fn/N` directive wired end-to-end with the managed
+// snapshot backend (no P/Invoke yet). A `:- native` function whose C# interop
 // method takes a Reftype gets a materialized snapshot of the reftype global's term;
 // the (mutated) snapshot is dematerialized back into the slot after the call, so a
 // following reftype_term sees what the function built. (The native-C P/Invoke

@@ -5,7 +5,7 @@ namespace Shumway.Tests.IsoConformance;
 /// <summary>
 /// The <c>portray/1</c> hook: <c>print/1,2</c>, format's <c>~p</c> and
 /// write_term's <c>portrayed(true)</c> give the user's portray/1 first shot at
-/// every subterm. It runs RE-ENTRANTLY on the live activation, which is what
+/// every subterm. It runs re-entrantly on the live activation, which is what
 /// made the nested-solve environment restore below matter.
 /// </summary>
 public class PortrayHookConformance
@@ -66,7 +66,7 @@ public class PortrayHookConformance
     [Fact]
     public void FailingNestedSolveKeepsTheCallersContinuation()
     {
-        // The regression this arc turned on: a re-entrant solve that FAILS left
+        // The regression this arc turned on: a re-entrant solve that fails left
         // the last clause tried as the current environment, so the caller
         // resumed against a foreign frame and its continuation vanished —
         // visible only under an enclosing catch/3.

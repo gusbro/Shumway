@@ -5,17 +5,17 @@ using Xunit;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>A wasm module bakes its members' linked ADDRESSES (deopt pcs,
+/// <summary>A wasm module bakes its members' linked addresses (deopt pcs,
 /// resume markers, BP encodings), and a stale one hands the interpreter a pc
 /// into what is now different code ("Encountered reserved_invalid opcode …
 /// bytecode corruption", the boards.pl crash).
 ///
 /// <para>The static layout is append-only, so a consult and a library load
 /// move nothing (measured, both). What moves an address is the space below
-/// it closing up: a predicate that DISAPPEARS leaves a hole the next relink
+/// it closing up: a predicate that disappears leaves a hole the next relink
 /// fills. The tier absorbs that by translating at the boundary rather than
 /// by requiring frozen addresses, which is what keeps a more aggressive
-/// compaction of the code space open to us. A REDEFINED predicate is a
+/// compaction of the code space open to us. A redefined predicate is a
 /// different case: its code changed, so the tick evicts it (and the baked
 /// callers that jump into it) instead of translating.</para></summary>
 public class WasmRelinkEvictionTests
@@ -26,7 +26,7 @@ public class WasmRelinkEvictionTests
         return (e, w);
     }
 
-    /// <summary>The batch shape: each consult's new candidates become ONE
+    /// <summary>The batch shape: each consult's new candidates become one
     /// module; an evicted functor leaves the rows and is recompiled, into a
     /// fresh module, at the next tick.</summary>
     private static (PrologEngine Engine, WasmPromotionStore Wasm, DesktopWasmWorld World)
@@ -94,7 +94,7 @@ public class WasmRelinkEvictionTests
         Assert.True(batched > 100, $"prelude batch promoted only {batched}");
 
         // The relink a library load forces: nothing was redefined, so
-        // NOTHING is evicted — the builds stay warm and the batch compiles
+        // nothing is evicted — the builds stay warm and the batch compiles
         // only what is genuinely new (the library).
         engine.ConsultString(
             ":- use_module(library(clpfd)).\n" +
@@ -155,7 +155,7 @@ public class WasmRelinkEvictionTests
         engine.Query("true.");
         Assert.True(wasm.PromoteAllStatics(engine) > 100);
 
-        // The hole is provoked DELIBERATELY now. It used to be a gift of
+        // The hole is provoked deliberately now. It used to be a gift of
         // clpfd's own load: its verify_attributes hook was multifile, hence
         // dynamic, and the load's directives running it minted anonymous
         // $disj_N helpers mid-consult, with the library's block landing on
@@ -184,7 +184,7 @@ public class WasmRelinkEvictionTests
         Assert.True(movedAtLeast > 50,
             $"only {movedAtLeast} predicates moved, expected the library's block");
 
-        // The predicates that MOVED are the library's own, so the queries
+        // The predicates that moved are the library's own, so the queries
         // have to run those: asking the prelude (which did not move) proves
         // nothing about the translation.
         WasmTierDelegate.ResetDiag();
@@ -212,7 +212,7 @@ public class WasmRelinkEvictionTests
 
     /// <summary>A redefinition evicts: the functor's rows go to zero, and
     /// the members of its module that reach it by a baked jump go with it
-    /// (their jumps would land in the dead region: baked and NOT dragged,
+    /// (their jumps would land in the dead region: baked and not dragged,
     /// caller/1 answered [2,3] while leaf(X) itself answered all six). The
     /// next tick compiles the new code and the dragged callers into a fresh
     /// module; a sibling that never calls the redefined functor stays where
@@ -238,7 +238,7 @@ public class WasmRelinkEvictionTests
         int modulesBefore = world.NextModuleId;
         Assert.True(engine.Query("findall(X, caller(X), [2,3]).").Success);
 
-        // A second consult unit ADDS clauses to leaf/1: same functor, new
+        // A second consult unit adds clauses to leaf/1: same functor, new
         // code at a new address (the old version stays as a dead region).
         engine.ConsultString("leaf(5). leaf(6). leaf(7).");
         wasm.CompileAllTick(engine);

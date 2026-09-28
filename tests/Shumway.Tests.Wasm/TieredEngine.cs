@@ -4,7 +4,7 @@ using Shumway.Embedding;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>An engine whose predicates promote to a desktop wasm world as
-/// they are consulted, ONE MODULE PER PREDICATE: the shape the differential
+/// they are consulted, one module per predicate: the shape the differential
 /// tests share, and the grain the browser's lazy mode uses. Every call or
 /// backtrack between two predicates crosses a module boundary, so a corpus
 /// built here exercises the in-wasm hop everywhere.</summary>

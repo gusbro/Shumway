@@ -146,12 +146,12 @@ public static class FunctorTable
 
     /// <summary>One past the highest functor id ever allocated. Unlike
     /// <see cref="Count"/> this counts holes, so it is the right bound for
-    /// anything indexing BY id rather than enumerating entries.</summary>
+    /// anything indexing by id rather than enumerating entries.</summary>
     public static int IdLimit => Volatile.Read(ref _nextId);
 
     /// <summary>Copies the dense <c>(atomId &lt;&lt; 32) | arity</c> publication
     /// array, starting at <paramref name="from"/>, into <paramref name="dest"/>
-    /// indexed from zero. Returns the first id NOT copied.
+    /// indexed from zero. Returns the first id not copied.
     ///
     /// <para>Copying stops at the first id a racing intern has allocated but
     /// not yet published, so an incremental mirror resumes exactly there

@@ -143,16 +143,16 @@ public sealed partial class Activation
         // BigInt / String / Pstr (table-id ≠ value), Float (two cells), or a
         // compound — takes the general alloc-then-Unify path unchanged.
         //
-        // NOTE (--alloc finding): on the Van Roy suite this saves
+        // Note (--alloc finding): on the Van Roy suite this saves
         // zero allocations — head-level literal args go through the already-
         // optimised UnifyRegisterWithCell (get_atom/get_nil/
         // get_integer), and these benchmarks have no literals nested inside
         // compound head args (the only shape that reaches here). Kept because
-        // it is correct, harmless, and a real win for programs that DO match
+        // it is correct, harmless, and a real win for programs that do match
         // nested literals (e.g. DCG / parser heads like foo([a|T], ...)).
         //
-        // The fast path applies ONLY when `value` is a genuine atomic literal
-        // (Atom / inline Int). It must NOT trigger for a `value` that is a
+        // The fast path applies only when `value` is a genuine atomic literal
+        // (Atom / inline Int). It must not trigger for a `value` that is a
         // REF — unify_float passes Cell.Ref(pairIdx) here (bug):
         // a Ref value against an unbound target needs Unify's young-to-old
         // BindVarToVar discipline, and against a bound value needs the full
@@ -180,7 +180,7 @@ public sealed partial class Activation
     // ----- Compound / list construction (write-mode entry points) -----
 
     /// <summary>
-    /// Implements <c>put_structure</c>: allocates a FUNCTOR cell on the heap and stores an
+    /// Implements <c>put_structure</c>: allocates a functor cell on the heap and stores an
     /// inline STR cell pointing at it in <c>X[<paramref name="regIdx"/>]</c> (ADR-017: no
     /// separate on-heap STR header), then enters write mode with <see cref="UnifyPointer"/>
     /// at the position where the first argument will be written.
@@ -189,7 +189,7 @@ public sealed partial class Activation
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
         // ADR-017 phase 2: the STR tag rides inline in the register, pointing
-        // straight at the FUNCTOR cell; the args follow. A structure is
+        // straight at the functor cell; the args follow. A structure is
         // functor + n args, not STR-header + functor + n args. Whole-structure
         // unification no longer pays a materialise copy thanks to the
         // cell-based UnifyCells path.
@@ -327,7 +327,7 @@ public sealed partial class Activation
         if (finalCell.Tag == Tag.Ref)
         {
             // ADR-017 phase 2: bind the plain var directly to an inline STR
-            // cell pointing at the FUNCTOR cell; the args follow. No separate
+            // cell pointing at the functor cell; the args follow. No separate
             // on-heap STR header (functor + n args, not STR + functor + n).
             int f = AllocateHeap(1);
             _heap[f] = Cell.Functor(functorId);
@@ -369,7 +369,7 @@ public sealed partial class Activation
         {
             // A bare ATTVAR goes in as a REF to its home, the mirror of
             // UnifyVariableX reading one out. Copying the cell would make a
-            // SECOND variable claiming the same attributes, and the attribute
+            // second variable claiming the same attributes, and the attribute
             // table keys on a cell's own address: the copy's lookup finds
             // nothing, which surfaced as KeyNotFoundException out of GetAttr.
             if (value.Tag == Tag.AttVar) value = Cell.Ref(value.AsHeapIndex);
@@ -560,11 +560,11 @@ public sealed partial class Activation
     //
     // The IL tier's twin of the interpreter superinstructions: the
     // WAM window `get_list Ai; unify_* ; unify_*` — the complete match/build of
-    // one cons cell — becomes ONE call instead of three. The generic trio pays
+    // one cons cell — becomes one call instead of three. The generic trio pays
     // three call boundaries plus _writeMode/_unifyPointer field traffic between
-    // them, and the WRITE half (building a list) lived entirely in NoInlining
+    // them, and the write half (building a list) lived entirely in NoInlining
     // slow paths; here both halves are straight-line, and the write half does
-    // ONE two-cell bump instead of two single-cell allocations. Anything off
+    // one two-cell bump instead of two single-cell allocations. Anything off
     // the two fast shapes (attvar, PSTR, bound non-list, register growth)
     // delegates to the exact generic sequence, so semantics are preserved by
     // construction. Emitted by IlPredicateCompiler's peephole; the bytecode
@@ -604,7 +604,7 @@ public sealed partial class Activation
             Cell fc = _heap[home];
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: one bump for the pair; bind the var to an inline LIS
+                // Write: one bump for the pair; bind the var to an inline LIS
                 // (ADR-017 — no on-heap header), exactly GetListSlow's layout.
                 int pair = AllocateHeap(2);
                 _heap[pair] = Cell.UnboundVar(pair);
@@ -653,9 +653,9 @@ public sealed partial class Activation
             Cell fc = _heap[home];
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: store the value cell verbatim (unify_value_x write
+                // Write: store the value cell verbatim (unify_value_x write
                 // semantics — UnifyArgCell's write arm), tail fresh.
-                // occurs_check (the FLAG): here the BIND comes after the
+                // occurs_check (the flag): here the bind comes after the
                 // store, so the pre-bind test is the classic one — does the
                 // variable about to be bound occur in the head value?
                 if (!OccursAllowsStore(home, _registers[v])) return false;
@@ -708,7 +708,7 @@ public sealed partial class Activation
             Cell fc = _heap[home];
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: functor + both args in ONE bump; inline STR bind
+                // Write: functor + both args in one bump; inline STR bind
                 // (ADR-017 phase 2 — no on-heap header).
                 int f = AllocateHeap(3);
                 _heap[f] = Cell.Functor(functorId);
@@ -846,7 +846,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Lazily unconses a non-empty PSTR into a heap <c>[Head|Tail]</c>
-    /// pair and returns the pair's index. A partial string IS the list it
+    /// pair and returns the pair's index. A partial string is the list it
     /// represents, so both list cursors — <see cref="GetListSlow"/> (a callee
     /// head matching <c>[H|T]</c>) and <see cref="UnifyList"/> (an inline list
     /// pattern, which compiles to a <c>unify_list</c> run) — need it. They had
@@ -891,12 +891,12 @@ public sealed partial class Activation
 
     /// <summary>ADR-019 <c>unify_structure</c>: build (write) or match (read) a
     /// nested compound at the parent's current argument and descend into its
-    /// args. Write mode allocates the nested FUNCTOR cell, writes an inline STR
+    /// args. Write mode allocates the nested functor cell, writes an inline STR
     /// ref to it into the parent's current arg slot, and moves
     /// <see cref="UnifyPointer"/> to the nested's first arg. Read mode derefs the
     /// parent's current arg and binds it (var → fresh structure, switch to write)
     /// or matches it (STR with the same functor, stay read), failing otherwise.
-    /// Emitted only for a nested compound in the LAST argument position, so the
+    /// Emitted only for a nested compound in the last argument position, so the
     /// parent is never resumed — the build stays linear, no write-pointer stack.</summary>
     public bool UnifyStructure(int functorId)
     {
@@ -921,7 +921,7 @@ public sealed partial class Activation
                 return true;
             }
             int slot = AllocateHeap(1);          // parent's current arg slot
-            int f = AllocateHeap(1);             // nested FUNCTOR cell (contiguous)
+            int f = AllocateHeap(1);             // nested functor cell (contiguous)
             _heap[f] = Cell.Functor(functorId);
             _heap[slot] = Cell.Str(f);
             _unifyPointer = f + 1;

@@ -71,7 +71,7 @@ public sealed class NativeStringConvTests
     public void HolderMode_ReusedHolder_NoAliasing()
     {
         // The key reason for holders over identity: filling the same buffer twice
-        // must NOT alias the two Prolog values.
+        // must not alias the two Prolog values.
         var e = new PrologEngine();
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).

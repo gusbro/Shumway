@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>An attribute MODIFIED inside a predicate that cuts, and then
+/// <summary>An attribute modified inside a predicate that cuts, and then
 /// backtracked over.
 ///
 /// <para>This is the shape the clp(Z) divergence was traced to. At the same
@@ -12,14 +12,14 @@ namespace Shumway.Tests.Wasm;
 /// Activation.Cut compacts, dropping entries a cut has made unreachable --
 /// and the tier's keeps it, because the emitter's cut lowers B and does
 /// nothing else. The question that decides which of them is wrong is
-/// whether that entry's restore is OBSERVABLE, and this asks it.</para>
+/// whether that entry's restore is observable, and this asks it.</para>
 ///
 /// <para>The oracle is Scryer, running the same question over the library
 /// this came from: <c>X in 1..9, ( narrow(X), fail ; true ), fd_dom(X, D)</c>
 /// answers <c>D = 1..9</c> there, in all three shapes -- narrowed under a
 /// cut, under a cut that is not the last goal, and undone by an exception
 /// rather than a failure, which is what clp(Z)'s with_local_attributes
-/// does. So the narrowing must NOT survive the backtrack.</para>
+/// does. So the narrowing must not survive the backtrack.</para>
 ///
 /// <para>Asked here without fd_dom, which this engine's own clpfd need not
 /// have: if the narrowing survived, the variable could no longer take a

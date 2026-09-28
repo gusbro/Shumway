@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>What file-at-a-time compilation cannot carry, it must refuse
 /// rather than write.
 ///
-/// <para>A hook is a CONSULT-TIME concept: the pipeline recognises the head,
+/// <para>A hook is a consult-time concept: the pipeline recognises the head,
 /// activates it early and adds it to the engine's expansion aggregate.
 /// Compiled one file at a time there is no aggregate to join, so the clause
 /// lands as an ordinary predicate and the hook never fires. Measured with

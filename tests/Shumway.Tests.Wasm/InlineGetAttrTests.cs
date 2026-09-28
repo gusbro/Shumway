@@ -6,14 +6,14 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>get_attr/3 answered inside the module, out of the attribute image.
 ///
-/// <para>Answers alone prove NOTHING here, and that is the lesson this file
+/// <para>Answers alone prove nothing here, and that is the lesson this file
 /// carries: when the type tests were first open-coded every test stayed green
 /// while the modules kept exiting to the host for all of them, because a
-/// builtin exit returns the same answer the inline path does. Only a COUNT
+/// builtin exit returns the same answer the inline path does. Only a count
 /// tells the two apart.</para>
 ///
 /// <para>A count of zero is just as easily a program that never reached the
-/// tier, so each corpus below calls atom_length/2 in the SAME clause as the
+/// tier, so each corpus below calls atom_length/2 in the same clause as the
 /// get_attr. atom_length is not open-coded, so it must show up in the tally --
 /// that is the anti-vacuity guard, measured on the very clause under test
 /// rather than somewhere else in the program.</para></summary>
@@ -52,7 +52,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
             "the tiered answer is wrong");
         Report("hit");
 
-        // The guard: the clause DID run on the tier, 50 times over.
+        // The guard: the clause did run on the tier, 50 times over.
         Assert.True(ExitsFor("atom_length", 2) >= 50,
             $"the clause never ran on the tier ({ExitsFor("atom_length", 2)} exits)");
         Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
@@ -66,7 +66,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
         WasmTierDelegate.ResetDiag();
 
         // All 50 lookups miss: the variable carries m, never nosuch. The miss
-        // is what the image was BUILT for -- open-coding only the failing path
+        // is what the image was built for -- open-coding only the failing path
         // would have erased under a tenth of the exits, so a miss that still
         // left the module would make the whole design pointless.
         Assert.True(engine.Query("put_attr(X, m, 7), miss(50, X, C), C == 0.").Success,
@@ -78,7 +78,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
         Assert.Equal(0L, ExitsFor("get_attr", 3));
     }
 
-    /// <summary>A PLAIN unbound variable fails inside the module. Carrying an
+    /// <summary>A plain unbound variable fails inside the module. Carrying an
     /// attribute is what makes a variable an attributed one, so a variable
     /// that is not attributed has no attribute in any module -- a fact the
     /// module holds without consulting anything.
@@ -103,7 +103,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
         Assert.Equal(0L, ExitsFor("get_attr", 3));
     }
 
-    /// <summary>A BOUND first argument still reaches the host: what get_attr
+    /// <summary>A bound first argument still reaches the host: what get_attr
     /// does with one is the builtin's own business, and the module has no
     /// opinion. The shortcut above is only for an unbound plain variable.
     /// </summary>
@@ -129,12 +129,12 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
     /// counter cannot check: a shortcut that fails where the host would have
     /// raised, or raises where it would have failed, moves no counter.
     ///
-    /// <para>The goals run THROUGH a promoted predicate. A query asked at the
+    /// <para>The goals run through a promoted predicate. A query asked at the
     /// top level runs in the interpreter, so asking these directly would
     /// compare the interpreter with itself -- and pass, whatever the module
     /// does. The atom_length/2 exits are the guard that says it did not.</para>
     ///
-    /// <para>The module ERROR cases carry the order this form depends on: the
+    /// <para>The module error cases carry the order this form depends on: the
     /// builtin resolves the module before it looks anything up, so
     /// get_attr(PlainVar, NotAnAtom, V) raises rather than failing, and the
     /// plain-variable shortcut must not answer first.</para></summary>
@@ -165,7 +165,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
         Assert.Equal(expected, got);
     }
 
-    /// <summary>An unbound module is an ERROR, not a failure, and the inline
+    /// <summary>An unbound module is an error, not a failure, and the inline
     /// path must have no opinion about it: it declines and the host raises.
     /// </summary>
     [DiagFact]

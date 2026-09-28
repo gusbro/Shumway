@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>The stream-term is the ordinary ground compound
 /// <c>'$stream'(Id)</c> (GNU Prolog's shape), not an opaque handle. That is
 /// what makes a stream survive everything a term survives — copy_term,
-/// findall, and above all assertz followed by a later call/retract, ACROSS
+/// findall, and above all assertz followed by a later call/retract, across
 /// queries. A foreign-cell stream-term did not: the clause compiler had no
 /// representation for the payload, so `assertz(s(S)), s(X)` handed back a
 /// bare `'$foreign'(0)` compound while `retract` still yielded a live
@@ -45,7 +45,7 @@ public sealed class StreamTermTests
         {
             var e = new PrologEngine();
             // Both retrieval paths — the compiled dynamic-predicate call and
-            // retract/1 — must hand back the SAME usable stream.
+            // retract/1 — must hand back the same usable stream.
             e.ConsultString(
                 ":- dynamic(st/1).\n"
                 + $"go :- open('{Esc(f)}', write, S), assertz(st(S)),\n"
@@ -63,7 +63,7 @@ public sealed class StreamTermTests
     public void AssertedStream_SurvivesAcrossQueries()
     {
         // The point of the '$stream'(Id) design: the registry lives on the
-        // ENGINE, so an id asserted in one query still names the stream in
+        // engine, so an id asserted in one query still names the stream in
         // the next. A per-activation payload table could not do this.
         string f = TempPath();
         try
@@ -113,7 +113,7 @@ public sealed class StreamTermTests
     // SWI 10 (both agree): a well-formed stream-term naming no open stream is
     // existence_error(stream, Culprit); anything that is not a stream-term or
     // alias at all is domain_error(stream_or_alias, Culprit) — `stream_or_alias`
-    // names a DOMAIN, not a type.
+    // names a domain, not a type.
     [Theory]
     [InlineData("'$stream'(999999)", "existence_error")]
     [InlineData("'$stream'(foo)", "domain_error")]

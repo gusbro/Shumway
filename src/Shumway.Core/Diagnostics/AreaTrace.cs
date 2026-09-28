@@ -4,7 +4,7 @@ namespace Shumway.Core.Diagnostics;
 
 /// <summary>Samples of how big the WAM areas are, taken on both tiers at
 /// points both of them reach, so the two can be laid side by side and asked
-/// WHERE they start to differ.
+/// where they start to differ.
 ///
 /// <para>The index is <see cref="Activation.CellsAllocated"/>, not time and
 /// not a sample number. It is monotonic, it is maintained on both paths (the
@@ -18,7 +18,7 @@ namespace Shumway.Core.Diagnostics;
 /// <para>Bounded and lossy on purpose: a run that has to be traced is one
 /// that does not terminate, so an unbounded log would exhaust the memory the
 /// trace exists to explain. Once the ring is full it keeps every Nth sample
-/// instead, halving the resolution each time it fills, which keeps the SHAPE
+/// instead, halving the resolution each time it fills, which keeps the shape
 /// of the whole run rather than a close-up of its beginning.</para>
 ///
 /// <para>Everything here is <see cref="ConditionalAttribute"/> on

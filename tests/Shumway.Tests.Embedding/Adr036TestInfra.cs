@@ -128,7 +128,7 @@ internal sealed class DapTestClient : IDisposable
                 && d.RootElement.GetProperty("event").GetString() == name,
             "event '" + name + "'", timeoutMs).RootElement;
 
-    /// <summary>A REVERSE request — the adapter asking us, VS Code, to do something
+    /// <summary>A reverse request — the adapter asking us, VS Code, to do something
     /// (runInTerminal). The caller answers with <see cref="SendRaw"/>.</summary>
     public JsonElement WaitReverseRequest(string command, int timeoutMs = 15000)
         => Take(
@@ -166,7 +166,7 @@ internal sealed class DapTestClient : IDisposable
         {
             int remaining = (int)Math.Max(1, deadline - Environment.TickCount64);
             if (!_incoming.TryTake(out JsonDocument? doc, remaining))
-                // A flake transcript must say what DID arrive: a stash full of
+                // A flake transcript must say what did arrive: a stash full of
                 // other traffic means the wire is alive and the adapter never
                 // sent this one message; an empty stash means silence.
                 throw new TimeoutException(

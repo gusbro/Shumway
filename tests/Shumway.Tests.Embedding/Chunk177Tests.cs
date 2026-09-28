@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Phase 15 chunk 177: <c>shumway-compile -r</c> (Release) drops both
-/// the embedded Prolog source AND the per-clause Meta/DbgInfo bytecode
+/// the embedded Prolog source and the per-clause Meta/DbgInfo bytecode
 /// markers from the .shmo. Combined with chunk 178's source-less
 /// LoadBundle path, a Release artifact carries no recoverable debug
 /// information at all and still runs at full speed.

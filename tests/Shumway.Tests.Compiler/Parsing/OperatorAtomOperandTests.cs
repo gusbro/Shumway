@@ -6,9 +6,9 @@ using SourceLexer = Shumway.Compiler.Lexer.Lexer;
 namespace Shumway.Tests.Compiler.Parsing;
 
 /// <summary>
-/// ISO §6.3.1.3: an operator-atom used as the OPERAND of an operator has the
+/// ISO §6.3.1.3: an operator-atom used as the operand of an operator has the
 /// operator's own priority, so it cannot sit where a lower-priority term is
-/// required — it must be parenthesised. Quoting does NOT exempt it: quotes
+/// required — it must be parenthesised. Quoting does not exempt it: quotes
 /// change the token, not the atom, so <c>X = '&lt;'</c> is the same error as
 /// <c>X = *</c> (Neumerkel syntax #106). It stays valid as a delimited
 /// argument / list element or when parenthesised; <c>arity_compat</c> and the
@@ -25,7 +25,7 @@ public class OperatorAtomOperandTests
     [InlineData("- -")]          // '-' as operand of prefix '-' (needs ≤ 200, has 500)
     [InlineData("- - -")]
     [InlineData("a * *")]        // '*' as right operand of '*' (needs ≤ 399, has 400)
-    [InlineData("X = '<'")]      // QUOTED operator-atom: same atom, same error
+    [InlineData("X = '<'")]      // quoted operator-atom: same atom, same error
     [InlineData(@"X = '\\'")]    // Neumerkel syntax #106
     public void OperatorAtom_AsOperatorOperand_IsRejected(string source)
     {
@@ -39,7 +39,7 @@ public class OperatorAtomOperandTests
     [InlineData("X = ('<')")]    // the conforming spelling: parenthesised
     [InlineData(@"X = ('\\')")]
     [InlineData("- (a)")]        // parenthesised / compound operand
-    [InlineData("a < b")]        // '<' used AS the infix operator
+    [InlineData("a < b")]        // '<' used as the infix operator
     public void OperatorAtom_AsArgumentOrParenthesised_IsAccepted(string source)
     {
         var t = Parse(source + " .");

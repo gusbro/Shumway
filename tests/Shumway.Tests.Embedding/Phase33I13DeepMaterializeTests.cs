@@ -120,7 +120,7 @@ public class Phase33I13DeepMaterializeTests
     public void SharedAcyclicSubterm_MaterializesTwiceNotAsCycle()
     {
         // p(Y, Y) with Y = a(1): the two occurrences share a heap address but
-        // are NOT a cycle. Path-scoped active-set removal must let both args
+        // are not a cycle. Path-scoped active-set removal must let both args
         // materialise as a(1) rather than one becoming a _C marker.
         var e = new PrologEngine();
         var sol = e.Query("Y = a(1), X = p(Y, Y).");

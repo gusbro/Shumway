@@ -38,7 +38,7 @@ public enum Tag : byte
     Rational = 0xD,
 
     // 0xE and 0xF are the two free slots. The tag space is 4 bits and cannot
-    // grow without changing the cell layout, so a NEW tag is a major decision
+    // grow without changing the cell layout, so a new tag is a major decision
     // (decision-policy.md). Values are contiguous by construction (compacted
     // pre-v1 when ADR-047 removed the string tag) — keep them that way.
 }

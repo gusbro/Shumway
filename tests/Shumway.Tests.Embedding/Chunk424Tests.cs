@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 424 — backtrackable builtins and runtime meta-calls INSIDE region
+/// Chunk 424 — backtrackable builtins and runtime meta-calls inside region
 /// members (the chunk-385 exclusion lifted). The planner allocates a
 /// <c>BuiltinResume</c> cursor per such site; the emit threads the chunk-218
 /// <c>BuiltinReturnPc</c> marker (backtrackable) / chunk-182 <c>Cp</c> marker
@@ -28,7 +28,7 @@ public class Chunk424Tests
     public void BetweenInsideMember_EnumeratesViaRegionResume()
     {
         // gen/1 (a member) holds between/3: the builtin's CP resume must
-        // re-enter the REGION method at the BuiltinResume cursor.
+        // re-enter the region method at the BuiltinResume cursor.
         var e = MakeT1(
             "go(X) :- mid(X).\n" +
             "mid(X) :- gen(X), check(X).\n" +
@@ -60,7 +60,7 @@ public class Chunk424Tests
     [Fact]
     public void RetractInsideMember_EnumeratesAndMutates()
     {
-        // grab/1 (a member) holds retract/1 — backtrackable AND mutating.
+        // grab/1 (a member) holds retract/1 — backtrackable and mutating.
         var e = MakeT1(
             ":- dynamic d/1.\n" +
             "take(X) :- grab(X).\n" +
@@ -98,7 +98,7 @@ public class Chunk424Tests
     [Fact]
     public void MetaCallInsideMember_Tail()
     {
-        // wrapt/1's call/1 is the LAST goal: the tail path leaves Cp alone
+        // wrapt/1's call/1 is the last goal: the tail path leaves Cp alone
         // (the called goal's proceed returns to the region's caller).
         var e = MakeT1(
             "runt(G) :- wrapt(G).\n" +
@@ -146,7 +146,7 @@ public class Chunk424Tests
     public void CallerChoicePoint_SurvivesMemberBuiltinEnumeration()
     {
         // The discriminating soundness case (extra-backtracking-not-sound):
-        // a CP created BEFORE entering the region must survive the member's
+        // a CP created before entering the region must survive the member's
         // builtin enumeration and cut.
         var e = MakeT1(
             "outer(S-X) :- seed(S), first(X).\n" +

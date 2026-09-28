@@ -49,7 +49,7 @@ public static class AttvarBuiltins
     }
 
     // ---- library(atts) storage primitives (native) --------------------
-    // Each atts module keeps a LIST of its attribute terms as the variable's
+    // Each atts module keeps a list of its attribute terms as the variable's
     // put_attr/get_attr value; these three walk/rebuild that list in C#. The
     // Prolog shim's walks ($attr_find/$attr_exclude + functor/3 per element)
     // were the hottest predicates of a clpz solve. Representation unchanged:
@@ -66,7 +66,7 @@ public static class AttvarBuiltins
         int listIdx = engine.GetAttr(varAddr, moduleId);
         // An "insert" is two different things, and the module handles
         // both: a row on a variable that is already attributed, and the
-        // PROMOTION of a plain one. What reaches here is what it
+        // promotion of a plain one. What reaches here is what it
         // declined, so which of the two it was is the question.
         Shumway.Core.Diagnostics.CompactCensus.NoteAttrPut(listIdx >= 0);
         if (listIdx < 0)
@@ -159,7 +159,7 @@ public static class AttvarBuiltins
         };
     }
 
-    // Walks the module's list collecting the head CELLS whose functor does
+    // Walks the module's list collecting the head cells whose functor does
     // not match — the kept elements share structure with the old list.
     private static System.Collections.Generic.List<Cell> CollectNonMatching(
         Activation engine, int listIdx, int kind, long key, out bool removedAny)

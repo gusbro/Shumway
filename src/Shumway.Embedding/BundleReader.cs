@@ -27,7 +27,7 @@ public static class BundleReader
                 "Bundle: magic bytes don't match 'SHUM' — not a Shumway bundle.");
 
         uint version = headerReader.ReadUInt32();
-        // Pre-release format policy (see BundleFormat): exactly ONE supported
+        // Pre-release format policy (see BundleFormat): exactly one supported
         // layout, frozen version number, no backward compatibility — a stale
         // bundle fails here (or on a truncated section); rebuild it by
         // re-linking.

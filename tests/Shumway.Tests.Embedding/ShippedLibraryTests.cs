@@ -72,13 +72,13 @@ public class ShippedLibraryTests
     [Fact]
     public void ListsExt_HelperNotExported_IsInvisible()
     {
-        // split_at/4 is exported; the library defines it via take/drop which ARE
+        // split_at/4 is exported; the library defines it via take/drop which are
         // exported here — so instead confirm the export surface is exact: a
-        // predicate the module does NOT define at all is unresolved, and the
+        // predicate the module does not define at all is unresolved, and the
         // exported ones resolve only through the import.
         var e = new PrologEngine();
         e.AddLibraryDirectory(RepoLibDir());
-        // No use_module — the export-qualified predicates are NOT bare-global.
+        // No use_module — the export-qualified predicates are not bare-global.
         e.ConsultString("reach(L) :- take(1, [a,b], L).");
         Assert.False(e.Query("catch(reach(_), _, fail).").Success);
     }

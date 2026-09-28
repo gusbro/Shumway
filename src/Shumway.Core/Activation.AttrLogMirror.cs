@@ -1,6 +1,6 @@
 namespace Shumway.Core;
 
-/// <summary>The attribute trail log's HOME column in a form a compiled wasm
+/// <summary>The attribute trail log's home column in a form a compiled wasm
 /// module can read: one i32 per record, dense, indexed by log index.
 ///
 /// <para>Why an image at all: a cut's compaction judges an AttrModify entry
@@ -43,7 +43,7 @@ public sealed partial class Activation
     }
 
     /// <summary>The homes, for the world that stages them into linear memory.
-    /// The array is REPLACED on growth, so a caller re-reads it per chain
+    /// The array is replaced on growth, so a caller re-reads it per chain
     /// rather than caching it.</summary>
     public int[] AttrLogHomes => _attrLogHomes ?? System.Array.Empty<int>();
 

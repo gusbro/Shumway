@@ -89,15 +89,15 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
         }
 
         o.WriteLine($"{freshEntries} fresh entries + {checkedRows} re-entry points agree");
-        // ANTI-VACUITY: a build with no re-entry points would pass the loop
+        // Anti-vacuity: a build with no re-entry points would pass the loop
         // above without comparing anything.
         Assert.True(checkedRows > 20, $"only {checkedRows} rows compared");
     }
 
-    /// <summary>Two worlds of ONE engine share the table and the registry:
+    /// <summary>Two worlds of one engine share the table and the registry:
     /// a row says which module owns a marker, and every module of the engine
     /// reads the same rows. That is the whole mechanism the split needs: a
-    /// module has to be able to discover that a marker is not its own AND
+    /// module has to be able to discover that a marker is not its own and
     /// where it went. A table per world could only ever answer "not mine".</summary>
     [Fact]
     public void SiblingWorldsShareOneTableAndSeeEachOther()

@@ -16,7 +16,7 @@ namespace Shumway.Tests.Wasm;
 /// has a propagator too many to render.</para>
 ///
 /// <para><c>'$live_attvars'/1</c> asks exactly that question: it walks the
-/// attribute table and keeps the addresses whose cell is STILL an
+/// attribute table and keeps the addresses whose cell is still an
 /// attributed variable. A tier that leaves one behind -- a slot
 /// backtracking freed and something reused, a record no sweep reached --
 /// reports one more here and nowhere else, because the answers stay

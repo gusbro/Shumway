@@ -98,9 +98,9 @@ public class PePatchEndToEnd
 
     /// <summary>Regression for the chunk-359 fact inliner's persisted-bundle atom-key
     /// bug (found via Blint's `any_lint/4` → `lint_msg_text/3`): an atom-keyed
-    /// multi-clause fact inlined into a caller compared the dispatch key with a RAW
+    /// multi-clause fact inlined into a caller compared the dispatch key with a raw
     /// build-time atom id (<c>emit.LoadConstant(keys[c])</c>) instead of the patchable
-    /// <see cref="EmitAtomId"/>, so a FRESH process compared against the wrong id, the
+    /// <see cref="EmitAtomId"/>, so a fresh process compared against the wrong id, the
     /// inlined lookup found no clause, and the caller silently failed. Here
     /// <c>msg/2</c> is the atom-keyed fact, inlined into <c>lookup/2</c>; cross-process
     /// the bound key <c>lnt104</c> must still resolve to <c>high</c>.</summary>
@@ -176,7 +176,7 @@ public class PePatchEndToEnd
             // returned a single solution. A failure prints "false."
             // and an exception prints "% PrologRuntimeException: ...".
             // The "true." check is enough to distinguish all three — and on
-            // failure the WHOLE transcript matters (Assert.Contains truncates
+            // failure the whole transcript matters (Assert.Contains truncates
             // its display, which once hid the child's actual error).
             Assert.True(stdout.Contains("true."),
                 $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"

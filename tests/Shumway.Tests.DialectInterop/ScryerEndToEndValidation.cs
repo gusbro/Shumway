@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.DialectInterop;
 
 /// <summary>End-to-end validation of real Scryer libraries: load each (under the
-/// scryer dialect) and EXERCISE a representative predicate — not just load.
+/// scryer dialect) and exercise a representative predicate — not just load.
 /// Records load + smoke outcomes and writes a report to SHUMWAY_TRIAGE_OUT.
 /// Opt-in (SHUMWAY_SCRYER_LIB, e.g. C:/Scryer/lib). Mirrors
 /// <see cref="SwiEndToEndValidation"/>.</summary>
@@ -145,7 +145,7 @@ public sealed class ScryerEndToEndValidation
         if (!string.IsNullOrWhiteSpace(outFile)) File.WriteAllText(outFile, report);
 
         // The load sweep is the hard assertion: every Scryer top-level library
-        // must at least LOAD on Shumway (46/46 at the time of writing).
+        // must at least load on Shumway (46/46 at the time of writing).
         Assert.Equal(0, loadFail);
     }
 

@@ -20,13 +20,13 @@ public sealed class OperatorTable
     /// layer sits over the <c>user</c> table), or null for a root table.
     /// Lookups fall through to the parent when this layer has no opinion
     /// for the (name, fixity) pair; a local <c>op(0, T, N)</c> records a
-    /// TOMBSTONE that hides the parent's definition for this layer only.</summary>
+    /// tombstone that hides the parent's definition for this layer only.</summary>
     public OperatorTable? Parent { get; }
 
     public OperatorTable() { }
     public OperatorTable(OperatorTable? parent) => Parent = parent;
 
-    /// <summary>Registers an operator in THIS layer. Replaces any prior
+    /// <summary>Registers an operator in this layer. Replaces any prior
     /// definition of the same (name, fixity) pair. Precedence <c>0</c>
     /// removes: in a root table the entry disappears; in a layered table it
     /// becomes a tombstone shadowing the parent (ADR-046).</summary>
@@ -140,7 +140,7 @@ public sealed class OperatorTable
     /// backtracking enumeration.</summary>
     public IEnumerable<(int Precedence, OperatorType Type, string Name)> Enumerate()
     {
-        // The EFFECTIVE view: this layer's entries shadow the parent's per
+        // The effective view: this layer's entries shadow the parent's per
         // (name, fixity); tombstones claim the slot and yield nothing, so
         // a locally-removed inherited operator does not reappear.
         var seenPrefix = new HashSet<string>();
@@ -163,7 +163,7 @@ public sealed class OperatorTable
         }
     }
 
-    /// <summary>The entries of THIS layer only (no parent) — what a module
+    /// <summary>The entries of this layer only (no parent) — what a module
     /// itself declared. Separate compilation persists exactly this set.</summary>
     public IEnumerable<(int Precedence, OperatorType Type, string Name)> EnumerateLocal()
     {
@@ -208,7 +208,7 @@ public sealed class OperatorTable
         // Without it, a library declaring meta_predicate before any op-defining
         // load (SWI's library(assoc), …) fails to parse. ADR-040.
         t.Define("meta_predicate", 1150, OperatorType.Fx);
-        // NOTE: SWI's `as` (xfx 700) and `thread_local` (fx 1150) are NOT in the
+        // Note: SWI's `as` (xfx 700) and `thread_local` (fx 1150) are not in the
         // default table — `as` in particular breaks programs using `as` as a
         // predicate/nonterminal head. The swi dialect load scope defines them
         // for the duration of an SWI library consult (PrologEngine.WithDialect).
@@ -236,7 +236,7 @@ public sealed class OperatorTable
         t.Define("*->", 1050, OperatorType.Xfy);
         t.Define(",", 1000, OperatorType.Xfy);
 
-        // Negation. `not` is deliberately NOT an operator here — ISO, GNU
+        // Negation. `not` is deliberately not an operator here — ISO, GNU
         // and SWI all leave it a plain atom (`X == not` must parse); the
         // arity_compat scope defines it (Arity writes `not Goal`).
         t.Define("\\+", 900, OperatorType.Fy);
@@ -293,7 +293,7 @@ public sealed class OperatorTable
 
         // Module qualification. 600 xfy is what GNU, SWI and Scryer all use
         // (measured, not assumed) — ISO 13211-1 does not define `:` at all, so
-        // the de-facto table is the whole authority. It puts `:` LOOSER than
+        // the de-facto table is the whole authority. It puts `:` looser than
         // `/`, so `m:f/0` reads as `m:(f/0)`: the qualifier is outside the
         // predicate indicator, as in every one of those systems.
         t.Define(":", 600, OperatorType.Xfy);

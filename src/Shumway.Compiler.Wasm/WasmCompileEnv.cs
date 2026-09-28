@@ -20,7 +20,7 @@ public interface IWasmCompileEnv
 {
     /// <summary>The BP field of a choice point pushed by
     /// <paramref name="functorId"/> whose alternatives continue at the
-    /// biased bytecode <paramref name="address"/>. ADDRESSES, not cursor
+    /// biased bytecode <paramref name="address"/>. Addresses, not cursor
     /// ordinals: a promotion rebuilds the group and renumbers cursors, but
     /// addresses never move, so choice points outlive the build that pushed
     /// them. The compiled fail path compares BP against each of the group's
@@ -33,7 +33,7 @@ public interface IWasmCompileEnv
     /// proceed re-enters it at the biased bytecode
     /// <paramref name="address"/> (same rebuild-stability rule as
     /// <see cref="EncodeBp"/>). In the engine this is an interned resume
-    /// marker; in a group the value is ALSO baked into the proceed jump
+    /// marker; in a group the value is also baked into the proceed jump
     /// table, so an in-group callee returns without leaving the
     /// module.</summary>
     int EncodeReturnMarker(int functorId, int address);
@@ -76,7 +76,7 @@ public interface IWasmCompileEnv
     ///
     /// <para><c>call/1</c> has had an inline form since the tier shipped;
     /// every wider arity stepped aside, and a meta-call builtin cannot be
-    /// requested directly either, so each one DEOPTED. That is not a
+    /// requested directly either, so each one deopted. That is not a
     /// corner: <c>maplist/3</c> is <c>call(G, X, Y)</c> in a loop, so a
     /// library built on maplist deopts once per element. Measured on
     /// clp(Z) in a browser: 1,336,036 of 1,336,496 deopts in a single
@@ -101,24 +101,24 @@ public interface IWasmCompileEnv
     /// <summary>Whether the builtin is =/2, which the compiled code
     /// open-codes as its own unifier instead of stepping out: measured, a
     /// leaf clause ending in a unification (tak's <c>A = Z</c>) otherwise
-    /// pays a host round-trip PER LEAF, and in the browser the host side is
+    /// pays a host round-trip per leaf, and in the browser the host side is
     /// interpreted C#. Attvars and exotic shapes still deopt inside the
     /// unifier, so semantics are the engine's.</summary>
     bool IsInlineUnify(int builtinId);
 
     /// <summary>Whether the builtin is <c>==/2</c> (negated=false) or
-    /// <c>\==/2</c> (negated=true) — term identity, whose ATOMIC fast path
+    /// <c>\==/2</c> (negated=true) — term identity, whose atomic fast path
     /// the module open-codes: two dereferenced atomic cells are identical
     /// exactly when they are the same cell. Anything non-atomic falls back
     /// to the builtin exit. Measured: crypt's \== chains cost 183k chain
-    /// exits per run in the browser, a 31x SLOWDOWN over Tier-0.</summary>
+    /// exits per run in the browser, a 31x slowdown over Tier-0.</summary>
     bool IsInlineCompare(int builtinId, out bool negated)
     {
         negated = false;
         return false;
     }
 
-    /// <summary>Whether the builtin is a one-argument TYPE TEST the module
+    /// <summary>Whether the builtin is a one-argument type test the module
     /// can answer itself: a tag comparison on the dereferenced argument, no
     /// heap, no binding, no host. Measured on the two libraries that lean on
     /// them hardest, as a share of all builtin exits: 60% of clpr's (var/1
@@ -145,7 +145,7 @@ public interface IWasmCompileEnv
     /// </summary>
     bool IsInlineGetAttr(int builtinId) => false;
 
-    /// <summary>Whether the builtin is <c>functor/3</c>, whose DECOMPOSING
+    /// <summary>Whether the builtin is <c>functor/3</c>, whose decomposing
     /// mode a module can answer without leaving.
     ///
     /// <para>It is the single heaviest exit clp(Z) makes -- 867 of 2,846
@@ -167,7 +167,7 @@ public interface IWasmCompileEnv
     /// value it finds.</para></summary>
     bool IsInlineGetFromAttrList(int builtinId) => false;
 
-    /// <summary>Whether the builtin is <c>arg/3</c>, whose INDEXED mode a
+    /// <summary>Whether the builtin is <c>arg/3</c>, whose indexed mode a
     /// module can answer without leaving: a bound index into a bound
     /// compound is a bounds check and one heap read.
     ///
@@ -185,7 +185,7 @@ public interface IWasmCompileEnv
     bool IsInlineTrivial(int builtinId, out bool succeeds)
     { succeeds = false; return false; }
 
-    /// <summary>Whether the builtin WRITES a module's attribute list:
+    /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.
     ///
@@ -195,7 +195,7 @@ public interface IWasmCompileEnv
     bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
     { isDelete = false; return false; }
 
-    /// <summary>Whether the builtin is <c>=../2</c>, whose DECOMPOSING
+    /// <summary>Whether the builtin is <c>=../2</c>, whose decomposing
     /// mode is a list the module can lay out. Composing reads a list
     /// instead of writing one and stays the engine's.</summary>
     bool IsInlineUniv(int builtinId) => false;
@@ -210,7 +210,7 @@ public interface IWasmCompileEnv
     /// and b_getval/2 and nb_getval/2.</summary>
     bool IsInlineGlobalFetch(int builtinId) => false;
 
-    /// <summary>For an inline global read, whether an unset key FAILS
+    /// <summary>For an inline global read, whether an unset key fails
     /// ('$fetch_global_var') rather than raising (b_getval, nb_getval: the
     /// host raises it).</summary>
     bool GlobalFetchFailsWhenUnset(int builtinId) => true;
@@ -234,7 +234,7 @@ public interface IWasmCompileEnv
     int UnwindCpTrailsBuiltinId => -1;
 
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
-    /// answer a module can give without leaving: two IDENTICAL cells name one
+    /// answer a module can give without leaving: two identical cells name one
     /// domain, and one domain is the same as itself. Anything else steps
     /// aside, because equal interval lists in different objects are still
     /// equal and only the host can see that.
@@ -250,7 +250,7 @@ public interface IWasmCompileEnv
     /// is an atom of its own (ADR-051 D1), so the test is a cell comparison,
     /// and a non-empty domain is answered false in the module rather than
     /// stepped aside: clpfd_narrow asks this on the path where the domain
-    /// DID change, and the answer is almost always no.</summary>
+    /// did change, and the answer is almost always no.</summary>
     bool IsInlineDomEmpty(int builtinId) => false;
 
     /// <summary>Whether the builtin is <c>$dom_contains/2</c>, which the
@@ -259,7 +259,7 @@ public interface IWasmCompileEnv
     bool IsInlineDomContains(int builtinId) => false;
 
     /// <summary>Whether the builtin is <c>$dom_del/3</c>. The module answers
-    /// the case that removes NOTHING, which is most of them, by handing back
+    /// the case that removes nothing, which is most of them, by handing back
     /// the domain it was given. A removal that really removes has to build a
     /// domain and steps aside.</summary>
     bool IsInlineDomDel(int builtinId) => false;
@@ -277,7 +277,7 @@ public interface IWasmCompileEnv
     bool IsInlineMetaCall(int builtinId) => false;
 
     /// <summary>Whether the builtin is <c>'$call'/2</c>, the meta-call that
-    /// CARRIES its cut barrier: X0 is the goal and X1 is the barrier the
+    /// carries its cut barrier: X0 is the goal and X1 is the barrier the
     /// enclosing call established, as an integer.
     ///
     /// <para>Same dispatch as call/1 in every other respect, so the module
@@ -288,12 +288,12 @@ public interface IWasmCompileEnv
     ///
     /// <para>The body conversion call/1 does (SS7.6.2, wrapping variable
     /// sub-goals) is skipped here by the host, and the module skips it for
-    /// call/1 too -- soundly, because only a CONTROL CONSTRUCT can need it
+    /// call/1 too -- soundly, because only a control construct can need it
     /// and one never reaches the module's cache: the host rewrites those to
     /// barrier helpers, which are deliberately not published.</para></summary>
     bool IsInlineBarrierCall(int builtinId) => false;
 
-    /// <summary>Whether the builtin is <c>append/3</c>, whose DETERMINISTIC
+    /// <summary>Whether the builtin is <c>append/3</c>, whose deterministic
     /// mode the module builds itself.
     ///
     /// <para>It is the single largest source of builtin exits measured: 2,000
@@ -302,26 +302,26 @@ public interface IWasmCompileEnv
     /// the builtin does.</para>
     ///
     /// <para>Only (+, ?, -): a proper list in the first argument. An unbound
-    /// tail is append/3's OTHER mode, which enumerates splits off a choice
+    /// tail is append/3's other mode, which enumerates splits off a choice
     /// point, and a packed string is a list the module cannot walk. Both step
     /// out, as does anything else.</para></summary>
     bool IsInlineAppend(int builtinId) => false;
 
     /// <summary>The functor id of <c>'$mqual'/2</c>, the wrapper a meta-call
     /// carries so its bare goal functor resolves against the meta-caller's
-    /// module first. The module has to see THROUGH it: the goal in X0 is the
+    /// module first. The module has to see through it: the goal in X0 is the
     /// wrapper, not the goal.</summary>
     int MqualFunctorId { get; }
 
     /// <summary>The functor id of <c>':'/2</c>. A body goal written
     /// <c>Module:Goal</c> that the compiler could not resolve statically
-    /// stays a call to this, and it is NOT a predicate: the interpreter
+    /// stays a call to this, and it is not a predicate: the interpreter
     /// unwraps it inside its own dispatch. A module that treats it as an
     /// ordinary callee jumps past that.</summary>
     int ColonFunctorId { get; }
 
     /// <summary>Every (goal functor, builtin) pair a meta-call may meet as
-    /// a GOAL. The compiler asks the SAME form questions of these that it
+    /// a goal. The compiler asks the same form questions of these that it
     /// asks of a static callee -- IsInlineUnify, IsInlineCompare,
     /// TryGetInlineTypeTest, IsInlineGetAttr -- so the two cannot drift: a
     /// form added for static code is one the meta-call gains, and a form
@@ -330,8 +330,8 @@ public interface IWasmCompileEnv
 }
 
 /// <summary>The one-argument type tests the module open-codes. Each is a
-/// set of tags, and the set is the builtin's contract -- notably a VARIABLE
-/// is Ref OR AttVar, because an attributed variable has attributes and no
+/// set of tags, and the set is the builtin's contract -- notably a variable
+/// is Ref or AttVar, because an attributed variable has attributes and no
 /// value, and the libraries that call var/1 most are the ones that create
 /// attributed variables.</summary>
 public enum WasmTypeTest
@@ -361,7 +361,7 @@ public sealed record WasmEntry(
     /// an out-of-range wasm store corrupts whatever lies beyond.</summary>
     int RegisterDemand);
 
-/// <summary>One predicate of a group compile: its compiled form, the BIAS
+/// <summary>One predicate of a group compile: its compiled form, the bias
 /// that offsets its bytecode addresses into the group's unified pc space
 /// (the linked base in the engine, so a deopt pc needs no translation), and
 /// its float-literal pool.</summary>
@@ -370,7 +370,7 @@ public sealed record WasmGroupMember(
     int Bias,
     System.Collections.Generic.IReadOnlyList<double>? FloatLiterals);
 
-/// <summary>A compiled GROUP module: one dispatcher over every member's
+/// <summary>A compiled group module: one dispatcher over every member's
 /// code, global cursors, cross-member calls as internal jumps.</summary>
 public sealed record WasmGroupEntry(
     byte[] Module,
@@ -383,8 +383,8 @@ public sealed record WasmGroupEntry(
     /// across all members.</summary>
     int RegisterDemand,
     /// <summary>(caller functor, callee functor) to the number of call sites
-    /// between them, counted while compiling. STATIC: it says which edges
-    /// exist and how tightly the code is coupled, NOT how often an edge is
+    /// between them, counted while compiling. Static: it says which edges
+    /// exist and how tightly the code is coupled, not how often an edge is
     /// taken at run time.</summary>
     System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites,
     /// <summary>The module id baked into the code; the installing world's

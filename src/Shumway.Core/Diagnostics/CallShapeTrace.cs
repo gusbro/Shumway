@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Shumway.Core.Diagnostics;
 
-/// <summary>What a builtin is being HANDED, entry by entry, so two runs of
+/// <summary>What a builtin is being handed, entry by entry, so two runs of
 /// the same goal can be diffed until the first call that differs.
 ///
 /// <para>A tally says a builtin ran two million times on one tier and
@@ -13,14 +13,14 @@ namespace Shumway.Core.Diagnostics;
 /// that re-feeds itself shows the same arity forever, and one that builds
 /// shows it climbing.</para>
 ///
-/// <para>Recorded per entry: the functor NAME id and arity for a compound,
+/// <para>Recorded per entry: the functor name id and arity for a compound,
 /// or a negative tag code otherwise, plus the cells allocated so far so an
 /// entry can be lined up against the area trace. Names, not heap indices:
 /// indices differ between two runs for reasons that have nothing to do with
 /// the bug.</para>
 ///
 /// <para>It stops at the cap rather than wrapping -- the question is where
-/// the two runs FIRST differ -- and <see cref="Wants"/> lets a call site
+/// the two runs first differ -- and <see cref="Wants"/> lets a call site
 /// skip the work of describing an argument nobody will record.</para>
 /// </summary>
 public static class CallShapeTrace

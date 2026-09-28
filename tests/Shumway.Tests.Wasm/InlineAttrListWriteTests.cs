@@ -9,8 +9,8 @@ namespace Shumway.Tests.Wasm;
 ///
 /// <para>Together they were 448 of the 730 builtin requests clp(Z) makes in
 /// one goal, 61%. The write is three things and the module reaches two: it
-/// writes the IMAGE, because that is what it reads back in the same chain,
-/// and the TRAIL entry, because that entry has to sit in order between
+/// writes the image, because that is what it reads back in the same chain,
+/// and the trail entry, because that entry has to sit in order between
 /// whatever else the chain trails. The store and the attribute log it parks,
 /// and the host puts them away at the next sync -- before any managed code
 /// runs, which is what makes the image leading the store sound.</para>
@@ -18,7 +18,7 @@ namespace Shumway.Tests.Wasm;
 /// <para>Updates only. An insert would have to place a new key in an
 /// open-addressed table and keep its load factor.</para>
 ///
-/// <para>The half no answer can show is the TRAIL: a wrong log index would
+/// <para>The half no answer can show is the trail: a wrong log index would
 /// have an unwind restore one attribute's old value onto another. So the
 /// cases here backtrack through the write and check what came back, and the
 /// interleaved one checks that two attributes unwind to their own
@@ -121,8 +121,8 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
     }
 
     /// <summary>Every shape of the write is made inside now: an update, a
-    /// row INSERT on a variable that is already attributed, the PROMOTION
-    /// of a plain one, a delete that matches nothing, and the REMOVAL that
+    /// row insert on a variable that is already attributed, the promotion
+    /// of a plain one, a delete that matches nothing, and the removal that
     /// takes the last row and demotes the cell with it.</summary>
     [DiagTheory]
     [InlineData("replaces(F, B), F == 1.")]
@@ -137,14 +137,14 @@ public sealed class InlineAttrListWriteTests(ITestOutputHelper o)
         => Assert.Equal(0L, WriteExitsOf(goal));
 
     /// <summary>A constant attribute is written inside too: it keys on
-    /// ITSELF, which one cell comparison asks.</summary>
+    /// itself, which one cell comparison asks.</summary>
     [DiagFact]
     public void AConstantAttrIsWrittenInside()
         => Assert.Equal(0L, WriteExitsOf("declines(R), R == yes."));
 
-    /// <summary>The counterproof, in red: an UNBOUND attribute owes an
+    /// <summary>The counterproof, in red: an unbound attribute owes an
     /// instantiation error, and errors are the host's. Reached through the
-    /// corpus predicate, because a builtin named in the QUERY text runs
+    /// corpus predicate, because a builtin named in the query text runs
     /// interpreted and proves nothing about the module.</summary>
     [DiagFact]
     public void WhatItCannotWriteStaysTheHosts()

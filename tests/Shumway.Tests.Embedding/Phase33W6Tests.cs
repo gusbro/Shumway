@@ -19,7 +19,7 @@ namespace Shumway.Tests.Embedding;
 public class Phase33W6Tests
 {
     /// <summary>Builds an engine whose bundle defines
-    /// <c>predName/arity</c> as ONE clause of exactly
+    /// <c>predName/arity</c> as one clause of exactly
     /// <c>execute_builtin &lt;builtin&gt;</c> — arguments pass through the
     /// X registers untouched, the builtin is the whole body.</summary>
     private static (PrologEngine Activation, int PredFid) EngineWith(
@@ -101,12 +101,12 @@ public class Phase33W6Tests
     [Fact]
     public void ExecuteBuiltin_Meta_IsRejected_WithHonestReason()
     {
-        // A META tail builtin (call/1) is deliberately outside the IL subset,
+        // A meta tail builtin (call/1) is deliberately outside the IL subset,
         // and the rejection names the real blocker (pre-fix it was invisible).
-        // NOTE: the form is unreachable from the toolchain — the compiler
+        // Note: the form is unreachable from the toolchain — the compiler
         // emits CallBuiltin for compile-time-known meta builtins and the
         // linker's Execute→ExecuteBuiltin rewrite only fires for tails that
-        // were UNRESOLVED at compile (call/N never is). The interpreter's
+        // were unresolved at compile (call/N never is). The interpreter's
         // ExecuteBuiltin case accordingly does not route meta dispatch either
         // (entry.Impl throws its loud dead-fallback guard if ever reached).
         var (e, fid) = EngineWith("w6ebcall", 1, "call", 1, ilThreshold: 1);

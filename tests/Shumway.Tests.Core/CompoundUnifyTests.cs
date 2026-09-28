@@ -303,7 +303,7 @@ public class CompoundUnifyTests
 
     // ---------- Helpers ----------
 
-    /// <summary>Lays out a compound term as STR + FUNCTOR + args contiguously. Returns
+    /// <summary>Lays out a compound term as STR + functor + args contiguously. Returns
     /// the heap index of the STR cell.</summary>
     private static int BuildCompound(Activation engine, int functorId, params Cell[] args)
     {

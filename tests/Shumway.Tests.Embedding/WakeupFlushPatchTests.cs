@@ -5,10 +5,10 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// A Call/Execute dispatch tick runs the pending-wakeup flush BEFORE using its
+/// A Call/Execute dispatch tick runs the pending-wakeup flush before using its
 /// operand — and the flush runs arbitrary goals. If a goal crosses a callee's
 /// promotion threshold, the install path (OnCalleePromoted) rewrites that
-/// callee's Call/Execute sites in place to CallIl/ExecuteIl with the FUNCTOR ID
+/// callee's Call/Execute sites in place to CallIl/ExecuteIl with the functor id
 /// as the operand — including the very site the tick is standing on. Reading
 /// the operand after the flush then pairs the already-dispatched Call/Execute
 /// opcode with the functor id and jumps to it as a bytecode address: garbage
@@ -19,7 +19,7 @@ public class WakeupFlushPatchTests
 {
     private const string Program =
         // The hook's returned goals warm the callee past the promotion
-        // threshold DURING the flush that runs inside the trigger clause's
+        // threshold during the flush that runs inside the trigger clause's
         // final Execute tick.
         "verify_attributes(m, _, _, [warmup, warmup, warmup]).\n" +
         "warmup :- tailpred(0).\n" +

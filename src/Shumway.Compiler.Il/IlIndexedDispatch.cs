@@ -257,7 +257,7 @@ public static class IlIndexedDispatch
         while (pc < end)
         {
             var op = (Opcode)code[pc];
-            // ADR-025 — each inline ITE takes one ELSE resume cursor; counted
+            // ADR-025 — each inline ITE takes one else resume cursor; counted
             // via its `jump` (exactly one per ITE, never in dispatch).
             if (op == Opcode.Call || op == Opcode.Jump) n++;
             int size = OpcodeSize(code, pc);
@@ -271,7 +271,7 @@ public static class IlIndexedDispatch
     // Per-engine model cache — keyed by functor id. The emitted IL bakes
     // the functor id and calls ResolveEntryByFunctorId; the cache lazily
     // builds the model from the engine's linked code + switch tables on
-    // first call. Used by BOTH the runtime promotion path and the
+    // first call. Used by both the runtime promotion path and the
     // persisted-bundle path — the latter is the whole point (a persisted
     // .dll loaded in a fresh process has no build-time model holder, but
     // the functor id is name-relative via load-time patching and the
@@ -576,7 +576,7 @@ public static class IlIndexedDispatch
         return table.DefaultAddress;
     }
 
-    // ADR-028 — structure-keyed sub target: key the table on the FUNCTOR of the
+    // ADR-028 — structure-keyed sub target: key the table on the functor of the
     // sub-terminal (a nested list keys as the cons functor), default on a miss.
     private static int StructureSubTarget(Activation engine, IReadOnlyList<SwitchTable> tables,
         int tableId, int argIdx, int sub0, int sub1)
@@ -615,7 +615,7 @@ public static class IlIndexedDispatch
         => TrySubCell(engine, cell, sub0, sub1, out Cell r) ? r : Cell.Ref(0);
 
     /// <summary>True for a non-empty packed list — the emitted term-switch
-    /// routes such an argument to its list bucket (a packed list IS a cons,
+    /// routes such an argument to its list bucket (a packed list is a cons,
     /// ADR-047/048). Public because persisted-bundle IL calls it.</summary>
     public static bool IsNonEmptyPstr(Cell cell)
         => cell.Tag == Tag.Pstr && cell.AsPstrLength > 0;

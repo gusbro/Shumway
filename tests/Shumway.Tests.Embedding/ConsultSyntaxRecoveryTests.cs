@@ -32,7 +32,7 @@ public sealed class ConsultSyntaxRecoveryTests
     public void DirectivesAfterASyntaxError_StillApply()
     {
         // Recovery must not degrade the lazy read model: an operator declared
-        // AFTER the broken clause still governs the parse of what follows.
+        // after the broken clause still governs the parse of what follows.
         var e = new PrologEngine { Warnings = new StringWriter() };
         e.ConsultString("""
             broken(] .

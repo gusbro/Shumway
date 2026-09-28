@@ -10,13 +10,13 @@ namespace Shumway.Tests.Wasm;
 /// <para>Every earlier replica of the clp(Z) runaway used this engine's own
 /// clpfd, whose attributes are the engine's native put_attr/3, and none of
 /// them reproduced. clp(Z) does not use those: it goes through
-/// <c>put_atts/2</c>, which stores a module's attribute as a LIST through
+/// <c>put_atts/2</c>, which stores a module's attribute as a list through
 /// <c>'$put_to_attr_list'/3</c>. The tallies say so -- 315 calls to that on
 /// both tiers -- and it is the one mechanism the replicas never touched.
 /// </para>
 ///
 /// <para>What is being asked: after a goal that attributed a variable is
-/// undone, is the CELL still an attributed variable? That is the question
+/// undone, is the cell still an attributed variable? That is the question
 /// <c>'$live_attvars'/1</c> answers, and on clp(Z) the tier answers it with
 /// six more variables than the interpreter, from a point where every
 /// builtin call and every allocation still agree exactly.</para></summary>

@@ -7,7 +7,7 @@ namespace Shumway.Compiler.Wasm;
 
 /// <summary>Where should the WAM's scalars live?
 ///
-/// <para>Today they live in LOCALS, loaded from the mailbox on entry and
+/// <para>Today they live in locals, loaded from the mailbox on entry and
 /// written back on exit. That prologue and epilogue are most of a small
 /// module's fixed cost — about 1,198 bytes of the ~3,234 byte floor — and they
 /// are also what a crossing has to pay: every hop between partitions, and every
@@ -34,7 +34,7 @@ public static class SpikeScalarHomeModules
         /// across modules would actually use.</summary>
         ImportedGlobal,
         /// <summary>Linear memory at a mailbox offset: what an access costs if
-        /// the scalar is NOT cached in a local, which is the shape the code
+        /// the scalar is not cached in a local, which is the shape the code
         /// would have without a prologue.</summary>
         Memory,
     }

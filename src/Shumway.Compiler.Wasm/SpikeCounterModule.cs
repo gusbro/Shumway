@@ -15,7 +15,7 @@ namespace Shumway.Compiler.Wasm;
 ///
 /// <para>It is the friendliest shape there is — no heap, no structures, no
 /// builtins — and that is the point: it measures what crossing into wasm and
-/// reaching the engine's memory COSTS, with nothing else in the way. If the
+/// reaching the engine's memory costs, with nothing else in the way. If the
 /// counter does not win here, nothing else will (the plan's Go criterion).
 /// </para>
 ///
@@ -87,7 +87,7 @@ public static class SpikeCounterModule
     ///
     /// <para><paramref name="cacheInLocal"/> chooses between the two honest
     /// readings of "what the backend would emit". With it, the counter lives
-    /// in a wasm local across the whole loop, which is what a backend WITH a
+    /// in a wasm local across the whole loop, which is what a backend with a
     /// register allocator could do and is the ceiling of the shape. Without
     /// it, every round loads X0 from the register file, tests its tag, unboxes
     /// it, decrements, boxes it and stores it back: a straight translation of

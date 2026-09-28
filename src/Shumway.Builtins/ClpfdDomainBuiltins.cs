@@ -17,7 +17,7 @@ public static class ClpfdDomainBuiltins
     private const long SizeInfinite = 1000000000;
 
     // Interned in Register(), not in field initializers: a beforefieldinit
-    // cctor runs at an unspecified time that DIFFERS between runtimes (Mono
+    // cctor runs at an unspecified time that differs between runtimes (Mono
     // interns these mid-registration, CoreCLR later), which shuffles early
     // ids per platform — and the baked prelude wasm group validates ids.
     private static int InfAtom, SupAtom, MinusFunctor;
@@ -49,7 +49,7 @@ public static class ClpfdDomainBuiltins
     // boundary. A term rather than a managed object so a wasm module can read
     // it out of linear memory, and so backtracking reclaims it.
     //
-    // Phase 0 keeps the ALGORITHMS on long[]: this converts at the boundary
+    // Phase 0 keeps the algorithms on long[]: this converts at the boundary
     // and ClpfdDomain is untouched. The operations move onto cells next, and
     // the conversions disappear with them.
 
@@ -179,8 +179,8 @@ public static class ClpfdDomainBuiltins
 
     /// <summary>$dom_del(+Dom, +V, -Dom2): remove the integer value V.
     ///
-    /// <para>When V was not in Dom the domain is UNCHANGED, and then Dom2 is
-    /// the incoming CELL and not a fresh one naming the same object. The two
+    /// <para>When V was not in Dom the domain is unchanged, and then Dom2 is
+    /// the incoming cell and not a fresh one naming the same object. The two
     /// are equivalent to Prolog, and the difference is what makes the pair
     /// this is half of decidable without leaving a wasm module:
     /// clpfd_narrow's first test is '$dom_same'(New, Old), which holds

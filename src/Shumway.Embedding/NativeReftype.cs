@@ -8,11 +8,11 @@ namespace Shumway.Embedding;
 /// <summary>ADR-024 — the **blittable native-memory** form of the materializer tier.
 /// A Prolog term is copied into a real <c>t_reftype</c> struct graph in unmanaged
 /// memory so a native C function (reached via P/Invoke) — which cannot touch the
-/// Shumway heap — can read and rebuild it. The layout is SHUMWAY'S OWN contract
+/// Shumway heap — can read and rebuild it. The layout is SHUMWAY'S own contract
 /// (Arity-inspired in field names and API shape; the Arity material we hold does
 /// not declare the struct at all, and the reference corpus's <c>:- c</c>
 /// prototypes treat <c>reftype</c> as opaque — the 64-bit-ready int64 fields are
-/// ours). Native C interops by RECOMPILING against this declaration:
+/// ours). Native C interops by recompiling against this declaration:
 ///
 /// <code>
 /// union u_crep { char* cstr; int cint; double cflt; };   // 8 bytes
@@ -24,7 +24,7 @@ namespace Shumway.Embedding;
 /// };                                                       // 32 bytes
 /// </code>
 ///
-/// <para>The SAME offsets hold in a 32-bit process: MSVC x86 aligns the
+/// <para>The same offsets hold in a 32-bit process: MSVC x86 aligns the
 /// int64/double members at 8, so <c>pars</c> is a 4-byte pointer at +16
 /// followed by 4 bytes of padding and <c>crep</c> stays at +24, total still
 /// 32 (verified against cl x86, offsetof probe). Every pointer access here
@@ -65,11 +65,11 @@ public static class NativeReftype
     /// <summary>when <paramref name="arena"/> is non-null, every
     /// allocation (nodes, pars arrays, char* buffers) bump-allocates from the
     /// engine's native arena instead of <c>AllocHGlobal</c>; the caller
-    /// releases the WHOLE graph by restoring its arena mark taken at call
+    /// releases the whole graph by restoring its arena mark taken at call
     /// entry (no walk, no per-node free — alloc+free measured as 96% of the
     /// marshal cost of a 50-element list). Same safety contract as the
     /// recorded-allocations mode this superseded: the release covers exactly
-    /// the memory WE allocated — a native function that swapped a
+    /// the memory we allocated — a native function that swapped a
     /// <c>cstr</c>/<c>pars</c> with its own allocator leaves our (unlinked)
     /// block to die with the mark, and its foreign pointer is never touched
     /// (a graph-walking free would corrupt the foreign heap).</summary>
@@ -113,7 +113,7 @@ public static class NativeReftype
                 break;
             case AtomTerm a:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Atom);
-                // nelem for text is the ENCODED BYTE length — the invariant native C
+                // nelem for text is the encoded byte length — the invariant native C
                 // relies on is `nelem == strlen(crep.cstr)`. Under Arity's original
                 // single-byte encodings byte count and char count coincide; under
                 // UTF-8 (Shumway's default) nelem stays the strlen, by design.
@@ -132,7 +132,7 @@ public static class NativeReftype
                 IntPtr pars = arena is not null
                     ? arena.NativeArenaAlloc(checked(c.Args.Length * IntPtr.Size))
                     : Marshal.AllocHGlobal(checked(c.Args.Length * IntPtr.Size));
-                // Link pars into the node BEFORE filling children: if a child's
+                // Link pars into the node before filling children: if a child's
                 // materialization throws (e.g. cint range), the recorded-free path
                 // still releases everything allocated so far, and the walking Free
                 // sees a consistent (zeroed) tail.
@@ -183,7 +183,7 @@ public static class NativeReftype
     // Allocates a NUL-terminated native byte buffer holding `s` encoded with
     // `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
     // Latin1 / a codepage), where a single 0 byte terminates the string.
-    // encodes through a POOLED buffer: no per-call byte[]
+    // encodes through a pooled buffer: no per-call byte[]
     // garbage. with an `arena` the buffer is call-scoped
     // (released by the caller's mark restore); otherwise HGlobal, freed by
     // the graph walk / the caller.</summary>
@@ -201,7 +201,7 @@ public static class NativeReftype
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.
-    // decodes through a POOLED buffer; only the string allocates.
+    // decodes through a pooled buffer; only the string allocates.
     internal static string ReadString(IntPtr p, Encoding enc)
     {
         if (p == IntPtr.Zero) return string.Empty;

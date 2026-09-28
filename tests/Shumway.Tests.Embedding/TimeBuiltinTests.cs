@@ -9,10 +9,10 @@ namespace Shumway.Tests.Embedding;
 /// <c>call/1</c> and prints a per-answer resource report (inferences =
 /// Tier-0 goal dispatches, elapsed seconds, heap cells allocated, Lips) to
 /// the engine's output. Non-determinism is preserved (each further answer
-/// reports the DELTA since the previous one). Since ADR-037 the body uses
+/// reports the delta since the previous one). Since ADR-037 the body uses
 /// <c>( call(Goal) *-> report ; report, fail )</c>: a deterministic goal makes
 /// <c>time/1</c> deterministic (no spurious choice point), and once the goal
-/// succeeds the else is pruned — so there is one report per answer and NO extra
+/// succeeds the else is pruned — so there is one report per answer and no extra
 /// report on exhausting a non-deterministic goal (a det goal cannot both leave
 /// no choice point and fire an exhaustion report).
 /// </summary>

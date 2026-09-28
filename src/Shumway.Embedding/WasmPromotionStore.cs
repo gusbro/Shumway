@@ -6,7 +6,7 @@ namespace Shumway.Embedding;
 
 /// <summary>The wasm tier's promotion state: per-functor dispatch counters, a
 /// threshold, and a reject set -- the IL store's shape without its IL. It
-/// does NOT reference the wasm backend: the world wires a
+/// does not reference the wasm backend: the world wires a
 /// <see cref="Promoter"/> (browser: compile + instantiate on the runtime
 /// thread; desktop tests: compile + the copy runner) that returns the
 /// finished delegate, or null for a predicate the backend refuses. Installed
@@ -37,7 +37,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// reject.</summary>
     public System.Func<CompiledPredicate, int, PredicateDelegate?>? Promoter { get; set; }
 
-    /// <summary>Compiles a whole candidate set into the group in ONE build
+    /// <summary>Compiles a whole candidate set into the group in one build
     /// and installs a delegate per member, returning how many made it.
     /// The per-promotion <see cref="Promoter"/> rebuilds the group each
     /// time, which is O(n^2) over n promotions; a program that wants its
@@ -52,7 +52,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>Installs one relocatable wasm module shipped in a bundle
     /// (<c>shumway-link --wasm</c>) into the host's world, against the
-    /// engine's CURRENT static link, and returns the functors it installed
+    /// engine's current static link, and returns the functors it installed
     /// with a note (the count, or why nothing was installed). Wired by the
     /// host that owns a world; without it the modules stay queued.</summary>
     public System.Func<PrologEngine, byte[], (IReadOnlyList<int> Installed, string Note)>?
@@ -99,13 +99,13 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     private int _lastBundleInstalled;
 
     /// <summary>jit_compile(all): compile the whole static program as it is
-    /// CONSULTED, not when the user's first query happens to need the link —
+    /// consulted, not when the user's first query happens to need the link —
     /// deferring the batch would bill that query for every compile at once.
     /// While set, <see cref="CompileAllTick"/> re-runs the batch after any
     /// consult that changed the program.</summary>
     public bool CompileAllOnConsult { get; set; }
 
-    // The static link the batch last reconciled against. IDENTITY, not a
+    // The static link the batch last reconciled against. Identity, not a
     // program stamp: a consult replaces the link, while an assert or a
     // dynamic hotness flip bumps _programStamp without touching the static
     // program at all. Keying on the stamp made every other goal reconcile
@@ -142,7 +142,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public bool Covers(int functorId) => _installed.ContainsKey(functorId);
 
     // FNV-1a over the linked bytecode and call sites: equal hashes mean the
-    // predicate merely MOVED; a redefinition changes them.
+    // predicate merely moved; a redefinition changes them.
     private static ulong CodeHash(CompiledPredicate pred)
     {
         const ulong prime = 1099511628211UL;
@@ -170,19 +170,19 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// boundary translation keeps every installed build valid.</summary>
     public System.Action<IReadOnlyDictionary<int, int>>? LiveRefreshed { get; set; }
 
-    /// <summary>Delegates evicted because a relink REDEFINED their
+    /// <summary>Delegates evicted because a relink redefined their
     /// predicates; running total, surfaced by the status report.</summary>
     public int RelinkEvictions { get; private set; }
 
-    /// <summary>A wasm module bakes its members' linked ADDRESSES: deopt
+    /// <summary>A wasm module bakes its members' linked addresses: deopt
     /// pcs, resume markers, BP encodings, and a stale one reaching the
     /// interpreter's SetPc runs what is now different code: "bytecode
     /// corruption" crashes. A relink moves an address when the space below
     /// it closes up — a predicate that disappeared, and in time a deliberate
     /// compaction — while what stays keeps its address. The bytecode itself
-    /// only MOVES (hashes equal), so the builds stay valid: this refreshes
+    /// only moves (hashes equal), so the builds stay valid: this refreshes
     /// the worlds' live-address maps (the boundary translation does the
-    /// rest) and evicts only a delegate whose predicate was REDEFINED or
+    /// rest) and evicts only a delegate whose predicate was redefined or
     /// dropped, which falls back to bytecode until re-promoted.</summary>
     public int ReconcileWithLink(PrologEngine engine)
     {
@@ -245,9 +245,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public int BatchTicksWorked { get; private set; }
 
     /// <summary>Makes the next <see cref="CompileAllTick"/> do the work
-    /// even though the program has not changed. Turning the batch ON is such
-    /// a moment: the tick's early-out asks whether the PROGRAM moved, and
-    /// what moved here is the MODE. Without this, jit_compile(all) compiled
+    /// even though the program has not changed. Turning the batch on is such
+    /// a moment: the tick's early-out asks whether the program moved, and
+    /// what moved here is the mode. Without this, jit_compile(all) compiled
     /// nothing and the batch ran later, triggered by predicates crossing the
     /// threshold during the user's next query -- which therefore ran
     /// interpreted. Measured in the browser: 107 s for the first goal, 1.8 s
@@ -256,7 +256,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     public int CompileAllTick(PrologEngine engine)
     {
-        // Only a change to the STATIC program can add candidates or move
+        // Only a change to the static program can add candidates or move
         // code, and a consult is what changes it: it invalidates the link,
         // and the next query builds a new one. Anything else is a reference
         // compare.
@@ -272,7 +272,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         InstallPendingBundles(engine);
         _lastLink = engine._staticLink;
         BatchTicksWorked++;
-        // Evict the stale BEFORE the batch, so it recompiles them against
+        // Evict the stale before the batch, so it recompiles them against
         // the addresses the modules will actually bake.
         ReconcileWithLink(engine);
         if (!CompileAllOnConsult || BatchPromoter is null) return 0;
@@ -316,7 +316,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             candidates.Add((pred, addr));
         }
         if (candidates.Count == 0) return 0;
-        // Announced HERE and nowhere else: this is the first moment the count
+        // Announced here and nowhere else: this is the first moment the count
         // is known and the last before the work. A notice keyed on "the tick
         // will run" instead fires after every consult, including the ones
         // whose whole program is already promoted -- "compiling... 0
@@ -378,7 +378,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public string? RefusalReason(int functorId)
         => _refusalReason.TryGetValue(functorId, out string? r) ? r : null;
 
-    /// <summary>The functors a compile actually REFUSED. The set also caches
+    /// <summary>The functors a compile actually refused. The set also caches
     /// by-design exclusions (the synthetic __query__ wrappers, whose body
     /// changes per query under one functor id) so RecordDispatch decides
     /// once — but those are not refusals and reporting them as such reads
@@ -421,10 +421,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // A snapshot is a module of its own, so it never waits for a batch.
         if (shadow) return PromoteShadow(functorId, engine!);
 
-        // Under the batch, a straggler must NOT build on its own. The group is
+        // Under the batch, a straggler must not build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
         // with the whole program on the tier that is a full rebuild landing
-        // INSIDE the user's query -- after the goal has written its output,
+        // inside the user's query -- after the goal has written its output,
         // before it answers. Note it and let the next boundary tick take it
         // with the others; until then it keeps running on Tier-0, exactly as
         // it did between crossing the threshold and being installed.

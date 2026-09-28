@@ -7,7 +7,7 @@ namespace Shumway.Compiler.Wasm;
 /// <summary>What a relocated immediate stands for. Everything the compiled
 /// code names outside itself is one of these; the values are process
 /// state (interned ids, linked addresses, the world's module id), so a
-/// module meant for another process carries the NAME and resolves it on
+/// module meant for another process carries the name and resolves it on
 /// install.</summary>
 public enum WasmRelocKind : byte
 {
@@ -120,7 +120,7 @@ public enum WasmInlineForms
     DomSingleton = 1 << 18,
 }
 
-/// <summary>A compile env that bakes a unique SENTINEL for every immediate
+/// <summary>A compile env that bakes a unique sentinel for every immediate
 /// the code names outside itself and records what each one stands for, so
 /// the bytes can be relocated into any process (<see
 /// cref="WasmRelocatableModule"/>). Form decisions (builtin, inline) come
@@ -274,7 +274,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         _evidence[fid] = EvidenceFor(entry.Name, entry.Arity, builtinId);
     }
 
-    // Every decision asked of the INNER env: asking this one would Note again.
+    // Every decision asked of the inner env: asking this one would Note again.
     private WasmBuiltinEvidence EvidenceFor(string name, int arity, int builtinId)
     {
         _inner.TryGetInlineTypeTest(builtinId, out var test);
@@ -435,17 +435,17 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     // other request, so the live id is only the input to EncodeBuiltinId.
     public int UnwindCpTrailsBuiltinId => _inner.UnwindCpTrailsBuiltinId;
 
-    // Handed through as the LIVE id, and only ever used as the input to
+    // Handed through as the live id, and only ever used as the input to
     // FunctorCell, which relocates by (name, arity). Baking the id itself
     // would be a cross-process bug: functor ids are handed out in intern
-    // ORDER, so the same predicate is a different id in another process.
+    // order, so the same predicate is a different id in another process.
     public int MqualFunctorId => _inner.MqualFunctorId;
     public int ColonFunctorId => _inner.ColonFunctorId;
 
     public IReadOnlyList<(int FunctorId, int BuiltinId)> MetaCallableBuiltins
         => _inner.MetaCallableBuiltins;
 
-    // Every form decision has to be DELEGATED here, not inherited: the
+    // Every form decision has to be delegated here, not inherited: the
     // interface's default answers "no", so a hook added upstream and not
     // added here silently stops applying to every baked module while the
     // live path keeps it (RelocatingCompileEnvTests makes that a failure).

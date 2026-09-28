@@ -2,7 +2,7 @@ namespace Shumway.Core;
 
 /// <summary>The wasm-tier state bridge: the mailbox contract of
 /// <see cref="WasmAbi"/> filled from and synced back into this activation.
-/// The wasm module manipulates the engine's OWN areas through the linear
+/// The wasm module manipulates the engine's own areas through the linear
 /// memory (browser: the pinned arrays live inside the runtime's memory;
 /// desktop tests: an image the runner copies in and out), so a bail at any
 /// verdict leaves the engine exactly where the interpreter would be.</summary>
@@ -71,7 +71,7 @@ public sealed partial class Activation
         /// <summary>Base and pair count of the global-variable image.</summary>
         long GlobalVarBase = 0,
         int GlobalVarCount = 0,
-        /// <summary>Whether the attribute image at AttrTableBase IS the
+        /// <summary>Whether the attribute image at AttrTableBase is the
         /// engine's own array (pinned into linear memory) rather than a copy
         /// of it. Decides who counts the module's inserts: see
         /// AttrMirrorNoteModuleInserts.</summary>
@@ -84,7 +84,7 @@ public sealed partial class Activation
         int FunctorReverseMask = 0);
 
     /// <summary>Grows the register bank to at least
-    /// <paramref name="count"/> registers, BEFORE the runner takes its view:
+    /// <paramref name="count"/> registers, before the runner takes its view:
     /// the compiled module stores X registers by fixed offset and an
     /// out-of-range store would corrupt whatever lies beyond the area.</summary>
     public void EnsureWasmRegisters(int count)
@@ -93,14 +93,14 @@ public sealed partial class Activation
     }
 
     // Direct views for the wasm runner (pinning or copying). Unlike
-    // Detach*Buffer these do NOT transfer ownership.
+    // Detach*Buffer these do not transfer ownership.
     public Cell[] WasmHeapView => _heap;
     public Cell[] WasmStackView => _stack;
     public Cell[] WasmRegistersView => _registers;
     public int[] WasmBindingTrailView => _bindingTrail;
 
     /// <summary>The extra trail, for a world that stages it. Shared so a
-    /// cut can COMPACT it in place: unlike every other area here the
+    /// cut can compact it in place: unlike every other area here the
     /// module rewrites entries, which is why the copying world has to copy
     /// it back and not just in.</summary>
     public ExtraTrailEntry[] WasmExtraTrailView => _extraTrail;
@@ -146,9 +146,9 @@ public sealed partial class Activation
     /// <summary>Puts the module's attribute writes in the store, and their
     /// records in the log. The module already wrote the image and the trail
     /// entry -- it had to, both are order-sensitive -- so this is the half
-    /// it could not reach, and it must land BEFORE anything reads the store.
+    /// it could not reach, and it must land before anything reads the store.
     ///
-    /// <para>The log records go in the same ORDER the module reserved them,
+    /// <para>The log records go in the same order the module reserved them,
     /// because the trail entries it wrote carry those indices. The assert is
     /// not paranoia: a mismatch would have an unwind restore one attribute's
     /// old value onto another attribute.</para></summary>
@@ -166,7 +166,7 @@ public sealed partial class Activation
             int oldValue = _wasmAttrWrites[at + WasmAbi.AttrWriteOld];
             int newValue = _wasmAttrWrites[at + WasmAbi.AttrWriteNew];
 
-            // The log record goes in the order the module RESERVED it,
+            // The log record goes in the order the module reserved it,
             // because the trail entries it wrote carry those indices.
             int logIndex = _attrTrailLog.Count;
             _attrTrailLog.Add((home, moduleId, oldValue));
@@ -225,7 +225,7 @@ public sealed partial class Activation
     public int WasmExtraTrailTop => _extraTrailTop;
 
     /// <summary>Grows the binding trail past its current length. For the wasm
-    /// tier after a chain deopted AT the trail limit: the wasm limit reserves
+    /// tier after a chain deopted at the trail limit: the wasm limit reserves
     /// a safety margin below the real array, so the interpreter completes the
     /// step inside that margin and the engine never grows the area on its own
     /// -- every later chain would deopt at the same spot, forever.</summary>
@@ -236,17 +236,17 @@ public sealed partial class Activation
     public void GrowWasmStack()
         => EnsureStackCapacity(_stack.Length - _stackTop + 1);
 
-    /// <summary>Told (module atom, goal functor, RESOLVED functor) every time
+    /// <summary>Told (module atom, goal functor, resolved functor) every time
     /// the meta-call dispatch resolves a module-tagged goal.
     ///
     /// <para>A compiled module cannot do this resolution: it is a lookup
     /// through the module's locals and imports, and the goal arrives wrapped
     /// as '$mqual'(Module, Goal) precisely because the bare functor is not
-    /// the answer. So the HOST publishes what it resolved and the module
+    /// the answer. So the host publishes what it resolved and the module
     /// reads it -- an inline cache, filled on the slow path it was already
     /// taking.</para>
     ///
-    /// <para>The first argument is the ADDRESS MAP the resolution was made
+    /// <para>The first argument is the address map the resolution was made
     /// against. A cache of these is only valid for one map -- a new query
     /// links a new one -- which is the same lifetime the engine's own
     /// meta-route cache is stamped with.</para>
@@ -254,7 +254,7 @@ public sealed partial class Activation
     /// <para>Null unless a wasm world is attached, and called only on the
     /// resolution path, which is already the slow one.</para></summary>
     /// <para>The last argument is the builtin id when the goal resolved to
-    /// a DIRECT builtin (one a module can request), -1 for a predicate.</para>
+    /// a direct builtin (one a module can request), -1 for a predicate.</para>
     public System.Action<object?, int, int, int, int, bool, int>? MetaResolutionObserver;
 
     /// <summary>Reports a module-tagged meta-call resolution to
@@ -353,7 +353,7 @@ public sealed partial class Activation
         m[WasmAbi.RegistersBase] = bases.RegistersBase;
         m[WasmAbi.BindingTrailBase] = bases.BindingTrailBase;
         // Withheld under a debug session, and that is ADR-035 D5+: with
-        // TrailEverything on, the trail IS the debugger's history and
+        // TrailEverything on, the trail is the debugger's history and
         // cut-time compaction destroys it. Not offering the image is how
         // the module is told, because a module with no base cannot
         // compact and steps aside exactly as it did before.
@@ -435,7 +435,7 @@ public sealed partial class Activation
         // '$catch_begin'/2 and '$catch_end'/0, which are builtins, and a
         // builtin ends the chain.
         //
-        // The floor is a SURVIVAL floor, not an optimisation: a throw
+        // The floor is a survival floor, not an optimisation: a throw
         // truncates the heap only to its own snapshot, so every mutation of
         // a cell older than that has to be restorable when it fires. The two
         // maxima are the opposite question -- a compaction that leaves both
@@ -449,12 +449,12 @@ public sealed partial class Activation
             if (f.SnapBindingTrailTop > snapBind) snapBind = f.SnapBindingTrailTop;
             if (f.SnapExtraTrailTop > snapExtra) snapExtra = f.SnapExtraTrailTop;
         }
-        // Armed HERE rather than in each world: every staging is a
+        // Armed here rather than in each world: every staging is a
         // handover, and the image is what the module reads. A divergence
         // from the store is a module computing on a lie, and this is the
         // last moment it costs nothing to catch. Diagnostic builds only.
         //
-        // AMORTIZED: the check walks the whole table, which a search grows
+        // Amortized: the check walks the whole table, which a search grows
         // (clp(Z) sudoku: ~3 ms a staging, most of a two-minute run), so it
         // runs once per table-size/64 stagings. A small table, every test's,
         // is still checked at every one.
@@ -476,14 +476,14 @@ public sealed partial class Activation
 
     /// <summary>Adopts the scalars the compiled code synced back on return
     /// (the EmitReturn set, plus ViewGen and the cut barrier, which choice
-    /// point restores rewrite in their slots). Pc is NOT adopted here: only
+    /// point restores rewrite in their slots). Pc is not adopted here: only
     /// the tail-call and deopt verdicts carry a meaningful Pc, and the
     /// verdict loop applies it explicitly.</summary>
     public void SyncFromWasmMailbox(System.ReadOnlySpan<long> m)
     {
         _heapTop = (int)m[WasmAbi.HeapTop];
         _bindingTrailTop = (int)m[WasmAbi.TrailTop];
-        // Adopted because a cut that compacts IN PLACE lowers it. Nothing
+        // Adopted because a cut that compacts in place lowers it. Nothing
         // else in the module writes it, so this is a no-op for every other
         // path -- and leaving it unadopted would silently undo the
         // compaction on the way out.
@@ -496,7 +496,7 @@ public sealed partial class Activation
             AttrMirrorNoteModuleInserts(_attrMirrorBudgetStaged - (int)m[WasmAbi.AttrMirrorBudget]);
             _attrMirrorBudgetStaged = (int)m[WasmAbi.AttrMirrorBudget];
         }
-        // Writes BEFORE orphans, and the order is load-bearing: a
+        // Writes before orphans, and the order is load-bearing: a
         // compaction in the same chain can have orphaned a record this
         // write created, and clearing an index the log does not hold yet
         // does nothing at all.

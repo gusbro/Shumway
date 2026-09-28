@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>jit_compile/1 against a wasm world: here Tier-1 IS the wasm
+/// <summary>jit_compile/1 against a wasm world: here Tier-1 is the wasm
 /// backend, which is the arrangement WebShumway ships and the one the
 /// conformance corpus asks for when it runs in a browser. The desktop
 /// runner builds three engines instead; this is the other half, where one
@@ -28,7 +28,7 @@ public sealed class JitCompileOnTheTierTests
 
         Assert.True(e.Query("jit_compile(off).").Success);
         // The eviction is queued for the next query setup, so it is the goal
-        // AFTER the switch that finds a Tier-0 engine.
+        // after the switch that finds a Tier-0 engine.
         Assert.True(e.Query("true.").Success);
         Assert.Empty(e.IlPromotion.PromotedFunctorIds());
 

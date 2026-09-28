@@ -390,7 +390,7 @@ internal static class NativeBlockInliner
         }
 
         // Resolves + emits an interop call (args coerced to the parameter types);
-        // returns the method's RAW return type (the caller normalizes / discards).
+        // returns the method's raw return type (the caller normalizes / discards).
         private Type EmitInteropCall(CCallExpr c)
         {
             var m = NativeBlockTyping.ResolveOrBail(_ctx.InteropResolver, c.Name);

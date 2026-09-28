@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 393 (Phase 29, Stage 9b-3 — the applied dead-region prune). `--region-prune`
 /// region-compiles the bundle and skips emitting a standalone IL method for each
-/// ABSORBED-ONLY predicate (reached only as a br-member of a live region). These tests
+/// absorbed-only predicate (reached only as a br-member of a live region). These tests
 /// pin: (1) the prune analysis fires (a non-zero region-absorbed count) on a region
 /// program, and (2) the pruned bundle still loads and runs correctly — the absorbed
 /// members run from inside the region methods (and keep their Tier-0 WAM as a fallback).
@@ -36,7 +36,7 @@ public class Chunk393Tests
             RegionPrune = true,   // implies IncludeCompiledIl
             IncludeCompiledIl = true,
             // Chunk 398: the per-module "prune_analysis" dry-run report is now opt-in
-            // (the APPLIED prune moved into BundleWriter.CompileEntryToIl over the exact
+            // (the applied prune moved into BundleWriter.CompileEntryToIl over the exact
             // calleeMap). Prune_FindsAbsorbedOnlyPredicates asserts on that report, so it
             // requests it; harmless for PrunedBundle_LoadsAndRunsCorrectly.
             RegionPruneReport = true,

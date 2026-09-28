@@ -20,7 +20,7 @@ public class ShareEncodingTests
 {
     // Mirrors WebShumwayApp.ShareEncode/ShareDecode, which live in the browser
     // app and cannot be referenced from here — the assertions below are about
-    // the FORMAT, so a change to it that broke sharing would break these too.
+    // the format, so a change to it that broke sharing would break these too.
     private static string Encode(string program, string query)
     {
         var payload = new MemoryStream();

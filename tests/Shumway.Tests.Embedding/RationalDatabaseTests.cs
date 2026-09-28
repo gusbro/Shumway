@@ -91,7 +91,7 @@ public sealed class RationalDatabaseTests
         Holds(e, "B is 2 rdiv 3, g(B, W), W == twothirds.");
         Holds(e, "A is 1 rdiv 3, g(A, W), W == third.");
         Assert.False(e.Query("C is 3 rdiv 4, g(C, _).").Success);
-        // An integer is not the rational that reduces to it, and 2 rdiv 6 IS
+        // An integer is not the rational that reduces to it, and 2 rdiv 6 is
         // 1 rdiv 3 -- canonical form, so it finds the same clause.
         Holds(e, "C is 2 rdiv 6, g(C, W), W == third.");
     }
@@ -129,7 +129,7 @@ public sealed class RationalDatabaseTests
     [Fact]
     public void ASavedDatabaseComesBackWithIt()
     {
-        // save/1 writes the LIVE database through the term codec, which knew
+        // save/1 writes the live database through the term codec, which knew
         // integers and floats and not this.
         string path = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), $"rat_db_{System.Guid.NewGuid():N}.sav")

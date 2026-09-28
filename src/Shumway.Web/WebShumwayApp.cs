@@ -9,16 +9,16 @@ namespace Shumway.Web;
 /// <see cref="TopLevelSession"/> the console REPL also drives.
 ///
 /// <para><b>Why every export returns a Task.</b> The app is built with
-/// <c>WasmEnableThreads</c>, which moves the .NET runtime OFF the browser's UI
+/// <c>WasmEnableThreads</c>, which moves the .NET runtime off the browser's UI
 /// thread. JavaScript then reaches it by posting to that thread, and the runtime
 /// rejects synchronous exports outright ("Cannot call synchronous C# methods") —
 /// a synchronous call would have to block the UI thread waiting for a reply,
 /// which is the freeze this design exists to prevent. Work that can take time
-/// goes one hop further, onto a POOL thread (<c>Task.Run</c>), leaving the
+/// goes one hop further, onto a pool thread (<c>Task.Run</c>), leaving the
 /// runtime thread free to receive <see cref="QueryCancel"/> while a search
 /// runs.</para>
 ///
-/// <para>Solutions are PULLED one at a time (<see cref="QueryNext"/>), which is
+/// <para>Solutions are pulled one at a time (<see cref="QueryNext"/>), which is
 /// what lets the UI offer "next solution" the way the REPL offers <c>;</c>.</para>
 /// </summary>
 internal static partial class WebShumwayApp
@@ -30,7 +30,7 @@ internal static partial class WebShumwayApp
     ///
     /// <para>An activation is single-threaded internally — the engine is not a
     /// thing two threads may be inside at once. With the search on a pool thread
-    /// there ARE two threads in play, and the editor asks for highlighting on
+    /// there are two threads in play, and the editor asks for highlighting on
     /// every keystroke, which reads the live operator table a consult is busy
     /// mutating. So engine work queues rather than overlaps: at most one of
     /// these bodies runs at a time, whichever thread called it.</para>
@@ -40,7 +40,7 @@ internal static partial class WebShumwayApp
     /// point. Queueing it would make it wait for the very goal it means to
     /// stop.</para>
     /// <para>Since the wasm tier, serializing is not enough: it has to be the
-    /// SAME thread every time. A compiled module is registered in the calling
+    /// same thread every time. A compiled module is registered in the calling
     /// thread's function table -- with threads on, every worker has its own,
     /// and only the memory is shared -- so a pool that hands out a different
     /// thread each time makes every module pay registration again there.
@@ -72,7 +72,7 @@ internal static partial class WebShumwayApp
         => OnEngine(() => Environment.CurrentManagedThreadId);
 
     /// <summary>The function-table length as the engine thread sees it: with
-    /// pinning, modules accumulate in ONE table.</summary>
+    /// pinning, modules accumulate in one table.</summary>
     internal static Task<int> OnEngineTableLength()
         => OnEngine(TableLengthHere);
 
@@ -97,7 +97,7 @@ internal static partial class WebShumwayApp
     {
         EnsureEngineThread();
         // RunContinuationsAsynchronously: without it the awaiting continuation
-        // runs ON the engine thread, and a continuation that queues more engine
+        // runs on the engine thread, and a continuation that queues more engine
         // work would deadlock against the queue it is standing in.
         var tcs = new TaskCompletionSource<T>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -142,7 +142,7 @@ internal static partial class WebShumwayApp
     private static void Main()
     {
         // A Main is required to start the runtime; the app itself is driven from
-        // JavaScript through the exports below. This runs ON the runtime thread,
+        // JavaScript through the exports below. This runs on the runtime thread,
         // which is the only place its context can be captured.
         _jsThread = SynchronizationContext.Current;
 
@@ -157,12 +157,12 @@ internal static partial class WebShumwayApp
 
         // browser-wasm has no Brotli codec, and a bundle is compressed with it
         // by default. Reading was never affected (the format says whether a
-        // bundle is compressed); WRITING one is, and compiling a library writes
+        // bundle is compressed); writing one is, and compiling a library writes
         // one. Set here rather than at the call site: nothing this build
         // produces can be compressed.
         BundleFormat.DisableCompression = true;
 
-        // Intern the whole builtin block HERE, while this is provably the
+        // Intern the whole builtin block here, while this is provably the
         // only thread (exports are not callable until Main returns). Boot()
         // runs on a pool thread concurrently with page exports, and a stray
         // intern from, say, an early highlight landing mid-registration would
@@ -214,7 +214,7 @@ internal static partial class WebShumwayApp
 
     private static void StartEngine()
     {
-        // Out and In must be set BEFORE the first query: query setup builds the
+        // Out and In must be set before the first query: query setup builds the
         // stream registry, and user_output / user_input keep whatever they were
         // handed then.
         PrologEngine engine = BootEngine();
@@ -291,7 +291,7 @@ internal static partial class WebShumwayApp
     /// <summary>Takes the next solution. The reply is one tag character followed by
     /// the text: see TagSolution / TagLast / TagFailed / TagError.
     ///
-    /// <para>Runs the search on a POOL THREAD and hands JavaScript a promise. The
+    /// <para>Runs the search on a pool thread and hands JavaScript a promise. The
     /// search is synchronous — it blocks whatever thread it is on until it has an
     /// answer — so the one thing that must not happen is for that thread to be the
     /// one drawing the page. Off the UI thread, the page keeps responding and
@@ -322,7 +322,7 @@ internal static partial class WebShumwayApp
         });
 
     /// <summary>Abandons the running query, if any. Called from the UI thread
-    /// WHILE the search may be running on a pool thread: it only sets the
+    /// while the search may be running on a pool thread: it only sets the
     /// cancellation token, which the engine observes at its next safe point, so
     /// it is prompt rather than instantaneous. Disposing is left to whoever
     /// finishes the run, or the token would be pulled out from under it.</summary>
@@ -334,7 +334,7 @@ internal static partial class WebShumwayApp
         // The abandoned query's unpainted output goes with it — see
         // DropBufferedOutput.
         DropBufferedOutput();
-        // A search stopped at a breakpoint is BLOCKED, not running: the token
+        // A search stopped at a breakpoint is blocked, not running: the token
         // alone would never be observed. Wake it so it can see the cancel.
         TryReleaseStop("continue");
         // Task<bool> rather than a bare Task: a non-generic Task is not
@@ -360,14 +360,14 @@ internal static partial class WebShumwayApp
     /// the JavaScript side is cheap next to re-rendering the overlay, which is
     /// what this call is for.</para>
     ///
-    /// <para>Uses the ENGINE'S lexer and the LIVE operator table, so the editor
+    /// <para>Uses the ENGINE'S lexer and the live operator table, so the editor
     /// agrees with the reader — including operators the consulted program
     /// declared itself.</para></summary>
     [JSExport]
     internal static Task<string> Highlight(string source)
         => OnEngineOrParked(() =>
         {
-            // Reads the LIVE operator table, which a consult mutates — hence the
+            // Reads the live operator table, which a consult mutates — hence the
             // gate. It also means highlighting waits behind a running search;
             // the page's editor draws its text without waiting for the colours.
             var spans = SyntaxHighlighter.Highlight(source, _session?.Engine.Operators);
@@ -435,7 +435,7 @@ internal static partial class WebShumwayApp
     /// a program that writes as it searches should be watchable while it runs.
     ///
     /// <para>A write from the search thread cannot touch JavaScript directly, so it
-    /// is POSTED to the runtime thread. Posts on one context run in the order they
+    /// is posted to the runtime thread. Posts on one context run in the order they
     /// were made, which is the property that matters: a program's output must
     /// reach the page in the order it was written.</para></summary>
     private sealed class PageWriter(bool asError = false) : TextWriter
@@ -470,11 +470,11 @@ internal static partial class WebShumwayApp
     /// asked to stop, but the transcript kept painting the backlog for minutes.
     /// </para>
     ///
-    /// <para>So writes accumulate here and at most ONE flush is ever in flight.
+    /// <para>So writes accumulate here and at most one flush is ever in flight.
     /// The post is scheduled on the first buffered write rather than on a timer,
     /// so when the page is keeping up a write still crosses on the next turn —
     /// a prompt written before a read is not left sitting in a buffer. When the
-    /// page is NOT keeping up, everything written meanwhile arrives as one
+    /// page is not keeping up, everything written meanwhile arrives as one
     /// string. Both kinds share one list, so ordinary output and diagnostics
     /// keep the order they were written in.</para></summary>
     private static readonly object _outLock = new();
@@ -485,7 +485,7 @@ internal static partial class WebShumwayApp
     /// <summary>How much unpainted output the search may run ahead by before it
     /// is made to wait. Batching alone was not enough to keep Stop working: a
     /// goal that writes without pause fills the runtime thread's queue with
-    /// flushes, and QueryCancel needs THAT thread to reach the engine — so the
+    /// flushes, and QueryCancel needs that thread to reach the engine — so the
     /// search outran the only thread that could stop it. Waiting here throttles
     /// the producer to roughly the speed of the page, which leaves the runtime
     /// thread time to answer, and bounds the memory a runaway goal can take.
@@ -509,13 +509,13 @@ internal static partial class WebShumwayApp
             if (overHighWater) _outDrained.Reset();
         }
         if (schedule) _jsThread!.Post(static _ => FlushOutput(), null);
-        // A BOUNDED wait: a throttle, never a block. If the page has stopped
+        // A bounded wait: a throttle, never a block. If the page has stopped
         // painting altogether (a hidden tab), the search proceeds anyway rather
         // than wedging — it has already yielded the time that matters.
         //
         // CA1416 flags the wait as unsupported on browser, which is true of the
         // thread that must never block: the runtime thread. This runs only on
-        // the SEARCH thread — the branch above returned early when the caller is
+        // the search thread — the branch above returned early when the caller is
         // the runtime thread — and that one is a pool thread whose whole job is
         // a synchronous search. Blocking it briefly is the design, not a
         // violation of it.
@@ -554,7 +554,7 @@ internal static partial class WebShumwayApp
     }
 
     /// <summary>Throws away output that has not been painted yet — what an
-    /// ABANDONED query still had queued. Without it, Stop stops the search and
+    /// abandoned query still had queued. Without it, Stop stops the search and
     /// the transcript goes on painting its trace long afterwards, which reads as
     /// Stop having done nothing.</summary>
     private static void DropBufferedOutput()

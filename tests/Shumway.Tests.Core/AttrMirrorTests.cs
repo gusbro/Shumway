@@ -9,7 +9,7 @@ namespace Shumway.Tests.Core;
 /// moving every index at once.
 ///
 /// <para>The image exists so a compiled wasm module can answer get_attr/3
-/// without leaving wasm. Its failure mode is therefore NOT a wrong answer
+/// without leaving wasm. Its failure mode is therefore not a wrong answer
 /// anyone would notice here: a stale row makes the module return a value the
 /// engine no longer holds, which is unsound and invisible to every test that
 /// only compares answers. So these assert the image directly, in both
@@ -51,7 +51,7 @@ public class AttrMirrorTests
         int v = Value(e, 50);
         e.PutAttr(x, ModA, v);
 
-        // Not merely "they agree" -- the image has to hold the VALUE, or a
+        // Not merely "they agree" -- the image has to hold the value, or a
         // check that only counted rows would pass on an empty one.
         Assert.Equal(v, e.AttrMirrorLookup(x, ModA));
         Assert.Equal(-1, e.AttrMirrorLookup(x, ModB));
@@ -164,7 +164,7 @@ public class AttrMirrorTests
         // Bind it, so the cell stops being an ATTVAR, then cut. The cut
         // discards the entry that would restore the cell, which is exactly
         // when the record may be reclaimed -- and it is reclaimed while it
-        // still HOLDS attributes. Every other path empties the record first,
+        // still holds attributes. Every other path empties the record first,
         // so this is the only one that exercises AttrDropRecord's own rows,
         // and it is the memory-hygiene path a long cut-only run depends on.
         e.SetHeap(x, Cell.Atom(60));
@@ -189,8 +189,8 @@ public class AttrMirrorTests
         int binding = e.BindingTrailTop;
         int extra = e.ExtraTrailTop;
 
-        // The variable becomes attributed ABOVE the choice point, so undoing
-        // the promotion drops a record that still HOLDS its attributes --
+        // The variable becomes attributed above the choice point, so undoing
+        // the promotion drops a record that still holds its attributes --
         // AttrDropRecord's own path, which the del tests never reach because
         // there the record is already empty by the time it is dropped. This is
         // what a solver posting on a fresh variable and then failing does, so
@@ -241,7 +241,7 @@ public class AttrMirrorTests
 
         e.CollectHeap();
 
-        // The home moved, so the OLD key must no longer answer and the store's
+        // The home moved, so the old key must no longer answer and the store's
         // new one must. Agreement alone would hold even on an empty image.
         Agrees(e, "after gc");
         Assert.Single(e.AttrTableKeysSnapshot());

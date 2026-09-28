@@ -65,7 +65,7 @@ public sealed class JitCompileBuiltinTests
         Assert.Empty(e.IlPromotion.PromotedFunctorIds());
     }
 
-    /// <summary>off returns what ALREADY promoted, not only what would have.
+    /// <summary>off returns what already promoted, not only what would have.
     /// The eviction is queued and applied at the next query setup, so the
     /// count is taken after a further goal has run.</summary>
     [Fact]
@@ -140,7 +140,7 @@ public sealed class JitCompileBuiltinTests
     [Fact]
     public void ARejectedModeNamesTheOffender()
     {
-        // Asserted on the PROLOG term, which is what the user reads: the
+        // Asserted on the prolog term, which is what the user reads: the
         // culprit reported as _ says nothing about what they typed.
         Assert.True(Engine().Query(
             "catch(jit_compile(sideways), "

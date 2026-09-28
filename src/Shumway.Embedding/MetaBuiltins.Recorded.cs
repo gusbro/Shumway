@@ -29,25 +29,25 @@ public static partial class MetaBuiltins
     }
 
     // recorded/3 is written around the retract lessons: the naive
-    // shape ToList-copied the key's WHOLE chain into
-    // (Ref, Term) tuples per call and materialised + unified EVERY candidate
+    // shape ToList-copied the key's whole chain into
+    // (Ref, Term) tuples per call and materialised + unified every candidate
     // through a full CP cycle. The classic Edinburgh drain
     // (`recorded(K, V, R), erase(R), …, !` once per item — the PrologToC
     // assembler) made that O(n²) tuples over tens of thousands of records:
     // dotnet-trace showed the enumerator's MoveNext alone at 38% exclusive
     // plus the induced finalizer/GC storm. Now:
-    //   1. LAZY-FIRST — scan the LIVE chain and yield the first match with no
+    //   1. Lazy-first — scan the live chain and yield the first match with no
     //      snapshot at all; the remaining entries are snapshotted only if a
-    //      RESUME actually happens (a cut after the first solution — the
+    //      resume actually happens (a cut after the first solution — the
     //      drain — never pays it, making the drain O(1) per call).
-    //   2. PREFILTER — a candidate that DefiniteMismatch proves incompatible
+    //   2. Prefilter — a candidate that DefiniteMismatch proves incompatible
     //      with the V pattern is skipped with zero allocation; a non-refuted
-    //      candidate pays a rolled-back trial unify, and only the ACCEPTED
+    //      candidate pays a rolled-back trial unify, and only the accepted
     //      one is materialised for real. An unbound V (the drain) skips the
     //      trial entirely.
     // Semantics note: mutations between the first solution and the first
     // resume are visible to the continuation (the lazy snapshot reads the
-    // live chain then) — the drain idiom RELIES on seeing its own erasures;
+    // live chain then) — the drain idiom relies on seeing its own erasures;
     // the old eager snapshot hid them until the next fresh call.
     public static bool Recorded3(Activation engine)
     {
@@ -63,11 +63,11 @@ public static partial class MetaBuiltins
         private readonly int _atomId;   // >= 0 => atom key (integer store); -1 => compound
         private readonly Term? _key;    // set only for compound keys
         private readonly int _returnPc;
-        // The key's chain, looked up ONCE (lazily) and cached for the cursor's
+        // The key's chain, looked up once (lazily) and cached for the cursor's
         // whole backtracking life — no repeated structural dictionary probe.
         private LinkedList<RecordedDatabase.RecordEntry>? _chain;
         private bool _chainResolved;
-        // Built on the FIRST resume (lazy tail snapshot); null before that.
+        // Built on the first resume (lazy tail snapshot); null before that.
         private List<(long Ref, Term Term)>? _snapshot;
         private int _snapIdx;
         private long _lastYieldedRef = -1;
@@ -101,7 +101,7 @@ public static partial class MetaBuiltins
             if (isResume && _snapshot is null)
             {
                 // Lazy tail snapshot: exactly one entry has been yielded so
-                // far. Capture the live chain AFTER it — or the whole current
+                // far. Capture the live chain after it — or the whole current
                 // chain when the consumer erased it (the drain): the entries
                 // before the yielded one were already rejected against this
                 // same (CP-restored) pattern, so re-offering them is at worst
@@ -138,7 +138,7 @@ public static partial class MetaBuiltins
                     if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
                     _lastYieldedRef = cand.Ref;
                     // Look ahead with the same rolled-back trial: a choice
-                    // point is only worth pushing when a LATER candidate can
+                    // point is only worth pushing when a later candidate can
                     // match too. Otherwise the last solution reports
                     // nondeterministic and every caller that never cuts drags
                     // a dead CP around.
@@ -187,7 +187,7 @@ public static partial class MetaBuiltins
         private bool YieldCandidate(
             Activation engine, (long Ref, Term Term) cand, bool isResume, bool more)
         {
-            // Push the re-satisfaction CP FIRST so the real bindings roll
+            // Push the re-satisfaction CP first so the real bindings roll
             // back cleanly on backtrack (arity 3 — the registers must be
             // restored for the next attempt's pattern; the CP-arity lesson),
             // and only when the lookahead found a further match.
@@ -203,7 +203,7 @@ public static partial class MetaBuiltins
     public static bool Erase1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "erase/1");
-        // A '$clause_ref'(Id) erases the referenced CLAUSE (asserta/2
+        // A '$clause_ref'(Id) erases the referenced clause (asserta/2
         // family); an integer erases a recorded-database entry (Arity).
         Term t = MaterializeRegister(engine, 0);
         if (t is VarTerm)
@@ -331,11 +331,11 @@ public static partial class MetaBuiltins
                 $"{builtin} requires the engine to be hosted by a PrologEngine.");
 
     /// <summary>Reads a recorded-DB key from register <paramref name="register"/>.
-    /// For an ATOM key returns its integer id (AtomId >= 0) and a null Term —
+    /// For an atom key returns its integer id (AtomId >= 0) and a null Term —
     /// the hot read path (recorded/3) then keys the integer-indexed store with
-    /// NO key-AST materialisation and no structural string hashing (the two
+    /// no key-AST materialisation and no structural string hashing (the two
     /// costs the PrologToC self-compile profile was dominated by). For a ground
-    /// COMPOUND key returns AtomId = -1 and the materialised, validated Term.
+    /// compound key returns AtomId = -1 and the materialised, validated Term.
     /// A var / inner-var key raises <c>instantiation_error</c> — the recorded
     /// DB keys on structural equality, and a VarTerm compares by its generated
     /// name, so a non-ground key would store under a never-again-equal key and

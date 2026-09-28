@@ -39,7 +39,7 @@ internal static class QueryWrapper
                 vars.Select(n => (Term)new VarTerm(n)).ToArray());
             Term copies = new VarTerm(CopiesVarName);
             Term residuals = new VarTerm(ResidualVarName);
-            // The projection reaches what the QUERY reaches, and a constraint
+            // The projection reaches what the query reaches, and a constraint
             // can be left on a variable it does not: `?- freeze(_, false).`
             // answered `true`, which says there is nothing pending. Nobody
             // constrains a variable they discard on purpose, so this is a
@@ -66,7 +66,7 @@ internal static class QueryWrapper
                 }),
             });
 
-            // copy_term/3 copies the WHOLE answer, on the heap, for every
+            // copy_term/3 copies the whole answer, on the heap, for every
             // solution -- 4.6 of the 7.8 seconds an answer of 4.5 million cells
             // took here, and far worse in a browser. It is here for residual
             // constraints, and with no attributed variable anywhere there are

@@ -117,7 +117,7 @@ public class BytecodeInterpreterTests
     public void Run_ExecuteChain_TailCallsPreserveTheOriginalCp()
     {
         // Modelling the WAM tail-call pattern: main calls A, A executes B, B executes C,
-        // and C proceeds. Since `execute` does NOT touch CP, the return address saved
+        // and C proceeds. Since `execute` does not touch CP, the return address saved
         // by the original `call` survives the entire chain — the final proceed lands
         // right after the original call instruction.
         //
@@ -127,7 +127,7 @@ public class BytecodeInterpreterTests
         //   15..19: execute C=20        (B — CP unchanged)
         //   20:     proceed             (C — jumps back to CP=9)
         //
-        // Note: a non-tail-call chain (call A → A calls B → B calls C) would NOT work
+        // Note: a non-tail-call chain (call A → A calls B → B calls C) would not work
         // without intervening allocate/deallocate, because each `call` overwrites the
         // single _cp register. Env frames are how the WAM stacks return addresses; that
         // pattern is exercised by Run_CallerWithEnvFrameAndCallee below.

@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// engine happens to be built out of.
 ///
 /// <para>An engine booted from a bundle with a baked prelude holds the prelude
-/// as PRECOMPILED records rather than manifest clauses, which is a different
+/// as precompiled records rather than manifest clauses, which is a different
 /// path through the enumeration. It used to list every prelude local
 /// (<c>$prelude$$member3/3: 2 clauses, source stripped</c>) — noise that also
 /// said the engine's own innards had no source, which is true and irrelevant.</para>

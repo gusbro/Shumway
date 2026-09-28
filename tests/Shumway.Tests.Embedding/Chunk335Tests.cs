@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Chunk 335 (Phase 28): a cut is a goal boundary and must flush pending
-/// attribute-hook wakeups BEFORE committing.
+/// attribute-hook wakeups before committing.
 ///
 /// <para>Binding a clpfd attributed variable to a value (plain <c>=/2</c>)
 /// queues a <c>verify_attributes/4</c> wakeup — the domain check is deferred
@@ -33,10 +33,10 @@ public class Chunk335Tests
     }
 
     // The canonical minimal repro: a clpfd attvar unified with an integer in
-    // the SECOND branch of a disjunction, the whole thing inside an
+    // the second branch of a disjunction, the whole thing inside an
     // if-then-else condition. Branch 1 narrows X to 1..2, X=5 fails there;
     // backtracking must reach branch 2 (true, domain restored to 1..9) so
-    // X=5 succeeds and the THEN branch runs.
+    // X=5 succeeds and the then branch runs.
     [Fact]
     public void CutFlushesWakeup_DisjunctionInIfThenElseCondition_TakesThenBranch()
     {

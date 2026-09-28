@@ -11,8 +11,8 @@ using WebAssembly.Runtime;
 ///
 /// <para>What this can and cannot say. It runs the hand-built counter module
 /// through the emitter library's own engine, which compiles wasm to .NET IL
-/// and JITs it — NOT a browser's wasm engine. So it measures the quality of
-/// the CODE the backend would generate, against the same counter run by our
+/// and JITs it — not a browser's wasm engine. So it measures the quality of
+/// the code the backend would generate, against the same counter run by our
 /// two tiers on the same machine in the same process. It does not measure
 /// what the browser will do with that code, and it cannot: the Go criterion
 /// is a browser number, and the boundary here is a JIT-compiled delegate call
@@ -44,8 +44,8 @@ public static class WasmSpike
         Console.WriteLine("   so this is about the generated code, not about a browser)");
         Console.WriteLine();
 
-        // Each measurement warms its own subject and then times ROUNDS runs of
-        // it, reporting the FASTEST: a wall clock on a shared machine only
+        // Each measurement warms its own subject and then times rounds runs of
+        // it, reporting the fastest: a wall clock on a shared machine only
         // ever adds, so the minimum is the sample least polluted by whatever
         // else the box was doing. The spread is printed beside it, because a
         // wide one says the number is worth less.

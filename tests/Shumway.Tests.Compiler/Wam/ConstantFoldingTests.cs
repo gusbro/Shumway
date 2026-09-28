@@ -43,7 +43,7 @@ public class ConstantFoldingTests
     [Fact]
     public void ZeroDivisor_IsNotFolded_LeftToRuntime()
     {
-        // 1//0 would raise at evaluation — must NOT be folded away; the runtime
+        // 1//0 would raise at evaluation — must not be folded away; the runtime
         // path (a_int_bin / a_eval) is kept so the error fires when executed.
         string text = Dis("p(X) :- X is 1 // 0.");
         Assert.True(text.Contains("a_int_bin") || text.Contains("a_eval"),

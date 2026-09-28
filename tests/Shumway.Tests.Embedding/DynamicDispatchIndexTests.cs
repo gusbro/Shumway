@@ -8,12 +8,12 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-041 selects a dynamic predicate's clauses at dispatch by the
 /// call's first argument, which is what keeps determinism from depending on
 /// whether the predicate has been recompiled indexed yet. It answered the
-/// question by WALKING the chain, and re-derived each clause's key as it went
+/// question by walking the chain, and re-derived each clause's key as it went
 /// -- interning the head atom, per clause, per call.
 ///
 /// <para>So a call cost O(clauses). That is invisible for a predicate built
 /// before the query that uses it, because the JIT recompile at query setup
-/// gives it a real index. It is not invisible for one built and used INSIDE
+/// gives it a real index. It is not invisible for one built and used inside
 /// one query, which never reaches that recompile: 20,000 calls on the same key
 /// took 0.86s over 2,000 clauses and 20s over 32,000.</para>
 ///
@@ -43,10 +43,10 @@ public sealed class DynamicDispatchIndexTests
         return e;
     }
 
-    /// <summary>The shape: a FIXED number of calls, and only the size of the
+    /// <summary>The shape: a fixed number of calls, and only the size of the
     /// predicate varies.
     ///
-    /// <para>COUNTED, not timed. The cost this is about is C# work inside the
+    /// <para>Counted, not timed. The cost this is about is C# work inside the
     /// selector, so no Prolog-level counter sees it -- inferences and heap
     /// cells come out identical (40,002 and 20,000) whether the selector
     /// walks 2,000 entries per call or none. And the clock cannot say it
@@ -54,7 +54,7 @@ public sealed class DynamicDispatchIndexTests
     /// clause count on an idle machine, so a ratio bound over it fails on
     /// whichever lane the noise lands badly (it did, on net48-x86).</para>
     ///
-    /// <para>What the fix actually claims is that the selector ANSWERS from
+    /// <para>What the fix actually claims is that the selector answers from
     /// its buckets instead of handing the call back to the chain. That is
     /// exact, and it is the same integer on every runtime and every clause
     /// count.</para></summary>
@@ -76,15 +76,15 @@ public sealed class DynamicDispatchIndexTests
         }
     }
 
-    /// <summary>ANTI-VACUITY: the counters are not simply always these
-    /// numbers. A call the buckets cannot answer must DECLINE -- an unbound
+    /// <summary>Anti-vacuity: the counters are not simply always these
+    /// numbers. A call the buckets cannot answer must decline -- an unbound
     /// first argument leaves every clause a candidate -- and a key no clause
     /// carries must be ruled out without walking.</summary>
     [Fact]
     public void ACallTheBucketsCannotAnswerIsHandedBackToTheChain()
     {
         // An unbound first argument leaves every clause a candidate, so the
-        // call is handed back -- once, since the first call BINDS the key and
+        // call is handed back -- once, since the first call binds the key and
         // the rest answer from the buckets. Plus at most a handful of
         // realloc-induced conservative fallbacks, same as everywhere.
         var (sole, none, declined) = Verdicts(2_000, "hit(100, _)");
@@ -104,8 +104,8 @@ public sealed class DynamicDispatchIndexTests
             $"declined={DynamicCodePatcher.SelDeclined}");
     }
 
-    /// <summary>ANTI-VACUITY for the answers themselves: selecting one clause
-    /// out of thousands must return the RIGHT one, and must leave no choice
+    /// <summary>Anti-vacuity for the answers themselves: selecting one clause
+    /// out of thousands must return the right one, and must leave no choice
     /// point behind it.</summary>
     [Fact]
     public void SelectingOneClauseOutOfThousandsStillAnswersCorrectly()
@@ -120,7 +120,7 @@ public sealed class DynamicDispatchIndexTests
 
     /// <summary>Runs a fixed number of calls over a predicate of the given
     /// size and reports what the selector decided: (sole, none, declined).
-    /// The build and the calls share ONE query, so the JIT's query-setup
+    /// The build and the calls share one query, so the JIT's query-setup
     /// recompile cannot index the predicate first -- which is the case this
     /// is about.</summary>
     private static (long Sole, long None, long Declined) Verdicts(
@@ -137,7 +137,7 @@ public sealed class DynamicDispatchIndexTests
 
     }
 
-    /// <summary>ANTI-VACUITY, and the whole contract: which clauses run, and
+    /// <summary>Anti-vacuity, and the whole contract: which clauses run, and
     /// in what order. A keyed clause and a catch-all both match, in clause
     /// order; a key nothing carries matches only the catch-all; a key that
     /// matches nothing at all fails.</summary>

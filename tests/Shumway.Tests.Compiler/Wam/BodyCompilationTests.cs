@@ -104,7 +104,7 @@ public class BodyCompilationTests
     public void Permanent_VarInOneChunkOnly_IsTemp()
     {
         // p(X, Y) :- q(X), r(Y).
-        // X is in chunk 0 (head + q). Y is in head AND in chunk 1 (r) — permanent.
+        // X is in chunk 0 (head + q). Y is in head and in chunk 1 (r) — permanent.
         var cc = CompileSource("p(X, Y) :- q(X), r(Y).");
         Assert.Equal(1, cc.PermanentCount);          // only Y
     }

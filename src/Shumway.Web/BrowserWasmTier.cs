@@ -109,9 +109,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                     + " — see the browser console for the engine's reason");
             return i;
         });
-        // EAGERLY on the installing thread: a module the browser refuses (a
+        // Eagerly on the installing thread: a module the browser refuses (a
         // V8 size limit, say — a giant jit_compile(all) group) must fail
-        // HERE, where the caller can fall back to bytecode and report,
+        // here, where the caller can fall back to bytecode and report,
         // never inside some later user query's first chain call. Every pool
         // thread is the same kind of worker, so this thread's verdict
         // stands for the others. Registering before minting the id keeps a
@@ -289,11 +289,11 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         }
 
         /// <summary>The '$fd_dom' functor table's address (ADR-051). Pinned
-        /// ONCE: the contents are interned at startup and never change, so
+        /// once: the contents are interned at startup and never change, so
         /// unlike every other area here there is nothing to repin.</summary>
         private static GCHandle _fdDomPin;
 
-        /// <summary>TRACE MODE's ring, pinned for the module to write into.
+        /// <summary>Trace MODE's ring, pinned for the module to write into.
         /// Allocated only once something arms the trace, so an ordinary run
         /// carries neither the buffer nor the pin.</summary>
         private static long[]? _traceRing;
@@ -312,7 +312,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         /// <summary>Moves whatever the module wrote into the host's trace and
         /// empties the ring. Called wherever the chain comes out, so the two
-        /// tiers' events land in ONE stream in the order they happened.
+        /// tiers' events land in one stream in the order they happened.
         /// </summary>
         private void DrainTraceRing()
         {
@@ -392,9 +392,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private int[]? _attrLogHomesPinned;
 
         /// <summary>The extra trail, pinned. The one area the module
-        /// REWRITES rather than only appending to -- a cut compacts it in
+        /// rewrites rather than only appending to -- a cut compacts it in
         /// place -- which in this world costs nothing extra, because pinning
-        /// means the engine's array IS the image and there is no copy back
+        /// means the engine's array is the image and there is no copy back
         /// to get wrong.</summary>
         private GCHandle _extraTrailPin;
         private ExtraTrailEntry[]? _extraTrailPinned;
@@ -587,7 +587,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         public void WriteSlot(int slot, long value) => _mailbox[slot] = value;
 
-        // Here an address IS a runtime address: the module's memory and the
+        // Here an address is a runtime address: the module's memory and the
         // host's are the same one, which is the whole reason this world pins
         // instead of copying.
         public long ReadWord(long address) => Marshal.ReadInt64((nint)address);
@@ -595,7 +595,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         public void SyncEngine()
         {
             if (_engineAuthoritative) return;
-            // Whatever the module traced belongs in the stream BEFORE the
+            // Whatever the module traced belongs in the stream before the
             // host resumes writing to it, or the two tiers interleave wrong.
             DrainTraceRing();
             _engine.SyncFromWasmMailbox(_mailbox);
@@ -679,7 +679,7 @@ internal static class BrowserWasmTier
     /// <summary>Which buffer last ran out, if one did. The ISO term says
     /// only "memory", which is right for a program and useless for finding
     /// out why one engine ran out where another did not.</summary>
-    /// <summary>Who ASKS for the builtins, heaviest pair first. The plain
+    /// <summary>Who asks for the builtins, heaviest pair first. The plain
     /// tally says which builtin a run leaves for; when one of them is the
     /// whole run, the next question is always who is asking, and the answer
     /// names a clause to read.</summary>
@@ -725,7 +725,7 @@ internal static class BrowserWasmTier
     /// <summary>Where the delegate's time went. The pieces sum:
     /// delegate = inside wasm + staging + builtins + the glue of the
     /// verdict loop, and a run that is slower than Tier 0 has to say
-    /// WHICH of those it is before anything is tuned.</summary>
+    /// which of those it is before anything is tuned.</summary>
     internal static string TimingReport()
     {
         double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -793,7 +793,7 @@ internal static class BrowserWasmTier
     {
         var rank = WasmTierDelegate.ForeignRanking();
         if (rank.Count == 0) return "";
-        // Does the callee EXIST as a static predicate, and at what
+        // Does the callee exist as a static predicate, and at what
         // address? A functor that names one which was simply not
         // promoted is a promotion question; one that names none, or one
         // sharing an address with a mangled sibling, is a naming bug.
@@ -812,7 +812,7 @@ internal static class BrowserWasmTier
             string name = Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?";
             string where = addrOf.TryGetValue(fid, out int at)
                 ? $" static@{at}" : " NOT a static predicate";
-            // The same name under some module, and where THAT sits.
+            // The same name under some module, and where that sits.
             string twin = "";
             foreach (var kv in addrOf)
             {
@@ -837,7 +837,7 @@ internal static class BrowserWasmTier
 
         var sb = new System.Text.StringBuilder();
         long total = WasmTierDelegate.DiagDeopts;
-        // The DISTINCT count leads: a flat spread over hundreds of sites and a
+        // The distinct count leads: a flat spread over hundreds of sites and a
         // storm at three are different problems, and only this number tells
         // them apart. A truncated list looks the same either way.
         sb.Append("%   deopt sites (of ").Append(total).Append(", ")
@@ -861,7 +861,7 @@ internal static class BrowserWasmTier
         if (WasmTierDelegate.DiagDeoptOverflow > 0)
             sb.Append($"%     {WasmTierDelegate.DiagDeoptOverflow} at sites past the table\n");
 
-        // WHY a meta-call declined, not just where. A site named
+        // Why a meta-call declined, not just where. A site named
         // "$wake_call/1@+28 CallBuiltin" says a meta-call went to the host
         // and nothing more: the goal could be a builtin no marker can name,
         // a pair the host never published, or a shape this path does not
@@ -877,9 +877,9 @@ internal static class BrowserWasmTier
                 if (hist[g] == 0) continue;
                 sb.Append($"%     {hist[g]} guard {g}: ")
                   .Append(Shumway.Compiler.Wasm.WasmPredicateCompiler.DeoptReasonName(g));
-                // The functor LAST seen at this code, where the site stamped
+                // The functor last seen at this code, where the site stamped
                 // one: a row saying 400 meta-calls found no marker only
-                // becomes actionable when it says 400 of WHAT.
+                // becomes actionable when it says 400 of what.
                 long gfid = WasmTierDelegate.DiagGuardFids[g];
                 // Guard 34 stamps a cell TAG there, not a functor: what
                 // an arithmetic operand turned out to be is the whole
@@ -887,7 +887,7 @@ internal static class BrowserWasmTier
                 // some unrelated predicate.
                 if (g == 25)
                 {
-                    // The unifier stamps WHICH of its six reasons.
+                    // The unifier stamps which of its six reasons.
                     string[] why = ["?", "trail full", "worklist full at entry",
                         "an attributed variable", "worklist full on a compound",
                         "worklist full on a list",
@@ -910,7 +910,7 @@ internal static class BrowserWasmTier
                 }
                 else if (g == 9 && gfid != 0)
                 {
-                    // The meta cache KEY the probe missed with (WasmResumeTable.MetaKey):
+                    // The meta cache key the probe missed with (WasmResumeTable.MetaKey):
                     // module atom + 1 above bit 36, an atom-goal flag at bit 35,
                     // the appended count at 32, the goal's functor or atom id below.
                     int module = (int)(gfid >> 36) - 1;
@@ -965,7 +965,7 @@ internal static class BrowserWasmTier
                 var next = GC.AllocateArray<long>(grown, pinned: true);
                 Array.Copy(_functorMirror, next, _functorMirror.Length);
                 _functorMirror = next;
-                // The new address is picked up at the NEXT staging; the old
+                // The new address is picked up at the next staging; the old
                 // pinned array stays valid for any chain in flight.
             }
             int synced = _functorSynced;
@@ -975,7 +975,7 @@ internal static class BrowserWasmTier
         }
     }
 
-    // The CURRENT engine's world; the stdlib bundle's module installs into it.
+    // The current engine's world; the stdlib bundle's module installs into it.
     private static BrowserWasmWorld? _world;
 
     internal static int ModuleCount() => _world?.ModuleCount ?? 0;
@@ -986,9 +986,9 @@ internal static class BrowserWasmTier
 
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
-    /// <summary>Set by jit_compile(off) and honoured by the BOOT, so a
+    /// <summary>Set by jit_compile(off) and honoured by the boot, so a
     /// restart really does give an engine with no wasm in it. Without it the
-    /// boot re-attached the tier at the default threshold AND installed the
+    /// boot re-attached the tier at the default threshold and installed the
     /// bundle's module, so "restart. for a clean engine" was false twice over.
     /// Cleared by any jit_compile that turns the tier back on.</summary>
     internal static bool Disabled;
@@ -1008,7 +1008,7 @@ internal static class BrowserWasmTier
     /// <summary>jit_compile/1 for this page: the threshold alone does not
     /// describe the tier here, because the world is attached lazily and "all"
     /// means "compile the program now and at every consult", not "promote on
-    /// the first call". Installed on the STORE so it survives query setup,
+    /// the first call". Installed on the store so it survives query setup,
     /// and installed even when the tier is off -- otherwise nothing could
     /// turn it back on.</summary>
     internal static void WireJitControl(PrologEngine engine)
@@ -1062,7 +1062,7 @@ internal static class BrowserWasmTier
                 : ""));
     }
 
-    /// <summary>Attaches the tier. The default is the BATCH mode: one module
+    /// <summary>Attaches the tier. The default is the batch mode: one module
     /// for the whole linked program at each consult boundary; the lazy mode
     /// compiles one module per predicate as it crosses the threshold. Either
     /// way a module is compiled once: a call or a backtrack into a sibling
@@ -1116,7 +1116,7 @@ internal static class BrowserWasmTier
         store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
     }
 
-    /// <summary>The jit_compile(all) path: the whole candidate set in ONE
+    /// <summary>The jit_compile(all) path: the whole candidate set in one
     /// module. A candidate the compiler refuses must not take the batch
     /// down: on a failed build each candidate is test-compiled alone and the
     /// refusals are marked unpromotable; the survivors build together.</summary>
@@ -1137,7 +1137,7 @@ internal static class BrowserWasmTier
             }
             catch (WasmRegisterException)
             {
-                // The BROWSER refused the module — too big, most likely.
+                // The browser refused the module — too big, most likely.
                 // Nothing was installed; the members are individually fine.
                 return 0;
             }
@@ -1181,7 +1181,7 @@ internal static class BrowserWasmTier
         }
     }
 
-    /// <summary>Wall time spent COMPILING modules, and how many — the cost
+    /// <summary>Wall time spent compiling modules, and how many — the cost
     /// side of the tier, reported by jit_compile(status). Mono-interpreted
     /// C#, so this is the dominant promotion cost in the browser.</summary>
     internal static long DiagCompileTicks;
@@ -1387,7 +1387,7 @@ internal static partial class WebShumwayApp
 
 /// <summary>Phase B of the wasm-tier plan: the benchmark page. Five programs
 /// — the three of the tier probe plus crypt and zebra from the Van Roy suite
-/// — each in its OWN pair of engines (the group module is the program's), a
+/// — each in its own pair of engines (the group module is the program's), a
 /// correctness cross-check first, then best-of-rounds wall time for tiered
 /// against plain Tier-0 and the geometric mean over the set. Reached via the
 /// page hash <c>#wasmbench</c>; the report feeds
@@ -1540,8 +1540,8 @@ internal static partial class WebShumwayApp
         """;
 
     /// <summary>clpr: the library whose store is floats and whose hot
-    /// builtin is attribute access. On the DESKTOP world it measured far
-    /// slower than Tier-0, but that world COPIES the live heap into linear
+    /// builtin is attribute access. On the desktop world it measured far
+    /// slower than Tier-0, but that world copies the live heap into linear
     /// memory on every chain entry while the browser pins the engine's own
     /// arrays -- so the desktop number says nothing about this one, and this
     /// is the one that counts.</summary>
@@ -1574,7 +1574,7 @@ internal static partial class WebShumwayApp
     /// deopts, the timings -- and what promoting one at a time costs in
     /// compile and registration against the batch, on the same program.
     ///
-    /// <para>Every engine here boots the way the PAGE boots: from the stdlib
+    /// <para>Every engine here boots the way the page boots: from the stdlib
     /// bundle, with its baked wasm module installed. That is the whole
     /// premise of the comparison, and it used to be simulated (the b* modes
     /// compiled the prelude into one module first) because the bake did not
@@ -1587,14 +1587,14 @@ internal static partial class WebShumwayApp
             var report = new StringBuilder();
             // Leads the report, because everything below is read wrongly
             // without it: a bundle that did not install leaves every
-            // predicate to compile LIVE, which shows as a consult an order
+            // predicate to compile live, which shows as a consult an order
             // of magnitude slower and as figures that look like a
             // regression in whatever was changed last.
             report.Append("bundle: ").AppendLine(BrowserWasmTier.BundleInstallNote);
             // And this leads it for the same reason, only worse: without the
-            // counters every tally below reads ZERO, and a report of zeros is
+            // counters every tally below reads zero, and a report of zeros is
             // indistinguishable from a run that never left the module. The
-            // only other tell is that `glue` comes out NEGATIVE, since it is
+            // only other tell is that `glue` comes out negative, since it is
             // what remains after subtracting a delegate figure nothing
             // counted -- which asks the reader to notice a minus sign.
             //
@@ -1707,7 +1707,7 @@ internal static partial class WebShumwayApp
                               + $" setup+answer={best - Shumway.Interpreter.BytecodeInterpreter.DiagRunTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
                               + $" (over {rounds} rounds)"
                               // The two buckets above account for about a
-                              // THIRD of the wall time; the rest is the host,
+                              // third of the wall time; the rest is the host,
                               // and the deopts are the half of it nothing has
                               // ever attributed. Queens 12 takes 19,029 of
                               // them per run, against 23,594 builtin exits,
@@ -1746,7 +1746,7 @@ internal static partial class WebShumwayApp
 
 /// <summary>The REPL's runtime switch for the wasm tier: the page answers the
 /// pseudo-goal <c>jit_compile.</c> (and its variants) by calling here, the
-/// way <c>restart.</c> is answered by the page. Attaching to the LIVE engine
+/// way <c>restart.</c> is answered by the page. Attaching to the live engine
 /// is safe between queries — nothing already running changes, the next
 /// dispatches start counting. "off" stops further promotion; what already
 /// promoted keeps running as wasm (detaching delegates under a live wasm
@@ -1814,7 +1814,7 @@ internal static partial class WebShumwayApp
             if (command == "shapes dump")
                 return Shumway.Core.Diagnostics.CallShapeTrace.Dump();
 
-            // The attributed-variable CELL lifecycle.
+            // The attributed-variable cell lifecycle.
             if (command == "cells on")
             {
                 Shumway.Core.Diagnostics.AttVarCellTrace.Reset();
@@ -1834,7 +1834,7 @@ internal static partial class WebShumwayApp
             {
                 Shumway.Core.Diagnostics.CommitTrace.Reset();
                 Shumway.Core.Diagnostics.CommitTrace.Enabled = true;
-                // The EMITTER has to be armed before the modules are
+                // The emitter has to be armed before the modules are
                 // compiled, or they carry no trace sites at all.
                 Shumway.Compiler.Wasm.WasmPredicateCompiler.TraceCommits = true;
                 return "% commit trace: armed" + System.Environment.NewLine;
@@ -1849,10 +1849,10 @@ internal static partial class WebShumwayApp
 
 
 
-            // The builtin calls IN ORDER. The tier open-codes some, so a
+            // The builtin calls in order. The tier open-codes some, so a
             // raw diff of the two sequences differs for that reason alone;
             // the names are printed so a comparison can drop the open-coded
-            // ones from BOTH sides before looking.
+            // ones from both sides before looking.
             if (command == "seq dump")
             {
                 var seq = Shumway.Core.Diagnostics.BuiltinTally.Sequence();
@@ -1876,7 +1876,7 @@ internal static partial class WebShumwayApp
 
 
 
-            // The builtin tally BOTH tiers write, so the same goal gives
+            // The builtin tally both tiers write, so the same goal gives
             // two numbers that can be subtracted.
             if (command == "builtins on")
             {
@@ -1926,7 +1926,7 @@ internal static partial class WebShumwayApp
 
             if (command == "clock")
             {
-                // What ONE read of the clock costs here. Every time bucket
+                // What one read of the clock costs here. Every time bucket
                 // the diagnostic build reports is a difference of reads, and
                 // in a browser a read may cross into the host: a bucket
                 // measured per chain carries a few of them, so a small one
@@ -1963,7 +1963,7 @@ internal static partial class WebShumwayApp
                     int scope = name.StartsWith('$') ? name.IndexOf('$', at + 1) : at;
                     return scope > 0 ? name[..at] : "";
                 }
-                // A library's EXPORTS carry no module prefix (clpfd's in/2,
+                // A library's exports carry no module prefix (clpfd's in/2,
                 // #=/2, label/1 look exactly like user predicates), so the
                 // qualified-name rule alone leaves dozens of them in the
                 // list. The engine's module manifests name them.
@@ -2032,7 +2032,7 @@ internal static partial class WebShumwayApp
                     // asked for is the one worth chasing, and it needs a name.
                     + (w.LastBatchTrigger.Count > 0
                         ? $", last asked for by {BrowserWasmTier.TriggerNames(w)}\n" : "\n")
-                    // The module is registered ONCE PER THREAD, lazily: the
+                    // The module is registered once per thread, lazily: the
                     // first chain a pool thread opens makes the browser
                     // compile the whole group before it can run anything. On
                     // a big group that is seconds, it reads as the query
@@ -2041,7 +2041,7 @@ internal static partial class WebShumwayApp
                     + "%   module registration: "
                     + $"{BrowserWasmWorld.DiagRegisterTicks * 1000.0 / Stopwatch.Frequency:F0}"
                     + " ms (per thread, on that thread's first chain)\n";
-                // Every counter above is a DELTA SINCE THE PREVIOUS STATUS:
+                // Every counter above is a delta since the previous status:
                 // cleared on the way out, so goals can be measured one at a
                 // time. A running total since boot reads as if it belonged to
                 // the last query, and 136 module builds accumulated over a
@@ -2115,7 +2115,7 @@ internal static partial class WebShumwayApp
         });
 }
 
-/// <summary>The BROWSER refused the compiled group module (a V8 limit, an
+/// <summary>The browser refused the compiled group module (a V8 limit, an
 /// instantiation failure) — the members are individually fine, so retrying
 /// them one by one, as a compile refusal warrants, would burn minutes to
 /// learn nothing. Callers back the group out instead.</summary>

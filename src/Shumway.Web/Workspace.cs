@@ -39,7 +39,7 @@ internal static partial class WebShumwayApp
     }
 
     // These go through the engine gate. They are not engine calls, but they are
-    // the SAME filesystem a running goal reads and writes through open/4 — and
+    // the same filesystem a running goal reads and writes through open/4 — and
     // EnsureWorkspace sets the process-wide current directory. Queueing them
     // behind engine work costs a save nothing in practice (the gate is only held
     // for the length of one solution) and removes the race entirely.
@@ -83,7 +83,7 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return ex.Message; }
         });
 
-    /// <summary>Removes a workspace AND its files. Switching away first is the
+    /// <summary>Removes a workspace and its files. Switching away first is the
     /// caller's job — removing the active one would leave the engine's current
     /// directory pointing at nothing.</summary>
     [JSExport]
@@ -206,7 +206,7 @@ internal static partial class WebShumwayApp
         return null;
     }
 
-    /// <summary>Rejects anything that would leave the ACTIVE workspace. The page
+    /// <summary>Rejects anything that would leave the active workspace. The page
     /// is not a hostile input, but a path assembled from a Prolog program's
     /// output is not obviously trustworthy either, and the rest of the in-memory
     /// filesystem holds the runtime's own files — and the other workspaces.</summary>

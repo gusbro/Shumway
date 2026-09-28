@@ -5,18 +5,18 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>A term walk written the way clp(Z)'s is: a predicate that calls
-/// maplist over its arguments with ITSELF as the closure, so the two recur
+/// maplist over its arguments with itself as the closure, so the two recur
 /// through each other.
 ///
 /// <para>Measured in a browser on clp(Z), the environment chain reached
 /// 142,846 frames, alternating <c>lists$maplist/3</c> and
-/// <c>clpz$unwrap_with/3</c> -- one frame per NODE of the term instead of
+/// <c>clpz$unwrap_with/3</c> -- one frame per node of the term instead of
 /// one per level. A flat maplist does not do it (20,000 elements peak at a
 /// stack of 30), so the mutual recursion is the shape that matters.</para>
 ///
 /// <para>The tree makes the two outcomes impossible to confuse: depth 14 is
-/// 16,383 nodes at depth 14, so a chain that tracks DEPTH stays tiny and one
-/// that tracks NODES cannot hide.</para></summary>
+/// 16,383 nodes at depth 14, so a chain that tracks depth stays tiny and one
+/// that tracks nodes cannot hide.</para></summary>
 public sealed class EnvChainGrowthTests(ITestOutputHelper o)
 {
     private const string Corpus = """

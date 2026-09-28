@@ -59,7 +59,7 @@ public class OpcodeTableTests
     [Fact]
     public void RationalOperandsAreBothLiteralIds()
     {
-        // Both name the BIGINT pool: the numerator and the denominator of a
+        // Both name the bigint pool: the numerator and the denominator of a
         // value that has no literal of its own.
         var info = OpcodeTable.Get(Opcode.GetRational);
         Assert.Equal(OperandKind.LiteralId, info.OperandKinds![0]);

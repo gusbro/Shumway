@@ -72,7 +72,7 @@ public sealed class IncrementalCompileCostTests(ITestOutputHelper o)
             + $"{(double)separateBytes / batch.Module.Length:F2}x bytes");
         o.WriteLine($"  per predicate  : median {median:F2} ms, max {each[^1]:F2} ms");
 
-        // The gate. What would sink the arc is a large FIXED cost per module,
+        // The gate. What would sink the arc is a large fixed cost per module,
         // and that shows up as a byte ratio in the tens. Measured 1.67x
         // (about 3.6 KB per module over the shared code of the batch).
         double bytesRatio = (double)separateBytes / batch.Module.Length;

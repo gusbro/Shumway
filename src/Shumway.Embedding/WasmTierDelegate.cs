@@ -2,7 +2,7 @@ using Shumway.Core;
 
 namespace Shumway.Embedding;
 
-/// <summary>The wasm tier's <c>PredicateDelegate</c>: a CHAIN driver over the
+/// <summary>The wasm tier's <c>PredicateDelegate</c>: a chain driver over the
 /// store's group module. One chain stages the engine areas once (pin or
 /// copy, fill the mailbox) and runs; in-group calls never leave the module
 /// (group compilation turned them into internal jumps), so what remains here
@@ -12,7 +12,7 @@ namespace Shumway.Embedding;
 /// the caller; a tail call to a non-wasm callee or a deopt sets Pc +
 /// <see cref="Activation.IlTailCallPending"/> and returns true; Fail returns
 /// false and backtracking re-enters wasm choice points through their marker
-/// BPs. Marker payloads are (functor, ADDRESS) -- stable across group
+/// BPs. Marker payloads are (functor, address) -- stable across group
 /// rebuilds -- and the world translates them to the current build's cursors.</summary>
 public sealed class WasmTierDelegate
 {
@@ -29,7 +29,7 @@ public sealed class WasmTierDelegate
     /// entries, in-chain module switches, deopts, builtin requests, and exits
     /// to the interpreter for tail calls it must dispatch.
     ///
-    /// <para>Every site that WRITES one is <see cref="System.Diagnostics
+    /// <para>Every site that writes one is <see cref="System.Diagnostics
     /// .ConditionalAttribute"/> on SHUMWAY_DIAG, so a stock build -- Release
     /// or Debug -- has none of it: a diagnostic does not ship in the binary
     /// the user runs, whatever it costs. (It costs little: measured at
@@ -52,7 +52,7 @@ public sealed class WasmTierDelegate
         false;
 #endif
 
-    /// <summary>Chain exits taken because the target was in ANOTHER module
+    /// <summary>Chain exits taken because the target was in another module
     /// (foreign) versus because the host owed work first (boundary). Only the
     /// first kind is what splitting the group into many modules has to make
     /// cheap; the second survives any arrangement. Kept apart because a single
@@ -66,7 +66,7 @@ public sealed class WasmTierDelegate
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinTally = new();
-    /// <summary>Exits per builtin that ended in FAILURE. The share that
+    /// <summary>Exits per builtin that ended in failure. The share that
     /// fails decides the design before it is written: a builtin that mostly
     /// fails can have its failing path open-coded without the module ever
     /// needing what the succeeding path reads. get_attr/3 was the case that
@@ -74,11 +74,11 @@ public sealed class WasmTierDelegate
     /// image was the only way.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinFailTally = new();
-    /// <summary>Deopt PCs with a HIT COUNT each, for attribution: knowing
+    /// <summary>Deopt PCs with a hit count each, for attribution: knowing
     /// where a storm falls is only half of it, the ranking is what says
     /// which instruction to open-code next.
     ///
-    /// <para>Sized for a FLAT distribution, which is the case that matters:
+    /// <para>Sized for a flat distribution, which is the case that matters:
     /// if the deopts spread over hundreds of sites there is no single
     /// instruction to fix, and a table that overflowed would report that as
     /// a handful of sites plus an anonymous remainder -- the shape of the
@@ -91,7 +91,7 @@ public sealed class WasmTierDelegate
     /// <summary>Slots in each site table. A field cannot be
     /// <c>[Conditional]</c>, so the arrays below exist in every build and the
     /// only way to stop a stock one paying for them is to size them to
-    /// nothing. Wide enough to hold a FLAT distribution when the diagnostics
+    /// nothing. Wide enough to hold a flat distribution when the diagnostics
     /// are compiled in, empty when they are not: the methods that index them
     /// are all Conditional, so nothing reads an empty table.</summary>
 #if SHUMWAY_DIAG
@@ -103,7 +103,7 @@ public sealed class WasmTierDelegate
     public static readonly long[] DiagDeoptHits = new long[DeoptSiteSlots];
 
     // -1, not 0: pc 0 is a legal address, and a table left at its default
-    // would make every slot look OCCUPIED by it -- no site is ever claimed
+    // would make every slot look occupied by it -- no site is ever claimed
     // and every deopt lands in the overflow. ResetDiag is not enough; a
     // browser session never calls it.
     private static long[] FreshPcTable()
@@ -115,21 +115,21 @@ public sealed class WasmTierDelegate
     /// <summary>Deopts whose PC did not fit the table.</summary>
     public static long DiagDeoptOverflow;
     /// <summary>Host switches by (functor, address): the crossings the in-wasm
-    /// hop did NOT take, which is what tells where a hop is missing. Same
+    /// hop did not take, which is what tells where a hop is missing. Same
     /// bounded shape as the deopt sites. Diagnostic.</summary>
     public static readonly long[] DiagSwitchKeys = FreshPcTable();
     public static readonly long[] DiagSwitchHits = new long[DeoptSiteSlots];
-    /// <summary>Key slots at the FIRST deopt: DiagA (which guard sent it
+    /// <summary>Key slots at the first deopt: DiagA (which guard sent it
     /// aside, when the site writes one), flags, TR, trail limit, H,
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
 
-    /// <summary>Ticks spent INSIDE the tier delegate, counted only at the
+    /// <summary>Ticks spent inside the tier delegate, counted only at the
     /// outermost entry so a nested chain (a findall re-entering the engine
     /// from a builtin) is not added twice.
     ///
     /// <para>What this is for: the world's own inWasm and stage counters
-    /// accounted for about a THIRD of a browser run's wall time, and the
+    /// accounted for about a third of a browser run's wall time, and the
     /// other two thirds had no name. Naming them is the difference between
     /// optimising a fifth of the clock and guessing. Everything below sums:
     /// delegate = inWasm + stage + builtins + the C# glue of the verdict
@@ -138,7 +138,7 @@ public sealed class WasmTierDelegate
     public static long DiagDelegateTicks;
     /// <summary>Ticks inside builtin implementations, at every depth. A
     /// builtin that re-enters the engine carries the nested chain's time with
-    /// it, which is why the glue is computed as a REMAINDER rather than
+    /// it, which is why the glue is computed as a remainder rather than
     /// measured on its own.</summary>
     public static long DiagBuiltinTicks;
 #if SHUMWAY_DIAG
@@ -150,7 +150,7 @@ public sealed class WasmTierDelegate
     /// <summary>How often each meta-call guard sent a call aside, indexed by
     /// the code the emitter stamps into DiagA.
     ///
-    /// <para>The last deopt's guard names ONE sample, and a run with several
+    /// <para>The last deopt's guard names one sample, and a run with several
     /// declining sites needs the distribution: "which guard, how often" is
     /// the question, and answering it with a single sample is how a site that
     /// declines 400 times hides behind one that declines once.</para>
@@ -162,13 +162,13 @@ public sealed class WasmTierDelegate
     // was dropped silently, so the cut's own decline never appeared.
     public static readonly long[] DiagMetaGuardHist = new long[64];
 
-    /// <summary>The goal functor LAST seen at each reason code, where the
+    /// <summary>The goal functor last seen at each reason code, where the
     /// site stamped one (DiagB). A histogram row says 400 meta-calls found
-    /// no marker; only this says 400 of WHAT -- and a reason whose functor
+    /// no marker; only this says 400 of what -- and a reason whose functor
     /// cannot be named in the current tables is itself a finding.</summary>
     public static readonly long[] DiagGuardFids = new long[64];
 
-    /// <summary>DiagA and DiagB as of the LAST deopt, not the first.
+    /// <summary>DiagA and DiagB as of the last deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
     /// reading zero there says nothing. The last is the one that was still
@@ -179,7 +179,7 @@ public sealed class WasmTierDelegate
     /// no attr-table record after every delegate return. Off by default.</summary>
     public static bool DiagOrphanScan;
 
-    /// <summary>Clears every tally. jit_compile(status) calls this AFTER
+    /// <summary>Clears every tally. jit_compile(status) calls this after
     /// reporting, so each status reads as the delta since the previous one
     /// and a goal can be measured on its own -- totals since boot answer a
     /// question nobody asked and read as if they belonged to the last
@@ -208,7 +208,7 @@ public sealed class WasmTierDelegate
 
 
     /// <summary>The two values the restore path's extra-trail guard compares
-    /// at the FIRST deopt: the top saved in the choice point (ctl[5]) and the
+    /// at the first deopt: the top saved in the choice point (ctl[5]) and the
     /// live one. They are supposed to be equal whenever nothing attributed
     /// was bound; a run whose every Trust steps aside says they are not, and
     /// the pair below says which side is wrong. Captured once, so nothing
@@ -234,13 +234,13 @@ public sealed class WasmTierDelegate
             (long)(int)stack[ctl + 5].Data,         // ...as the emitter reads it
             engine.ExtraTrailTop,                   // the live top, managed
             cx.ReadSlot(WasmAbi.ExtraTrailTop),     // ...as the mailbox has it
-            cx.ReadSlot(WasmAbi.DiagA),             // what the GUARD saw: saved
-            cx.ReadSlot(WasmAbi.DiagB),             // what the GUARD saw: live
+            cx.ReadSlot(WasmAbi.DiagA),             // what the guard saw: saved
+            cx.ReadSlot(WasmAbi.DiagB),             // what the guard saw: live
         };
         System.Array.Copy(cap, DiagFirstRestoreGuard, 8);
     }
 
-    // Every counter below is written ONLY through these, so one attribute
+    // Every counter below is written only through these, so one attribute
     // per hook strips the lot. A [Conditional] call takes its arguments with
     // it, so a caller pays nothing to compute them either.
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
@@ -276,7 +276,7 @@ public sealed class WasmTierDelegate
             DiagMetaGuardHist[DiagLastGuard]++;
             DiagGuardFids[DiagLastGuard] = DiagLastGuardFid;
         }
-        // Cleared, because this runs on EVERY deopt and only a meta-call
+        // Cleared, because this runs on every deopt and only a meta-call
         // decline writes the slot. Left standing, the code from one decline
         // would be read again by the next deopt from anywhere, and the
         // histogram would report a cause that instruction never had.
@@ -316,14 +316,14 @@ public sealed class WasmTierDelegate
 
     /// <summary>The callees a chain could not continue into, by functor.
     /// The count alone says how much there is to remove; it does not say
-    /// WHAT to remove, and the two answers point at different work -- a
+    /// what to remove, and the two answers point at different work -- a
     /// handful of predicates carrying millions of exits is a promotion
     /// question, millions of distinct ones is an architecture question.
     /// </summary>
     private static readonly long[] DiagForeignKeys = FreshPcTable();
     private static readonly long[] DiagForeignHits = new long[DeoptSiteSlots];
 
-    /// <summary>Builtin requests by (builtin, REQUESTING predicate). The
+    /// <summary>Builtin requests by (builtin, requesting predicate). The
     /// plain tally says which builtin a run leaves for; when one of them
     /// is the whole run, the next question is always who is asking, and
     /// the answer names a clause to read.</summary>
@@ -374,10 +374,10 @@ public sealed class WasmTierDelegate
     /// else: the answers stay right until the buffer runs out.</summary>
     public static long DiagMaxStackTop, DiagMaxChoiceTop;
 
-    /// <summary>WHOSE choice points those are, taken once, the first time
+    /// <summary>Whose choice points those are, taken once, the first time
     /// the stack passes a height no healthy run reaches. A count says the
     /// tier is not reclaiming; only the chain says what it is not
-    /// reclaiming -- and whether the points are LIVE at all, since this
+    /// reclaiming -- and whether the points are live at all, since this
     /// walks the B chain and a dead point is not on it.</summary>
     public static string? DiagCpCensus;
 
@@ -405,13 +405,13 @@ public sealed class WasmTierDelegate
         }
     }
 
-    /// <summary>The same for the ENVIRONMENT chain. A stack held by
+    /// <summary>The same for the environment chain. A stack held by
     /// frames and a stack held by alternatives are different faults,
     /// and only walking both says which one this is.</summary>
     public static string? DiagEnvCensus;
 
-    /// <summary>What a saved continuation POINTS AT. A frame the tier
-    /// built holds a resume MARKER, not a bytecode address: read as an
+    /// <summary>What a saved continuation points at. A frame the tier
+    /// built holds a resume marker, not a bytecode address: read as an
     /// address it resolves to whichever predicate happens to sit below
     /// the marker base and reports offsets in the billions.</summary>
     private static string DescribeReturn(Activation engine, int cp)
@@ -428,7 +428,7 @@ public sealed class WasmTierDelegate
             catch (System.Exception) { name = "fid" + fid; }
             return "marker " + name + "@" + addr;
         }
-        // The return address is the instruction AFTER the call, so -1
+        // The return address is the instruction after the call, so -1
         // keeps a call in the last byte of its predicate from being
         // attributed to the next one.
         return engine.ResolveAddressToLabel?.Invoke(cp - 1) ?? $"@0x{cp:X}";
@@ -445,7 +445,7 @@ public sealed class WasmTierDelegate
         foreach (var (e, ret) in engine.EnumerateEnvironmentFrames())
         {
             if (++walked > 200_000) { capped = true; break; }
-            // POSITIONS, not addresses: a frame seen twice means the
+            // Positions, not addresses: a frame seen twice means the
             // chain loops, which reads exactly like a deep recursion
             // through the return addresses alone.
             if (!seen.Add(e)) { cycled = true; break; }
@@ -552,7 +552,7 @@ public sealed class WasmTierDelegate
     /// are where the time goes (queens 12: 626,930 builtin exits against
     /// 524,030 chains), so this is the list that says what earns
     /// open-coding next.</summary>
-    /// <summary>TEMP probe: the same ranking with the FAILING share.</summary>
+    /// <summary>Temp probe: the same ranking with the failing share.</summary>
     public static List<(string Name, int Arity, long Hits, long Fails)> BuiltinFailRanking()
     {
         var r = new List<(string, int, long, long)>();
@@ -627,13 +627,13 @@ public sealed class WasmTierDelegate
         if (!engine.WasmModeCompatible || engine.HasPendingWakeups)
         {
             // A relink may have moved the code out from under the build:
-            // the fallback pc must be LIVE (see IWasmExecutionWorld's
+            // the fallback pc must be live (see IWasmExecutionWorld's
             // translation contract).
             engine.SetPc(address == 0
                 ? _world.LiveEntryAddressOf(_functorId)
                 : (int)_world.TranslatePcToLive(_functorId, address));
             engine.IlTailCallPending = true;
-            // The interpreter must RUN that pc: as a plain tail call it would
+            // The interpreter must run that pc: as a plain tail call it would
             // dispatch it back through the tier, which refuses it again, forever
             // (a debug session's trail-everything made every call spin).
             engine.SignalIlDeopt();
@@ -694,10 +694,10 @@ public sealed class WasmTierDelegate
                     pendingPc = (int)cx.TranslatePcToLive(cx.ReadSlot(WasmAbi.Pc));
                     deopted = true;
                     CountDeopt(pendingPc);
-                    // A deopt AT an area's limit is a capacity signal, not a
+                    // A deopt at an area's limit is a capacity signal, not a
                     // semantic one. The wasm limit sits a margin below the
                     // real array, so the interpreter completes the step
-                    // INSIDE that margin and never grows the area — leaving
+                    // inside that margin and never grows the area — leaving
                     // every later chain to deopt at the same spot (measured:
                     // 108 of tak's 114 entries, all at one pc). Note it here;
                     // the growth runs after the chain closes.
@@ -718,7 +718,7 @@ public sealed class WasmTierDelegate
                 if (v != WasmVerdict.BuiltinRequest)
                     throw new System.InvalidOperationException(
                         $"wasm verdict {v} for functor {currentFid}"
-                        // Verdict 99 is DebugLoopGuard: say WHERE it span.
+                        // Verdict 99 is DebugLoopGuard: say where it span.
                         + $" (guardCursor={cx.ReadSlot(WasmAbi.DebugGuardCursor)}"
                         + $" guardCount={cx.ReadSlot(WasmAbi.DebugGuardCount)}"
                         + $" metaGuard={cx.ReadSlot(WasmAbi.DiagA)}"
@@ -735,13 +735,13 @@ public sealed class WasmTierDelegate
                 // it -- which, after hops, is not the functor that entered.
                 if (ret >= 0) currentFid = cx.OwnerFunctorOf(ret);
                 CountBuiltinCaller(builtinId, currentFid);
-                // The builtin runs against the ENGINE: adopt the mailbox
+                // The builtin runs against the engine: adopt the mailbox
                 // first, restage after -- managed code may bind, allocate,
                 // even replace an area array by growing it.
                 cx.SyncEngine();
                 var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                 engine.Inferences++;
-                // Mirrors the interpreter's CallBuiltin: trim BEFORE the impl
+                // Mirrors the interpreter's CallBuiltin: trim before the impl
                 // so any choice point it pushes lands at the trimmed top
                 // (execute_builtin, ret -1, never trims).
                 if (ret >= 0) engine.TrimEnv(trim);
@@ -776,7 +776,7 @@ public sealed class WasmTierDelegate
                     // hands =/2 through here). ADR-049: the wakeup fires at
                     // the next goal boundary, and boundaries inside the chain
                     // read a Flags word staged at entry -- so the chain
-                    // closes HERE and the interpreter, whose every boundary
+                    // closes here and the interpreter, whose every boundary
                     // checks live state, carries on at the return address.
                     // One exit per wakeup, same as the deopt it replaces.
                     pendingPc = (int)cx.TranslatePcToLive(ret);
@@ -811,7 +811,7 @@ public sealed class WasmTierDelegate
         {
             engine.SetPc(pendingPc);
             engine.IlTailCallPending = true;
-            // A deopt resumes at an instruction the INTERPRETER must run.
+            // A deopt resumes at an instruction the interpreter must run.
             // Without this the Call/Execute helper re-dispatches that pc
             // through the tier, and when it is the deopting predicate's own
             // entry the two spin forever.
@@ -821,7 +821,7 @@ public sealed class WasmTierDelegate
     }
 
     /// <summary>Whether the marker can be followed inside the chain: the
-    /// functor is in the build THIS chain captured AND the chain guards
+    /// functor is in the build this chain captured and the chain guards
     /// hold. The guards are the boundary work the interpreter would have
     /// done: heap watermark (collect at a return boundary), cancellation,
     /// and pending wakeups (only a builtin can queue them mid-chain; they
@@ -830,11 +830,11 @@ public sealed class WasmTierDelegate
                                  ref int currentFid, ref WasmTarget target)
     {
         var (fid, address) = Activation.DecodeResumeMarker(marker);
-        // The two ways this can fail are worth telling apart. FOREIGN means
+        // The two ways this can fail are worth telling apart. Foreign means
         // the target simply is not in this chain's module: the chain closes,
         // the interpreter re-dispatches, and another one opens -- the cost the
         // many-modules arc exists to remove, and the only counter that says
-        // how much there is to remove. BOUNDARY means the target IS here but
+        // how much there is to remove. Boundary means the target is here but
         // the host owes work first (a heap collection, a wakeup, a
         // cancellation); that exit stays no matter how modules are arranged.
         if (!cx.TryResolve(fid, address, out WasmTarget t))

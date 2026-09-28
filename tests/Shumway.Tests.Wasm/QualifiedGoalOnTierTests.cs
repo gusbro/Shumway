@@ -10,10 +10,10 @@ namespace Shumway.Tests.Wasm;
 /// resolve statically and so left as a call to <c>':'/2</c>.
 ///
 /// <para><c>':'/2</c> is not what its clauses say it is. It carries a module
-/// and a goal, and the INTERPRETER intercepts it inside its own dispatch;
+/// and a goal, and the interpreter intercepts it inside its own dispatch;
 /// the clauses exist to have something to name. Compiled to the tier it ran
 /// as written, and <c>lists:append([1],[2],X)</c> came back as an
-/// existence_error naming the MODULE ATOM -- not even the goal -- while
+/// existence_error naming the module atom -- not even the goal -- while
 /// Tier 0 answered.</para>
 ///
 /// <para>Found through a probe that compared clp(Z) domains across tiers and
@@ -85,7 +85,7 @@ public sealed class QualifiedGoalOnTierTests(ITestOutputHelper o)
             taken.Add($"{AtomTable.GetById(aid)?.Name}/{ar}");
         }
         o.WriteLine("promoted: " + string.Join(", ", taken));
-        // ANTI-VACUITY: the corpus's own predicate IS taken, so a run that
+        // Anti-vacuity: the corpus's own predicate is taken, so a run that
         // promoted nothing at all cannot pass this.
         Assert.Contains("user$q/1", taken);
         Assert.DoesNotContain(":/2", taken);

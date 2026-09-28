@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>An arithmetic expression that arrives in a REGISTER, evaluated
+/// <summary>An arithmetic expression that arrives in a register, evaluated
 /// inside the module.
 ///
 /// <para><c>X is E</c> where E is built at run time is not a leaf, and the
@@ -13,12 +13,12 @@ namespace Shumway.Tests.Wasm;
 /// deopts were exactly this, every one of them an operand whose tag was
 /// Str -- which is what a constraint solver does all day.</para>
 ///
-/// <para>The walk is ITERATIVE over two stacks growing toward each other
+/// <para>The walk is iterative over two stacks growing toward each other
 /// above the stack top. A term's depth is user data, so a recursive walk
 /// would be a wasm stack overflow a Prolog program could cause on
 /// purpose.</para>
 ///
-/// <para>Which functors count as arithmetic comes from a table the HOST
+/// <para>Which functors count as arithmetic comes from a table the host
 /// derives from the evaluator's own name resolvers, so the two cannot
 /// disagree -- a second list of operator names would be a second thing to
 /// get wrong, and wrong silently: a module computing with the wrong operator
@@ -111,7 +111,7 @@ public sealed class ArithExpressionTests(ITestOutputHelper o)
         => Assert.Equal(0L, DeoptsOf(goal));
 
     /// <summary>The counterproofs, in red. Each of these has an answer the
-    /// module must NOT invent: an error, an operator it does not implement,
+    /// module must not invent: an error, an operator it does not implement,
     /// a product that leaves sixty bits. Without them the tests above would
     /// pass just as well with an evaluator that guessed.</summary>
     [DiagTheory]

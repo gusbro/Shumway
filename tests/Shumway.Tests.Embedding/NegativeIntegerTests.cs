@@ -75,7 +75,7 @@ public class NegativeIntegerTests
     [Fact]
     public void Arg_NegativeIndex_TypeError()
     {
-        // arg/3 expects a positive integer; -1 IS now an Integer cell
+        // arg/3 expects a positive integer; -1 is now an Integer cell
         // (was a compound before), so the failure mode is "out of range",
         // not type_error.
         var engine = new PrologEngine();

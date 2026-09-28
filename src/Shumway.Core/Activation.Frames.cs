@@ -61,7 +61,7 @@ public sealed partial class Activation
         // the GC fuzz/bisect env overrides (SHUMWAY_GC_THRESHOLD /
         // GC_STRESS / GC_AT / GC_UPTO) only exist in -p:ShumwayDiag=true
         // builds; a normal build never reads the environment here. The fuzz
-        // FIELDS and their (branch-predicted) checks in MaybeCollectHeap stay,
+        // fields and their (branch-predicted) checks in MaybeCollectHeap stay,
         // because the test suite also drives them programmatically
         // (GcStressMode / ActivationConfig).
         DiagReadGcOverrides();
@@ -92,7 +92,7 @@ public sealed partial class Activation
     /// <para>The record outlives the binding because a backtrack restores the
     /// ATTVAR cell and would find its constraints gone otherwise — so it may be
     /// dropped exactly when the entry that would do that restoring is dropped,
-    /// and not before. The cut drops it when the cell is YOUNGER than the
+    /// and not before. The cut drops it when the cell is younger than the
     /// surviving choice point, which means an outer backtrack truncates the
     /// cell away entirely and there is nothing left to restore.</para>
     ///
@@ -126,13 +126,13 @@ public sealed partial class Activation
     public int HeapCapacity => _heap.Length;
     public int Hb => _hb;
 
-    /// <summary>ADR-035 D5+ (Set Next Statement) — trail EVERY binding, not only those the
+    /// <summary>ADR-035 D5+ (Set Next Statement) — trail every binding, not only those the
     /// HB check requires for backtracking. The HB optimisation skips trailing a binding to
     /// a variable younger than the newest choice point (backtracking discards that heap
-    /// wholesale, so undoing is pointless) — which also makes such bindings UNRECOVERABLE
+    /// wholesale, so undoing is pointless) — which also makes such bindings unrecoverable
     /// for anyone else. A debugger that rewinds execution to an earlier goal restores state
     /// by unwinding the trail to a recorded mark, and that only restores everything if
-    /// everything was trailed. Implemented by PINNING <see cref="Hb"/> at
+    /// everything was trailed. Implemented by pinning <see cref="Hb"/> at
     /// <see cref="int.MaxValue"/> (every write to it goes through <see cref="AssignHb"/>):
     /// the per-bind hot path keeps its single <c>addr &lt; _hb</c> compare — zero new
     /// branches — and only the cold per-choice-point assignments pay a predicted branch.
@@ -272,7 +272,7 @@ public sealed partial class Activation
         if (_stackTop > desired) _stackTop = desired;
         // ADR-016: only lower the recorded Y-slot count when the trim
         // actually reclaimed slots. When the CP-protection clamp prevents
-        // the trim, the frame KEEPS all its slots — and they are live (an
+        // the trim, the frame keeps all its slots — and they are live (an
         // in-progress choice point can still backtrack into them), so the
         // heap GC must continue to scan them as roots. Lowering the count
         // to numLivePerms in that case would let the collector reclaim
@@ -299,10 +299,10 @@ public sealed partial class Activation
     internal static readonly bool CatchDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
 
-    /// <summary>The nested-driver FAILURE path: a still-active frame the
+    /// <summary>The nested-driver failure path: a still-active frame the
     /// failed goal opened (its '$catch_end' only fires on success) must stop
     /// catching — a later ball must not route into the dead goal. It cannot
-    /// be REMOVED, though: the goal's push/deactivate records are still on
+    /// be removed, though: the goal's push/deactivate records are still on
     /// the extra trail (the driver does not rewind it on failure), and the
     /// outer unwind replays them against this stack — a physically shorter
     /// stack then underflows the replay (their clpb's hook-failure inside
@@ -429,16 +429,16 @@ public sealed partial class Activation
     }
 
     /// <summary>Drops a frame outright instead of parking it, when nothing can
-    /// come back for it. A frame is otherwise reclaimed only by BACKTRACKING,
+    /// come back for it. A frame is otherwise reclaimed only by backtracking,
     /// through its push record, so a deterministic loop accumulated one per
     /// catch/3 forever -- about 230 bytes a call, and four million calls were
     /// most of a gigabyte.
     ///
-    /// <para>Two conditions, both necessary. The frame must be the TOP one, or
+    /// <para>Two conditions, both necessary. The frame must be the top one, or
     /// removing it would renumber the frames above that other trail records
     /// name. And no choice point may have outlived the guarded goal
     /// (<c>_b &lt;= SnapB</c>), since that is exactly what could re-enter it and
-    /// need the catcher live again; a cut that took choice points from BELOW
+    /// need the catcher live again; a cut that took choice points from below
     /// the catch is fine too, because backtracking then leaves the catch
     /// entirely and would have removed the frame anyway.</para>
     ///
@@ -447,7 +447,7 @@ public sealed partial class Activation
     /// rewind this trail -- so it is neutered in place, unless it happens to
     /// be the last entry, in which case the trail shrinks too and a loop like
     /// `catch(true, _, true)` costs nothing at all. The record is identified
-    /// before being touched: the frame recorded the trail top BEFORE writing
+    /// before being touched: the frame recorded the trail top before writing
     /// it, so it sits at SnapExtraTrailTop, and it is verified to still be
     /// this frame's push before anything is written.</para></summary>
     private bool TryReclaimCatchFrame(int i, in CatchFrame f)
@@ -569,7 +569,7 @@ public sealed partial class Activation
         _stack[newE + EnvCeOffset] = Cell.RawInt(_e);
         _stack[newE + EnvCpOffset] = Cell.RawInt(_cp);
         _stack[newE + EnvNOffset] = Cell.RawInt(numPermanents);
-        // Y slots are left UNINITIALISED — tagged Cell.RawInt(0), which the heap
+        // Y slots are left uninitialised — tagged Cell.RawInt(0), which the heap
         // GC's conservative stack scan skips (it is not a Ref), and which is
         // never read: standard WAM codegen writes a permanent at its first
         // occurrence (get_variable_y / put_variable_y / unify_variable_y, all of
@@ -610,9 +610,9 @@ public sealed partial class Activation
         // point) the frame must stay — a backtrack could reactivate it — so the
         // reclamation degrades to the original no-op. Only ever lowers _stackTop.
         //
-        // The floor is NOT oldE: a cut-discarded choice point may sit DEAD
+        // The floor is not oldE: a cut-discarded choice point may sit dead
         // directly below the frame (try_me_else pushed per call, killed by the
-        // clause's cut), and stopping at oldE leaks its slots FOREVER on LCO
+        // clause's cut), and stopping at oldE leaks its slots forever on LCO
         // loops — a lazy DCG grew ~15 dead slots per parsed line. Everything
         // live on the control stack is reachable from the E-chain or the
         // B-chain, and both grow upward (a CP's saved CE frame predates the
@@ -639,7 +639,7 @@ public sealed partial class Activation
 
     /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
     // the inline throw blocked JIT inlining of these two,
-    // which every Y-slot opcode in BOTH tiers calls. Hoisted to the cold
+    // which every Y-slot opcode in both tiers calls. Hoisted to the cold
     // ThrowNoEnv helper (the ThrowBadAlloc pattern) + AggressiveInlining.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -649,7 +649,7 @@ public sealed partial class Activation
         return _stack[_e + EnvY1Offset + slot];
     }
 
-    /// <summary>ADR-035 — a Y slot of a NAMED environment, rather than the current one:
+    /// <summary>ADR-035 — a Y slot of a named environment, rather than the current one:
     /// a debugger reads the variables of every frame on the stack, not just the
     /// innermost.</summary>
     public Cell GetY(int env, int slot)
@@ -674,17 +674,17 @@ public sealed partial class Activation
     }
 
     /// <summary>ADR-035 — the return address an environment frame saved at allocate: the
-    /// caller's continuation, authoritative for the frame walk (unlike the Cp REGISTER,
+    /// caller's continuation, authoritative for the frame walk (unlike the Cp register,
     /// which between two calls of a clause body still holds the completed previous call's
     /// return — dead state).</summary>
     public int EnvSavedCp(int e) => e >= 0 ? (int)_stack[e + EnvCpOffset].Data : -1;
 
-    // ADR-035 D5+ — Set Next Statement onto a SIBLING clause's head: after rewinding to
+    // ADR-035 D5+ — Set Next Statement onto a sibling clause's head: after rewinding to
     // the caller's goal and re-running its argument setup, the next dispatch of that call
-    // enters the CHOSEN clause instead of the predicate's entry. The entry FUNCTION (built
+    // enters the chosen clause instead of the predicate's entry. The entry function (built
     // by the debug service, which knows the predicate's clause table) receives the
     // activation at the dispatch point — arguments loaded, Cp/B0 set — pushes the
-    // clause-alternative choice point for the clauses AFTER the chosen one (standard
+    // clause-alternative choice point for the clauses after the chosen one (standard
     // Prolog: if the chosen clause fails and did not cut, the following clauses are
     // tried), and returns the clause's code address. One-shot, consumed at the first
     // dispatch whatever its target.
@@ -704,7 +704,7 @@ public sealed partial class Activation
     /// change which clause to enter any number of times before resuming.</summary>
     public int DebugClauseEntryPredicate => _debugClauseEntryPred;
 
-    /// <summary>Cancels a pending re-enter: any OTHER successful Set Next Statement while
+    /// <summary>Cancels a pending re-enter: any other successful Set Next Statement while
     /// one is armed means the user changed their mind away from it.</summary>
     public void DisarmDebugClauseEntry()
     {
@@ -712,7 +712,7 @@ public sealed partial class Activation
         _debugClauseEntryEnter = null;
     }
 
-    /// <summary>ADR-035 D5+ — the debugger's DESTRUCTIVE variable edit: resets the cell at
+    /// <summary>ADR-035 D5+ — the debugger's destructive variable edit: resets the cell at
     /// <paramref name="addr"/> to an unbound variable, trailing the old value so
     /// backtracking (and a Set Next Statement rewind) restores the binding the program
     /// had made. The Watch-window edit builds on this: un-instantiate, or clear-then-bind
@@ -724,7 +724,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Consumes the armed re-enter. True (with the entry function) when the
-    /// dispatch target IS the armed predicate; the arm is cleared either way — it was
+    /// dispatch target is the armed predicate; the arm is cleared either way — it was
     /// meant for the very next call, and a different target means the world moved on.</summary>
     public bool TryTakeDebugClauseEntry(int target, out Func<Activation, int> enter)
     {
@@ -762,9 +762,9 @@ public sealed partial class Activation
     // CP restore so a CheckVisible in a dynamic chain, re-entered by
     // backtracking, reads the same view-gen its activation started with.
     // The slot is uniform across CPs even though only dynamic-chain CPs
-    // semantically need it (CheckVisible is CurrentViewGen's ONLY reader);
+    // semantically need it (CheckVisible is CurrentViewGen's only reader);
     // ADR-026 analyzed splitting the frame into narrow (static) / wide
-    // (dynamic-chain) widths and REJECTED it — the measured ceiling on the
+    // (dynamic-chain) widths and rejected it — the measured ceiling on the
     // most CP-intensive synthetic is 0.3-1% (below noise), against ~13
     // frame-walker mask sites each a silent-corruption hazard. The tiny
     // per-CP cost buys a single uniform save/restore path.
@@ -907,7 +907,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Restores registers, E, CP, trails, and HeapTop from the current CP. Returns
-    /// the saved arity. Does NOT set <see cref="Hb"/> — that differs between Retry and Trust
+    /// the saved arity. Does not set <see cref="Hb"/> — that differs between Retry and Trust
     /// and is the caller's responsibility.</summary>
     private int RestoreCommonFromCurrentCp()
     {
@@ -979,7 +979,7 @@ public sealed partial class Activation
         if (HasCleanupHandlers) FireCleanupsAbove(barrier);
 
         // Drop IL CP stack entries above the
-        // barrier BEFORE _b moves. Each entry's Key is its frame's
+        // barrier before _b moves. Each entry's Key is its frame's
         // stack-B position; the entries are pushed in monotonic _b
         // order so any stale ones sit at the top of _ilCpStack —
         // pop them down to the first <= barrier. Replaces the
@@ -1051,7 +1051,7 @@ public sealed partial class Activation
     // (int)Data cast.
     public void GetLevel(int slot) => SetY(slot, Cell.RawInt(_b0));
 
-    /// <summary>ADR-025 — <c>Y[slot] := RawInt(B)</c>: capture the CURRENT
+    /// <summary>ADR-025 — <c>Y[slot] := RawInt(B)</c>: capture the current
     /// choice-point top as the inline-ITE commit barrier. <see cref="GetLevel"/>
     /// captures <c>B0</c>, which any pre-ITE body call resets — cutting to it
     /// pruned a preceding generator's choice points (the helper form never saw
@@ -1076,22 +1076,22 @@ public sealed partial class Activation
     public void CutToLevel(int slot) => Cut((int)GetY(slot).Data);
 
     /// <summary>The <c>BP</c> (next-alternative) value written by
-    /// <see cref="SoftCut"/> to mark an ELSE choice point neutralised. Distinct
+    /// <see cref="SoftCut"/> to mark an else choice point neutralised. Distinct
     /// from the <c>-1</c> sentinel an IL choice-point frame carries; a real code
     /// address is a non-negative offset, so <c>-2</c> can never collide.</summary>
     public const int SoftCutDeadBp = -2;
 
-    /// <summary>ADR-037 — soft cut. <paramref name="barrier"/> names the ELSE
+    /// <summary>ADR-037 — soft cut. <paramref name="barrier"/> names the else
     /// choice point of an inline <c>( Cond *-> Then ; Else )</c> (captured into a
-    /// Y slot by a <c>get_level_b</c> emitted AFTER the <c>try_me_else</c>). Once
+    /// Y slot by a <c>get_level_b</c> emitted after the <c>try_me_else</c>). Once
     /// <c>Cond</c> succeeds this commits away the <c>Else</c> alternative:
     /// <list type="bullet">
-    /// <item>If the ELSE CP is the current top (<c>Cond</c> left no choice point),
-    /// it is DISCARDED — cut to its parent, keeping all current bindings — so the
+    /// <item>If the else CP is the current top (<c>Cond</c> left no choice point),
+    /// it is discarded — cut to its parent, keeping all current bindings — so the
     /// whole <c>*-></c> is deterministic and the top level sees no remaining
     /// alternative (this is what makes <c>time(true)</c> determinate).</item>
-    /// <item>If <c>Cond</c> left choice points ABOVE the ELSE CP, that frame is a
-    /// middle frame and cannot be popped, so it is NEUTRALISED — its <c>BP</c>
+    /// <item>If <c>Cond</c> left choice points above the else CP, that frame is a
+    /// middle frame and cannot be popped, so it is neutralised — its <c>BP</c>
     /// slot is set to <see cref="SoftCutDeadBp"/>. Backtracking that later reaches
     /// it (after the condition's CPs are exhausted) pops it and keeps
     /// backtracking instead of running <c>Else</c>, so the condition's
@@ -1106,15 +1106,15 @@ public sealed partial class Activation
         int arity = (int)_stack[barrier + CpArityOffset].Data;
         if (barrier == _b)
         {
-            // ELSE CP is the top → the condition was deterministic → discard it
+            // Else CP is the top → the condition was deterministic → discard it
             // (cut to its parent) so no neutralised-but-present frame lingers.
             // Cut also drops the matching _ilCpStack entry when it is an IL CP.
             Cut((int)_stack[barrier + CpBOffset(arity)].Data);
             return;
         }
-        // Middle frame. A Tier-1 inline-ITE ELSE CP carries the IL sentinel BP and
+        // Middle frame. A Tier-1 inline-ITE else CP carries the IL sentinel BP and
         // is resumed by its delegate (the dead-BP sentinel would be ignored), so
-        // neutralise its _ilCpStack entry instead; a Tier-0 ELSE CP is resumed via
+        // neutralise its _ilCpStack entry instead; a Tier-0 else CP is resumed via
         // its BP, so patch that to the dead sentinel.
         if ((int)_stack[barrier + CpBpOffset(arity)].Data == IlChoicePointSentinelBp)
             NeutralizeIlChoicePoint(barrier);
@@ -1149,27 +1149,27 @@ public sealed partial class Activation
     private void CompactTrails(int barrier, int parentBindingTop, int parentExtraTop,
                                int parentHeapTop)
     {
-        // ADR-035 D5+ — under a debug session the trail IS the debugger's history: Set
+        // ADR-035 D5+ — under a debug session the trail is the debugger's history: Set
         // Next Statement's rewind marks index positions in it, and TrailEverything grew it
         // precisely so every binding since any mark can be undone. Cut-time compaction is
-        // a pure optimisation (it drops entries no future BACKTRACK could need) and it
+        // a pure optimisation (it drops entries no future backtrack could need) and it
         // destroyed that history wholesale — a real program cuts constantly (every Blint
         // clause ends in !), the trail collapsed to a handful of entries, and the marks'
         // saved tops read as "backtracked past" and were purged. Same trade as the pinned
         // Hb: the optimisation stands down while a debugger needs the past.
         if (_trailEverything) return;
 
-        // Where the walk starts. A cut to the SAME parent, over a trail
+        // Where the walk starts. A cut to the same parent, over a trail
         // that only grew since the last walk, starts where that walk
         // stopped: the entries below were judged against the same parent
         // and a surviving entry survives again, so re-reading them buys
         // nothing -- and cost everything, because a backtrackable global
         // write survives every cut, and clp(Z) makes two per propagator and
         // a cut per if-then-else: quadratic in a propagation burst. The
-        // watermark keys on the barrier AND the parent tops (a choice point
+        // watermark keys on the barrier and the parent tops (a choice point
         // pushed later at the same stack address has other tops), and a
         // trail that shrank below the mark (a backtrack between the cuts)
-        // starts from the parent again. Starting late can only KEEP an
+        // starts from the parent again. Starting late can only keep an
         // entry a full walk would drop, which is always sound.
         int startBinding = parentBindingTop, startExtra = parentExtraTop;
         if (barrier == _compactBarrier
@@ -1186,7 +1186,7 @@ public sealed partial class Activation
         // both tops already equal it, so both compaction walks are empty
         // and — since the trail only grows between CPs — no catch-frame
         // snapshot can sit above the (unchanged) top. The whole body is a
-        // no-op, INCLUDING the O(_catchFrames) snapshot-clip loop that
+        // no-op, including the O(_catchFrames) snapshot-clip loop that
         // otherwise runs on every cut (deep catch nesting made every
         // deterministic cut pay O(catch frames) for nothing).
         if (startBinding == _bindingTrailTop && startExtra == _extraTrailTop)
@@ -1196,11 +1196,11 @@ public sealed partial class Activation
         bool diagReadLog = false, diagWroteLog = false,
              diagDroppedRecord = false, diagClippedFrame = false;
 
-        // A cut's "young entry" drop reasons about BACKTRACKING: anything
+        // A cut's "young entry" drop reasons about backtracking: anything
         // above the parent CP's heap top is truncated by any outer
-        // backtrack, so restoring it is moot. But an ACTIVE CATCH FRAME is
+        // backtrack, so restoring it is moot. But an active catch frame is
         // a second unwind consumer: its throw truncates the heap only to
-        // ITS SnapHeapTop, and every mutation of an OLDER cell / attvar
+        // its SnapHeapTop, and every mutation of an older cell / attvar
         // made inside the guarded goal must still be restored then. With
         // no parent CP at all (barrier -1 → parentHeapTop 0) the old rule
         // emptied the trails wholesale while a catch frame was live —
@@ -1242,19 +1242,19 @@ public sealed partial class Activation
             // The "young heap cell" drop rule keeps an entry only when it
             // references a cell that pre-dates the parent CP's heap top
             // (younger cells are truncated on any outer backtrack, so the
-            // entry would serve no purpose). But `entry.HeapIdx` only IS a
+            // entry would serve no purpose). But `entry.HeapIdx` only is a
             // heap address for ValueChange; the other kinds overload it:
-            //   - AttrModify: HeapIdx indexes _attrTrailLog, NOT the heap.
-            //     The drop rule must test the attribute variable's HOME —
+            //   - AttrModify: HeapIdx indexes _attrTrailLog, not the heap.
+            //     The drop rule must test the attribute variable's home —
             //     a young attvar is reclaimed on backtrack (its record
-            //     restore is moot), but an OLD attvar's record restore is
+            //     restore is moot), but an old attvar's record restore is
             //     still required. Testing HeapIdx (a monotonic log counter)
             //     against parentHeapTop is meaningless and, once the log
             //     outgrows the heap top, wrongly drops live old-attvar
             //     entries — breaking the restore chain so the record ends
             //     up pointing at a reclaimed term (donald: fd(Dom, _)).
-            //   - BigIntAlloc: HeapIdx is the bigint TABLE size before the
-            //     allocation, also NOT a heap address. The big-integer table
+            //   - BigIntAlloc: HeapIdx is the bigint table size before the
+            //     allocation, also not a heap address. The big-integer table
             //     is a side table reclaimed only by these entries (nothing
             //     else trims it), so — like CatchFrame — the entry must always
             //     survive: a plain backtrack to an ancestor trims every bigint
@@ -1289,11 +1289,11 @@ public sealed partial class Activation
             }
             else if (entry.Type == TrailType.AttrModify)
             {
-                // The dropped entry was the ONLY reference into its side-log
+                // The dropped entry was the only reference into its side-log
                 // record; without this the record is orphaned — positional
                 // unwind truncation never reaches it in cut-only (CP-free)
                 // runs, and the GC roots its Home/OldValue forever. A lazy
-                // phrase_from_file retained its ENTIRE consumed input through
+                // phrase_from_file retained its entire consumed input through
                 // exactly these orphans (one per chunk, via the frozen tail's
                 // old attribute). Dead records are skipped by mark/relocate
                 // and physically reclaimed when an unwind truncates past them.

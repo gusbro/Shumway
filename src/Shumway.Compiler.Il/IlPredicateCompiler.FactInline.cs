@@ -8,7 +8,7 @@ public sealed partial class IlPredicateCompiler
 {
     // ============================================================================
     // Tier-1 IL local-predicate inlining, Phase 1 (multi-clause facts)
-    // (docs/design/il-local-inlining.md). Gated OFF by default behind
+    // (docs/design/il-local-inlining.md). Gated off by default behind
     // SHUMWAY_INLINE_FACTS=1 — a backtracking/cursor bug would give wrong
     // answers, so the default path is untouched while this is validated.
     // ============================================================================
@@ -59,13 +59,13 @@ public sealed partial class IlPredicateCompiler
                     && callee.ClauseCount >= 2 && IsFactPredicate(callee)
                     && TryGetFactClauseRanges(callee, out var ranges)
                     && ranges.Count == callee.ClauseCount
-                    // Profitability gate: inline ONLY facts whose
+                    // Profitability gate: inline only facts whose
                     // every clause has a distinct constant first arg, so the
-                    // index pre-filter makes a BOUND call deterministic
+                    // index pre-filter makes a bound call deterministic
                     // (the clear crypt-style win). A fact without that index
                     // (a grammar/dictionary fact with compound or repeated first
                     // args) inlines as a plain linear chain — no indexing gain —
-                    // so the trampoline keeps those. This is the ONLY size-ish
+                    // so the trampoline keeps those. This is the only size-ish
                     // gate: re-entry is an O(1) jump table (see the cursor switch
                     // in EmitSingleClauseMetaCpBody), so inlining a wide fact no
                     // longer costs more than the trampoline — no clause-count
@@ -97,7 +97,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>Exploratory diagnostic (SHUMWAY_IL_SHAPE=2): classify every
     /// non-tail <c>Call</c> site's callee by inline-candidate shape, to see what
-    /// an EXTENDED inliner could reach beyond today's index-eligible multi-clause
+    /// an extended inliner could reach beyond today's index-eligible multi-clause
     /// fact. One <c>[cand] category callee=fid clauses=N</c> line per site;
     /// aggregate a run with <c>sort | uniq -c</c>. Categories: <c>1cl-fact</c>
     /// (leaf-inlinable today), <c>1cl-rule</c> (single-clause rule w/ body),
@@ -203,12 +203,12 @@ public sealed partial class IlPredicateCompiler
         byte[] fcode = site.Fact.BytecodeUnfused;
         int k = site.ClauseRanges.Count;
 
-        // Phase 1b: when every clause has a DISTINCT constant first
+        // Phase 1b: when every clause has a distinct constant first
         // argument (all integer or all atom — crypt's odd/even/lefteven), emit a
-        // first-argument index pre-filter so a BOUND arg jumps straight to its
+        // first-argument index pre-filter so a bound arg jumps straight to its
         // single clause (deterministic, no choice point) instead of the linear
         // scan — recovering the first-arg indexing the trampoline had. Only an
-        // UNBOUND arg falls to the chain (generate, try-all). A bound value with
+        // unbound arg falls to the chain (generate, try-all). A bound value with
         // no matching key, or a bound non-indexed type, fails outright (a pure
         // constant fact has no catch-all clause).
         if (factArity >= 1
@@ -416,11 +416,11 @@ public sealed partial class IlPredicateCompiler
         // Cursor dispatch: 0 → start; N → resume_N; baseCursor+j → inlined
         // fact clause-(j+2) re-entry (the backtrack alternative). Cursors are
         // dense small ints from 0 (ComputeInlineSites allocates contiguous
-        // ranges), so this is a single O(1) jump table (IL `switch`) — NOT a
+        // ranges), so this is a single O(1) jump table (IL `switch`) — not a
         // linear compare chain. That matters: every backtrack re-enters the
-        // delegate HERE, and an inlined fact's generate chain re-enters once per
+        // delegate here, and an inlined fact's generate chain re-enters once per
         // clause alternative; a linear switch would make that O(cursors) and grow
-        // with each inline site — making inlining cost MORE than the trampoline it
+        // with each inline site — making inlining cost more than the trampoline it
         // replaces (the trampoline re-enters the callee's own compact dispatch).
         // The jump table keeps re-entry constant, so inlining is strictly cheaper.
         int maxCursor = callSiteCount;
@@ -437,9 +437,9 @@ public sealed partial class IlPredicateCompiler
                 cursorLabels[site.BaseCursor + j] = site.AltLabels[j];
 
         // CSE (mirrors the region Stage-11 hoist): every inlined-fact
-        // clause alternative's PushIlChoicePoint reloads the SAME self-delegate —
+        // clause alternative's PushIlChoicePoint reloads the same self-delegate —
         // a per-push holder dictionary probe on the runtime path. Hoist that load
-        // to ONE local ahead of the cursor switch (which dominates every push
+        // to one local ahead of the cursor switch (which dominates every push
         // site, including the backtrack re-entries), so each push is a LoadLocal.
         // Gate on ≥2 pushes: below that the hoist's load+store would only grow
         // the method. An inline site with k clauses pushes k−1 CPs = AltLabels.
@@ -480,7 +480,7 @@ public sealed partial class IlPredicateCompiler
 
     // Builtins that push a CP and call
     // ResumeAtReturnPc on retry, whose IL call_builtin site needs a resume
-    // marker — is now BuiltinEntry.IsBacktrackable, DERIVED by reflection
+    // marker — is now BuiltinEntry.IsBacktrackable, derived by reflection
     // (BacktrackableDetector) from each builtin's IL rather than a hand list, so
     // a new cursor builtin can't be silently forgotten. Every emit-time site
     // reads the per-entry flag.
@@ -522,8 +522,8 @@ public sealed partial class IlPredicateCompiler
         {
             byte b = bytecode[pc];
             if (b == (byte)Opcode.Call) count++;
-            // ADR-025 — each inline ITE consumes ONE resume cursor (the ELSE
-            // entry). Counted via its try_me_else's body-CP arity SENTINEL,
+            // ADR-025 — each inline ITE consumes one resume cursor (the else
+            // entry). Counted via its try_me_else's body-CP arity sentinel,
             // which a dispatch-chain try_me_else never carries. (It used to be
             // counted via the `jump` opcode, but the branch-tail-LCO shape
             // emits no jump when the ITE is the clause's last goal.)
@@ -575,12 +575,12 @@ public sealed partial class IlPredicateCompiler
     /// entry points and the persisted-assembly path.
     /// Also used by threaded non-tail Call sites
     /// to encode the resume marker (functorId, cursor).
-    /// THREAD-STATIC on purpose: compiles run concurrently on the shared
-    /// IlCompileWorker AND on engine threads (bundle / persisted builds —
+    /// Thread-static on purpose: compiles run concurrently on the shared
+    /// IlCompileWorker and on engine threads (bundle / persisted builds —
     /// see _labelSeq's note), and this was the one piece of mutable emit
     /// state left plain-static. A concurrent compile clobbering it bakes
-    /// ANOTHER predicate's fid into this delegate's resume markers, so a
-    /// post-backtrack resume re-enters the WRONG delegate at an arbitrary
+    /// another predicate's fid into this delegate's resume markers, so a
+    /// post-backtrack resume re-enters the wrong delegate at an arbitrary
     /// cursor — rare, arbitrary corruption far from the cause. Set and read
     /// strictly within one synchronous emit, so thread-static is exact.</summary>
     [System.ThreadStatic]

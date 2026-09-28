@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Shumway.Tests.Compiler.Parsing;
 
-/// <summary>ADR-022 step 1 — the parser now CAPTURES the raw spans of Arity
+/// <summary>ADR-022 step 1 — the parser now captures the raw spans of Arity
 /// embedded native code instead of discarding them:
 /// <list type="bullet">
 /// <item>a <c>{ …C… }</c> body block becomes <c>'$native_goal'(RawText)</c>
@@ -45,7 +45,7 @@ public sealed class NativeBlockCaptureTests
         Assert.Single(goals);
         var str = Assert.IsType<StringTerm>(goals[0].Args[0]);
         Assert.Contains("strlen", str.Content);     // the raw C text is preserved
-        Assert.DoesNotContain("{", str.Content);     // braces are NOT part of the span
+        Assert.DoesNotContain("{", str.Content);     // braces are not part of the span
         Assert.DoesNotContain("}", str.Content);
 
         // The goals before and after the block survive as normal Prolog.
@@ -73,7 +73,7 @@ public sealed class NativeBlockCaptureTests
         Assert.Contains("char buf[255]", str.Content);
         Assert.DoesNotContain("prolog", str.Content); // the `:- prolog.` line is excluded
 
-        // The Prolog clause AFTER the region is not swallowed (the old bug for
+        // The Prolog clause after the region is not swallowed (the old bug for
         // `#prolog`; here `:- prolog.` correctly resumes Prolog).
         Assert.Contains(clauses, c => c.Kind == ClauseKind.Fact
             && c.Term is AtomTerm { Name: "q" });

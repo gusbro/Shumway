@@ -57,8 +57,8 @@ public class Phase33PrologToCTests : IDisposable
     public void Include_OpsFromEarlierIncludeApplyToLaterSibling()
     {
         // The SWI loader-file pattern: first include defines ops, later
-        // sibling INCLUDES use them. (Documented approximation: the
-        // INCLUDING file itself is parsed before expansion, so only later
+        // sibling includes use them. (Documented approximation: the
+        // including file itself is parsed before expansion, so only later
         // included files — not the loader's own text — see the new ops.)
         Write("ops.pl", ":- op(700, xfx, ===>).\n");
         Write("uses.pl",
@@ -135,7 +135,7 @@ public class Phase33PrologToCTests : IDisposable
         {
             var e = new PrologEngine();
             Assert.True(e.Query("getenv('SHUMWAY_P2C_TEST', V), V == hello.").Success);
-            // Unset: FAILS (no error) so the (getenv ; default) idiom works.
+            // Unset: Fails (no error) so the (getenv ; default) idiom works.
             Assert.True(e.Query(
                 "( getenv('SHUMWAY_P2C_NOPE_XYZ', V) -> true ; V = fallback ), V == fallback.").Success);
         }
@@ -177,7 +177,7 @@ public class Phase33PrologToCTests : IDisposable
         string f = Slash(Write("data.pl", "one.\ntwo.\nthree.\n"));
         string g = Slash(Write("other.pl", "alpha.\n"));
         var e = new PrologEngine();
-        // Read one term, switch to another file, come back: must RESUME at
+        // Read one term, switch to another file, come back: must resume at
         // term two, not restart (the PrologToC nested-include reader relies
         // on this — restarting re-read the outer file's clauses twice).
         var s = e.Query(
@@ -236,7 +236,7 @@ public class Phase33PrologToCTests : IDisposable
     public void OperatorDefs_SurviveStrippedBundle_AndListNameForm()
     {
         // A module defining ops (single + list-name forms) is compiled,
-        // linked SOURCE-STRIPPED, and loaded into a fresh engine: the ops
+        // linked source-stripped, and loaded into a fresh engine: the ops
         // must be live in the runtime table (current_op) and usable by
         // runtime term reading — a stripped bundle used to lose them (the
         // debug path masked it by re-consulting source).

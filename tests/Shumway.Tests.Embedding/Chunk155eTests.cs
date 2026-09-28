@@ -23,7 +23,7 @@ public class Chunk155eTests
     public void Assertz_VarArg_AfterPromotion_VisibleInEveryBucket()
     {
         // Hot indexed predicate with atom buckets. Assertz a var-arg
-        // clause — it must appear in queries for ANY key.
+        // clause — it must appear in queries for any key.
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
         e.ConsultString(":- dynamic d/2.");

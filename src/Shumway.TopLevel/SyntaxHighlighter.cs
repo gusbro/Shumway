@@ -29,7 +29,7 @@ public enum SpanKind
 public readonly record struct HighlightSpan(int Start, int Length, SpanKind Kind);
 
 /// <summary>
-/// Syntax highlighting driven by the ENGINE'S OWN LEXER rather than a separate
+/// Syntax highlighting driven by the ENGINE'S own lexer rather than a separate
 /// pattern language. The two cannot drift: quoted atoms, <c>0'c</c> character
 /// codes, block comments, the Arity <c>$…$</c> form, digit separators and
 /// character conversion are read here exactly as the reader reads them. And
@@ -154,7 +154,7 @@ public static class SyntaxHighlighter
 
     /// <summary>How much source a token occupies. The token carries its decoded
     /// text, which for a quoted atom or an escaped literal is shorter than what
-    /// was written, so the length is measured on the SOURCE: from the token's
+    /// was written, so the length is measured on the source: from the token's
     /// offset to wherever the next one begins. That is what the caller does by
     /// covering gaps; here we only need the common case exactly right, and a
     /// conservative scan otherwise.</summary>

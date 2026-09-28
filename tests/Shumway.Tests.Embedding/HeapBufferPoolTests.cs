@@ -37,7 +37,7 @@ public class HeapBufferPoolTests
     [Fact]
     public void DecayedPeak_DropsOversizedBuffer_AfterSmallQueries()
     {
-        // Needs a buffer genuinely ABOVE the 1M-cell (8 MB) retention floor:
+        // Needs a buffer genuinely above the 1M-cell (8 MB) retention floor:
         // a 3M-element list ≈ 6M live cells → ≥ 8M-cell capacity.
         var e = new PrologEngine();
         Assert.True(e.Query("length(L, 3000000), maplist(=(x), L).").Success);

@@ -177,7 +177,7 @@ public class StreamControlConformance : IDisposable
     {
         // ISO §8.11: an argument that is neither a stream-term nor an alias
         // is domain_error(stream_or_alias, Culprit) — `stream_or_alias` names
-        // a DOMAIN, not a type. GNU Prolog 1.5 and SWI 10 both raise exactly
+        // a domain, not a type. GNU Prolog 1.5 and SWI 10 both raise exactly
         // this (measured); the earlier type_error here was ours alone.
         var e = new PrologEngine();
         var sol = e.Query(
@@ -245,7 +245,7 @@ public class StreamControlConformance : IDisposable
     {
         // user_output is always registered; current_stream/3 should
         // surface it. ISO §7.10.2.4 gives the standard output stream mode
-        // APPEND (not write), so filter on that.
+        // append (not write), so filter on that.
         var e = new PrologEngine();
         Assert.True(e.Query("current_stream(_, append, _).").Success);
         Assert.True(e.Query(
@@ -470,8 +470,8 @@ public class StreamControlConformance : IDisposable
     [Fact]
     public void EofActionError_SecondReadPastEndRaises()
     {
-        // §8.11.5.3: eof_action(error) is the DEFAULT — the read that
-        // consumed eof yields end_of_file; the NEXT read raises
+        // §8.11.5.3: eof_action(error) is the default — the read that
+        // consumed eof yields end_of_file; the next read raises
         // permission_error(input, past_end_of_stream, S). Matches GNU.
         // eof_action(eof_code) opts back into end_of_file forever (and is
         // what arity_compat flips the default to).
@@ -536,7 +536,7 @@ public class StreamControlConformance : IDisposable
         Assert.True(e.Query(
             "catch(get_char(user_output, _), error(permission_error(input, stream, user_output), _), true).").Success);
         // at_end_of_stream/1 is property-based (§8.11.8): an output stream
-        // simply lacks the end_of_stream property, so the call FAILS —
+        // simply lacks the end_of_stream property, so the call fails —
         // §8.11.8.3 lists no permission error.
         Assert.True(e.Query("\\+ at_end_of_stream(user_output).").Success);
     }

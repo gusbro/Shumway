@@ -7,7 +7,7 @@ using Xunit;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>The desktop world copies the engine's areas into one linear image,
-/// back to back, and hands the module each one's base and LIMIT. The module
+/// back to back, and hands the module each one's base and limit. The module
 /// writes up to the limit, so an area's span is its limit, not what was copied
 /// in: the extra trail was staged at its top with the orphan ring right after
 /// it while the limit said the whole array, and the first entry a module
@@ -58,7 +58,7 @@ public sealed class DesktopImageLayoutTests
         Add("attr log", WasmAbi.AttrLogBase, WasmAbi.AttrLogLength, 4);
         Add("arith table", WasmAbi.ArithTableBase, WasmAbi.ArithTableLength, 4);
 
-        // ANTI-VACUITY: the case that broke is staged -- entries below the top
+        // Anti-vacuity: the case that broke is staged -- entries below the top
         // and a ring right after the area.
         Assert.Equal(5, cx.ReadSlot(WasmAbi.ExtraTrailTop));
         Assert.Contains(areas, a => a.Name == "extra trail");

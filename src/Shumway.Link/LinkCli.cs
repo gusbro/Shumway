@@ -45,9 +45,9 @@ internal static class LinkCli
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        // Inputs route by extension (C-toolchain style): .shum is a LIBRARY (its
-        // members are pulled on demand, FIFO), .pl is SOURCE (compiled on the fly
-        // to an object), anything else is an OBJECT (.shmo, always linked). A .shum
+        // Inputs route by extension (C-toolchain style): .shum is a library (its
+        // members are pulled on demand, FIFO), .pl is source (compiled on the fly
+        // to an object), anything else is an object (.shmo, always linked). A .shum
         // must be a shumway-lib librarian archive (it carries its objects); a
         // linked bundle has none and can't serve as a library.
         var objects = new List<ShmoObject>();
@@ -98,7 +98,7 @@ internal static class LinkCli
             var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
             if (opts.Consult)
             {
-                // Consult ALL sources into one engine (directives + expansion
+                // Consult all sources into one engine (directives + expansion
                 // hooks run, use_module dependencies load) and link every module
                 // the load brought in — the shumway-compile --consult pipeline.
                 var errors = new List<ShmoCompileError>();
@@ -309,11 +309,11 @@ internal static class LinkCli
                 + $"bytes={result.Bytes!.Length}).");
         }
 
-        // --exe / --dll target the RUNNING toolchain's framework: the net10
+        // --exe / --dll target the running toolchain's framework: the net10
         // build emits single-file .NET 10 apps; the net48 build emits
         // Framework folder apps (exe + engine DLLs + config). Both need the
-        // .NET SDK on the BUILD machine (the stub compiles via dotnet build);
-        // net48 TARGET machines only need .NET Framework 4.8.
+        // .NET SDK on the build machine (the stub compiles via dotnet build);
+        // net48 target machines only need .NET Framework 4.8.
         if (!string.IsNullOrEmpty(opts.ExePath))
         {
             var mode = opts.SelfContained
@@ -515,7 +515,7 @@ internal static class LinkCli
                     Shumway.Embedding.BundleFormat.DisableCompression = true;
                     break;
 
-                // Bake only the REACHED prelude predicates
+                // Bake only the reached prelude predicates
                 // (closure over the prelude call graph). Opt-in: runtime-
                 // constructed goals naming unreached prelude predicates raise
                 // existence_error (declare them :- ensure_linked to keep them).
@@ -821,7 +821,7 @@ internal static class LinkCli
     // The last two are what PrologEngine searches by default, and the linker
     // has to agree with it: a toolchain unpacked into one directory has lib/
     // sitting next to the executables, so a program the REPL runs and
-    // shumway-compile compiles must also LINK without being told where the
+    // shumway-compile compiles must also link without being told where the
     // libraries are. Lowest precedence, so an explicit -L still wins.
     private static List<string> CollectLibraryDirs(List<string> flagged)
     {
@@ -846,7 +846,7 @@ internal static class LinkCli
         if (System.IO.Directory.Exists(dir)) dirs.Add(dir);
     }
 
-    /// <summary>Every artifact this run was asked to produce. A failure ANYWHERE
+    /// <summary>Every artifact this run was asked to produce. A failure anywhere
     /// — reading an input, compiling a source, the link itself — must leave none
     /// of them behind: a stale bundle beside a failed build is the one a later
     /// run picks up, and it looks like a success.</summary>

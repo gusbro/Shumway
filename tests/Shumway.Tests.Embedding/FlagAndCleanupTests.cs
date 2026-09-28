@@ -34,7 +34,7 @@ public sealed class FlagAndCleanupTests
     public void Flag_PersistsAcrossFailureDrivenLoop()
     {
         var e = new PrologEngine();
-        // The gensym idiom: a flag counter is NOT backtracked, so it survives a
+        // The gensym idiom: a flag counter is not backtracked, so it survives a
         // failure-driven loop and ends at the number of iterations.
         e.Query("( between(1, 5, _), flag(counter, Old, Old+1), fail ; true ).");
         Assert.True(e.Query("get_flag(counter, V), V == 5.").Success);
@@ -86,7 +86,7 @@ public sealed class FlagAndCleanupTests
         // SWI's determinism-detection idiom: setup_call_cleanup(true, G, Det=true)
         // — the cleanup goal shares variables with the caller, so its binding must
         // survive into the continuation. Regression: the cleanup used to run the
-        // assertz-retract COPY of the goal (renamed variables), so Det stayed
+        // assertz-retract copy of the goal (renamed variables), so Det stayed
         // unbound outside.
         var e = new PrologEngine();
         Assert.Equal("yes", e.QueryFirst<string>(
@@ -211,7 +211,7 @@ public sealed class FlagAndCleanupTests
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(closed/0).");
         // A nondet Goal succeeds leaving choice points, then an exception is
-        // thrown AFTER it and caught by an outer catch — unwinding past the
+        // thrown after it and caught by an outer catch — unwinding past the
         // leftover scope must fire cleanup.
         Assert.True(e.Query(
             "catch((setup_call_cleanup(true, member(_,[1,2,3]), assertz(closed)), throw(boom)), boom, true).").Success);
@@ -249,7 +249,7 @@ public sealed class FlagAndCleanupTests
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(closed/0).");
-        // The caller takes the FIRST solution and stops (no cut) — the leftover
+        // The caller takes the first solution and stops (no cut) — the leftover
         // choice points are abandoned at query teardown, firing cleanup (the SWI
         // toplevel-cancel case).
         Assert.True(e.Query(
@@ -295,7 +295,7 @@ public sealed class FlagAndCleanupTests
         e.ConsultString(":- dynamic(cc2/1).");
         // A non-deterministic goal whose choice points are fully backtracked:
         // one solution, cleanup exactly once (on exhaustion). (Cleanup on an
-        // ABANDONED first solution is the documented limitation.)
+        // abandoned first solution is the documented limitation.)
         int n = e.QueryAll("call_cleanup(member(2, [1,2,3]), assertz(cc2(ok))).").Count();
         Assert.Equal(1, n);
         Assert.Single(e.QueryAll("cc2(ok)."));

@@ -12,10 +12,10 @@ namespace Shumway.Core;
 /// the peek/read asymmetry the ISO stream model needs:
 ///
 /// <list type="bullet">
-/// <item><see cref="Peek"/> on an ill-formed sequence throws WITHOUT
+/// <item><see cref="Peek"/> on an ill-formed sequence throws without
 ///   consuming — the peek stays repeatable and a later read sees the same
 ///   bytes.</item>
-/// <item><see cref="Read"/> on an ill-formed sequence consumes exactly ONE
+/// <item><see cref="Read"/> on an ill-formed sequence consumes exactly one
 ///   byte (the offending lead) before throwing, so a reader that catches the
 ///   error can resynchronise byte-by-byte.</item>
 /// </list>
@@ -96,7 +96,7 @@ public sealed class Utf8TextReader : TextReader
         int b0 = _buf[_bufPos];
         if (b0 < 0x80) { length = 1; return b0; }
 
-        // Sequence length + constrained range of the FIRST continuation
+        // Sequence length + constrained range of the first continuation
         // byte (RFC 3629 table: rejects overlongs, surrogates, > U+10FFFF).
         int need; int lo = 0x80; int hi = 0xBF;
         switch (b0)
@@ -146,8 +146,8 @@ public sealed class Utf8TextReader : TextReader
         try { cp = DecodeNext(out length); }
         catch (PrologRuntimeException)
         {
-            // A READ consumes the offending lead byte — byte-wise resync —
-            // where a PEEK left it in place.
+            // A read consumes the offending lead byte — byte-wise resync —
+            // where a peek left it in place.
             _bufPos++;
             throw;
         }

@@ -72,7 +72,7 @@ public class Chunk39Tests
     [Fact]
     public void Store_AtThreshold_BackgroundMode_QueuesThenInstalls()
     {
-        // Phase 33 L2 (the default) — the crossing call QUEUES the compile
+        // Phase 33 L2 (the default) — the crossing call queues the compile
         // and stays Tier-0 (null); IsPromoted settles the in-flight compile;
         // the installed delegate serves subsequent dispatches.
         var store = new IlPromotionStore { Threshold = 3 };   // background default
@@ -227,7 +227,7 @@ public class Chunk39Tests
             for (int i = 0; i < 3; i++) engine.Query("foo(_).");   // warm → promote (queued)
             // Phase 33 I10 — the churn pin under test (≥ EvictionChurnLimit
             // promote→evict cycles ⇒ stay Tier 0) is real product behaviour and
-            // runs in the DEFAULT background mode unchanged. The former flake was
+            // runs in the default background mode unchanged. The former flake was
             // purely a missing barrier: each round's snapshot compile is queued on
             // the shared background IL worker and installs only on a later drain,
             // but the eviction counts toward the churn limit only when a delegate

@@ -9,7 +9,7 @@ namespace Shumway.Web;
 /// asking, which is not what it does anywhere else.
 ///
 /// <para>The engine's read is synchronous: it blocks the thread until it has
-/// characters. That is exactly why the search runs on a POOL thread — blocking
+/// characters. That is exactly why the search runs on a pool thread — blocking
 /// there costs the page nothing, and the prompt is drawn by the UI thread while
 /// the engine waits. The request goes out through the runtime thread (JavaScript
 /// interop is thread-affine), and the answer comes back through
@@ -54,7 +54,7 @@ internal static partial class WebShumwayApp
         public override int Read() => Available() ? _buffer[_at++] : -1;
 
         /// <summary>True once there is a character to hand out; asks the page and
-        /// BLOCKS if there is not. False only at end of file.</summary>
+        /// blocks if there is not. False only at end of file.</summary>
         private bool Available()
         {
             lock (_lock)
@@ -64,7 +64,7 @@ internal static partial class WebShumwayApp
                     if (_at < _buffer.Length) return true;
                     if (_eof) return false;
                     if (_jsThread is null) return false;   // no page to ask
-                    // Blocking is only safe OFF the runtime thread — that thread
+                    // Blocking is only safe off the runtime thread — that thread
                     // has to be free to deliver the answer. It never reads (the
                     // search is on a pool thread), but if one ever did, an
                     // immediate end-of-file beats a deadlocked tab.
@@ -72,7 +72,7 @@ internal static partial class WebShumwayApp
                     // Ask on the thread that owns the JavaScript side, then wait.
                     // Monitor.Wait releases the lock, so the answer can arrive.
                     _jsThread.Post(static _ => AskForInput(), null);
-                    // CA1416: blocking is unsupported on the browser's MAIN
+                    // CA1416: blocking is unsupported on the browser's main
                     // thread; the guard above is what keeps this off it.
 #pragma warning disable CA1416
                     Monitor.Wait(_lock);

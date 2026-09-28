@@ -14,7 +14,7 @@ namespace Shumway.Web;
 /// <para>With threads on, every worker has its own function table -- only the
 /// memory is shared -- so an index registered on one thread does not exist on
 /// another, and calling through it traps the worker silently. The design that
-/// follows from that: a thread REGISTERS the module bytes itself, through the
+/// follows from that: a thread registers the module bytes itself, through the
 /// C shim's EM_JS (JavaScript in the calling thread's own realm), and gets an
 /// index valid exactly where it will be used. No JavaScript instantiates
 /// anything from the page; C# holds the module bytes and the whole path is
@@ -26,7 +26,7 @@ internal static partial class WebShumwayApp
     private static extern int shumway_wasm_table_length();
 
     /// <summary>Instantiates the module bytes against this thread's realm and
-    /// registers its entry in THIS thread's table. Returns the index, or -1.
+    /// registers its entry in this thread's table. Returns the index, or -1.
     /// </summary>
     [DllImport("spike")]
     private static extern int shumway_wasm_register(int bytesPtr, int len);
@@ -97,14 +97,14 @@ internal static partial class WebShumwayApp
         }).ConfigureAwait(false);
     }
 
-    /// <summary>Where the WAM's scalars should live. They are in LOCALS today,
+    /// <summary>Where the WAM's scalars should live. They are in locals today,
     /// loaded from the mailbox on entry and spilled on exit, and that prologue
     /// and epilogue are both most of a small module's fixed size and what every
     /// crossing pays. Imported mutable globals would remove them rather than
     /// share them -- a module reached by a tail call would find the state
     /// already there.
     ///
-    /// <para>The question is the price of an ACCESS, because these are the
+    /// <para>The question is the price of an access, because these are the
     /// hottest reads and writes in the engine. The same counting loop, four
     /// ways, differing only in where the counter lives.</para></summary>
     [JSExport]
@@ -156,7 +156,7 @@ internal static partial class WebShumwayApp
         }).ConfigureAwait(false);
 
     /// <summary>Is engine work actually pinned to one thread? A compiled module
-    /// is registered in the CALLING thread's function table, so a pool that
+    /// is registered in the calling thread's function table, so a pool that
     /// hands out a different thread each time makes every module pay
     /// registration again there. The claim is only worth anything if the ids
     /// come back identical, and worth checking because CA1416 says a dedicated
@@ -185,13 +185,13 @@ internal static partial class WebShumwayApp
     /// that hand control to each other with <c>return_call_indirect</c> through
     /// this thread's function table, never returning to the host.
     ///
-    /// <para>G0 is the gate that can kill the arc, and it is a PROPERTY, not a
+    /// <para>G0 is the gate that can kill the arc, and it is a property, not a
     /// speed: millions of hops must run in bounded stack. If the engine
     /// compiles the tail call as an ordinary call the stack grows per hop and
-    /// there is no fallback -- in the WAM a call IS a jump and the continuation
+    /// there is no fallback -- in the WAM a call is a jump and the continuation
     /// lives in CP. G1 is the speed, against the 4-15 us a cross-module switch
     /// costs today going out through mono-interpreted C#. G4 is that a module
-    /// reaches table slots added AFTER it was instantiated.</para></summary>
+    /// reaches table slots added after it was instantiated.</para></summary>
     [JSExport]
     internal static async Task<string> WasmSplitProbe(int hops, int rounds)
         => await Task.Run(() =>
@@ -295,7 +295,7 @@ internal static partial class WebShumwayApp
     [DllImport("spike")]
     private static extern int shumway_wasm_probe_index(int index);
 
-    /// <summary>Registers on one pool thread and asks OTHER pool threads what
+    /// <summary>Registers on one pool thread and asks other pool threads what
     /// they see at that index -- without calling it, since calling through a
     /// foreign index traps the worker with nothing to catch. The engine is
     /// thread-agile, so the answer decides the product's shape: an index that

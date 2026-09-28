@@ -8,7 +8,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>The <c>encoding/1</c> open/4 option (SWI-style): a Latin-1 file
-/// must read back with its BYTE VALUES as codes (Latin-1 is the first 256
+/// must read back with its byte values as codes (Latin-1 is the first 256
 /// Unicode code points) — the default UTF-8 reader turns every 0x80–0xFF
 /// byte into U+FFFD, which silently corrupts ISO-8859-1 sources (the
 /// Neumerkel conformity pages).</summary>

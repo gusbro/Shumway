@@ -8,7 +8,7 @@ namespace Shumway.Builtins;
 /// the <c>length/2</c> / <c>append/3</c> / <c>sort/2</c> family this is
 /// the bread-and-butter list toolkit user code reaches for.
 ///
-/// <para><see cref="Member"/> is NOT registered — <c>member/2</c> lives
+/// <para><see cref="Member"/> is not registered — <c>member/2</c> lives
 /// in the Prolog prelude so it enumerates solutions via standard
 /// backtracking; the first-solution C# version here is unreachable from
 /// Prolog source.</para>
@@ -79,7 +79,7 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             i++;
         }
-        // Prologue generate mode: an integer index against a PARTIAL list
+        // Prologue generate mode: an integer index against a partial list
         // (unbound tail) extends it — nth0(2, Es, E) gives Es = [_,_,E|_].
         // A closed or improper tail still just fails.
         if (cur.Tag != Tag.Ref) return false;
@@ -88,7 +88,7 @@ public static class ListBuiltins
             && engine.UnifyRegisterWithCell(2, Cell.Ref(elemSlot));
     }
 
-    /// <summary>Advances one list cell, EXTENDING a partial list by a fresh
+    /// <summary>Advances one list cell, extending a partial list by a fresh
     /// <c>[H|T]</c> cons when the walk reaches an unbound tail — the prologue
     /// generate mode, and what makes a variable-index enumeration over a
     /// partial list produce answers ad infinitum instead of stopping at the

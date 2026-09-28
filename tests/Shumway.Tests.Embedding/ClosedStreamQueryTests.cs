@@ -7,15 +7,15 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>A closed stream is still a stream-term, so the three predicates
-/// that merely ASK about a stream -- current_input/1, current_output/1,
+/// that merely ask about a stream -- current_input/1, current_output/1,
 /// stream_property/2 -- must FAIL for one, not raise. Their error tables
 /// (8.11.1.3, 8.11.2.3, 8.11.8.3) list no existence_error at all, and a
 /// domain error is only right for a term that can never be a stream-term.
-/// Predicates that USE a stream (close/1, set_input/1, write/2) keep raising
+/// Predicates that use a stream (close/1, set_input/1, write/2) keep raising
 /// existence_error; that split is the whole point and is asserted here in
 /// both directions.
 ///
-/// <para>What makes a stream-term is its FORM, not the registry: a closed
+/// <para>What makes a stream-term is its form, not the registry: a closed
 /// stream is gone from the registry and is still one. So an id that never
 /// named a stream is a stream-term too, and behaves exactly like a closed one
 /// -- queries fail, uses raise existence_error. Deciding it by asking the
@@ -60,7 +60,7 @@ public sealed class ClosedStreamQueryTests
         Assert.True(WithClosedStream($@"\+ {goal}."));
     }
 
-    /// <summary>Anti-vacuity: the same four goals SUCCEED on a live stream, so
+    /// <summary>Anti-vacuity: the same four goals succeed on a live stream, so
     /// the failures above are the closed-ness and not a broken predicate.</summary>
     [Fact]
     public void TheSameQueries_SucceedOnALiveStream()
@@ -78,7 +78,7 @@ public sealed class ClosedStreamQueryTests
         finally { File.Delete(f); }
     }
 
-    /// <summary>The other half of the split: USING a closed stream still
+    /// <summary>The other half of the split: Using a closed stream still
     /// raises existence_error(stream, S). If this ever turns into failure the
     /// fix above has gone too far.</summary>
     [Theory]
@@ -91,9 +91,9 @@ public sealed class ClosedStreamQueryTests
             $"catch({goal}, error(E, _), true), E = existence_error(stream, _)."));
     }
 
-    /// <summary>An id that never named a stream has the FORM of a stream-term,
+    /// <summary>An id that never named a stream has the form of a stream-term,
     /// so it is not a domain error: the query just fails, as it does for a
-    /// closed stream. A typo is still caught, but by the predicates that USE
+    /// closed stream. A typo is still caught, but by the predicates that use
     /// the stream (below), which is where it can do harm.</summary>
     [Theory]
     [InlineData("current_input('$stream'(999999))")]
@@ -107,8 +107,8 @@ public sealed class ClosedStreamQueryTests
         Assert.True(e.Query($@"\+ {goal}.").Success);
     }
 
-    /// <summary>...and USING it raises existence_error, the same as a closed
-    /// stream: the term IS a stream-term, there is just no such stream.</summary>
+    /// <summary>...and using it raises existence_error, the same as a closed
+    /// stream: the term is a stream-term, there is just no such stream.</summary>
     [Theory]
     [InlineData("close('$stream'(999999))")]
     [InlineData("write('$stream'(999999), x)")]
@@ -119,7 +119,7 @@ public sealed class ClosedStreamQueryTests
             $"catch({goal}, error(E, _), true), E = existence_error(stream, _).").Success);
     }
 
-    /// <summary>The domain check that DOES survive, and it is about form only:
+    /// <summary>The domain check that does survive, and it is about form only:
     /// '$stream'(foo) has no id, so it is no stream-term at all.</summary>
     [Theory]
     [InlineData("current_input('$stream'(foo))")]

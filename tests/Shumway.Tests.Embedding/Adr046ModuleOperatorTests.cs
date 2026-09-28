@@ -71,7 +71,7 @@ public class Adr046ModuleOperatorTests
                 + "mk(A +-> B, pair(A, B)).\n");
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
-            // Mid-consult import: the op is active for the REST of the file.
+            // Mid-consult import: the op is active for the rest of the file.
             e.ConsultString(
                 ":- use_module(library(oplib46)).\n"
                 + "route(R) :- mk(a +-> b, R).\n");
@@ -149,7 +149,7 @@ public class Adr046ModuleOperatorTests
         // Neither op leaks to user at load…
         Assert.False(e.Query("current_op(700, xfx, '+=>').").Success);
         Assert.False(e.Query("current_op(600, xfx, privz).").Success);
-        // …a use_module of the LOADED module imports the exported one only.
+        // …a use_module of the loaded module imports the exported one only.
         Assert.True(e.Query("use_module(library(oplibz)).").Success);
         Assert.True(e.Query("current_op(700, xfx, '+=>').").Success);
         Assert.False(e.Query("current_op(600, xfx, privz).").Success);

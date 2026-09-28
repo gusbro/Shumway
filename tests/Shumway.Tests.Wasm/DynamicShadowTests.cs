@@ -134,7 +134,7 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
         Agree(plain, tiered, "freeze(A, true), rd(1, A, 5).");
     }
 
-    // A dynamic predicate declared in a MODULE keeps its source clauses in
+    // A dynamic predicate declared in a module keeps its source clauses in
     // the module, not in the dynamic store: clp(Z)'s clpz_neq/2 is one.
     private const string ModuleCorpus = """
         :- module(mdyn, [md/1, mrun/1, mall/1]).
@@ -157,7 +157,7 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
         Assert.True(tiered.IlPromotion.Wasm!.HasShadow(Fid("md", 1)),
             "a module's dynamic predicate was not promoted as a snapshot");
         Agree(plain, tiered, "mall(L), L == [1, 2, 3].");
-        // A source clause retracted, and a call in the SAME query after it:
+        // A source clause retracted, and a call in the same query after it:
         // no snapshot may be taken from sources that predate the retract.
         Agree(plain, tiered, "retract(md(1)), mrun(3), mall(L), L == [2, 3].");
         Agree(plain, tiered, "mall(L), L == [2, 3].");

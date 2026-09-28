@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Consulting a source must not move the code that was already
 /// compiled. The static region is laid out append-only: a predicate keeps
-/// the ordinal it was first laid out with, and anything new — or CHANGED by
+/// the ordinal it was first laid out with, and anything new — or changed by
 /// a reconsult — takes a fresh ordinal at the end.
 ///
 /// <para>The layout used to be "whatever the module compiler produced, then
@@ -90,10 +90,10 @@ public sealed class StaticLayoutStabilityTests
         Assert.True(e.Query("findall(X, (small(X), label([X])), [2,3]).").Success);
     }
 
-    /// <summary>A RECONSULT keeps every address too. The sets: what is
+    /// <summary>A reconsult keeps every address too. The sets: what is
     /// being loaded (A) against what the layout already holds (B). B minus A
     /// keeps its ordinal; A minus B is appended; A intersect B splits —
-    /// unchanged keeps its place, and a CHANGED predicate leaves its old
+    /// unchanged keeps its place, and a changed predicate leaves its old
     /// version behind as a dead region while the new one is appended like a
     /// fresh predicate. The dead version owns nothing (the functor resolves
     /// to the new address) and is never executed; it is there so the code
@@ -112,7 +112,7 @@ public sealed class StaticLayoutStabilityTests
         e.Query("true.");
         var after = Layout(e);
 
-        // Only the predicate the reconsult CHANGED moved; everything else,
+        // Only the predicate the reconsult changed moved; everything else,
         // the prelude included, is exactly where it was.
         var (_, moved, names) = Compare(before, after);
         Assert.Equal(1, moved);
@@ -122,8 +122,8 @@ public sealed class StaticLayoutStabilityTests
         Assert.True(e.Query("r(1).").Success);
         Assert.True(e.Query("member(b, [a,b,c]).").Success);
 
-        // The hole is BOOKKEPT: where it is, how big, and whose it was —
-        // what a future pass needs to reuse it. It sits at p/1's OLD
+        // The hole is bookkept: where it is, how big, and whose it was —
+        // what a future pass needs to reuse it. It sits at p/1's old
         // address, and the live p/1 is elsewhere.
         var dead = Assert.Single(e.StaticDeadRegions);
         var (pAtom, _) = Shumway.Core.FunctorTable.Lookup(dead.FunctorId);

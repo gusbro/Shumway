@@ -26,7 +26,7 @@ public sealed class WasmConformanceTests(ITestOutputHelper o)
     }
 
     /// <summary>Each case as (name, goal-text). Pulled once from a Tier-0
-    /// engine, NOT from the engine under test: a case is run as its own
+    /// engine, not from the engine under test: a case is run as its own
     /// top-level query, the way a user asks it and the way that agrees
     /// across configs (wrapping it in once(G) with G fetched from wc_case
     /// routed it through a meta-call that diverged under full promotion). And
@@ -96,7 +96,7 @@ public sealed class WasmConformanceTests(ITestOutputHelper o)
         Assert.Equal("", noneFailed);
 
         // The tier answers what Tier-0 answers, case for case. The list is
-        // EMPTY on purpose: a divergence here is a tier bug, and the two it
+        // empty on purpose: a divergence here is a tier bug, and the two it
         // caught (the meta-called cut barrier read after the arguments had
         // overwritten X1, and get_attr/3's form spending the local the
         // meta-call was keeping the goal's heap base in) both presented as a

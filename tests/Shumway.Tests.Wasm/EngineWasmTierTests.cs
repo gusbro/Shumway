@@ -3,11 +3,11 @@ using Shumway.Embedding;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>The wasm tier against the LIVE engine: promotion through the
+/// <summary>The wasm tier against the live engine: promotion through the
 /// ordinary dispatch path, execution through <see cref="DesktopWasmRunner"/>
 /// (the copy-image runner), verdicts through <see cref="WasmTierDelegate"/>.
 /// Everything the interpreter does around the delegate -- marker resumes,
-/// backtracking into wasm choice points, builtins, deopt -- is the REAL
+/// backtracking into wasm choice points, builtins, deopt -- is the real
 /// machinery; only the wasm execution engine differs from the browser.</summary>
 public class EngineWasmTierTests
 {
@@ -56,7 +56,7 @@ public class EngineWasmTierTests
         var store = engine.IlPromotion;
         store.Threshold = 0;                     // the IL tier stands aside
         var world = new DesktopWasmWorld();
-        // The GROUP promoter: every promotion recompiles the whole set into
+        // The group promoter: every promotion recompiles the whole set into
         // one module (cross-member calls become internal jumps) and installs
         // the fresh build; delegates resolve against the world per entry.
         var members = new List<WasmGroupMember>();
@@ -150,7 +150,7 @@ public class EngineWasmTierTests
     [Fact]
     public void StructureKeyedDispatch_CompilesAndAnswers()
     {
-        // area/2's clauses are keyed by DISTINCT structure functors, which is
+        // area/2's clauses are keyed by distinct structure functors, which is
         // what makes the compiler emit switch_on_structure — an opcode that
         // used to reject the predicate out of the group. Compiling it is half
         // the pin; answering like the interpreter is the other half.
@@ -172,7 +172,7 @@ public class EngineWasmTierTests
     public void ATrailLimitDeopt_GrowsTheArea_InsteadOfRepeating()
     {
         // tak fills the binding trail. The wasm limit sits a margin below the
-        // real array, and the interpreter finishes the deopted step INSIDE
+        // real array, and the interpreter finishes the deopted step inside
         // that margin — so without growth the engine keeps the same trail
         // forever and every chain deopts at the same pc (measured: 108 of 114
         // entries). With growth each limit deopt doubles the area: a handful
@@ -189,7 +189,7 @@ public class EngineWasmTierTests
     [DiagFact]
     public void TermIdentityIsOpenCoded_ForAtomicCells()
     {
-        // ==/2 and \==/2 on dereferenced Atom/Int cells decide INSIDE the
+        // ==/2 and \==/2 on dereferenced Atom/Int cells decide inside the
         // module: identity is cell identity there. crypt's \== chains used
         // to cost one chain exit each — 183k per browser run, a 31x
         // slowdown. Everything non-atomic still exits to the real builtin.
@@ -200,7 +200,7 @@ public class EngineWasmTierTests
         Assert.True(e.Query("alldiff(3, [1, 2, 4, 5]).").Success);
         Assert.False(e.Query("alldiff(3, [1, 3]).").Success);
 
-        // The atomic path leaves the chain ZERO times.
+        // The atomic path leaves the chain zero times.
         WasmTierDelegate.ResetDiag();
         Assert.True(e.Query("alldiff(0, [1,2,3,4,5,6,7,8,9,10]).").Success);
         Assert.Equal(0, WasmTierDelegate.DiagBuiltins);
@@ -210,7 +210,7 @@ public class EngineWasmTierTests
         Assert.True(e.Query("idc(f(a), f(a), same), idc(f(a), f(b), diff).").Success);
         Assert.True(e.Query("idc(X, X, same), idc(X, Y, diff).").Success);
 
-        // What the comparator DECLINES still exits: two equal bignums can
+        // What the comparator declines still exits: two equal bignums can
         // wear different cells, so cell identity is not term identity.
         Assert.True(e.Query("B1 is 2 ^ 200, B2 is 2 ^ 200, idc(f(B1), f(B2), same).").Success);
         WasmTierDelegate.ResetDiag();

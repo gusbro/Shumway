@@ -110,7 +110,7 @@ public class DeepNestingParseTests
         // A clause body is a run of the xfy `,`, and reading the right operand
         // recursively spent a frame per goal: a body of about a thousand goals
         // overflowed the stack, killing the process mid-consult. The run is
-        // read in a loop and folded right, which must give the SAME tree.
+        // read in a loop and folded right, which must give the same tree.
         var sb = new StringBuilder();
         for (int i = 0; i < Deep; i++) sb.Append("g(").Append(i).Append("), ");
         sb.Append("last");

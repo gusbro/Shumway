@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 150: <c>garbage_collect_clauses/0,1</c> — re-threads
 /// each dynamic predicate's bytecode chain through only its live
-/// entries, bypassing the dead (retracted/abolished) entries, AND
+/// entries, bypassing the dead (retracted/abolished) entries, and
 /// reclaims the dead chunks into an engine-wide free list so the
 /// next <c>assertz</c> / <c>asserta</c> can reuse the bytes instead
 /// of extending the program buffer. ADR-015's append-only chain

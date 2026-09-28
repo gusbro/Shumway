@@ -48,7 +48,7 @@ public class AttVarAliasTests
     [Fact]
     public void TheCopyIsTheSameVariable()
     {
-        // Not merely readable: it must BE the variable, so binding through the
+        // Not merely readable: it must be the variable, so binding through the
         // structure binds the original.
         var e = Attributed();
         Assert.True(e.Query("put_attr(V, m, hello), pair(V, T), arg(1, T, A), A == V.").Success);

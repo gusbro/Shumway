@@ -5,14 +5,14 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>Turning the batch on has to compile the program THEN, not at
+/// <summary>Turning the batch on has to compile the program then, not at
 /// whatever boundary happens to come next.
 ///
 /// <para>The tick's early-out asks whether the static program changed, which
 /// is the right question for a consult and the wrong one for a mode change:
 /// switching to "all" leaves the program exactly as it was. So the batch did
 /// not run, the user's next goal ran interpreted, predicates crossed the
-/// threshold while it ran, and the tick AFTER that goal finally compiled
+/// threshold while it ran, and the tick after that goal finally compiled
 /// everything. Measured in a browser: 107 s for the first
 /// countall(queens(9,Qs),N) and 1.8 s for the same goal once the batch had
 /// caught up.</para></summary>
@@ -40,7 +40,7 @@ public sealed class JitCompileAllCompilesNowTests(ITestOutputHelper o)
         var wasm = new WasmPromotionStore(store)
         {
             // Lazy and far away: nothing promotes by hotness in these runs,
-            // so anything compiled was compiled BY the batch.
+            // so anything compiled was compiled by the batch.
             Threshold = 1_000_000,
             CompileAllOnConsult = false,
             BatchPromoter = candidates =>
@@ -97,7 +97,7 @@ public sealed class JitCompileAllCompilesNowTests(ITestOutputHelper o)
         Assert.Empty(engine.IlPromotion.PromotedFunctorIds());
     }
 
-    /// <summary>Turning the batch back on compiles THEN. The program has not
+    /// <summary>Turning the batch back on compiles then. The program has not
     /// changed since the tick last looked, so only the mode change can ask
     /// for this build.</summary>
     [Fact]
@@ -121,7 +121,7 @@ public sealed class JitCompileAllCompilesNowTests(ITestOutputHelper o)
 
     /// <summary>Counter-proof, and the shape of the bug exactly as it was
     /// reported: off, then all, and the batch does not run. In the browser
-    /// the next goal then ran interpreted and the tick after IT compiled
+    /// the next goal then ran interpreted and the tick after it compiled
     /// everything.</summary>
     [Fact]
     public void WithoutTheForceTheTickTakesItsEarlyOut()

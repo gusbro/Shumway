@@ -8,12 +8,12 @@ namespace Shumway.Tests.Embedding;
 /// import from it (<c>strip_module/3</c>) is already in the prelude.
 ///
 /// <para>But Scryer's <c>dcgs.pl</c> does not call it bare, it calls
-/// <c>loader:strip_module(...)</c>, and a MODULE-QUALIFIED call needs a
+/// <c>loader:strip_module(...)</c>, and a module-qualified call needs a
 /// module of that name to have the predicate. With the no-op there was no
 /// such module, and the failure cascaded a long way: dcgs raised
 /// <c>existence_error: loader/0</c>, <c>library(atts)</c> failed with it,
 /// the <c>attribute</c> operator was therefore never declared, and Scryer's
-/// clpz.pl then failed to PARSE at its <c>:- attribute clpz/1, ...</c> line.
+/// clpz.pl then failed to parse at its <c>:- attribute clpz/1, ...</c> line.
 /// A whole constraint library lost to an empty shim, with consult reporting
 /// no error at all.</para></summary>
 public sealed class LoaderShimTests
@@ -21,7 +21,7 @@ public sealed class LoaderShimTests
     private static PrologEngine Engine()
         => new() { Warnings = new System.IO.StringWriter() };
 
-    /// <summary>THE CASE: the qualified call dcgs.pl actually makes.</summary>
+    /// <summary>The case: the qualified call dcgs.pl actually makes.</summary>
     [Fact]
     public void TheQualifiedCallResolves()
     {
@@ -56,7 +56,7 @@ public sealed class LoaderShimTests
         Assert.True(e.Query("p(M, G), M == a, G == b.").Success);
     }
 
-    /// <summary>ANTI-VACUITY for the cascade: without a resolvable
+    /// <summary>Anti-vacuity for the cascade: without a resolvable
     /// loader:strip_module/3 the error is the one that started it all, so
     /// this test names what regressing would look like.</summary>
     [Fact]
@@ -64,7 +64,7 @@ public sealed class LoaderShimTests
     {
         var e = Engine();
         e.ConsultString(":- use_module(library(loader)).");
-        // A no-op shim leaves NO module, and the qualified call then raises
+        // A no-op shim leaves no module, and the qualified call then raises
         // existence_error on loader/0 rather than failing.
         Assert.True(e.Query(
             "catch(loader:strip_module(x:y, _, _), E, true), var(E).").Success,

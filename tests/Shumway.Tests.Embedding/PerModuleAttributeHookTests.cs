@@ -59,7 +59,7 @@ public sealed class PerModuleAttributeHookTests
     {
         // The baked clpfd (bare-global multifile /4) and a user module's
         // module-local /4 hook run side by side: an FD variable constrained by
-        // clpfd AND carrying a module-local ceiling, both enforced.
+        // clpfd and carrying a module-local ceiling, both enforced.
         var e = new PrologEngine();
         e.UseClpfd();
         e.ConsultString(ModA);
@@ -70,7 +70,7 @@ public sealed class PerModuleAttributeHookTests
     public void OneVariable_TwoModules_BothHooksRun()
     {
         // A single variable carries an attribute from each module; binding it
-        // must satisfy BOTH hooks (SICStus/SWI semantics: every module's hook
+        // must satisfy both hooks (SICStus/SWI semantics: every module's hook
         // runs). le(6) ∧ ge(2): 4 passes both, 9 fails le, 1 fails ge.
         var e = new PrologEngine();
         e.ConsultString(ModA);

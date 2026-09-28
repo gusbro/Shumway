@@ -5,7 +5,7 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>A tabled predicate running on the wasm tier. The tier owns the
 /// memory-side choice-point stack and lowers B over it (cut, trust,
-/// backtracking between members) without touching the engine's MANAGED
+/// backtracking between members) without touching the engine's managed
 /// parallel IL-choice-point stack. Left unreconciled, a later backtrack to a
 /// real IL choice point the wasm buried under a stale entry read the entry's
 /// sentinel bp (-1) as a bytecode address: SetPc(-1), which the loop takes as

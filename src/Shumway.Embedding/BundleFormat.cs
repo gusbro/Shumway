@@ -16,11 +16,11 @@ namespace Shumway.Embedding;
 ///   [0..3]    Magic 'S','H','U','M'
 ///   [4..7]    Format version (uint32, = CurrentVersion)
 ///   [8]       Compression flag: 0 = raw body, 1 = the whole
-///             body below is ONE Brotli stream (bodies ≥ 4 KB compress;
+///             body below is one Brotli stream (bodies ≥ 4 KB compress;
 ///             typical ratio ~4-6× on real corpora)
 ///   [9..]     Body (raw or decompressed):
 ///                 genMajor         : uint32  \
-///                 genMinor         : uint32   > the Shumway that WROTE this
+///                 genMinor         : uint32   > the Shumway that wrote this
 ///                 genPatch         : uint32  /  file (see ShumwayVersion)
 ///                 Module count (uint32)
 ///             then for each module:
@@ -70,9 +70,9 @@ namespace Shumway.Embedding;
 ///                   each module    : byteCount:uint32 + bytes
 /// </code>
 ///
-/// <para>PRE-RELEASE FORMAT POLICY (same as <see cref="ShmoFormat"/>): there
-/// is exactly ONE supported layout — this one — and the version number is
-/// FROZEN. No Shumway artifact has shipped publicly, so backward
+/// <para>pre-release format policy (same as <see cref="ShmoFormat"/>): there
+/// is exactly one supported layout — this one — and the version number is
+/// frozen. No Shumway artifact has shipped publicly, so backward
 /// compatibility and version bumps are deliberately not maintained (rebuild
 /// stale bundles by re-linking); the number starts meaning something at the
 /// first public release. Do not add <c>version &gt;=</c> conditionals to the
@@ -88,12 +88,12 @@ public static class BundleFormat
     public const int CurrentVersion = 6;
 
     // ---- whole-body compression ------------------------------
-    // Layout addition: ONE flag byte follows the version; the REST of the
+    // Layout addition: One flag byte follows the version; the rest of the
     // stream (the "body": module count + entries + trailers) is stored raw
     // (flag 0) or as one Brotli stream (flag 1). Whole-body rather than
     // per-entry on purpose: the big redundancy is CROSS-entry (shared atom
     // names, repeated opcode patterns across modules), and the reader is
-    // sequential anyway. Decompression happens ONCE at LoadBundle; runtime
+    // sequential anyway. Decompression happens once at LoadBundle; runtime
     // pays nothing.
 
     /// <summary>Compression flag values (the byte after the version).</summary>
@@ -104,12 +104,12 @@ public static class BundleFormat
     /// isn't worth it and tiny bundles stay trivially inspectable.</summary>
     public const int CompressionThresholdBytes = 4096;
 
-    /// <summary>turns a writer's RAW image
+    /// <summary>turns a writer's raw image
     /// (<c>[magic 4][version 4][body…]</c>) into the on-disk form:
     /// <c>[magic][version][flag][raw-or-brotli body]</c>. Shared by
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
     /// emit identical framing.</summary>
-    /// <summary>Set to leave every image UNCOMPRESSED regardless of size. For
+    /// <summary>Set to leave every image uncompressed regardless of size. For
     /// hosts whose runtime has no Brotli codec — browser-wasm throws
     /// <c>PlatformNotSupportedException</c> from <c>BrotliStream</c>, so a
     /// compressed bundle cannot be read there at all. Flag 0 is part of the
@@ -118,7 +118,7 @@ public static class BundleFormat
     /// transport anyway.</summary>
     public static bool DisableCompression { get; set; }
 
-    /// <summary>Writes the producing Shumway version — the FIRST field of a
+    /// <summary>Writes the producing Shumway version — the first field of a
     /// <c>.shum</c> body. Shared by the two writers (BundleWriter.ToBytes and
     /// ShmoLinker.SerialiseBundle) precisely so they cannot drift apart; the
     /// reader is <see cref="ReadGeneratorVersion"/>.</summary>

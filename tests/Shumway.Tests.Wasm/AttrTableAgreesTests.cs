@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>The attribute table's image has to say exactly what the store
-/// says, read the way a MODULE reads it: an i64 load at a computed address in
+/// says, read the way a module reads it: an i64 load at a computed address in
 /// linear memory, not a managed call.
 ///
 /// <para>The probe below is written out rather than calling the engine's own
@@ -68,7 +68,7 @@ public sealed class AttrTableAgreesTests(ITestOutputHelper o)
 
         // A fresh activation, not the consulting engine's: the staging under
         // test copies the areas and the image out of whatever activation opens
-        // the chain, and nothing here ever CALLS the module.
+        // the chain, and nothing here ever calls the module.
         var act = new Activation();
         var expected = new List<(int Home, int Module, int Value)>();
         for (int i = 0; i < 40; i++)
@@ -82,7 +82,7 @@ public sealed class AttrTableAgreesTests(ITestOutputHelper o)
                 expected.Add((home, m, v));
             }
         }
-        // One removed again, so the image has to carry a HOLE and not just a
+        // One removed again, so the image has to carry a hole and not just a
         // prefix: a probe that stopped at the tombstone would hide the rest.
         act.DelAttr(expected[5].Home, expected[5].Module);
         var removed = expected[5];
@@ -106,11 +106,11 @@ public sealed class AttrTableAgreesTests(ITestOutputHelper o)
 
         o.WriteLine($"{expected.Count} attributes read from linear memory,"
                     + $" table at 0x{tableBase:X} mask 0x{mask:X}");
-        // ANTI-VACUITY: an empty expectation would pass every loop above.
+        // Anti-vacuity: an empty expectation would pass every loop above.
         Assert.True(expected.Count > 100, $"only {expected.Count} compared");
     }
 
-    /// <summary>A mutation between two calls of the SAME chain has to reach
+    /// <summary>A mutation between two calls of the same chain has to reach
     /// the image. The host runs a builtin with the chain open -- put_attr/3
     /// itself is one -- and re-enters; the module would otherwise keep reading
     /// what was true before the builtin ran.</summary>
@@ -135,7 +135,7 @@ public sealed class AttrTableAgreesTests(ITestOutputHelper o)
 
         // A fresh activation, not the consulting engine's: the staging under
         // test copies the areas and the image out of whatever activation opens
-        // the chain, and nothing here ever CALLS the module.
+        // the chain, and nothing here ever calls the module.
         var act = new Activation();
         int home = act.AllocateHeapUnbound();
         int v0 = act.AllocateHeap(1);

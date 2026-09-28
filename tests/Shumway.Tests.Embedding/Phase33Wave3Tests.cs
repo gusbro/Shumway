@@ -30,7 +30,7 @@ public class Phase33Wave3Tests
         // The commit inside once must not prune the outer member's alternatives.
         Assert.True(e.Query(
             "findall(X, (member(X, [1, 2]), once(member(_, [y, z]))), L), L == [1, 2].").Success);
-        // A goal that backtracks INTERNALLY before committing still works, and an
+        // A goal that backtracks internally before committing still works, and an
         // explicit `!` inside the once'd goal stays scoped to the once barrier.
         Assert.True(e.Query(
             "findall(Y, (member(Y, [1, 2]), once((member(X, [a, b]), X == b))), L), L == [1, 2].").Success);
@@ -60,7 +60,7 @@ public class Phase33Wave3Tests
     [Fact]
     public void W1_Once_VariableGoal_TakesRuntimePath()
     {
-        // A var goal is NOT rewritten (falls to the prelude once/1 + call/1,
+        // A var goal is not rewritten (falls to the prelude once/1 + call/1,
         // which raises the ISO errors for non-callables).
         var e = new PrologEngine();
         e.ConsultString("p.");
@@ -131,7 +131,7 @@ public class Phase33Wave3Tests
     }
 
     // ---- W9(e): `=/2` widens the neck-cut prefix (both `=/2` lowerings —
-    // the inline get_*/unify_* form AND the call_builtin fallback for
+    // the inline get_*/unify_* form and the call_builtin fallback for
     // Y-var/both-nonvar shapes — leave Cp, B0 and the CP stack untouched) ----
 
     [Fact]

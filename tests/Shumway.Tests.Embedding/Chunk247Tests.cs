@@ -84,7 +84,7 @@ public class Chunk247Tests
         // foreign call succeed without any explicit
         // RegisterPredicates from C#.
         //
-        // Chunk 248 contract: NO pre-registration is needed before
+        // Chunk 248 contract: No pre-registration is needed before
         // ShmoCompiler. The compiler emits a generic Call to the
         // unknown functor; the runtime Linker rewrites Call →
         // CallBuiltin in-place at SetupQuery time, after LoadBundle

@@ -8,8 +8,8 @@ namespace Shumway.Tests.Embedding;
 /// string / bigint literals; at load they must be remapped into the engine's one
 /// shared <c>_literalPools</c> (RemapPrecompiledLiterals), else a static literal
 /// reads whatever value sits at that id in the merged pool. The classic trigger:
-/// a Release (source-stripped) bundle with TWO floats where a static
-/// <c>X =:= 2.5</c> read the OTHER float (the linked --exe bug).
+/// a Release (source-stripped) bundle with two floats where a static
+/// <c>X =:= 2.5</c> read the other float (the linked --exe bug).
 /// </summary>
 public class FloatArithLinkRepro
 {

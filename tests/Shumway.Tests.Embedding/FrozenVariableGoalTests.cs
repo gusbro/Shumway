@@ -5,10 +5,10 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Issue #76: a frozen goal that is still a VARIABLE. freeze/2
+/// <summary>Issue #76: a frozen goal that is still a variable. freeze/2
 /// accepts one (it raises only when the goal runs), but every walker over
 /// the suspension matched the conjunction pattern <c>(A, B)</c> first — and
-/// unifying an unbound goal there BOUND it to a fresh conjunction, which
+/// unifying an unbound goal there bound it to a fresh conjunction, which
 /// corrupted the suspension and recursed on the fresh halves. The reported
 /// symptoms were an instantiation_error and a resource_error(memory) from
 /// the residual projection; the merge and alias-check walkers hung outright.
@@ -68,7 +68,7 @@ public class FrozenVariableGoalTests
     [Fact]
     public void AGoalThatIsTheFrozenVariableItselfProjects()
     {
-        // The issue's `freeze(X,X).` — the goal IS the attributed variable,
+        // The issue's `freeze(X,X).` — the goal is the attributed variable,
         // so binding it inside the projection also woke it: an
         // instantiation_error out of a goal that had not run.
         Assert.Equal("freeze(X, X)", AnswerOf("freeze(X, X)."));
@@ -102,7 +102,7 @@ public class FrozenVariableGoalTests
     [Fact]
     public void RunningAVariableGoalIsAnInstantiationError()
     {
-        // Delaying an unbound goal is fine; CALLING one is not.
+        // Delaying an unbound goal is fine; calling one is not.
         Bounded(() =>
         {
             var e = Coroutining();
@@ -156,7 +156,7 @@ public class FrozenVariableGoalTests
     [Fact]
     public void TwoEqualGoalsOnAliasedVariablesBothRun()
     {
-        // Each freeze/2 call demands ONE run. The aliasing merge deduped by
+        // Each freeze/2 call demands one run. The aliasing merge deduped by
         // ==, which is right for a dif/when record (one constraint leaves a
         // copy in each variable it watches) and wrong for a goal: this
         // printed once. A lost side effect is a correctness bug.
@@ -176,7 +176,7 @@ public class FrozenVariableGoalTests
     {
         // The dedup the merge exists for: dif's single record sits in both
         // X and Y, and aliasing them must not double it. The pair here still
-        // HAS a unifier once X and Y are one (X = a), so the constraint is
+        // has a unifier once X and Y are one (X = a), so the constraint is
         // live and the question is only how many times it is shown.
         string s = AnswerOf("dif(f(X, Y), f(a, a)), X = Y.");
         Assert.Equal("dif(X, a)", s);

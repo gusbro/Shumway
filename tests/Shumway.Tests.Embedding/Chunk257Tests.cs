@@ -124,7 +124,7 @@ public class Chunk257Tests
         Assert.Contains("greet(X, Y)", output);
         Assert.Contains("Y=hello(X)", output);
         Assert.DoesNotContain("_G", output);
-        // Should NOT have been renumbered to A, B since the names
+        // Should not have been renumbered to A, B since the names
         // came from source.
         Assert.DoesNotContain("greet(A, B)", output);
     }

@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>How a sentence scan ended: at its terminating solo dot, at end
-/// of input mid-sentence, or at a character that PROVES no completion can
+/// of input mid-sentence, or at a character that proves no completion can
 /// ever lex (see <see cref="SentenceScanner.ReadSentenceText"/>).</summary>
 public enum SentenceEnd
 {
@@ -10,7 +10,7 @@ public enum SentenceEnd
     Poisoned,
 }
 
-/// <summary>Consumes exactly ONE Prolog sentence — through its terminating
+/// <summary>Consumes exactly one Prolog sentence — through its terminating
 /// solo <c>.</c> — from a <see cref="System.IO.TextReader"/>, tracking just
 /// enough lexical state to find the real end dot: quoted contexts
 /// (<c>' " `</c>, with <c>''</c> doubling and <c>\</c> escapes), <c>%</c>
@@ -34,7 +34,7 @@ public static class SentenceScanner
     private static bool IsRawControl(char c) => c < ' ' || c == '\x7f';
 
     /// <summary>True when <paramref name="c"/> glues onto a preceding token
-    /// (letter, digit, underscore): a <c>0</c> after one is a token TAIL
+    /// (letter, digit, underscore): a <c>0</c> after one is a token tail
     /// (<c>10</c>, <c>a0</c>, <c>_0</c>), never the standalone integer that
     /// opens a <c>0'c</c> char literal.</summary>
     private static bool IsTokenGlue(char c) => c == '_' || char.IsLetterOrDigit(c);
@@ -52,7 +52,7 @@ public static class SentenceScanner
     /// completion can ever turn into a valid token — ISO §8.14.1.1 reads as
     /// if character by character, and the §8.14.1.3 error condition is
     /// already satisfied, so <c>read/1</c> on an interactive stream must
-    /// raise NOW instead of prompting for more input that cannot help
+    /// raise now instead of prompting for more input that cannot help
     /// (conformity s#2: <c>'</c> + newline held the prompt hostage until the
     /// user donated a closing quote and a dot). The scan stops at the
     /// poisoning character; parsing the returned text reports the exact
@@ -64,10 +64,10 @@ public static class SentenceScanner
         System.IO.TextReader reader, out SentenceEnd end,
         bool allowRawControls = false)
     {
-        // NOT "stop at any '.' followed by whitespace" — that would slice
+        // Not "stop at any '.' followed by whitespace" — that would slice
         // `?X =.. ?Y` in half at univ's second dot, and equally mis-split a
         // dot inside a quoted atom, a string, or a comment. The end-of-clause
-        // token is a SOLO '.' followed by layout/EOF.
+        // token is a solo '.' followed by layout/EOF.
         end = SentenceEnd.EndOfInput;
         var sb = new System.Text.StringBuilder();
         char quote = '\0';            // inside 'x' / "x" / `x` when non-zero
@@ -81,7 +81,7 @@ public static class SentenceScanner
             int ci = reader.Read();
             if (ci < 0)
             {
-                // §6.4.1: an UNTERMINATED block comment is a syntax error, so
+                // §6.4.1: an unterminated block comment is a syntax error, so
                 // hand the text to the parser (which reports it) rather than
                 // treating it as layout.
                 if (blockComment)
@@ -112,7 +112,7 @@ public static class SentenceScanner
                 if (escNumeric)
                 {
                     // Inside \<octal>\ / \x<hex>\ the terminating backslash
-                    // ENDS the escape — it does not escape what follows, so
+                    // ends the escape — it does not escape what follows, so
                     // `"\0\"` closes at the quote after it (a plain
                     // \-escapes-next model absorbed that quote and the REPL
                     // consumed input forever).
@@ -132,7 +132,7 @@ public static class SentenceScanner
                     // An octal digit or 'x' starts a numeric escape running
                     // to its terminating backslash; anything else (mnemonic,
                     // \', \\, line continuation) is one escaped char. The
-                    // \<newline> continuation is the LEGAL raw control here.
+                    // \<newline> continuation is the legal raw control here.
                     if ((c >= '0' && c <= '7') || c == 'x') escNumeric = true;
                     else if (IsRawControl(c) && c != '\n' && c != '\r'
                              && !allowRawControls)
@@ -172,12 +172,12 @@ public static class SentenceScanner
                 case '\'':
                     // 0'c char literal: consume the (possibly escaped) char
                     // raw — mirroring the lexer's fallbacks (Neumerkel
-                    // #213/#259): 0'\<newline> is NOT a char literal (the
+                    // #213/#259): 0'\<newline> is not a char literal (the
                     // quote opens a quoted token whose first content is a
                     // line continuation), and 0''' is the doubled-quote
                     // literal while 0'' + other closes an empty atom.
-                    // ONLY a standalone 0 introduces one: `16'mod'2` and
-                    // `00'+'1` are an integer followed by a QUOTED-ATOM
+                    // Only a standalone 0 introduces one: `16'mod'2` and
+                    // `00'+'1` are an integer followed by a quoted-atom
                     // operator (s#122/#127/#130/#280), so the quote there
                     // opens a quoted token, not a char literal.
                     if (prev == '0' && !IsTokenGlue(prev2))

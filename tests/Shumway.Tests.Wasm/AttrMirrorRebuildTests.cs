@@ -4,11 +4,11 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>What a REBUILD of the attribute image has to carry.
+/// <summary>What a rebuild of the attribute image has to carry.
 ///
 /// <para>The image holds two kinds of row: a module's value, and a home's
-/// row COUNT. The count is what tells a module whether the row it is taking
-/// away is the LAST one, which is the difference between removing an
+/// row count. The count is what tells a module whether the row it is taking
+/// away is the last one, which is the difference between removing an
 /// attribute and demoting the variable back to a plain one.</para>
 ///
 /// <para>A rebuild reads the store, and the store does not hold counts. So a

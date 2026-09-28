@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary><c>==/2</c> and <c>\==/2</c> between two COMPOUNDS, answered
+/// <summary><c>==/2</c> and <c>\==/2</c> between two compounds, answered
 /// inside the module.
 ///
 /// <para>The inline compare could already settle a pair with a simple side.
@@ -13,7 +13,7 @@ namespace Shumway.Tests.Wasm;
 /// carries a comparator beside its unifier, walking both terms over a
 /// worklist above the stack top.</para>
 ///
-/// <para>It answers with LESS than unification needs: two distinct cells
+/// <para>It answers with less than unification needs: two distinct cells
 /// that are variables are two distinct terms, so where the unifier binds,
 /// this decides. Bignums, rationals, packed strings and foreign terms step
 /// aside, because equal values there can wear different cells.</para>

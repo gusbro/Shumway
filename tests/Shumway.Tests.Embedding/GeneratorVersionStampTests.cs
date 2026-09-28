@@ -51,7 +51,7 @@ public sealed class GeneratorVersionStampTests
     [Fact]
     public void TheTwoBundleWriters_StillAgreeByteForByte()
     {
-        // The .shum has TWO producers (BundleWriter.ToBytes and
+        // The .shum has two producers (BundleWriter.ToBytes and
         // ShmoLinker.SerialiseBundle). A field added to one and not the other
         // is the classic way this format breaks; link a real program and
         // compare the linker's own image against the writer's.
@@ -65,7 +65,7 @@ public sealed class GeneratorVersionStampTests
         Bundle fromLinker = BundleReader.FromBytes(result.Bytes!);
         Assert.Equal(ShumwayVersion.Current, fromLinker.GeneratorVersion);
 
-        // ...and re-serialising that same bundle through the OTHER writer
+        // ...and re-serialising that same bundle through the other writer
         // must produce the identical image.
         byte[] rewritten = BundleWriter.ToBytes(fromLinker);
         Assert.Equal(result.Bytes!.Length, rewritten.Length);

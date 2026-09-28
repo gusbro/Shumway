@@ -8,7 +8,7 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>Sub-argument indexing (ADR-027 second level, ADR-028
 /// structure-keyed): the clause is chosen by a term reached through a
-/// bounded path INTO the first argument, not by the argument itself. The
+/// bounded path into the first argument, not by the argument itself. The
 /// three opcodes are switch_on_atom_sub, switch_on_integer_sub and
 /// switch_on_structure_sub, and they were the largest group the wasm
 /// backend refused — three of six, all in clpfd.
@@ -19,9 +19,9 @@ namespace Shumway.Tests.Wasm;
 /// the tier must answer exactly what the interpreter answers.</para></summary>
 public sealed class WasmSubIndexTests(ITestOutputHelper o)
 {
-    // Heads that share a first-argument functor and differ INSIDE it: what
+    // Heads that share a first-argument functor and differ inside it: what
     // makes the compiler emit a sub-switch rather than a first-level one.
-    // Sub-indexing fires where the top-level argument does NOT discriminate
+    // Sub-indexing fires where the top-level argument does not discriminate
     // (a list in every clause) but a term reached through a bounded path into
     // it does: the car for one hop, the car's own argument for two.
     private const string Corpus = """
@@ -88,7 +88,7 @@ public sealed class WasmSubIndexTests(ITestOutputHelper o)
         "bkt([lit(3), z], R), R == [z].",
         "bkt([lit(3, 4), z], R), R == [lit(3, 4), z].",   // same name, other arity
         "bkt([zz, z], R), R == [zz, z].",
-        // A nested list is a KEY of the table, and it keys by the ATOM id of
+        // A nested list is a key of the table, and it keys by the atom id of
         // '.', not by an interned './2' -- get that wrong and this one falls
         // through to the catch-all.
         "bkt([[9, 8], z], R), R == nested(9, [8], [z]).",
@@ -179,7 +179,7 @@ public sealed class WasmSubIndexTests(ITestOutputHelper o)
         o.WriteLine($"{goal}\n  tier0: {a}\n  wasm : {b}");
         Assert.Equal(a, b);
         Assert.DoesNotContain("Exception", a);
-        // ANTI-VACUITY: the predicate must be ON the tier, and it must be
+        // Anti-vacuity: the predicate must be on the tier, and it must be
         // there because the sub-switch compiled — the whole point.
         Assert.NotEmpty(members);
     }

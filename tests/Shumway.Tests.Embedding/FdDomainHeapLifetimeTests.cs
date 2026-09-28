@@ -57,7 +57,7 @@ public sealed class FdDomainHeapLifetimeTests(ITestOutputHelper o)
 
     /// <summary>Narrow, then cut: after the cut nothing can restore the
     /// intermediate domains, and with domains on the heap that garbage is
-    /// reclaimable. Asserted on the domains ALONE, through the $dom_*
+    /// reclaimable. Asserted on the domains alone, through the $dom_*
     /// builtins, with no constraint variable involved.
     ///
     /// <para>Measured through clpfd instead, the number used to be dominated

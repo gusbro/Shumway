@@ -183,7 +183,7 @@ public sealed class CParserTests
     public void DeferredForms_ThrowCleanly()
     {
         // The term/reftype tier (struct member access `->`, the Arity `..`
-        // operator) and C casts are NOT in the int/float/string subset. They must
+        // operator) and C casts are not in the int/float/string subset. They must
         // fail as a clean CParseException (so step 4 reports a compile error),
         // never crash. Validated against the corpus: 100% of `:- c` regions and
         // ~97% of `{...}` blocks parse; the rest are exactly these forms.

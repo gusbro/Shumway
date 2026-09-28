@@ -22,7 +22,7 @@ public sealed class PreludeBundleParityTests
         _ = new PrologEngine();
 
         // The `:- public` spellings the prelude uses: name/A, 'name'/A,
-        // (name)/A and ('name')/A — the last is how an OPERATOR atom's
+        // (name)/A and ('name')/A — the last is how an operator atom's
         // indicator must be written (ISO 6.3.1.3, s#378).
         var publics = new System.Collections.Generic.HashSet<(string, int)>();
         foreach (Match m in Regex.Matches(Prelude.Source,
@@ -105,7 +105,7 @@ public sealed class PreludeBundleParityTests
     [Fact]
     public void BakedBundle_TreatsPreludePredicatesAsBuiltIn()
     {
-        // The introspection contract must not depend on HOW the prelude got
+        // The introspection contract must not depend on how the prelude got
         // installed: a baked $prelude entry records its predicates as
         // prelude functors exactly like the live consult, so
         // predicate_property reports built_in, current_predicate skips them
@@ -131,7 +131,7 @@ public sealed class PreludeBundleParityTests
             "\\+ current_predicate(findall/3).",
             // The prelude's :- meta_predicate directives never execute on
             // the baked path — the templates are recovered from the source
-            // constant, so the ENUMERATION (findall over properties) is
+            // constant, so the enumeration (findall over properties) is
             // identical too, template included.
             "findall(X, predicate_property(findall(_, _, _), X), L), "
                 + "memberchk(meta_predicate(findall(*, 0, *)), L).",

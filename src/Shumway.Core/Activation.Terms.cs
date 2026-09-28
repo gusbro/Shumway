@@ -9,7 +9,7 @@ public sealed partial class Activation
 
     /// <summary>
     /// Stores <paramref name="value"/> in the engine's BigInteger table and returns a
-    /// BIGINT cell whose payload is its id. The cell is meaningful only for this engine
+    /// bigint cell whose payload is its id. The cell is meaningful only for this engine
     /// (auxiliary tables are not shared, unlike atoms and functors).
     ///
     /// <para>Values that fit in the 60-bit inline range collapse to <see cref="Cell.Int"/>
@@ -46,7 +46,7 @@ public sealed partial class Activation
         };
     }
 
-    /// <summary>Returns the <see cref="BigInteger"/> referenced by a BIGINT cell.</summary>
+    /// <summary>Returns the <see cref="BigInteger"/> referenced by a bigint cell.</summary>
     public BigInteger AsBigInt(Cell cell)
     {
         if (cell.Tag != Tag.BigInt)
@@ -132,7 +132,7 @@ public sealed partial class Activation
         }
     }
 
-    /// <summary>Returns the <see cref="Rational"/> referenced by a RATIONAL cell.</summary>
+    /// <summary>Returns the <see cref="Rational"/> referenced by a rational cell.</summary>
     public Rational AsRational(Cell cell)
     {
         if (cell.Tag != Tag.Rational)
@@ -143,7 +143,7 @@ public sealed partial class Activation
     internal int RationalTableCount => _rationalTable.Count;
 
     /// <summary>Stores <paramref name="value"/> in the engine's foreign-object table and
-    /// returns a FOREIGN cell whose payload is its id. The value may be <c>null</c>.</summary>
+    /// returns a foreign cell whose payload is its id. The value may be <c>null</c>.</summary>
     public Cell MakeForeign(object? value)
     {
         int id = _foreignTable.Count;
@@ -153,16 +153,16 @@ public sealed partial class Activation
 
     /// <summary>ADR-053: releases every foreign object the collector just
     /// disproved. <paramref name="live"/> is the per-collection bitmap the
-    /// trace filled from the FOREIGN cells it reached; an id outside it is
+    /// trace filled from the foreign cells it reached; an id outside it is
     /// named by nothing reachable.
     ///
-    /// <para>Dead entries are NULLED rather than removed, so every surviving
+    /// <para>Dead entries are nulled rather than removed, so every surviving
     /// id keeps meaning what it meant and no id is ever reused under a live
-    /// reference. Only the TAIL is actually removed, and only while its last
+    /// reference. Only the tail is actually removed, and only while its last
     /// entry is dead -- which is the common append-then-die shape, and gives
     /// the slots back without moving anything.</para>
     ///
-    /// <para>Judged by LIVENESS, never by null-ness: <see cref="MakeForeign"/>
+    /// <para>Judged by liveness, never by null-ness: <see cref="MakeForeign"/>
     /// accepts null, so a program can store one on purpose, and shrinking on
     /// null would drop a live id off the end and turn the next
     /// <see cref="AsForeign(Cell)"/> into an index-out-of-range thrown out of
@@ -174,7 +174,7 @@ public sealed partial class Activation
     ///
     /// <para><see cref="TrailType.BigIntAlloc"/> and
     /// <see cref="TrailType.RationalAlloc"/> reclaim a slot when
-    /// backtracking unwinds past the allocation, which covers a SEARCH and
+    /// backtracking unwinds past the allocation, which covers a search and
     /// covers nothing else: a deterministic loop never backtracks, and that
     /// loop is what an embedded system spends its life in. Twenty thousand
     /// transient big integers in one left twenty thousand entries standing
@@ -187,7 +187,7 @@ public sealed partial class Activation
     /// round-trip to go stale when a tail slot is released.</para>
     ///
     /// <para>This does not disturb the trail contract. The unwind truncates
-    /// only when the table is LARGER than the size it recorded, so a table
+    /// only when the table is larger than the size it recorded, so a table
     /// the collector already shrank makes it a no-op.</para></summary>
     private void NumericSweepUnmarked(bool[]? bigLive, bool[]? ratLive)
     {
@@ -199,10 +199,10 @@ public sealed partial class Activation
     /// are reset to <c>default</c> rather than removed, so surviving ids
     /// stay positional and none is reused under a live reference -- null for
     /// a foreign object, zero for a big integer or rational, each of which
-    /// drops the magnitude array that is the actual memory. Only the TAIL is
+    /// drops the magnitude array that is the actual memory. Only the tail is
     /// removed, and only while its last entry is dead.
     ///
-    /// <para>Judged by LIVENESS, never by the stored value: a program can
+    /// <para>Judged by liveness, never by the stored value: a program can
     /// store a null foreign object or the integer zero on purpose, and
     /// shrinking on the value would drop a live id off the end and turn the
     /// next lookup into an index-out-of-range thrown out of the
@@ -222,13 +222,13 @@ public sealed partial class Activation
         => live is not null && id < live.Length && live[id];
 
     /// <summary>The foreign-table entry by raw id, or null when out of range. The
-    /// debugger's attvar transplant reads a SUSPENDED activation's table with this to
+    /// debugger's attvar transplant reads a suspended activation's table with this to
     /// re-register the object on the evaluation activation (foreign ids are
     /// per-activation).</summary>
     public object? ForeignById(int id)
         => id >= 0 && id < _foreignTable.Count ? _foreignTable[id] : null;
 
-    /// <summary>Returns the object referenced by a FOREIGN cell (possibly <c>null</c>).</summary>
+    /// <summary>Returns the object referenced by a foreign cell (possibly <c>null</c>).</summary>
     public object? AsForeign(Cell cell)
     {
         if (cell.Tag != Tag.Foreign)
@@ -247,7 +247,7 @@ public sealed partial class Activation
     }
 
     /// <summary>
-    /// Allocates a FLOAT header cell and its paired INT cell contiguously on the heap
+    /// Allocates a float header cell and its paired INT cell contiguously on the heap
     /// and returns the heap index of the header. Together they encode the 64-bit double
     /// per the two-cell layout in <see cref="Cell.MakeFloat(double, int)"/>.
     /// </summary>
@@ -265,8 +265,8 @@ public sealed partial class Activation
     /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
     /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
     /// </summary>
-    /// <summary>Like <see cref="MakePstr"/> but leaves the tail cell an UNBOUND
-    /// variable instead of <c>[]</c>, so the result is a PARTIAL list. Returns
+    /// <summary>Like <see cref="MakePstr"/> but leaves the tail cell an unbound
+    /// variable instead of <c>[]</c>, so the result is a partial list. Returns
     /// the header index; the tail's own index is
     /// <see cref="GetPstrTailIndex"/> of it.
     ///
@@ -284,7 +284,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Builds the list of characters or codes named by
-    /// <paramref name="kind"/>, PACKED (ADR-047 decision 8) — the single entry
+    /// <paramref name="kind"/>, packed (ADR-047 decision 8) — the single entry
     /// point every runtime text producer goes through. Returns a heap index
     /// whose cell is the list: the atom <c>[]</c> when the text is empty, a
     /// PSTR header otherwise.
@@ -514,7 +514,7 @@ public sealed partial class Activation
     /// <summary>Heap index of the cell that immediately follows a PSTR's buffer cells.
     /// That cell is the tail value (typically <c>[]</c>, a variable, another PSTR, or
     /// a LIS in the "fallback to cons" case).</summary>
-    /// <summary>Tail-cell index of a PSTR given the header CELL rather than its
+    /// <summary>Tail-cell index of a PSTR given the header cell rather than its
     /// heap address — a slice arrives as a computed value with no address of
     /// its own.</summary>
     public int GetPstrTailIndexOf(Cell header) => ComputePstrTailIndex(header);
@@ -554,7 +554,7 @@ public sealed partial class Activation
             : AtomTable.Intern(Utf16Text.FromCodePoint(codePoint), permanent: false).Id);
     }
 
-    /// <summary>The first CHARACTER of a non-empty packed list: its code
+    /// <summary>The first character of a non-empty packed list: its code
     /// point and how many units it spans (2 for a surrogate pair, else 1).
     /// BMP-flagged headers never reach the pair check. A lone surrogate
     /// yields its own unit value — malformed text reads unit-wise, the same
@@ -576,14 +576,14 @@ public sealed partial class Activation
         return u0;
     }
 
-    /// <summary>The first element of a non-empty packed list as a CELL VALUE
+    /// <summary>The first element of a non-empty packed list as a cell value
     /// — no heap allocation, so clause-selection dispatch can key on it. A
     /// chars head may intern a one-character atom on a cache miss (managed
     /// allocation only, deterministic).</summary>
     public Cell PstrHeadElementCell(Cell header)
         => PstrHeadCell(header.AsPstrKind, PstrHeadCodePoint(header, out _));
 
-    /// <summary>The tail of a non-empty packed list as a CELL VALUE: the
+    /// <summary>The tail of a non-empty packed list as a cell value: the
     /// stored tail (deref'd) when one element remains, else a virtual slice
     /// header. Never writes the heap — dispatch-safe.</summary>
     public Cell PstrTailCellValue(Cell header)
@@ -718,7 +718,7 @@ public sealed partial class Activation
     /// ATTVAR cell (<see cref="BindAttVarToValue"/> trails the original):
     /// dropping one at bind time would bring the variable back with its
     /// constraints gone. That is the reason, and the only one — in particular
-    /// it is NOT for <c>call_residue_vars/2</c>, whose second half filters
+    /// it is not for <c>call_residue_vars/2</c>, whose second half filters
     /// bound variables out itself.</para>
     ///
     /// <para>Callers diff two snapshots by raw heap address, which is sound
@@ -830,7 +830,7 @@ public sealed partial class Activation
 
     /// <summary>Diagnostic: the first heap address holding an AttVar cell
     /// with no attr-table record, or -1. An attributed variable exists only
-    /// at its home WITH its record; anything else is a corruption tripwire's
+    /// at its home with its record; anything else is a corruption tripwire's
     /// find.</summary>
     public int FindOrphanAttVar()
     {
@@ -984,7 +984,7 @@ public sealed partial class Activation
                 // module entirely when it was absent before (-1).
                 {
                     var (home, mod, oldValue) = _attrTrailLog[entry.HeapIdx];
-                    // The record may be GONE: DropDeadAttrRecord removes it
+                    // The record may be gone: DropDeadAttrRecord removes it
                     // once the cell at home is no longer a live attributed
                     // variable, which is exactly when restoring an attribute
                     // value for it would mean nothing. Indexing regardless
@@ -1052,7 +1052,7 @@ public sealed partial class Activation
     /// caller is responsible for unwinding the trail back to the pre-unify state.
     /// </summary>
     /// <summary>Set by the depth guard inside the unify walk to request an
-    /// escalated (pair-guarded) RESTART from the entry point. Never survives
+    /// escalated (pair-guarded) restart from the entry point. Never survives
     /// an entry call: consumed (or found clear) before it returns.</summary>
     private bool _unifyEscalate;
 
@@ -1065,7 +1065,7 @@ public sealed partial class Activation
     /// in the unify-value stores.</summary>
     public byte OccursMode { get; set; }
 
-    // True only while the FLAG (mode 2) is driving an occurs-checked
+    // True only while the flag (mode 2) is driving an occurs-checked
     // unification: an occurs violation then throws instead of failing.
     // The explicit unify_with_occurs_check/2 builtin never sets it — its
     // ISO contract is to fail, whatever the flag says.
@@ -1149,13 +1149,13 @@ public sealed partial class Activation
 
     /// <summary>C#-recursion depth past which plain unification escalates to
     /// the guarded (pair-set) mode. Typical terms never reach it and pay
-    /// nothing; only deep nesting — or a CYCLIC pair, whose recursion would
+    /// nothing; only deep nesting — or a cyclic pair, whose recursion would
     /// otherwise overflow the C# stack — escalates. Well below the
     /// stack-overflow point (same scheme as the standard-order comparator).</summary>
     private const int UnifyRecursionLimit = 512;
 
     /// <summary>List-spine iterations past which <see cref="UnifyLis"/>
-    /// engages the pair guard: a CYCLIC spine loops forever WITHOUT growing
+    /// engages the pair guard: a cyclic spine loops forever without growing
     /// the C# stack, so the depth limit alone cannot catch it. High enough
     /// that real lists (under a million elements) never pay the guard.</summary>
     private const int UnifySpineGuardLimit = 1 << 20;
@@ -1173,12 +1173,12 @@ public sealed partial class Activation
         {
             if (activePairs is null)
             {
-                // Escalate by RESTART, not in place: a set created here only
-                // covers THIS subtree — the recursion unwinds below the limit,
+                // Escalate by restart, not in place: a set created here only
+                // covers this subtree — the recursion unwinds below the limit,
                 // dives into the cycle again with a fresh empty set, and the
                 // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
                 // exactly so, oscillating around the limit). The entry point
-                // re-runs the WHOLE unification with the guard on from depth 0;
+                // re-runs the whole unification with the guard on from depth 0;
                 // bindings already made are monotone (they re-unify via the
                 // address shortcut or the pair set), so no rollback is needed.
                 _unifyEscalate = true;
@@ -1186,11 +1186,11 @@ public sealed partial class Activation
             }
             // Already escalated, and the term is deeper than the C# stack can
             // be trusted with — a stack overflow cannot be caught, so it is
-            // not an option. The pair goes on a WORK LIST the entry point
+            // not an option. The pair goes on a work list the entry point
             // drains at depth 0, which is the mixed form: recursive while the
             // depth is known to be safe, an explicit stack past that.
             //
-            // Deferring is sound because unification is CONFLUENT: which
+            // Deferring is sound because unification is confluent: which
             // equation you solve first cannot change the most general unifier,
             // nor whether the set is solvable at all. And the pair set is
             // append-only here (see below), so order cannot change what it
@@ -1248,7 +1248,7 @@ public sealed partial class Activation
 
     /// <summary>
     /// Cell-based unification (ADR-017). Unifies two operand cells taken
-    /// directly from registers / Y-slots / bytecode literals, WITHOUT first
+    /// directly from registers / Y-slots / bytecode literals, without first
     /// copying an inline compound (Str/Lis) to a heap address — which is what
     /// the materialise-then-<see cref="Unify(int,int)"/> entry points used to
     /// do, re-copying a register-held structure on every <c>get_value</c> and
@@ -1348,7 +1348,7 @@ public sealed partial class Activation
 
     /// <summary>
     /// Unifies two compound (STR) terms. <paramref name="fA"/> and <paramref name="fB"/>
-    /// are heap indices of FUNCTOR cells (the payloads of their containing STR cells).
+    /// are heap indices of functor cells (the payloads of their containing STR cells).
     /// Fails fast if the functor ids differ; otherwise recurses on each argument cell.
     ///
     /// <para>The recursion uses the C# stack, which is sufficient for the typical
@@ -1433,7 +1433,7 @@ public sealed partial class Activation
         // tails are deref'd here and the loop continues while both remain
         // cons cells, delegating anything else to the general Unify.
         //
-        // A CYCLIC spine loops here WITHOUT growing the C# stack, so past
+        // A cyclic spine loops here without growing the C# stack, so past
         // UnifySpineGuardLimit iterations the pair guard engages: a revisited
         // cons pair is an equation already in the system — rational-tree true.
         int spineIters = 0;
@@ -1527,12 +1527,12 @@ public sealed partial class Activation
         => RunOccursCheck(new OccursItem(OccursWork.Pair, aIdx, bIdx));
 
     /// <summary>What the occurs-checked walk still owes. `Leave` is how a
-    /// compound gets OFF the path it joined: pushed under its children, it
+    /// compound gets off the path it joined: pushed under its children, it
     /// runs when they are done, which is what a `finally` did when this
     /// descended the C# stack.</summary>
     private enum OccursWork : byte { Pair, Str, Lis, Leave }
 
-    /// <summary>A queued step. The path key a Leave removes IS the pair it
+    /// <summary>A queued step. The path key a Leave removes is the pair it
     /// names, so it is recomputed rather than carried: one field fewer in a
     /// struct copied on every push and pop.</summary>
     private readonly record struct OccursItem(OccursWork Kind, int A, int B)
@@ -1540,12 +1540,12 @@ public sealed partial class Activation
         public long PathKey => ((long)A << 32) | (uint)B;
     }
 
-    /// <summary>The occurs-checked unification, on an EXPLICIT stack. How deep
+    /// <summary>The occurs-checked unification, on an explicit stack. How deep
     /// a term nests is the program's choice and a .NET stack overflow cannot
     /// be caught, so this may not spend a frame per level.
     ///
     /// <para>The work list rather than the deferral the plain unifier uses:
-    /// this pair set is a PATH, removed on the way out, so a pair put off
+    /// this pair set is a path, removed on the way out, so a pair put off
     /// until later would no longer see the ancestors that make a cyclic term
     /// terminate. Enter and leave have to keep their nesting, and here they
     /// do -- a Leave item sits under the children of the compound that pushed
@@ -1606,7 +1606,7 @@ public sealed partial class Activation
         Cell aCell = _heap[aAddr];
         Cell bCell = _heap[bAddr];
 
-        // Attributed variables: the occurs check runs BEFORE the hook path
+        // Attributed variables: the occurs check runs before the hook path
         // takes over — an attvar is a variable, and binding it into a term
         // it occurs in creates the same cycle a plain Ref would. Only the
         // attvar-vs-nonvar shapes can cycle; attvar-vs-var aliases safely.
@@ -1661,12 +1661,12 @@ public sealed partial class Activation
         };
     }
 
-    // The compound walk threads an active-pair set so unifying two CYCLIC
+    // The compound walk threads an active-pair set so unifying two cyclic
     // terms (X = f(X), Y = f(Y), unify_with_occurs_check(X, Y)) terminates:
-    // re-entering a pair already on the walk's path SUCCEEDS — the pair is
+    // re-entering a pair already on the walk's path succeeds — the pair is
     // the one being unified above us, and assuming it equal is the rational-
-    // tree fixpoint (this engine's terms ARE rational trees; Trealla agrees).
-    // The occurs CHECK itself guards only the creation of NEW cycles: a
+    // tree fixpoint (this engine's terms are rational trees; Trealla agrees).
+    // The occurs check itself guards only the creation of new cycles: a
     // variable binding to a term it occurs in (OccursIn, on the Ref paths).
     private static bool Queue(OccursWork kind, int a, int b, List<OccursItem> work)
     {
@@ -1675,11 +1675,11 @@ public sealed partial class Activation
     }
 
     /// <summary>Joins a compound pair to the path and queues its arguments.
-    /// Re-entering a pair already ON the path SUCCEEDS -- it is the pair being
+    /// Re-entering a pair already on the path succeeds -- it is the pair being
     /// unified above us, and assuming it equal is the rational-tree fixpoint
-    /// (this engine's terms ARE rational trees; Trealla agrees), which is what
+    /// (this engine's terms are rational trees; Trealla agrees), which is what
     /// makes X = f(X), Y = f(Y), unify_with_occurs_check(X, Y) terminate. The
-    /// occurs CHECK itself guards only the creation of NEW cycles: a variable
+    /// occurs check itself guards only the creation of new cycles: a variable
     /// binding to a term it occurs in, on the Ref paths above.</summary>
     private bool EnterOccursStr(
         int fA, int fB, ref HashSet<long>? path, List<OccursItem> work)
@@ -1690,7 +1690,7 @@ public sealed partial class Activation
         long pairKey = ((long)fA << 32) | (uint)fB;
         if (!(path ??= new HashSet<long>()).Add(pairKey)) return true;   // coinductive
         var (_, arity) = FunctorTable.Lookup(functorIdA);
-        // Leave first so it runs LAST, and arguments in reverse so they run
+        // Leave first so it runs last, and arguments in reverse so they run
         // left to right -- the order the recursive form unified them in, which
         // decides which of two failures is reported.
         work.Add(new OccursItem(OccursWork.Leave, fA, fB));
@@ -1712,7 +1712,7 @@ public sealed partial class Activation
 
     /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
     /// is structurally reachable from the (dereferenced) value at
-    /// <paramref name="sourceAddr"/>. An already-CYCLIC source is NOT an
+    /// <paramref name="sourceAddr"/>. An already-CYCLIC source is not an
     /// occurrence: this engine's terms are rational trees, so binding a
     /// fresh variable to an existing cyclic term is sound (Trealla agrees) —
     /// the check only bars the variable from appearing inside the value.
@@ -1937,7 +1937,7 @@ public sealed partial class Activation
     /// <c>Int(cu)</c>, then recurses on the LIS tail with either the PSTR's stored tail
     /// (length 1) or a virtual one-shorter PSTR slice.
     ///
-    /// <para>Heads are CODE POINTS: a supplementary character (above U+FFFF)
+    /// <para>Heads are code points: a supplementary character (above U+FFFF)
     /// is one element spanning two packed units, joined by
     /// <see cref="PstrHeadCodePoint"/>.</para>
     /// </summary>
@@ -2040,7 +2040,7 @@ public sealed partial class Activation
     /// carries no attributes.</summary>
     /// <para>Called from the head-matching ops too (<c>get_struct</c>,
     /// <c>get_list</c> and their unify-cursor twins): binding an attributed
-    /// variable by MATCHING a clause head against it is a binding like any
+    /// variable by matching a clause head against it is a binding like any
     /// other, and used not to wake anything — so a <c>freeze/2</c> on a
     /// variable that a callee's head decomposed never fired.</para>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
@@ -2061,7 +2061,7 @@ public sealed partial class Activation
 
     /// <summary>Tier-1 IL cut support. A cut is a goal boundary:
     /// any wakeup queued by the IL clause body (e.g. binding a clpfd attvar
-    /// in the head, then a neck cut) must run BEFORE the cut commits, or a
+    /// in the head, then a neck cut) must run before the cut commits, or a
     /// failing constraint has no surviving choice point to backtrack into —
     /// the same unsoundness the bytecode interpreter had to fix.
     /// The IL emit calls this immediately before <see cref="NeckCut"/> /
@@ -2070,13 +2070,13 @@ public sealed partial class Activation
     /// <c>_pendingWakeups.Count</c> fast path keeps the overwhelmingly common
     /// no-wakeup case (every non-attvar program) to a single field read.
     ///
-    /// <para>FUTURE (deferred, kept on purpose): this runtime guard costs
+    /// <para>Future (deferred, kept on purpose): this runtime guard costs
     /// ~1-2.5 ns per IL cut even when no attribute hook exists. It could be
-    /// elided entirely by gating the IL EMISSION on
+    /// elided entirely by gating the IL emission on
     /// <see cref="HasAnyAttributeHook"/> at promotion time (zero cost for
-    /// non-attvar IL programs). That was NOT done because it needs a
+    /// non-attvar IL programs). That was not done because it needs a
     /// soundness-critical invariant — the IL promotion cache must be
-    /// invalidated whenever ANY consult first defines
+    /// invalidated whenever any consult first defines
     /// <c>verify_attributes/4</c> (not just UseClpfd/UseClpr), or a predicate
     /// promoted before a custom hook loaded would silently skip the flush. The
     /// ~ns-per-cut cost is below the wall-clock noise floor and only applies to
@@ -2126,9 +2126,9 @@ public sealed partial class Activation
     }
 
     /// <summary>Trial-unifies registers <paramref name="regA"/> and
-    /// <paramref name="regB"/>, LEAVING the bindings in place so the caller
+    /// <paramref name="regB"/>, leaving the bindings in place so the caller
     /// can read the unifier (e.g. materialise each bound variable's value).
-    /// The caller MUST call <see cref="EndTrialUnify"/> with the returned
+    /// The caller must call <see cref="EndTrialUnify"/> with the returned
     /// <paramref name="scope"/> to roll the bindings back. Returns false when
     /// the terms cannot unify — in which case the rollback is done here and
     /// <paramref name="scope"/> must not be used. On success,
@@ -2142,7 +2142,7 @@ public sealed partial class Activation
 
         // Hb at the heap top makes every trial binding trail — even to "old"
         // variables — which is both what the unwind needs and what lets the
-        // trail double as the record of WHICH variables the trial bound.
+        // trail double as the record of which variables the trial bound.
         SetHb(_heapTop);
         bool unified = UnifyRegisters(regA, regB);
 
@@ -2188,7 +2188,7 @@ public sealed partial class Activation
     /// false when the terms cannot unify. When they can,
     /// <paramref name="unifierVars"/> receives the distinct heap addresses of
     /// every real variable participating in the unifier: the variables the
-    /// trial bound PLUS the unbound variables inside the values they were
+    /// trial bound plus the unbound variables inside the values they were
     /// bound to. Both sides matter — a <c>dif/2</c> suspension attributes
     /// every one of them, because a plain variable aliasing to an attributed
     /// one fires no hook (the attvar survives), so leaving the value-side
@@ -2199,13 +2199,13 @@ public sealed partial class Activation
         => TrialUnifyCollectingBoundVars(
             regA, regB, out unifierVars, out _, out _);
 
-    /// <summary>As above, and — when the unifier turns out to be a SINGLE
+    /// <summary>As above, and — when the unifier turns out to be a single
     /// binding — the variable it binds and the value it binds it to.
     ///
     /// <para>That pair is the whole unifier, so for <c>dif/2</c> it is the
     /// whole constraint: knowing it here means the caller does not have to
     /// unify a second time to find it out. The value is handed back as the
-    /// CELL, captured while the binding is still live and reused as-is
+    /// cell, captured while the binding is still live and reused as-is
     /// afterwards — unification binds variables to terms that already exist,
     /// so the cell still denotes the same term once the trial is unwound, with
     /// no copying and no loss of identity. A value reaching above the trial's
@@ -2228,9 +2228,9 @@ public sealed partial class Activation
             if (!pointsIntoTheTrial) { soleVarAddr = v; soleValue = value; }
         }
 
-        // Value-side variables — walked BEFORE the unwind, while the
+        // Value-side variables — walked before the unwind, while the
         // bindings are still in place. The walk appends to unifierVars.
-        // Separate visited set for structure cells: a var home can BE a
+        // Separate visited set for structure cells: a var home can be a
         // list-pair head slot, and sharing the set would skip that pair.
         var seen = new HashSet<int>(unifierVars);
         var visited = new HashSet<int>();
@@ -2305,12 +2305,12 @@ public sealed partial class Activation
     /// <c>verify_attributes/4</c> goal per entry and meta-calling it in
     /// this (live) engine so the hooks see the real attributed
     /// variables.</summary>
-    /// <summary>Every entry whose attributed variable is STILL BOUND — the
+    /// <summary>Every entry whose attributed variable is still bound — the
     /// wake's reason survived. An entry whose home cell is an attvar again
     /// (its binding was unwound by backtracking) or lies above the heap top
     /// (its heap segment was discarded) is dead and silently dropped: its
     /// hook must not run against an unbound variable. This filter is what
-    /// lets backtracking leave the queue ALONE — an interposed failure of a
+    /// lets backtracking leave the queue alone — an interposed failure of a
     /// younger computation must not eat the wake of a binding that
     /// survives it (the promoted-length freeze loss).</summary>
     public IReadOnlyList<(int Module, int AttrValueIdx, int OtherIdx)> TakePendingWakeups()

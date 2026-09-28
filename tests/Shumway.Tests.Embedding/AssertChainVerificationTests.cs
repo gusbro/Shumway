@@ -15,17 +15,17 @@ namespace Shumway.Tests.Embedding;
 /// <para>The check is now the same incremental one reclamation uses: an
 /// entry's offsets cannot move while the buffer is the same array object and
 /// content never shrinks on it, so a previous verdict stands and only the
-/// entries added since need looking at. What the check DEFENDS is untouched
+/// entries added since need looking at. What the check defends is untouched
 /// -- a chain describing a rebuilt buffer still fails the buffer-identity
 /// test and still falls back to the store.</para></summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
 public sealed class AssertChainVerificationTests
 {
-    /// <summary>COUNTED, not timed: building n facts verifies O(n) entries in
+    /// <summary>Counted, not timed: building n facts verifies O(n) entries in
     /// total, not n(n-1)/2 -- which is 1,999,000 at 2,000, so the bound has
     /// two orders of magnitude of air under it. It is a multiple rather than
-    /// an equality because a buffer REALLOCATION legitimately re-verifies the
+    /// an equality because a buffer reallocation legitimately re-verifies the
     /// whole chain once (a new array is a new identity), and how many times
     /// the buffer reallocates while growing depends on what capacity the
     /// pool hands the engine -- which varies with the tests that ran before
@@ -45,7 +45,7 @@ public sealed class AssertChainVerificationTests
             e.ConsultString($":- mk({n}).");
             Assert.True(PrologEngine.ChainEntriesVerified < 40L * n,
                 $"{PrologEngine.ChainEntriesVerified} entries verified building {n}");
-            // ANTI-VACUITY: they all landed, in order, and dispatch sees them.
+            // Anti-vacuity: they all landed, in order, and dispatch sees them.
             Assert.Equal(n, e.QueryAll("g(_).").Count());
             Assert.True(e.Query($"g({n}).").Success);
             Assert.True(e.Query("g(1).").Success);

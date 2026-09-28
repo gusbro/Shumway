@@ -4,11 +4,11 @@ using System.Runtime.CompilerServices;
 namespace Shumway.Core.Debugging;
 
 /// <summary>
-/// ADR-035 — the two entry points a debugger reaches into the engine by NAME, and the
+/// ADR-035 — the two entry points a debugger reaches into the engine by name, and the
 /// reason they live in <c>Shumway.Core</c> rather than next to the session that
 /// implements them.
 ///
-/// <para>A debugger evaluates an expression in the context of a FRAME, and a frame can
+/// <para>A debugger evaluates an expression in the context of a frame, and a frame can
 /// only name types its own module can see. The frame we stop on is whichever engine frame
 /// is topmost — usually the interpreter, sometimes the machine itself — and
 /// <c>Shumway.Interpreter</c> does not reference <c>Shumway.Embedding</c>: the dependency
@@ -29,10 +29,10 @@ public static class ShumwayDebugHost
     /// method with an observable effect is a method the JIT may not delete.</summary>
     public static volatile int NotifyCount;
 
-    // ----- the handshake: FIELDS, not a method -----
+    // ----- the handshake: Fields, not a method -----
     //
     // A debugger asking the debuggee a question can do it two ways, and they are not
-    // equally available. READING a field only inspects memory. CALLING a method means
+    // equally available. Reading a field only inspects memory. Calling a method means
     // running code in the debuggee, on a particular thread — and Visual Studio will not run
     // code on a thread that is not the current one. The thread the engine runs on very often
     // is not: a Break All lands the IDE's current thread wherever it likes, and the very
@@ -44,7 +44,7 @@ public static class ShumwayDebugHost
     // anyone who can read memory. Which is exactly what a debugger is.
 
     /// <summary>The wire format a session is speaking, or 0 when none is running. A debugger
-    /// reads this FIRST: it says both "there is a session" and "we agree about the
+    /// reads this first: it says both "there is a session" and "we agree about the
     /// layout".</summary>
     public static volatile int SessionFormatVersion;
 
@@ -58,7 +58,7 @@ public static class ShumwayDebugHost
 
     /// <summary>The metadata token of <see cref="Notify"/> — the address the debugger plants
     /// its hidden breakpoint at. Published here for the same reason as everything else in
-    /// this block: the debugger can READ it, where asking for it (a reflection call in the
+    /// this block: the debugger can read it, where asking for it (a reflection call in the
     /// debuggee) would mean running code on a thread it may not be allowed to run code
     /// on.</summary>
     public static readonly int NotifyMetadataToken =
@@ -83,8 +83,8 @@ public static class ShumwayDebugHost
         // The debugger stops the process here. Nothing else belongs in this method:
         // whatever it needs is in the channel, and it reads that with ReadMemory.
         //
-        // The loop below runs ZERO iterations and exists for the JIT, not the program: a
-        // loop with no call in it forces the whole method to carry FULLY-INTERRUPTIBLE GC
+        // The loop below runs zero iterations and exists for the JIT, not the program: a
+        // loop with no call in it forces the whole method to carry fully-interruptible GC
         // info, which makes the breakpoint's IP a GC-safe point even in a Release build.
         // Without it, a func-eval at this stop (Immediate window, Locals edit) is refused —
         // "stopped at a point where garbage collection is impossible" — whenever the
@@ -93,7 +93,7 @@ public static class ShumwayDebugHost
         for (int i = NotifyCount; i > int.MaxValue - 1; i++) { }
     }
 
-    /// <summary>The handshake — the ONE func-eval the design allows at attach. Returns the
+    /// <summary>The handshake — the one func-eval the design allows at attach. Returns the
     /// pinned channel addresses, or <c>""</c> if no debug session is running in this
     /// process.</summary>
     [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
@@ -103,7 +103,7 @@ public static class ShumwayDebugHost
         return handler is null ? "" : handler();
     }
 
-    /// <summary>A method that does nothing, so that asking whether it CAN be called is a
+    /// <summary>A method that does nothing, so that asking whether it can be called is a
     /// question about the debugger and not about us. A func-eval is the only way to run code
     /// in a stopped process, and whether one is permitted at a given stop is not documented
     /// anywhere — it is discovered. Calling this answers it in isolation: no arguments, no
@@ -118,17 +118,17 @@ public static class ShumwayDebugHost
     public static Func<int, string, string>? OnEvaluateGoal;
 
     /// <summary>ADR-035 — the Immediate window. Runs <paramref name="goalBase64"/> (a
-    /// UTF-8 Prolog goal, base64-encoded) in a NEW activation over the live engine, with
+    /// UTF-8 Prolog goal, base64-encoded) in a new activation over the live engine, with
     /// the variables of display frame <paramref name="frameIndex"/> substituted by their
     /// current values, and returns the result — base64-encoded UTF-8 again.
     ///
-    /// <para>Base64 both ways because this crosses as a C# EXPRESSION: the debugger
+    /// <para>Base64 both ways because this crosses as a C# expression: the debugger
     /// func-evals <c>ShumwayDebugHost.EvaluateGoal(3, "...")</c>, and a goal is full of
     /// quotes and backslashes that would otherwise need C#-literal escaping on the way in
     /// and un-escaping of the evaluator's rendered string on the way out. Base64 has
     /// neither problem.</para>
     ///
-    /// <para>This is a FUNC-EVAL — the one mechanism that runs code in a stopped process —
+    /// <para>This is a func-eval — the one mechanism that runs code in a stopped process —
     /// and it is user-initiated from a normal break state, which is the context where
     /// func-eval is supported (the stop path itself never evaluates anything; that is what
     /// the pinned channel is for).</para></summary>
@@ -161,11 +161,11 @@ public static class ShumwayDebugHost
     /// <summary>Set by the debug session. See <see cref="SetFrameVariable"/>.</summary>
     public static Func<int, string, string, string>? OnSetFrameVariable;
 
-    /// <summary>ADR-035 D5+ — the Watch-window EDIT of a frame variable: DESTRUCTIVE
+    /// <summary>ADR-035 D5+ — the Watch-window edit of a frame variable: Destructive
     /// (replaces an existing binding, trailed so backtracking restores it; the term
     /// <c>_</c> un-instantiates). Name and term are base64 UTF-8 both ways, same
     /// rationale as <see cref="EvaluateGoal"/>. A func-eval, user-initiated from a break
-    /// state. The Immediate window deliberately does NOT route here — it keeps pure,
+    /// state. The Immediate window deliberately does not route here — it keeps pure,
     /// non-destructive unification.</summary>
     [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
     public static string SetFrameVariable(int frameIndex, string nameBase64, string termBase64)

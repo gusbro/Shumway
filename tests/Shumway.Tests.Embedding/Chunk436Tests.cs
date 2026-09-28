@@ -8,11 +8,11 @@ namespace Shumway.Tests.Embedding;
 /// Chunk 436 (Phase 30) — three Arity-compat compiler robustness pieces,
 /// driven by the real Arity corpus (anstring.pl / arity.pl):
 /// <list type="number">
-/// <item>Unknown directives (e.g. <c>:- extrn foo/3:far.</c>) are a WARNING
+/// <item>Unknown directives (e.g. <c>:- extrn foo/3:far.</c>) are a warning
 /// under <c>arity_compat</c> — the compile continues and succeeds; the
 /// <see cref="ShmoCompiler.SilentlyIgnoredDirectives"/> set suppresses
 /// named ones entirely. Without the flag behaviour is unchanged.</item>
-/// <item><c>:- c.</c> switches to a native-code (C) section skipped RAW
+/// <item><c>:- c.</c> switches to a native-code (C) section skipped raw
 /// until a line with <c>:- prolog.</c> (whitespace-tolerant) or EOF;
 /// <c>:- prolog.</c> in normal mode is a silent no-op.</item>
 /// <item>Crash fix (unconditional): a LexerException (e.g. Arity's
@@ -232,7 +232,7 @@ public class Chunk436Tests
         // (`x) threw a LexerException that escaped the error-recovery
         // resync entirely. Without the flag it is still an unlexable
         // character — but recovered as a diagnostic, never a crash.
-        // (Chunk 437: WITH the flag `x now lexes as a char-code integer
+        // (Chunk 437: With the flag `x now lexes as a char-code integer
         // and the source compiles — see Chunk437Tests.)
         var r = ShmoCompiler.TryCompileSource(
             "p(L) :- not(L = [_, `x|_]).\n" +

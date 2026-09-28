@@ -216,7 +216,7 @@ public static partial class ExecutableEmitter
             File.Copy(producedPath, finalPath, overwrite: true);
             string sideTargetDir = string.IsNullOrEmpty(outputDir)
                 ? Directory.GetCurrentDirectory() : outputDir!;
-            // Framework deployment is a FOLDER: the engine DLLs and the
+            // Framework deployment is a folder: the engine DLLs and the
             // app config travel next to the exe (no single-file publish on
             // net48). The config is renamed to match the final exe name.
             foreach (string dll in Directory.GetFiles(publishDir, "*.dll"))
@@ -341,7 +341,7 @@ public static partial class ExecutableEmitter
                 System.Console.Error.WriteLine(""shumway: debug mode active."");";
         // ADR-036 — a baked DAP port: the executable listens for VS Code on
         // 127.0.0.1:<port> whenever it runs. The SHUMWAY_DAP_PORT environment variable
-        // has PRECEDENCE over the bake (DebugOptions' own default reads it: any set
+        // has precedence over the bake (DebugOptions' own default reads it: any set
         // value decides, 0/unparseable = off), so the bake fills in only when the
         // environment says nothing.
         string dapBake = dapPort is int p

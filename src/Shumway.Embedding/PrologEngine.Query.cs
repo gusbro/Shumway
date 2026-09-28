@@ -53,7 +53,7 @@ public sealed partial class PrologEngine
     {
         // Heap-buffer pool: the finally runs exactly when the activation
         // dies — enumeration completed, disposed early (foreach break /
-        // Query taking one solution), or unwound by an exception — and NOT
+        // Query taking one solution), or unwound by an exception — and not
         // on suspension between yields. Solutions hold materialized AST
         // terms, never references into the surrendered buffer.
         try
@@ -99,7 +99,7 @@ public sealed partial class PrologEngine
             // caller stopped asking. Same as a yield, and more final.
             // setup_call_cleanup/3: fire any cleanup whose scope is abandoned by
             // the teardown (a caller that stopped with choice points still live —
-            // the SWI toplevel-cancel case). Runs BEFORE the heap buffer is
+            // the SWI toplevel-cancel case). Runs before the heap buffer is
             // surrendered so the cleanup goal still has its heap.
             if (engine.HasCleanupHandlers || engine.HasPendingCleanups)
                 interp.RunTeardownCleanups(program);
@@ -188,7 +188,7 @@ public sealed partial class PrologEngine
     /// <summary>The <see cref="TryCatch"/> walk restricted to frames at or
     /// above <paramref name="minFrameIndex"/> — the nested in-engine goal
     /// driver (a wakeup, a findall body) may only resolve balls against
-    /// frames opened INSIDE itself; anything older belongs to an outer
+    /// frames opened inside itself; anything older belongs to an outer
     /// driver's scope.</summary>
     private static int TryCatchFrom(
         Activation engine, Term ballTerm, int minFrameIndex, out bool hadActiveFrame,
@@ -203,12 +203,12 @@ public sealed partial class PrologEngine
 
             if (lowMemory)
             {
-                // A resource_error left the heap FULL: the speculative trial
+                // A resource_error left the heap full: the speculative trial
                 // below would materialize the ball at the exhausted top, raise
                 // resource_error again from inside catch resolution, and the
                 // original error would escape every catch/3. The machine can
                 // only continue through a rollback anyway, so roll back to
-                // THIS frame first (exactly what a match commits to) and
+                // this frame first (exactly what a match commits to) and
                 // materialize in the reclaimed space — the ball is ground and
                 // the catcher slot predates the snapshot. A mismatch keeps
                 // walking outward: outer frames' snapshots are older, so each
@@ -223,7 +223,7 @@ public sealed partial class PrologEngine
 
             // Speculatively unify the ball with the catcher, then undo —
             // testing the match must not disturb the machine. That includes
-            // the WAKEUP QUEUE: a catcher containing attributed variables
+            // the wakeup queue: a catcher containing attributed variables
             // queues verify_attributes wakeups during the trial, and their
             // recorded heap indices point into the trial region truncated
             // right below — flushing them later read garbage cells (clpz's
@@ -293,7 +293,7 @@ public sealed partial class PrologEngine
         var addresses = engine.CurrentFunctorAddresses;
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
             return address;
-        // Last chance: a '$catchrec_N' compiled by a DIFFERENT activation's
+        // Last chance: a '$catchrec_N' compiled by a different activation's
         // assert/setup (the Logtalk suspended-outer-query shape) — materialize
         // it into this one. See TryMaterializeAssertHelper.
         int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
@@ -418,7 +418,7 @@ public sealed partial class PrologEngine
     /// interpreter observes the request the next time the heap GC watermark is
     /// crossed (so the common per-goal path pays nothing — a heap-bounded loop
     /// such as <c>repeat, fail</c> is not cancellable) and throws
-    /// <see cref="OperationCanceledException"/> (NOT a Prolog ball — a
+    /// <see cref="OperationCanceledException"/> (not a Prolog ball — a
     /// surrounding <c>catch/3</c> never intercepts it). Still synchronous: it
     /// runs on the calling thread. Use <see cref="QueryAsync"/> to run off-thread.</summary>
     public IEnumerable<Solution> QueryAll(string queryText, CancellationToken cancellationToken)
@@ -517,7 +517,7 @@ public sealed partial class PrologEngine
              BytecodeInterpreter Interp) SetupQueryFromTerm(Term queryTerm)
     {
         // ADR-035 — serialized against the debug session's own thread. A breakpoint can
-        // arrive while the engine is IDLE (F9 at the prompt), and the session's idle
+        // arrive while the engine is idle (F9 at the prompt), and the session's idle
         // watcher applies it from its own thread — which raced this method's table
         // rebuild the moment a query started at the same instant, and a Dictionary read
         // concurrent with a write throws ConcurrentOperationsNotSupported (seen live: F9
@@ -548,7 +548,7 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>Config for query-setup activations: TINY initial heap/stack —
+    /// <summary>Config for query-setup activations: Tiny initial heap/stack —
     /// <see cref="HeapBufferPool.Adopt"/> (called right after construction)
     /// supplies the real buffers, recycled across activations or allocated at
     /// default size when the pool is empty. The constructor's default-size
@@ -571,8 +571,8 @@ public sealed partial class PrologEngine
         // no in-flight choice points hold addresses into it). The
         // rebuild that follows below picks up the trim automatically.
         //
-        // ADR-035 D5 — except during a DEBUG EVALUATION (an Immediate-window goal, a
-        // breakpoint condition): that nested query's setup is NOT a safe point — the outer
+        // ADR-035 D5 — except during a debug evaluation (an Immediate-window goal, a
+        // breakpoint condition): that nested query's setup is not a safe point — the outer
         // query is suspended mid-flight and everything it holds points into the current
         // buffers. Compaction is paused, not skipped: the counter keeps accumulating and
         // the next real query's setup does the deferred work.
@@ -581,7 +581,7 @@ public sealed partial class PrologEngine
         // A queued jit_compile(off) returns the promoted predicates to their
         // bytecode. Here for the same reason as the compaction above: nothing
         // in flight holds a position inside the code being dropped. A debug
-        // evaluation is NOT such a point -- the outer query is suspended
+        // evaluation is not such a point -- the outer query is suspended
         // mid-flight -- so it waits for the next real query, exactly as the
         // compaction does.
         if (_debugEvalDepth == 0) IlPromotion.ApplyPendingJitChange();
@@ -610,16 +610,16 @@ public sealed partial class PrologEngine
 
         // What the user typed, kept for the call stack's query frame (see AddFrame). Only
         // under a debug session: this renders a term, and nobody else is looking. A host that
-        // wrapped the goal says so with QueryLabel — rendering ITS wrapper back would name
+        // wrapped the goal says so with QueryLabel — rendering its wrapper back would name
         // the frame after machinery the user never wrote.
         CurrentQueryText = DebugSession is null
             ? null
             : QueryLabel ?? AstTermRenderer.Render(queryTerm, 999, _operators);
 
-        // the Phase-19+ implicit_dynamic pre-scan is NO
-        // LONGER applied to the query body. Pre-declaring an
-        // assertz-target made it observable as an EMPTY dynamic
-        // predicate from the query's start, so a goal sequenced BEFORE
+        // the Phase-19+ implicit_dynamic pre-scan is no
+        // longer applied to the query body. Pre-declaring an
+        // assertz-target made it observable as an empty dynamic
+        // predicate from the query's start, so a goal sequenced before
         // the assertz in the same query (`catch(call(zzz(1)), _, true),
         // assertz(zzz(1))`) saw it fail instead of raising
         // existence_error — diverging from ISO/SWI and from the same
@@ -645,7 +645,7 @@ public sealed partial class PrologEngine
         // a stale cached compile at the wrong indexing level — drop it
         // so ModuleCompiler rebuilds it (the drop bumps _programStamp,
         // so the compiled program product below rebuilds too — which is
-        // why this loop runs BEFORE the product validity check). The
+        // why this loop runs before the product validity check). The
         // unindexed set then names every dynamic functor still below
         // the threshold.
         long profHt0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
@@ -692,7 +692,7 @@ public sealed partial class PrologEngine
 
         // ---- compiled program product ----
         // Everything below up to (and including) the region partition is a
-        // pure function of the PROGRAM (static + dynamic clauses), not of the
+        // pure function of the program (static + dynamic clauses), not of the
         // query: compile it once and reuse it until the program changes. The
         // per-query work is then only the synthetic __query__ clause — the
         // "small bootstrap" — instead of an O(program) re-walk per query.
@@ -752,29 +752,29 @@ public sealed partial class PrologEngine
         }
         else
         {
-            // the derivation is being REGENERATED: MetaTransform
+            // the derivation is being regenerated: MetaTransform
             // helper names ('$disj_N', '$catchgoal_N', ...) come from the
             // global NextMetaHelperId counter, so the fresh ASTs reference
-            // fresh helper ids. Any COMPILED artifact from the previous
-            // derivation still calls the OLD helper ids — helpers that no
+            // fresh helper ids. Any compiled artifact from the previous
+            // derivation still calls the old helper ids — helpers that no
             // longer exist in the new clause set, so the link bakes an
             // undefined sentinel and the call raises existence_error
             // ('$disj_N'/K — the long-standing Logtalk '$disj_95' gap; hit
             // reliably by lgtunit's runtime send-cache asserta, which bumps
             // the derivation between queries). Nothing compiled may outlive
             // the derivation that produced its call sites — but that is a
-            // PER-MODULE property, not a whole-program one: a module whose
+            // per-module property, not a whole-program one: a module whose
             // transform is reused verbatim below keeps its helper clauses in
             // allRewritten, so its compiled predicates stay linkable. Only a
-            // module that actually REGENERATES mints fresh helper ids, and
-            // only ITS compiled predicates are dropped (DropStaticCompiledFids
+            // module that actually regenerates mints fresh helper ids, and
+            // only its compiled predicates are dropped (DropStaticCompiledFids
             // in the loop below — the targeted version of the old blanket
             // _staticPredicateCache.Clear()).
-            //  * the linked STATIC REGION (_staticLink) is still dropped — a
+            //  * the linked static region (_staticLink) is still dropped — a
             //    dynamic clause recompiled under the new derivation calls new
-            //    '$disj_N' helpers, and those helper predicates are STATIC:
+            //    '$disj_N' helpers, and those helper predicates are static:
             //    they only reach the code space through a fresh static link.
-            // The dynamic COMPILED cache still clears wholesale. DO NOT relax
+            // The dynamic compiled cache still clears wholesale. Do not relax
             // this to the rewrite entries' per-entry fingerprint: reusing a
             // dynamic predicate's compiled bytecode across a derivation bump
             // broke clpz's propagators at runtime (constraints silently
@@ -785,7 +785,7 @@ public sealed partial class PrologEngine
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;
             _staticLink = null;
-            // The IL tier's promoted delegates are deliberately NOT evicted
+            // The IL tier's promoted delegates are deliberately not evicted
             // here: a delegate compiled under the previous derivation calls
             // that derivation's '$disj_N' helper ids, and those stay
             // resolvable forever through the late-helper registry
@@ -803,7 +803,7 @@ public sealed partial class PrologEngine
                 // doubly wrong: the wrapper's own clauses take no stop site (nothing
                 // ever calls them), so a breakpoint in ifthenelse/3 never binds; and
                 // the caller sprouts anonymous control-construct frames (";/2", ",")
-                // at its own line instead of a clean step-into. So for a DEBUGGABLE
+                // at its own line instead of a clean step-into. So for a debuggable
                 // module we keep the wrapper as a real predicate. Opaque modules
                 // (prelude, :- disable_debug) run without stop sites anyway, so they
                 // still get the optimization.
@@ -843,9 +843,9 @@ public sealed partial class PrologEngine
                 // module-local meta-wrapper unfold (ifthen/2-style user
                 // control wrappers called with statically-known goals become inline
                 // if-then-else, eliminating the goal-term build + wrapper frame +
-                // runtime meta-dispatch). Runs BEFORE the pipeline so MetaTransform
+                // runtime meta-dispatch). Runs before the pipeline so MetaTransform
                 // lowers the inserted control constructs. manifest.Clauses is the
-                // STATIC clause set (dynamic-head clauses were routed to
+                // static clause set (dynamic-head clauses were routed to
                 // _dynamicClauses), so a detected wrapper is immutable by invariant.
                 var unfolded = (_flags.DebugCodegen && !opaqueModule)
                     ? manifest.Clauses
@@ -864,7 +864,7 @@ public sealed partial class PrologEngine
 
                 var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports)
                 { QualifiedStaticResolver = ResolveQualifiedStatic, MetaArgSpec = MetaArgSpec };
-                // ADR-035 — a library's HELPERS are library code too. MetaTransform
+                // ADR-035 — a library's helpers are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
                 // consult time — but they are right here, in `transformed`, and they
@@ -963,7 +963,7 @@ public sealed partial class PrologEngine
             // per-functor transform cache. A functor's entry
             // is dropped by InvalidateDynamicCache when its clause list
             // mutates; validity against the rewrite-context inputs is
-            // PER ENTRY (the locals-set instance it was built under +
+            // per entry (the locals-set instance it was built under +
             // the mode-table version) — the per-module transform cache
             // hands back the same locals HashSet while a module is
             // unchanged, so reference equality is exact. So a query after
@@ -1082,13 +1082,13 @@ public sealed partial class PrologEngine
         // launcher prefix, at offset Call(9) + Halt(1) = 10. We need it
         // available to the compiler so dynamic predicates emit their
         // last-clause chain instruction with the absolute target.
-        // ADR-030 cut elision, hoisted OUT of ModuleCompiler for this call site
+        // ADR-030 cut elision, hoisted out of ModuleCompiler for this call site
         // (ElideRedundantCuts: false below). Elision is a WHOLE-program
         // analysis, so a module reused verbatim by the per-module transform
-        // cache can still change its elision outcome when a DIFFERENT module's
+        // cache can still change its elision outcome when a different module's
         // regeneration flips a callee's det-ness — and its skip-cached compiled
         // predicate would silently keep the old decision (an un-elided cut is
-        // harmless; a stale ELIDED cut re-exposes choice points). Running the
+        // harmless; a stale elided cut re-exposes choice points). Running the
         // elision here lets us diff the elided-fid set against the previous
         // build's and drop exactly the flipped predicates from the skip cache.
         long profPe0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
@@ -1096,7 +1096,7 @@ public sealed partial class PrologEngine
         {
             // Replay fast path: the elision decisions are a pure function of
             // the eligible (static) clause content, the defined-indicator set
-            // and the per-indicator eligibility — a dynamic clause's BODY is
+            // and the per-indicator eligibility — a dynamic clause's body is
             // never analyzed (ineligible predicates never enter the det set).
             // When no module re-transformed and both fid sets match the
             // previous build's, replay the cached substitution map (original
@@ -1171,7 +1171,7 @@ public sealed partial class PrologEngine
 
         // Cross-activation helper visibility (the Logtalk-under-promotion fix):
         // every helper compiled by this setup stays materializable on demand
-        // into any OTHER live activation (see TryMaterializeAssertHelper).
+        // into any other live activation (see TryMaterializeAssertHelper).
         long profPe2 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (LoadProfEnabled)
         {
@@ -1221,7 +1221,7 @@ public sealed partial class PrologEngine
         long profPb2 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (LoadProfEnabled) ProfPbCompileTicks += profPb2 - profPb1;
         // --- ADR-015 chunk B + persistent code space -------
-        // Partition the compiled PROGRAM predicates into two regions:
+        // Partition the compiled program predicates into two regions:
         //   * static  — cacheable + non-dynamic, linked once.
         //   * dynamic — cacheable + dynamic, linked once into the
         //     persistent buffer; mutated in place by
@@ -1259,11 +1259,11 @@ public sealed partial class PrologEngine
             else pDynamic.Add(pred);
         }
 
-        // A compiled predicate must NEVER be silently dropped: when the static
-        // link is REUSED, any static-classified predicate absent from it (a
+        // A compiled predicate must never be silently dropped: when the static
+        // link is reused, any static-classified predicate absent from it (a
         // MetaTransform helper freshly minted by a dynamic recompile — the
         // '$disj_N' of a mutated predicate's new derivation, whose ids did not
-        // exist when the cached region was linked) is re-routed to the QUERY
+        // exist when the cached region was linked) is re-routed to the query
         // region so it still links and lands in the address map. Without this,
         // the recompiled dynamic clause (linked on a persistent rebuild) calls
         // — or meta-calls, via a findall collect-loop goal term — a helper
@@ -1331,7 +1331,7 @@ public sealed partial class PrologEngine
         // Synthetic query clause — rewrite in the user module's context, but
         // with the user locals (which don't include __query__) so the
         // head functor remains bare. the stub's synthesized helpers
-        // use the reserved `$q` namespace: they are rewritten under the SAME
+        // use the reserved `$q` namespace: they are rewritten under the same
         // user-module mangling as the consulted clauses' helpers, so without
         // the prefix a stub `$disj_1` collides with a consulted `$disj_1`
         // (the helper-name-collision latent bug). `$q` names are reused
@@ -1369,7 +1369,7 @@ public sealed partial class PrologEngine
                 queryClauses.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
-        // Compile ONLY the query clauses (against the shared literal pools and
+        // Compile only the query clauses (against the shared literal pools and
         // the same fail-stub address); everything else comes from the product.
         var queryModule = new ModuleCompiler
         {
@@ -1427,7 +1427,7 @@ public sealed partial class PrologEngine
             if (IlPromotion.PendingWasmModules.Count > 0)
                 IlPromotion.Wasm?.InstallPendingBundles(this);
             // A relink may have moved promoted code. The tier learns the live
-            // addresses HERE, before this query can deopt into them: a host
+            // addresses here, before this query can deopt into them: a host
             // tick after the query is too late, and a lazy-mode host never
             // ticks at all (a consult, then clpfd deopting into dead code).
             IlPromotion.Wasm?.ReconcileWithLink(this);
@@ -1508,7 +1508,7 @@ public sealed partial class PrologEngine
         }
         var persistentAddresses = _persistentAddressesCache;
 
-        // The per-query region is appended in a SEPARATE buffer at a
+        // The per-query region is appended in a separate buffer at a
         // logical address well above the persistent buffer's end.
         // The ProgramView built below routes addresses in [0, split)
         // to the persistent buffer and [split, split+queryLen) to the
@@ -1533,13 +1533,13 @@ public sealed partial class PrologEngine
         // Merge the three regions' link metadata; downstream code is
         // region-agnostic and reads this combined view. The persistent base
         // (which already carries the persistent regions' bare-name aliases)
-        // is shared BY REFERENCE under a small per-query overlay
+        // is shared by reference under a small per-query overlay
         // (LayeredIntMap) instead of being copied — the three O(program)
         // dictionary copies here were the largest warm-setup cost on a
         // clpz-sized program. The overlay holds the query region's links,
         // its bare aliases, the IL/region markers, and any mid-query
         // trampoline installs; overlay wins on lookup, preserving the old
-        // construction order (a query-region REAL address shadows a
+        // construction order (a query-region real address shadows a
         // colliding persistent alias).
         var queryAddrOverlay = CollectionsCompat.Copy(queryLink.Addresses);
         var mergedAddresses = new Shumway.Core.LayeredIntMap<int>(
@@ -1552,7 +1552,7 @@ public sealed partial class PrologEngine
         if (Shumway.Core.Profiler.Enabled)
             _profileFunctorAddresses = mergedAddresses;
         // The merged switch-table list is still rebuilt per query (cheap
-        // reference copies): the new-key assertz path REPLACES
+        // reference copies): the new-key assertz path replaces
         // entries of _dynamicLink.SwitchTables in place for cross-query
         // persistence, so a cached merged snapshot would go stale.
         var mergedSwitchTables =
@@ -1605,7 +1605,7 @@ public sealed partial class PrologEngine
         // the persistent regions' aliases are already in the layered base
         // (pre-computed at persistent rebuild — see
         // _persistentAddressBaseCache); only the query region's handful
-        // of entries still need the per-query string walk. addressMap IS
+        // of entries still need the per-query string walk. addressMap is
         // mergedAddresses — the aliases and markers land in the same
         // per-query overlay (they were the only delta between the two maps,
         // and the merged map's remaining consumers — the launcher patch and
@@ -1626,7 +1626,7 @@ public sealed partial class PrologEngine
         // address (a non-stripped IL predicate keeps its WAM and meta-calls
         // through it unchanged). A module-local predicate is registered under
         // its mangled "module$name" functor, so it also needs a bare-name alias
-        // (mirroring the WAM bare-alias loop above) pointing at the SAME marker
+        // (mirroring the WAM bare-alias loop above) pointing at the same marker
         // — a runtime meta-call (an if-then-else condition, call/N) names the
         // predicate by its plain name.
         foreach (int ilFid in IlPromotion.PromotedFunctorIds())
@@ -1646,7 +1646,7 @@ public sealed partial class PrologEngine
                 addressMap[bareFid] = marker;
         }
 
-        // region member-entry aliases, LOWEST priority: an absorbed-only
+        // region member-entry aliases, lowest priority: an absorbed-only
         // member with no WAM address (stripped) and no standalone IL delegate (pruned)
         // still resolves by fid — into its region method at the member's entry cursor.
         // The ContainsKey guards keep every better resolution (a real WAM address, or
@@ -1713,12 +1713,12 @@ public sealed partial class PrologEngine
             MutatedDynamicFids = _mutatedDynamicFids,
             // ADR-035 — the debug seam. Null unless a session is attached
             // (trace/0, or a debugger), in which case the Tier-0 interpreter
-            // raises the four Prolog ports on it. A LAZY session
+            // raises the four Prolog ports on it. A lazy session
             // (ActivateOnAttach, not yet armed) deliberately leaves it null:
             // the interpreter's existing Debug?-null-checks then cost what
             // release costs, which is the whole point of the mode.
             Debug = DebugFullyArmed ? DebugSession : null,
-            // ADR-035 D5+ — with a session watching, trail EVERY binding (the HB
+            // ADR-035 D5+ — with a session watching, trail every binding (the HB
             // optimisation's untrailed young-var bindings are unrecoverable, and Set
             // Next Statement rewinds by unwinding the trail to a recorded mark).
             TrailEverything = DebugFullyArmed && DebugSession is not null,
@@ -1741,7 +1741,7 @@ public sealed partial class PrologEngine
         if (LoadProfEnabled)
             ProfActCtorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;
         // Heap-buffer pool: seed the fresh activation with the recycled
-        // buffer (if any) BEFORE anything materializes onto the heap.
+        // buffer (if any) before anything materializes onto the heap.
         _heapPool.Adopt(engine);
         // the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
@@ -1756,7 +1756,7 @@ public sealed partial class PrologEngine
         // query rewire above has to advertise itself.
         engine.BumpProgramGeneration();
         // expose the linked switch tables on the engine
-        // as a MUTABLE list. The same list reference is handed to the
+        // as a mutable list. The same list reference is handed to the
         // interpreter; the new-key assertz path swaps entries in place
         // and the interpreter sees the update on the next dispatch
         // because it reads through the list reference each time.
@@ -1851,7 +1851,7 @@ public sealed partial class PrologEngine
                 { Kind: "resource_error" } || IsResourceBall(nestedBall);
             return TryCatchFrom(engine, nestedBall, minFrameIndex, out _, nestedLowMem);
         };
-        // Cheap throw: a throw/1 whose catcher was opened in the SAME dispatch
+        // Cheap throw: a throw/1 whose catcher was opened in the same dispatch
         // invocation resolves to a PC jump — no .NET exception construction or
         // EH unwinding (clpz's with_local_attributes throws per propagation).
         engine.InlineThrowResolver = (ballIdx, minFrameIndex) =>
@@ -1879,7 +1879,7 @@ public sealed partial class PrologEngine
         {
             var resolverMap = mergedPredicatesByAddress;
             // Diagnostic / error-path only: sort lazily on first resolve. Eagerly
-            // sorting every merged predicate address cost O(N log N) at EVERY
+            // sorting every merged predicate address cost O(N log N) at every
             // query setup, dominating warm setups on large programs.
             int[]? sortedAddrs = null;
             engine.ResolveAddressToLabel = addr =>
@@ -1992,11 +1992,11 @@ public sealed partial class PrologEngine
         _fidMemoLo = _fidMemoHi = int.MaxValue;   // and with it the address→functor memo
         if (_flags.DebugCodegen || _compiledSites.Count > 0)
         {
-            // SCALE GUARD: this rebuild costs O(every stop site + clause frame in the
-            // program) — for a codebase of hundreds of modules, paying it at EVERY query
+            // Scale guard: this rebuild costs O(every stop site + clause frame in the
+            // program) — for a codebase of hundreds of modules, paying it at every query
             // setup dwarfed the query. The derived tables depend only on the
             // (address → compiled predicate) mapping, so when that mapping is unchanged
-            // — same addresses, same predicate INSTANCES, the common case for every
+            // — same addresses, same predicate instances, the common case for every
             // query between consults/asserts — the previous tables stand. The check is
             // an O(predicates) reference walk, exact by construction.
             bool layoutUnchanged = _debugTablesBuiltFor is { } prev
@@ -2021,13 +2021,13 @@ public sealed partial class PrologEngine
         // buffer actually holds our patches. (RefreshBreakpoints, mid-query, follows the live
         // activation via _lastQueryEngine — set just below — so a realloc is tracked there.)
         //
-        // ADR-035 D5 — a DEBUG EVALUATION's nested query does not touch the sync at all: the
-        // armed table describes the OUTER query's buffer, which is where the machine returns
+        // ADR-035 D5 — a debug EVALUATION's nested query does not touch the sync at all: the
+        // armed table describes the outer query's buffer, which is where the machine returns
         // when the evaluation is done, and re-deriving it here would point it at the eval's.
         // The usual case reuses the outer's buffer anyway (patches in place, table already
         // right); in the rare rebuilt-under-eval case the fresh buffer simply runs without
         // Break bytes — an eval's stops are suppressed regardless — and the flag below tells
-        // the NEXT real setup that this persistent buffer never received its patches, so its
+        // the next real setup that this persistent buffer never received its patches, so its
         // per-byte un-patch must not expect to find them (a false "drift" alarm otherwise).
         if (_debugEvalDepth == 0)
         {
@@ -2039,7 +2039,7 @@ public sealed partial class PrologEngine
         {
             _persistentRebuiltPatchFree = true;
         }
-        // Shared BY REFERENCE, and shared even when it is empty: a breakpoint can be armed
+        // Shared by reference, and shared even when it is empty: a breakpoint can be armed
         // on a query that is already running (F9 during a long goal), and the Break byte it
         // patches into the program is reached by an activation that was set up before the
         // table had anything in it. Handing over null when the table happened to be empty
@@ -2078,7 +2078,7 @@ public sealed partial class PrologEngine
             engine.Debug?.RelocateHeapRoots(engine, relocIndex, relocBoundary);
         };
 
-        // Test seam: fires INSIDE the arm-publish race window — after the
+        // Test seam: fires inside the arm-publish race window — after the
         // activation's DebugFullyArmed read at construction, before its
         // publication as LiveActivation. The regression pin runs the whole
         // watcher-thread arm dance here, which is the exact interleaving no
@@ -2088,12 +2088,12 @@ public sealed partial class PrologEngine
         // Tier-0 deterministic benchmark metric: keep a reference to the
         // per-query engine so the harness can read its monotonic
         // CellsAllocated after the query completes (the engine is
-        // otherwise local and discarded). Read-only diagnostic — and ALSO
+        // otherwise local and discarded). Read-only diagnostic — and also
         // the LiveActivation a lazily-arming debug session reaches for.
         _lastQueryEngine = engine;
         // ADR-035 D5+ — close the arm-publish race. ActivateFullDebug (a
         // watcher/DAP thread) sets DebugFullyArmed and then requests an arm
-        // on LiveActivation; if it read the PREVIOUS (dead) activation
+        // on LiveActivation; if it read the previous (dead) activation
         // because this one was not yet published, the request was silently
         // lost and the query ran unarmed forever (a debugger that could
         // never stop an infinite loop — the CI hang that ran a billion
@@ -2188,7 +2188,7 @@ public sealed partial class PrologEngine
         => AddBareLocalAliasesCore(map.ContainsKey, (k, v) => map[k] = v, entries, recordAdded);
 
     /// <summary>The index of the module/name separator '$' in a mangled
-    /// functor name, or -1. Normally the FIRST '$'; for a module whose own
+    /// functor name, or -1. Normally the first '$'; for a module whose own
     /// name starts with '$' ("$prelude") the first '$' is the module's, and
     /// only helper-shaped locals ('$'-leading bare name — the '$$' seam) are
     /// recognised: an inline-catch '$catchrec_N' recovery term carries the
@@ -2263,7 +2263,7 @@ public sealed partial class PrologEngine
         ((long)moduleAtomId << 32) | (uint)bareFunctorId;
 
     // Cached per derivation generation — imports only change with a consult,
-    // but this ran per QUERY, string-interning module + "$" + name for every
+    // but this ran per query, string-interning module + "$" + name for every
     // import of every module each time (a visible slice of warm setup on a
     // many-module load like the Scryer clpz chain).
     private IReadOnlyDictionary<long, int>? _runtimeImportMapCache;
@@ -2319,7 +2319,7 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>The indicator of the predicate a clause DEFINES, which for a
+    /// <summary>The indicator of the predicate a clause defines, which for a
     /// grammar rule is not the indicator of its term: <c>greeting --&gt;
     /// [hello]</c> is a <c>--&gt;</c>/2 term that defines <c>greeting/2</c>,
     /// and a pushback rule <c>H, PB --&gt; B</c> defines H's. The static path

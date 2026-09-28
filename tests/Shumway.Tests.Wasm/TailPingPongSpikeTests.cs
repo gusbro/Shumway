@@ -11,12 +11,12 @@ namespace Shumway.Tests.Wasm;
 ///
 /// <para>The arc's premise is that two wasm modules can hand control to each
 /// other through an imported table without returning to the host, and that the
-/// transfer is a REAL tail call. The speed half of that has to be measured in a
+/// transfer is a real tail call. The speed half of that has to be measured in a
 /// browser. These are the parts that can be settled here, and settling them
 /// early is the point: each one can kill or reshape the arc for a few minutes'
 /// work.</para></summary>
 /// <summary>The module's export surface. Public because the library compiles
-/// wasm to IL by INHERITING this type.</summary>
+/// wasm to IL by inheriting this type.</summary>
 public abstract class PingPongExports
 {
     public abstract int run(int mailbox, int cursor);
@@ -46,7 +46,7 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
     }
 
     /// <summary>G3: does the emitter library's own wasm engine execute
-    /// <c>return_call_indirect</c> through an IMPORTED table? If it does not,
+    /// <c>return_call_indirect</c> through an imported table? If it does not,
     /// nothing in this test project can ever exercise the in-wasm hop and the
     /// whole split path becomes browser-only to test — which does not kill the
     /// arc but changes its cost a great deal. Either way it is worth knowing on
@@ -79,7 +79,7 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
         }
         catch (Exception e)
         {
-            // A refusal here is the ANSWER to G3, not a broken test: record it
+            // A refusal here is the answer to G3, not a broken test: record it
             // in the shape the arc's plan asks for and fail loudly.
             Assert.Fail($"G3 = NO: the library refused the module. {e.GetType().Name}: {e.Message}");
             return;
@@ -106,7 +106,7 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
         o.WriteLine($"G3 = YES: 7 hops, finished in slot {who} (memory says {done})");
         // Seven hops starting at A ends at B: A,B,A,B,A,B,A -> the 7th
         // decrement happens in A... the parity is what it is; assert only that
-        // SOMETHING finished and that both halves agree on which.
+        // something finished and that both halves agree on which.
         Assert.Equal(who, (int)done);
         Assert.InRange(who, 0, 1);
     }

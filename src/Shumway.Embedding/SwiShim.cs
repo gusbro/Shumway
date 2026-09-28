@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>The SWI compatibility shim — SWI system predicates that are not
-/// standard/ISO and are provided only on demand: it loads AUTOMATICALLY the first
+/// standard/ISO and are provided only on demand: it loads automatically the first
 /// time an SWI-dialect module is loaded, and can also be loaded explicitly with
 /// <c>use_module(library(swi))</c> (as SWI itself offers <c>library(sicstus)</c>).
 /// A pure ISO program that never touches SWI never sees these predicates.

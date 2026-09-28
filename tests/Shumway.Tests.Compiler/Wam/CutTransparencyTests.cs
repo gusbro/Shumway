@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Compiler.Wam;
 
-/// <summary>Phase 26 — a NECK cut (`head :- !, ...`) is chunk-transparent, so a
+/// <summary>Phase 26 — a neck cut (`head :- !, ...`) is chunk-transparent, so a
 /// variable confined to the head + the chunk-0 call stays temporary (X register)
 /// instead of being promoted to a permanent Y slot — matching GProlog's `pl2wam`
 /// for the same shape. The Warren argument scheduler is extended to target the
@@ -45,7 +45,7 @@ public class CutTransparencyTests
     {
         // p([H|T], [H|R]) :- !, p(T, R).  — the recursive clause matches
         // GProlog: no environment frame (B), and T/R extracted straight into the
-        // recursive call's argument registers (A), so NO put_value and NO
+        // recursive call's argument registers (A), so no put_value and no
         // allocate anywhere in the predicate.
         string text = Dis("p([], []). p([H|T], [H|R]) :- !, p(T, R).");
         Assert.Contains("neck_cut", text);

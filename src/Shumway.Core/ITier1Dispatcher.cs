@@ -37,7 +37,7 @@ public interface ITier1Dispatcher
     int AddressOfFunctor(int functorId);
 
     /// <summary>The delegate a functor had before it was evicted, for a
-    /// RESUME only (a cursor past the entry): a choice point or a
+    /// resume only (a cursor past the entry): a choice point or a
     /// continuation left in a call that began before the eviction. That
     /// call finishes on the code it began with, which is the logical update
     /// view when the eviction was a mutation (ADR-054). Never for a fresh

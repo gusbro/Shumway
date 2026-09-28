@@ -17,7 +17,7 @@ namespace Shumway.Tests.Wasm;
 /// first one: the head unifies the second and third arguments, so it
 /// matches whenever the output is unbound and only <c>var/1</c> then
 /// decides -- with a cut. A cut that does not commit, or a type test that
-/// answers differently for an ATTRIBUTED variable, both turn this walk
+/// answers differently for an attributed variable, both turn this walk
 /// into a rewalk.</para></summary>
 public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
 {
@@ -83,7 +83,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
 
     /// <summary>The same walk over #-wrapped elements with = as the
     /// closure, which is what clp(Z) passes: the second clause then
-    /// meta-calls a BUILTIN through call/3.</summary>
+    /// meta-calls a builtin through call/3.</summary>
     [DiagFact]
     public void TheHashClauseMetaCallsABuiltin()
     {
@@ -112,7 +112,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
             $"=../2 ran {univ} times over a 200-deep walk: it is rewalking");
     }
 
-    /// <summary>And the same walk over a term carrying ATTRIBUTED
+    /// <summary>And the same walk over a term carrying attributed
     /// variables, which is what a propagator goal is.</summary>
     [DiagFact]
     public void TheWalkOverAttributedVariables()

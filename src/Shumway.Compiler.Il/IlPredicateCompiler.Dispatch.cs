@@ -30,10 +30,10 @@ public sealed partial class IlPredicateCompiler
         int N = clauses.Count;
 
         // ADR-031/034 pre-scan — recognise each non-last clause's CP-free
-        // guard ONCE (the stats count per invocation, and the ADR-034 fallback
+        // guard once (the stats count per invocation, and the ADR-034 fallback
         // needs the result before the cursor space is sized): a clause whose
-        // guard embeds dynamic SNAPSHOTS re-emits its guard Call sites on the
-        // fallback path as threaded calls, each taking an EXTRA forward-resume
+        // guard embeds dynamic snapshots re-emits its guard Call sites on the
+        // fallback path as threaded calls, each taking an extra forward-resume
         // cursor beyond the one-per-site base count.
         var guardOk = new bool[N];
         var guardInfo = new CpFreeGuardInfo[N];
@@ -66,9 +66,9 @@ public sealed partial class IlPredicateCompiler
         _emitOwnerFid = predicate.FunctorId;
 
         // CSE (mirrors the region Stage-11 hoist): every clause's
-        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
-        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
-        // the cursor switch (which dominates every clause entry, fresh AND
+        // PushIlChoicePoint reloads the same self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to one local ahead of
+        // the cursor switch (which dominates every clause entry, fresh and
         // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
         // shrinks the per-invocation work. N clauses push N−1 CPs.
         SelfDelegateEmitter effectiveSelf = emitSelf;
@@ -115,7 +115,7 @@ public sealed partial class IlPredicateCompiler
             // next clause (directly, or via the restore stub), and the commit
             // materialises the CP lazily only in the rare pending-wakeups case
             // (see EmitCpFreeGuardClause). forceLeafRuleInline: a tier-G guard
-            // Call MUST take the inline path (its failure is then a
+            // Call must take the inline path (its failure is then a
             // direct branch to the guard's fail label). Recognition ran once
             // in the pre-scan above (guardOk/guardInfo).
             if (guardOk[i])
@@ -124,7 +124,7 @@ public sealed partial class IlPredicateCompiler
                 // ADR-034 — staleness test + fallback (see the region driver's
                 // twin for the full story): a mutated embedded snapshot sends
                 // the clause down a plain path — entry CP + un-inlined guard
-                // (threaded by-fid calls reach the LIVE dynamic) + jump into
+                // (threaded by-fid calls reach the live dynamic) + jump into
                 // the shared post-commit body.
                 var dynFids = ginfo.EmbeddedDynamicFids;
                 Sigil.Label? dynFb = null, dynBody = null;
@@ -144,7 +144,7 @@ public sealed partial class IlPredicateCompiler
                     (s, e, fl) =>
                     {
                         // Guard slice: e == CutPc; post-commit body: e == end.
-                        // Only the GUARD slice forces leaf inlining — the
+                        // Only the guard slice forces leaf inlining — the
                         // recognizer's snapshot-fid collection stops at the
                         // cut, so a forced inline in the body slice would
                         // bypass the ADR-034 staleness check.
@@ -299,7 +299,7 @@ public sealed partial class IlPredicateCompiler
         // the table only carries atom-headed clauses. A
         // predicate with mixed list-pattern + atom-headed clauses
         // (e.g. main/1 = `main([F|_]) :- ... ; main([]) :- ...`) ends
-        // up with the list-pattern clause UN-INDEXED — it's reachable
+        // up with the list-pattern clause un-indexed — it's reachable
         // only through the var-dispatch try/retry/trust chain, not
         // through switch_on_atom. The IndexedAtom emit only emits the
         // atom-direct dispatch, so a query with a non-empty list
@@ -475,10 +475,10 @@ public sealed partial class IlPredicateCompiler
             callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
 
         // CSE (mirrors the region Stage-11 hoist): every var-path
-        // clause's PushIlChoicePoint reloads the SAME self-delegate — a
+        // clause's PushIlChoicePoint reloads the same self-delegate — a
         // per-push holder dictionary probe on the runtime path. Hoist it to
-        // ONE local ahead of the cursor switch (which dominates every
-        // varEnter label, fresh AND backtrack re-entries); gate on ≥2 pushes
+        // one local ahead of the cursor switch (which dominates every
+        // varEnter label, fresh and backtrack re-entries); gate on ≥2 pushes
         // so the load+store only ever shrinks the per-invocation work.
         SelfDelegateEmitter effectiveSelf = emitSelf;
         if (n - 1 >= 2)
@@ -492,7 +492,7 @@ public sealed partial class IlPredicateCompiler
         // Top-level cursor dispatch. one O(1) jump table (IL
         // `switch`) over the dense cursor space — 0 → tag dispatch; 1..n-1 →
         // varEnter[cursor]; n..n+M-1 → call-site resume — replacing the
-        // linear compare chain that tested cursor==0 LAST, making the
+        // linear compare chain that tested cursor==0 last, making the
         // fresh-call path (by far the most common) pay the whole chain. An
         // out-of-range cursor falls through to fail, exactly as the old
         // chain's explicit default did.

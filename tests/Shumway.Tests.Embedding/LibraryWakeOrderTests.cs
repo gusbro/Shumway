@@ -10,8 +10,8 @@ namespace Shumway.Tests.Embedding;
 /// clause as a dynamic seed. The seed append bypassed the dynamic-store
 /// mutation funnel (InvalidateDynamicCache), so the compiled trampoline's
 /// first-argument switch never learned the second library's key: a
-/// bound-module call missed the clause and FAILED while clause/2 saw it.
-/// The wake driver calls with the module bound, so the SECOND library
+/// bound-module call missed the clause and failed while clause/2 saw it.
+/// The wake driver calls with the module bound, so the second library
 /// loaded lost its suspensions silently — freeze/2 answered false after
 /// clpfd-then-coroutining, and labeling answered false after
 /// coroutining-then-clpfd. The unbound walk still found everything, which
@@ -35,7 +35,7 @@ public sealed class LibraryWakeOrderTests
 
     private static void BothHooksDispatch(PrologEngine e)
     {
-        // Through the REAL mechanism -- an attributed variable of each
+        // Through the real mechanism -- an attributed variable of each
         // library's module gets bound and its hook has to fire. The probe
         // used to call the bare verify_attributes/4 with the module bound,
         // because the hook was one shared multifile predicate and a bound-
@@ -47,7 +47,7 @@ public sealed class LibraryWakeOrderTests
         // predicate. The class of bug the old probe pinned (one shared
         // predicate accumulating clauses across loads, and a load path
         // dropping a contributor) cannot recur when there is no shared
-        // predicate; what CAN still break is a library whose hook does not
+        // predicate; what can still break is a library whose hook does not
         // fire, and that is what these ask.
         Assert.True(e.Query("X in 1..2, X #> 1, X == 2.").Success,
             "clpfd's hook did not fire on binding its variable");

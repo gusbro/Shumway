@@ -8,10 +8,10 @@ namespace Shumway.Tests.Wasm;
 ///
 /// <para>73 exits in one clp(Z) goal, and every one a question the module
 /// can answer: is there an unbound variable anywhere in this term. An
-/// ATTRIBUTED variable is unbound too, which is the case the libraries that
+/// attributed variable is unbound too, which is the case the libraries that
 /// call ground/1 hardest make and the easy one to get wrong.</para>
 ///
-/// <para>The engine's walk carries a VISITED set, because a cyclic term with
+/// <para>The engine's walk carries a visited set, because a cyclic term with
 /// no variables is ground and a walk without one would not terminate. The
 /// module has no set and does not need one: its worklist is bounded by the
 /// stack limit, so a cycle fills it and the walk declines.</para></summary>

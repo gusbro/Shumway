@@ -5,12 +5,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Phase 33 (Logtalk bring-up): a <c>consult/1</c> issued from INSIDE a live
-/// query must make the consulted (static) predicates reachable in the SAME
+/// Phase 33 (Logtalk bring-up): a <c>consult/1</c> issued from inside a live
+/// query must make the consulted (static) predicates reachable in the same
 /// query — Logtalk's <c>'$lgt_load_prolog_code'</c> loads each entity's
 /// compiled scratch file mid-<c>'$lgt_runtime_initialization'</c> and then
 /// meta-calls the freshly loaded predicates. The predicates are compiled with
-/// the SAME static pipeline as a top-level consult (one code path) and
+/// the same static pipeline as a top-level consult (one code path) and
 /// live-linked into the running query's code space.
 /// </summary>
 public class LiveConsultLinkingTests
@@ -34,7 +34,7 @@ public class LiveConsultLinkingTests
         {
             var engine = new PrologEngine();
             string p = path.Replace("\\", "/");
-            // consult mid-query, then META-CALL p/1 (call/1 resolves the goal
+            // consult mid-query, then meta-call p/1 (call/1 resolves the goal
             // through CurrentFunctorAddresses — the runtime dispatch path
             // Logtalk uses).
             var sols = engine.QueryAll($"consult('{p}'), findall(X, call(p(X)), Xs).");

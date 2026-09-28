@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>A meta-call whose goal is a DIRECT builtin is requested from
+/// <summary>A meta-call whose goal is a direct builtin is requested from
 /// inside the module, the way a call_builtin site requests one, instead of
 /// stepping aside for the host to dispatch it. The host publishes the
 /// resolution (a negative call marker: WasmResumeTable.PublishBuiltin) on
@@ -58,7 +58,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
         cxb :- put_attr(X, m, 1), \+ cxm(X = 1).
         """;
 
-    /// <summary>The tiered engine reads the user corpus INTO module mc, whose
+    /// <summary>The tiered engine reads the user corpus into module mc, whose
     /// privates its predicates then are (ADR-056): the query names them
     /// through the module.</summary>
     private static string UnderTheModule(string goal) => $"mc:({goal.TrimEnd('.')}).";
@@ -103,7 +103,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     }
 
     /// <summary>A form that cannot decide, once the callee's arguments are
-    /// in the registers, declines to the REQUEST: X0 holds the first
+    /// in the registers, declines to the request: X0 holds the first
     /// argument by then, so the host's re-dispatch of the instruction is no
     /// longer an option. The pair here is one the module's unifier hands
     /// over, an attributed variable against a value, meta-called from a
@@ -128,7 +128,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     /// leaves N times as a builtin request and steps aside at most once,
     /// for the resolution that fills the cache -- except a goal the module
     /// open-codes as an inline form (atom/1), which never leaves at all. A
-    /// NESTED call is not direct -- call/N needs the dispatcher -- so that
+    /// nested call is not direct -- call/N needs the dispatcher -- so that
     /// loop still steps aside every time, which is what says the counters
     /// see these sites.</summary>
     [DiagFact]

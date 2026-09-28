@@ -137,7 +137,7 @@ public class ArithmeticConformance
     [Fact]
     public void Error_UnknownEvaluable_ReportsIndicator()
     {
-        // The culprit is the procedure INDICATOR Name/Arity, not the term.
+        // The culprit is the procedure indicator Name/Arity, not the term.
         AssertSucceeds("catch(_ is foo, error(type_error(evaluable, V), _), true), V == foo/0.");
         AssertSucceeds("catch(_ is foo(1,2,3), error(type_error(evaluable, V), _), true), V == foo/3.");
     }
@@ -241,7 +241,7 @@ public class ArithmeticConformance
         AssertSucceeds("catch(_ is 2^2147483646, error(resource_error(memory), _), true).");
         AssertSucceeds("catch(_ is 2^2147483647, error(resource_error(memory), _), true).");
         AssertSucceeds("catch(_ is 2^2147483648, error(resource_error(memory), _), true).");
-        // A trivial base stays exact at ANY exponent.
+        // A trivial base stays exact at any exponent.
         AssertBinding("X is 1^2147483648.", "X", Int(1));
         AssertBinding("X is (-1)^2147483649.", "X", Int(-1));
         AssertBinding("X is 0^2147483648.", "X", Int(0));

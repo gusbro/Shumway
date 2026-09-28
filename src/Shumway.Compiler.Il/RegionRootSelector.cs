@@ -6,19 +6,19 @@ namespace Shumway.Compiler.Il;
 
 /// <summary>
 /// Stage 9c (cost-based root selection / minimal-root-set) — picks which predicates to
-/// FORCE as region roots (exclude from absorption) to cut the inter-root duplication
+/// force as region roots (exclude from absorption) to cut the inter-root duplication
 /// that all-as-roots region compilation produces. See
 /// <c>docs/design/il-region-compilation.md</c> §9c.
 ///
-/// <para>The model: absorbing a member <c>M</c> into a region root bakes in M AND its
-/// whole absorbed sub-closure (the BFS continues through M), so the code DUPLICATED per
-/// absorbing region is <c>size(region(M))</c> — the size of M's OWN region closure, not
+/// <para>The model: absorbing a member <c>M</c> into a region root bakes in M and its
+/// whole absorbed sub-closure (the BFS continues through M), so the code duplicated per
+/// absorbing region is <c>size(region(M))</c> — the size of M's own region closure, not
 /// M's bytecode. If M is absorbed by <c>dup(M)</c> regions, promoting M to its own root
 /// (one copy + dup(M) cross-region trampolines) saves <c>(dup(M) − 1) × size(region(M))</c>.
 /// </para>
 ///
 /// <para>Because regions overlap/nest, promoting one predicate changes every other
-/// predicate's region size and duplication, so this is a GLOBAL optimisation solved by
+/// predicate's region size and duplication, so this is a global optimisation solved by
 /// an iterative greedy fixpoint: build all regions with the current promotion set
 /// excluded, score every still-absorbed shared predicate, promote the single best,
 /// recompute, repeat until no promotion beats <paramref name="minSaving"/>. Promoting
@@ -54,11 +54,11 @@ public static class RegionRootSelector
         var promoted = new HashSet<int>();
         var regionOf = new Dictionary<int, IReadOnlyCollection<int>>(fids.Count);
         var sizeOf = new Dictionary<int, long>(fids.Count);
-        // Incremental fixpoint. Rebuilding EVERY region per greedy
+        // Incremental fixpoint. Rebuilding every region per greedy
         // iteration was O(fids × promotions) region BFS walks; but promoting X
-        // can only change regions whose member set CONTAINED X. Proof: the
+        // can only change regions whose member set contained X. Proof: the
         // region BFS skips a non-absorbed callee via `continue` regardless of
-        // WHY it is skipped (ineligible, already excluded, or over budget) —
+        // why it is skipped (ineligible, already excluded, or over budget) —
         // skipping never consumes budget or stops the walk — so adding X to the
         // excluded set leaves every walk that never absorbed X byte-identical.
         // Track member-fid → the roots whose current region contains it, and
@@ -92,7 +92,7 @@ public static class RegionRootSelector
 
         while (true)
         {
-            // 2. Duplication: how many OTHER regions absorb each predicate as a member.
+            // 2. Duplication: how many other regions absorb each predicate as a member.
             var dup = new Dictionary<int, int>(fids.Count);
             foreach (var (root, members) in regionOf)
                 foreach (int m in members)
@@ -105,7 +105,7 @@ public static class RegionRootSelector
             foreach (var (m, d) in dup)
             {
                 if (d < 2 || promoted.Contains(m)) continue;
-                long score = (long)(d - 1) * sizeOf[m];   // size = M's OWN region closure
+                long score = (long)(d - 1) * sizeOf[m];   // size = M's own region closure
                 if (score > bestScore) { bestScore = score; best = m; }
             }
             if (best < 0) break;

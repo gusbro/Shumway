@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>The type tests on an ATTRIBUTED variable.
+/// <summary>The type tests on an attributed variable.
 ///
 /// <para>An attributed variable is still a variable, so <c>var/1</c> holds
 /// of it and <c>nonvar/1</c> does not. The tier open-codes these, which is
@@ -16,7 +16,7 @@ namespace Shumway.Tests.Wasm;
 /// <para>The tally that brought this here: on clp(Z)'s projection the tier
 /// calls <c>=../2</c> 2,178,087 times and Tier 0 does not call it at all,
 /// while every other builtin agrees to within a percent. <c>=../2</c> is
-/// reached only from the LAST clause of unwrap_with/3, whose first two are
+/// reached only from the last clause of unwrap_with/3, whose first two are
 /// a var test and a shape test.</para></summary>
 public sealed class VarOnAttributedTests(ITestOutputHelper o)
 {

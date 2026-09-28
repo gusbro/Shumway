@@ -44,7 +44,7 @@ public class ReadTermOptionsTests
     [Fact]
     public void Singletons_OnceOccurringNamedVariables()
     {
-        // X occurs twice (excluded); `_` is anonymous (excluded). `_Z` IS a
+        // X occurs twice (excluded); `_` is anonymous (excluded). `_Z` is a
         // singleton — only the bare `_` is anonymous, and the "leading
         // underscore means deliberately unused" convention belongs to the
         // compiler's warning, not to read_term/2,3.
@@ -65,7 +65,7 @@ public class ReadTermOptionsTests
     [Fact]
     public void VariableNames_PairVariableSharesTermVariable()
     {
-        // The variable in the variable_names pair is the SAME variable as in the
+        // The variable in the variable_names pair is the same variable as in the
         // read term: binding it through the pair binds the term's argument too.
         var sol = ReadWith("p(X).",
             "variable_names(['X'=V])", "V = 42, T == p(42)");

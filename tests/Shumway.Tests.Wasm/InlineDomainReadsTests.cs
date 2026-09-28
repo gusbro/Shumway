@@ -82,8 +82,8 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
     [InlineData("run_nonempty(50)")]
     [InlineData("run_empty(50)")]
     [InlineData("changed(changed)")]
-    // Where the contents comparison walks: a difference in the FIRST bound,
-    // in the LAST, and in the middle. The last one is what a walk gets wrong
+    // Where the contents comparison walks: a difference in the first bound,
+    // in the last, and in the middle. The last one is what a walk gets wrong
     // by starting at the functor and stopping one short, which reads as
     // "equal" and is invisible in the answers of the smaller cases.
     [InlineData("first_bound(differ)")]
@@ -136,7 +136,7 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
         Assert.Equal(0, exits2("$dom_empty"));
     }
 
-    /// <summary>A domain that really changed is a DIFFERENT cell, and phase
+    /// <summary>A domain that really changed is a different cell, and phase
     /// 4 compares those bound for bound rather than stepping aside. The
     /// answer is still the engine's answer; what moved is where it is
     /// computed.

@@ -28,7 +28,7 @@ public sealed class ClauseReader
     /// behaviour).</summary>
     public Func<string, OperatorTable>? ModuleLayerProvider;
 
-    /// <summary>The table the reader is CURRENTLY parsing with — the module
+    /// <summary>The table the reader is currently parsing with — the module
     /// layer after a <c>:- module/2</c> switch, else the table it was
     /// constructed with. The consult pipeline injects imported operators
     /// here when a mid-file <c>use_module</c> brings some in.</summary>
@@ -56,7 +56,7 @@ public sealed class ClauseReader
         _operators = operators;
         _flags = flags;
         _lexer = lexer;
-        // The flag affects LEXING ($...$ atoms, #line markers),
+        // The flag affects lexing ($...$ atoms, #line markers),
         // so the lexer adopts the caller's setting up front; the
         // set_prolog_flag directive (below) can also flip it mid-file.
         lexer.ArityCompat = flags.ArityCompat;
@@ -84,7 +84,7 @@ public sealed class ClauseReader
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
 
     // ------------------------------------------------------------------
-    // `:- define(TermA = TermB).` (ALWAYS active, not gated
+    // `:- define(TermA = TermB).` (always active, not gated
     // by arity_compat). After the directive, every subterm of a
     // subsequent clause that is value-equal to TermA is replaced by
     // TermB. The directive is consumed here — it never reaches the
@@ -100,7 +100,7 @@ public sealed class ClauseReader
     /// directive was consumed here (the caller drops it). Semantic
     /// choices:
     /// <list type="bullet">
-    /// <item>Always active — NOT gated by arity_compat. The directive
+    /// <item>Always active — not gated by arity_compat. The directive
     /// has no clash with any ISO directive name.</item>
     /// <item>A redefinition of the same LHS overwrites the earlier
     /// mapping (last definition wins from that point in the source
@@ -146,20 +146,20 @@ public sealed class ClauseReader
     /// <summary>Applies every active define to
     /// <paramref name="clause"/>'s term. Semantic choices:
     /// <list type="bullet">
-    /// <item>SINGLE PASS: every subterm is checked once, top-down,
-    /// against ALL active defines together. A substituted result is NOT
+    /// <item>Single pass: every subterm is checked once, top-down,
+    /// against all active defines together. A substituted result is not
     /// re-scanned — <c>define(a = f(a))</c> cannot loop, and with both
     /// <c>define(a = b)</c> and <c>define(b = c)</c> active, <c>a</c>
     /// rewrites to <c>b</c>, not <c>c</c> (no re-expansion).</item>
     /// <item>A matched subterm's interior is not walked — the RHS is
     /// inserted verbatim (and the immutable RHS node is shared by every
     /// substitution site).</item>
-    /// <item>Functor NAMES are not renamed: <c>define(f = g)</c>
-    /// rewrites the ATOM <c>f</c> wherever it occurs as a (sub)term, but
+    /// <item>Functor names are not renamed: <c>define(f = g)</c>
+    /// rewrites the atom <c>f</c> wherever it occurs as a (sub)term, but
     /// <c>f(1)</c> keeps its functor — a compound's name is not a
     /// subterm position.</item>
     /// <item>Defines do not apply inside another define directive's own
-    /// arguments (callers consume defines BEFORE calling this).</item>
+    /// arguments (callers consume defines before calling this).</item>
     /// </list></summary>
     private Clause ApplyDefines(Clause clause)
     {
@@ -218,7 +218,7 @@ public sealed class ClauseReader
             Clause clause = Clause.From(term);
 
             // A `:- define(A = B).` directive is consumed
-            // here, BEFORE substitution — active defines are not applied
+            // here, before substitution — active defines are not applied
             // inside another define directive's own arguments.
             if (clause.Kind == ClauseKind.Directive
                 && TryHandleDefineDirective(clause))
@@ -243,7 +243,7 @@ public sealed class ClauseReader
 
     /// <summary>arity_compat only — Arity native-code
     /// sections. <c>:- c.</c> switches the source to embedded C that
-    /// must be skipped RAW (it isn't parseable as Prolog) until a line
+    /// must be skipped raw (it isn't parseable as Prolog) until a line
     /// starting with the directive <c>:- prolog.</c> (or EOF, which
     /// ends the module normally); <c>:- prolog.</c> met in normal
     /// Prolog mode is a silent no-op. Returns true when the directive
@@ -370,7 +370,7 @@ public sealed class ClauseReader
                 when (ex.Kind == "resource_error")
             {
                 // A term nested deeper than the reader can descend
-                // (RecursionGuard). Nothing is wrong with the TEXT, so this
+                // (RecursionGuard). Nothing is wrong with the text, so this
                 // is not a syntax error — but it is still one clause the
                 // reader steps over to get on with the file.
                 errorEntry = ClauseOrError.ResourceLimit(ex.Detail, default);
@@ -426,7 +426,7 @@ public sealed class ClauseReader
 
     /// <summary>SICStus/Scryer allow <c>op(P, T, N)</c> entries in a module's export
     /// list (<c>:- module(atts, [op(1199, fx, attribute), ...])</c>): the operator is
-    /// active for the rest of the module's own source AND becomes importable. We
+    /// active for the rest of the module's own source and becomes importable. We
     /// activate each here, in place, so the module body parses with them — the same
     /// point a standalone <c>:- op</c> directive would take effect.</summary>
     private void ApplyModuleListOps(Term exportList, SourcePosition pos)
@@ -464,9 +464,9 @@ public sealed class ClauseReader
 
     private void ApplySetPrologFlagDirective(Term[] args, SourcePosition pos)
     {
-        // The reader's ONLY business here is the eager parse-time effect of
+        // The reader's only business here is the eager parse-time effect of
         // the two flags that gate the lexer/reader itself. Anything it
-        // cannot apply -- a variable argument, a wrong value -- is NOT a
+        // cannot apply -- a variable argument, a wrong value -- is not a
         // syntax error: the directive is a runtime goal that will raise its
         // own ISO error (instantiation_error, domain_error) when it
         // executes, and in a quad transcript the very point of the line may
@@ -487,7 +487,7 @@ public sealed class ClauseReader
         }
         else if (flagName.Name == "arity_compat")
         {
-            // Must take effect during LEXING (it gates the
+            // Must take effect during lexing (it gates the
             // $...$ atom syntax and #line markers), so flip the live
             // lexer too, like char_conversion does via its shared map.
             if (valueName.Name is not ("true" or "false"))
@@ -515,7 +515,7 @@ public sealed class ClauseReader
         OperatorType type = ParseOperatorType(typeTerm.Name, pos);
 
         // ADR-046 — `op(P, T, user:Name)` (SWI's escape) defines in the
-        // ROOT (user/global) table regardless of the module being read;
+        // root (user/global) table regardless of the module being read;
         // `op(P, T, m:Name)` targets module m's layer. An unqualified name
         // defines in the current layer.
         Term nameSpec = args[2];

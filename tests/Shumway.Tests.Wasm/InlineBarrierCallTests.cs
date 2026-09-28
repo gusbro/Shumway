@@ -4,12 +4,12 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>'$call'/2 -- the meta-call that CARRIES its cut barrier -- and the
+/// <summary>'$call'/2 -- the meta-call that carries its cut barrier -- and the
 /// cut it most often carries.
 ///
 /// <para>The body conversion of SS7.6.2 takes a conjunction apart element by
 /// element: `( a, ! ; b )` reaches the prelude's helper as
-/// `'$call_conj'(a, !, K)`, so the `!` arrives ALONE, with K. A bare cut with
+/// `'$call_conj'(a, !, K)`, so the `!` arrives alone, with K. A bare cut with
 /// no barrier would be meaningless -- it would prune an empty block -- and the
 /// carried barrier is exactly what gives it meaning: it cuts as far as the
 /// call that established it, and no further.</para>
@@ -18,7 +18,7 @@ namespace Shumway.Tests.Wasm;
 /// do it -- it already has a cut -- and the only thing it cannot do is fire a
 /// setup_call_cleanup handler, so a live one makes it decline.</para>
 ///
-/// <para>Every test here counts SOLUTIONS on both sides of the cut. A cut that
+/// <para>Every test here counts solutions on both sides of the cut. A cut that
 /// prunes too much or too little still answers "yes" to the first question,
 /// which is why asking only that would prove nothing.</para></summary>
 public sealed class InlineBarrierCallTests(ITestOutputHelper o)
@@ -36,7 +36,7 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
         """;
 
     [Theory]
-    // The cut commits to the first a/1 and drops both the rest of a/1 AND
+    // The cut commits to the first a/1 and drops both the rest of a/1 and
     // the disjunction's second branch.
     [InlineData("conj(X)", "[1]")]
     // The control: without the cut, all four.
@@ -44,7 +44,7 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
     // A cut nested one level deeper still reaches only its own call.
     [InlineData("deep(X)", "[1,2]")]
     [InlineData("arrow(X)", "[1]")]
-    // And the cut inside conj/1 must NOT prune the caller's choice points:
+    // And the cut inside conj/1 must not prune the caller's choice points:
     // outer/2 still has two solutions for X.
     [InlineData("outer(X, _)", "[1,2]")]
     public void TheCutReachesExactlyAsFarAsItsCall(string goal, string _)
@@ -60,7 +60,7 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
         Assert.Equal(want, got);
     }
 
-    /// <summary>A live setup_call_cleanup handler makes a cut FIRE it. The
+    /// <summary>A live setup_call_cleanup handler makes a cut fire it. The
     /// module cannot run a cleanup -- that is meta-calling a goal from inside
     /// the cut -- so it declines, and the cleanup must still run exactly
     /// once.</summary>

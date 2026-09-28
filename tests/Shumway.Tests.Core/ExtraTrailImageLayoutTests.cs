@@ -29,7 +29,7 @@ public sealed class ExtraTrailImageLayoutTests
             (int)Marshal.OffsetOf<ExtraTrailEntry>(nameof(ExtraTrailEntry.BindingTrailMarker)));
     }
 
-    /// <summary>The entry is blittable, which is what lets a world PIN the
+    /// <summary>The entry is blittable, which is what lets a world pin the
     /// array instead of marshalling it. A managed reference anywhere inside
     /// would make the pin illegal and the image a copy of something else.
     /// </summary>

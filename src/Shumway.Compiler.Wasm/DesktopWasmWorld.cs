@@ -16,13 +16,13 @@ public abstract class WasmRunExports
 /// against a private linear memory (the emitter library's wasm-to-IL
 /// engine); a chain copies the engine areas into that image once, runs any
 /// number of in-image hops, and copies back at the end. Everything in a cell
-/// is an INDEX into its area, never an address, which is what makes the copy
-/// model sound -- and what lets the SAME emitted code run under both
+/// is an index into its area, never an address, which is what makes the copy
+/// model sound -- and what lets the same emitted code run under both
 /// staging models. Engine-thread only.
 ///
 /// <para><b>Why this copies and the browser does not, structurally.</b> In
 /// the browser the .NET runtime is itself compiled to wasm, so the engine's
-/// Cell[] arrays already live INSIDE the linear memory the module imports:
+/// Cell[] arrays already live inside the linear memory the module imports:
 /// pinning one and handing over its address gives the module the engine's
 /// real array, and there is nothing to copy because there is only one
 /// memory. Here the module runs against a private UnmanagedMemory block
@@ -35,8 +35,8 @@ public abstract class WasmRunExports
 /// <para>Closing the gap would mean allocating the engine's areas in
 /// unmanaged memory inside that block -- surgery on the engine's core (the
 /// interpreter and the ADR-016 heap GC both walk those arrays), for the
-/// benefit of a test harness. So this world is for CORRECTNESS and for
-/// COUNTS, which are identical in both; a TIME taken here measures the
+/// benefit of a test harness. So this world is for correctness and for
+/// counts, which are identical in both; a time taken here measures the
 /// copying (see CONTRIBUTING.md, "Measuring the WebAssembly tier").</para></summary>
 public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 {
@@ -108,7 +108,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         });
         var m = Modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
                                 registerDemand, callEdges, out var displaced);
-        // The slot IS the module id: the module index array the hop reads
+        // The slot is the module id: the module index array the hop reads
         // maps i -> i here (the browser's addFunction picks its own).
         while (Functions.Length <= m.Id) Functions.Grow(1);
         Functions[m.Id] = TailEntry(instance.Exports);
@@ -122,7 +122,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
     /// the JIT turns that into a tail call only opportunistically (not
     /// under MinOpts or a debugger), and a hop through a non-tail wrapper
     /// keeps one frame per hop. The internal function is the library's
-    /// "👻 &lt;index&gt;" static with the exports object as its LAST
+    /// "👻 &lt;index&gt;" static with the exports object as its last
     /// parameter; run is function 0 (no imported functions). A library that
     /// no longer names it that way gets the wrapper, and the deep
     /// backtracking test says whether that still holds up.</summary>
@@ -173,7 +173,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         => System.Runtime.InteropServices.Marshal.WriteInt64(
             _memory.Start, MailboxAt + slot * 8, value);
 
-    /// <summary>Diagnostic: read a heap cell from the world's IMAGE (what
+    /// <summary>Diagnostic: read a heap cell from the world's image (what
     /// the module last saw or wrote), from outside any chain.</summary>
     public long DebugReadHeapCell(int index)
     {
@@ -215,14 +215,14 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         /// <summary>Copies the engine's live heap, stack, registers and
         /// trail into linear memory, once per chain.
         ///
-        /// <para>This is why a TIME taken on this world is not a measurement
+        /// <para>This is why a time taken on this world is not a measurement
         /// of the tier: the browser pins the engine's arrays and copies
         /// nothing, so a crossing costs O(1) there and O(live data) here.
         /// On clpr, whose heap grows as it runs, that made the per-crossing
         /// cost grow with the problem (35, 52, 91 us as the work doubled
         /// twice) and the tier look 5x slower than Tier-0 — where the same
         /// program in a browser is 1.1-2.2x faster. Use this world for
-        /// correctness and for COUNTS, which are identical in both; measure
+        /// correctness and for counts, which are identical in both; measure
         /// time in a headless browser (CONTRIBUTING.md).</para></summary>
         private unsafe void StageFromEngine()
         {
@@ -260,7 +260,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
-            // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
+            // Rounded up to 8 for speed, not correctness: a wasm i64.load
             // may be unaligned (the align immediate is a hint), so no test
             // can fail on dropping this -- do not go looking for one.
             _attrAt = (_moduleIndexAt + moduleCount * 4 + 7) & ~7;
@@ -270,7 +270,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
             _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
             _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
-            // Room ABOVE the top: the module appends entries (an attribute
+            // Room above the top: the module appends entries (an attribute
             // write), and the orphan ring starts right after this area. Staged
             // at exactly the top, the first append overwrote the ring and the
             // ring's writes came back as entries of no known type.
@@ -286,7 +286,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             // The global-variable image, per staging: the store is a handful
             // of keys, and a b_setval inside a builtin has to be visible on
-            // re-entry. An EMPTY image is published too (base set, count 0):
+            // re-entry. An empty image is published too (base set, count 0):
             // it says every key is unset, which the module answers itself.
             int globalPairs = _engine.Host is Shumway.Builtins.IGlobalVarHost gvHost
                 ? gvHost.GlobalVars.WriteLiveCells(_globalRows, _engine.InstanceId) : -1;
@@ -375,7 +375,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 Buffer.MemoryCopy(p, mem + _attrAt, attrRows.Length * 8L,
                                   attrRows.Length * 8L);
             // Copied once per staging, and it is 520 bytes: the contents
-            // never change, but the ADDRESS moves when the areas before it
+            // never change, but the address moves when the areas before it
             // grow, so there is nothing to compare against that is cheaper
             // than the copy.
             fixed (long* p = FdDomFunctorTable.Cells)
@@ -384,9 +384,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // Copied whole, for the attribute table's reason: records are
             // truncated and relocated under it, so there is no "synced up to
             // here" mark to resume from. Only the live prefix is copied.
-            // Append-only, but the ADDRESS moves when the areas before it
+            // Append-only, but the address moves when the areas before it
             // grow, so there is nothing cheaper to compare than the copy.
-            // Append-only and never re-keyed, but the table is REPLACED
+            // Append-only and never re-keyed, but the table is replaced
             // when it grows, so the copy follows the array it was handed.
             fixed (long* p = funRev)
                 Buffer.MemoryCopy(p, mem + _funRevAt, funRev.Length * 8L,
@@ -401,8 +401,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = attrLogHomes)
                     Buffer.MemoryCopy(p, mem + _attrLogAt, attrLogCount * 4L,
                                       attrLogCount * 4L);
-            // The one area the module REWRITES rather than only appending to:
-            // a cut compacts it in place. Copied in whole and copied BACK on
+            // The one area the module rewrites rather than only appending to:
+            // a cut compacts it in place. Copied in whole and copied back on
             // the way out, and how much to copy back is remembered here
             // because the module lowers the top.
             _extraTrailStaged = extraTop;
@@ -478,7 +478,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             Cell[] regs = _engine.WasmRegistersView;
             int[] trail = _engine.WasmBindingTrailView;
             // Live data ends at the synced tops: a binding always lands below
-            // the area's top at bind time, and anything above the FINAL top is
+            // the area's top at bind time, and anything above the final top is
             // dead (unwound or deallocated).
             int h2 = (int)_mailbox[WasmAbi.HeapTop];
             fixed (Cell* p = heap)
@@ -491,14 +491,14 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int tr2 = (int)_mailbox[WasmAbi.TrailTop];
             fixed (int* p = trail)
                 Buffer.MemoryCopy(mem + _trailAt, p, trail.Length * 4L, tr2 * 4L);
-            // Back, because a cut may have COMPACTED it: entries move down
+            // Back, because a cut may have compacted it: entries move down
             // over the ones it dropped, so the live prefix changed shape and
             // not just length. Copy what was staged, since the compaction
             // only ever lowers the top and the bytes above it are dead
             // either way.
             // What the compaction parked for the host to clear. Only the
             // prefix the module actually wrote, which the mailbox counts.
-            // The module writes these, so they come BACK like the extra
+            // The module writes these, so they come back like the extra
             // trail does and unlike every read-only image here.
             int attrWrote = (int)_mailbox[WasmAbi.AttrWriteTop];
             int[] attrWrites = _engine.WasmAttrWriteRingView;
@@ -520,9 +520,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = orphanRing)
                     Buffer.MemoryCopy(mem + _orphanAt, p, orphanRing.Length * 4L,
                                       System.Math.Min(orphans, orphanRing.Length) * 4L);
-            // The count is the FINAL top and not what was staged. A cut
+            // The count is the final top and not what was staged. A cut
             // compacts entries down over the ones it drops, which stays
-            // inside the staged length; but an attribute write APPENDS one,
+            // inside the staged length; but an attribute write appends one,
             // and that entry sits above the mark. Copying the staged length
             // alone left it behind as a zero-typed entry an unwind could not
             // read.

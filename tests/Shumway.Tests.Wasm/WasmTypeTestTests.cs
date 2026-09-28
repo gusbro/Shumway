@@ -13,22 +13,22 @@ namespace Shumway.Tests.Wasm;
 /// 39% of clpfd's (integer/1 36%) -- the cheapest entries in that ranking
 /// and the largest share of it.</para>
 ///
-/// <para>The trap these tests exist for is the tag SETS. A variable is Ref
+/// <para>The trap these tests exist for is the tag sets. A variable is Ref
 /// or ATTVAR: an attributed variable has attributes and no value, so var/1
 /// accepts it and nonvar/1 rejects it -- and the libraries that lean on
 /// var/1 are precisely the ones that create attributed variables, so
 /// getting this wrong would answer wrongly exactly where it matters.
 /// integer/1 takes BigInt beside Int, number/1 takes Rational too, and
 /// compound/1 takes a packed string (ADR-047: a PSTR is a list).</para></summary>
-/// <summary>The corpus, built ONCE for the whole class.
+/// <summary>The corpus, built once for the whole class.
 ///
-/// <para>Every case here asks a different goal of the SAME program, and
+/// <para>Every case here asks a different goal of the same program, and
 /// building it is what the time went to: two engines, each loading clpfd,
 /// and the tiered one compiling every reached predicate to its own wasm
 /// module and then to IL. Measured, 38 cases cost 200 s that way and the
 /// work they share is all of it.</para>
 ///
-/// <para>Safe to share because these cases only ASK: no case asserts,
+/// <para>Safe to share because these cases only ask: no case asserts,
 /// retracts or consults, and each Query gets its own activation. A case
 /// that mutated the database would make its neighbours order-dependent,
 /// so one that needs to must build its own engine -- as the counter below
@@ -116,7 +116,7 @@ public sealed class WasmTypeTestTests(ITestOutputHelper o, WasmTypeTestCorpus sh
         "isvar(foo, R), R == no.",
         "isnonvar(_, R), R == no.",
         "isnonvar(foo, R), R == yes.",
-        // AN ATTRIBUTED VARIABLE IS A VARIABLE
+        // An attributed variable is A variable
         "X in 1..3, isvar(X, R), R == yes.",
         "X in 1..3, isnonvar(X, R), R == no.",
         "X in 1..3, isatomic(X, R), R == no.",

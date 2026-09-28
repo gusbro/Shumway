@@ -73,7 +73,7 @@ public class Adr035VariablesTests
 
         var stop = Walk(engine, "p(hello, 42).")[0];
 
-        // The clause's entry stop sits AFTER head unification, so the head arguments are
+        // The clause's entry stop sits after head unification, so the head arguments are
         // matched: a debugger stopped at a clause shows what it was called with.
         Assert.Equal("hello", Value(stop, "X"));
         Assert.Equal("42", Value(stop, "Y"));
@@ -156,7 +156,7 @@ public class Adr035VariablesTests
             _log.WriteLine($"{f.Name}/{f.Arity}: "
                 + string.Join(", ", f.Variables.Select(v => $"{v.Name} = {v.Value}")));
 
-        // Each frame names its variables the way ITS clause did — the same value carries
+        // Each frame names its variables the way its clause did — the same value carries
         // three different names down the stack, which is exactly what the user needs to
         // see and what a raw heap dump could never tell them.
         Assert.Equal("one", frames.Single(f => f.Name == "leaf").Variables

@@ -11,8 +11,8 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-035 D5+ — binding free frame variables from the Immediate window.
 ///
 /// <para>The user's design: the goal runs exactly as always (a nested evaluation over the
-/// live engine, frame variables substituted), and AFTER a solution its bindings for the
-/// frame's free variables are unified INTO the suspended frame — real cells, real
+/// live engine, frame variables substituted), and after a solution its bindings for the
+/// frame's free variables are unified into the suspended frame — real cells, real
 /// trailing, transactionally. If the commit instantiated anything, the parked evaluation's
 /// choice points die: <c>;</c> may not walk to another solution the frame is no longer
 /// free to take.</para></summary>
@@ -127,7 +127,7 @@ public class Adr035BindIntoFrameTests
     [Fact]
     public void WithoutACommit_TheSolutionWalkStaysAvailable()
     {
-        // A goal that mentions NO frame variable commits nothing; ';' keeps walking as it
+        // A goal that mentions no frame variable commits nothing; ';' keeps walking as it
         // always has.
         var engine = DebugEngine(Program);
         Assert.True(engine.AddBreakpoint("<string>", 3) > 0);
@@ -160,7 +160,7 @@ public class Adr035BindIntoFrameTests
     [Fact]
     public void ASharedStructure_BindsBothVariables()
     {
-        // X = f(Y): the committed structure EMBEDS the frame's own Y — later binding Y
+        // X = f(Y): the committed structure embeds the frame's own Y — later binding Y
         // through the program shows inside X. Here: commit X = f(Y), then commit Y = 9;
         // the program's result must be result(f(9), 9).
         var engine = DebugEngine(Program);
@@ -178,9 +178,9 @@ public class Adr035BindIntoFrameTests
     [Fact]
     public void AConflictingGoal_FailsAndLeavesTheFrameUntouched()
     {
-        // First alias X and Y; then try binding them to DIFFERENT values. The committed
-        // aliasing means the second evaluation substitutes BOTH names by the SAME
-        // variable — so the conflicting goal simply FAILS in the eval, before any commit
+        // First alias X and Y; then try binding them to different values. The committed
+        // aliasing means the second evaluation substitutes both names by the same
+        // variable — so the conflicting goal simply fails in the eval, before any commit
         // is attempted: the frame carries its knowledge into every later evaluation.
         var engine = DebugEngine(Program);
         Assert.True(engine.AddBreakpoint("<string>", 3) > 0);
@@ -191,7 +191,7 @@ public class Adr035BindIntoFrameTests
         Assert.Contains("committed to the frame", answers[0]);
         Assert.Equal("false", answers[1]);
         Assert.Single(sols);
-        // X = Y survived; 1/2 did not: both stay the SAME free variable in the result.
+        // X = Y survived; 1/2 did not: both stay the same free variable in the result.
         string outText = sols[0]["Out"]!.ToString()!.Replace(" ", "");
         var m = System.Text.RegularExpressions.Regex.Match(
             outText, @"^result\((_\w+),(_\w+)\)$");
@@ -202,8 +202,8 @@ public class Adr035BindIntoFrameTests
     [Fact]
     public void ABoundFrameVariable_IsSubstitutedNotRebound()
     {
-        // Out is FREE at line 3 but X gets bound by the program at line 4 — stop at 4:
-        // X is bound, so `X = something_else` substitutes X's VALUE into the goal and
+        // Out is free at line 3 but X gets bound by the program at line 4 — stop at 4:
+        // X is bound, so `X = something_else` substitutes X's value into the goal and
         // simply fails in the eval; the frame does not change.
         //  2: run2(Out) :-
         //  3:     mk(X),
@@ -229,7 +229,7 @@ public class Adr035BindIntoFrameTests
     {
         // The trailing semantics: the commit behaves as if the program had unified at the
         // stop point. When choice(X) is retried (first solution rejected by test/1), the
-        // backtrack unwinds PAST the stop point — the committed binding of W must vanish
+        // backtrack unwinds past the stop point — the committed binding of W must vanish
         // with it, exactly like a binding the program had made there.
         //  2: run3(Out) :-
         //  3:     choice(X),

@@ -47,7 +47,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "predicate_property/2 requires a PrologEngine host.");
         Term head = MaterializeRegister(engine, 0);
-        // A Module:Head query answers from M's VIEWPOINT (the SICStus
+        // A Module:Head query answers from M's viewpoint (the SICStus
         // doctrine: current_predicate(M:PI) is strictly M's definitions,
         // predicate_property is where visibility — imports included — shows).
         // Innermost module wins for a nested qualification. Logtalk's
@@ -89,7 +89,7 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(
                 IsoError.DomainError("predicate_property", propTerm));
 
-        // M's viewpoint: its own definition; else the import's SOURCE
+        // M's viewpoint: its own definition; else the import's source
         // predicate plus imported_from(Source); else the bare-global /
         // builtin the module sees like everyone else.
         string? importedFrom = null;
@@ -137,8 +137,8 @@ public static partial class MetaBuiltins
         // The declared meta-template, when one was recorded (`:- meta_predicate`).
         if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
             props.Add(new CompoundTerm("meta_predicate", new[] { template }));
-        // A BOUND Property narrows the list, so the cursor enumerates
-        // SOLUTIONS rather than every property this predicate has —
+        // A bound Property narrows the list, so the cursor enumerates
+        // solutions rather than every property this predicate has —
         // `predicate_property(p(_), dynamic)` is then deterministic.
         Term wanted = MaterializeRegister(engine, 1);
         if (wanted is not VarTerm)
@@ -193,7 +193,7 @@ public static partial class MetaBuiltins
             new Term[] { inner, StampedContext(re) ?? new VarTerm("_") });
 
     /// <summary>Public because the top level's error renderer builds its
-    /// message from THIS term — the same one catch/3 unifies with — so the
+    /// message from this term — the same one catch/3 unifies with — so the
     /// message can never again show a shape the catcher would not match
     /// (issue #65: <c>existence_error(inex/0)</c> printed one-arg while the
     /// ball carried <c>existence_error(procedure, inex/0)</c>).</summary>
@@ -255,10 +255,10 @@ public static partial class MetaBuiltins
     /// <see cref="PrologRuntimeException.Detail"/> string
     /// <c>"Name/Arity"</c> (as written by
     /// <see cref="PrologRuntimeException.UndefinedProcedure"/>). ISO requires
-    /// the culprit to be the COMPOUND <c>'/'(Name, Arity)</c>, not an atom whose
+    /// the culprit to be the compound <c>'/'(Name, Arity)</c>, not an atom whose
     /// name happens to be <c>"Name/Arity"</c> — otherwise a catcher pattern
     /// <c>error(existence_error(procedure, foo/3), _)</c> can never unify with
-    /// the ball. Splits on the LAST <c>/</c> (so a quoted name containing a
+    /// the ball. Splits on the last <c>/</c> (so a quoted name containing a
     /// slash, e.g. <c>'a/b'/2</c>, still resolves correctly) and falls back to
     /// the bare atom if the suffix isn't a non-negative integer.</summary>
     /// <summary>An existence_error's Detail is either a <c>Name/Arity</c>
@@ -322,7 +322,7 @@ public static partial class MetaBuiltins
     }
 
     // catch/3 is now a prelude predicate built on the catch-frame
-    // plumbing ($catch_begin/$catch_end), running the guarded goal in the LIVE
+    // plumbing ($catch_begin/$catch_end), running the guarded goal in the live
     // engine. The old isolated-sub-engine builtin (which ran Goal in a peer
     // sub-engine and bound back only the first solution) was removed — it hid
     // the guarded goal's assert/retract and other side effects from the caller,
@@ -359,7 +359,7 @@ public static partial class MetaBuiltins
 
     // ============================================================================
     // call/N — registered so the compiler emits call_builtin; dispatched
-    // IN THE LIVE ENGINE (never these bodies)
+    // in the live engine (never these bodies)
     // ============================================================================
 
     public static bool Call1(Activation engine) => CallN(engine, totalArity: 1);
@@ -385,14 +385,14 @@ public static partial class MetaBuiltins
     /// goal in the live engine and this body must never be reached.</summary>
     private static bool CallN(Activation engine, int totalArity)
     {
-        // DEAD PATH — must never run. call/N is dispatched IN THE LIVE ENGINE:
+        // Dead path — must never run. call/N is dispatched in the live engine:
         // the call_builtin opcode handler sees the builtin's IsCall flag and
         // routes to BytecodeInterpreter.DispatchCall (Tier-0) — and the Tier-1
         // IL emit routes through IlMetaCallHelper.Dispatch — both of which run
         // the goal directly in this engine (so assert/retract from the called
         // goal are visible to the caller). This
         // builtin body (the historical isolated-sub-engine fallback) is never
-        // reached. The sub-engine deep-copies the dynamic store, so if it DID
+        // reached. The sub-engine deep-copies the dynamic store, so if it did
         // run, side effects from the called goal would silently not bleed back —
         // a correctness bug. Fail loudly instead of producing wrong answers.
         _ = totalArity;
@@ -437,14 +437,14 @@ public static partial class MetaBuiltins
     /// Cleanup goal.</summary>
     public static bool SccRegister(Activation engine)
     {
-        // arg 1 is the LIVE Cleanup term — capture its dereffed cell so an
+        // arg 1 is the live Cleanup term — capture its dereffed cell so an
         // async fire (cut / unwind / teardown) runs it with bindings intact.
         Cell live = engine.GetRegister(1);
         if (live.Tag == Tag.Ref)
         {
             int idx = engine.Deref(live.AsHeapIndex);
             Cell at = engine.GetHeap(idx);
-            // Bound: keep the VALUE cell; unbound: keep a REF to its home
+            // Bound: keep the value cell; unbound: keep a REF to its home
             // (bindings made later flow through when the async fire runs).
             live = at.Tag == Tag.Ref ? Cell.Ref(idx) : at;
         }

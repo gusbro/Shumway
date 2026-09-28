@@ -210,7 +210,7 @@ public sealed class IlPromotionStore
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
 
-    // ADR-023 priming: a dynamic/visible predicate declared WITH source clauses is
+    // ADR-023 priming: a dynamic/visible predicate declared with source clauses is
     // read-hot and mutation-cold — promote on its first call (still fully evictable).
     private readonly HashSet<int> _primeImmediately = new();
 
@@ -218,7 +218,7 @@ public sealed class IlPromotionStore
     public void MarkPrime(int functorId) => _primeImmediately.Add(functorId);
 
     /// <summary>Predicates whose bytecode exceeds this stay on Tier 0 when compiled
-    /// SYNCHRONOUSLY — sync callers opted into bounded latency. See
+    /// synchronously — sync callers opted into bounded latency. See
     /// <see cref="EffectiveMaxBytecodeBytes"/>.</summary>
     public int MaxIlPromotionBytecodeBytes { get; set; } = 16384;
 
@@ -322,7 +322,7 @@ public sealed class IlPromotionStore
     public int PgoSampleThreshold { get; set; } = 32;
 
     /// <summary>jit_compile/1's implementation: sets the promotion threshold
-    /// of THE tier this build has, and reports whether there was one to set.
+    /// of the tier this build has, and reports whether there was one to set.
     ///
     /// <para>A build has exactly one Tier-1. When a wasm store is attached it
     /// is that one (WebShumway, and the desktop differential tests, where
@@ -330,16 +330,16 @@ public sealed class IlPromotionStore
     /// needs runtime codegen and so does not exist under Native AOT.</para>
     ///
     /// <para>0 stops further promotion at once -- safe, since no live
-    /// delegate is touched -- and QUEUES the return of what already promoted.
+    /// delegate is touched -- and queues the return of what already promoted.
     /// Dropping those here would strand a choice point created inside Tier-1
     /// code with nowhere to redo, so the eviction waits for the next query
-    /// setup: "off" governs the goals AFTER it.</para></summary>
+    /// setup: "off" governs the goals after it.</para></summary>
     public bool SetJitThreshold(int threshold)
     {
         // A host whose tier needs more than a threshold supplies its own
         // policy: WebShumway attaches its world lazily and, for "all",
         // compiles the whole program up front rather than billing the user's
-        // first real query for it. Kept on the STORE and not on the
+        // first real query for it. Kept on the store and not on the
         // activation, which query setup rebinds.
         if (JitPolicy is { } policy) return policy(threshold);
         if (_wasm is not null)
@@ -386,7 +386,7 @@ public sealed class IlPromotionStore
 
     /// <summary>The wasm tier's promotion state, when a world wired one
     /// (browser boot; desktop differential tests). Its delegates install into
-    /// THIS store's table, so dispatch and eviction are shared.</summary>
+    /// this store's table, so dispatch and eviction are shared.</summary>
     public WasmPromotionStore? Wasm
     {
         get => _wasm;
@@ -422,7 +422,7 @@ public sealed class IlPromotionStore
         if (Threshold <= 0 || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
-        // Mid-consult, no NEW promotions: the program is still growing — a
+        // Mid-consult, no new promotions: the program is still growing — a
         // predicate promoted now (the expansion hooks are the hot case: one
         // term_expansion call per consulted clause) would snapshot a clause set
         // a later file in the same load extends. Already-promoted delegates
@@ -433,7 +433,7 @@ public sealed class IlPromotionStore
         if (_pendingCompiles.Contains(functorId)) return null;   // compile in flight
         if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
 
-        // ADR-023 — a dynamic predicate promotes as a SNAPSHOT of its visible
+        // ADR-023 — a dynamic predicate promotes as a snapshot of its visible
         // clauses; mutation evicts it. Churn-pinned predicates stay Tier-0 until
         // the re-arm streak completes.
         bool isDynamic = IsExcludedByLayout(predicate);
@@ -462,7 +462,7 @@ public sealed class IlPromotionStore
             return null;
         }
 
-        // CanCompile consults the float pool, so establish it on THIS thread too
+        // CanCompile consults the float pool, so establish it on this thread too
         // (the worker-thread emit sets its own).
         var prevFloatPool = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
         bool canCompile;
@@ -481,7 +481,7 @@ public sealed class IlPromotionStore
 
         if (BackgroundCompilation)
         {
-            // The engine-state-reading providers are invoked HERE, on the engine
+            // The engine-state-reading providers are invoked here, on the engine
             // thread, and their values captured — the worker must not touch engine
             // state (List<T> reads racing an Add are unsafe).
             var floatPool = FloatPoolProvider?.Invoke(functorId);
@@ -526,11 +526,11 @@ public sealed class IlPromotionStore
 
     /// <summary>ADR-023 — wraps a dynamic-snapshot delegate so it self-guards against
     /// staleness: eviction clears every table, but a reference already hoisted into a
-    /// running frame survives, and a pre-mutation snapshot answering a FRESH call
+    /// running frame survives, and a pre-mutation snapshot answering a fresh call
     /// violates the logical update view. On a fresh entry (cursor 0) with the
     /// mutation stamp moved, the guard self-evicts and redirects to the live Tier-0
     /// chain (SetPc + IlTailCallPending — the tail contract every dispatch site
-    /// honours). A RESUME (cursor &gt; 0) deliberately keeps the old snapshot: a call
+    /// honours). A resume (cursor &gt; 0) deliberately keeps the old snapshot: a call
     /// that began before the mutation must enumerate its call-time view.</summary>
     private PredicateDelegate GuardDynamicSnapshot(int fid, PredicateDelegate inner)
     {
@@ -584,7 +584,7 @@ public sealed class IlPromotionStore
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // not in this query's program — retry later
             // The profile was recorded on the shape promotion compiled — for a
-            // DYNAMIC predicate that is the ADR-023 static snapshot, but the
+            // dynamic predicate that is the ADR-023 static snapshot, but the
             // program's entry for its fid is the dynamic-dispatch form
             // (enter_dynamic + check_visible), which is not IL-compilable and
             // would throw here. A shape that no longer compiles cannot take an
@@ -612,11 +612,11 @@ public sealed class IlPromotionStore
 
     public bool IsPgoInstrumented(int functorId) => _pgoProfileKeys.ContainsKey(functorId);
 
-    // The synthetic __query__/N wrappers have a DIFFERENT body per query under the
+    // The synthetic __query__/N wrappers have a different body per query under the
     // same functor id — caching one query's IL would replay it for every later query
     // of that arity.
     //
-    // The SAME is true of the helpers a query stub synthesises for its `;`,
+    // The same is true of the helpers a query stub synthesises for its `;`,
     // `->` and `\+`. MetaTransform names those with the reserved "$q" prefix
     // precisely so they are "REUSED query-to-query" and stay bounded
     // (MetaTransform.HelperPrefix) — which means '$q$disj_1'/5 is one functor
@@ -631,7 +631,7 @@ public sealed class IlPromotionStore
         return name == "__query__" || IsQueryStubHelper(name);
     }
 
-    /// <summary>A helper synthesised for the CURRENT query's stub: named
+    /// <summary>A helper synthesised for the current query's stub: named
     /// <c>$q$kind_N</c>, module-mangled to <c>mod$$q$kind_N</c>.</summary>
     public static bool IsQueryStubHelper(string name)
         => name.StartsWith("$q$", System.StringComparison.Ordinal)
@@ -639,7 +639,7 @@ public sealed class IlPromotionStore
 
     // A bytecode body opening with enter_dynamic is mutation-driven dispatch
     // (per-clause check_visible + in-place chain patches, ADR-015): a cached IL
-    // delegate of that FORM would not observe a mid-life retract. Such predicates
+    // delegate of that form would not observe a mid-life retract. Such predicates
     // promote only via the ADR-023 snapshot path.
     private static bool IsExcludedByLayout(CompiledPredicate predicate)
     {

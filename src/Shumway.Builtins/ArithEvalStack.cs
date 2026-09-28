@@ -47,7 +47,7 @@ public static class ArithEvalStack
     public static bool IsEmpty => _top == 0;
 
     /// <summary>ADR-049: whether an inline-arithmetic operand is an unbound
-    /// variable — the ONLY case a pending wake could still bind, and so the
+    /// variable — the only case a pending wake could still bind, and so the
     /// only case a wake flush is needed before reading it. A bound operand
     /// (the norm, and every operand a clp propagator computes on) skips the
     /// flush for the price of one deref.</summary>

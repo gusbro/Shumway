@@ -5,7 +5,7 @@ namespace Shumway.Smoke.Net48;
 
 /// <summary>
 /// Milestone-3 smoke for the netfx-target branch: Tier-0 running on
-/// .NET Framework 4.8, meant to be executed BOTH as x86 (32-bit — the
+/// .NET Framework 4.8, meant to be executed both as x86 (32-bit — the
 /// point of the branch) and as x64 (parity). Exit code = number of
 /// failed checks. Optional args: a .shum path plus a query, to prove a
 /// bundle produced by the .NET 10 toolchain loads and runs here.
@@ -109,7 +109,7 @@ internal static class SmokeNet48Cli
                 loop(N, Acc, R) :- N > 0, A1 is Acc + N, N1 is N - 1, loop(N1, A1, R).
                 """);
             // Each shape runs several times: the first crossings promote, the
-            // later iterations must produce the same answers FROM the emitted IL.
+            // later iterations must produce the same answers from the emitted IL.
             for (int i = 0; i < 5; i++)
             {
                 if (e.QueryFirst<long>("fib(15, F).", "F") != 610) return false;
@@ -121,7 +121,7 @@ internal static class SmokeNet48Cli
             }
             // Settle before judging: compiles queued to the background worker
             // may still be in flight — on a contended CI runner (the x86 lane
-            // shares 4 cores with everything) a pending compile is NOT a
+            // shares 4 cores with everything) a pending compile is not a
             // failure, just late. The ~1-in-100 "promoted predicates: 0"
             // sightings match this window exactly; a worker that is genuinely
             // dead still fails below, now with the state dump saying so.
@@ -146,7 +146,7 @@ internal static class SmokeNet48Cli
                     Console.WriteLine($"        unpromotable: {name}/{arity} — {reason}");
                 }
                 // Per-candidate state + compile-worker liveness: the flake's
-                // signature (tracked>0, promoted=0) needs to say WHERE each
+                // signature (tracked>0, promoted=0) needs to say where each
                 // candidate stalled — counting, pending on a dead worker, or
                 // rejected — and whether the worker thread is even alive.
                 Console.Write(e.IlPromotion.DescribePromotionState());
@@ -169,7 +169,7 @@ internal static class SmokeNet48Cli
             {
                 var e2 = new PrologEngine();
                 e2.LoadBundle(args[0]);
-                // >0 means the bundle's PERSISTED IL actually loaded and bound
+                // >0 means the bundle's persisted IL actually loaded and bound
                 // delegates in this runtime (vs silently serving bytecode).
                 Console.WriteLine($"        persisted-IL delegates bound: {e2.IlPromotion.PromotedCount}");
                 return Succeeds(e2, args[1]);
@@ -192,7 +192,7 @@ internal static class SmokeNet48Cli
                 {
                     var e = new PrologEngine();
                     long expected = n * (n + 1) / 2;
-                    // The list variable must stay INSIDE a consulted predicate:
+                    // The list variable must stay inside a consulted predicate:
                     // a named query variable materializes its value to a C# Term
                     // AST in the bindings, and a multimillion-node AST — not the
                     // engine heap — is then what exhausts a 32-bit process.

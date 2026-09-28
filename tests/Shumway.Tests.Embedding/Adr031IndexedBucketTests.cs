@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-031 indexed buckets — CP-free guard commit inside INDEXED dispatch.
+/// ADR-031 indexed buckets — CP-free guard commit inside indexed dispatch.
 /// A chain node whose clause is an accepted guard skips its bucket
 /// choice-point push: it records the next node's cursor in the per-member
 /// <c>idxnext</c> local and branches to the clause's shared guard block;
@@ -86,8 +86,8 @@ public class Adr031IndexedBucketTests
         Adr031CpFreeGuardTests.Mode m)
     {
         // The multi-chain case the idxnext local exists for: the var-head
-        // guard clauses live in EVERY chain (key buckets + the var/default
-        // chain), each node with a DIFFERENT next — a guard failure must
+        // guard clauses live in every chain (key buckets + the var/default
+        // chain), each node with a different next — a guard failure must
         // continue in the chain it was entered through.
         var e = Activation(m,
             ":- public q/2.\n"
@@ -112,8 +112,8 @@ public class Adr031IndexedBucketTests
     public void TailNodeGuard_SentinelFailsToCaller(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // Bucket 'a' = two guard clauses, NO catch-all: the second node is a
-        // chain TAIL (idxnext = −1). Both guards failing must fail the
+        // Bucket 'a' = two guard clauses, no catch-all: the second node is a
+        // chain tail (idxnext = −1). Both guards failing must fail the
         // predicate (the sentinel falls through the dispatch switch), and the
         // CALLER's alternative must run.
         var e = Activation(m,
@@ -136,7 +136,7 @@ public class Adr031IndexedBucketTests
     {
         // ADR-034 inside an indexed bucket: the guard inlines the rule-bearing
         // dynamic rd/1's snapshot; after the first assert the clause-entry
-        // test routes to the fallback, which materializes the bucket CP FROM
+        // test routes to the fallback, which materializes the bucket CP from
         // the idxnext local and calls the live predicate.
         var e = Activation(m,
             ":- public s/3.\n"
@@ -148,7 +148,7 @@ public class Adr031IndexedBucketTests
         Assert.True(e.Query("s(a, 5, R), R == pos.").Success);
         Assert.True(e.Query("s(a, -1, R), R == neg.").Success);
         Assert.True(e.Query("s(b, 0, R), R == isb.").Success);
-        // Mutation, same query — the fallback must see the live clause AND
+        // Mutation, same query — the fallback must see the live clause and
         // keep the bucket semantics (commit prunes; key 'b' untouched).
         Assert.True(e.Query("assertz(rd(-1)), s(a, -1, R), R == pos.").Success);
         Assert.True(e.Query("s(a, -1, R), R == pos.").Success);
@@ -163,7 +163,7 @@ public class Adr031IndexedBucketTests
     public void RegionIndexedMember_GuardBuckets(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The LOCAL indexed predicate is absorbed as a region member — the
+        // The local indexed predicate is absorbed as a region member — the
         // region driver's twin of the standalone path (region cursors in
         // idxnext, region-wide dispatch switch in the fail stub).
         var e = Activation(m,

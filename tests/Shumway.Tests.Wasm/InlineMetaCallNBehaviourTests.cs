@@ -7,8 +7,8 @@ namespace Shumway.Tests.Wasm;
 /// <summary>call/N for N &gt;= 2 dispatched inside the module.
 ///
 /// <para>The emitter question and the cache key are pinned elsewhere. What
-/// is pinned HERE is the thing that can be subtly wrong while still
-/// answering: the appended arguments have to land AFTER the goal's own
+/// is pinned here is the thing that can be subtly wrong while still
+/// answering: the appended arguments have to land after the goal's own
 /// ones, in order, and the goal's own arguments are copied over the very
 /// registers the appended ones arrive in. A copy that ran before the park
 /// would answer correctly whenever the goal's arity happens to be 0, and
@@ -36,7 +36,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
         return e;
     }
 
-    /// <summary>Both halves of the argument list, in order. got2 REPORTS
+    /// <summary>Both halves of the argument list, in order. got2 reports
     /// what it received, so an appended argument that landed on top of a
     /// goal argument (or the other way round) shows up as a different term
     /// rather than as a failure.</summary>
@@ -57,7 +57,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
     }
 
     /// <summary>The goal already carries more arguments than the call site
-    /// appends, so the parked registers are written back PAST where they
+    /// appends, so the parked registers are written back past where they
     /// sat. This is the direction a copy-then-place order gets wrong.
     /// </summary>
     [DiagFact]
@@ -95,7 +95,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
     }
 
     /// <summary>The same goal reached by call/2 and by call/3 resolves to
-    /// DIFFERENT predicates. One cache key for both would serve the first
+    /// different predicates. One cache key for both would serve the first
     /// answer to the second, which is a wrong call and not a slow one.
     /// </summary>
     [Fact]
@@ -113,7 +113,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
             "call/2 and call/3 of the same goal shared a resolution");
     }
 
-    /// <summary>An arity the module cannot serve must still ANSWER. Past
+    /// <summary>An arity the module cannot serve must still answer. Past
     /// the register window the width guard sends it to the host, and the
     /// only way to tell that apart from a bug is that the answer is right.
     /// </summary>
@@ -161,7 +161,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
         Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
     }
 
-    /// <summary>The motivating case, stated as a test: maplist/3 IS
+    /// <summary>The motivating case, stated as a test: maplist/3 is
     /// call(G, X, Y) in a loop, and every element used to deopt. The count
     /// is what the arc is about, so it is the assertion.</summary>
     [DiagFact]
@@ -188,7 +188,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
         Assert.Equal(0L, WasmTierDelegate.DiagDeopts);
     }
 
-    /// <summary>A cut inside the goal cuts the GOAL: call/N is opaque to
+    /// <summary>A cut inside the goal cuts the goal: call/N is opaque to
     /// cut exactly as call/1 is. The barrier is refreshed on the appending
     /// path too, or the cut would prune the caller.</summary>
     [Fact]
@@ -212,7 +212,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
 
     /// <summary>The shapes it declines still answer the way the builtin
     /// does: an unbound goal raises, a nonexistent predicate raises, and an
-    /// ATOM goal (nothing to read off the heap) runs.</summary>
+    /// atom goal (nothing to read off the heap) runs.</summary>
     [Fact]
     public void TheShapesItDeclinesStillAnswer()
     {
@@ -228,14 +228,14 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
             "an atom goal must still run");
     }
 
-    /// <summary>A goal that is a bare ATOM at run time, which is the shape
+    /// <summary>A goal that is a bare atom at run time, which is the shape
     /// clp(Z)'s maplist/3 carries: the goal arrives in a variable holding a
-    /// predicate NAME, not a partial application.
+    /// predicate name, not a partial application.
     ///
     /// <para>The module resolves an atom goal through a table keyed by atom
     /// that names the name/0 predicate. An appending call site wants
     /// name/appended instead, and the module cannot form that functor id:
-    /// interning is a SEARCH of the functor table and a module can only
+    /// interning is a search of the functor table and a module can only
     /// index. So it steps aside, correctly and slowly.</para>
     ///
     /// <para>It matters less than it reads. A call/N whose goal is a
@@ -266,7 +266,7 @@ public sealed class InlineMetaCallNBehaviourTests(ITestOutputHelper o)
     }
 
     /// <summary>The atom goal and the compound goal key the cache by
-    /// DIFFERENT id spaces -- an atom id and a functor id -- and those two
+    /// different id spaces -- an atom id and a functor id -- and those two
     /// ranges overlap, which is the whole reason the key carries a flag.
     ///
     /// <para>Both shapes go through one call site here, so a key that did

@@ -42,7 +42,7 @@ public sealed partial class PrologEngine
 
     // ----- ADR-035: breakpoints -----
     //
-    // The armed SOURCE SITES are the truth. The byte patches in the program are
+    // The armed source sites are the truth. The byte patches in the program are
     // derived from them, and are re-derived whenever the code space changes (a
     // relink, a compaction, a consult) — which is why a breakpoint set once keeps
     // working across queries instead of pointing at whatever moved into its old
@@ -58,32 +58,32 @@ public sealed partial class PrologEngine
     public IReadOnlyCollection<int> Breakpoints => _breakpointSites;
 
     /// <summary>ADR-035 — arms every stop site on this source line, and returns how
-    /// many bound. Zero means the breakpoint cannot bind ANYWHERE below the line: the
+    /// many bound. Zero means the breakpoint cannot bind anywhere below the line: the
     /// file has no code left — or it belongs to a predicate compiled without debug
     /// (<c>:- disable_debug.</c>), or the program is not debug-compiled at all. A
     /// debugger renders that as a hollow breakpoint rather than pretending it took.
     ///
     /// <para>A line with no stop site of its own — blank, a comment, or a rule's head,
-    /// whose "clause entered" point IS its first goal's — snaps FORWARD to the next
+    /// whose "clause entered" point is its first goal's — snaps forward to the next
     /// line that has one, which is what every debugger does with a breakpoint set on a
     /// line that is not code. <see cref="BoundLine"/> reports where it landed.</para>
     ///
-    /// <para>Binding is decided against THIS engine's compiled code, not against the
+    /// <para>Binding is decided against this engine's compiled code, not against the
     /// global site table: the table is process-wide, so two engines that both
     /// consulted a string source share its site ids, and only the code that is
     /// actually loaded here can be stopped in. Forces the code space to link if it
     /// has not yet, since before that there is nothing to answer with.</para></summary>
     public int AddBreakpoint(string file, int line) => AddBreakpoint(file, line, null);
 
-    /// <summary>ADR-035 D5 — a CONDITIONAL breakpoint: <paramref name="condition"/> is a
+    /// <summary>ADR-035 D5 — a conditional breakpoint: <paramref name="condition"/> is a
     /// Prolog goal evaluated when the breakpoint is reached, in the frame it fired in
     /// (its variables substituted by name, like the Immediate window's). The breakpoint
-    /// stops only when the goal SUCCEEDS; a goal that fails lets the program run on as if
+    /// stops only when the goal succeeds; a goal that fails lets the program run on as if
     /// the breakpoint were not there. A condition that cannot run — a syntax error, an
-    /// exception, a timeout — STOPS and says why (see
+    /// exception, a timeout — stops and says why (see
     /// <see cref="DebugStopEvent.ConditionError"/>): a broken condition that silently
     /// swallowed its breakpoint would be undiagnosable. Null (the 2-arg overload) means
-    /// unconditional — and REPLACES any previous condition on this breakpoint, because
+    /// unconditional — and replaces any previous condition on this breakpoint, because
     /// the debugger writes its whole desired state each time.</summary>
     public int AddBreakpoint(string file, int line, string? condition)
     {
@@ -93,14 +93,14 @@ public sealed partial class PrologEngine
         lock (_debugArmGate)
         {
             // Remembered whether it binds or not. A breakpoint set on a file that has not
-            // been consulted YET is the normal case under a launch — the user draws it,
+            // been consulted yet is the normal case under a launch — the user draws it,
             // then starts the program — and binding it against code that does not exist is
             // not possible, so for want of this line it was quietly dropped and the program
             // ran clean through every breakpoint in it. It binds in
             // RebindPendingBreakpoints, when the code arrives.
             _requestedBreakpoints.Add((file, line));
-            // Keyed by FILE ID, not by the string: the id is the file's canonical
-            // identity (base-name interned), where the string is one SPELLING of it.
+            // Keyed by file id, not by the string: the id is the file's canonical
+            // identity (base-name interned), where the string is one spelling of it.
             // The page/IDE says "probe.pl", the consult said "/dir/probe.pl" — one
             // file, one id, two spellings, and a string-keyed condition stored under
             // one spelling was invisible to a hit reported under the other.
@@ -128,17 +128,17 @@ public sealed partial class PrologEngine
         }
     }
 
-    // Which breakpoint each armed site belongs to — the line the USER asked for, which
+    // Which breakpoint each armed site belongs to — the line the user asked for, which
     // is not always the line the code is on (a breakpoint on a rule's head binds at its
     // first goal). A debugger that has to match a hit back to the red dot it drew needs
     // the line it drew, not the line we bound.
     private readonly Dictionary<int, (int FileId, int Line)> _breakpointRequests = new();
 
-    // Every breakpoint the debugger has ASKED for, bound or not. The armed sites above are
+    // Every breakpoint the debugger has asked for, bound or not. The armed sites above are
     // derived from these; these are the truth.
     private readonly HashSet<(string File, int Line)> _requestedBreakpoints = new();
 
-    // ADR-035 D5 — the condition each requested breakpoint carries, keyed by FILE ID +
+    // ADR-035 D5 — the condition each requested breakpoint carries, keyed by file id +
     // line (see AddBreakpoint: an id is the file, a string is a spelling of it).
     // Absent = unconditional (the ordinary case pays one failed lookup per hit, nothing more).
     private readonly Dictionary<(int FileId, int Line), string> _breakpointConditions = new();
@@ -161,7 +161,7 @@ public sealed partial class PrologEngine
     /// code arrives (a consult), which is the moment a breakpoint set on a file that had not
     /// been loaded yet finally has something to attach to.
     ///
-    /// <para>This is what makes a LAUNCH work at all: the user draws the red dot, presses the
+    /// <para>This is what makes a launch work at all: the user draws the red dot, presses the
     /// button, and the file is consulted afterwards. Without it the breakpoint is asked for
     /// against an empty program, binds nothing, and is forgotten — and the program runs to
     /// completion untouched, which is exactly what it did.</para></summary>
@@ -170,7 +170,7 @@ public sealed partial class PrologEngine
         if (_requestedBreakpoints.Count == 0) return;
 
         // Relink first. The set of sites a breakpoint may bind to (_compiledSites) is rebuilt
-        // when a query is SET UP, not when a file is consulted — so right after a consult it
+        // when a query is set up, not when a file is consulted — so right after a consult it
         // still describes the program as it was before, and the clauses that just arrived are
         // invisible. EnsureCodeLinked would not do it: it sees a linked code space and returns
         // happy. A trivial query is what actually rebuilds the map.
@@ -178,7 +178,7 @@ public sealed partial class PrologEngine
 
         // A copy: AddBreakpoint writes to the set (idempotently — it is a set), and
         // enumerating a collection one is adding to is not allowed even when nothing changes.
-        // The rebind re-asks for the breakpoint AS THE USER SET IT — condition included; the
+        // The rebind re-asks for the breakpoint as the user set it — condition included; the
         // 2-arg overload would silently strip it.
         foreach ((string file, int line) in _requestedBreakpoints.ToArray())
             AddBreakpoint(file, line,
@@ -214,9 +214,9 @@ public sealed partial class PrologEngine
     /// -1 for a hollow one.
     ///
     /// <para>A line with a stop site binds where it is. A line without one binds forward
-    /// to the next site OF THE CLAUSE IT IS IN — which is how a breakpoint on a rule's
-    /// head (whose entry point IS its first goal's) or on a blank line inside a body
-    /// finds its code. It does NOT wander past the end of that clause: a breakpoint on a
+    /// to the next site of the clause it is in — which is how a breakpoint on a rule's
+    /// head (whose entry point is its first goal's) or on a blank line inside a body
+    /// finds its code. It does not wander past the end of that clause: a breakpoint on a
     /// blank line between predicates, or inside a <c>:- disable_debug.</c> region, has
     /// nothing to bind to, and saying so is better than silently arming a line the user
     /// was not looking at.</para></summary>
@@ -267,7 +267,7 @@ public sealed partial class PrologEngine
     /// <summary>ADR-035 D5+ — every clause of the predicate whose code contains
     /// <paramref name="pc"/>: its entry address (the head-matching code — where a
     /// re-enter jumps) and its head's source span. What a Set Next Statement aimed at a
-    /// SIBLING clause's head resolves against.</summary>
+    /// sibling clause's head resolves against.</summary>
     internal IReadOnlyList<(int ClauseStartPc, int FileId, int HeadLine, int FirstLine)>
         ClauseHeadTargets(int pc)
     {
@@ -310,7 +310,7 @@ public sealed partial class PrologEngine
     /// <summary>ADR-035 D5+ — the source span of the debuggable clause that contains
     /// <paramref name="line"/> in <paramref name="fileId"/>: where its head is written and
     /// the first/last stoppable lines. Used to recognise a Set Next Statement aimed at the
-    /// HEAD (a line in [HeadLine, FirstLine)) as the back-to-head rewind. Null when no
+    /// head (a line in [HeadLine, FirstLine)) as the back-to-head rewind. Null when no
     /// clause spans the line.</summary>
     internal (int HeadLine, int FirstLine, int LastLine)? ClauseLineSpan(int fileId, int line)
     {
@@ -368,7 +368,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>ADR-035 — turns last-call optimisation on or off for queries from here
-    /// on. A debugger turns it OFF, because LCO reclaims a predicate's frame before its
+    /// on. A debugger turns it off, because LCO reclaims a predicate's frame before its
     /// final goal runs and a frame the machine has reclaimed is a frame the debugger
     /// cannot show. To change it for the query already running — which is what a
     /// debugger stopped inside one actually wants — see
@@ -389,13 +389,13 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>ADR-035 — re-applies the patches to the buffer the debugged activation is
-    /// executing RIGHT NOW, so a breakpoint set or cleared while a query is stopped takes effect
+    /// executing right now, so a breakpoint set or cleared while a query is stopped takes effect
     /// on that same query. A no-op before the first query, where the next
     /// <see cref="SetupQueryFromTerm"/> will do it anyway.
     ///
-    /// <para>The buffer comes from the LIVE activation, never from a cached reference: a
+    /// <para>The buffer comes from the live activation, never from a cached reference: a
     /// mid-query <c>assertz</c> can reallocate the bytecode array (grow-and-copy), and the
-    /// activation then runs the NEW array. Un-patching a stale cached array would restore a dead
+    /// activation then runs the new array. Un-patching a stale cached array would restore a dead
     /// buffer and leave the live one with an orphaned <c>Break</c> byte — the crash this replaces.
     /// Whatever the activation runs now is the one and only buffer to touch; if it did not change,
     /// it is the same array, and if it did, it is the new one.</para></summary>
@@ -419,7 +419,7 @@ public sealed partial class PrologEngine
     /// <para><paramref name="bufferCarriesOurPatches"/> says whether <paramref name="program"/>
     /// is the buffer our recorded patches live in — true for the buffer the activation runs
     /// (same array or a grow-and-copy of it, which carries the <c>Break</c> bytes) and for a
-    /// REUSED persistent buffer at setup; false only for a FRESHLY-REBUILT one, which was linked
+    /// reused persistent buffer at setup; false only for a freshly-rebuilt one, which was linked
     /// clean from the compiled predicates and never carried a Break, so there is nothing to
     /// remove and the recorded originals (from the now-dead buffer) must not be written into
     /// it.</para></summary>
@@ -435,7 +435,7 @@ public sealed partial class PrologEngine
                 {
                     // We recorded a Break at this pc but the buffer the activation runs has none.
                     // The guard above keeps us from writing a stale original over live code, but
-                    // this should NEVER happen — it means the breakpoint table drifted from the
+                    // this should never happen — it means the breakpoint table drifted from the
                     // executed buffer, exactly the class of bug this design exists to prevent, so
                     // surface it loudly for investigation rather than papering over it.
                     string msg = $"breakpoint table out of step: recorded a Break at pc={pc} but "
@@ -467,7 +467,7 @@ public sealed partial class PrologEngine
     private int[] _stopPcs = Array.Empty<int>();
     private int[] _stopSiteIds = Array.Empty<int>();
 
-    /// <summary>ADR-035 — the source site AT this program address, or -1 if the
+    /// <summary>ADR-035 — the source site at this program address, or -1 if the
     /// address is not a stop site. What a session that receives <c>OnBreak(pc)</c>
     /// uses to say where it stopped.</summary>
     public int SiteAt(int pc)
@@ -476,7 +476,7 @@ public sealed partial class PrologEngine
         return i >= 0 ? _stopSiteIds[i] : -1;
     }
 
-    /// <summary>ADR-035 — the source site this program address is INSIDE: the last
+    /// <summary>ADR-035 — the source site this program address is inside: the last
     /// stop site at or before it. A pc in the middle of a goal's instructions —
     /// which is where the four ports find it — belongs to the goal whose site
     /// precedes it. Returns -1 before the first site in the program.</summary>
@@ -488,8 +488,8 @@ public sealed partial class PrologEngine
         return i >= 0 ? _stopSiteIds[i] : -1;
     }
 
-    /// <summary>As <see cref="SiteAtOrBefore"/>, but only WITHIN the predicate that
-    /// contains <paramref name="pc"/> — the DISPLAY question. A frame inside code
+    /// <summary>As <see cref="SiteAtOrBefore"/>, but only within the predicate that
+    /// contains <paramref name="pc"/> — the display question. A frame inside code
     /// compiled without sites (the prelude, a library, a <c>:- disable_debug.</c>
     /// region) must answer "no location": the backward scan otherwise inherits the
     /// last site of whatever debuggable predicate precedes it in the code space and
@@ -513,7 +513,7 @@ public sealed partial class PrologEngine
 
     /// <summary>ADR-035 — the first clause at or after a predicate's entry address. A
     /// predicate does not begin with its clause: the dispatch prologue comes first, and the
-    /// frame map is keyed by CLAUSE. Used for the top-level query, whose own address is the
+    /// frame map is keyed by clause. Used for the top-level query, whose own address is the
     /// only thing we know about it.</summary>
     private int FirstClauseStartAtOrAfter(int predicateAddress)
     {
@@ -541,7 +541,7 @@ public sealed partial class PrologEngine
         IReadOnlyList<(string Name, string Value)> Variables)
     {
         /// <summary>ADR-035 — the frame as the CALL it is: the head's arguments with their
-        /// CURRENT values, parenthesised and ready to display — <c>(120, foo/2, _G5)</c> —
+        /// current values, parenthesised and ready to display — <c>(120, foo/2, _G5)</c> —
         /// instantiating as the clause runs. Empty when the clause was not compiled
         /// debuggable (there is no head skeleton to fill in), and for the query and the
         /// omitted-frames sentence, which are not calls.</summary>
@@ -551,8 +551,8 @@ public sealed partial class PrologEngine
         /// in source order: the <c>!2</c> of <c>total(...)!2</c>. Zero when unknown.</summary>
         public int ClauseNumber { get; init; }
 
-        /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts ON THIS
-        /// FRAME (cross-frame moves rewind the frames above it first). Filled by the
+        /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts on this
+        /// frame (cross-frame moves rewind the frames above it first). Filled by the
         /// debug service when a stop is published; empty otherwise.</summary>
         public IReadOnlyList<int> SetNextLines { get; init; } = Array.Empty<int>();
 
@@ -563,7 +563,7 @@ public sealed partial class PrologEngine
         public IReadOnlyList<(string Name, string Goals)> Residuals { get; init; }
             = Array.Empty<(string, string)>();
 
-        /// <summary>The frame variables that are ATTRIBUTED, with the heap address of
+        /// <summary>The frame variables that are attributed, with the heap address of
         /// their cell on the captured activation — what the residual projection
         /// transplants. Capture-internal; never serialized.</summary>
         internal IReadOnlyList<(string Name, int Addr)> AttVarSlots { get; init; }
@@ -597,14 +597,14 @@ public sealed partial class PrologEngine
     {
         ArgumentNullException.ThrowIfNull(engine);
 
-        // TWO PASSES, and the reason is the deep stack. A recursion 2 700 frames deep is a
+        // Two passes, and the reason is the deep stack. A recursion 2 700 frames deep is a
         // real thing to be stopped in, and nobody reads 2 700 frames: what they read is the
         // few at the top (where they are) and the few at the bottom (how they got in). Between
         // them is the same clause 2 600 times.
         //
         // Building all of them means rendering every variable of every one — the expensive
         // part of a stop by far — and then not showing most of them, because the stack has to
-        // cross a fixed-size buffer. So the first pass finds the frames and NOTHING else
+        // cross a fixed-size buffer. So the first pass finds the frames and nothing else
         // (a binary search apiece), and the second builds only the ones that will be seen,
         // with one synthetic frame in the middle saying how many are not.
         var sites = new List<(int Pc, int Env)>();
@@ -630,7 +630,7 @@ public sealed partial class PrologEngine
         return frames;
     }
 
-    /// <summary>ADR-035 — the (pc, environment) behind one frame of the CURRENT stop's
+    /// <summary>ADR-035 — the (pc, environment) behind one frame of the current stop's
     /// display list, by the index the debugger's frames carry. Mirrors
     /// <see cref="CaptureFrames(Activation, int, int, int)"/>'s head/tail selection exactly,
     /// omitted-frames sentence included (that index answers false: it is not a frame).
@@ -641,10 +641,10 @@ public sealed partial class PrologEngine
         pc = -1;
         env = -1;
         if (displayIndex < 0) return false;
-        // ADR-035 D5+ — a PENDING clause re-enter is presented as a synthetic top frame
+        // ADR-035 D5+ — a pending clause re-enter is presented as a synthetic top frame
         // (the chosen predicate at its chosen head, not yet entered — no machine context
         // exists for it). Display indices from the debugger include it; the real frames
-        // shift down by one. Centralised HERE because every display-index consumer
+        // shift down by one. Centralised here because every display-index consumer
         // (Set Next Statement, the Immediate window's goal evaluation, bind-into-frame)
         // resolves through this method.
         if (engine.DebugClauseEntryArmed)
@@ -653,7 +653,7 @@ public sealed partial class PrologEngine
             displayIndex--;
         }
         var sites = new List<(int Pc, int Env)>();
-        // liveTop, like CaptureFrames(engine): the display indices MUST align with the
+        // liveTop, like CaptureFrames(engine): the display indices must align with the
         // stack the debugger shows.
         CollectFrameSites(engine, sites, engine.P, engine.E, engine.Cp, liveTop: true);
 
@@ -676,10 +676,10 @@ public sealed partial class PrologEngine
         return true;
     }
 
-    /// <summary>ADR-035 D5+ — the frame's variables as terms AND as heap ADDRESSES on the
+    /// <summary>ADR-035 D5+ — the frame's variables as terms and as heap addresses on the
     /// suspended activation, which is what the bind-into-frame commit needs: the address is
     /// the real cell a committed binding unifies against, where the term is only a copy.
-    /// <c>Addr</c> is the DEREFERENCED slot address for a heap-referencing slot, or -1 when
+    /// <c>Addr</c> is the dereferenced slot address for a heap-referencing slot, or -1 when
     /// the slot holds an inline value (bound immediate — nothing to bind into) or could not
     /// be read. <c>IsAttVar</c> flags an attributed variable (bind-into-frame refuses those:
     /// unifying one schedules hook wakeups the suspended machine is in no state to run).</summary>
@@ -728,19 +728,19 @@ public sealed partial class PrologEngine
         return result;
     }
 
-    /// <summary>Builds the attvar TRANSPLANT terms for a set of attributed variables of a
-    /// SUSPENDED activation: the <c>ag(Module, AttrValue, Var)</c> triples the prelude's
-    /// <c>'$dbg_residuals'/2</c> / <c>'$dbg_attach'/1</c> reattach onto an EVALUATION
+    /// <summary>Builds the attvar transplant terms for a set of attributed variables of a
+    /// suspended activation: the <c>ag(Module, AttrValue, Var)</c> triples the prelude's
+    /// <c>'$dbg_residuals'/2</c> / <c>'$dbg_attach'/1</c> reattach onto an evaluation
     /// activation's fresh variables. The walk is transitive over attribute values (a
     /// hook may read a sibling variable's attribute — clpz's <c>rel_tuple</c>), exactly
     /// like <c>'$copy_term_3_prep'/3</c>'s; variable identity is preserved by naming
     /// every source variable <c>_G&lt;addr&gt;</c>, the same name
     /// <see cref="TermReader.Materialize"/> gives it, so one materialisation of a goal
     /// mentioning both lands them on the same fresh variable. The source activation is
-    /// only READ.</summary>
+    /// only read.</summary>
     /// <summary>The suspended activation whose attributed variables are being
     /// transplanted into a debug evaluation — what <c>'$dbg_fix_foreign'/1</c> reads
-    /// per-activation FOREIGN payloads from (clpfd's native domains). Set around each
+    /// per-activation foreign payloads from (clpfd's native domains). Set around each
     /// evaluation that carries a transplant; null otherwise.</summary>
     internal Activation? DebugTransplantSource;
 
@@ -788,11 +788,11 @@ public sealed partial class PrologEngine
 
     /// <summary>ADR-035 — everything a nested Immediate-window evaluation clobbers.
     ///
-    /// <para>An evaluated goal runs as a REAL query — <c>SetupQueryFromTerm</c>, a fresh
+    /// <para>An evaluated goal runs as a real query — <c>SetupQueryFromTerm</c>, a fresh
     /// activation, the live database — which is exactly the semantics asked for
     /// (an <c>assertz</c> persists like any mid-query nested activation's). But query setup
     /// also rebuilds the per-query debug tables and the address→predicate map, and the
-    /// SUSPENDED query — the one the user is stopped in, and will resume with F5 — still
+    /// suspended query — the one the user is stopped in, and will resume with F5 — still
     /// needs its own: its wrapper's addresses are not in the new map, and a stack walk
     /// through them after the eval would mislabel the bottom of the user's stack. So the
     /// eval brackets itself: save these, run, put them back. The code space itself is
@@ -852,16 +852,16 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>ADR-035 D5 — how many debug evaluations (Immediate-window goals, breakpoint
-    /// conditions) are running right now. While one is, the OUTER query is suspended
+    /// conditions) are running right now. While one is, the outer query is suspended
     /// mid-flight — its activation, its Break bytes, its in-flight choice points all live in
     /// the current code space — so a nested query's setup must not treat itself as the safe
     /// point it usually is: no auto-compaction ("no in-flight choice points hold
     /// addresses into it" premise is false here; the compaction is merely deferred to the
-    /// next real query), and no breakpoint re-sync (the armed table describes the OUTER
+    /// next real query), and no breakpoint re-sync (the armed table describes the outer
     /// query's buffer and must keep doing so).</summary>
     private int _debugEvalDepth;
 
-    /// <summary>ADR-035 D5 — the persistent buffer was REBUILT by a debug evaluation's
+    /// <summary>ADR-035 D5 — the persistent buffer was rebuilt by a debug evaluation's
     /// nested setup (the outer query had already invalidated it), which skips the breakpoint
     /// sync: the fresh buffer never received the armed Break bytes. The next real setup
     /// consumes this to pass <c>bufferCarriesOurPatches: false</c> for a buffer it would
@@ -897,13 +897,13 @@ public sealed partial class PrologEngine
     /// and <see cref="TryGetDisplayFrameContext"/> can never disagree about it.
     ///
     /// <para>Under <see cref="MaxFrames"/> every frame shows. Over it the middle is left out —
-    /// but a stack that deep is almost always a RECURSION, the same short cycle of predicates
+    /// but a stack that deep is almost always a recursion, the same short cycle of predicates
     /// repeated hundreds of times, and a blind head/tail cut slices through the middle of a
-    /// cycle at each edge. <see cref="TryBuildCyclePlan"/> keeps the SAME budget — the innermost
+    /// cycle at each edge. <see cref="TryBuildCyclePlan"/> keeps the same budget — the innermost
     /// <see cref="HeadFrames"/> and outermost <see cref="TailFrames"/>, so the display never
-    /// shrinks below ~100 frames — but SNAPS each cut to a cycle boundary, so both ends show
+    /// shrinks below ~100 frames — but snaps each cut to a cycle boundary, so both ends show
     /// whole cycles: the innermost (where the machine is) and the outermost (where the recursion
-    /// STARTED, together with the non-recursive frames that led into it). A cut may keep a few
+    /// started, together with the non-recursive frames that led into it). A cut may keep a few
     /// frames more than the budget to reach the boundary; that is deliberate. Seeing the origin
     /// end whole is what lets a user read where the chain came from and Run-to-cursor onto the
     /// goal after it. Falls back to a blind head/tail cut when there is no cycle spanning the
@@ -932,7 +932,7 @@ public sealed partial class PrologEngine
     /// is the same clause resumed at the same call site, so a recursion — however its clauses
     /// are selected — reads as a run of identical pcs (plain recursion, period 1) or a run that
     /// repeats every P frames (mutual recursion, period P). Returns false when no cycle is long
-    /// enough to elide, or when the frames OUTSIDE the cycle are themselves too many to show.</summary>
+    /// enough to elide, or when the frames outside the cycle are themselves too many to show.</summary>
     private static bool TryBuildCyclePlan(
         IReadOnlyList<(int Pc, int Env)> sites, out FramePlan plan)
     {
@@ -965,9 +965,9 @@ public sealed partial class PrologEngine
         int bandStart = bestStart;
         int bandEnd = bestStart + fullCycles * bestPeriod;   // exclusive, whole cycles
 
-        // Keep the head/tail BUDGET, but move each cut onto a cycle boundary of the band so the
-        // two ends show whole cycles. The inner cut rounds UP (>= HeadFrames), the outer cut
-        // rounds DOWN (leaves >= TailFrames), so the display stays at least HeadFrames+TailFrames.
+        // Keep the head/tail budget, but move each cut onto a cycle boundary of the band so the
+        // two ends show whole cycles. The inner cut rounds up (>= HeadFrames), the outer cut
+        // rounds down (leaves >= TailFrames), so the display stays at least HeadFrames+TailFrames.
         int innerCut = SnapUpToCycle(HeadFrames, bandStart, bandEnd, bestPeriod);
         int outerCut = SnapDownToCycle(n - TailFrames, bandStart, bandEnd, bestPeriod);
 
@@ -975,7 +975,7 @@ public sealed partial class PrologEngine
         if (omitted < bestPeriod) return false;     // the band does not span the cut — head/tail
 
         // Shown = [0, innerCut) ++ [outerCut, n): the innermost budget (ending on a boundary),
-        // then everything from the outer boundary — the outermost whole cycles AND the
+        // then everything from the outer boundary — the outermost whole cycles and the
         // non-recursive frames that started the chain.
         int shownCount = innerCut + (n - outerCut);
         var shown = new int[shownCount];
@@ -1008,14 +1008,14 @@ public sealed partial class PrologEngine
         return bandStart + m * period;
     }
 
-    /// <summary>Pass one: WHERE the frames are — a (pc, environment) pair each — without
+    /// <summary>Pass one: Where the frames are — a (pc, environment) pair each — without
     /// building any of them. Same walk, same rules, same stopping condition (the query is the
     /// bottom of every stack).</summary>
     private void CollectFrameSites(
         Activation engine, List<(int Pc, int Env)> sites, int pc, int e, int cp,
         bool liveTop = false)
     {
-        // The environment chain holds exactly the clauses that HAVE a frame, innermost
+        // The environment chain holds exactly the clauses that have a frame, innermost
         // first. Only the clause we are standing in can be frameless (a frameless
         // clause makes no non-tail call, so it can never be a caller waiting to
         // resume) — and if it is, the first environment on the chain is already its
@@ -1027,16 +1027,16 @@ public sealed partial class PrologEngine
         if (AddSite(sites, pc, ownFrame && envs.Count > 0 ? envs[0] : -1))
             return;
 
-        // At a LIVE port in a clause whose environment is allocated, the caller chain is
-        // exactly the saved continuations on the environment chain, and the Cp REGISTER is
-        // dead state: between two calls of the body it still holds the PREVIOUS completed
+        // At a live port in a clause whose environment is allocated, the caller chain is
+        // exactly the saved continuations on the environment chain, and the Cp register is
+        // dead state: between two calls of the body it still holds the previous completed
         // call's return address. Yielding it fabricated a ghost frame — the same clause
         // shown twice, once at the current goal and once at the goal that already returned
         // (surfaced by prueba.pl's fuzzy/0 after member/2: a real predicate call sets Cp
-        // where a builtin does not, so it took a prelude RULE mid-body to expose it). The
+        // where a builtin does not, so it took a prelude rule mid-body to expose it). The
         // redo path is different: there pc is the retried clause but its environment does
         // not exist yet (allocate has not re-run), e/cp are the CALLER's — for that shape
-        // the register IS the continuation, and the legacy walk below stands.
+        // the register is the continuation, and the legacy walk below stands.
         if (liveTop && ownFrame && envs.Count > 0)
         {
             for (int i = 0; i < envs.Count; i++)
@@ -1053,12 +1053,12 @@ public sealed partial class PrologEngine
         int envIndex = ownFrame ? 1 : 0;
         foreach (int returnPc in engine.EnumerateCallReturnAddresses(e, cp))
         {
-            // A return address points at the instruction AFTER the call, which is
-            // where the NEXT goal's code begins — so looking its line up directly
+            // A return address points at the instruction after the call, which is
+            // where the next goal's code begins — so looking its line up directly
             // would blame a caller for the goal it has not run yet. Step back a byte
             // to land inside the call itself, the goal the frame is really waiting on.
             //
-            // The query is the BOTTOM of the stack, and it is not recursive: once it is on
+            // The query is the bottom of the stack, and it is not recursive: once it is on
             // the list, the walk is done. What lies past it is the address the query returns
             // to — the top level's own code, which no Prolog frame describes — and it looked
             // enough like the wrapper to be named `?-` a second time. One query, one frame.
@@ -1076,7 +1076,7 @@ public sealed partial class PrologEngine
         int i = IndexOfPredicateAt(pc);
         if (i < 0) return false;
         // ADR-035 fully-transparent control: a ,/;/-> construct (or its lowered
-        // $disj_N / $call_* plumbing) is flow, not a goal — it takes NO frame in
+        // $disj_N / $call_* plumbing) is flow, not a goal — it takes no frame in
         // the call stack. Skip it but keep walking; the caller advances envIndex
         // regardless, so the next real frame still pairs with its own environment.
         if (IsTransparentControlFunctor(
@@ -1105,7 +1105,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Is this address really inside the predicate the binary search landed on, or
-    /// did the search merely CLAMP to it? The search takes the last entry at or before the
+    /// did the search merely clamp to it? The search takes the last entry at or before the
     /// address, so an address past the end of every predicate — a return into the launcher,
     /// say — comes back named as the last one, which is a guess and not a fact.</summary>
     private static bool WithinPredicate(
@@ -1137,17 +1137,17 @@ public sealed partial class PrologEngine
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
 
         // The wrapper the engine puts the goal in. An error's stack trace hides it, and
-        // rightly — the user did not write it. A DEBUGGER may not: stopped inside a
-        // top-level query the user IS standing there, and a query of nothing but builtins
+        // rightly — the user did not write it. A debugger may not: stopped inside a
+        // top-level query the user is standing there, and a query of nothing but builtins
         // (`?- writeln(uno), debugger_break, writeln(dos).`) has no other frame at all. The
         // debugger showed an empty stack and looked broken. It shows the query now — as
-        // `?-`, which is what the user typed, and NOT as a predicate: arity -1 says "this is
+        // `?-`, which is what the user typed, and not as a predicate: arity -1 says "this is
         // not a Name/Arity", and the debugger renders it without one.
         bool isQuery = name == "__query__";
         if (isQuery)
         {
             // `?-` on its own says only "a query is running", which the user could see from
-            // the fact that they are stopped. It shows the GOAL — the text they typed —
+            // the fact that they are stopped. It shows the goal — the text they typed —
             // because that is the frame's identity, the way `step/2` is a clause's.
             name = CurrentQueryText is null ? "?-" : "?- " + Ellipsize(CurrentQueryText, 120);
             arity = -1;
@@ -1179,7 +1179,7 @@ public sealed partial class PrologEngine
             }
         }
 
-        // Bounded to THIS predicate: an opaque frame answers no location rather
+        // Bounded to this predicate: an opaque frame answers no location rather
         // than inheriting its debuggable neighbour's last line.
         int siteId = SiteWithinPredicate(pc);
         var site = siteId >= 0
@@ -1211,7 +1211,7 @@ public sealed partial class PrologEngine
     /// it makes every named variable permanent.</para></summary>
     /// <summary>ADR-035 — the frame's head arguments with their current values, rendered
     /// for the call-stack line: <c>total([item(_, 25)|T], Acc, Total)</c> shown as
-    /// <c>([item(_, 25)], 10, _G5)</c>. The skeleton is the head as WRITTEN; each named
+    /// <c>([item(_, 25)], 10, _G5)</c>. The skeleton is the head as written; each named
     /// variable in it is substituted by its current value (through the capture's bag, so a
     /// term shared with the Locals list is rendered once), an anonymous or not-yet-written
     /// one by <c>_</c>. Each argument is cut to <see cref="MaxHeadArgChars"/> — a stack line
@@ -1251,7 +1251,7 @@ public sealed partial class PrologEngine
             for (int i = 0; i < args.Count; i++)
             {
                 if (i > 0) text.Append(", ");
-                // The substituted values arrive as VarTerms NAMED by their rendering — the
+                // The substituted values arrive as VarTerms named by their rendering — the
                 // renderer prints a variable's name verbatim, which splices an already
                 // rendered (and already capped) value into the skeleton without
                 // materializing anything twice.
@@ -1267,7 +1267,7 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>One argument of a call-stack line. The LINE has to be read at a glance —
+    /// <summary>One argument of a call-stack line. The line has to be read at a glance —
     /// the whole call, clause number and all, in a window column; a variable's full value
     /// (itself capped at <see cref="MaxVariableChars"/>) belongs to the Locals window.</summary>
     private const int MaxHeadArgChars = 64;
@@ -1290,7 +1290,7 @@ public sealed partial class PrologEngine
             result.Add((v.Name, bag.Render(cell)));
             // An attributed variable renders as a bare _G name; note it here so the
             // stop's residual projection knows which cells to transplant. The slot may
-            // hold the AttVar cell DIRECTLY (unification copies the value cell) or a
+            // hold the AttVar cell directly (unification copies the value cell) or a
             // Ref chain ending at one.
             try
             {
@@ -1311,13 +1311,13 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>
-    /// ADR-035 — one rendering per VALUE, however many frames hold it.
+    /// ADR-035 — one rendering per value, however many frames hold it.
     ///
     /// <para>A call stack is mostly the same bindings seen from different clauses: the
     /// caller passed <c>Data</c> down, so every frame of the recursion holds the same term
     /// — the same heap cell. Rendering it per frame did the expensive part of a stop (walk
     /// the term, build the AST, print it) once per frame instead of once, and serialised
-    /// the same characters once per frame too. This bag lives for ONE capture (bindings
+    /// the same characters once per frame too. This bag lives for one capture (bindings
     /// change between stops) and keys on the dereferenced cell: same cell, same string —
     /// the very instance, which is what lets the channel write it once and point at it.</para>
     /// </summary>
@@ -1339,9 +1339,9 @@ public sealed partial class PrologEngine
         {
             try
             {
-                // A VARIABLE WHOSE TURN HAS NOT COME. `allocate` leaves the Y slots
+                // A variable whose turn has not come. `allocate` leaves the Y slots
                 // untouched — RawInt(0), a control word, not a term — because standard WAM
-                // codegen writes a permanent at its FIRST occurrence and never reads it
+                // codegen writes a permanent at its first occurrence and never reads it
                 // before. It is a plain unbound variable as far as the user is concerned —
                 // it has no value yet. (Handing it to the materializer instead threw a
                 // NotSupportedException — caught, but printed into Visual Studio's Output
@@ -1349,14 +1349,14 @@ public sealed partial class PrologEngine
                 if (slot.Tag == Tag.RawInt) return "_";
 
                 // Not a term at all — the raw backing store of a partial string, which no
-                // variable is ever bound TO.
+                // variable is ever bound to.
                 if (slot.Tag == Tag.PstrBuffer) return "<internal>";
 
-                // THE KEY IS THE DEREFERENCED CELL. Two variables bound to the same term
+                // The key is the dereferenced cell. Two variables bound to the same term
                 // dereference to the same cell — same tag, same payload — wherever their own
                 // slots live. An unbound variable's identity is its final Ref cell, so the
                 // same variable shows the same `_G` in every frame that shares it, by
-                // construction. (Equal-but-distinct terms in different cells do NOT share —
+                // construction. (Equal-but-distinct terms in different cells do not share —
                 // the bag dedups sharing, not equality; the channel's string table catches
                 // the equal-content case at serialisation.)
                 Cell cell = slot;
@@ -1372,7 +1372,7 @@ public sealed partial class PrologEngine
 
                 // Materialization reads from the heap; a value that is not already there (a
                 // Y slot holding a direct value cell) is staged into one fresh heap cell.
-                // Copying the CELL keeps sharing intact.
+                // Copying the cell keeps sharing intact.
                 if (at < 0)
                 {
                     at = _engine.AllocateHeap(1);
@@ -1384,10 +1384,10 @@ public sealed partial class PrologEngine
                 // variable holds the parsed contents of the file it is linting, and rendering
                 // it whole put a megabyte of text into a variable the Locals window shows on
                 // one line — which nobody can read, and which overran the channel that had to
-                // carry the WHOLE stack. (Seeing inside a big term is what expanding it in the
+                // carry the whole stack. (Seeing inside a big term is what expanding it in the
                 // Locals window is for; that is a func-eval, and it is on the D5 list.)
-                // QUOTED (writeq-style): a Locals value feeds the Watch-window edit, and
-                // an unquoted atom '1234' round-tripped as the INTEGER 1234.
+                // quoted (writeq-style): a Locals value feeds the Watch-window edit, and
+                // an unquoted atom '1234' round-tripped as the integer 1234.
                 string value = Ellipsize(
                     AstTermRenderer.Render(term, 999, _host.Operators, quoted: true),
                     MaxVariableChars);
@@ -1427,7 +1427,7 @@ public sealed partial class PrologEngine
             // try / retry / trust carry the clause address as their first operand.
             Shumway.Core.Opcode.Try or Shumway.Core.Opcode.Retry or Shumway.Core.Opcode.Trust
                 => BitConverter.ToInt32(program, retryPc + 1),
-            // try_me_else / retry_me_else / trust_me name the NEXT clause; their own
+            // try_me_else / retry_me_else / trust_me name the next clause; their own
             // clause is the code that follows them.
             _ => retryPc + Shumway.Core.OpcodeTable.Get(opByte).Size,
         };
@@ -1461,7 +1461,7 @@ public sealed partial class PrologEngine
             : b;
     }
 
-    /// <summary>ADR-035 — the predicate an address falls INSIDE, as opposed to
+    /// <summary>ADR-035 — the predicate an address falls inside, as opposed to
     /// <see cref="LookupPredicateByAddress"/>, which only recognises an entry point.
     /// The redo port needs it: a choice point's retry address points into the middle
     /// of a clause chain, never at its head.</summary>
@@ -1478,7 +1478,7 @@ public sealed partial class PrologEngine
         return name == "__query__" ? null : (name, arity);
     }
 
-    /// <summary>ADR-035 — the module a compiled predicate belongs to: the prefix of its MANGLED
+    /// <summary>ADR-035 — the module a compiled predicate belongs to: the prefix of its mangled
     /// name before the <c>$</c> (a module-local predicate is compiled as <c>module$name</c>).
     /// Null for a global/public predicate, a builtin, a synthesised helper, or the query wrapper
     /// — none carry a module prefix. Read straight off the code the frame is running, so it is
@@ -1498,13 +1498,13 @@ public sealed partial class PrologEngine
         return sep > 0 ? mangled.Substring(0, sep) : null;
     }
 
-    /// <summary>ADR-035 — the module the current frame is in, the way the CALL STACK LINE names
+    /// <summary>ADR-035 — the module the current frame is in, the way the CALL stack line names
     /// it: the same source-file base name the frame decoder prints (<c>Blint:main</c> comes from
     /// <c>Blint.pl</c>). Two ways, most precise first:
     /// <list type="number">
-    /// <item>the frame's OWN mangled module prefix, when it is running a module-local predicate
+    /// <item>the frame's own mangled module prefix, when it is running a module-local predicate
     /// (<see cref="ModulePrefixAt"/>);</item>
-    /// <item>otherwise the base name of the frame's SOURCE FILE — a public predicate is compiled
+    /// <item>otherwise the base name of the frame's source file — a public predicate is compiled
     /// global (no prefix) and a control-construct helper (<c>$catchgoal_N</c>) is global too, but
     /// the call-stack line still shows the module of the <c>.pl</c> they came from, and so do we.
     /// This is returned as-is (not filtered against the known modules): whether it truly defines
@@ -1627,7 +1627,7 @@ public sealed partial class PrologEngine
             return Remangle(g, mod + "$" + name);
 
         // The frame's module did not define it (or could not be determined — a public predicate
-        // or a lowered helper whose file named no module). Fall back to the module that UNIQUELY
+        // or a lowered helper whose file named no module). Fall back to the module that uniquely
         // defines the name: the only module the unqualified call could mean. Ambiguous (two
         // modules) or absent → leave it global (a public predicate or a builtin).
         string? unique = UniqueModuleDefining(name, arity);
@@ -1684,10 +1684,10 @@ public sealed partial class PrologEngine
     public void AttachDebugSession(Shumway.Core.IDebugSession? session)
         => DebugSession = session;
 
-    /// <summary>ADR-035 D5+ — whether the RUNTIME debug machinery is on: ports raised,
+    /// <summary>ADR-035 D5+ — whether the runtime debug machinery is on: ports raised,
     /// every binding trailed, last-call optimisation off. True by default (a session
     /// attached the classic way debugs from its first goal); a lazily-opened session
-    /// (<see cref="Debugging.DebugOptions.ActivateOnAttach"/>) starts with this FALSE —
+    /// (<see cref="Debugging.DebugOptions.ActivateOnAttach"/>) starts with this false —
     /// queries run at near-release Tier-0 speed — and flips it when a debugger actually
     /// attaches. Compile-time debuggability (<c>compile_mode=debug</c>) is independent:
     /// code is compiled debuggable either way.</summary>
@@ -1702,7 +1702,7 @@ public sealed partial class PrologEngine
         set => _debugFullyArmed = value;
     }
 
-    /// <summary>The LCO choice full debug applies WHEN it arms (the pin / option
+    /// <summary>The LCO choice full debug applies when it arms (the pin / option
     /// resolution done once at <see cref="EnableDebugging"/>).</summary>
     internal bool DebugLcoWhenArmed { get; set; }
 
@@ -1715,15 +1715,15 @@ public sealed partial class PrologEngine
     private static bool _debugDiagLoggingArmed;
 
     /// <summary>
-    /// ADR-035 — turn on source-level debugging for THIS engine, so a debugger attached to
-    /// this PROCESS can set breakpoints in the <c>.pl</c> files it consults, step, inspect
+    /// ADR-035 — turn on source-level debugging for this engine, so a debugger attached to
+    /// this process can set breakpoints in the <c>.pl</c> files it consults, step, inspect
     /// the mixed Prolog+C# call stack, and run goals in the Immediate window. It is the
     /// embedding-API equivalent of the REPL's <c>--debug</c>: the point is to debug Shumway
     /// when it is one part of a larger .NET application, in that application's own process,
     /// rather than only in the standalone REPL.
     ///
-    /// <para>CALL IT BEFORE CONSULTING the code you want to debug. Debuggability is a
-    /// property of the CODE, decided when it is compiled: predicates compiled after this call
+    /// <para>CALL it before consulting the code you want to debug. Debuggability is a
+    /// property of the code, decided when it is compiled: predicates compiled after this call
     /// keep their variable names, their frames and their source positions; predicates
     /// compiled before it already threw those away. (Loading a bundle counts as consulting —
     /// a bundle that still carries its module sources is re-compiled debuggable, and the
@@ -1751,9 +1751,9 @@ public sealed partial class PrologEngine
         _flags.DebugCodegen = true;
 
         // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off — but
-        // SHUMWAY_DEBUG_LCO is a PIN, and a pin the code overrides is not one, so honour it
+        // SHUMWAY_DEBUG_LCO is a pin, and a pin the code overrides is not one, so honour it
         // when set and take the caller's choice only otherwise. Under ActivateOnAttach the
-        // resolved choice applies only WHEN the session arms — until then LCO stays on,
+        // resolved choice applies only when the session arms — until then LCO stays on,
         // which is most of what makes the lazy mode fast.
         DebugLcoWhenArmed = Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null
             ? options.LastCallOptimisation
@@ -1768,7 +1768,7 @@ public sealed partial class PrologEngine
             _flags.DebugLco = DebugLcoWhenArmed;
         }
 
-        // SHUMWAY_DEBUG_DIAG=1 — log every exception the engine THROWS, caught or not, with
+        // SHUMWAY_DEBUG_DIAG=1 — log every exception the engine throws, caught or not, with
         // its stack. A handled house-keeping throw is invisible from outside and loud from
         // inside a debugger (Visual Studio prints "Exception thrown" into Output for each);
         // this tells the bug being hunted from the noise. Armed once for the process.
@@ -1796,7 +1796,7 @@ public sealed partial class PrologEngine
             catch (Exception) { /* no temp dir — run without the log */ }
         }
 
-        // The files we are ABOUT to consult, said before we consult them: a breakpoint drawn
+        // The files we are about to consult, said before we consult them: a breakpoint drawn
         // before the process stops anywhere binds against a module, a module is a .pl file,
         // and a just-started process has no frames for the debugger to learn the names from.
         // Optional — every file is also announced as it is consulted.
@@ -1829,16 +1829,16 @@ public sealed partial class PrologEngine
         return session;
     }
 
-    /// <summary>ADR-035 — block until a debugger has attached to this process AND finished
+    /// <summary>ADR-035 — block until a debugger has attached to this process and finished
     /// arming its breakpoints, or <paramref name="timeout"/> elapses. Split out of
-    /// <see cref="EnableDebugging"/> so a bundle-loading path can defer the wait until AFTER
+    /// <see cref="EnableDebugging"/> so a bundle-loading path can defer the wait until after
     /// its modules have been consulted (that consult materialises + announces their source,
     /// which is what an attaching debugger must find before the goal runs).</summary>
     internal void WaitForDebuggerReady(
         Debugging.ChannelDebugSession session, TimeSpan timeout)
     {
-        // --debug-wait means WAIT. The whole reason to launch a program this way is to debug
-        // it from its first goal, so there is NO deadline on the attach itself: a user who
+        // --debug-wait means wait. The whole reason to launch a program this way is to debug
+        // it from its first goal, so there is no deadline on the attach itself: a user who
         // takes a minute to open Visual Studio and attach still lands at the entry, rather
         // than finding the program already run to the end. (A program launched to be debugged
         // that runs on without a debugger is useless; hanging until Ctrl-C is the honest
@@ -1849,7 +1849,7 @@ public sealed partial class PrologEngine
 
         // Attached is not ready: the debugger still has to find the channel and arm the
         // breakpoints the user drew before pressing the button. Consulting now would run the
-        // program straight past them. This wait IS bounded — it is the "has it gone quiet"
+        // program straight past them. This wait is bounded — it is the "has it gone quiet"
         // wait (milliseconds), not the "will anyone ever come" wait above.
         int quietMs = (int)timeout.TotalMilliseconds;
         session.WaitForDebuggerCommands(quietMs > 0 ? quietMs : 0);
@@ -1884,29 +1884,29 @@ public sealed partial class PrologEngine
         return name == "__query__" ? null : (name, arity);
     }
 
-    /// <summary>ADR-035 — is this predicate one a debugger may stop IN?
+    /// <summary>ADR-035 — is this predicate one a debugger may stop in?
     ///
     /// <para>The prelude and the libraries are implicitly <c>:- disable_debug</c>, and they
-    /// are compiled that way — but a PORT is raised by the interpreter at every call and
+    /// are compiled that way — but a port is raised by the interpreter at every call and
     /// every proceed, whatever the callee was compiled from. So a step landed in
     /// <c>copy_term/3</c>, in <c>$prelude$$attr_goals_of/2</c>, in the top level's own
     /// wrapper goals: code the user did not write, cannot see, and did not ask to step
-    /// through. Stepping has to stay in THEIR program, which means a port in code that is
+    /// through. Stepping has to stay in their program, which means a port in code that is
     /// not theirs must not stop it.</para></summary>
     internal bool IsDebuggableAddress(int address)
         => FunctorAtAddress(address) is int fid && !_nonDebuggableFunctors.Contains(fid);
 
     /// <summary>ADR-035 — the functor whose compiled code contains <paramref name="address"/>,
-    /// or null if the address names none. Shared by the CONTAINER check
+    /// or null if the address names none. Shared by the container check
     /// (<see cref="IsDebuggableAddress"/> — "is the code I am standing in the user's?") and the
-    /// CALLEE check (<see cref="IsDebuggableCallee"/> — "should a call to here stop?").</summary>
+    /// callee check (<see cref="IsDebuggableCallee"/> — "should a call to here stop?").</summary>
     /// <summary>The (address → predicate) mapping the current debug tables were derived
     /// from — the scale guard's identity snapshot (see the query-setup rebuild).</summary>
     private Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _debugTablesBuiltFor;
 
     /// <summary>ADR-035 — derives the per-program debug tables (armable stop sites, the
     /// pc→site arrays, clause frames, clause line spans) from the compiled predicates.
-    /// One pass over each predicate's stops with a TWO-POINTER walk into its frames —
+    /// One pass over each predicate's stops with a two-pointer walk into its frames —
     /// the old shape re-scanned every stop per frame, quadratic in clause count for
     /// clause-heavy predicates.</summary>
     private void RebuildDebugTables()
@@ -1970,7 +1970,7 @@ public sealed partial class PrologEngine
         frames.Values.CopyTo(_clauseFrames, 0);
     }
 
-    // The last predicate RANGE this resolved — a one-entry memo. Ports ask about the
+    // The last predicate range this resolved — a one-entry memo. Ports ask about the
     // same few addresses in a loop (the same call sites, over and over), so the answer
     // is almost always the memo, not the binary search. Reset wherever the predicate
     // layout is rebuilt (_sortedPredEntries invalidation). Engine-thread only, like
@@ -1988,7 +1988,7 @@ public sealed partial class PrologEngine
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
         // The memo range reproduces the search's clamp semantics exactly: everything
-        // from this predicate's start to the NEXT predicate's start resolves here.
+        // from this predicate's start to the next predicate's start resolves here.
         _fidMemoLo = entries[i];
         _fidMemoHi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
         _fidMemoFid = _currentPredicatesByAddress[entries[i]].FunctorId;
@@ -1996,18 +1996,18 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>ADR-035 — should a CALL landing at <paramref name="address"/> stop? Unlike
-    /// <see cref="IsDebuggableAddress"/> (the CONTAINER question) this also refuses a
-    /// TRANSPARENT control construct: calling a <c>$disj_N</c> / <c>$call_*</c> helper is
+    /// <see cref="IsDebuggableAddress"/> (the container question) this also refuses a
+    /// transparent control construct: calling a <c>$disj_N</c> / <c>$call_*</c> helper is
     /// flow, not a goal, so the step passes straight through it to the real callee. The
-    /// distinction matters because a <c>$disj_N</c> region CONTAINS user goals — it is a valid
+    /// distinction matters because a <c>$disj_N</c> region contains user goals — it is a valid
     /// place to be standing (a user goal in a disjunction branch), just not a valid thing to
-    /// stop ON when it is the callee.</summary>
+    /// stop on when it is the callee.</summary>
     internal bool IsDebuggableCallee(int address)
         => FunctorAtAddress(address) is int fid && IsDebuggableFunctor(fid);
 
     /// <summary>ADR-035 — is the code at <paramref name="address"/> a transparent control
     /// construct's (a <c>$disj_N</c> / <c>$call_*</c> helper)? The one part of the callee
-    /// question that holds regardless of where the CALL SITE is: flow is never a goal.</summary>
+    /// question that holds regardless of where the CALL site is: flow is never a goal.</summary>
     internal bool IsTransparentCalleeAddress(int address)
         => FunctorAtAddress(address) is int fid && IsTransparentControlFunctor(fid);
 
@@ -2015,13 +2015,13 @@ public sealed partial class PrologEngine
         => !_nonDebuggableFunctors.Contains(functorId)
            && !IsTransparentControlFunctor(functorId);
 
-    /// <summary>ADR-035 — is this functor a pure CONTROL CONSTRUCT (or its lowered
-    /// plumbing), which the debugger renders TRANSPARENTLY: no stop port and no
+    /// <summary>ADR-035 — is this functor a pure control construct (or its lowered
+    /// plumbing), which the debugger renders transparently: no stop port and no
     /// call-stack frame? A standard Prolog tracer (SWI, GProlog) never surfaces
     /// <c>,</c> / <c>;</c> / <c>-&gt;</c> / <c>*-&gt;</c> as goals — they are flow,
     /// not calls — so stepping goes straight from a clause to the real user goals.
     /// The <em>meta</em>-predicates the user invoked by name (<c>catch/3</c>,
-    /// <c>once/1</c>, <c>ignore/1</c>, <c>\+</c>) are NOT control constructs: they
+    /// <c>once/1</c>, <c>ignore/1</c>, <c>\+</c>) are not control constructs: they
     /// stay visible (see <see cref="DebugConstructName"/>).
     ///
     /// <para>What is transparent: the bare operators (never normally reached as a
@@ -2031,9 +2031,9 @@ public sealed partial class PrologEngine
     /// for a variable goal (<c>$call</c>, <c>$call_conj</c>, <c>$call_disj</c>,
     /// <c>$call_arrow</c>). <c>$call_neg</c> is deliberately left visible — it is
     /// the runtime form of <c>\+</c>, a meta-goal.</para></summary>
-    // Transparency is a pure function of the functor's NAME, and functor ids are stable
+    // Transparency is a pure function of the functor's name, and functor ids are stable
     // for the life of the process — but computing it walks functor table → atom table →
-    // demangle → string switch, and the call PORT asked at every goal. Cached forever.
+    // demangle → string switch, and the call port asked at every goal. Cached forever.
     private readonly Dictionary<int, bool> _transparentByFid = new();
 
     internal bool IsTransparentControlFunctor(int functorId)
@@ -2059,7 +2059,7 @@ public sealed partial class PrologEngine
 
     /// <summary>ADR-035 — is <paramref name="pc"/> inside the synthetic <c>__query__</c>
     /// wrapper the engine puts a top-level goal in? The wrapper is compiled user query code,
-    /// so it is a DEBUGGABLE address — but it is not code the user wrote, and its call port to
+    /// so it is a debuggable address — but it is not code the user wrote, and its call port to
     /// the entry goal maps to the end of the source (it has no line of its own). "Stop at the
     /// entry point" must skip it and land in the entry predicate itself.</summary>
     internal bool IsQueryWrapperAddress(int pc)
@@ -2205,7 +2205,7 @@ public sealed partial class PrologEngine
     private readonly object _debugArmGate = new();
 
     /// <summary>ADR-036 — the arm gate, for the debug session's idle watcher: it must
-    /// take THIS before the session's own stop gate (the order the engine thread uses —
+    /// take this before the session's own stop gate (the order the engine thread uses —
     /// consult/setup under the arm gate, then a stop under the session gate), or the
     /// two-thread arm-vs-consult pair deadlocks by lock inversion.</summary>
     internal object DebugArmGate => _debugArmGate;

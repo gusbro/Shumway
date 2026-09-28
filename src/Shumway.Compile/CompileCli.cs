@@ -55,7 +55,7 @@ internal static class CompileCli
         if (opts is null) return ExitUsageError;
 
         bool multi = opts.InputPaths.Count > 1;
-        // -o names an output DIRECTORY under multi-input, and under --consult
+        // -o names an output directory under multi-input, and under --consult
         // (which always emits one .shmo per module in the loaded graph — it is
         // inherently multi-output even from a single input file).
         bool outputIsDir = multi || opts.Consult;
@@ -70,7 +70,7 @@ internal static class CompileCli
             }
         }
 
-        // --consult loads ALL inputs into ONE ephemeral engine and emits one
+        // --consult loads all inputs into one ephemeral engine and emits one
         // .shmo per module the whole load brought in (shared dependencies once).
         if (opts.Consult)
             return CompileViaConsultMany(opts.InputPaths, opts);
@@ -85,17 +85,17 @@ internal static class CompileCli
         return exit;
     }
 
-    /// <summary>--consult: compile THROUGH the consult pipeline (an ephemeral
+    /// <summary>--consult: compile through the consult pipeline (an ephemeral
     /// engine loads the files, so directives and term/goal-expansion hooks
     /// actually run), emitting one .shmo per module the load brought in. All
-    /// inputs are consulted into ONE engine, so a module shared by several
-    /// roots — a library and its dependencies — loads and compiles ONCE.
+    /// inputs are consulted into one engine, so a module shared by several
+    /// roots — a library and its dependencies — loads and compiles once.
     /// Each module — the roots and every dependency — is written as
     /// &lt;module&gt;.shmo into the output directory (<c>-o &lt;dir&gt;</c>, or
     /// the first input's directory when <c>-o</c> is omitted). Consult is
     /// inherently multi-output, so <c>-o</c> is a directory, never a file.
     ///
-    /// <para>A DRAGGED-IN dependency (not one of the passed inputs) is skipped
+    /// <para>A dragged-in dependency (not one of the passed inputs) is skipped
     /// when its <c>.shmo</c> already exists, is newer than the module's source
     /// (the <c>.pl</c>, or the runtime assembly for a baked-in library), and
     /// was built in the same mode — so compiling <c>a.pl</c> then <c>b.pl</c>
@@ -151,7 +151,7 @@ internal static class CompileCli
     }
 
     /// <summary>A dragged-in dependency's <c>.shmo</c> may be reused when it
-    /// exists, is at least as new as the module's source, AND was built in the
+    /// exists, is at least as new as the module's source, and was built in the
     /// same mode — never reuse a release object for a debug build (or vice
     /// versa). An unreadable / stale-format object regenerates.</summary>
     private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode)
@@ -189,7 +189,7 @@ internal static class CompileCli
     /// a file-at-a-time compile, described for the error, or null when
     /// nothing is lost.
     ///
-    /// <para>A hook is a CONSULT-TIME concept: the consult pipeline
+    /// <para>A hook is a consult-time concept: the consult pipeline
     /// recognises the head, activates it early and adds it to the engine's
     /// expansion aggregate. Compiled file-at-a-time there is no aggregate to
     /// join, so the clause lands as an ordinary predicate (local, mangled,
@@ -198,14 +198,14 @@ internal static class CompileCli
     /// loaded it does not. That is the same source meaning two things, so
     /// the compile is refused rather than noted.</para>
     ///
-    /// <para>Read off the OBJECT, not the text: a file that merely calls
+    /// <para>Read off the object, not the text: a file that merely calls
     /// term_expansion/2, or names it in a comment, compiles fine.</para></summary>
     private static string? WhatFileAtATimeWouldLose(Shumway.Embedding.ShmoObject obj)
     {
         foreach (var d in obj.Defined)
         {
             // A module-qualified clause head (`user:term_expansion(...)`,
-            // `lists:append(...)`) is read as the TERM it is, so the object
+            // `lists:append(...)`) is read as the term it is, so the object
             // defines a predicate for the functor ':'/2 -- which is not a
             // predicate anybody meant to write. The consult pipeline gives
             // the head to the named module instead.
@@ -363,7 +363,7 @@ internal static class CompileCli
         }
     }
 
-    /// <summary>The consult-mode counterpart: the objects this run was ASKED to
+    /// <summary>The consult-mode counterpart: the objects this run was asked to
     /// produce are the ones named after its inputs, so a failure removes those.
     /// A dependency's object is left alone — its own source still compiled, and
     /// it was up to date before this run.</summary>
@@ -371,7 +371,7 @@ internal static class CompileCli
     {
         foreach (string input in inputs)
         {
-            // The object is named after the MODULE, which is the file's base
+            // The object is named after the module, which is the file's base
             // name unless the source declares one — and after a failed consult
             // there is no loaded module to ask, so both candidates go.
             string name = System.IO.Path.GetFileNameWithoutExtension(input);
@@ -385,7 +385,7 @@ internal static class CompileCli
     }
 
     /// <summary>The name in a <c>:- module(Name, ...)</c> directive, or null.
-    /// Read from the TEXT because the consult that would have told us failed.</summary>
+    /// Read from the text because the consult that would have told us failed.</summary>
     private static string? DeclaredModuleName(string input)
     {
         try
@@ -443,15 +443,15 @@ internal static class CompileCli
         foreach (var p in preds) calleeMap[p.FunctorId] = p;
         foreach (var p in snapPreds) calleeMap.TryAdd(p.FunctorId, p);
 
-        // Emit IL for EVERY predicate, even one whose body makes a NON-TAIL call
-        // to a predicate defined in ANOTHER module / the prelude / the dynamic
-        // store. The IL emitter dispatches such a call BY FUNCTOR ID at runtime
+        // Emit IL for every predicate, even one whose body makes a non-tail call
+        // to a predicate defined in another module / the prelude / the dynamic
+        // store. The IL emitter dispatches such a call by functor id at runtime
         // (EncodeResumeMarker), exactly like the WAM `call` does — it needs only
         // the fid, not the callee's body. The single-file dump's calleeMap can't
         // resolve those, so without help CanCompile rejects the whole predicate
         // ("call->unresolved") and the dump is silent for it — useless. So for
-        // each externally-defined callee fid we install a STUB: it lets the gate
-        // pass; with regions OFF and InlineRules2 OFF (the dump's settings) the
+        // each externally-defined callee fid we install a stub: it lets the gate
+        // pass; with regions off and InlineRules2 off (the dump's settings) the
         // stub is never inlined or inspected, so the emitted code is the real
         // threaded fid-dispatch. (The real --with-compiled-il / --exe link
         // resolves these against the full program.) The stub's enter_dynamic
@@ -530,14 +530,14 @@ internal static class CompileCli
                 var ic = new IlPredicateCompiler();
                 if (!ic.CanCompile(p, calleeMap))
                 {
-                    // Print WHY. The most common reason in a single-file dump is
-                    // `call->unresolved`: the predicate makes a NON-TAIL call to a
-                    // predicate that isn't defined in THIS module (a prelude /
+                    // Print why. The most common reason in a single-file dump is
+                    // `call->unresolved`: the predicate makes a non-tail call to a
+                    // predicate that isn't defined in this module (a prelude /
                     // cross-module / dynamic-store callee). The dump compiles one
                     // .shmo in isolation, so its calleeMap holds only this module's
                     // own predicates; the real --with-compiled-il / --exe link
-                    // compiles against the FULL linked program and resolves them.
-                    // (A TAIL call to an unknown callee compiles fine — it dispatches
+                    // compiles against the full linked program and resolves them.
+                    // (A tail call to an unknown callee compiles fine — it dispatches
                     // by fid at runtime; only a non-tail call needs the callee known
                     // to emit its continuation.)
                     string reason = ic.DescribeRejection(p, calleeMap);
@@ -570,7 +570,7 @@ internal static class CompileCli
                     skipped++;
                 }
             }
-            // Each module's predicates index that module's OWN float pool;
+            // Each module's predicates index that module's own float pool;
             // set it so get_float/put_float can bake their values (§ floats).
             var prevPool = IlPredicateCompiler.BeginFloatPool(module.FloatLiterals);
             foreach (var p in preds)
@@ -594,7 +594,7 @@ internal static class CompileCli
     }
 
     /// <summary>Stage-9 dry run: report which predicates the dead-region reachability
-    /// analysis would PRUNE if this module were region-compiled into a bundle — those
+    /// analysis would prune if this module were region-compiled into a bundle — those
     /// reached only as absorbed br-members of some region. Module-level approximation:
     /// the external roots are the call-graph roots (predicates with no in-module caller,
     /// i.e. the entry points / externally-called predicates); a real linker uses the
@@ -604,7 +604,7 @@ internal static class CompileCli
         var module = CompiledModuleCodec.Decode(obj.Bytecode);
         var preds = module.Predicates.ToDictionary(p => p.FunctorId);
 
-        // Call-graph roots: a predicate no OTHER in-module predicate calls.
+        // Call-graph roots: a predicate no other in-module predicate calls.
         var calledByOthers = new HashSet<int>();
         foreach (var p in module.Predicates)
             foreach (var cs in p.CallSites)
@@ -697,7 +697,7 @@ internal static class CompileCli
 
                 case "--debug":
                 case "-d":
-                    // ADR-035 — --debug means source-level DEBUGGABLE: keep the source AND
+                    // ADR-035 — --debug means source-level debuggable: keep the source and
                     // bake the debug-shape WAM (frames, Y-slots, no trimming/LCO, stop sites,
                     // variable/frame maps) into the .shmo, so a bundle built from it is
                     // debuggable at load with no re-consult. (Plain ShmoBuildMode.Debug —

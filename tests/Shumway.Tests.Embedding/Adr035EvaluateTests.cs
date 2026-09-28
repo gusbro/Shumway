@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// ADR-035 — the Immediate window: evaluate any goal against the live engine, from a
 /// stop, with the stopped frame's variables substituted by their current values.
 ///
-/// <para>The goal runs as a REAL query — a new activation over the same engine, the same
+/// <para>The goal runs as a real query — a new activation over the same engine, the same
 /// database — which is the semantics asked for: an <c>assertz</c> persists exactly as it
 /// would from any nested mid-query activation, and the suspended query's own view of the
 /// database follows the ordinary logical-update rules. The evaluation brackets everything
@@ -133,7 +133,7 @@ public class Adr035EvaluateTests
     public void TheSuspendedQueryResumesUndamaged()
     {
         // The bracket. The eval runs a full query setup, which rebuilds the per-query
-        // debug tables — and the SUSPENDED query still needs its own to finish stepping.
+        // debug tables — and the suspended query still needs its own to finish stepping.
         // After an eval (with an assertz in it, for good measure), the original query
         // steps on and completes with the right answer.
         var engine = DebugEngine(Program + ":- dynamic seen/1.\n");
@@ -148,7 +148,7 @@ public class Adr035EvaluateTests
             {
                 evaluated = true;
                 s.EvaluateGoal(0, "assertz(seen(X))");
-                s.Resume(StepMode.Over);   // and STEP, from the stop we were at
+                s.Resume(StepMode.Over);   // and step, from the stop we were at
             }
         });
         engine.AttachDebugSession(svc);
@@ -159,7 +159,7 @@ public class Adr035EvaluateTests
             _log.WriteLine($"{s.Reason,-10} {s.Goal,-8} line={s.Line} frames={s.Frames.Count}");
 
         // The query succeeded, the step after the eval landed on the next goal of the
-        // clause (r/1, line 4 -> its call), and the stack at that stop is the ORIGINAL
+        // clause (r/1, line 4 -> its call), and the stack at that stop is the original
         // query's, boundary-free, down to `?- p(7)`.
         Assert.Single(solutions);
         Assert.Equal(2, stops.Count);
@@ -173,10 +173,10 @@ public class Adr035EvaluateTests
     public void ABreakpointReachedByTheEvaluatedGoalStops_WithBothStacksShown()
     {
         // The C#-parity behavior, and better: the nested stop's stack is the evaluated
-        // goal's frames, a boundary naming the evaluation, and UNDER it the suspended
+        // goal's frames, a boundary naming the evaluation, and under it the suspended
         // query the user was stopped in — not an opaque cut.
         var engine = DebugEngine(Program);
-        engine.AddBreakpoint("<string>", 4);   // hit by p(7) AND by the evaluated p(1)
+        engine.AddBreakpoint("<string>", 4);   // hit by p(7) and by the evaluated p(1)
 
         string result = "";
         var stops = new List<DebugStopEvent>();
@@ -200,7 +200,7 @@ public class Adr035EvaluateTests
         // The eval completed (the nested stop's handler resumed with Continue).
         Assert.Equal("true", result);
 
-        // The nested stop happened, and its stack is MIXED: p(1)'s frames, the boundary,
+        // The nested stop happened, and its stack is mixed: p(1)'s frames, the boundary,
         // then the suspended p(7)'s frames down to the query.
         Assert.Equal(2, stops.Count);   // the outer breakpoint, then the eval's
         var nested = stops[1];
@@ -264,15 +264,15 @@ public class Adr035EvaluateTests
     [Fact]
     public void ABreakpointSetWhileStopped_IsArmedForTheEvaluation()
     {
-        // The bug the user hit: in BREAK state nothing drains the command channel until the
+        // The bug the user hit: in break state nothing drains the command channel until the
         // engine resumes — the engine thread is parked inside the notify — so a breakpoint
-        // drawn with F9 WHILE STOPPED sits unread, and an Immediate-window evaluation runs
-        // straight past it. A breakpoint set BEFORE the stop is already armed and does stop.
-        // The evaluation now drains and applies the pending breakpoint FIRST, so the two
+        // drawn with F9 while stopped sits unread, and an Immediate-window evaluation runs
+        // straight past it. A breakpoint set before the stop is already armed and does stop.
+        // The evaluation now drains and applies the pending breakpoint first, so the two
         // cases are the same. This test goes through the real channel, because that is where
         // the pending command lives.
         var engine = DebugEngine(Program);
-        engine.AddBreakpoint("<string>", 4);          // the OUTER stop, inside p(7)
+        engine.AddBreakpoint("<string>", 4);          // the outer stop, inside p(7)
 
         ChannelDebugSession? session = null;
         var stopLines = new List<int>();
@@ -284,7 +284,7 @@ public class Adr035EvaluateTests
             if (acted) return;                        // the nested stop: record it and go on
             acted = true;
 
-            // The user draws a breakpoint on double/2 (line 7) WHILE STOPPED. It goes down
+            // The user draws a breakpoint on double/2 (line 7) while stopped. It goes down
             // the command channel and sits there unread — the engine is parked in this very
             // notify and will not drain until it resumes.
             session!.Channel.WriteCommands(
@@ -344,7 +344,7 @@ public class Adr035EvaluateTests
     public void ANewGoalAbandonsThePreviousBacktracking()
     {
         // Halfway through walking member/2, evaluating a different goal starts fresh; a ";"
-        // afterwards continues the NEW goal, not the abandoned one.
+        // afterwards continues the new goal, not the abandoned one.
         var engine = DebugEngine(Program);
         engine.AddBreakpoint("<string>", 4);
 
@@ -409,7 +409,7 @@ public class Adr035EvaluateTests
     public void TheChannelSnapshotIsPutBack_SoLocalsStillReadTheOriginalStop()
     {
         // The debugger's Locals read the snapshot buffer, and Visual Studio returns the
-        // user to the ORIGINAL break state when the eval is done. The eval's stops
+        // user to the original break state when the eval is done. The eval's stops
         // overwrite the buffer; the bracket restores it byte for byte.
         var engine = DebugEngine(Program);
         engine.AddBreakpoint("<string>", 4);
@@ -430,7 +430,7 @@ public class Adr035EvaluateTests
                     0, Convert.ToBase64String(
                         System.Text.Encoding.UTF8.GetBytes("p(1)")));
 
-                // Back from the eval: the buffer holds the ORIGINAL stop again — same
+                // Back from the eval: the buffer holds the original stop again — same
                 // frames, same goal, same sequence — as the Locals window will re-read it.
                 Marshal.Copy(session.Channel.SnapshotAddress, bytes, 0, bytes.Length);
                 var restored = DebugChannel.ReadSnapshot(bytes)!;

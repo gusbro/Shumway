@@ -32,7 +32,7 @@ public sealed class ScryerListPrimitivesTests
     public void ANonVariableIsNotUnattributed(string term)
         => Assert.False(Engine().Query($"'$unattributed_var'({term}).").Success);
 
-    /// <summary>An ATTRIBUTED variable fails too: that is the whole point of
+    /// <summary>An attributed variable fails too: that is the whole point of
     /// the name, and the reason it cannot just be var/1. Scryer fails when
     /// the attribute list is a cons.</summary>
     [Fact]
@@ -41,7 +41,7 @@ public sealed class ScryerListPrimitivesTests
         var e = Engine();
         Assert.False(e.Query("put_attr(X, m, hello), '$unattributed_var'(X).").Success);
         // ...and it goes back to succeeding once the attribute is removed,
-        // so the test is about the ATTRIBUTE and not about the variable.
+        // so the test is about the attribute and not about the variable.
         Assert.True(e.Query(
             "put_attr(X, m, hello), del_attr(X, m), '$unattributed_var'(X).").Success);
     }
@@ -67,7 +67,7 @@ public sealed class ScryerListPrimitivesTests
             "'$det_length_rundown'(L, 3), L = [A,B,C], A = 1, var(B), var(C).").Success);
     }
 
-    /// <summary>THE CASE THIS EXISTS FOR, end to end: Scryer's own length/2
+    /// <summary>The case this exists for, end to end: Scryer's own length/2
     /// over the two primitives. The clause is theirs, transcribed, so the
     /// test fails if either primitive drifts from what it expects.</summary>
     [Fact]

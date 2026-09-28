@@ -7,7 +7,7 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>A deopt pays a full image staging, so a run where most chains
 /// step aside spends its time on the boundary rather than in wasm. The total
-/// says that happened; only a per-site ranking says WHERE, which is what
+/// says that happened; only a per-site ranking says where, which is what
 /// turns "379k deopts" into a list of instructions worth open-coding.</summary>
 public sealed class DeoptRankingTests(ITestOutputHelper o)
 {
@@ -34,7 +34,7 @@ public sealed class DeoptRankingTests(ITestOutputHelper o)
         o.WriteLine($"total={WasmTierDelegate.DiagDeopts} ranked={sum} "
             + $"overflow={WasmTierDelegate.DiagDeoptOverflow} sites={rank.Count}");
 
-        // ANTI-VACUITY: the corpus must actually be on the tier AND actually
+        // Anti-vacuity: the corpus must actually be on the tier and actually
         // deopt, or the accounting below holds trivially.
         Assert.NotEmpty(members);
         Assert.True(WasmTierDelegate.DiagDeopts > 100,
@@ -48,7 +48,7 @@ public sealed class DeoptRankingTests(ITestOutputHelper o)
             Assert.True(rank[i - 1].Hits >= rank[i].Hits, "ranking is not sorted");
     }
 
-    /// <summary>The table must be usable WITHOUT a ResetDiag first: a browser
+    /// <summary>The table must be usable without a ResetDiag first: a browser
     /// session never calls one, and a table left at its zero default claims
     /// no site at all -- every deopt falls into the overflow and the ranking
     /// reports eight empty rows. That is exactly what shipped.</summary>

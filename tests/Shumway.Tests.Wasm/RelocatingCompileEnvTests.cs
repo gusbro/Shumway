@@ -24,7 +24,7 @@ public sealed class RelocatingCompileEnvTests(ITestOutputHelper o)
                 inherited.Add(map.InterfaceMethods[i].Name);
         Assert.True(inherited.Count == 0,
             "falls back to the interface's default in a bake: " + string.Join(", ", inherited));
-        // ANTI-VACUITY: the interface does have defaults to fall back to.
+        // Anti-vacuity: the interface does have defaults to fall back to.
         Assert.Contains(typeof(IWasmCompileEnv).GetMethods(), m => !m.IsAbstract);
     }
 
@@ -142,7 +142,7 @@ public sealed class RelocatingCompileEnvTests(ITestOutputHelper o)
         foreach (var (k, v) in liveExits) o.WriteLine($"live  {k} x{v}");
         foreach (var (k, v) in bakedExits) o.WriteLine($"baked {k} x{v}");
 
-        // ANTI-VACUITY: live, these are inline forms, so a bake that lost
+        // Anti-vacuity: live, these are inline forms, so a bake that lost
         // them shows as exits the live compile does not make.
         foreach (string b in Inline)
             Assert.False(liveExits.GetValueOrDefault(b) >= 200, $"{b} is not inline even live");

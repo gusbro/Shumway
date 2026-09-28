@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Core;
 
-/// <summary>ADR-053: a foreign table entry lives as long as a FOREIGN cell
+/// <summary>ADR-053: a foreign table entry lives as long as a foreign cell
 /// naming it is reachable, and no longer. Mechanism level: build the heap
 /// directly, set the roots, collect, and read the table.
 ///
@@ -31,7 +31,7 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
         var e = new Activation();
         ClearRegisters(e);
 
-        // Two objects, only the first reachable: its FOREIGN cell is on the
+        // Two objects, only the first reachable: its foreign cell is on the
         // heap under a root, the second's cell is dropped on the floor.
         var kept = new object();
         var dropped = new object();
@@ -54,10 +54,10 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
         Assert.NotSame(dropped, e.ForeignById(1));
     }
 
-    /// <summary>THE COUNTER-PROOF. A foreign object reachable only from a
-    /// REGISTER must survive: the sweep may only free what the trace
+    /// <summary>The counter-proof. A foreign object reachable only from a
+    /// register must survive: the sweep may only free what the trace
     /// disproved. Without the Tag.Foreign case that records live ids, the
-    /// sweep frees everything and this fails RED.</summary>
+    /// sweep frees everything and this fails red.</summary>
     [Fact]
     public void AForeignObjectReachableFromARegisterSurvives()
     {
@@ -66,7 +66,7 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
         e.AllocateHeapUnbound();                   // garbage, so the collector moves
 
         var live = new object();
-        e.SetRegister(0, e.MakeForeign(live));     // the cell IS the root
+        e.SetRegister(0, e.MakeForeign(live));     // the cell is the root
 
         e.CollectHeap();
 
@@ -76,7 +76,7 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
     }
 
     /// <summary>And one reachable only through a compound on the heap: the
-    /// id has to be recorded from the TRACE, not just from the roots.
+    /// id has to be recorded from the trace, not just from the roots.
     /// </summary>
     [Fact]
     public void AForeignObjectNestedInAStructureSurvives()
@@ -121,11 +121,11 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
         o.WriteLine($"table {100} -> {e.ForeignTableCount}");
         Assert.Equal(1, e.ForeignTableCount);       // the tail went
         Cell r0 = e.GetRegister(0);
-        Assert.Equal(0, r0.AsForeignId);            // the live id did NOT move
+        Assert.Equal(0, r0.AsForeignId);            // the live id did not move
         Assert.Same(live, e.AsForeign(r0));
     }
 
-    /// <summary>A dead entry UNDER a live one cannot be removed without
+    /// <summary>A dead entry under a live one cannot be removed without
     /// moving the live id, so it is nulled instead: the object goes, the
     /// slot stays, and every surviving id still means what it meant.
     /// </summary>
@@ -151,8 +151,8 @@ public class ForeignTableSweepTests(ITestOutputHelper o)
         Assert.Null(e.ForeignById(0));              // the object was released
     }
 
-    /// <summary>A null a program stored ON PURPOSE is indistinguishable from
-    /// a swept one by value, so the sweep must judge by LIVENESS. Shrinking
+    /// <summary>A null a program stored on purpose is indistinguishable from
+    /// a swept one by value, so the sweep must judge by liveness. Shrinking
     /// on null-ness would drop a live id off the end and turn
     /// AsForeign into an index-out-of-range out of the engine.</summary>
     [Fact]

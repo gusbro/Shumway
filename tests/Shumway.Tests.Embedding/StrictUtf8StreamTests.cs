@@ -50,7 +50,7 @@ public class StrictUtf8StreamTests : IDisposable
     {
         string f = File("bad.txt", new byte[] { 0xFF, (byte)'a' });
         var e = new PrologEngine();
-        // Two peeks both see the error (nothing consumed); the failed GET
+        // Two peeks both see the error (nothing consumed); the failed get
         // consumes the one bad byte, so the next get reads 'a'.
         Assert.True(e.Query(
             $"open('{f}', read, S), "
@@ -113,7 +113,7 @@ public class StrictUtf8StreamTests : IDisposable
     {
         // ADR-045 CR look-ahead: the LF probe behind a CR must not lose the
         // CR when what follows is ill-formed; the error surfaces on the read
-        // positioned AT the bad byte.
+        // positioned at the bad byte.
         string f = File("cr.txt", new byte[] { (byte)'\r', 0xFF, (byte)'x' });
         var e = new PrologEngine();
         Assert.True(e.Query(

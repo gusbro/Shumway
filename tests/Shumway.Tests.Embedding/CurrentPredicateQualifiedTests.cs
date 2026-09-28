@@ -6,7 +6,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Qualified <c>current_predicate(M:PI)</c> — stage 1 of the real
-/// M:P story. The qualified form answers for what module M DEFINES (clause
+/// M:P story. The qualified form answers for what module M defines (clause
 /// heads, its dynamics — imports and re-exports are not definitions); an
 /// unbound M backtracks over the modules, SWI-style. Both spellings are one
 /// form: the operator-natural <c>m:f/0</c> parses as <c>(m:f)/0</c> (':' at
@@ -157,7 +157,7 @@ public sealed class CurrentPredicateQualifiedTests
             e.ConsultFile(Path.Combine(dir, "cpq_top.pl"));
             Assert.True(e.Query("current_predicate(cpq_top:top_own/0).").Success);
             Assert.True(e.Query("current_predicate(cpq_dep:dep_pub/0).").Success);
-            // Imported into cpq_top, but DEFINED in cpq_dep only.
+            // Imported into cpq_top, but defined in cpq_dep only.
             Assert.False(e.Query("current_predicate(cpq_top:dep_pub/0).").Success);
         }
         finally { Directory.Delete(dir, recursive: true); }

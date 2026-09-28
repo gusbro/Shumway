@@ -152,7 +152,7 @@ public class Chunk58Tests
         var engine = new PrologEngine();
         engine.ConsultString(
             ":- public not_a/2.\n" +
-            // not_a consumes one element that is NOT a.
+            // not_a consumes one element that is not a.
             "not_a --> \\+ [a], [_].\n");
         Assert.True(engine.Query("not_a([b], []).").Success);
         Assert.False(engine.Query("not_a([a], []).").Success);

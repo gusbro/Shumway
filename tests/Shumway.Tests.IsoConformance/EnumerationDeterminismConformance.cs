@@ -3,13 +3,13 @@ using Shumway.Embedding;
 namespace Shumway.Tests.IsoConformance;
 
 /// <summary>
-/// A builtin that enumerates must leave a choice point only when a FURTHER
+/// A builtin that enumerates must leave a choice point only when a further
 /// solution exists. Leaving one on the last (or only) answer is phantom
 /// nondeterminism: every caller that does not cut drags a dead choice point
 /// around, and lgtunit's deterministic/1 — which the conformity battery uses —
 /// reports the goal as nondet.
 ///
-/// <para>The rule these all follow: narrow the candidate set to the SOLUTIONS
+/// <para>The rule these all follow: narrow the candidate set to the solutions
 /// before enumerating. Where the bound arguments say which candidates can
 /// match, filter on them; where only a trial unification can tell, look ahead
 /// with one (rolled back) before deciding to push.</para>
@@ -30,7 +30,7 @@ public class EnumerationDeterminismConformance
     [Fact]
     public void AtomConcatWithAliasedArgumentsIsDeterministic()
     {
-        // Both halves are the SAME unbound variable: only the even split can
+        // Both halves are the same unbound variable: only the even split can
         // match, so the split point is pinned exactly as a bound argument
         // pins it. `A == aa` is the answer, with no choice point behind it.
         Assert.True(IsDeterministic("", "atom_concat(A, A, aaaa), A == aa"));

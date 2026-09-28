@@ -8,14 +8,14 @@ namespace Shumway.Web;
 /// like Concord, DAP and the in-process tests — attached directly, no channel,
 /// no protocol; the page calls the exports below and receives one stop event.
 ///
-/// <para><b>Threading.</b> A stop happens INSIDE the running search — on the
-/// pool thread <c>QueryNext</c> put it on, with <c>_engineGate</c> HELD. So the
+/// <para><b>Threading.</b> A stop happens inside the running search — on the
+/// pool thread <c>QueryNext</c> put it on, with <c>_engineGate</c> held. So the
 /// stop handler cannot touch JavaScript directly (interop is thread-affine):
-/// the snapshot is POSTED to the runtime thread, the road engine output already
-/// takes. The handler then BLOCKS its thread until the page resumes it — the
+/// the snapshot is posted to the runtime thread, the road engine output already
+/// takes. The handler then blocks its thread until the page resumes it — the
 /// pending <c>QueryNext</c> promise simply stays unresolved while stopped,
 /// which is the truthful shape: the search has not answered. That is also why
-/// <see cref="DebugResume"/> must NOT go through <c>OnEngine</c>: the gate is
+/// <see cref="DebugResume"/> must not go through <c>OnEngine</c>: the gate is
 /// held by the very query it needs to wake. Like <c>QueryCancel</c>, it only
 /// flips state and returns.</para></summary>
 internal static partial class WebShumwayApp
@@ -25,9 +25,9 @@ internal static partial class WebShumwayApp
     /// <summary>Blocks the stopped search until the page says how to go on.</summary>
     private static readonly SemaphoreSlim _debugResumeGate = new(0);
 
-    /// <summary>1 while a stop is waiting to be resumed. Exchanged to 0 by the ONE
+    /// <summary>1 while a stop is waiting to be resumed. Exchanged to 0 by the one
     /// release that wins — resume and cancel can both try, and a second Release
-    /// would let the NEXT stop fall straight through.</summary>
+    /// would let the next stop fall straight through.</summary>
     private static int _debugStopPending;
 
     private static string _debugResumeMode = "continue";
@@ -36,7 +36,7 @@ internal static partial class WebShumwayApp
     internal static partial void DebugStoppedToPage(string json);
 
     /// <summary>Restarts the engine with debug compilation on and a debug session
-    /// attached. A fresh engine because debuggability is decided at COMPILE time:
+    /// attached. A fresh engine because debuggability is decided at compile time:
     /// whatever was consulted before this call has no ports and no source map —
     /// the page consults the buffer again after enabling. Returns null, or the
     /// error text.</summary>
@@ -51,12 +51,12 @@ internal static partial class WebShumwayApp
                 StartEngine();
                 var engine = _session!.Engine;
                 // Before any consult: the flag is read when a clause compiles —
-                // and it must be set as a DIRECTIVE. A set_prolog_flag QUERY
+                // and it must be set as a directive. A set_prolog_flag query
                 // lands in the store current_prolog_flag reads but not the one
                 // consult compiles under; only the directive reaches that one.
                 engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n");
                 // A debugger needs the frames LCO would reclaim. This one is a
-                // RUNTIME flag, set the way the debug test suites set it.
+                // runtime flag, set the way the debug test suites set it.
                 foreach (var _ in engine.QueryAll("set_prolog_flag(debug_lco, off).")) { }
                 _debug = new DebugService(engine, OnDebugStop);
                 // Break All: the page sets a flag (DebugBreakNow); the engine
@@ -75,10 +75,10 @@ internal static partial class WebShumwayApp
         });
 
     /// <summary>Sets or removes a breakpoint, optionally guarded by a condition goal
-    /// (empty = unconditional; a set REPLACES the previous condition — the page writes
-    /// its whole desired state each time). Breakpoints bind by file BASE NAME, so the
+    /// (empty = unconditional; a set replaces the previous condition — the page writes
+    /// its whole desired state each time). Breakpoints bind by file base name, so the
     /// page passes the workspace file's name and it matches however the file was
-    /// consulted. WHILE STOPPED the engine gate is held by the suspended search, so
+    /// consulted. While stopped the engine gate is held by the suspended search, so
     /// the call bypasses it — the engine is parked, and its breakpoint table is
     /// arm-gate-serialized on its own (the flow every desktop debugger uses).</summary>
     [JSExport]
@@ -99,8 +99,8 @@ internal static partial class WebShumwayApp
             if (bound == 0 && warmUp)
             {
                 // Once an engine has run a query, a consult defers compiling its
-                // clauses to the NEXT query's setup — and a breakpoint only binds
-                // to COMPILED sites. Force that setup and retry.
+                // clauses to the next query's setup — and a breakpoint only binds
+                // to compiled sites. Force that setup and retry.
                 foreach (var _ in engine.QueryAll("true.")) { }
                 bound = engine.AddBreakpoint(file, line, cond);
             }
@@ -113,9 +113,9 @@ internal static partial class WebShumwayApp
     }
 
     /// <summary>The Immediate window: evaluates <paramref name="goal"/> against display
-    /// frame <paramref name="frameIndex"/> of the SUSPENDED query — the engine-side
+    /// frame <paramref name="frameIndex"/> of the suspended query — the engine-side
     /// semantics of the desktop debuggers, including the <c>!</c> on-frame prefix and a
-    /// bare <c>;</c> for the next solution. Only meaningful while stopped. UNGATED (the
+    /// bare <c>;</c> for the next solution. Only meaningful while stopped. Ungated (the
     /// stop holds the engine gate) but on a pool thread: an evaluation may run to its
     /// 15-second timeout, and the runtime thread must stay free.</summary>
     [JSExport]
@@ -131,7 +131,7 @@ internal static partial class WebShumwayApp
         });
     }
 
-    /// <summary>Set Next Statement: move where the suspended query will RESUME to
+    /// <summary>Set Next Statement: move where the suspended query will resume to
     /// <paramref name="line"/> on display frame <paramref name="frame"/>, without
     /// running anything (ADR-035 D5+). The machine is parked, so this mutates its P
     /// directly, the way evaluation reads it. Returns the re-captured stop as JSON
@@ -157,7 +157,7 @@ internal static partial class WebShumwayApp
     }
 
     /// <summary>Re-captures the suspended query's frames — variables and residual
-    /// constraints as they are NOW, after an on-frame <c>!</c> evaluation changed
+    /// constraints as they are now, after an on-frame <c>!</c> evaluation changed
     /// them. Same JSON as the stop event; empty when nothing is stopped.</summary>
     [JSExport]
     internal static Task<string> DebugFramesNow()
@@ -177,13 +177,13 @@ internal static partial class WebShumwayApp
     }
 
     /// <summary>Wakes the stopped search: <c>continue</c>, <c>into</c>, <c>over</c>
-    /// or <c>out</c>. False when nothing was stopped. Deliberately NOT gated — see
+    /// or <c>out</c>. False when nothing was stopped. Deliberately not gated — see
     /// the class comment.</summary>
     [JSExport]
     internal static Task<bool> DebugResume(string mode)
         => Task.FromResult(TryReleaseStop(mode));
 
-    /// <summary>Asks the RUNNING search to pause at its next goal (Break All).
+    /// <summary>Asks the running search to pause at its next goal (Break All).
     /// Only a flag — the engine reads it at a port, on its own thread.</summary>
     [JSExport]
     internal static Task<bool> DebugBreakNow()
@@ -194,11 +194,11 @@ internal static partial class WebShumwayApp
 
     /// <summary>1 while the page has asked for a Break All the engine has not yet
     /// honoured. Cleared when a run ends, so a pause requested too late cannot
-    /// ambush the NEXT query at its first goal.</summary>
+    /// ambush the next query at its first goal.</summary>
     private static int _breakNowRequested;
 
     /// <summary>Engine-gated normally, direct while a debug stop is pending: the
-    /// suspended search HOLDS the gate, and the engine is parked — reading or
+    /// suspended search holds the gate, and the engine is parked — reading or
     /// writing workspace files then is safe and must not queue behind a gate
     /// that only the debugger's own resume will release. This is what lets the
     /// user browse the other files of the workspace while stopped.</summary>
@@ -217,7 +217,7 @@ internal static partial class WebShumwayApp
 
     private static void OnDebugStop(DebugService s, DebugStopEvent e)
     {
-        // Pool thread, mid-search, engine gate held. Pending FIRST, so a resume
+        // Pool thread, mid-search, engine gate held. Pending first, so a resume
         // racing the post finds the stop already claimable.
         Interlocked.Exchange(ref _debugStopPending, 1);
         string json = SerializeStop(e);
@@ -227,7 +227,7 @@ internal static partial class WebShumwayApp
             _jsThread.Post(j => DebugStoppedToPage((string)j!), json);
 
         // CA1416 flags any blocking wait as browser-unsupported, but that is a
-        // statement about the RUNTIME thread. This handler only ever runs on
+        // statement about the runtime thread. This handler only ever runs on
         // the pool thread the search occupies (OnEngine's Task.Run), where
         // blocking is legal — and blocking here is the point: stopped means
         // the search does not advance.
@@ -259,7 +259,7 @@ internal static partial class WebShumwayApp
             // and BreakFile/BreakLine differ by design.
             w.WriteString("breakFile", e.BreakFile);
             w.WriteNumber("breakLine", e.BreakLine);
-            // Why a CONDITIONAL breakpoint stopped without its condition
+            // Why a conditional breakpoint stopped without its condition
             // holding (it could not run); empty for every ordinary stop.
             w.WriteString("conditionError", e.ConditionError);
             w.WriteStartArray("frames");
@@ -291,7 +291,7 @@ internal static partial class WebShumwayApp
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
-                // The lines Set Next Statement accepts ON THIS frame (moving
+                // The lines Set Next Statement accepts on this frame (moving
                 // execution there is valid); the page offers them and no others.
                 w.WriteStartArray("setNextLines");
                 foreach (int ln in f.SetNextLines) w.WriteNumberValue(ln);

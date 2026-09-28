@@ -112,7 +112,7 @@ public class Phase33Wave1Tests
         Assert.Equal(Encoding.ASCII, e.NativeTextEncoding);
     }
 
-    // ---- E3: string_term/2 must parse with the engine's LIVE operator table so
+    // ---- E3: string_term/2 must parse with the engine's live operator table so
     //      user :- op/3 operators round-trip (it rendered with the live table but
     //      parsed with the default one). ----
 
@@ -146,7 +146,7 @@ public class Phase33Wave1Tests
             "catch(string_term('foo(', _), error(syntax_error(_), _), R = caught), R == caught.").Success);
     }
 
-    // ---- E7: a recorded-DB key with an INNER unbound variable used to store under
+    // ---- E7: a recorded-DB key with an inner unbound variable used to store under
     //      a never-matchable key (silent lookup failure); now instantiation_error. ----
 
     [Fact]
@@ -179,7 +179,7 @@ public class Phase33Wave1Tests
         }
         using (var lease = pool.Rent())
         {
-            // A fresh engine: the previous rental's assert is NOT visible.
+            // A fresh engine: the previous rental's assert is not visible.
             Assert.False(lease.Activation.Query("fact(9).").Success);
             Assert.True(lease.Activation.Query("base(1).").Success);
         }
@@ -211,7 +211,7 @@ public class Phase33Wave1Tests
     }
 
     // ---- E11 bonus: Arity string_search/4 (leading case flag; 0-based, per
-    //      ARITY.HLP "Location is offset from 0" — the /3 form was verified 0-based). ----
+    //      arity.HLP "Location is offset from 0" — the /3 form was verified 0-based). ----
 
     [Fact]
     public void E11_StringSearch4_CaseFlag()

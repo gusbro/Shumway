@@ -54,7 +54,7 @@ public class LogicAndControlConformance
     {
         // ISO §6.3.3 / §6.4.7 function-call disambiguation (chunk 149):
         // `\+ (G1, G2)` with whitespace before `(` is the prefix operator
-        // `\+` applied to the parenthesised conjunction `(G1, G2)` — NOT
+        // `\+` applied to the parenthesised conjunction `(G1, G2)` — not
         // the function-call `\+/2`. So `\+ (fail, true)` negates a goal
         // that fails and therefore succeeds, while `\+ (true, true)`
         // negates a goal that succeeds and therefore fails.
@@ -66,9 +66,9 @@ public class LogicAndControlConformance
     [Fact]
     public void NotProvable_AdjacentParen_IsFunctionCallShape()
     {
-        // The flip side: `\+(fail, true)` with NO whitespace is the
+        // The flip side: `\+(fail, true)` with no whitespace is the
         // function-call notation `\+/2`, which is undefined → a catchable
-        // existence_error(procedure, _). (The indicator IS `\+/2`, but the
+        // existence_error(procedure, _). (The indicator is `\+/2`, but the
         // literal `\+/2` can't be written in source — `\+/` is one graphic
         // token under maximal munch — so the catcher leaves the PI a var.)
         var e = new PrologEngine();

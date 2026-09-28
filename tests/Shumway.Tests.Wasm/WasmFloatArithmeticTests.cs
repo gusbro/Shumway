@@ -8,22 +8,22 @@ namespace Shumway.Tests.Wasm;
 /// <summary>Float arithmetic inside the module, against the interpreter.
 ///
 /// <para>The a_eval RPN stack lived in i64 locals, so a float literal was an
-/// unconditional deopt and a float CELL operand deopted on its tag. Measured
+/// unconditional deopt and a float cell operand deopted on its tag. Measured
 /// on a 2,000-iteration loop over `N * 1.5`: 2,000 deopts, one per
 /// iteration, and 8x the time of the same loop in integers -- the tier made
-/// float code SLOWER than not promoting at all, and clpr (whose store is
+/// float code slower than not promoting at all, and clpr (whose store is
 /// floats) ran 12x slower than Tier-0.</para>
 ///
-/// <para>Each slot now carries a KIND beside its value: the 60-bit int lane
+/// <para>Each slot now carries a kind beside its value: the 60-bit int lane
 /// as before, or the IEEE bits of a double. Delivering a float result still
 /// escalates -- that needs its two heap cells -- so what stays in wasm here
-/// is everything that CONSUMES floats: literals, operand reads, arithmetic
+/// is everything that consumes floats: literals, operand reads, arithmetic
 /// and comparisons.</para>
 ///
 /// <para>These are differential: the tier must answer exactly what the
 /// interpreter answers. Arithmetic is where "fast and almost right" is
-/// worst, so the assertions are equality of ANSWERS, not of speed.</para></summary>
-/// <summary>The corpus, built ONCE for the whole class: 50 cases asking
+/// worst, so the assertions are equality of answers, not of speed.</para></summary>
+/// <summary>The corpus, built once for the whole class: 50 cases asking
 /// different goals of the same program, where building the program was the
 /// cost. See <see cref="WasmTypeTestCorpus"/> for when sharing is safe --
 /// these cases only ask.</summary>
@@ -164,7 +164,7 @@ public sealed class WasmFloatArithmeticTests(
         "sgn(-2.5, R), R == -1.0.",
         "sgn(2.5, R), R == 1.0.",
         "sgn(0.0, R), R == 0.0.",
-        // the single zero, now on a COMPUTED value
+        // the single zero, now on a computed value
         "mul(0.0, -1.0, R), R == 0.0.",
         "neg(0.0, R), R == 0.0.",
         "mul(0.0, -1.0, R), R =:= 0.0.",
@@ -219,7 +219,7 @@ public sealed class WasmFloatArithmeticTests(
             $"{entries} chain entries for one goal: the chain is breaking");
     }
 
-    /// <summary>And a loop that PRODUCES a float every iteration: this is the
+    /// <summary>And a loop that produces a float every iteration: this is the
     /// one clpr is made of, and it used to deopt on every `is`.</summary>
     [DiagFact]
     public void AFloatProducingLoopStaysInTheModule()

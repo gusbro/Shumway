@@ -7,10 +7,10 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-037 — the inline <c>( Cond *-> Then ; Else )</c> soft cut compiled to
 /// Tier-1 IL. The <c>soft_cut</c> opcode emits <c>engine.SoftCutToLevel</c>; the
-/// ELSE choice point is an IL choice point, so the deterministic case discards it
+/// else choice point is an IL choice point, so the deterministic case discards it
 /// (via <c>Cut</c>, which also drops the <c>_ilCpStack</c> entry) and the
 /// non-deterministic case neutralises the IL CP's resume delegate (so backtracking
-/// pops it and fails through instead of running Else). Every test runs PROMOTED
+/// pops it and fails through instead of running Else). Every test runs promoted
 /// (threshold 1) and asserts promotion happened — a Tier-0 fallback would hide an
 /// emit failure.
 /// </summary>
@@ -49,7 +49,7 @@ public class Adr037SoftCutIlTests
     public void SoftCut_Promoted_PreservesNondeterminism_ThenPerSolution()
     {
         // Exercises the IL-CP neutralisation path: member leaves choice points
-        // ABOVE the ELSE IL CP, so soft_cut must mark that middle IL CP's resume
+        // above the else IL CP, so soft_cut must mark that middle IL CP's resume
         // to fail (not run Else) — Then runs once per condition solution.
         var (e, _) = Promoted(
             ":- public g/2.\n" +

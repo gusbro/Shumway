@@ -90,7 +90,7 @@ public class ParserTests
     [Fact]
     public void Compound_NoArgsIsAnError()
     {
-        // `foo()` is NOT valid Prolog — atoms with zero args have no paren form.
+        // `foo()` is not valid Prolog — atoms with zero args have no paren form.
         Assert.Throws<ParseException>(() => Parse("foo()"));
     }
 

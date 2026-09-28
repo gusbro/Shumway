@@ -2,7 +2,7 @@ using Shumway.Core;
 
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>The compile environment for the LIVE engine: every encoding the
+/// <summary>The compile environment for the live engine: every encoding the
 /// module bakes is the interned resume-marker scheme Tier-1 IL already uses,
 /// so wasm-pushed choice points, call continuations and callee dispatch all
 /// flow through the interpreter's existing marker path -- backtracking into a

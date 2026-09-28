@@ -60,7 +60,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
 
     /// <summary>One module per predicate answers what Tier-0 answers, and
     /// every crossing is a hop: nothing goes out to the host, nothing deopts.
-    /// The counter-proof is the same corpus as ONE module, which cannot hop
+    /// The counter-proof is the same corpus as one module, which cannot hop
     /// because it has no sibling to hop to.</summary>
     [DiagFact]
     public void OneModulePerPredicateAnswersLikeTier0AndOnlyHops()
@@ -68,7 +68,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
         string oracle = Oracle();
         var (engine, members, world) = TieredEngine.BuildWithWorld(Corpus);
         Assert.Equal(oracle, Answer(engine));       // promotes as it calls
-        // ANTI-VACUITY: the four predicates each got a module.
+        // anti-vacuity: the four predicates each got a module.
         Assert.True(members.Count >= 4, $"only {members.Count} promoted");
         Assert.Equal(members.Count, world.Modules.ModuleCount);
 

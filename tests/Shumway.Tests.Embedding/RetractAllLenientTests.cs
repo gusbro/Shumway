@@ -4,8 +4,8 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>retractall/1 leniency (SWI / SICStus): a no-op on an UNDEFINED
-/// predicate (was raising permission_error via retract), an error on a STATIC
+/// <summary>retractall/1 leniency (SWI / SICStus): a no-op on an undefined
+/// predicate (was raising permission_error via retract), an error on a static
 /// one, and a normal bulk-retract on a dynamic one.</summary>
 public sealed class RetractAllLenientTests
 {
@@ -14,7 +14,7 @@ public sealed class RetractAllLenientTests
     {
         var e = new PrologEngine();
         Assert.True(e.Query("retractall(never_defined(_)).").Success);
-        // The predicate is left UNDEFINED (no fabricated dynamic stub), so
+        // The predicate is left undefined (no fabricated dynamic stub), so
         // calling it still raises existence_error — unchanged by the retractall.
         Assert.True(e.Query(
             "catch(never_defined(_), error(existence_error(procedure, _), _), true).").Success);

@@ -80,7 +80,7 @@ public class Chunk170Tests
         Assert.Contains("public", stderr);
         Assert.Contains("foo/1", stderr);
         Assert.Contains("bar/2", stderr);
-        // Local predicate must NOT appear under public.
+        // Local predicate must not appear under public.
         var publicSection = stderr.Substring(stderr.IndexOf("public"));
         Assert.DoesNotContain("helper/1", publicSection);
     }

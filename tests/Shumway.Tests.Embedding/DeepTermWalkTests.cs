@@ -6,7 +6,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Engine walks over USER DATA must not run on the C# call stack.
+/// Engine walks over user data must not run on the C# call stack.
 ///
 /// <para>A term a program builds has no depth limit the engine controls, and
 /// a .NET stack overflow is not a <c>resource_error</c> a program can catch —
@@ -150,7 +150,7 @@ public class DeepTermWalkTests
     [Fact]
     public void LeftNestedOperatorChain_Materialises()
     {
-        // `1+2+3+…` is yfx, so it parses into a LEFT spine: deep in argument
+        // `1+2+3+…` is yfx, so it parses into a left spine: deep in argument
         // one, where the list-spine shortcut does not help. It parsed fine and
         // then died planting the AST on the heap.
         var text = new StringBuilder("0");

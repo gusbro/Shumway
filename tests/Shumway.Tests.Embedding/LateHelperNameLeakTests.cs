@@ -5,7 +5,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>The late-helper registry's name filter must not swallow USER
+/// <summary>The late-helper registry's name filter must not swallow user
 /// predicates. MetaTransform helpers are '$kind_id' — bare '$disj_12',
 /// module-mangled 'mod$$disj_12', always a '$' right before the last
 /// segment. A user local like 'test_326' fits the letters_digits shape by
@@ -23,7 +23,7 @@ public sealed class LateHelperNameLeakTests
         {
             // dep_7/0 matches the helper shape (letters_digits) — before the
             // fix it registered under its bare name and a top-level call ran
-            // it despite the module being a use_module DEPENDENCY.
+            // it despite the module being a use_module dependency.
             File.WriteAllText(Path.Combine(dir, "lhl_dep.pl"), """
                 :- module(lhl_dep, [lhl_pub/0]).
                 lhl_pub :- dep_7.

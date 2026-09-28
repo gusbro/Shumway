@@ -11,7 +11,7 @@ namespace Shumway.Tests.Wasm;
 /// where the marker comes from, and the meta one reads it from a table that
 /// was filled only when a module was installed. So a meta-call landing on a
 /// predicate the tier never compiled -- one the census refused, a dynamic,
-/// anything below the threshold -- read zero and STEPPED ASIDE, while a
+/// anything below the threshold -- read zero and stepped aside, while a
 /// direct call to that same predicate did not.</para>
 ///
 /// <para>Measured on clp(Z) in a browser, that asymmetry was 160,888 of
@@ -39,7 +39,7 @@ public sealed class MetaCallToAnUncompiledCalleeTests(ITestOutputHelper o)
             "the interpreter's own answer moved");
 
         var (tiered, _) = TieredEngine.Build(Corpus);
-        // The FIRST meta-call is the one that teaches the host, so a
+        // The first meta-call is the one that teaches the host, so a
         // measured run has to come after one. That is the design: the
         // marker is published on the path the host was taking anyway.
         Assert.True(tiered.Query("drive(_).").Success);

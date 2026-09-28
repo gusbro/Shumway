@@ -10,7 +10,7 @@ public sealed partial class PrologEngine
     // directive, for term_expansion; a body goal, for goal_expansion) and returns
     // its replacement, or null to decline. First hook that returns non-null wins;
     // a term_expansion may return several terms (one clause → many) or an empty
-    // list (drop the term). These run BEFORE the Prolog-level term_expansion/2 //
+    // list (drop the term). These run before the Prolog-level term_expansion/2 //
     // goal_expansion/2 predicates.
     private List<System.Func<Term, IReadOnlyList<Term>?>>? _termExpansions;
     private List<System.Func<Term, Term?>>? _goalExpansions;
@@ -83,7 +83,7 @@ public sealed partial class PrologEngine
 
     // ---- hook discriminator index ----
     //
-    // Every consulted term (and, for goal_expansion, every body GOAL of every
+    // Every consulted term (and, for goal_expansion, every body goal of every
     // clause) pays one QueryAll per live hook family — the dominant cost of
     // loading a large library under active hooks (~2 ms per no-match QueryAll).
     // Most hook clauses discriminate their input by a principal functor, either
@@ -122,7 +122,7 @@ public sealed partial class PrologEngine
         if (!_hookIndexValid) { _teIdx = _te6Idx = _geIdx = null; _hookIndexValid = true; }
         if (slot is not null) return slot;
         var idx = new HookDiscriminators();
-        // A hook living in the DYNAMIC store (asserted, no static clauses) can
+        // A hook living in the dynamic store (asserted, no static clauses) can
         // change without a consult — don't reason about its clauses.
         if (_dynStore.IsDynamic(hookFid)) { idx.AnyMatch = true; return slot = idx; }
         var (atomId, arity) = FunctorTable.Lookup(hookFid);
@@ -193,7 +193,7 @@ public sealed partial class PrologEngine
         }
     }
 
-    // How many times a term or a goal may be REPLACED along one path before
+    // How many times a term or a goal may be replaced along one path before
     // this gives up. A hook that expands its own output does not terminate,
     // and no system bounds that for you: the ones that survive it survive by
     // not walking user data on the machine stack, which is what the explicit
@@ -212,7 +212,7 @@ public sealed partial class PrologEngine
 
     // The Prolog term_expansion/2 hook: call the user predicate
     // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and
-    // return its expansion. A term_expansion result that is a PROPER LIST is a list
+    // return its expansion. A term_expansion result that is a proper list is a list
     // of clauses (SWI/Scryer); anything else is a single clause; `[]` drops the
     // term. Returns false when term_expansion/2 is undefined or fails (no
     // expansion). Only consulted when HasPrologTermExpansion is true, so a program
@@ -256,7 +256,7 @@ public sealed partial class PrologEngine
             if (TryPrologTermExpansionOnce(term, one)) repl = one;
         }
         // No hook fired, or the sole result is the term unchanged → this term
-        // is final. Out of budget is NOT that: stopping there quietly hands
+        // is final. Out of budget is not that: stopping there quietly hands
         // the compiler a half-expanded clause nobody wrote.
         if (repl is null || (repl.Count == 1 && repl[0].Equals(term)))
         {
@@ -266,7 +266,7 @@ public sealed partial class PrologEngine
         if (depth <= 0) throw ExpansionRunaway();
         foreach (var t in repl)
         {
-            // A DIRECTIVE in a hook's output is an instruction to the compiler,
+            // A directive in a hook's output is an instruction to the compiler,
             // final as emitted — never re-expanded (SWI single-pass semantics).
             // record.pl's expansion opens with an xref marker directive
             // `(:- record('<compiled>'))`; re-running the hook on it generated
@@ -362,7 +362,7 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>Runs the EARLY-ACTIVATED in-file term_expansion hooks (renamed
+    /// <summary>Runs the early-activated in-file term_expansion hooks (renamed
     /// to <paramref name="predName"/> in the consult's hidden module) against
     /// one directive term. Same solution/flatten handling as
     /// <see cref="TryPrologTermExpansionOnce"/>, but scoped to the dedicated
@@ -449,14 +449,14 @@ public sealed partial class PrologEngine
     // reads the output back with fresh heap-address names (_G<addr>) — losing the
     // sharing between the input's vars and the clause around it. This restores it:
     // read each input var back too (same heap address → same _G<addr> name) and
-    // rename that name in the output to the input var's ORIGINAL name, so the
+    // rename that name in the output to the input var's original name, so the
     // expansion shares variables with the rest of the clause again.
     //
-    // Any variable the HOOK introduced (not an input var) then gets a globally
-    // UNIQUE name: heap-address names repeat across materialisations (a later
+    // Any variable the hook introduced (not an input var) then gets a globally
+    // unique name: heap-address names repeat across materialisations (a later
     // expansion's _G<addr> can equal a _G<addr> already in the surrounding
     // clause from an earlier expansion — clpz's ++>-expanded clauses meet their
-    // brace-goal expansions), and a colliding name silently ALIASES two
+    // brace-goal expansions), and a colliding name silently aliases two
     // unrelated variables in the rebuilt clause.
     private static int _freshExpansionVar;
 
@@ -518,11 +518,11 @@ public sealed partial class PrologEngine
 
     internal bool HasPrologGoalExpansion => HasPredicate(GoalExpansionFid);
 
-    // term_expansion/2 and goal_expansion/2 are GLOBAL hooks: any module that
+    // term_expansion/2 and goal_expansion/2 are global hooks: any module that
     // defines one (real libraries do it with a `user:` clause head — atts.pl,
     // dcgs.pl) contributes to the single global hook, so the functor is never
     // mangled into a module-local name, even inside an export-qualified module.
-    // The clause itself stays in its file's module, so its BODY still resolves
+    // The clause itself stays in its file's module, so its body still resolves
     // against that module's own predicates.
     internal static bool IsGlobalHookFunctor(int fid) =>
         fid == TermExpansionFid || fid == GoalExpansionFid || fid == TermExpansion6Fid;
@@ -598,8 +598,8 @@ public sealed partial class PrologEngine
             Term done;
             while (true)
             {
-                // A VARIABLE goal is a runtime meta-call — goal_expansion must
-                // not touch it: a hook's head pattern would UNIFY into the
+                // A variable goal is a runtime meta-call — goal_expansion must
+                // not touch it: a hook's head pattern would unify into the
                 // variable (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))`
                 // turned clpz's `( Repeat -> ... )` condition into an orphaned
                 // `phrase(_,_,[])`, destroying the goal). Scryer's expand_goal
@@ -626,7 +626,7 @@ public sealed partial class PrologEngine
                     if (--budget <= 0) throw ExpansionRunaway();
                     g = next;
                 }
-                // The replacement may itself be a CONTROL construct whose
+                // The replacement may itself be a control construct whose
                 // subgoals still need expanding — clpz's own goal_expansion
                 // rewrites get_attr/3 into (var(V), get_atts(V, Access)), and
                 // that get_atts needs the atts hook that bakes the calling

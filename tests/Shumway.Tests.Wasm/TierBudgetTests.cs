@@ -11,7 +11,7 @@ namespace Shumway.Tests.Wasm;
 ///
 /// <para>These exist because of one failure mode nothing else can see. When the
 /// backend translates something wrongly it steps aside, the interpreter redoes
-/// the instruction, and the ANSWER comes out right — the run is simply slower.
+/// the instruction, and the answer comes out right — the run is simply slower.
 /// A differential against Tier-0 is blind to it by construction. It has already
 /// happened once: a choice-point restore that scaled a cell index by four
 /// instead of eight made every retry and trust step aside, and
@@ -22,7 +22,7 @@ namespace Shumway.Tests.Wasm;
 /// bug — during an arc it is usually the point. The failure prints the old and
 /// the new value so the change can be read at a glance, and the rule is that
 /// the commit which updates a number says in words why it moved. A number that
-/// went DOWN with no work that explains it is as suspicious as one that went
+/// went down with no work that explains it is as suspicious as one that went
 /// up.</para></summary>
 public sealed class TierBudgetTests(ITestOutputHelper o)
 {
@@ -90,7 +90,7 @@ public sealed class TierBudgetTests(ITestOutputHelper o)
         o.WriteLine($"{goal}\n  entries={gotEntries} deopts={gotDeopts} "
             + $"foreignExits={gotForeign}");
 
-        // ANTI-VACUITY: a budget of zero everywhere would be met by a tier
+        // Anti-vacuity: a budget of zero everywhere would be met by a tier
         // that never ran.
         Assert.NotEmpty(members);
         Assert.True(gotEntries > 0, "nothing entered the tier: the budget is vacuous");
@@ -109,7 +109,7 @@ public sealed class TierBudgetTests(ITestOutputHelper o)
     }
 
     /// <summary>The budget above is per goal; this is the property that holds
-    /// for ALL of them and is worth stating on its own, because it is the one
+    /// for all of them and is worth stating on its own, because it is the one
     /// the arc must not lose: with a single module, nothing leaves the tier
     /// looking for a target elsewhere.</summary>
     [DiagFact]

@@ -14,13 +14,13 @@ internal sealed class BoundedCaptureWriter : System.IO.StringWriter
     private readonly bool _truncate;
 
     /// <param name="truncate">What reaching the ceiling means. A capture the
-    /// PROGRAM asked for refuses (false) with
+    /// program asked for refuses (false) with
     /// <c>resource_error(text_length)</c>: it wanted the text, and there is
-    /// no text to give it. A capture a HOST asked for with a ceiling of its
+    /// no text to give it. A capture a host asked for with a ceiling of its
     /// own (true) keeps the prefix and drops the rest — it is comparing the
     /// text against something it already has, so past its own longest
     /// pattern the answer cannot change. Truncating also leaves the goal
-    /// RUNNING, which is how a looping goal still reaches the time limit
+    /// running, which is how a looping goal still reaches the time limit
     /// that decides it loops.</param>
     public BoundedCaptureWriter(int limit, bool truncate = false)
     {

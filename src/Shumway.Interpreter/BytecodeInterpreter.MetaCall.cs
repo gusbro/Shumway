@@ -169,7 +169,7 @@ public sealed partial class BytecodeInterpreter
     private bool RunWakeups(ProgramView code)
     {
         // The drain holds heap indices (the goals-variable slot, the built
-        // verify_attributes goal) in C# locals ACROSS meta-calls, which reach
+        // verify_attributes goal) in C# locals across meta-calls, which reach
         // safe points. Collection has to stand down for the region, not for the
         // rest of the query the way the old attvar bail did.
         _engine.EnterGcInhibit();
@@ -199,10 +199,10 @@ public sealed partial class BytecodeInterpreter
                 var (moduleId, attrValueIdx, otherIdx) = batch[i];
                 if (moduleId == Shumway.Core.Activation.LazyAttrModuleId)
                 {
-                    // Native '$lazy' — the attribute value IS the goal. No
+                    // Native '$lazy' — the attribute value is the goal. No
                     // verify_attributes hook exists or is wanted; hand the
                     // goal straight to the run-goals pass, which fires it
-                    // AFTER the binding, like a frozen goal.
+                    // after the binding, like a frozen goal.
                     int c = _engine.AllocateHeap(2);
                     _engine.SetHeap(c, Shumway.Core.Cell.Ref(attrValueIdx));
                     _engine.SetHeap(c + 1,
@@ -210,7 +210,7 @@ public sealed partial class BytecodeInterpreter
                     goalLists[i] = Shumway.Core.Cell.Lis(c);
                     continue;
                 }
-                // ADR-040 — resolve THIS module's hook per module: its own
+                // ADR-040 — resolve this module's hook per module: its own
                 // verify_attributes/3 (Scryer style) or /4 (module-local first,
                 // bare fallback). Two dialects' libraries each own their hook.
                 int v3 = _engine.Verify3FunctorId(moduleId);
@@ -270,7 +270,7 @@ public sealed partial class BytecodeInterpreter
     /// the now-bound variable (snapshotted at <paramref name="attrValueIdx"/> before
     /// the bind). <c>Value</c> is the term the variable was bound to.
     ///
-    /// <para>Limitation: attribute WRITES the hook makes to ProxyVar do not stick
+    /// <para>Limitation: attribute writes the hook makes to ProxyVar do not stick
     /// (the real variable is already bound) — the deferred-wakeup design cannot run
     /// the hook before the bind. Hooks that only read attributes and return Goals
     /// (the common case) work; ones that narrow the bound variable's own attributes
@@ -340,7 +340,7 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
-    /// <summary>The same §7.8.3 check for a goal still in TERM form (the
+    /// <summary>The same §7.8.3 check for a goal still in term form (the
     /// in-engine meta-call path).</summary>
     private void CheckBodyConvertible(Cell part, Cell whole)
     {
@@ -410,9 +410,9 @@ public sealed partial class BytecodeInterpreter
 
         if (functorId == ConjFunctorId)
         {
-            // §7.8.3: converting the goal to a body must succeed BEFORE
+            // §7.8.3: converting the goal to a body must succeed before
             // any of it runs — call((fail, 3)) is
-            // type_error(callable, (fail,3)), with the WHOLE goal as the
+            // type_error(callable, (fail,3)), with the whole goal as the
             // culprit, and `fail` never executes.
             CheckBodyConvertible(goal, goal);
             return MetaCallInEngine(code, _engine.GetHeap(argBase))
@@ -501,7 +501,7 @@ public sealed partial class BytecodeInterpreter
         Cell rawGoal = _engine.GetRegister(0);
         Cell goal = DerefCell(rawGoal);
 
-        // §7.6.2 — a VARIABLE in goal position converts to `call(V)`, which
+        // §7.6.2 — a variable in goal position converts to `call(V)`, which
         // gives it its own cut barrier. The argument slot still holds the REF
         // even after the variable was bound, so a goal reached through one is
         // recognisable here: `call((Z = (!), a(X), Z))` must keep a(X)'s
@@ -515,13 +515,13 @@ public sealed partial class BytecodeInterpreter
         // so a bare goal functor resolves against that module's locals first.
         int resolutionModule = PrepareMqualGoal(ref goal);
 
-        // SS7.6.2 converts the WHOLE body up front, at the call/N boundary:
-        // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable AT
-        // CONVERSION TIME, so it converts to call(C) and the ! it is later
+        // SS7.6.2 converts the whole body up front, at the call/N boundary:
+        // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable at
+        // conversion time, so it converts to call(C) and the ! it is later
         // bound to cuts only within that call. Dispatching lazily loses
         // this: by the time '$call' reaches C, its home cell holds a plain
         // `!`, indistinguishable from one written literally. So variable
-        // sub-goals wrap HERE — and only here: '$call'/2 dispatches a body
+        // sub-goals wrap here — and only here: '$call'/2 dispatches a body
         // this conversion already produced (convertBody: false), and
         // re-converting there would re-lose sub-goals bound mid-body.
         // Allocation-free when the skeleton has no variable positions.
@@ -573,12 +573,12 @@ public sealed partial class BytecodeInterpreter
         }
 
         int totalArity = goalArity + extraCount;
-        // The key the MODULE can form. It reads the goal off the heap, so
+        // The key the module can form. It reads the goal off the heap, so
         // for a compound it knows the functor id and, statically, how many
-        // arguments this call/N appends; it cannot derive the RESOLVED
+        // arguments this call/N appends; it cannot derive the resolved
         // functor, whose arity is wider.
         //
-        // An ATOM goal has no functor to read -- interning (name, 0) is a
+        // An atom goal has no functor to read -- interning (name, 0) is a
         // search and a module can only index -- so it keys by the atom id
         // instead, flagged, because atom ids and functor ids overlap.
         bool observedAtomGoal = goalArity == 0;
@@ -607,7 +607,7 @@ public sealed partial class BytecodeInterpreter
         // on the module too, and the tagged path is the (uncommon) variable
         // meta-call, not the hot direct-call path.
         // §7.8.3: a control construct's arguments must convert to a body
-        // BEFORE any of it runs — call((fail, 3)) and call(',', fail, 3)
+        // before any of it runs — call((fail, 3)) and call(',', fail, 3)
         // are both type_error(callable, (fail,3)), and `fail` must not
         // execute first. Checked here (not after the route cache) so the
         // cached path is covered too.
@@ -719,11 +719,11 @@ public sealed partial class BytecodeInterpreter
             return TryBacktrack();
         }
 
-        // Module-relative resolution FIRST — before the builtin check: a tagged
+        // Module-relative resolution first — before the builtin check: a tagged
         // goal resolves against the meta-caller's module locals (module$name),
         // so a runtime-variable meta-call reaches a module-local predicate the
         // same way a compile-time one is mangled. Order matters: an
-        // export-qualified module may define its OWN version of a builtin-named
+        // export-qualified module may define its own version of a builtin-named
         // predicate (Scryer's iso_ext defines copy_term/3, forall/2, succ/2) —
         // `iso_ext:copy_term(...)` must run iso_ext$copy_term, not the engine
         // builtin, exactly as its compile-time internal calls do. A module that
@@ -772,7 +772,7 @@ public sealed partial class BytecodeInterpreter
                         ? Shumway.Core.MetaRouteKind.DollarCall
                         : Shumway.Core.MetaRouteKind.Builtin,
                     builtinId);
-            // A DIRECT builtin is one a compiled module can request itself;
+            // A direct builtin is one a compiled module can request itself;
             // the $call helpers need this dispatcher, so they stay its.
             if (!builtin.IsDollarCall)
                 _engine.PublishMetaResolution(
@@ -783,18 +783,18 @@ public sealed partial class BytecodeInterpreter
 
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
         {
-            // A module-tagged goal whose functor is ALREADY qualified lands
+            // A module-tagged goal whose functor is already qualified lands
             // here, not in the mangled branch above: mangling it again would
             // ask for clpfd$clpfd$pneq/2. Measured, this is where every one
             // of clpfd's meta-calls resolves -- 2,728 of them against 0 in
             // the two branches that look like they should have it.
             //
-            // It resolves to ITSELF, and that is worth caching all the same:
+            // It resolves to itself, and that is worth caching all the same:
             // what the reader of the cache needs is permission to jump, and
             // the pair (module, functor) is what it has to ask under.
-            // ONLY a plain jump. By here functorId may have been REWRITTEN:
+            // Only a plain jump. By here functorId may have been rewritten:
             // a control construct (`,`, `;`, `->`, `*->`) is dispatched to a
-            // helper WITH THE CUT BARRIER IN X2, which is dispatcher
+            // helper with the cut barrier in X2, which is dispatcher
             // knowledge a compiled module does not have -- it copies the
             // goal's own arguments and jumps. Publishing one of those would
             // send the module into the helper without a barrier and with the
@@ -892,7 +892,7 @@ public sealed partial class BytecodeInterpreter
             int fid = _engine.GetHeap(fidx).AsFunctorId;
             // Both the engine's $mqual(Module, Goal) tag and the ISO Module:Goal
             // qualifier share the same (Module, Goal) layout. A `M:G` with a
-            // bad module slot is the ISO error HERE — falling through used to
+            // bad module slot is the ISO error here — falling through used to
             // dispatch ':'/2 as a predicate, whose prelude clause is
             // call(M:G): an infinite loop, not an error.
             if (fid == MqualFunctorId) { }
@@ -941,9 +941,9 @@ public sealed partial class BytecodeInterpreter
     /// wraps it as <c>'$mqual'(Module, Goal)</c>; but when the goal is itself an
     /// if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) — the shape a <c>;</c> matches
     /// structurally in <c>'$call_disj'</c> to give it if-then-else / soft-cut
-    /// semantics — it distributes the module INTO the construct's Cond/Then
+    /// semantics — it distributes the module into the construct's Cond/Then
     /// instead. A wrapping <c>$mqual</c> there would hide the <c>-&gt;</c>/<c>*-&gt;</c>
-    /// from that match (falling to the plain-disjunction clauses, which run BOTH
+    /// from that match (falling to the plain-disjunction clauses, which run both
     /// branches / raise <c>existence_error(*-&gt;/2)</c>).</summary>
     private Cell WrapGoal(int module, Cell goalCell)
     {
@@ -1018,7 +1018,7 @@ public sealed partial class BytecodeInterpreter
             // by the auto-promotion path. A non-dynamic predicate
             // present in CurrentFunctorAddresses under the same fid
             // (e.g. a module-local predicate that the link layer
-            // deliberately did NOT expose to this call site) must
+            // deliberately did not expose to this call site) must
             // still raise the standard existence_error rather than
             // breaking module visibility.
             var prog = _engine.CurrentProgram;
@@ -1028,8 +1028,8 @@ public sealed partial class BytecodeInterpreter
                 && (Opcode)prog[latest] == Opcode.EnterDynamic)
                 return latest;
             // a mid-query consult (consult/1 from a live query)
-            // live-links STATIC predicates into the running query's code
-            // space; a call site compiled at THIS query's setup (before the
+            // live-links static predicates into the running query's code
+            // space; a call site compiled at this query's setup (before the
             // consult) baked the undefined sentinel for them. The consult
             // made these fids globally visible exactly as a top-level
             // consult would, so resolving the sentinel to the live-linked
@@ -1040,17 +1040,17 @@ public sealed partial class BytecodeInterpreter
                 && visible.Contains(fid))
                 return latest;
             // a --strip-wam predicate has no WAM address; its map entry is
-            // a resume MARKER (a standalone delegate's (fid, 0), or a region member's
+            // a resume marker (a standalone delegate's (fid, 0), or a region member's
             // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler
             // SetPc's it and the dispatch loop's marker route invokes the IL. Module
-            // visibility is not widened: the sentinel's fid was chosen by the LINK
+            // visibility is not widened: the sentinel's fid was chosen by the link
             // layer (mangled for a local), so resolving that exact fid's own alias
             // grants nothing the link didn't already grant. Cold path — sentinels only.
             if (Activation.IsResumeMarker(latest))
                 return latest;
         }
         // Last chance: a runtime-assert MetaTransform helper linked by a
-        // DIFFERENT activation — materialize it into this one on demand.
+        // different activation — materialize it into this one on demand.
         int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
         if (late >= 0) return late;
         // honour the `unknown` flag — error throws here,
@@ -1100,12 +1100,12 @@ public sealed partial class BytecodeInterpreter
             catch (TopLevelFailure) { result = InterpreterResult.Failed; break; }
             catch (Exception ex) when (ResolveNestedCatch(ex, entryCatchFrames, out int recovery))
             {
-                // A catch/3 frame opened INSIDE this nested goal caught the
+                // A catch/3 frame opened inside this nested goal caught the
                 // ball. The C# unwinding already destroyed the inner Dispatch
-                // frames, but THIS driver frame — which owns the interrupted
+                // frames, but this driver frame — which owns the interrupted
                 // caller's continuation (saved Pc/Cp/B0 below) — must survive:
                 // resume the recovery in our own loop. A ball whose matching
-                // frame is OUTSIDE the nested goal (or matches nothing)
+                // frame is outside the nested goal (or matches nothing)
                 // rethrows via the filter and unwinds this driver too, which
                 // is then correct — the outer rollback discards us wholesale.
                 _engine.SetPc(recovery);
@@ -1124,7 +1124,7 @@ public sealed partial class BytecodeInterpreter
             if (_engine.B > savedB) _engine.Cut(savedB);
             return true;
         }
-        // Failure: the last clause tried left ITS environment current — the
+        // Failure: the last clause tried left its environment current — the
         // final backtrack found no choice point to restore E from — so the
         // caller would resume against a foreign frame. Nothing above savedE is
         // live any more; put the caller's environment back.

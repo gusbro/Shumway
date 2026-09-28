@@ -123,9 +123,9 @@ public class Chunk45Tests
         // Pre-warm is opt-in now (compile_all / WarmAllCompilable), not at load.
         engine.WarmAllCompilable();
 
-        // bar/0 IS promotable (single-clause fact, no body).
+        // bar/0 is promotable (single-clause fact, no body).
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("bar", 0)));
-        // foo/0 is NOT promotable (its body has a non-tail Call to
+        // foo/0 is not promotable (its body has a non-tail Call to
         // bar/0 before the tail-call to baz/0).
         Assert.True(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
         // Both still work via the consulted source.

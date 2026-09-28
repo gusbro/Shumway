@@ -54,7 +54,7 @@ public class Chunk90Tests
         // Phase 28: X*X #= 9 must label X=3, not X=1. The product propagator's
         // both-ground clause called clpfd_narrow(C, [P-P]) which, for a ground C
         // (here C is the bound product 9), only checked the new domain was
-        // non-empty instead of that C was IN it — so X=1 (1*1=1 != 9) wrongly
+        // non-empty instead of that C was in it — so X=1 (1*1=1 != 9) wrongly
         // survived labeling. Surfaced by the reducer/ExamplesFD corpus.
         Assert.Equal(Int(3), Fd().Query("X in 1..9, X*X #= 9, label([X]).")["X"]);
     }

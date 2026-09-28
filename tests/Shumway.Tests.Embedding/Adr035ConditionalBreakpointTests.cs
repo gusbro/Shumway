@@ -10,9 +10,9 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-035 D5 — conditional breakpoints. The breakpoint carries a Prolog goal;
 /// when the <c>Break</c> is reached the goal runs in the frame it fired in (its variables
-/// substituted by name, the Immediate-window recipe), ON THE ENGINE'S THREAD, before any
+/// substituted by name, the Immediate-window recipe), on the ENGINE'S thread, before any
 /// debugger hears of the hit: success stops, failure runs on, and a condition that cannot
-/// run (syntax error, exception, timeout) stops WITH the error — a broken condition that
+/// run (syntax error, exception, timeout) stops with the error — a broken condition that
 /// silently swallowed its breakpoint would be undiagnosable.</summary>
 [Collection("debugger")]
 public class Adr035ConditionalBreakpointTests
@@ -94,7 +94,7 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void ConditionSetUnderAnotherSpellingOfTheFile_StillGoverns()
     {
-        // The engine consulted the FULL path; the debugger names the file by its
+        // The engine consulted the full path; the debugger names the file by its
         // base name. One file, one id, two spellings — and the condition must
         // follow the breakpoint across them. It was once keyed by the spelling
         // the debugger used, which the hit never reports: the breakpoint stopped
@@ -163,7 +163,7 @@ public class Adr035ConditionalBreakpointTests
         var engine = DebugEngine();
         Assert.True(engine.AddBreakpoint("<string>", 4, "X > 3") > 0);
         engine.RemoveBreakpoint("<string>", 4);
-        // Re-armed WITHOUT a condition: it must stop on every hit, not remember "X > 3".
+        // Re-armed without a condition: it must stop on every hit, not remember "X > 3".
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
         var stops = Run(engine);
@@ -201,7 +201,7 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void ConditionWithABreakpointInItsPath_DoesNotRecurse()
     {
-        // The condition calls a predicate that ITSELF carries a breakpoint. A stop inside
+        // The condition calls a predicate that itself carries a breakpoint. A stop inside
         // a condition would recurse into evaluating the condition again; it must be skipped.
         //  8: check(X) :-
         //  9:     X > 3.
@@ -220,11 +220,11 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void ConditionEvaluation_UnderHeavyAssertz_DoesNotDerailTheOuterQuery()
     {
-        // The Blint crash. A condition is evaluated at EVERY hit, and each evaluation is a
+        // The Blint crash. A condition is evaluated at every hit, and each evaluation is a
         // nested query whose setup used to run the chunk-158 auto-compaction when the
         // accumulated assertz count crossed the watermark — "the safe point: no in-flight
-        // choice points hold addresses into it", said the comment. False for a NESTED
-        // debug evaluation: the OUTER query is in flight, its Break bytes live in the old
+        // choice points hold addresses into it", said the comment. False for a nested
+        // debug evaluation: the outer query is in flight, its Break bytes live in the old
         // buffer, and the compaction re-linked the breakpoint table against the new one —
         // so the outer query's next Break dispatched against a table that no longer
         // described it, and the whole program died of "code space out of step".
@@ -261,8 +261,8 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void ConditionEvaluation_WithUndeclaredDynamicAsserts_DoesNotDerailTheOuterQuery()
     {
-        // The other half of the Blint shape: the asserted predicate is UNDECLARED, so its
-        // implicit_dynamic auto-promotion mid-query takes the NON-OWNER invalidation path
+        // The other half of the Blint shape: the asserted predicate is undeclared, so its
+        // implicit_dynamic auto-promotion mid-query takes the non-owner invalidation path
         // (the persistent buffer is nulled while the outer query flies). Every condition
         // evaluation's nested setup then finds nothing to reuse and must rebuild — and the
         // rebuilt buffer must not steal the breakpoint table from the outer query's.
@@ -298,12 +298,12 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void AnErroringCondition_NeverLeaksIntoTheProgramsOwnCatch()
     {
-        // The Blint crash's other face. The condition machinery runs INSIDE the outer
+        // The Blint crash's other face. The condition machinery runs inside the outer
         // query's dispatch loop: an exception that escaped it would land in the outer
         // RunCatching — where the PROGRAM's own catch/3 would eat it, sending the program
         // down an error path it never takes without a debugger (or, uncaught, killing the
         // query with the RunCatching→Query→Main stack the user saw). The condition's error
-        // must surface ONLY as ConditionError on the stop.
+        // must surface only as ConditionError on the stop.
         //
         //  2: main(R) :-
         //  3:     catch(work, E, recover(E, R)).
@@ -325,7 +325,7 @@ public class Adr035ConditionalBreakpointTests
             use(_).
             recover(E, caught(E)).
             """);
-        // Y is unbound in the frame → is/2 raises → the condition ERRORS at every hit.
+        // Y is unbound in the frame → is/2 raises → the condition errors at every hit.
         Assert.True(engine.AddBreakpoint("<string>", 6, "Z is Y + 1, Z > 0") > 0);
 
         var stops = new List<DebugStopEvent>();
@@ -335,7 +335,7 @@ public class Adr035ConditionalBreakpointTests
         engine.AttachDebugSession(null);
 
         // The program's catch/3 never fired: main succeeded through work's second clause,
-        // leaving R unbound — NOT bound to caught(...).
+        // leaving R unbound — not bound to caught(...).
         Assert.Single(sols);
         Assert.DoesNotContain("caught", sols[0]["R"]?.ToString() ?? "");
 
@@ -347,11 +347,11 @@ public class Adr035ConditionalBreakpointTests
     [Fact]
     public void ConditionSideEffectsPersist_LikeAnImmediateWindowGoal()
     {
-        // Conditions run in the live engine (the C# debugger contract: a condition CAN
+        // Conditions run in the live engine (the C# debugger contract: a condition can
         // have side effects; they are expected to be tests, but the engine does not lie
         // about what ran). An assertz made by the condition is visible afterwards.
         var engine = DebugEngine(":- dynamic(seen/1).\n" + Program);
-        // Program shifted one MORE line by the :- dynamic directive: use(X) is line 5.
+        // Program shifted one more line by the :- dynamic directive: use(X) is line 5.
         Assert.True(engine.AddBreakpoint("<string>", 5, "assertz(seen(X)), X > 100") > 0);
 
         var stops = Run(engine);

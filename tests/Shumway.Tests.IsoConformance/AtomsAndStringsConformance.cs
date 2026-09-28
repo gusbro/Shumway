@@ -71,7 +71,7 @@ public class AtomsAndStringsConformance
     public void NumberChars_ParsesTheListWhenBothArgumentsAreBound()
     {
         // ISO §8.16.8: the char list is authoritative when instantiated, so
-        // number_chars(1, ['0','1']) parses "01"→1 and succeeds (it must NOT
+        // number_chars(1, ['0','1']) parses "01"→1 and succeeds (it must not
         // generate "1" from the 1 and fail the compare).
         var engine = new PrologEngine();
         Assert.True(engine.Query("number_chars(1, ['0','1']).").Success);

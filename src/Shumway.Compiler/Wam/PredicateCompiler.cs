@@ -44,7 +44,7 @@ public sealed class PredicateCompiler
     /// per-clause source-position markers from the emitted bytecode.
     /// Release mode in <c>shumway-compile</c> sets this so a stripped
     /// .shmo carries no debug bytes — both the source-string field
-    /// AND the in-bytecode debug markers are gone for IP-protection
+    /// and the in-bytecode debug markers are gone for IP-protection
     /// builds. Default <c>true</c> keeps backward compatibility with
     /// every existing caller (PrologEngine consult, tests).</summary>
     public bool EmitDebugInfo { get; set; } = true;
@@ -229,7 +229,7 @@ public sealed class PredicateCompiler
                 arity,
                 clauseCount: 1,
                 callSites: compiledClauses[0].CallSites,
-                // ADR-025 — the clause bytes ARE the predicate bytes here (no
+                // ADR-025 — the clause bytes are the predicate bytes here (no
                 // prefix), so the clause's intra-clause branch operands are
                 // already predicate-local: pass them straight through.
                 dispatchSites: compiledClauses[0].DispatchSites,
@@ -379,7 +379,7 @@ public sealed class PredicateCompiler
             {
                 if (dynamicChain)
                 {
-                    // Absolute fail-stub address — NOT in dispatchSites so
+                    // Absolute fail-stub address — not in dispatchSites so
                     // the linker does not shift it.
                     emitter.EmitRetryMeElse(failStubAddr);
                 }
@@ -428,7 +428,7 @@ public sealed class PredicateCompiler
     /// <summary>ADR-025 — folds a clause's intra-clause branch operands (the
     /// inline-ITE <c>try_me_else</c>/<c>jump</c> targets) into the predicate's
     /// dispatch sites: each site offset shifts by the clause's placement, and the
-    /// operand VALUE is rebased from clause-local to predicate-local (the linker
+    /// operand value is rebased from clause-local to predicate-local (the linker
     /// then shifts it to program-absolute like any other dispatch site).</summary>
     /// <summary>ADR-035 — a clause's frame map, placed where the clause was placed.
     /// The span is what takes a debugger from a program address back to the clause
@@ -436,12 +436,12 @@ public sealed class PredicateCompiler
     private static IReadOnlyList<DebugClauseFrame> ClauseFrames(
         CompiledClause clause, int clauseStart, int clauseNumber)
     {
-        // Having somewhere to STOP and having variables to SHOW are different things, and
+        // Having somewhere to stop and having variables to show are different things, and
         // reading the first as a proxy for the second cost the query frame its variables:
         // the `__query__` wrapper is deliberately given no stop sites (the user cannot set a
         // breakpoint on a line they never wrote), so it fell out here — and a debugger
         // stopped in `?- X = 41, debugger_break.` could not show X, the one variable the user
-        // was looking at. A clause is debuggable if it was COMPILED debuggable, which is what
+        // was looking at. A clause is debuggable if it was compiled debuggable, which is what
         // having either of these says.
         if (clause.DebugStops.Count == 0 && clause.DebugVariables.Count == 0)
             return Array.Empty<DebugClauseFrame>();
@@ -498,7 +498,7 @@ public sealed class PredicateCompiler
     private static ArgInfo ClassifyArg(Clause clause, int argIdx)
     {
         // For a Rule the clause Term is `:-/2` with head at Args[0]; for a Fact
-        // the clause Term IS the head.
+        // the clause Term is the head.
         Term headTerm = clause.Kind == ClauseKind.Rule
             ? ((CompoundTerm)clause.Term).Args[0]
             : clause.Term;
@@ -508,7 +508,7 @@ public sealed class PredicateCompiler
         // An SSU rule lowers to an all-'$SSU'-vars head with the real pattern
         // as '$ssu_match'(Pattern, HeadCopy), first goal of the body — which
         // would leave every SSU predicate unindexed. Classify from the
-        // PATTERN's arg instead: index dispatch only SKIPS clauses the call
+        // PATTERN's arg instead: index dispatch only skips clauses the call
         // argument cannot unify with, and for those '$ssu_match' would refuse
         // just the same (subsumption starts with unification), so selection
         // semantics are identical — a var call argument still lands in the
@@ -579,7 +579,7 @@ public sealed class PredicateCompiler
         // Positions resolved in pass 1.
         public int SwitchPos;          // start of switch_on_term / switch_on_arg
         public int VarLblPos;          // var-fallthrough target (next level or final chain)
-        // Chain over ONLY the var-headed clauses at this position — the
+        // Chain over only the var-headed clauses at this position — the
         // correct target for a const/list/struct call value that has no
         // specific bucket. (The full chain in VarLblPos is only right
         // for an unbound call arg, which can match every clause.) Using
@@ -622,8 +622,8 @@ public sealed class PredicateCompiler
     /// Structurally a nested copy of the top-level typed switch (a keyed table +
     /// per-key group chains + a default chain over the wildcard clauses).</summary>
     // ADR-028 generalises the ADR-027 SubSwitch into a nested BucketSwitch that
-    // replaces ANY >= 2-clause value-bucket chain, discriminating by a
-    // (dimension, key-kind): the dimension is either a SIBLING argument (read
+    // replaces any >= 2-clause value-bucket chain, discriminating by a
+    // (dimension, key-kind): the dimension is either a sibling argument (read
     // X[SiblingArg] via switch_on_{atom,integer,structure}_arg, 9 bytes) or a
     // SUB-path (walk from X[ArgIdx] via switch_on_{atom,integer,structure}_sub,
     // 17 bytes, ADR-027); the key-kind is atom / integer / structure functor.
@@ -638,9 +638,9 @@ public sealed class PredicateCompiler
 
         public BucketKeyKind Kind;
         public SortedDictionary<int, List<int>> Buckets = new();  // key -> {ground ∪ var-wildcards}
-        // The FULL bucket in source order — the target when the discriminator is
+        // The full bucket in source order — the target when the discriminator is
         // unbound (Ref) or its key misses. An unbound discriminator can unify
-        // with every clause in the bucket, so the default MUST try them all
+        // with every clause in the bucket, so the default must try them all
         // (ADR-028 soundness fix; ADR-027's wildcards-only default dropped the
         // ground clauses when a var-headed clause was present).
         public List<int> AllClauses = new();
@@ -735,7 +735,7 @@ public sealed class PredicateCompiler
     }
 
     /// <summary>ADR-028: build the best nested <see cref="SubSwitch"/> for a
-    /// ≥ 2-clause value bucket. Considers the SIBLING dimension (read
+    /// ≥ 2-clause value bucket. Considers the sibling dimension (read
     /// <paramref name="siblingArgs"/>) and — when <paramref name="subPaths"/> is
     /// non-null (a list / struct bucket) — the SUB dimension (walk from
     /// <paramref name="bucketArgIdx"/>). Each candidate partitions the bucket by a
@@ -815,7 +815,7 @@ public sealed class PredicateCompiler
         }
     }
 
-    /// <summary>Candidate paths for a LIST bucket: the head (depth-1), then each
+    /// <summary>Candidate paths for a list bucket: the head (depth-1), then each
     /// sub-position of the head compound (depth-2, the Arity token-stream
     /// <c>[t(Sym,Code)|_]</c> idiom).</summary>
     private static IEnumerable<(int, int)> ListCandidatePaths()
@@ -824,7 +824,7 @@ public sealed class PredicateCompiler
         for (int j = 0; j < MaxSubArityProbe; j++) yield return (0, j);
     }
 
-    /// <summary>Candidate paths for a STRUCT functor group: each argument of the
+    /// <summary>Candidate paths for a struct functor group: each argument of the
     /// struct (depth-1). The arg is the struct itself, so the first hop indexes
     /// straight into it.</summary>
     private static IEnumerable<(int, int)> StructCandidatePaths()
@@ -929,11 +929,11 @@ public sealed class PredicateCompiler
         for (int li = 0; li < levels.Length; li++)
         {
             var lvl = levels[li];
-            // A value bucket at level li is reached with the EARLIER cascade args
+            // A value bucket at level li is reached with the earlier cascade args
             // (levels 0..li-1) unbound — the var-fallthrough path led here — and
             // this level's arg pinned to the bucket key. So the only args that can
             // be bound at the call, and thus discriminate the bucket, are the
-            // LATER cascade args (levels li+1..). Earlier / this-level args would
+            // later cascade args (levels li+1..). Earlier / this-level args would
             // always miss to the default.
             var siblings = new List<int>();
             for (int lj = li + 1; lj < levels.Length; lj++) siblings.Add(levels[lj].ArgIdx);
@@ -994,7 +994,7 @@ public sealed class PredicateCompiler
         }
 
         // Final chain (try/retry/trust over all clauses in source order).
-        // This is the var-fallthrough target of the LAST indexable arg.
+        // This is the var-fallthrough target of the last indexable arg.
         int finalChainPos = pos;
         pos += ChainSize(n);
 
@@ -1136,7 +1136,7 @@ public sealed class PredicateCompiler
                 values[idx] = group.Count == 1 ? clauseBodyPos[group[0]] : ss.GroupPos[key];
                 idx++;
             }
-            // ADR-028: default (unbound / missing discriminator) = the FULL bucket
+            // ADR-028: default (unbound / missing discriminator) = the full bucket
             // chain (every clause can unify with an unbound discriminator), not
             // just the wildcards.
             int def = ss.AllClauses.Count >= 2 ? ss.DefaultChainPos
@@ -1470,7 +1470,7 @@ public sealed class PredicateCompiler
 
         // ----- Per-level bucket structure -----
         // Each level corresponds to one indexable arg. Level li's
-        // candidate clauses are those whose args at ALL previous
+        // candidate clauses are those whose args at all previous
         // indexable positions are Var (so dispatch reached this level
         // via the var-fallthrough cascade). Within candidates, bucket
         // by arg[indexableArgs[li]] classification, then merge var-

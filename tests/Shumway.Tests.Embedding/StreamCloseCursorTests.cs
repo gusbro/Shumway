@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ISO §8.11.6 — closing the CURRENT input or output moves that
+/// <summary>ISO §8.11.6 — closing the current input or output moves that
 /// cursor back to <c>user_input</c> / <c>user_output</c>.
 ///
 /// <para>Without it, <c>current_output/1</c> hands the program a stream term

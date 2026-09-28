@@ -183,7 +183,7 @@ public class LexerTests
     [Fact]
     public void Integer_FollowedByDotThenSpace_IsIntegerAndDot()
     {
-        // "1." is an integer 1 plus the clause-terminator dot, NOT a float.
+        // "1." is an integer 1 plus the clause-terminator dot, not a float.
         var toks = Tokens("1. ");
         Assert.Equal(3, toks.Count);
         Assert.Equal(TokenKind.Integer, toks[0].Kind);

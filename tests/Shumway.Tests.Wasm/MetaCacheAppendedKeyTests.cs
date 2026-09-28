@@ -6,7 +6,7 @@ namespace Shumway.Tests.Wasm;
 /// <summary>The meta cache is what lets a module resolve a meta-call without
 /// leaving. It was keyed by (module, goal functor), which sufficed while
 /// call/1 was the only inline form: nothing is appended, so the goal's
-/// functor IS the resolved one.
+/// functor is the resolved one.
 ///
 /// <para>call/N breaks that. <c>call(G, X)</c> and <c>call(G, X, Y)</c> have
 /// the same goal and resolve to different predicates, and the module cannot
@@ -27,7 +27,7 @@ public sealed class MetaCacheAppendedKeyTests
         return t;
     }
 
-    /// <summary>THE POINT: one goal, two call sites of different width, two
+    /// <summary>The point: one goal, two call sites of different width, two
     /// answers. Keyed on the goal alone the second would overwrite the
     /// first, and a call(G,X) would jump into the call(G,X,Y) predicate --
     /// the same arity check that guards the module would then be the only
@@ -64,7 +64,7 @@ public sealed class MetaCacheAppendedKeyTests
     }
 
     /// <summary>The key and the probe are two halves of one agreement, and
-    /// the module recomputes BOTH. Distinct inputs must land on distinct
+    /// the module recomputes both. Distinct inputs must land on distinct
     /// keys, or a probe that finds a slot would accept the wrong row.
     /// </summary>
     [Fact]
@@ -78,7 +78,7 @@ public sealed class MetaCacheAppendedKeyTests
                         $"key collision at module {m}, goal {g}, appended {a}");
     }
 
-    /// <summary>A width past what the key carries is REFUSED rather than
+    /// <summary>A width past what the key carries is refused rather than
     /// folded onto a narrower row: call/9 and wider keep going to the host,
     /// which is what they did before there was a cache.</summary>
     [Fact]
@@ -92,7 +92,7 @@ public sealed class MetaCacheAppendedKeyTests
 
     /// <summary>The flag is the only thing separating an atom goal from a
     /// compound one, because atom ids and functor ids are drawn from
-    /// overlapping ranges: the SAME number means a different goal depending
+    /// overlapping ranges: the same number means a different goal depending
     /// on it. A key that dropped it would hand one goal's resolution to the
     /// other.</summary>
     [Theory]

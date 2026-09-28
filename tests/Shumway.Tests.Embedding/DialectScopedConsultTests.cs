@@ -4,9 +4,9 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Consulting a library's SOURCE the way its own system reads it.
+/// Consulting a library's source the way its own system reads it.
 ///
-/// <para>A library from Scryer or SWI means what THAT system says it means —
+/// <para>A library from Scryer or SWI means what that system says it means —
 /// `double_quotes` above all. Reading it as ISO gets it wrong quietly, since
 /// most of a file parses either way and only the string literals differ. The
 /// loader has always applied the dialect; this is the same thing for a host

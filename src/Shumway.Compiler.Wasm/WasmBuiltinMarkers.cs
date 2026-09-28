@@ -2,7 +2,7 @@ using Shumway.Core;
 
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>Gives every DIRECT builtin -- one a module can request through
+/// <summary>Gives every direct builtin -- one a module can request through
 /// <see cref="WasmVerdict.BuiltinRequest"/> -- a negative call marker in a
 /// world's resume table, so a meta-call whose goal names a builtin requests
 /// it from inside the module instead of stepping aside for the host to

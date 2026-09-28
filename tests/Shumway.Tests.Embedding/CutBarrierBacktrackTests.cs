@@ -26,7 +26,7 @@ public class CutBarrierBacktrackTests
         + "g(_) :- fail.\n"
         + "chk(P) :- g(P), !, fail.\n"        // clause 1 — body fails before its cut
         + "chk(_) :- !.\n"                     // clause 2 — deep cut, commits
-        + "chk(_) :- record_fellthrough.\n"   // clause 3 — must NOT run
+        + "chk(_) :- record_fellthrough.\n"   // clause 3 — must not run
         + ":- dynamic fellthrough/0.\n"
         + "record_fellthrough :- assertz(fellthrough).\n"
         + "run(R) :- ( chk(x), fail ; true ),\n"

@@ -6,11 +6,11 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// DCG if-then-else state threading — the endpoint-merge bug: when the
-/// CONDITION is a state-consuming nonterminal and the then part consumes
+/// condition is a state-consuming nonterminal and the then part consumes
 /// nothing (<c>( nt(X) -&gt; [] ; … )</c>), the then-branch's endpoint variable
 /// occurs only inside the condition. The merge substitution used to rename the
 /// then part alone — a silent no-op — leaving the if-then-else's shared
-/// endpoint UNBOUND: every goal after it ran on a dangling, freshly-invented
+/// endpoint unbound: every goal after it ran on a dangling, freshly-invented
 /// state. Scryer clpz lost its whole propagator queue through exactly this
 /// (its <c>( C &lt; 0 -&gt; [] ; [] )</c> bound-removal helpers), so fused
 /// linear constraints stopped propagating after the first pass.
@@ -20,7 +20,7 @@ public class DcgIteEndpointTests
     [Fact]
     public void NonterminalCondition_EmptyThen_ThreadsTheStateThrough()
     {
-        // peek(X) CONSUMES one token; the then arm consumes nothing. After the
+        // peek(X) consumes one token; the then arm consumes nothing. After the
         // ITE the rest of the input must still be the real list.
         var e = new PrologEngine();
         e.ConsultString("""
@@ -38,9 +38,9 @@ public class DcgIteEndpointTests
     public void WrapperCondition_EmptyBranches_InRecursion_KeepsTheSharedState()
     {
         // The clpz shape, rephrased as an original counter grammar: a
-        // comparison WRAPPER nonterminal as condition, both arms empty, inside
+        // comparison wrapper nonterminal as condition, both arms empty, inside
         // a recursive walk, with pushback state accessors around it. The
-        // post-ITE writer must see the ORIGINAL state term, not a fresh one.
+        // post-ITE writer must see the original state term, not a fresh one.
         var e = new PrologEngine();
         e.ConsultString("""
             lessthan(A, B) --> { A < B }.
@@ -55,7 +55,7 @@ public class DcgIteEndpointTests
             """);
         var sol = e.Query("t(R).");
         Assert.True(sol.Success);
-        // The bug: close_gate ran against a phantom fresh gate — the REAL
+        // The bug: close_gate ran against a phantom fresh gate — the real
         // Aux kept its attribute and R came out still_open.
         Assert.Equal("closed", Assert.IsType<CompoundTerm>(sol["R"]).Functor);
     }

@@ -28,18 +28,18 @@ public readonly record struct DebugSite(int FileId, int Line, int Column);
 /// </summary>
 public static class DebugSiteTable
 {
-    /// <summary>Keyed by the file's NAME — <c>blint.pl</c> — not by the path somebody reached
+    /// <summary>Keyed by the file's name — <c>blint.pl</c> — not by the path somebody reached
     /// it through, and without regard to case.
     ///
     /// <para>That is not a shortcut, it is the identity Shumway already uses: a source file
-    /// IS a module, and a module takes its name from the file's name with the directory
+    /// is a module, and a module takes its name from the file's name with the directory
     /// dropped. Two files called <c>utils.pl</c> in two directories are one module to this
     /// engine long before they are one file to this table.</para>
     ///
     /// <para>Keying by the string as given was the bug: the engine was started with
     /// <c>shumway --debug c:\temp\Blint.pl</c> and the editor opened <c>C:\temp\Blint.pl</c>,
     /// and those were two different files here — so the breakpoint bound against the one with
-    /// no code in it and was silently never hit. Canonicalising the PATH would have fixed
+    /// no code in it and was silently never hit. Canonicalising the path would have fixed
     /// that one spelling and left every other: a relative consult against the IDE's absolute
     /// path, a mapped drive against a UNC share, a copy of the file somewhere else.</para>
     /// </summary>
@@ -47,7 +47,7 @@ public static class DebugSiteTable
         new(StringComparer.OrdinalIgnoreCase);
 
     // Indexed by id: the fullest name we have been given for the file, which is what a
-    // debugger needs in order to OPEN it. The key identifies; this one navigates.
+    // debugger needs in order to open it. The key identifies; this one navigates.
     private static readonly List<string> _fileNames = new();
 
     private static readonly ConcurrentDictionary<DebugSite, int> _siteIds = new();

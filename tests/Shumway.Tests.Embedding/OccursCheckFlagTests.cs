@@ -86,7 +86,7 @@ public sealed class OccursCheckFlagTests
     {
         Assert.False(new PrologEngine().Query("unify_with_occurs_check(X, f(X)).").Success);
         Assert.False(On("true").Query("unify_with_occurs_check(X, f(X)).").Success);
-        // Under error, the BUILTIN still fails — its ISO contract; only
+        // Under error, the builtin still fails — its ISO contract; only
         // flag-driven unification raises.
         Assert.False(On("error").Query("unify_with_occurs_check(X, f(X)).").Success);
         Assert.True(On("error").Query("unify_with_occurs_check(X, f(1)), X == f(1).").Success);

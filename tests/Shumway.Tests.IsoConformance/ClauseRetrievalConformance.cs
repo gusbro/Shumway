@@ -26,7 +26,7 @@ public class ClauseRetrievalConformance
     [Fact]
     public void Clause_PrivateStatic_RaisesPermissionError()
     {
-        // §8.8.1.3.d: a static predicate not declared public is a PRIVATE
+        // §8.8.1.3.d: a static predicate not declared public is a private
         // procedure — clause/2 raises permission_error (GNU and Scryer
         // agree; SWI-dialect modules keep SWI's laxer introspection).
         var e = new PrologEngine();
@@ -41,7 +41,7 @@ public class ClauseRetrievalConformance
     [Fact]
     public void Clause_PublicStaticFact_RetrievesBodyTrue()
     {
-        // A `:- public` static IS readable (ISO's public-procedure notion).
+        // A `:- public` static is readable (ISO's public-procedure notion).
         var e = new PrologEngine();
         e.ConsultString(":- public p/1.\np(1). p(2).");
         var sol = e.Query("clause(p(1), B).");
@@ -112,7 +112,7 @@ public class ClauseRetrievalConformance
     public void CurrentPredicate_VarIndicator_EnumeratesUserPredicates()
     {
         // §8.8.2: with a var indicator the call enumerates the
-        // USER-DEFINED predicates as Name/Arity terms (builtins are not
+        // user-defined predicates as Name/Arity terms (builtins are not
         // among them — GNU agrees). Pinned structurally so a renderer
         // change doesn't break it.
         var e = new PrologEngine();
@@ -125,7 +125,7 @@ public class ClauseRetrievalConformance
                           Arity: (c.Args[1] as IntTerm)?.Value))
             .ToList();
 
-        // Built-ins are NOT enumerated…
+        // Built-ins are not enumerated…
         Assert.DoesNotContain(indicators, p => p.Name == "is" && p.Arity == 2);
         // …user-defined predicates are.
         Assert.Contains(indicators, p => p.Name == "foo" && p.Arity == 1);
@@ -149,7 +149,7 @@ public class ClauseRetrievalConformance
     [Fact]
     public void CurrentPredicate_ExcludesBuiltins()
     {
-        // §8.8.2: current_predicate/1 ranges over USER-DEFINED procedures
+        // §8.8.2: current_predicate/1 ranges over user-defined procedures
         // only — GNU-verified (current_predicate(atom/1) fails there).
         // predicate_property/2 is how a program asks about a builtin.
         var e = new PrologEngine();

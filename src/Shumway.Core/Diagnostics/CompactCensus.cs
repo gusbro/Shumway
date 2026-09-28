@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Shumway.Core.Diagnostics;
 
-/// <summary>How often a cut's compaction WALKS the trails versus how often
+/// <summary>How often a cut's compaction walks the trails versus how often
 /// it actually drops anything, and what the walk had to reach to do it.
 ///
 /// <para>The tier's cut steps aside whenever the interpreter would walk,
@@ -10,9 +10,9 @@ namespace Shumway.Core.Diagnostics;
 /// can answer from linear memory. That is correct and coarser than it needs
 /// to be: a walk that drops nothing is a deopt bought for no work.</para>
 ///
-/// <para>The rest says whether the module could do the walk ITSELF, and the
+/// <para>The rest says whether the module could do the walk itself, and the
 /// four are counted apart because they cost different things. Reading the
-/// attribute log is an IMAGE away -- the same technique the functor and
+/// attribute log is an image away -- the same technique the functor and
 /// attribute tables already use. The three writes are not: the module would
 /// have to write managed state back, and a half-done compaction that leaves
 /// a record orphaned is a leak this code already documents. So the walks the
@@ -30,9 +30,9 @@ public static class CompactCensus
     /// <summary>Judged an AttrModify entry, which reads the record's home
     /// out of the attribute trail log.</summary>
     public static long ReadTheLog;
-    /// <summary>Cleared an orphaned record IN that log.</summary>
+    /// <summary>Cleared an orphaned record in that log.</summary>
     public static long WroteTheLog;
-    /// <summary>Dropped a dead record from the attribute STORE, which is a
+    /// <summary>Dropped a dead record from the attribute store, which is a
     /// different table and only happens when the cell stopped being an
     /// attributed variable.</summary>
     public static long DroppedARecord;
@@ -40,7 +40,7 @@ public static class CompactCensus
     /// control state and the third thing a module-side walk would have to
     /// write.</summary>
     public static long ClippedAFrame;
-    /// <summary>Walks that read the log and wrote NOTHING: the ones a module
+    /// <summary>Walks that read the log and wrote nothing: the ones a module
     /// with a read image could finish on its own.</summary>
     public static long ReachableByAnImage;
 
@@ -69,8 +69,8 @@ public static class CompactCensus
     public static void NoteOrphanCleared() => OrphansCleared++;
 
     /// <summary>How a put_to_attr_list found the store: a row already
-    /// there (an UPDATE, which a module can do in place) or not (an
-    /// INSERT, which may have to grow an open-addressed table).</summary>
+    /// there (an update, which a module can do in place) or not (an
+    /// insert, which may have to grow an open-addressed table).</summary>
     public static long AttrPutUpdate, AttrPutInsert;
 
     [Conditional(Symbol)]
@@ -78,7 +78,7 @@ public static class CompactCensus
     { if (update) AttrPutUpdate++; else AttrPutInsert++; }
 
     /// <summary>What a del_from_attr_list found: 0 no list at all, 1
-    /// nothing matched, 2 the list EMPTIED (a removal), 3 an update.
+    /// nothing matched, 2 the list emptied (a removal), 3 an update.
     /// Only 3 and the two no-ops are things a module can answer.</summary>
     public static readonly long[] AttrDelShape = new long[4];
 
@@ -87,7 +87,7 @@ public static class CompactCensus
 
     /// <summary>What an insert the module declined actually was: a row
     /// on an already-attributed variable, a promotion of a plain one, and
-    /// whether the store already held an ORPHAN record for that home --
+    /// whether the store already held an orphan record for that home --
     /// which is the one shape the module refuses on purpose.</summary>
     public static long InsertOnAttVar, InsertOnPlain, InsertWithOrphan;
 
@@ -98,7 +98,7 @@ public static class CompactCensus
         if (orphan) InsertWithOrphan++;
     }
 
-    /// <summary>What reached the host's =../2: the COMPOSING mode, or a
+    /// <summary>What reached the host's =../2: the composing mode, or a
     /// decompose the module declined and with which tag.</summary>
     public static long UnivCompose;
     public static readonly long[] UnivDeclinedTag = new long[16];

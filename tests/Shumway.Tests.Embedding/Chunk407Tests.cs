@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// unfolding (<c>MetaWrapperUnfold</c>). User-defined control wrappers
 /// (Arity-compat <c>ifthen/2</c>, <c>ifthenelse/3</c>, not-via-cut-fail)
 /// called with statically-known goals are unfolded into inline if-then-else at
-/// the call site. These tests pin the SEMANTICS through the public engine —
+/// the call site. These tests pin the semantics through the public engine —
 /// the same programs must behave identically whether or not the unfold fires,
 /// so every case here encodes the wrapper contract, including the edges where
 /// a naive unfold would diverge (then-goal failure, cut opacity, lazy type
@@ -60,8 +60,8 @@ public class Chunk407Tests
     [Fact]
     public void IfThen_CondCommitsFirstSolution()
     {
-        // C = member-like generator: ifthen commits to C's FIRST solution;
-        // backtracking into go/1 must NOT re-enter the condition.
+        // C = member-like generator: ifthen commits to C's first solution;
+        // backtracking into go/1 must not re-enter the condition.
         var e = Make(IfThen
             + "pick(1).\npick(2).\npick(3).\n"
             + "go(X) :- ifthen(pick(X), true).\n");
@@ -73,7 +73,7 @@ public class Chunk407Tests
     [Fact]
     public void IfThen_CutInsidePassedGoal_StaysOpaque()
     {
-        // A ! inside the goal the CALLER passes is opaque both ways (meta-call
+        // A ! inside the goal the caller passes is opaque both ways (meta-call
         // barrier / ISO condition opacity): the caller's own choice points
         // survive. outer/1 enumerates both solutions.
         var e = Make(IfThen
@@ -137,12 +137,12 @@ public class Chunk407Tests
         Assert.False(e.Query("no.").Success);
     }
 
-    // ----- guards: where the unfold must NOT change behaviour -----
+    // ----- guards: where the unfold must not change behaviour -----
 
     [Fact]
     public void VariableGoalArg_StillDispatchesAtRuntime()
     {
-        // The call site passes a VARIABLE goal — no unfold; the wrapper's
+        // The call site passes a variable goal — no unfold; the wrapper's
         // standalone form must meta-call it.
         var e = Make(IfThen + "go(G) :- ifthen(G, assertz(hit(ran))).\n");
         Assert.True(e.Query("go(true).").Success);
@@ -162,7 +162,7 @@ public class Chunk407Tests
     [Fact]
     public void NonCallableArg_KeepsLazyTypeError()
     {
-        // ifthen(1, true): the original raises type_error(callable) AT RUN TIME
+        // ifthen(1, true): the original raises type_error(callable) at run time
         // inside the wrapper. The unfold skips non-callable args, so the error
         // surfaces exactly as before (catchable, not a compile-time failure).
         var e = Make(IfThen + "go :- ifthen(1, true).\n");

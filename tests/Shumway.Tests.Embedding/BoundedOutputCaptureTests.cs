@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// user as <c>ArgumentOutOfRangeException: PSTR length must be in [0,
 /// 67108863]</c> — a .NET exception from the cell encoding's range check,
 /// which no program can catch and no report can explain. Two things were
-/// wrong: text arriving from the host was only checked where it was PACKED
+/// wrong: text arriving from the host was only checked where it was packed
 /// (a layout guard), and the harness let a looping goal's output accumulate
 /// without a ceiling.</para></summary>
 public sealed class BoundedOutputCaptureTests
@@ -28,7 +28,7 @@ public sealed class BoundedOutputCaptureTests
     [Fact]
     public void AHostsOwnCeiling_TruncatesInsteadOfRefusing()
     {
-        // A host capturing to COMPARE (the quad harness) sets a ceiling of
+        // A host capturing to compare (the quad harness) sets a ceiling of
         // its own: past its longest pattern the answer cannot change, so
         // the prefix is kept and the goal is left running — which is how a
         // looping goal still reaches the limit that decides it loops.

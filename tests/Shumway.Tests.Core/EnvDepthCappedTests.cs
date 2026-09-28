@@ -7,7 +7,7 @@ namespace Shumway.Tests.Core;
 /// ADR-035 — the depth, counted no further than it has to be.
 ///
 /// <para>A step's condition compares the depth of the port it is at against the depth the step
-/// was taken FROM, so every port deeper than that is uninteresting — but ASKING costs a walk of
+/// was taken from, so every port deeper than that is uninteresting — but asking costs a walk of
 /// the environment chain, and a step over a goal that runs for a while passes millions of ports
 /// at whatever depth that goal reaches. Stepping over one goal of a real program took 140
 /// seconds against the 20 it takes to run: not the program, the counting.</para>

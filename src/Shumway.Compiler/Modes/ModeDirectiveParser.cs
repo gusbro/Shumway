@@ -26,7 +26,7 @@ public static class ModeDirectiveParser
     /// body isn't a <c>mode/1</c> compound at all — the caller then
     /// tries other directive readers. Returns true with
     /// <paramref name="declaration"/> set on success; returns true with
-    /// <paramref name="error"/> set when the body IS a mode directive
+    /// <paramref name="error"/> set when the body is a mode directive
     /// but malformed (bad indicator, bad determinism, non-compound
     /// spec) — those are hard errors the caller should surface.</summary>
     public static bool TryParse(
@@ -48,7 +48,7 @@ public static class ModeDirectiveParser
     }
 
     /// <summary>Chain-aware variant: the classic
-    /// DEC-10 / Quintus style packs MANY specs into ONE directive as a
+    /// DEC-10 / Quintus style packs many specs into one directive as a
     /// ','-chain — <c>:- mode f(+,-), g(+), h(?,-).</c> parses as
     /// <c>mode(','(f(+,-), ','(g(+), h(?,-))))</c>. Splits the chain and
     /// parses each element with the single-spec core. Same contract as

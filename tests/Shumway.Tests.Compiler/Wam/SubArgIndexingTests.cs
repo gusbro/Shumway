@@ -126,7 +126,7 @@ public class SubArgIndexingTests
     [Fact]
     public void SharedFirstToken_NoSubSwitch_PlainChainKept()
     {
-        // heading_line-style: every clause's list head shares the SAME leading
+        // heading_line-style: every clause's list head shares the same leading
         // atom, so one level of sub indexing can't partition -> no sub-switch.
         var cp = Compile("""
             h([x,a|T],T).

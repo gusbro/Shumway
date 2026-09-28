@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// ADR-030 — redundant trailing-cut elimination must be observationally
 /// invisible: identical solutions and side effects whether the cut is present or
 /// elided. These pin the engine-level soundness of the shipped intra-module pass
-/// (default ON). The key hazard is <em>over</em>-eliding a load-bearing cut,
+/// (default on). The key hazard is <em>over</em>-eliding a load-bearing cut,
 /// which would leak extra solutions on backtracking (<c>extra-backtracking-not-
 /// sound</c>).
 /// </summary>
@@ -35,7 +35,7 @@ public class Adr030RedundantCutTests
     public void LoadBearingCut_OverMultiClauseCallee_NotOverElided()
     {
         // q/2 backtracks under q(X, L) with L bound and X free. The cut commits
-        // to the first — it is load-bearing and MUST survive. If wrongly elided,
+        // to the first — it is load-bearing and must survive. If wrongly elided,
         // QueryAll would see two solutions.
         var e = Consult("q(X,[X|_]). q(X,[_|T]):-q(X,T). first(X,L):-q(X,L),!.");
         Assert.Single(e.QueryAll("first(X, [a,b,c])."));   // load-bearing cut kept

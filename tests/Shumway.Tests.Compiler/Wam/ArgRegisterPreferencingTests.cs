@@ -30,7 +30,7 @@ public class ArgRegisterPreferencingTests
     public void HeadArgIsVariable_NotPreferenced_KeepsMove()
     {
         // p(X, [Y|T]) :- q(T, X): T would flow to arg 0, but arg 0 holds the
-        // head variable X (live in the body), so reg 0 is NOT free — T must
+        // head variable X (live in the body), so reg 0 is not free — T must
         // keep its own slot and the put_value_x stays.
         string text = PredicateDisassembler
             .Disassemble("p(X, [Y|T]) :- q(T, X).").Single().Text;
@@ -40,7 +40,7 @@ public class ArgRegisterPreferencingTests
     [Fact]
     public void UsedInLaterGoal_NotPreferenced()
     {
-        // r([X|T]) :- a(b), s(T): T is used only in the SECOND goal, so it is
+        // r([X|T]) :- a(b), s(T): T is used only in the second goal, so it is
         // permanent (Y) and never preferenced into a first-goal register.
         string text = PredicateDisassembler
             .Disassemble("r([X|T]) :- a(b), s(T).").Single().Text;

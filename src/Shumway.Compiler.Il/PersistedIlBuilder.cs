@@ -50,7 +50,7 @@ public static class PersistedIlBuilder
         public required int DelegateSlot { get; init; }
 
         /// <summary>True iff this predicate's WAM body may be dropped
-        /// (--strip-wam): its IL is self-contained, OR it is an indexed
+        /// (--strip-wam): its IL is self-contained, or it is an indexed
         /// predicate whose dispatch graph (<see cref="IndexGraph"/>) is persisted
         /// (so the delegate no longer reads the WAM).</summary>
         public required bool Strippable { get; init; }
@@ -61,7 +61,7 @@ public static class PersistedIlBuilder
         /// indexed predicate dispatches without its WAM body.</summary>
         public byte[]? IndexGraph { get; init; }
 
-        /// <summary>For a REGION method, the non-root members'
+        /// <summary>For a region method, the non-root members'
         /// external-entry cursor table (name, arity, MemberEntry cursor); null
         /// otherwise. Flows into <see cref="IlPersistedEntry.RegionMembers"/> so
         /// LoadBundle can alias a stripped member to its region entry.</summary>
@@ -76,20 +76,20 @@ public static class PersistedIlBuilder
     /// rewrite each baked build-time atom/functor id constant into the
     /// equivalent runtime-process id (functor/atom ids drift
     /// across processes since they're ordinal in the global AtomTable
-    /// /FunctorTable, and the LINK process accumulates interns that
-    /// the RUN process doesn't).</summary>
+    /// /FunctorTable, and the link process accumulates interns that
+    /// the run process doesn't).</summary>
     /// <param name="prunableFids">Stage 9b-3 (dead-region prune): functor ids of
-    /// ABSORBED-ONLY predicates — reached only as <c>br</c>-members of some live region
-    /// method, never standalone. They are SKIPPED here (no standalone IL method emitted),
+    /// absorbed-only predicates — reached only as <c>br</c>-members of some live region
+    /// method, never standalone. They are skipped here (no standalone IL method emitted),
     /// since their code is already baked into the region methods that absorb them. They
-    /// REMAIN in <paramref name="predicates"/> (the callee map) so those region methods
+    /// remain in <paramref name="predicates"/> (the callee map) so those region methods
     /// can still absorb their bodies, and they keep their Tier-0 WAM as a safety fallback
     /// (a later step may strip it). Null = no prune.</param>
     /// <param name="emitOnly">When non-null,
     /// only these functor ids get standalone IL methods; everything else in
-    /// <paramref name="predicates"/> serves purely as the CALLEE MAP for
+    /// <paramref name="predicates"/> serves purely as the callee map for
     /// resolution. This is how a multi-entry bundle compiles each entry's IL
-    /// against the WHOLE program (cross-module calls resolve) while emitting
+    /// against the whole program (cross-module calls resolve) while emitting
     /// each predicate exactly once, in its own entry.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
@@ -247,7 +247,7 @@ public static class PersistedIlBuilder
                 // A region method reports its members' external-entry
                 // cursors so the load path can alias stripped members into it.
                 RegionMembers = ic.LastRegionMemberCursors,
-                // Strippable when self-contained (not indexed) OR indexed with a
+                // Strippable when self-contained (not indexed) or indexed with a
                 // persisted graph. An indexed predicate whose graph build failed
                 // keeps its WAM (the delegate would still read it).
                 Strippable = !indexed || indexGraph is not null,
@@ -340,7 +340,7 @@ public static class PersistedIlBuilder
             }
             int ilStart = fileOffset + headerSize;
             int ilEnd = ilStart + ilLength;
-            // A PROPER opcode walk, not a sliding byte window.
+            // A proper opcode walk, not a sliding byte window.
             // The old heuristic ("any int preceded by byte 0x20") matched
             // sentinel-shaped bytes inside a `switch` instruction's jump
             // table: two adjacent 4-byte branch targets like 0x320 / 0x17E
@@ -527,11 +527,11 @@ public static class PersistedIlBuilder
     /// <summary>SHUMWAY_PERSIST_SKIP_DUMP=&lt;file&gt; — appends the emit
     /// exception + bytecode of a predicate the persisted-IL build skipped.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
-    // The reflection below reads an OPTIONAL property off whatever exception
+    // The reflection below reads an optional property off whatever exception
     // the emitter threw (Sigil carries the IL so far in DebugInstructions).
     // The trimmer cannot see that type, and it does not need to: the dump is
     // a developer diagnostic that writes what it finds and skips what it does
-    // not. Without the suppression a browser publish built WITH SHUMWAY_DIAG
+    // not. Without the suppression a browser publish built with SHUMWAY_DIAG
     // fails trim analysis outright -- and that build is the only place the
     // tier's counters can be read where performance actually matters.
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming",

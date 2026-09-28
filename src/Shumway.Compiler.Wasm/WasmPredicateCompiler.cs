@@ -23,7 +23,7 @@ namespace Shumway.Compiler.Wasm;
 /// <para>Control flow is the classic dispatcher loop: every jump target gets
 /// a cursor id, a <c>br_table</c> at the top routes to the current cursor's
 /// block, and a block ends by setting the cursor and branching back (or
-/// returning a verdict). The cursor is also the RE-ENTRY vocabulary: resume
+/// returning a verdict). The cursor is also the re-entry vocabulary: resume
 /// markers and choice-point BPs name cursors, so a call's return and a
 /// backtrack land on the same dispatch.</para></summary>
 public static class WasmPredicateCompiler
@@ -38,17 +38,17 @@ public static class WasmPredicateCompiler
                              g.CursorByAddress, g.RegisterDemand);
     }
 
-    /// <summary>Compiles a GROUP of predicates into one module over a unified
+    /// <summary>Compiles a group of predicates into one module over a unified
     /// pc space: each member's bias (its linked base in the engine) offsets
     /// its bytecode addresses, so pcs never collide, a deopt pc needs no
     /// translation, and a cross-member call is an internal dispatch jump --
     /// the self-tail mechanism generalised. Cursors are global to the module;
     /// markers carry (fid, global cursor).</summary>
     /// <param name="moduleId">The id the installing world gave this module.
-    /// BAKED into the code, not read from the mailbox: after a hop the
+    /// Baked into the code, not read from the mailbox: after a hop the
     /// mailbox is still the chain's, and a module that took its identity
     /// from there would dispatch another module's cursors as its own.</param>
-    /// <summary>TRACE MODE, off unless a diagnostic turns it on BEFORE the
+    /// <summary>Trace mode, off unless a diagnostic turns it on before the
     /// module is compiled. See EmitTraceRecord: an unarmed module is byte
     /// for byte the module it was before.</summary>
     public static bool TraceCommits;
@@ -76,13 +76,13 @@ public static class WasmPredicateCompiler
     public static bool DebugLoopGuard;
 
     /// <summary>Emit the meta-call's guard stamps (which guard declined, and
-    /// the functor id it saw) into DiagA/DiagB. OFF: unlike the host-side
+    /// the functor id it saw) into DiagA/DiagB. Off: unlike the host-side
     /// tallies, this one puts real instructions in every compiled module, so
     /// it cannot ride on SHUMWAY_DIAG -- a stock module would carry a store
     /// per guard. Turned on by hand when a decline has to be explained.
     ///
     /// <para>It earned its keep once already: the inline meta-call declined
-    /// every time and the counters said so, but only these stamps said WHY --
+    /// every time and the counters said so, but only these stamps said why --
     /// the goal arrives wrapped in '$mqual'(Module, Goal), so the functor the
     /// module reads is the wrapper's, not the goal's.</para></summary>
     public static bool DebugMetaGuards
@@ -101,7 +101,7 @@ public static class WasmPredicateCompiler
     {
         // Every deopt site stamps a reason or declares that a guard
         // already did, so nothing this compiler emits reads zero. A zero
-        // therefore means the MODULE has no stamps at all: it was compiled
+        // therefore means the module has no stamps at all: it was compiled
         // with DebugMetaGuards off, which is what a bundle baked at build
         // time by a non-diag build looks like.
         0 => "no stamp: a module compiled without stamps (a non-diag bake)",
@@ -202,22 +202,22 @@ public static class WasmPredicateCompiler
         public IReadOnlyDictionary<int, int> CursorByAddress => _cursorByAddr;
         private int _failCase;      // pseudo-cursor: backtrack (not re-enterable)
         private int _proceedCase;   // pseudo-cursor: full proceed resolution
-        private int _caseCount;     // per PARTITION while its body is emitted
+        private int _caseCount;     // per partition while its body is emitted
 
         // Partitions of the cursor space, cut at member boundaries. One
         // function per partition: a single function holding the whole group
         // is over the JIT cliff (both RyuJIT and Liftoff) far below wasm's
-        // validation limits — a 643k-instruction body compiles for MINUTES
+        // validation limits — a 643k-instruction body compiles for minutes
         // where 634k takes seconds. Cursors are contiguous per member
         // (leaders are addresses, members' address ranges are disjoint), so
         // a partition is a cursor range [Lo, Hi).
         private readonly List<(int Lo, int Hi)> _parts = new();
         private (int Lo, int Hi) _curPart;
 
-        /// <summary>Partition budget in DECODED WAM instructions (~40 wasm
+        /// <summary>Partition budget in decoded WAM instructions (~40 wasm
         /// instructions each). Two ceilings, and the lower one rules. The
         /// browser's JIT has a cliff near 640k instructions per function,
-        /// which a budget of 2,500 stayed far under; but its OPTIMISING
+        /// which a budget of 2,500 stayed far under; but its optimising
         /// tier never arrived for functions of that size either -- V8 tiers
         /// a function up by a per-function budget, and a 100k-instruction
         /// function ran clp(Z) in baseline code for whole benchmarks. With
@@ -257,7 +257,7 @@ public static class WasmPredicateCompiler
             }
         }
 
-        // Instruction pcs are BIASED (linked-absolute); operand addresses
+        // Instruction pcs are biased (linked-absolute); operand addresses
         // stay predicate-local and are biased at their use sites.
         private void DecodeSection(int sec)
         {
@@ -297,7 +297,7 @@ public static class WasmPredicateCompiler
         }
 
         // Per-member (per-section) cost census, filled by Census during
-        // Decode. sureExits are opcodes that ALWAYS cross to the host when
+        // Decode. sureExits are opcodes that always cross to the host when
         // run (a C# builtin with no inline form -- catch_begin/end, put_attr,
         // most of the registry); compilable are the ones that run inside the
         // module. A call to another predicate is neither: its cost belongs to
@@ -312,27 +312,27 @@ public static class WasmPredicateCompiler
         /// <para>The shape this exists for is catch/3 around a call
         /// (deep3/perftest1.pl): $catch_begin and $catch_end are two host
         /// crossings per execution, the body is one `is`, and the recursion
-        /// is a call whose cost is the callee's. Promoted, it ran 24x SLOWER
+        /// is a call whose cost is the callee's. Promoted, it ran 24x slower
         /// than Tier-0 in a desktop measurement -- 40,000 crossings for
         /// 20,000 levels. The census is a by-product of the decode pass that
         /// already visits every opcode, so it costs nothing at run time,
         /// which is the whole reason it is static and not measured: measuring
-        /// would tax every module that runs WELL.</para>
+        /// would tax every module that runs well.</para>
         ///
         /// <para>The bar is deliberately low -- reject only when crossings
-        /// EQUAL OR OUTNUMBER the compilable work -- so it catches the clear
+        /// equal or outnumber the compilable work -- so it catches the clear
         /// losers (deep3) without second-guessing predicates that gain today.
         /// A member with no crossings at all is never in question.</para>
         /// </summary>
         /// <summary>Some predicates are not what their clauses say they are.
         /// <c>':'/2</c> and <c>'$mqual'/2</c> carry a module and a goal, and
-        /// the INTERPRETER intercepts them inside its own dispatch: their
+        /// the interpreter intercepts them inside its own dispatch: their
         /// clauses exist to have something to name, and running them as
         /// written does not do what calling them does.
         ///
         /// <para>So they cannot be compiled. On the tier <c>':'/2</c> ran
         /// its own body and a qualified goal came back as an
-        /// existence_error on the MODULE ATOM -- not even the goal -- while
+        /// existence_error on the module atom -- not even the goal -- while
         /// Tier 0 answered. Refusing them costs nothing: a call to one takes
         /// the ordinary path for an uncompiled callee and lands on its
         /// bytecode, which is where its meaning lives.</para></summary>
@@ -360,12 +360,12 @@ public static class WasmPredicateCompiler
                 // over a C# builtin (clpfd_iv/3 and friends) crosses once
                 // whether it is promoted or not -- promoted it exits mid-
                 // chain, refused it closes and reopens the chain -- so
-                // refusing it buys nothing and measured WORSE on queens_fd
+                // refusing it buys nothing and measured worse on queens_fd
                 // (chains 1,459 -> 2,669 for 174 fewer exits). The damage
-                // this census exists for starts at TWO crossings per pass,
+                // this census exists for starts at two crossings per pass,
                 // which is what catch/3 costs.
                 if (exits < 2) continue;
-                // A body with REAL WORK in it is compiled whatever its
+                // A body with real work in it is compiled whatever its
                 // crossing count. That is what this census already says
                 // it wants -- leave anything with real work alone -- and
                 // a ratio cannot say it: a large predicate crosses more
@@ -375,7 +375,7 @@ public static class WasmPredicateCompiler
                 // Measured, that is not hypothetical. clp(Z)'s get_atts/2
                 // (96 crossings, 746 compilable ops) and put_atts/2 (59,
                 // 458) were refused by 3%, and refusing them cost 1,208
-                // chain CLOSURES in one goal -- every call from compiled
+                // chain closures in one goal -- every call from compiled
                 // code to a refused callee ends a chain and pays a fresh
                 // staging, a cost the ratio does not model because it
                 // only weighs the callee's own crossings.
@@ -389,10 +389,10 @@ public static class WasmPredicateCompiler
                 // What one host crossing costs, measured in compilable ops
                 // it takes to pay for it. The honest number is in the
                 // hundreds (a crossing is microseconds, an op's wasm gain is
-                // nanoseconds), but the census counts TEXT, not executions:
+                // nanoseconds), but the census counts text, not executions:
                 // a hot loop re-runs its compilable ops thousands of times
                 // per crossing elsewhere (clpfd does exactly that and wins
-                // 5.6x WITH crossings in its text). So the weight stays low
+                // 5.6x with crossings in its text). So the weight stays low
                 // on purpose: catch only the bodies whose text is dominated
                 // by crossings -- deep3 and its catch helper -- and leave
                 // anything with real work alone.
@@ -410,7 +410,7 @@ public static class WasmPredicateCompiler
             }
         }
 
-        /// <summary>Whether a builtin has a form the emitter runs INSIDE the
+        /// <summary>Whether a builtin has a form the emitter runs inside the
         /// module rather than exiting to the host. The one place that answer
         /// lives: EmitCall dispatches on exactly these, and the census reads
         /// the same list, so the two cannot drift on which builtins stay in
@@ -430,7 +430,7 @@ public static class WasmPredicateCompiler
                 // it reaches the callee by a local jump or an in-wasm hop, so
                 // it is neither a crossing nor this member's compilable work.
                 //
-                // EXCEPT a call to this predicate's own '$catchgoal_N' helper.
+                // Except a call to this predicate's own '$catchgoal_N' helper.
                 // catch/3 in a body is rewritten to that call (MetaTransform.
                 // RewriteCatch), and the helper's $catch_begin/$catch_end are
                 // the CALLER's catch: two host crossings every time this body
@@ -714,7 +714,7 @@ public static class WasmPredicateCompiler
             }
             _parts.Add((start, addrs.Count));
 
-            // The PROCEED jump table: every in-group non-tail call bakes
+            // The proceed jump table: every in-group non-tail call bakes
             // Cp = marker(callerFid, resume cursor) as a constant; a proceed
             // whose Cp matches jumps straight to the caller's resume instead
             // of returning Success -- the interpreter's marker path, inside
@@ -724,7 +724,7 @@ public static class WasmPredicateCompiler
                 if (ins.Op is not (Opcode.Call or Opcode.Execute)) continue;
                 if (!_callee.TryGetValue(ins.Pc, out int callee)) continue;
                 if (_env.TryGetBuiltin(callee, out _)) continue;
-                // Who calls whom, counted at COMPILE time: the caller's and
+                // Who calls whom, counted at compile time: the caller's and
                 // callee's functors, one entry per call site. Free (this pass
                 // already walks every instruction) and it is the evidence for
                 // whether a group could be split along some boundary without
@@ -759,7 +759,7 @@ public static class WasmPredicateCompiler
             => Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex))));
 
         /// <summary>Resolves a resume marker through the resume table and, when
-        /// it names THIS module, dispatches to its cursor. Leaves nothing on
+        /// it names this module, dispatches to its cursor. Leaves nothing on
         /// the stack and falls through when the marker resolves elsewhere or
         /// not at all — the caller then does whatever it did before there was
         /// a table.
@@ -816,7 +816,7 @@ public static class WasmPredicateCompiler
                 OpenElse();
                 {
                     // Another module owns it. Look up where that module sits
-                    // in this thread's function table and TAIL CALL it: the
+                    // in this thread's function table and tail CALL it: the
                     // frame is replaced, not stacked, which is what lets a
                     // Prolog program cross modules millions of times. A plain
                     // call would grow the real stack per crossing.
@@ -897,9 +897,9 @@ public static class WasmPredicateCompiler
                 Type = new Memory(1, 65536),
             });
             // The thread's function table, where every module of this engine
-            // is registered. A marker resolving to ANOTHER module is reached
+            // is registered. A marker resolving to another module is reached
             // through it, inside wasm, instead of by returning a verdict and
-            // letting the host re-dispatch. The memory import stays FIRST:
+            // letting the host re-dispatch. The memory import stays first:
             // WasmSharedMemory walks the import section for its limits byte.
             module.Imports.Add(new Import.Table(WasmAbi.TableModule,
                                                WasmAbi.TableField, 0, null));
@@ -1014,11 +1014,11 @@ public static class WasmPredicateCompiler
 
         /// <summary>run(mailbox, cursor): route the cursor to the partition
         /// owning it (ranges are ascending, so a chain of upper-bound tests;
-        /// a pseudo-cursor goes to the resolver) with a TAIL call. Nothing
+        /// a pseudo-cursor goes to the resolver) with a tail call. Nothing
         /// of this function survives the transfer: a partition leaving for
         /// another partition tail-calls run again, and a hop to another
         /// module is a return_call_indirect from a partition, so the module
-        /// holds ONE frame at any depth of backtracking. A plain call here
+        /// holds one frame at any depth of backtracking. A plain call here
         /// would keep a run frame per hop and grow the stack with the
         /// choice-point chain.</summary>
         private FunctionBody BuildDispatcherBody()
@@ -1060,7 +1060,7 @@ public static class WasmPredicateCompiler
             new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
             new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-            // One KIND per a_eval slot (0 = the 60-bit int lane, 1 = float
+            // One kind per a_eval slot (0 = the 60-bit int lane, 1 = float
             // bits). Appended last: every index above is baked into emitted
             // code, so the bank can only grow at the end.
             new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int32 },
@@ -1072,7 +1072,7 @@ public static class WasmPredicateCompiler
             // own arity. Appended after the attribute probe's, same rule:
             // only at the end.
             new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
-            // The cut barrier '$call'/2 carries, read out of X1 BEFORE the
+            // The cut barrier '$call'/2 carries, read out of X1 before the
             // goal's arguments overwrite it. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
             // The meta-called goal's heap base and its functor cell, in that
@@ -1091,14 +1091,14 @@ public static class WasmPredicateCompiler
             // count-changing rebuild needs beside it. Appended last, same
             // rule.
             new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
-            // Whether the meta-called goal is an ATOM, which keys the
+            // Whether the meta-called goal is an atom, which keys the
             // cache differently. Appended last, same rule.
             new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
             // Two i64 scratch cells that survive EmitUnifyTwo. Appended
             // last, same rule.
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
             // The cut compaction's bank, and the fourteen the attribute
-            // WRITE and =../2 need beside it. Appended last, same rule.
+            // write and =../2 need beside it. Appended last, same rule.
             new Local { Count = 30, Type = WebAssemblyValueType.Int32 },
             // sort/2's bank: the two arrays, the count, the merge width
             // and its cursors. Appended last, same rule.
@@ -1106,7 +1106,7 @@ public static class WasmPredicateCompiler
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
-        /// partition's own cursors, a LOCAL fail case (this partition's CP
+        /// partition's own cursors, a local fail case (this partition's CP
         /// sites only), and an $out case that spills the scalars and
         /// tail-calls run with the cursor to route — how a jump reaches
         /// another partition. In-partition jumps stay internal branches.</summary>
@@ -1164,7 +1164,7 @@ public static class WasmPredicateCompiler
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
             {
-                // DIAGNOSTIC (off by default): every dispatch records the
+                // Diagnostic (off by default): every dispatch records the
                 // cursor in DebugGuardCursor and bumps DebugGuardCount; when
                 // it passes DebugGuardLimit (10M when the host leaves it 0)
                 // the run returns the impossible verdict 99. These had been
@@ -1202,7 +1202,7 @@ public static class WasmPredicateCompiler
             }
             for (int j = _caseCount - 1; j >= 0; j--) Op(new Block(BlockType.Empty));
             // Route: FAIL pseudo-cursor -> local $fail; anything outside
-            // [Lo, Hi) (the PROCEED pseudo-cursor included) -> $out; a local
+            // [Lo, Hi) (the proceed pseudo-cursor included) -> $out; a local
             // cursor -> its case via br_table. Depths at this point,
             // innermost first: cases 0..n-1, $fail = n, $out = n+1 (+1
             // inside an If).
@@ -1248,7 +1248,7 @@ public static class WasmPredicateCompiler
 
         /// <summary>The shared resolver: where a fail or a proceed that no
         /// partition resolved locally ends up, and the only place that can
-        /// answer the host. It was once the ONLY full copy of two group-wide
+        /// answer the host. It was once the only full copy of two group-wide
         /// chains, which is why it is a function of its own; the chains are
         /// now indexed reads into the resume table, so what it saves is no
         /// longer size but the routing -- a partition resolves its own
@@ -1303,7 +1303,7 @@ public static class WasmPredicateCompiler
         private void EmitProceedResolve()
         {
             // Identical to what a partition emits now. The resolver existed to
-            // hold the ONE full copy of a chain no partition could afford to
+            // hold the one full copy of a chain no partition could afford to
             // carry; a table read is the same handful of instructions
             // everywhere, so there is no longer a full copy to hold. The
             // function stays because the dispatcher routes the pseudo-cursors
@@ -1392,7 +1392,7 @@ public static class WasmPredicateCompiler
             StoreScalars();
             // After in-wasm hops the host cannot know which module it is
             // hearing from, and a deopt pc or a builtin's return address is
-            // in THAT module's build space. Every verdict says. Not on the
+            // in that module's build space. Every verdict says. Not on the
             // hop path: a hop reloads nothing from this slot.
             StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
             Op(new Int32Constant((int)v));
@@ -1417,7 +1417,7 @@ public static class WasmPredicateCompiler
         /// specific cause with a general one.</summary>
         private const int DeoptStamped = -1;
 
-        /// <summary>The reason is REQUIRED, and that is the point: every
+        /// <summary>The reason is required, and that is the point: every
         /// step-aside says why, in the same histogram the meta-call guards
         /// feed, or names <see cref="DeoptStamped"/> to say a guard already
         /// did. Half of clpr's deopts read as anonymous because sites were
@@ -1458,7 +1458,7 @@ public static class WasmPredicateCompiler
         }
 
         // Highest X register the module touches: the host must guarantee the
-        // register area covers it BEFORE entering (the bank starts small and
+        // register area covers it before entering (the bank starts small and
         // an out-of-range wasm store corrupts whatever lies next).
         private int _maxRegister = -1;
         public int RegisterDemand
@@ -1512,7 +1512,7 @@ public static class WasmPredicateCompiler
         // ---- deref ----
 
         /// <summary>Derefs LC0 in place; LDa ends at the last REF's home (the
-        /// unbound address when LC0 comes out still a REF). A REF cell IS its
+        /// unbound address when LC0 comes out still a REF). A REF cell is its
         /// heap index (tag 0), which is what makes the self-reference test a
         /// plain i64 compare.</summary>
         private void Deref()
@@ -1603,12 +1603,12 @@ public static class WasmPredicateCompiler
         // The FAIL case: local backtracking
         // ------------------------------------------------------------------
 
-        /// <summary>No choice point of OURS on top means the host backtracks;
+        /// <summary>No choice point of ours on top means the host backtracks;
         /// one of ours means its BP names a retry/trust cursor and the
         /// restore there does the rest. BP values are compared against this
         /// module's own encodings -- anything else is foreign.
         ///
-        /// <para>The body is the same wherever it is emitted; only a MISS
+        /// <para>The body is the same wherever it is emitted; only a miss
         /// differs. In the resolver a miss is a CP no member pushed, so the
         /// verdict goes to the host; in a partition it continues, and the
         /// dispatcher routes it. Measured at ~237 wasm instructions a copy:
@@ -1639,7 +1639,7 @@ public static class WasmPredicateCompiler
             // opens with EmitRestoreCommon, which already steps aside when
             // the CP's extra-trail top differs from the live one (the module
             // can only unwind the binding trail). A guard here as well cost
-            // 100x on the phase-B bench when it compared the RAW ctl cell
+            // 100x on the phase-B bench when it compared the raw ctl cell
             // (RawInt, tag bits included) against the plain mailbox top and
             // so fired on every failure.
             Op(new LocalGet(LT2));
@@ -1647,21 +1647,21 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // bp
 
-            // BP values bake the site's OWN fid, so the pairs map value ->
+            // BP values bake the site's own fid, so the pairs map value ->
             // cursor across every member. A partition chains only the pairs
             // whose retry cursor is local (self-backtracking, the hot case)
-            // and hands a miss to the resolver; the resolver chains them ALL
+            // and hands a miss to the resolver; the resolver chains them all
             // and only a CP no member pushed returns Fail to the host.
             // One indexed read, where a chain of baked comparisons used to be:
             // one `if (bp == const)` per choice-point site in the module,
-            // walked linearly on EVERY failure. A BP is a resume marker and a
+            // walked linearly on every failure. A BP is a resume marker and a
             // marker is a dense id, so the answer is a subscript.
             //
             // The probe dispatches to any cursor of this module, including one
             // in another partition -- the br_table's default hands those to the
             // group dispatcher, which is the same route a jump across
             // partitions already takes. So the partition/resolver split that
-            // the chain needed does not apply to what is EMITTED any more:
+            // the chain needed does not apply to what is emitted any more:
             // the copies are identical but for the miss.
             EmitResumeProbe(LT1);
             if (missReturnsToHost) EmitReturn(WasmVerdict.Fail);   // a foreign CP
@@ -1712,7 +1712,7 @@ public static class WasmPredicateCompiler
 
         /// <summary>Emits one instruction; true when it transferred control.</summary>
         /// <summary>Resume addresses at which an inline meta-call left a
-        /// frame of its OWN to pop. Reached only by that meta-call's return:
+        /// frame of its own to pop. Reached only by that meta-call's return:
         /// the site never exits to the host (its fallback is a step-aside,
         /// which continues in the interpreter and does not re-enter here), so
         /// there is no second path arriving without a frame.</summary>
@@ -1720,7 +1720,7 @@ public static class WasmPredicateCompiler
 
         private bool EmitInstr(Instr ins)
         {
-            // The meta-call's frame is popped where control comes BACK, which
+            // The meta-call's frame is popped where control comes back, which
             // is a dispatch case of its own -- CP and E are restored from it
             // before the clause continues.
             if (_metaFrameResume.Contains(ins.Pc)) EmitDeallocate();
@@ -1805,7 +1805,7 @@ public static class WasmPredicateCompiler
                 case Opcode.GetListA2: EmitGetList(1, ins.Pc); return false;
                 case Opcode.PutStructure: EmitPutStructure(ins.I0, ins.I1, ins.Pc); return false;
                 case Opcode.PutList:
-                    // The register takes a LIS pointing at the NEXT two heap
+                    // The register takes a LIS pointing at the next two heap
                     // cells; the two unify_* that follow write them.
                     RegStore(ins.I0, () =>
                     {
@@ -1896,10 +1896,10 @@ public static class WasmPredicateCompiler
                         // The escape is the site's own non-inline exit: a
                         // pair only the engine's unifier can decide -- an
                         // attributed variable above all -- runs as a leaf
-                        // builtin request with the chain OPEN, where the
+                        // builtin request with the chain open, where the
                         // deopt it replaces closed the chain and left the
                         // rest of the clause to the interpreter. Measured
-                        // after the hook migration, these sites WERE the
+                        // after the hook migration, these sites were the
                         // remaining guard-25 population: the woken hook
                         // jumps now, and the bind that wakes it is clpr's
                         // own static V = C.
@@ -2135,7 +2135,7 @@ public static class WasmPredicateCompiler
                     // call/N for N >= 2. Until now every one of these
                     // fell through to the deopt below, because a
                     // meta-call builtin cannot be requested through the
-                    // mailbox either. maplist/3 IS call(G, X, Y), so a
+                    // mailbox either. maplist/3 is call(G, X, Y), so a
                     // library built on maplist deopted once per element.
                     if (_env.IsInlineMetaCallN(ins.I0, out int appendedN))
                     {
@@ -2436,7 +2436,7 @@ public static class WasmPredicateCompiler
             Op(new Int64Constant(0));
             Op(new Int64NotEqual());
             OpenIf();
-            // Stamped like a guard although it is not one: this is the FIRST
+            // Stamped like a guard although it is not one: this is the first
             // thing a meta-call emits, so a meta-call that bails here leaves
             // no code and reads as anonymous. Measured, that is what half of
             // clpr's deopt sites were, and reading them as meta-call
@@ -2446,7 +2446,7 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>The compaction a cut owes the trails, done IN PLACE.
+        /// <summary>The compaction a cut owes the trails, done in place.
         ///
         /// <para>A cut drops the trail entries it has made unreachable: an
         /// entry whose target is younger than the parent choice point's heap
@@ -2456,14 +2456,14 @@ public static class WasmPredicateCompiler
         /// the module left.</para>
         ///
         /// <para>Two passes, and the first one is the point. A walk can turn
-        /// out to need a WRITE into managed state the module cannot reach:
+        /// out to need a write into managed state the module cannot reach:
         /// an orphaned attribute record has to be cleared, a dead record
         /// dropped from the store, a catch frame's snapshot clipped. Finding
         /// that out halfway through is not an option, because a half-done
         /// compaction that leaves a record orphaned is a leak the engine
         /// already documents (a lazy phrase_from_file retained its entire
         /// consumed input through exactly those orphans). So the first pass
-        /// decides WITHOUT touching anything, and the second pass only runs
+        /// decides without touching anything, and the second pass only runs
         /// when the answer is yes. Measured, that is 479 of 784 walks.</para>
         ///
         /// <para>The survival floor is the parent's heap top raised to the
@@ -2526,7 +2526,7 @@ public static class WasmPredicateCompiler
             // parent over a trail that only grew since the last walk starts
             // where that walk stopped. The host keeps the same mark, so the
             // two walks continue each other. The parent's own tops are kept
-            // aside: they are the KEY the mark is written under.
+            // aside: they are the key the mark is written under.
             Op(new LocalGet(LKPB)); Op(new LocalSet(LKPB0));
             Op(new LocalGet(LKPE)); Op(new LocalSet(LKPE0));
             LoadSlot32(WasmAbi.CompactBarrier);
@@ -2568,7 +2568,7 @@ public static class WasmPredicateCompiler
             Op(new BranchIf(1));                            // -> $done
 
             // No image, and something on the extra trail to judge: decline.
-            // A cut that trailed only BINDINGS needs no image at all, which
+            // A cut that trailed only bindings needs no image at all, which
             // is why this is asked here and not before the no-op test. The
             // host withholds the base under a debug session, where the trail
             // is the debugger's history rather than an optimisation.
@@ -2631,9 +2631,9 @@ public static class WasmPredicateCompiler
                 {
                     // A dropped AttrModify orphans its record, and clearing
                     // that record is a write into a managed list. It is
-                    // HYGIENE rather than semantics -- the record is dead the
+                    // hygiene rather than semantics -- the record is dead the
                     // moment the entry goes and nothing reads it again -- so
-                    // the index is PARKED for the host to clear when the
+                    // the index is parked for the host to clear when the
                     // chain comes out, and only a full ring declines.
                     Op(new LocalGet(LKH));
                     Op(new Int32Constant((int)Shumway.Core.TrailType.AttrModify));
@@ -2655,7 +2655,7 @@ public static class WasmPredicateCompiler
                     CloseNested();
 
                     // A dropped ValueChange may drop a dead record from the
-                    // attribute STORE, and only when the cell at its home
+                    // attribute store, and only when the cell at its home
                     // stopped being an attributed variable. That test the
                     // module can make exactly, so it declines only when the
                     // drop would really fire.
@@ -2686,7 +2686,7 @@ public static class WasmPredicateCompiler
                         Op(new Int32EqualZero());
                         OpenIf();
                         {
-                            // The record is dead and has to go. PARKED
+                            // The record is dead and has to go. Parked
                             // rather than handed back, for the reason the
                             // orphan clearing is: from the moment the cell
                             // stops being an attributed variable nothing
@@ -2754,7 +2754,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32GreaterThanOrEqualSigned());
                 Op(new BranchIf(1));                        // -> $compacted
 
-                // Every binding entry that came BEFORE this extra entry, so
+                // Every binding entry that came before this extra entry, so
                 // the marker rewritten below names the right position.
                 EmitEntryAddr(LKER);
                 Op(new LocalSet(LKT));
@@ -2929,7 +2929,7 @@ public static class WasmPredicateCompiler
 
         /// <summary>Pushes 1 when the entry survives the cut's compaction.
         ///
-        /// <para>The kinds whose index is NOT a heap address each have their
+        /// <para>The kinds whose index is not a heap address each have their
         /// own answer, and every one of them is "keep": a side table is
         /// reclaimed only by its own entry, and control state is not a heap
         /// cell. The default rule is the young-cell rule -- an entry whose
@@ -2937,7 +2937,7 @@ public static class WasmPredicateCompiler
         /// backtrack truncates it anyway.</para>
         ///
         /// <para>AttrModify is the one that has to look somewhere else: its
-        /// index names a RECORD, not a cell, and the record's home is what
+        /// index names a record, not a cell, and the record's home is what
         /// the rule is about. That is the read the image exists for. An index
         /// past the image is not a question the module can answer, so with
         /// <paramref name="declineToSlow"/> it declines; the second pass
@@ -2953,7 +2953,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             OpenIf(BlockType.Int32);
             {
-                // An index PAST the image is one this chain reserved for a
+                // An index past the image is one this chain reserved for a
                 // write of its own, and the home it names is in the parked
                 // row rather than in the log -- the log will not hold it
                 // until the host drains. Reading it there is not a special
@@ -3133,14 +3133,14 @@ public static class WasmPredicateCompiler
         private void EmitProceedReturn()
         {
             // No shortcut for a module without return sites of its own: the
-            // table can still resolve a Cp to ANOTHER module, and a plain
+            // table can still resolve a Cp to another module, and a plain
             // Success here would send every such return out through the host.
             //
-            // The watermark guard comes FIRST and still decides everything: at
+            // The watermark guard comes first and still decides everything: at
             // or past it the module owes the host a collection, so it declines
             // to resume here no matter what the table says.
             //
-            // Past the guard it is one indexed read. Note this resolves MORE
+            // Past the guard it is one indexed read. Note this resolves more
             // than the old chain did: that chain only knew the return sites of
             // in-group calls, while the table knows every re-entry point of the
             // module, so a Cp that lands on one of them now resumes in wasm
@@ -3163,12 +3163,12 @@ public static class WasmPredicateCompiler
         /// chain exit each time (60% of clpr's exits, 39% of clpfd's).
         ///
         /// <para>The tag sets are the builtins' own (TypeBuiltins). The one
-        /// that is easy to get wrong is VARIABLE: Ref or ATTVAR, because an
+        /// that is easy to get wrong is variable: Ref or ATTVAR, because an
         /// attributed variable has attributes and no value -- and the
         /// libraries that call var/1 hardest are exactly the ones that make
         /// attributed variables.</para></summary>
         /// <param name="load0">Where the argument comes from. Null means X0,
-        /// which is where a static call site left it. A META-CALLED goal
+        /// which is where a static call site left it. A meta-called goal
         /// passes a heap load instead, and must: this form hands the
         /// instruction back to the host on the paths it cannot decide, and
         /// the host re-reads the goal out of X0.</param>
@@ -3219,10 +3219,10 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Leaves 1 on the wasm stack when the cell in <paramref
-        /// name="cellLocal"/> is a NON-EMPTY domain, '$fd_dom'(...), and 0 for
+        /// name="cellLocal"/> is a non-empty domain, '$fd_dom'(...), and 0 for
         /// anything else including the empty domain's atom.
         ///
-        /// <para>Recognised by the functor's ATOM, read out of the staged
+        /// <para>Recognised by the functor's atom, read out of the staged
         /// functor table, because the arity varies with the interval count and
         /// so the functor id does too. The atom travels as a relocatable cell
         /// (the cut's rule: ids are per process, and a baked module outlives
@@ -3289,7 +3289,7 @@ public static class WasmPredicateCompiler
         /// precisely to learn whether anything was removed.</para>
         ///
         /// <para>Two different domains are compared bound for bound, as
-        /// CELLS. That needs no knowledge of what a bound means, so it works
+        /// cells. That needs no knowledge of what a bound means, so it works
         /// for inf and sup as well as for integers: equal bounds are equal
         /// cells, and a domain is canonical (ascending, disjoint,
         /// non-adjacent), so equal contents and equal arity is equality.
@@ -3315,7 +3315,7 @@ public static class WasmPredicateCompiler
             Op(new Int64Equal());
             OpenIf();
             {
-                // Still has to BE a domain: a reserved functor is a term
+                // Still has to be a domain: a reserved functor is a term
                 // anyone can write, and f(1) owes a type error.
                 EmitIsDomainStr(LDomA);
                 OpenIf();
@@ -3417,7 +3417,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32GreaterThanSigned());
                 Op(new BranchIf(3));                        // all equal -> $done
 
-                // Offset 1: the bases point AT the functor cell, and the
+                // Offset 1: the bases point at the functor cell, and the
                 // arguments start after it. Loading at the base compares the
                 // functors (already equal) and walks off the end one short,
                 // so two domains differing only in their last bound would
@@ -3456,7 +3456,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>$dom_empty/1: the empty domain is an atom of its own, so
-        /// the test is a cell comparison. A non-empty domain answers FALSE
+        /// the test is a cell comparison. A non-empty domain answers false
         /// here rather than stepping aside, which is the half that matters --
         /// clpfd_narrow asks this on the path where the domain did change,
         /// and the answer is almost always no.</summary>
@@ -3489,19 +3489,19 @@ public static class WasmPredicateCompiler
 
         /// <summary>Walks a domain's intervals looking for an integer.
         ///
-        /// <para>Emitted INSIDE the $done/$slow pair the forms open, and it
+        /// <para>Emitted inside the $done/$slow pair the forms open, and it
         /// opens two more of its own, so from inside the loop the branch
         /// depths are: 0 the loop, 1 $found, 2 $absent, 3 $slow, 4 $done.
         /// Getting one of those wrong is a jump to the wrong arm, which is a
         /// wrong answer and not a crash, so they are written down.</para>
         ///
-        /// <para>Every bound it compares must be an INTEGER. inf and sup are
+        /// <para>Every bound it compares must be an integer. inf and sup are
         /// atoms (ADR-051 D3) and an unbounded domain steps aside instead:
         /// the comparison would have to be three-way, and the domains this
         /// runs on are finite. Measured on queens_fd, no unbounded domain
         /// reaches it.</para>
         ///
-        /// <para>The callbacks run OUTSIDE the loop, where the depths are
+        /// <para>The callbacks run outside the loop, where the depths are
         /// different again: in onFound they are 0 $absent, 1 $slow, 2 $done,
         /// and in onAbsent 0 $slow, 1 $done. Counting them as though $found
         /// were still open sends a found value down the absent arm, which
@@ -3728,7 +3728,7 @@ public static class WasmPredicateCompiler
             GoFail();
             CloseNested();
 
-            // The bound moves to a local of this form's own BEFORE the
+            // The bound moves to a local of this form's own before the
             // unification: EmitUnifyTwo derefs its other operand, Deref
             // spends LC1, and the value would be read back as whatever the
             // deref left there. (Measured: the answers changed and clpfd
@@ -3901,7 +3901,7 @@ public static class WasmPredicateCompiler
             Op(new Int64Or());
         }
 
-        /// <summary>Rebuilds a domain whose interval COUNT changed, and
+        /// <summary>Rebuilds a domain whose interval count changed, and
         /// unifies it with the output argument.
         ///
         /// <para><paramref name="deltaIntervals"/> is -1 when the interval
@@ -3925,7 +3925,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             Op(new LocalSet(LDomI));                        // new arity
 
-            // An empty result is the empty ATOM, not a zero-arity structure.
+            // An empty result is the empty atom, not a zero-arity structure.
             Op(new LocalGet(LDomI));
             Op(new Int32Constant(0));
             Op(new Int32LessThanOrEqualSigned());
@@ -3949,7 +3949,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32GreaterThanOrEqualSigned());
                 // Depths here: 0 this else, 1 the found arm's if, 2 $absent,
                 // 3 $slow, 4 $done. Landing on $absent instead would unify
-                // the output with the domain that came IN, which is a wrong
+                // the output with the domain that came in, which is a wrong
                 // answer and not a slower one.
                 Op(new BranchIf(3));                        // past it -> $slow
 
@@ -3981,7 +3981,7 @@ public static class WasmPredicateCompiler
         /// 8,807.</para>
         ///
         /// <para>The value is a bound of an interval wider than one: the
-        /// interval narrows, the interval COUNT does not change, and the
+        /// interval narrows, the interval count does not change, and the
         /// rebuilt domain reuses the functor that is already on the heap.
         /// That is the largest of the removals that do remove (503 of 1,226
         /// on queens_fd(7), 63% on send+more=money).</para>
@@ -4015,7 +4015,7 @@ public static class WasmPredicateCompiler
                     Op(new LocalSet(LC2));                  // hi cell
 
                     // Three shapes, and which one decides the interval
-                    // COUNT of the result: a one-value interval disappears
+                    // count of the result: a one-value interval disappears
                     // (count - 1), a value strictly inside splits it
                     // (count + 1), and a value at a bound narrows it (count
                     // unchanged). Only the last reuses the functor on the
@@ -4367,7 +4367,7 @@ public static class WasmPredicateCompiler
             return true;
         }
 
-        /// <summary>A call whose callee lives in ANOTHER module: resolve it
+        /// <summary>A call whose callee lives in another module: resolve it
         /// through the resume table and tail-call it in wasm, and only fall
         /// back to the host verdict when it cannot be reached from here (a
         /// module this thread has not registered, or one that is not on the
@@ -4395,12 +4395,12 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Whether the clause holding <paramref name="pc"/> has an
-        /// ENVIRONMENT FRAME, scanning back to the clause's start.
+        /// environment frame, scanning back to the clause's start.
         ///
         /// <para>It decides whether an inline meta-call may write CP. A
-        /// normal non-tail call writes CP freely BECAUSE the frame holds the
+        /// normal non-tail call writes CP freely because the frame holds the
         /// clause's own continuation and Deallocate restores it. A clause
-        /// whose only call is a BUILTIN has no frame, and needs none: a
+        /// whose only call is a builtin has no frame, and needs none: a
         /// builtin never touches CP, execution just falls through to the next
         /// instruction. Turning such a site into a predicate call and writing
         /// CP there leaves nothing to restore -- the clause's Proceed then
@@ -4408,7 +4408,7 @@ public static class WasmPredicateCompiler
         /// That is not hypothetical: it is $wake_call/1, whose whole body is
         /// call(G), spinning 10,000,001 dispatches on its own resume.</para>
         ///
-        /// <para>Answers FALSE when unsure. The caller's response to false is
+        /// <para>Answers false when unsure. The caller's response to false is
         /// to build a frame of its own, which is correct either way and only
         /// costs two instructions -- so the conservative direction is the one
         /// that over-allocates, never the one that writes CP into thin
@@ -4438,7 +4438,7 @@ public static class WasmPredicateCompiler
             return false;
         }
 
-        /// <summary>append/3's DETERMINISTIC mode, built in the module.
+        /// <summary>append/3's deterministic mode, built in the module.
         ///
         /// <para>It is the largest single source of builtin exits measured:
         /// 2,000 of clpr's 5,000, twice the next one. And the exit is what
@@ -4476,7 +4476,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant((int)Tag.Lis));
                 Op(new Int32NotEqual());
                 Op(new BranchIf(1));                        // -> $counted
-                // A LIS cell's payload is its HEAD index; the tail is the
+                // A LIS cell's payload is its head index; the tail is the
                 // cell right after the head.
                 Op(new LocalGet(LC0));
                 Op(new Int64Constant(Cell.PayloadMask));
@@ -4502,7 +4502,7 @@ public static class WasmPredicateCompiler
             Op(new Int64NotEqual());
             Op(new BranchIf(0));                            // -> $slow
 
-            // Empty L1: the answer IS L2.
+            // Empty L1: the answer is L2.
             Op(new LocalGet(LAtSlot));
             Op(new Int32Constant(0));
             Op(new Int32Equal());
@@ -4597,8 +4597,8 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LT1));
             CellStoreDyn(LHeapB, LT1, 0, () => RegLoad(1));
 
-            // L3 is the cell AT start -- which is already the first pair's
-            // LIS -- not Lis(start). Lis() takes a HEAD index, so building
+            // L3 is the cell at start -- which is already the first pair's
+            // LIS -- not Lis(start). Lis() takes a head index, so building
             // one over start wraps the answer in itself: the list came out
             // as [[a,b,c]|a], correct and one level too deep.
             EmitUnifyTwo(() => RegLoad(2),
@@ -4612,16 +4612,16 @@ public static class WasmPredicateCompiler
 
         /// <summary>The widest meta-call the module takes. The callee's
         /// arguments are copied into X registers, and the bank is staged from
-        /// a demand computed at COMPILE time, so a runtime arity past this
+        /// a demand computed at compile time, so a runtime arity past this
         /// has nowhere to land: it steps aside instead. Eight covers every
         /// propagator clpfd and clpr post.</summary>
         private const int MaxMetaCallArity = 8;
 
-        /// <summary>call/1 of a goal known only at RUN time, dispatched inside
+        /// <summary>call/1 of a goal known only at run time, dispatched inside
         /// the module.
         ///
         /// <para>This is the one thing a module could not do. Every call the
-        /// emitter bakes names its callee by a MARKER, and a marker is
+        /// emitter bakes names its callee by a marker, and a marker is
         /// interned by the host from a (functor, address) pair -- it cannot be
         /// computed from a functor -- so a meta-call had no target to jump to
         /// and stepped aside, always. The call-marker table closes exactly
@@ -4635,22 +4635,22 @@ public static class WasmPredicateCompiler
         /// closes the chain and the re-entry pays a fresh staging. clpr's
         /// wakeup drain is the same shape.</para>
         ///
-        /// <para>Only a COMPOUND goal is taken. An atom goal would need the
+        /// <para>Only a compound goal is taken. An atom goal would need the
         /// functor id of (atom, 0) and the module can read the functor table
         /// but not search it, so those step aside. So does an unmirrored
         /// functor, which reads as arity zero -- impossible for a compound,
         /// and the safe direction.</para></summary>
-        /// <param name="tail">A meta-call in TAIL position inherits our
+        /// <param name="tail">A meta-call in tail position inherits our
         /// continuation, so CP is left alone and the goal simply takes our
         /// place. The cut barrier is refreshed either way: a tail call still
         /// enters a new procedure, and a neck_cut there must see B as of this
         /// dispatch.</param>
         /// <param name="barrierFromX1">'$call'/2: the barrier is
-        /// CARRIED, in X1, rather than being B as of this dispatch. It is the
+        /// carried, in X1, rather than being B as of this dispatch. It is the
         /// barrier the enclosing call established, so a cut inside the goal
         /// commits no further than that call -- taking B here instead would let
         /// it prune choice points the caller still owns.</param>
-        /// <summary>Stamps WHICH guard sent a meta-call aside into DiagA, so
+        /// <summary>Stamps which guard sent a meta-call aside into DiagA, so
         /// a decline can be told apart from the other ways to reach the same
         /// deopt. The ABI keeps DiagA for exactly this.</summary>
         private void MetaGuard(int code)
@@ -4665,7 +4665,7 @@ public static class WasmPredicateCompiler
         {
             if (MaxMetaCallArity - 1 > _maxRegister) _maxRegister = MaxMetaCallArity - 1;
             EmitFlagsCheck(pc);
-            // Decided once, for BOTH arms. The resume cursor at pc + 9 pops
+            // Decided once, for both arms. The resume cursor at pc + 9 pops
             // the frame this call built, so every path that reaches it must
             // have built one -- the inline cut below jumps straight there,
             // and without its own Allocate it would pop a frame that was
@@ -4681,16 +4681,16 @@ public static class WasmPredicateCompiler
             // already sitting in this file. =/2 is the case that proves it:
             // written in a body it is not a call at all (the WAM lowers it to
             // get/unify, and what survives goes through EmitInlineUnify), but
-            // arriving through call/1 it is a TERM, compiled by nobody, and
+            // arriving through call/1 it is a term, compiled by nobody, and
             // the host dispatches it by functor. No marker names it and none
             // ever will.
             //
-            // A LAST RESORT, never a precondition. Tried only where the
+            // A last resort, never a precondition. Tried only where the
             // meta-call has just established that no module covers this goal
             // -- the marker is zero, or the $mqual cache has no row -- which
             // is the path that deopted until now. Putting the chain in front
             // of the marker probe, which is the obvious place, taxes the
-            // common case (a goal that IS a predicate) with a dozen compares
+            // common case (a goal that is a predicate) with a dozen compares
             // it will never use, to speed up the case that was leaving
             // anyway. The two are exclusive by construction: a form is a
             // builtin, a marker names a predicate, and where a user
@@ -4733,11 +4733,11 @@ public static class WasmPredicateCompiler
             void EmitInlineGoalForm()
             {
                 // The goal's heap index and its functor cell, in locals of
-                // this path's OWN: the bodies spend LC0-LC2, LT0-LT2 and LDa,
+                // this path's own: the bodies spend LC0-LC2, LT0-LT2 and LDa,
                 // Deref spends LC1 on the way, and a body may spend anything
                 // else it likes. Borrowing LAt* here was wrong -- get_attr/3's
                 // form overwrites LAtSlot with the hash slot it is probing,
-                // and Arg(2), which is loaded only AFTER the probe, then read
+                // and Arg(2), which is loaded only after the probe, then read
                 // a heap cell picked by a hash. Measured: get_attr answered
                 // with a cell from nowhere, and the comparison after it
                 // failed. A form body owes this path nothing.
@@ -4746,9 +4746,9 @@ public static class WasmPredicateCompiler
                 CellLoadDyn(LHeapB, LT2);
                 Op(new LocalSet(LGoalCell));
 
-                // Argument i of the goal, straight off the heap. NOT copied
+                // Argument i of the goal, straight off the heap. Not copied
                 // into X0..Xn-1 first, which is the obvious shape and is
-                // wrong: X0 holds THE GOAL, and every form here can hand the
+                // wrong: X0 holds the goal, and every form here can hand the
                 // instruction back to the host -- by declining to $slow, or
                 // by stepping aside from inside -- whereupon the host
                 // re-reads the goal out of X0 and finds the goal's first
@@ -4756,19 +4756,19 @@ public static class WasmPredicateCompiler
                 // registers precisely because it never comes back.
                 Action Arg(int i) => () => CellLoadDyn(LHeapB, LGoalBase, i + 1);
 
-                // A form that cannot decide hands the GOAL to the host as an
-                // ordinary builtin request -- the goal here IS a builtin, its
+                // A form that cannot decide hands the goal to the host as an
+                // ordinary builtin request -- the goal here is a builtin, its
                 // registry impl is the real one, and a leaf request keeps the
                 // chain open where a deopt closes it and leaves the rest of
                 // the clause to the interpreter. The arguments go into the
-                // registers only NOW: this exit runs the goal and resumes at
+                // registers only now: this exit runs the goal and resumes at
                 // pc + 9, so the instruction is never re-dispatched and X0
                 // is not needed again.
                 //
                 // Only without an own frame. The wasm resume at pc + 9 pops
                 // whatever frame the site built, but a builtin that queues a
-                // WAKEUP makes the host close the chain and continue in
-                // BYTECODE at pc + 9 -- where no Deallocate exists, and a
+                // wakeup makes the host close the chain and continue in
+                // bytecode at pc + 9 -- where no Deallocate exists, and a
                 // frame only the wasm emission knows about would be left
                 // under E for the caller to read Y slots out of. A site with
                 // a real frame (or in tail position) has no such asymmetry.
@@ -4813,7 +4813,7 @@ public static class WasmPredicateCompiler
                     {
                         body();
                         // Only now: a form that fails, declines or steps
-                        // aside leaves BEFORE this point, and the host has to
+                        // aside leaves before this point, and the host has to
                         // find the frame exactly as it was.
                         if (ownFrame)
                         {
@@ -4844,9 +4844,9 @@ public static class WasmPredicateCompiler
             // The goal must be a compound: an atom carries no functor id.
             RegLoad(0); Op(new LocalSet(LC0)); Deref();
 
-            // A bare ATOM goal is a zero-arity predicate. The module has its
+            // A bare atom goal is a zero-arity predicate. The module has its
             // atom id and cannot turn (atom, 0) into a functor -- that is a
-            // SEARCH of the functor table and it can only index -- so the
+            // search of the functor table and it can only index -- so the
             // host publishes the marker by atom instead. Measured, this is a
             // third of clpr's remaining deopts: the prelude's disjunction
             // helpers reach their branches through '$call'/2, and those
@@ -4856,7 +4856,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             OpenIf();
             {
-                // An ATOM goal is out of reach for call/N. The table
+                // An atom goal is out of reach for call/N. The table
                 // below is keyed by atom and names the name/0 predicate;
                 // an appending call site wants name/appended, and the
                 // module cannot form that functor id -- interning is a
@@ -4895,7 +4895,7 @@ public static class WasmPredicateCompiler
                         Op(new BranchIf(2));                // -> $slow
                         // X1 is a cell, and a cell can be a REF chain: the
                         // host reads this barrier through a deref. Taking the
-                        // payload raw yields a HEAP INDEX, which is a small
+                        // payload raw yields a heap index, which is a small
                         // positive number and therefore a plausible-looking
                         // barrier -- it cuts, just to the wrong place, and
                         // takes the caller's choice points with it.
@@ -4917,7 +4917,7 @@ public static class WasmPredicateCompiler
                             EmitAllocateFrame(0, pc);
                             _metaFrameResume.Add(pc + 9);
                         }
-                        // A cut SUCCEEDS and execution carries on at the next
+                        // A cut succeeds and execution carries on at the next
                         // instruction, exactly as the host's does.
                         GoTo(pc + 9);
                     }
@@ -4989,10 +4989,10 @@ public static class WasmPredicateCompiler
             // clause that meta-called it, because a bare functor has to
             // resolve against that module's locals first. The module cannot
             // do that resolution -- it is a walk through a module's locals
-            // and imports -- so it reads what the HOST resolved, out of the
+            // and imports -- so it reads what the host resolved, out of the
             // inline cache the host fills on the path it was taking anyway.
             //
-            // Compared as a CELL, never as a baked id: FunctorCell relocates
+            // Compared as a cell, never as a baked id: FunctorCell relocates
             // by (name, arity), and a functor id is only valid in the process
             // that interned it.
             Op(new LocalGet(LC1));
@@ -5015,11 +5015,11 @@ public static class WasmPredicateCompiler
                 Op(new Int32WrapInt64());
                 Op(new LocalSet(LT0));                      // module atom
 
-                // The goal inside is a compound, or an ATOM -- which is a
+                // The goal inside is a compound, or an atom -- which is a
                 // predicate of arity 0 before this call site appends to it,
                 // and the shape clp(Z)'s maplist/3 actually carries: its
                 // goal arrives in a variable holding a bare predicate name.
-                // Both key the cache; they differ in WHAT they key by, and
+                // Both key the cache; they differ in what they key by, and
                 // in that an atom has no arguments to copy.
                 CellLoadDyn(LHeapB, LT2, 2);
                 Op(new LocalSet(LC0));
@@ -5084,8 +5084,8 @@ public static class WasmPredicateCompiler
                     Op(new LocalSet(LT1));                  // the goal's functor
 
                     // The goal's own arity, kept for the cross-check below:
-                    // the args are copied out of the GOAL, but the callee's
-                    // width comes from the RESOLVED functor, and the two
+                    // the args are copied out of the goal, but the callee's
+                    // width comes from the resolved functor, and the two
                     // have to agree once this site's appended count is in.
                     LoadSlot32(WasmAbi.FunctorTableBase);
                     Op(new LocalGet(LT1));
@@ -5098,7 +5098,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LMetaArity));           // goal arity
 
-                    // A compound whose functor has arity ZERO is an atom goal
+                    // A compound whose functor has arity zero is an atom goal
                     // to the host, which keys it by atom id (MetaCall.cs:
                     // observedAtomGoal is goalArity == 0). Keyed the same
                     // way here, from the row's atom half; keyed by functor it
@@ -5120,7 +5120,7 @@ public static class WasmPredicateCompiler
                 }
                 OpenElse();
                 {
-                    // An atom keys by its ATOM id. Interning (name, 0) is a
+                    // An atom keys by its atom id. Interning (name, 0) is a
                     // search of the functor table and a module can only
                     // index, so the functor is not available here at all --
                     // which is why the key carries a flag: atom ids and
@@ -5160,7 +5160,7 @@ public static class WasmPredicateCompiler
                 // key = ((module + 1) << 36) | (atom << 35)
                 //     | (appended << 32) | goalKey
                 // -- WasmResumeTable.MetaKey, which this must match word for
-                // word. call/N resolves to a WIDER functor than the goal,
+                // word. call/N resolves to a wider functor than the goal,
                 // and the module cannot derive that id, so the key is what
                 // it can form: the goal, whether the goal is an atom, and
                 // how many arguments this site appends.
@@ -5240,7 +5240,7 @@ public static class WasmPredicateCompiler
                     OpenIf();
                     {
                         EmitInlineGoalForm();
-                        // The KEY the probe missed with, so the histogram
+                        // The key the probe missed with, so the histogram
                         // can name the goal (module, functor or atom) that
                         // keeps going to the host.
                         if (DebugMetaGuards)
@@ -5258,7 +5258,7 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LT1));
                         Op(new Int64Load { Offset = 8 });
                         Op(new Int32WrapInt64());
-                        Op(new LocalSet(LT1));              // the RESOLVED functor
+                        Op(new LocalSet(LT1));              // the resolved functor
                         Op(new Branch(2));                  // -> $resolved
                     }
                     CloseNested();
@@ -5285,7 +5285,7 @@ public static class WasmPredicateCompiler
             }
             OpenElse();
             {
-                // Not wrapped: the callee IS the goal, so there are not two
+                // Not wrapped: the callee is the goal, so there are not two
                 // arities to reconcile.
                 Op(new Int32Constant(0));
                 Op(new LocalSet(LMetaAtom));
@@ -5308,7 +5308,7 @@ public static class WasmPredicateCompiler
 
             // marker = callMarkers[fid]; zero means no module covers it, and
             // an id past the table reads as zero for the same reason -- both
-            // mean "not a predicate this world compiled", which is the ONE
+            // mean "not a predicate this world compiled", which is the one
             // question that decides between jumping and everything else.
             // The base is re-read rather than held: LT0 was spent inside the
             // $mqual branch, and a mailbox load is cheaper than a local more.
@@ -5402,7 +5402,7 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
 
-            // LAST chance: the copy below overwrites X1.
+            // Last chance: the copy below overwrites X1.
             EmitReadBarrier();
 
             // call/N: the arguments to append are sitting in X1..Xappended,
@@ -5417,7 +5417,7 @@ public static class WasmPredicateCompiler
                 RegStore(park, () => RegLoad(i));
             }
 
-            // The goal's arguments become X0..Xn-1. An ATOM goal has none
+            // The goal's arguments become X0..Xn-1. An atom goal has none
             // and LMetaArity is 0, so this loop runs zero times -- which is
             // what keeps LT2 (not a goal index in that case) unread.
             Op(new Int32Constant(0));
@@ -5478,7 +5478,7 @@ public static class WasmPredicateCompiler
             // From here it is an ordinary call: the callee enters a new
             // procedure, so its cut barrier is refreshed, and CP is the marker
             // that brings it back to the instruction after this one.
-            // A non-tail meta-call WRITES CP, and that is only recoverable
+            // A non-tail meta-call writes CP, and that is only recoverable
             // when a frame holds the clause's own continuation. A clause
             // whose only call was a builtin has no frame and needs none --
             // so build one here, exactly the shape Allocate/Deallocate
@@ -5493,13 +5493,13 @@ public static class WasmPredicateCompiler
             // probe are exactly what must not drift between them.
             //
             // Called from inside the atom arm and again at the end, so
-            // each arm emits its own copy INTO ITS OWN BRANCH. That is
+            // each arm emits its own copy into its own branch. That is
             // what keeps the compound path at the block depth it was
             // written for: wrapping it to share one copy would shift
             // every branch target in it, and a wrong one there is a
             // hang, not a failed test.
-            // X1 carries the barrier ONLY until the goal's arguments are
-            // copied over the registers. Read it, check it and park it BEFORE
+            // X1 carries the barrier only until the goal's arguments are
+            // copied over the registers. Read it, check it and park it before
             // that -- and the check has to happen here too, because a barrier
             // this path cannot use sends the instruction back to the host,
             // which re-reads '$call'(Goal, Barrier) out of X0 and X1. Doing
@@ -5562,7 +5562,7 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.SuccessTailCall);
             }
 
-            // A NEGATIVE marker names a direct builtin (WasmResumeTable.
+            // A negative marker names a direct builtin (WasmResumeTable.
             // PublishBuiltin): the goal's arguments are in X0.. by now, so
             // this is exactly the request a call_builtin site makes, and the
             // chain stays open for the host to resume at pc + 9. The frame
@@ -5575,7 +5575,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32LessThanSigned());
                 OpenIf();
                 {
-                    // The forms first, on the REGISTERS: a builtin the
+                    // The forms first, on the registers: a builtin the
                     // module open-codes (=/2, the comparisons, the type
                     // tests, get_attr/3) is answered here and never leaves.
                     // The arguments are X0.. whatever the goal's shape was
@@ -5584,10 +5584,10 @@ public static class WasmPredicateCompiler
                     // marker, so the match is on its id; the goal's functor
                     // cell is no use here, under '$mqual' it is the
                     // wrapper's. Measured on clp(Z): include(var, Vs, ...)
-                    // meta-calls var/1 as an ATOM plus one argument, 6,899
+                    // meta-calls var/1 as an atom plus one argument, 6,899
                     // requests on queens24 with the forms keyed by goal.
                     //
-                    // A form that cannot decide declines to the REQUEST,
+                    // A form that cannot decide declines to the request,
                     // never to $slow: X0 no longer holds the goal, and the
                     // host's re-dispatch of this instruction would read the
                     // first argument as it.
@@ -5673,7 +5673,7 @@ public static class WasmPredicateCompiler
             EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc, emitEscape);
         }
 
-        /// <summary>Tags for which term identity IS cell identity, so a pair
+        /// <summary>Tags for which term identity is cell identity, so a pair
         /// can be decided without descending: an unbound variable, an
         /// attributed variable, an atom, a small integer.
         ///
@@ -5692,13 +5692,13 @@ public static class WasmPredicateCompiler
             (1 << (int)Tag.Ref) | (1 << (int)Tag.AttVar)
             | (1 << (int)Tag.Atom) | (1 << (int)Tag.Int);
 
-        /// <summary>A PSTR can normalise to a cell of ANOTHER tag: a
-        /// zero-length one IS its own tail, so it compares equal to the atom
+        /// <summary>A PSTR can normalise to a cell of another tag: a
+        /// zero-length one is its own tail, so it compares equal to the atom
         /// [] despite the tags. Deciding such a pair by tags would answer
         /// false, so a PSTR on either side goes to the host whatever the
         /// other side is.
         ///
-        /// <para>UNTESTED, and deliberately kept: no Prolog-level query found
+        /// <para>Untested, and deliberately kept: no Prolog-level query found
         /// reaches == with a zero-length PSTR still in a register, because
         /// unification materialises the tail first, and removing this guard
         /// does not turn any test red. It stays because the cell state is
@@ -5710,30 +5710,30 @@ public static class WasmPredicateCompiler
         private const int PstrTagMask = 1 << (int)Tag.Pstr;
 
         /// <summary>Term identity (<c>==/2</c> / <c>\==/2</c>), decided inside
-        /// the module whenever CELLS alone can decide it.
+        /// the module whenever cells alone can decide it.
         ///
         /// <para>Two rules, and between them they cover nearly everything the
         /// solvers ask. Identical cells are identical terms, always. And when
-        /// the cells differ, if EITHER side has a tag whose identity is cell
+        /// the cells differ, if either side has a tag whose identity is cell
         /// identity (<see cref="SimpleTagMask"/>) the terms differ -- such a
         /// cell is never list-like, so the engine reaches its tag test, and
         /// there either the tags differ or both sides are compared as
         /// cells.</para>
         ///
-        /// <para>Over the old form (Atom or Int on BOTH sides) that adds
+        /// <para>Over the old form (Atom or Int on both sides) that adds
         /// variables, which is where the exits actually were, and every mixed
         /// pair: a variable against a compound now decides instead of leaving.
         /// Floats, bignums, rationals, two compounds, and anything touching a
         /// PSTR still go to <paramref name="emitBuiltinExit"/>.</para></summary>
         /// <param name="load0">Where argument 0 comes from. Null means the
-        /// register a static call site would have put it in. A META-CALLED
-        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// register a static call site would have put it in. A meta-called
+        /// goal passes heap loads instead, and must: this form can decline or
         /// step aside, and both hand the instruction back to the host, which
         /// re-reads the goal out of X0. Writing the arguments into the
         /// registers first would have destroyed it.</param>
         /// <param name="load1">Where argument 1 comes from. Null means the
-        /// register a static call site would have put it in. A META-CALLED
-        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// register a static call site would have put it in. A meta-called
+        /// goal passes heap loads instead, and must: this form can decline or
         /// step aside, and both hand the instruction back to the host, which
         /// re-reads the goal out of X0. Writing the arguments into the
         /// registers first would have destroyed it.</param>
@@ -5771,7 +5771,7 @@ public static class WasmPredicateCompiler
             else Op(new Branch(2));                         // ==: identical -> done
             CloseNested();
 
-            // Different cells: decidable when one side is simple and NEITHER
+            // Different cells: decidable when one side is simple and neither
             // side is a PSTR.
             TagIn(LC2, SimpleTagMask);
             TagIn(LC0, SimpleTagMask);
@@ -5789,7 +5789,7 @@ public static class WasmPredicateCompiler
                 // Two compounds, or a PSTR on either side: the comparator
                 // (module function K+3) walks them over a worklist above the
                 // stack top, the way the unifier does. Returns 0 different /
-                // 1 identical / 2 deopt, and moves NO scalar -- it binds
+                // 1 identical / 2 deopt, and moves no scalar -- it binds
                 // nothing and trails nothing, so a step-aside mid-walk costs
                 // only the walk.
                 StoreSlotFromI32Local(WasmAbi.StackTop, LST);
@@ -5831,7 +5831,7 @@ public static class WasmPredicateCompiler
         ///
         /// <para>The probe is the host's, instruction for instruction: hash,
         /// then walk, stopping at an empty slot and stepping over tombstones.
-        /// It is BOUNDED by the table size. The image's load factor
+        /// It is bounded by the table size. The image's load factor
         /// guarantees an empty slot exists, so the bound is unreachable by
         /// construction -- it is there because the alternative to a wrong
         /// image is a module that never returns, and a wrong answer is
@@ -5841,31 +5841,31 @@ public static class WasmPredicateCompiler
         /// name="emitBuiltinExit"/>: no image staged, a non-attvar first
         /// argument, an unbound or non-atom module. The builtin's errors and
         /// its allocation for a non-variable stay the engine's, which is what
-        /// keeps this a speed change and not a semantic one. A MISS, though,
+        /// keeps this a speed change and not a semantic one. A miss, though,
         /// is answered here: no attribute means fail, and that needs nothing
         /// the module does not have.</para></summary>
         /// <param name="load0">Where argument 0 comes from. Null means the
-        /// register a static call site would have put it in. A META-CALLED
-        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// register a static call site would have put it in. A meta-called
+        /// goal passes heap loads instead, and must: this form can decline or
         /// step aside, and both hand the instruction back to the host, which
         /// re-reads the goal out of X0. Writing the arguments into the
         /// registers first would have destroyed it.</param>
         /// <param name="load1">Where argument 1 comes from. Null means the
-        /// register a static call site would have put it in. A META-CALLED
-        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// register a static call site would have put it in. A meta-called
+        /// goal passes heap loads instead, and must: this form can decline or
         /// step aside, and both hand the instruction back to the host, which
         /// re-reads the goal out of X0. Writing the arguments into the
         /// registers first would have destroyed it.</param>
         /// <param name="load2">Where argument 2 comes from. Null means the
-        /// register a static call site would have put it in. A META-CALLED
-        /// goal passes heap loads instead, and MUST: this form can decline or
+        /// register a static call site would have put it in. A meta-called
+        /// goal passes heap loads instead, and must: this form can decline or
         /// step aside, and both hand the instruction back to the host, which
         /// re-reads the goal out of X0. Writing the arguments into the
         /// registers first would have destroyed it.</param>
         /// <param name="missIsFailure">What "no such attribute" means. For
-        /// a READ it is the answer -- get_attr/3 fails, and answering that
-        /// without leaving is most of why the probe exists. For a WRITE it
-        /// is an INSERT, which is a different operation on an
+        /// a read it is the answer -- get_attr/3 fails, and answering that
+        /// without leaving is most of why the probe exists. For a write it
+        /// is an insert, which is a different operation on an
         /// open-addressed table and belongs to the host, so the probe
         /// declines instead. Getting this backwards makes a put FAIL, which
         /// is not a shape any caller is prepared for.</param>
@@ -5886,13 +5886,13 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             Op(new BranchIf(0));                            // -> $slow
 
-            // A1 FIRST, and the order is the contract, not a preference.
+            // A1 first, and the order is the contract, not a preference.
             // The builtin resolves the module before it ever looks the
-            // attribute up, so get_attr(Var, NotAnAtom, V) RAISES whatever
+            // attribute up, so get_attr(Var, NotAnAtom, V) raises whatever
             // A0 is. Deciding A0 first would let the fail arm below answer
             // "no" to a call that owes an error.
             //
-            // A bound atom, then: an unbound or non-atom module is an ERROR,
+            // A bound atom, then: an unbound or non-atom module is an error,
             // and errors are the host's.
             (load1 ?? (() => RegLoad(1)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
@@ -5911,14 +5911,14 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LAtPromote));
 
             // A0 must be an attributed variable -- or, for a writer, a plain
-            // one it PROMOTES. Its payload IS its home either way.
+            // one it promotes. Its payload is its home either way.
             (load0 ?? (() => RegLoad(0)))(); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.AttVar));
             Op(new Int32NotEqual());
             OpenIf();
             {
-                // A PLAIN unbound variable carries no attributes at all --
+                // A plain unbound variable carries no attributes at all --
                 // carrying one is what makes a variable an ATTVAR -- so
                 // get_attr on it fails, in every module, and answering that
                 // needs nothing the module does not already have. Measured
@@ -5926,7 +5926,7 @@ public static class WasmPredicateCompiler
                 // and failed all 400, one host round trip each to be told
                 // no.
                 //
-                // Anything else is still the host's: a BOUND first argument
+                // Anything else is still the host's: a bound first argument
                 // is the builtin's own business, error or fail.
                 TagOfC0();
                 Op(new Int32Constant((int)Tag.Ref));
@@ -5935,7 +5935,7 @@ public static class WasmPredicateCompiler
                 if (missIsFailure) GoFail();
                 else
                 {
-                    // A writer PROMOTES it. The home is the same field it
+                    // A writer promotes it. The home is the same field it
                     // would be for an attributed variable, so the probe
                     // below runs unchanged and finds nothing -- unless a
                     // reused slot left an orphan row, which the count says
@@ -6014,7 +6014,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalSet(LC1));
 
                 // An empty slot ends the probe: no such attribute. For a
-                // reader that IS the answer. For a writer it is an INSERT,
+                // reader that is the answer. For a writer it is an insert,
                 // and this is where it would go -- unless a tombstone came
                 // first, which is the cheaper slot and takes no new room.
                 Op(new LocalGet(LC1));
@@ -6059,8 +6059,8 @@ public static class WasmPredicateCompiler
                 }
                 CloseNested();
 
-                // A tombstone is where a row COULD go, and the first one
-                // is where it WOULD: reusing it shortens nothing but costs
+                // A tombstone is where a row could go, and the first one
+                // is where it would: reusing it shortens nothing but costs
                 // nothing either, which is why the host does not count it
                 // against the load factor and neither does this.
                 Op(new LocalGet(LC1));
@@ -6106,7 +6106,7 @@ public static class WasmPredicateCompiler
             // aside on their own, so semantics stay the engine's.
             // get_attr/3 unifies A2 with the attribute term, exactly as
             // UnifyRegisterWithHeapAt does; '$get_from_attr_list'/3 passes a
-            // walk of the list that term IS. Everything above -- the image,
+            // walk of the list that term is. Everything above -- the image,
             // the module, the attributed variable, the probe -- is the same
             // question and is asked once.
             if (onValue is null)
@@ -6127,16 +6127,16 @@ public static class WasmPredicateCompiler
         /// walks it for the element sharing Attr's functor and unifies with
         /// that element.
         ///
-        /// <para>Attr must be a COMPOUND, and that restriction is what makes
+        /// <para>Attr must be a compound, and that restriction is what makes
         /// the walk total rather than partial. The builtin keys on the
         /// functor, and a functor of arity one or more can never be the
         /// arity-zero functor an atom keys on, so every element that is not
-        /// a compound is a SKIP -- not a question this has to hand back. An
+        /// a compound is a skip -- not a question this has to hand back. An
         /// atom or a constant Attr steps aside instead.</para></summary>
         private void EmitAttrListWalk(int pc)
         {
             // Attr keys the walk two ways, both the builtin's own: a
-            // COMPOUND on its functor, any other BOUND term on itself --
+            // compound on its functor, any other bound term on itself --
             // one cell comparison, exactly as the host compares an atom's
             // identity, an integer's value, a float's pointer. Unbound is
             // an error, and errors are the host's.
@@ -6242,9 +6242,9 @@ public static class WasmPredicateCompiler
                     Op(new LocalGet(LT1));
                     Op(new LocalSet(LT0Alt));               // the element, key spent
                     // The two nested ifs of the compound-only walk became
-                    // ONE value with one if, so $found sits a level closer
+                    // one value with one if, so $found sits a level closer
                     // than it used to: keeping the old depth here sent every
-                    // MATCH to the slow exit, compounds included.
+                    // match to the slow exit, compounds included.
                     Op(new Branch(2));                      // -> $found
                 }
                 CloseNested();
@@ -6256,7 +6256,7 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $step
             CloseNested();                                  // $found
 
-            // Unified against the element the walk STOPPED at, not against a
+            // Unified against the element the walk stopped at, not against a
             // copy: the builtin unifies with the list cell itself.
             EmitUnifyTwo(() => RegLoad(2),
                          () => CellLoadDyn(LHeapB, LT0Alt), pc);
@@ -6265,13 +6265,13 @@ public static class WasmPredicateCompiler
         /// <summary><c>arg(N, T, A)</c> with N a bound index into a bound
         /// compound: a bounds check and one heap read.
         ///
-        /// <para>The argument ORDER is the standard's, not a preference. The
+        /// <para>The argument order is the standard's, not a preference. The
         /// term is judged first, so an unbound or non-compound T is the
         /// host's whatever N looks like; deciding N first would let the fail
         /// arm below answer "no" to a call that owes an error.</para>
         ///
         /// <para>Steps aside for an unbound N -- with an SWI-dialect caller
-        /// that ENUMERATES, which is a choice point this cannot leave -- and
+        /// that enumerates, which is a choice point this cannot leave -- and
         /// for a negative one, which is a domain error. A zero or oversized
         /// index is a plain FAIL, and that it answers.</para></summary>
         private void EmitInlineArg(int pc, Action emitBuiltinExit)
@@ -6280,7 +6280,7 @@ public static class WasmPredicateCompiler
             OpenBlock();                                    // $done
             OpenBlock();                                    // $slow
 
-            // The TERM first. Str and Lis only: a PSTR the builtin would
+            // The term first. Str and Lis only: a PSTR the builtin would
             // materialise, and every other shape is an error.
             RegLoad(1); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
@@ -6390,31 +6390,31 @@ public static class WasmPredicateCompiler
         /// <c>'$del_from_attr_list'/3</c>, once the probe has the module's
         /// attribute list: rebuild the list without the element sharing
         /// Attr's functor (and, for a put, with Attr at its head), then
-        /// WRITE it.
+        /// write it.
         ///
         /// <para>The write is three things, and the module can only reach
-        /// two. It writes the IMAGE, because that is what it reads back in
-        /// the same chain, and it writes the TRAIL entry, because that entry
+        /// two. It writes the image, because that is what it reads back in
+        /// the same chain, and it writes the trail entry, because that entry
         /// has to sit in order between whatever else the chain trails. The
         /// store and the attribute log it cannot reach, so it parks what
         /// they need and the host applies it at the next sync -- before any
         /// managed code runs, which is what makes the image leading the
         /// store sound rather than a lie.</para>
         ///
-        /// <para>UPDATES only. An insert would have to place a new key in an
+        /// <para>Updates only. An insert would have to place a new key in an
         /// open-addressed table and maintain its load factor, and a module
         /// that got that wrong would leave a table that never rebuilds.
         /// Measured on clp(Z), 215 of 312 put_atts calls are updates.</para>
         ///
-        /// <para>A delete that matched NOTHING writes nothing at all, which
+        /// <para>A delete that matched nothing writes nothing at all, which
         /// is the cheapest correct answer there is; a delete that empties
         /// the list declines, because removing the key is a removal and not
         /// an update.</para></summary>
         private void EmitInlineAttrListWrite(int pc, bool isDelete)
         {
             // Attr keys the walk two ways, and both are the builtin's own.
-            // A COMPOUND keys on its functor, which the mirror names. Any
-            // other BOUND term keys on itself, and the module can ask that
+            // A compound keys on its functor, which the mirror names. Any
+            // other bound term keys on itself, and the module can ask that
             // with a cell comparison -- an atom, an integer, a float's
             // pointer, all exactly as the host compares them. An unbound
             // Attr is an error, and errors are the host's.
@@ -6501,7 +6501,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalGet(LKEW));
                 Op(new Int32EqualZero());
                 Op(new BranchIf(1));                        // -> $done
-                // Everything went: the ROW goes, and with it the record if
+                // Everything went: the row goes, and with it the record if
                 // it was the last one.
                 Op(new LocalGet(LKER));
                 Op(new Int32EqualZero());
@@ -6514,7 +6514,7 @@ public static class WasmPredicateCompiler
             }
             else
             {
-                // A PROMOTION is only safe when the variable carries
+                // A promotion is only safe when the variable carries
                 // nothing at all. A count above zero is an orphan record a
                 // reused heap slot left behind, and sweeping that is the
                 // host's -- as is a row for this very module, which would
@@ -6542,7 +6542,7 @@ public static class WasmPredicateCompiler
                 }
                 CloseNested();
 
-                // An INSERT taking a fresh slot spends from the budget the
+                // An insert taking a fresh slot spends from the budget the
                 // host staged: that budget is the distance to the load
                 // factor, so spending it all is exactly the point at which
                 // one call has to go back and let the table be rebuilt. A
@@ -6647,7 +6647,7 @@ public static class WasmPredicateCompiler
 
             // The image first, because it is what a later read in this same
             // chain looks at. An existing row takes the new value; a missing
-            // one is PLACED where the probe said it would go, key and all,
+            // one is placed where the probe said it would go, key and all,
             // and the slot it takes comes off the budget when it was fresh.
             Op(new LocalGet(LAtRow));
             OpenIf();
@@ -6680,7 +6680,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalGet(LAtPromote));
                 OpenIf();
                 {
-                    // Probed AGAIN, because the row just written may have
+                    // Probed again, because the row just written may have
                     // taken the slot the first probe picked: two probes over
                     // one table choose their insertion point independently,
                     // and a linear walk from different starts reaches the
@@ -6729,7 +6729,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Parks one attribute change for the host, and moves the
-        /// ring on. Everything in it is what the module could NOT write: the
+        /// ring on. Everything in it is what the module could not write: the
         /// store row and the log record. The old value is what the probe
         /// found, or -1 when there was none, which is what an unwind reads
         /// as "remove it again".</summary>
@@ -6820,7 +6820,7 @@ public static class WasmPredicateCompiler
         /// when that row was the last one.
         ///
         /// <para>The last one is the case that needs the count: a variable
-        /// with no attributes left is a PLAIN variable again, and the cell
+        /// with no attributes left is a plain variable again, and the cell
         /// has to say so before anything in this chain reads it. The trail
         /// order is DelAttr's -- the attribute's change first, the cell's
         /// second -- because an unwind meeting them the other way round
@@ -6892,7 +6892,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64ExtendInt32Signed());
             });
 
-        /// <summary>Walks the module's attribute list counting what SURVIVES
+        /// <summary>Walks the module's attribute list counting what survives
         /// the write and whether anything matched. Leaves the count in LKER
         /// and the flag in LKEW, and touches nothing.</summary>
         private void EmitAttrListCount()
@@ -6941,7 +6941,7 @@ public static class WasmPredicateCompiler
 
         /// <summary>The same walk again, copying the survivors into the
         /// pairs at LKBW. The cell it copies is the one the builtin
-        /// collects: a head that is a VARIABLE is kept as a reference to
+        /// collects: a head that is a variable is kept as a reference to
         /// where it lives, not as the variable's own cell, or the new list
         /// would hold a copy that no binding reaches.</summary>
         private void EmitAttrListCopy()
@@ -7005,9 +7005,9 @@ public static class WasmPredicateCompiler
         /// <summary>Whether the head at LKH matches Attr. Derefed, because
         /// a head reached through a bound variable is the term it points at.
         ///
-        /// <para>Two rules, which are the builtin's own. A COMPOUND Attr
+        /// <para>Two rules, which are the builtin's own. A compound Attr
         /// matches a head with the same functor. A constant Attr matches the
-        /// head that IS it, which one cell comparison answers: an atom's
+        /// head that is it, which one cell comparison answers: an atom's
         /// cell is its identity, an integer's its value, a float's its
         /// pointer -- exactly the comparison the host makes. The kinds never
         /// cross, because a functor of arity one or more is not any
@@ -7051,7 +7051,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Points the pair at LKBW at the next one and advances.
-        /// The LAST link is overwritten with the empty list afterwards,
+        /// The last link is overwritten with the empty list afterwards,
         /// which is one store rather than a test in the loop.</summary>
         private void EmitAttrListLink()
         {
@@ -7070,7 +7070,7 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LKBW));
         }
 
-        /// <summary><c>T =.. L</c> with T BOUND: build the list and unify.
+        /// <summary><c>T =.. L</c> with T bound: build the list and unify.
         ///
         /// <para>All 81 of clp(Z)'s remaining univ calls come from one
         /// walker, and the shape is the same every time: a term in hand, a
@@ -7078,14 +7078,14 @@ public static class WasmPredicateCompiler
         /// and a head alternating, the functor's atom first for a compound,
         /// the empty list last.</para>
         ///
-        /// <para>Arguments are copied VERBATIM, which is what the builtin
+        /// <para>Arguments are copied verbatim, which is what the builtin
         /// does and is right for an unbound one too: a variable's cell is a
         /// reference to where it lives, so the copy refers to the same
         /// variable rather than making a new one. That is also why a bignum
         /// or a rational needs nothing from the module -- the cell is moved,
         /// never read.</para>
         ///
-        /// <para>An unbound T is the COMPOSING mode, a different predicate
+        /// <para>An unbound T is the composing mode, a different predicate
         /// that reads the list instead of writing it; a packed string is a
         /// list the builtin materialises first. Both stay the engine's.
         /// </para></summary>
@@ -7113,7 +7113,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Equal());
                 Op(new BranchIf(0));                        // -> $cons
 
-                // An unbound term is the COMPOSING mode: the list is read
+                // An unbound term is the composing mode: the list is read
                 // and the term built, which is the other half of =../2.
                 Op(new LocalGet(LKT));
                 Op(new Int32Constant((int)Tag.Ref));
@@ -7122,7 +7122,7 @@ public static class WasmPredicateCompiler
                 EmitUnivCompose(pc, 4);
                 CloseNested();
 
-                // Every other BOUND shape is a one-element list holding T.
+                // Every other bound shape is a one-element list holding T.
                 Op(new LocalGet(LKT));
                 Op(new Int32Constant((int)Tag.Atom));
                 Op(new Int32Equal());
@@ -7344,7 +7344,7 @@ public static class WasmPredicateCompiler
         ///
         /// <para>73 exits in one clp(Z) goal, and every one of them a
         /// question the module can answer: is there an unbound variable
-        /// anywhere in this term. An ATTRIBUTED variable is unbound too,
+        /// anywhere in this term. An attributed variable is unbound too,
         /// which is the case the libraries that call ground/1 hardest make
         /// and the easy one to get wrong.</para></summary>
         /// <summary><c>'$fetch_global_var'(Key, Value)</c> answered from the
@@ -7388,7 +7388,7 @@ public static class WasmPredicateCompiler
             OpenLoop();                                     // $scan
             {
                 // The image is complete (every key the host would answer
-                // is in it), so a key it lacks is UNSET and the read
+                // is in it), so a key it lacks is unset and the read
                 // fails here. Measured on clp(Z): trigger_prop reads its
                 // current propagator before anything has set it, 6,400
                 // times on queens24, and every one left the module.
@@ -7449,7 +7449,7 @@ public static class WasmPredicateCompiler
         /// elements are copied above the stack top, merge-sorted with the
         /// module's comparator, deduplicated, and built as a fresh list on
         /// the heap for L2. Everything the module cannot settle goes to the
-        /// host BEFORE anything is written, as the request itself: a pair
+        /// host before anything is written, as the request itself: a pair
         /// the comparator declines, a spine that is not a proper list, an
         /// L2 that is no partial list (the host owes the type error), and a
         /// heap or a stack without the room. clp(Z) sorts a list of queue
@@ -7755,10 +7755,10 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
-        /// <summary>Probes the image for a home's ROW COUNT, which is kept
+        /// <summary>Probes the image for a home's row count, which is kept
         /// under a module id no module has.
         ///
-        /// <para>It is what says whether a write CREATES or DESTROYS the
+        /// <para>It is what says whether a write creates or destroys the
         /// record: a promotion needs the count to be zero, and a removal
         /// needs to know whether the row it takes is the last one. Leaves
         /// the count, the row's address when there is one, and where a row
@@ -7887,7 +7887,7 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>The trail entry a CELL change owes, so backtracking puts
+        /// <summary>The trail entry a cell change owes, so backtracking puts
         /// the variable back the way it was. Written by the module because,
         /// like every other entry, it has to sit in order between whatever
         /// else the chain trails.</summary>
@@ -7920,7 +7920,7 @@ public static class WasmPredicateCompiler
             });
         }
 
-        /// <summary><c>T =.. L</c> with T UNBOUND: read the list and build
+        /// <summary><c>T =.. L</c> with T unbound: read the list and build
         /// the term.
         ///
         /// <para>The half that asks the reverse question. Taking a term apart
@@ -7929,7 +7929,7 @@ public static class WasmPredicateCompiler
         /// give an id, and that is a table of its own. A functor nobody has
         /// interned yet has no id to find, and interning one is allocation
         /// the host owns -- so that declines, which is also what makes this
-        /// safe: a wrong id would be a term of the wrong NAME.</para>
+        /// safe: a wrong id would be a term of the wrong name.</para>
         ///
         /// <para>Two passes over the list, because the cell count is not
         /// known until the end: one to count and check the shape, one to
@@ -7968,7 +7968,7 @@ public static class WasmPredicateCompiler
             CloseNested();
             CloseNested();
 
-            // It has to END in the empty list. A partial one is an
+            // It has to end in the empty list. A partial one is an
             // instantiation error and an improper one a type error, and
             // both are the engine's to raise.
             Op(new LocalGet(LC0));
@@ -8002,7 +8002,7 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64());
             Op(new LocalSet(LKT));                          // the atom
 
-            // A '.'/2 term IS a cons cell here, and the difference is not
+            // A '.'/2 term is a cons cell here, and the difference is not
             // cosmetic: the unifier calls two different tags a mismatch, so
             // a Str named '.' would be a term nothing matches. functor/3 and
             // the host's own =../2 both carry this same rule.
@@ -8100,7 +8100,7 @@ public static class WasmPredicateCompiler
             CloseNested();
             CloseNested();
 
-            // T is unbound, so this BINDS it -- through the ordinary path, so
+            // T is unbound, so this binds it -- through the ordinary path, so
             // the trail and the young-to-old rule are the engine's.
             EmitUnifyTwo(() => RegLoad(0), () =>
             {
@@ -8115,7 +8115,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64Or());
             }, pc);
             // $done sits one past $slow, and going anywhere else lands in
-            // the NEXT arm of the switch: composing and then falling into
+            // the next arm of the switch: composing and then falling into
             // the compound case built a second term over the first.
             Op(new Branch((uint)(slowDepth + 1)));          // -> $done
         }
@@ -8134,7 +8134,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(arityLocal));
             Op(new Int32Constant(1));
             Op(new Int32Subtract());
-            Op(new LocalSet(LKStop));                       // the ARITY, one less
+            Op(new LocalSet(LKStop));                       // the arity, one less
             Op(new LocalGet(atomLocal));
             Op(new Int32Constant(1));
             Op(new Int32Add());
@@ -8363,7 +8363,7 @@ public static class WasmPredicateCompiler
                 EmitDeopt(pc, 19);
                 CloseNested();
                 // A tail call still enters a new procedure: the next
-                // iteration's neck_cut must see B as of THIS dispatch, not
+                // iteration's neck_cut must see B as of this dispatch, not
                 // the barrier the original entry came in with -- a body that
                 // left choice points would be over-cut (SetB0(B) parity).
                 StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
@@ -8455,7 +8455,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Structure dispatch, the interpreter's semantics exactly:
-        /// a Str cell's FUNCTOR CELL (heap[index]) decides the branch; any
+        /// a Str cell's functor cell (heap[index]) decides the branch; any
         /// other tag falls to the default chain (a Lis was routed by the term
         /// switch already; a mismatch belongs to the default's own tests).</summary>
         private void EmitSwitchOnStructure(Instr ins, int reg, int tableId)
@@ -8488,7 +8488,7 @@ public static class WasmPredicateCompiler
         /// <summary>One hop of the bounded sub-path: LC0 holds a dereferenced
         /// cell, and this replaces it with its <paramref name="idx"/>-th
         /// argument, dereferenced. A hop that cannot be taken -- a cell that
-        /// is not compound, an index past the arity — is a MISS and jumps to
+        /// is not compound, an index past the arity — is a miss and jumps to
         /// <paramref name="missAddr"/>, which is the table's default: exactly
         /// what TryHop returning false does in the interpreter.
         ///
@@ -8613,7 +8613,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             OpenIf();
             {
-                // The cons key is the ATOM id of '.', not an interned './2':
+                // The cons key is the atom id of '.', not an interned './2':
                 // the interpreter and the IL backend both look it up that way,
                 // and a table this one keys differently silently misses.
                 bool listed = false;
@@ -8653,12 +8653,12 @@ public static class WasmPredicateCompiler
         /// <summary>The engine's PushChoicePoint, cell for cell; jumps to
         /// <paramref name="gotoAddr"/> afterwards when one is given, else
         /// falls through.</summary>
-        /// <summary>TRACE MODE, off unless a diagnostic turns it on before
+        /// <summary>Trace mode, off unless a diagnostic turns it on before
         /// the module is compiled. When on, the module writes one record per
         /// commit-shaped event into a ring in the shared image, which the
         /// host drains when the chain comes out.
         ///
-        /// <para>It exists because everything the module COMMITS -- pushing
+        /// <para>It exists because everything the module commits -- pushing
         /// a choice point, cutting one away -- happens inside wasm without
         /// calling anything the engine can see, so no host-side instrument
         /// can line those up against Tier 0's. Writing to memory rather than
@@ -8773,7 +8773,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT2)); Op(new LocalGet(LT0));
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(1));
-            // regs[t2] = stack[B + 1 + t2]. A cell is EIGHT bytes: these
+            // regs[t2] = stack[B + 1 + t2]. A cell is eight bytes: these
             // index cells, not the 4-byte trail entries.
             Op(new LocalGet(LRegsB));
             Op(new LocalGet(LT2)); Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
@@ -8857,7 +8857,7 @@ public static class WasmPredicateCompiler
             CloseNested();
             CloseNested();
 
-            // H is about to go BACKWARDS. Cells claimed before this
+            // H is about to go backwards. Cells claimed before this
             // backtrack were still claimed -- time/1 counts allocations, not
             // the top -- so bank the span being discarded before dropping it.
             Op(new LocalGet(LCells));
@@ -8991,7 +8991,7 @@ public static class WasmPredicateCompiler
 
         // ---- the register/Y helpers with unify semantics ----
 
-        /// <summary>Pushes the cell in <paramref name="local"/> as a BIND
+        /// <summary>Pushes the cell in <paramref name="local"/> as a bind
         /// value: an attributed variable's cell becomes Ref(home) — its
         /// payload — because an AttVar cell exists only at its home (Deref
         /// does not follow it; a raw copy elsewhere is an orphan the attr
@@ -9011,16 +9011,16 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LC1));
         }
 
-        /// <summary><c>functor(T, Name, Arity)</c> with T BOUND, answered
+        /// <summary><c>functor(T, Name, Arity)</c> with T bound, answered
         /// in the module.
         ///
         /// <para>The heaviest exit clp(Z) makes, and the module already
         /// holds what the answer needs: a compound's functor id indexes
         /// the mirror, which packs (atom id, arity) in one i64, and an
-        /// atomic term IS its own name with arity zero.</para>
+        /// atomic term is its own name with arity zero.</para>
         ///
         /// <para>Everything else steps aside at this pc and the builtin
-        /// answers: an unbound T is the CONSTRUCTING mode, which
+        /// answers: an unbound T is the constructing mode, which
         /// allocates and raises on shapes this has no business knowing,
         /// and a functor id the host has not mirrored reads as arity zero,
         /// which no compound can be.</para></summary>
@@ -9094,7 +9094,7 @@ public static class WasmPredicateCompiler
             CloseNested();
 
             // Both answers delivered by the ordinary unify, so a bound
-            // argument is COMPARED rather than assumed to be free, and a
+            // argument is compared rather than assumed to be free, and a
             // shape it cannot settle steps aside exactly as it would in a
             // clause body.
             EmitUnifyTwo(() => RegLoad(1), () => Op(new LocalGet(LU0)), pc);
@@ -9104,7 +9104,7 @@ public static class WasmPredicateCompiler
         /// <param name="emitEscape">What to do with a pair only the
         /// engine's unifier can decide. Null steps aside at this pc; the
         /// meta-call passes a builtin-request exit instead, because there
-        /// the goal IS =/2 and the host can be asked to run it without
+        /// the goal is =/2 and the host can be asked to run it without
         /// abandoning the chain.</param>
         private void EmitUnifyTwo(Action loadLeft, Action loadRight, int pc,
                                   Action? emitEscape = null)
@@ -9123,7 +9123,7 @@ public static class WasmPredicateCompiler
             OpenElse();
             {
                 // X side unbound. Against a bound Y value, bind X's home
-                // to it; against an unbound Y, bind YOUNG to OLD -- the
+                // to it; against an unbound Y, bind young to old -- the
                 // younger home takes the reference, as the engine's unifier
                 // does, so backtracking never leaves an old cell pointing at
                 // reclaimed heap.
@@ -9296,7 +9296,7 @@ public static class WasmPredicateCompiler
             int packed = ins.I0;
             int rel = (packed >> 16) & 0xFF;
             // Read into a_eval slots 0 and 1 rather than LC2/LC1: the slots
-            // carry the KIND, which is what lets a float operand stay here
+            // carry the kind, which is what lets a float operand stay here
             // instead of escalating. The comparison delivers nothing, so no
             // heap cell is needed whichever lane it takes.
             EmitReadNumericOperand(packed & 0xFF, ins.I1, ins.Pc, 0);
@@ -9348,7 +9348,7 @@ public static class WasmPredicateCompiler
         {
             int packed = ins.I0;
             int binOp = (packed >> 24) & 0xFF;
-            // The a_eval slots carry the KIND, which is what admits a float
+            // The a_eval slots carry the kind, which is what admits a float
             // operand here: this opcode was 56% of clpr's deopts, all of them
             // an operand whose tag was not Int.
             EmitReadNumericOperand(packed & 0xFF, ins.I1, ins.Pc, 0);
@@ -9453,7 +9453,7 @@ public static class WasmPredicateCompiler
                     break;
                 case 7:     // Min
                 case 8:     // Max
-                    // The result IS one of the operands, so there is nothing
+                    // The result is one of the operands, so there is nothing
                     // to range-check: both already fit in sixty bits.
                     Op(new LocalGet(LC2));
                     Op(new LocalGet(LC1));
@@ -9491,7 +9491,7 @@ public static class WasmPredicateCompiler
         /// <summary>Writes the double whose IEEE bits are in <paramref
         /// name="bitsLocal"/> as the two cells a float term is (header with
         /// the top 4 bits and the paired index, paired cell with the other
-        /// 60), at H. Mirrors Cell.MakeFloat, INCLUDING its single zero: a
+        /// 60), at H. Mirrors Cell.MakeFloat, including its single zero: a
         /// computed -0.0 stores as 0.0, or writeq, ==/2 and compare/3 would
         /// disagree with the interpreter on a value it can produce
         /// (0.0 * -1.0).</summary>
@@ -9528,8 +9528,8 @@ public static class WasmPredicateCompiler
             });
         }
 
-        /// <summary>Delivers a FLOAT result: two heap cells and a REF to the
-        /// header, the shape put_float leaves. A target that is already BOUND
+        /// <summary>Delivers a float result: two heap cells and a REF to the
+        /// header, the shape put_float leaves. A target that is already bound
         /// escalates -- comparing a computed double against a stored one is
         /// the interpreter's judgement to make (NaN alone would need its
         /// rules), and an is/2 into a bound float is rare enough that the
@@ -9608,7 +9608,7 @@ public static class WasmPredicateCompiler
             }
         }
         // ---- structures and lists (ADR-017 inline cells; ADR-019 last-arg
-        // nested builds; the RESERVED forms of ADR-020 are rejected) ----
+        // nested builds; the reserved forms of ADR-020 are rejected) ----
 
         /// <summary>Steps aside before any mutation when the next
         /// <paramref name="cells"/> heap cells would cross the watermark.</summary>
@@ -9624,7 +9624,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>heap[LDa] = value, trailed when old (the engine's Bind).
-        /// Trail FIRST: its full-trail deopt must fire before any mutation --
+        /// Trail first: its full-trail deopt must fire before any mutation --
         /// a stored bind without its trail entry would survive backtracking,
         /// and the interpreter's re-run would find the var already bound and
         /// never grow the trail (a deopt storm, measured on tak).</summary>
@@ -9725,7 +9725,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Equal());
                 OpenIf();
                 {
-                    // Unbound: bind to LIS(H) -- the pair is NOT allocated
+                    // Unbound: bind to LIS(H) -- the pair is not allocated
                     // here; the two unify_* that follow write it (ADR-017's
                     // two-cell cons).
                     EmitBindDa(pc, () => PushTaggedH(Tag.Lis));
@@ -9735,7 +9735,7 @@ public static class WasmPredicateCompiler
                 OpenElse();
                 {
                     // An attributed variable needs its hooks; a packed string
-                    // IS a cons but with its own representation. Both step
+                    // is a cons but with its own representation. Both step
                     // aside; everything else plainly fails.
                     Op(new LocalGet(LT0));
                     Op(new Int32Constant((int)Tag.AttVar));
@@ -9887,7 +9887,7 @@ public static class WasmPredicateCompiler
             OpenIf();
             {
                 // Building: the parent's arg slot takes STR(H+1) and the
-                // functor follows -- contiguous, because this is the LAST
+                // functor follows -- contiguous, because this is the last
                 // argument (ADR-019).
                 EmitHeapGuard(pc, 2);
                 CellStoreDyn(LHeapB, LH, 0, () => PushTaggedH(Tag.Str, 1));
@@ -10023,7 +10023,7 @@ public static class WasmPredicateCompiler
         /// <summary>A cut, and the compaction it owes.
         ///
         /// <para>The interpreter's Cut does two things: it lowers B, and it
-        /// COMPACTS the trails, dropping entries the cut has made
+        /// compacts the trails, dropping entries the cut has made
         /// unreachable. The module can do the first and not the second, and
         /// the difference is not academic: measured on clp(Z), an AttrModify
         /// entry the interpreter drops here survived on the tier, sat below a
@@ -10045,7 +10045,7 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LT0));
             // 2 = a cut, payload = the barrier it commits to. Recorded
             // before the staleness test, so a cut that turns out to be a
-            // no-op is still visible as an ATTEMPT -- which is the half a
+            // no-op is still visible as an attempt -- which is the half a
             // comparison against Tier 0 needs.
             EmitTraceRecord(2, () => Op(new LocalGet(LT0)));
             // A stale barrier (at or above B) is a no-op, per ISO: the CP the
@@ -10215,9 +10215,9 @@ public static class WasmPredicateCompiler
 
         // ---- a_eval: the RPN stack simulated at compile time (ADR-018) ----
         // The engine evaluates is/2 over a ThreadStatic managed stack; here
-        // the stack is DEPTH tracked while compiling and the entries live in
+        // the stack is depth tracked while compiling and the entries live in
         // i64 locals, so a deopt anywhere in the sequence rewinds to the
-        // FIRST push -- pushes are read-only, so the interpreter re-runs the
+        // first push -- pushes are read-only, so the interpreter re-runs the
         // whole sequence against its own stack and nothing is double-applied.
 
         private const int AEvalMaxDepth = 8;
@@ -10226,7 +10226,7 @@ public static class WasmPredicateCompiler
 
         private static uint LA(int k) => (uint)(23 + k);
 
-        /// <summary>The slot's KIND: 0 = the value is a 60-bit int, 1 = it is
+        /// <summary>The slot's kind: 0 = the value is a 60-bit int, 1 = it is
         /// the IEEE bits of a double. One local rather than a parallel f64
         /// bank, so a slot costs one extra i32 and the reinterprets are
         /// free.</summary>
@@ -10251,7 +10251,7 @@ public static class WasmPredicateCompiler
         private const uint LMetaAtom = 56; // i32: 1 when the goal is an atom
         // Two i64 scratch cells that survive EmitUnifyTwo, which spends
         // LC0 and LC2 on its own derefs. Any inline form that has to
-        // hold a value ACROSS the unify that delivers it needs them.
+        // hold a value across the unify that delivers it needs them.
         private const uint LU0 = 57;
         private const uint LU1 = 58;
         // The cut's compaction. Its own bank because it runs between a
@@ -10273,7 +10273,7 @@ public static class WasmPredicateCompiler
         private const uint LKOrph = 72;  // i32: orphaned records parked
         private const uint LKOrph2 = 84; // i32: dead records parked
         private const uint LKDot = 85;   // i32: composing a CONS, not a Str
-        private const uint LAtKind = 86; // i32: Attr is a COMPOUND, not a constant
+        private const uint LAtKind = 86; // i32: Attr is a compound, not a constant
         private const uint LKPB0 = 87;   // i32: the parent's binding top, before the watermark
         private const uint LKPE0 = 88;   // i32: the parent's extra top, before the watermark
         private const uint LSrtA = 89;   // i32: sort/2's array, the sorted one at the end
@@ -10290,15 +10290,15 @@ public static class WasmPredicateCompiler
         private const uint LAtHome = 74; // i32: the attributed variable
         private const uint LAtMod = 75;  // i32: the module, kept for a writer
         private const uint LKT0Alt = 76; // i32: a parked row's index
-        private const uint LAtIns = 77;  // i32: where a row WOULD go
+        private const uint LAtIns = 77;  // i32: where a row would go
         private const uint LAtFresh = 78;// i32: and whether that slot is fresh
-        private const uint LAtCntRow = 79;  // i32: the COUNT row's address
+        private const uint LAtCntRow = 79;  // i32: the count row's address
         private const uint LAtCntIns = 80;  // i32: where it would go
         private const uint LAtCntFresh = 81;// i32: and whether that slot is fresh
         private const uint LAtCount = 82;   // i32: how many rows the home has
-        private const uint LAtPromote = 83; // i32: A0 was a PLAIN variable
+        private const uint LAtPromote = 83; // i32: A0 was a plain variable
 
-        // `!` as an atom. Compared as a relocatable atom CELL, never as a
+        // `!` as an atom. Compared as a relocatable atom cell, never as a
         // baked id: atom ids are per process.
         private static readonly int CutAtomId =
             Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
@@ -10324,7 +10324,7 @@ public static class WasmPredicateCompiler
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it
-        /// holds. The caller has already established that SOME operand is a
+        /// holds. The caller has already established that some operand is a
         /// float, so this is the promotion the standard requires.</summary>
         private void AEvalAsF64(int k)
         {
@@ -10356,7 +10356,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Or());
         }
 
-        /// <summary>Decodes the FLOAT cell in LC0 into its IEEE bits on the
+        /// <summary>Decodes the float cell in LC0 into its IEEE bits on the
         /// wasm stack: the header carries the top 4 bits and the paired
         /// cell's payload the other 60 (see Cell.MakeFloat).</summary>
         private void EmitDecodeFloatBitsFromC0()
@@ -10386,7 +10386,7 @@ public static class WasmPredicateCompiler
                     break;
                 case 2:
                 {
-                    // A float LITERAL is a constant: its bits go straight in.
+                    // A float literal is a constant: its bits go straight in.
                     // This was an unconditional deopt, and it is the site the
                     // measurement found -- 2,000 deopts in a 2,000-iteration
                     // loop over `N * 1.5`, one per iteration.
@@ -10415,7 +10415,7 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Reads an a_eval operand into slot <paramref name="slot"/>
-        /// with its kind: an INT cell takes the 60-bit lane, a FLOAT cell
+        /// with its kind: an INT cell takes the 60-bit lane, a float cell
         /// decodes to IEEE bits, anything else deopts. The int path is byte
         /// for byte what EmitReadIntOperand emits, so integer arithmetic is
         /// untouched.</summary>
@@ -10423,7 +10423,7 @@ public static class WasmPredicateCompiler
         {
             if (kind == 0)
             {
-                // A 32-bit integer LITERAL, not a register: the fused
+                // A 32-bit integer literal, not a register: the fused
                 // forms pass these, and reading it as a register number
                 // is how this first went wrong.
                 Op(new Int64Constant(val));
@@ -10466,7 +10466,7 @@ public static class WasmPredicateCompiler
                 }
                 OpenElse();
                 {
-                    // Not a number. A COMPOUND is an EXPRESSION -- `X is E`
+                    // Not a number. A compound is an expression -- `X is E`
                     // where E arrived in a register, which is what a solver
                     // builds all day -- and the evaluator walks it. Anything
                     // else (a variable, a bignum, a rational) is the
@@ -10594,7 +10594,7 @@ public static class WasmPredicateCompiler
                         Op(new Float64Absolute());
                         AEvalStoreF64(slot);
                         break;
-                    case 3:     // Sign: -1.0 / 0.0 / 1.0, a FLOAT for a float
+                    case 3:     // Sign: -1.0 / 0.0 / 1.0, a float for a float
                         AEvalAsF64(slot);
                         Op(new Float64Constant(0.0));
                         Op(new Float64GreaterThan());
@@ -10741,7 +10741,7 @@ public static class WasmPredicateCompiler
         // ---- ADR-020 reserved builds, simulated at compile time ----
         // The engine runs put_structure_r / put_list_r with a runtime
         // write-frame stack (PushWriteFrame / OnReservedArgWritten). The
-        // build tree is static, so the whole cascade is replayed HERE and
+        // build tree is static, so the whole cascade is replayed here and
         // the region flattens to one upfront heap guard plus straight
         // stores at fixed offsets from the region base H0. Deopt-free by
         // construction: reserved builds are pure writes, and the guard
@@ -10945,7 +10945,7 @@ public static class WasmPredicateCompiler
         // ---- term identity: module function K+3 ----
         // (a: i64, b: i64, mailbox: i32) -> i32: 0 different, 1 identical,
         // 2 deopt. The unifier's walk without the binding, and '==' answers
-        // with LESS than unification needs: two distinct cells that are
+        // with less than unification needs: two distinct cells that are
         // variables are two distinct terms, so the var arms decide instead
         // of binding. BigInts, rationals, PSTRs and foreigns step aside --
         // equal values there can wear different cells, so cell identity is
@@ -10958,7 +10958,7 @@ public static class WasmPredicateCompiler
         // caller's locals: ArithValue is a sixty-bit integer or the bits of
         // a double, and ArithKind says which.
         //
-        // Why it exists: `X is Expr` where Expr arrives in a REGISTER is not
+        // Why it exists: `X is Expr` where Expr arrives in a register is not
         // a leaf. The fused opcodes read one cell and the module could only
         // handle a number, so an expression built at run time -- which is
         // what a constraint solver does all day -- stepped aside. Measured
@@ -10966,7 +10966,7 @@ public static class WasmPredicateCompiler
         // an operand whose tag was Str.
         //
         // Iterative, over two stacks growing toward each other above the
-        // stack top: a WORK stack of things still to do and an OPERAND stack
+        // stack top: a work stack of things still to do and an operand stack
         // of values already computed. A tree is not bounded by anything the
         // compiler knows, so a recursive walk would be a wasm stack overflow
         // on user data, which is not a failure a Prolog program may cause.
@@ -10980,7 +10980,7 @@ public static class WasmPredicateCompiler
         // ---- ground/1: module function K+5 ----
         // (term: i64, mailbox: i32) -> i32: 1 ground, 0 not, 2 decline.
         //
-        // The engine's own walk carries a VISITED set, because a cyclic term
+        // The engine's own walk carries a visited set, because a cyclic term
         // with no variables is ground and a walk without one would not
         // terminate. A module has no set, and it does not need one: the
         // worklist is bounded by the stack limit, so a cycle fills it and
@@ -11068,7 +11068,7 @@ public static class WasmPredicateCompiler
                 Deref(C, T0);
 
                 // An unbound variable is what this predicate is looking for,
-                // and an ATTRIBUTED one is unbound too -- which is exactly
+                // and an attributed one is unbound too -- which is exactly
                 // the case the libraries that call ground/1 hardest make.
                 TagOf(C); I64(0); O(new Int64Equal());
                 TagIs(C, (long)Tag.AttVar);
@@ -11132,12 +11132,12 @@ public static class WasmPredicateCompiler
         /// <summary>acyclic_term/1 as a module function: (root cell, mailbox)
         /// -> 0 cyclic, 1 acyclic, 2 declined. A depth-first walk over a
         /// worklist above the stack top, like ground's; what makes it a
-        /// cycle check is a CLOSE entry pushed under every compound's
+        /// cycle check is a close entry pushed under every compound's
         /// arguments, tagged as no term cell is (Functor) and carrying the
         /// compound's address. The entries still pending are exactly the
         /// compounds on the current path, so a compound is cyclic when the
         /// pending entries name its address, and a shared subterm reached
-        /// again on ANOTHER path is not. Declines on a packed string, whose
+        /// again on another path is not. Declines on a packed string, whose
         /// tail only the engine unpacks, and when the worklist would cross
         /// the stack limit.</summary>
         private static List<Instruction> BuildAcyclicBody()
@@ -11192,7 +11192,7 @@ public static class WasmPredicateCompiler
                 LG(WL); I32(8); O(new Int32Add()); LSet(WL);
             }
             // The compound at T0 is on the current path when a pending
-            // CLOSE entry carries its address: cyclic.
+            // close entry carries its address: cyclic.
             void FailIfOnPath()
             {
                 LG(WL); LSet(P);
@@ -11238,7 +11238,7 @@ public static class WasmPredicateCompiler
                 LG(WL); I32(8); O(new Int32Subtract()); LSet(WL);
                 LG(WL); O(new Int64Load()); LSet(C);
 
-                // A CLOSE entry: its compound's arguments are all walked, so
+                // A close entry: its compound's arguments are all walked, so
                 // it leaves the path.
                 TagIs(C, (long)Tag.Functor);
                 OIf(); Continue(); OEnd();
@@ -11305,7 +11305,7 @@ public static class WasmPredicateCompiler
         /// 0 equal, 1 the first is smaller, 2 greater, 3 a pair the host
         /// orders. Variables by address, integers by value, compounds by
         /// arity, then functor, then arguments left to right, over a
-        /// worklist above the stack top. Two DIFFERENT atoms (ordered by
+        /// worklist above the stack top. Two different atoms (ordered by
         /// name), a float, a bigint, a rational and a packed string on
         /// either side are the host's. A pair of cyclic terms never ends
         /// here, so a step budget hands it to the host's cycle check.
@@ -11938,8 +11938,8 @@ public static class WasmPredicateCompiler
             OIf();
             {
                 LG(a); LG(b); O(new Int64Multiply()); LSet(tmp);
-                // The 64-bit overflow probe BEFORE the 60-bit fit, exactly as
-                // the leaf form does it: a product that WRAPPED can land back
+                // The 64-bit overflow probe before the 60-bit fit, exactly as
+                // the leaf form does it: a product that wrapped can land back
                 // inside sixty bits, and the fit check alone would pass it.
                 LG(a); I64(0); O(new Int64NotEqual());
                 LG(a); I64(-1); O(new Int64NotEqual());
@@ -12098,12 +12098,12 @@ public static class WasmPredicateCompiler
                 Deref(CB, DB);
 
                 // The same cell is the same term, whatever its tag, and for
-                // a variable it is the ONLY way to be identical.
+                // a variable it is the only way to be identical.
                 LG(CA); LG(CB); O(new Int64Equal());
                 OIf(); Continue(); OEnd();
 
-                // A PSTR on EITHER side is the engine's, and the reason is
-                // ADR-047: a packed string IS a list, so a PSTR cell and a
+                // A PSTR on either side is the engine's, and the reason is
+                // ADR-047: a packed string is a list, so a PSTR cell and a
                 // LIS cell can be the same term wearing different tags. The
                 // tag rule below would call them different.
                 TagIs(CA, (long)Tag.Pstr); TagIs(CB, (long)Tag.Pstr);
@@ -12284,7 +12284,7 @@ public static class WasmPredicateCompiler
                 LG(addr); LG(HHB); O(new Int32LessThanSigned());
                 OIf();
                 {
-                    // Trail space FIRST: a heap store without its trail
+                    // Trail space first: a heap store without its trail
                     // entry would survive backtracking.
                     LG(TR); LG(TRLIM); O(new Int32GreaterThanOrEqualSigned());
                     OIf(); Ret2(1); OEnd();
@@ -12377,7 +12377,7 @@ public static class WasmPredicateCompiler
                     TagIs(CB, 0);
                     OIf();
                     {
-                        // var-var, distinct: the YOUNGER home takes the ref.
+                        // var-var, distinct: the younger home takes the ref.
                         LG(DA); LG(DB); O(new Int32LessThanSigned());
                         OIf(); Bind(DB, CA);
                         OElse(); Bind(DA, CB);

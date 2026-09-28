@@ -5,8 +5,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>An ATTVAR cell is the one cell that names its own slot: the
 /// payload is the home address, and that address is the key into the
-/// attribute table. So the cell may be REFERENCED from anywhere but never
-/// COPIED to another address — a copy is a second cell claiming a home that
+/// attribute table. So the cell may be referenced from anywhere but never
+/// copied to another address — a copy is a second cell claiming a home that
 /// is not its own, and the first lookup through it finds no record.
 ///
 /// <para>The list-peeling helper handed the raw head and tail cells to its

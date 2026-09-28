@@ -19,7 +19,7 @@ public sealed class DynamicIlPromotionTests
         var e = new PrologEngine();
         e.IlPromotion.Threshold = threshold;
         // Deterministic promotion: with the background worker, whether a
-        // delegate is INSTALLED by the time a mutation evicts depends on
+        // delegate is installed by the time a mutation evicts depends on
         // compile timing — and EvictDelegate counts churn only when a delegate
         // was actually present. Under a cold JIT (standalone run) or CPU
         // contention (parallel gate) the install could miss the round, the
@@ -148,11 +148,11 @@ public sealed class DynamicIlPromotionTests
     public void DeclaredDynamicWithClauses_PrimesOnFirstCall()
     {
         // ADR-023 priming — a `:- dynamic` (or `:- visible`) predicate declared
-        // WITH clauses promotes to its IL snapshot on the FIRST call, even under a
+        // with clauses promotes to its IL snapshot on the first call, even under a
         // far-away warm-up threshold (other predicates would need `threshold`
         // calls). It stays fully mutable + evictable.
         var e = new PrologEngine();
-        e.IlPromotion.Threshold = 1000;   // promotion ON, normal warm-up far away
+        e.IlPromotion.Threshold = 1000;   // promotion on, normal warm-up far away
         e.ConsultString("""
             :- dynamic color/1.
             color(red).
@@ -161,7 +161,7 @@ public sealed class DynamicIlPromotionTests
             """);
         int fid = Fid("color", 1);
         Assert.False(e.IlPromotion.IsPromoted(fid));
-        Assert.True(e.Query("color(green).").Success);   // ONE call
+        Assert.True(e.Query("color(green).").Success);   // One call
         Assert.True(e.IlPromotion.IsPromoted(fid));       // primed → already IL
         // unchanged mutability: a mutation evicts the snapshot, new state is live.
         Assert.True(e.Query("assertz(color(yellow)).").Success);
@@ -172,8 +172,8 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void RuntimeOnlyDynamic_NotPrimed_WarmsNormally()
     {
-        // A dynamic predicate with NO source clauses (populated only by runtime
-        // assertz) is NOT primed — under a high threshold one call won't promote it.
+        // A dynamic predicate with no source clauses (populated only by runtime
+        // assertz) is not primed — under a high threshold one call won't promote it.
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1000;
         e.ConsultString(":- dynamic t/1.");
@@ -196,7 +196,7 @@ public sealed class DynamicIlPromotionTests
         Assert.Contains(snap.Predicates, p => p.Arity == 1);   // d/1 snapshot present
     }
 
-    // A predicate declared dynamic in a MODULE keeps its source clauses in
+    // A predicate declared dynamic in a module keeps its source clauses in
     // the module, not in the dynamic store; its snapshot is taken from them
     // (and from what the store holds since). An assert lands in the store:
     // until the next setup the module's clauses alone would make a snapshot
@@ -225,9 +225,9 @@ public sealed class DynamicIlPromotionTests
     public void LogicalUpdateView_HoldsThroughIlSnapshot()
     {
         // d/1 is IL-promoted; a goal that backtracks over d/1 and asserts a new
-        // clause MID-ITERATION must still see only the snapshot as of when its goal
+        // clause mid-iteration must still see only the snapshot as of when its goal
         // began (ADR-015) — the in-progress call finishes on the snapshot delegate;
-        // the assert evicts it only for FUTURE calls.
+        // the assert evicts it only for future calls.
         var e = Activation("""
             :- dynamic d/1.
             d(1).
@@ -239,7 +239,7 @@ public sealed class DynamicIlPromotionTests
         for (int i = 0; i < 5; i++) Assert.True(e.Query("d(2).").Success);
         Assert.True(e.IlPromotion.IsPromoted(fid));                // snapshot active
 
-        // iter sees [1,2,3] — NOT 99 (asserted during the iteration).
+        // iter sees [1,2,3] — not 99 (asserted during the iteration).
         Assert.True(e.Query("iter(L), L == [1, 2, 3].").Success);
         // but the assert did take effect for later calls.
         Assert.True(e.Query("d(99).").Success);

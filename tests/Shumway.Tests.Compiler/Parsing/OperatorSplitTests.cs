@@ -59,7 +59,7 @@ public class OperatorSplitTests
     [Fact]
     public void WholeAtomIsInfix_NoSplit()
     {
-        // '=..' IS a registered infix — should NOT be split.
+        // '=..' is a registered infix — should not be split.
         var t = Parse("X =.. [foo, 1, 2].");
         var c = Assert.IsType<CompoundTerm>(t);
         Assert.Equal("=..", c.Functor);

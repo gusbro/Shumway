@@ -34,7 +34,7 @@ public class Chunk82Tests
     [Fact]
     public void Consult_KeepsUnchangedEntries_AndPicksUpTheNewClause()
     {
-        // Invalidation is TARGETED, not wholesale: a consult leaves compiled
+        // Invalidation is targeted, not wholesale: a consult leaves compiled
         // predicates of unchanged modules (the prelude's) in the cache — the
         // per-module transform fingerprint drops exactly the changed modules'
         // entries at the next query's product build — and the newly consulted

@@ -2,7 +2,7 @@ using Shumway.Core;
 
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>The <c>'$fd_dom'</c> functor cells, indexed by INTERVAL COUNT:
+/// <summary>The <c>'$fd_dom'</c> functor cells, indexed by interval count:
 /// entry k is the functor of a domain with k intervals, which has arity 2k
 /// (ADR-051).
 ///

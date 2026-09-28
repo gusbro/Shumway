@@ -137,7 +137,7 @@ public class CompoundHeadTests
         var cc = CompileSource("p(foo(X, bar(X))).");
         var d = Disassemble(cc.Bytecode);
 
-        // ADR-019: bar(X) is foo's LAST arg → matched inline with
+        // ADR-019: bar(X) is foo's last arg → matched inline with
         // unify_structure (no temp + second get_structure).
         //   get_structure foo/2, X[0]
         //   unify_variable_x X[N]    ; first X — claim slot N

@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>$dom_del hands back the cell it was given when it removes
-/// nothing, so an unchanged domain is the SAME term and not a second copy of
+/// nothing, so an unchanged domain is the same term and not a second copy of
 /// itself.
 ///
 /// <para>clpfd_narrow runs the pair on every propagation: remove a value,
@@ -13,7 +13,7 @@ namespace Shumway.Tests.Wasm;
 /// queens_fd(9), $dom_del and $dom_same together were 82% of every builtin
 /// exit in the run.</para>
 ///
-/// <para>The wasm form that answered $dom_same by comparing cells is OFF for
+/// <para>The wasm form that answered $dom_same by comparing cells is off for
 /// now: it recognised a domain by its Foreign tag, and ADR-051 made a domain
 /// a term. Phase 2 restores it reading the term, where the comparison is by
 /// contents and strictly stronger. What these tests hold on to meanwhile is
@@ -68,7 +68,7 @@ public sealed class InlineDomSameTests(ITestOutputHelper o)
     }
 
     /// <summary>A removal that removes nothing builds no domain. Measured as
-    /// heap cells PER ITERATION, which is byte-identical between runs, so the
+    /// heap cells per iteration, which is byte-identical between runs, so the
     /// comparison is exact: the loop pays one cell an iteration either way
     /// for its own fresh variable, and a removal that really removes pays for
     /// a domain on top of it.</summary>

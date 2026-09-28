@@ -196,7 +196,7 @@ public sealed class BundleModulePromotionTests
     public void CollidingBareModules_AreBothSkippedWholesale_CleanOnePromoted()
     {
         // a and b both define a local dup/1 → the name collides in `user`; c's
-        // uniq/1 is unique. All-or-nothing: a AND b are skipped entirely, c is
+        // uniq/1 is unique. All-or-nothing: a and b are skipped entirely, c is
         // promoted. (1-arg :- module makes each a named, non-export-qualified
         // bare module with local predicates.)
         using var t = new TempDir();

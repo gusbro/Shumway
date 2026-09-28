@@ -199,7 +199,7 @@ public class WasmRelocatableModuleTests
         byte[] bytes = WasmRelocatableModule.Bake(membersA, new EngineWasmCompileEnv()).ToBytes();
         // The ABI stamp sits right after the magic. A module baked by an
         // engine with another mailbox layout reads shifted slots with no
-        // error anywhere downstream, so the READER is the only place that
+        // error anywhere downstream, so the reader is the only place that
         // can catch it -- and the message must say the cure.
         bytes[4] ^= 0xFF;
         var ex = Assert.Throws<InvalidDataException>(

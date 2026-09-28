@@ -10,7 +10,7 @@ namespace Shumway.Tests.Embedding;
 ///
 /// <para>`BigIntAlloc` reclaims a slot when backtracking unwinds past the
 /// allocation. The sweep can shrink the table first, so the unwind now
-/// routinely finds a table SMALLER than the size it recorded. That is a
+/// routinely finds a table smaller than the size it recorded. That is a
 /// no-op by construction (it truncates only when the table is larger), and
 /// these are the cases that say so.</para></summary>
 public sealed class NumericSideTableLifetimeTests

@@ -24,7 +24,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The float-literal pool the predicate currently being compiled
     /// indexes (its own module's <c>FloatLiterals</c>), set by the driver before
     /// compiling. <c>get_float</c>/<c>put_float</c> resolve their <c>literalId</c>
-    /// against this and bake the VALUE as an <c>ldc.r8</c> constant — so the IL is
+    /// against this and bake the value as an <c>ldc.r8</c> constant — so the IL is
     /// process-independent (no patch needed for persisted bundles). When null,
     /// the float opcodes report as unsupported and the predicate stays Tier-0
     /// (safe fallback). Thread-static: set on whichever thread runs the emit.</summary>
@@ -176,7 +176,7 @@ public sealed partial class IlPredicateCompiler
         string localSalt = "",
         GuardContEmitContext? guardContCtx = null)
     {
-        // In region mode every member is emitted into ONE shared IL method, so a
+        // In region mode every member is emitted into one shared IL method, so a
         // pc-based local name (unique within a single predicate, where pc starts at
         // 0) collides across members — two members each with, say, a put_variable at
         // pc 0 would both declare `freshRef_pc0`. Salt every per-member-emitted local
@@ -194,8 +194,8 @@ public sealed partial class IlPredicateCompiler
         // A0 just before the call (see the disasm in NativeBundleTests); tracking it
         // lets the CallBuiltin handler recover which block to inline.
         int regZeroAtom = -1;
-        // ADR-025 stage (b) — inline-ITE labels. `jump` targets (the END join)
-        // get a label marked when the walk reaches the address; the ELSE
+        // ADR-025 stage (b) — inline-ITE labels. `jump` targets (the end join)
+        // get a label marked when the walk reaches the address; the else
         // resume label (a cursor-switch target) is marked at the trust_me.
         Dictionary<int, Sigil.Label>? jumpLabels = null;
         Dictionary<int, Sigil.Label>? iteElseLabels = null;
@@ -204,7 +204,7 @@ public sealed partial class IlPredicateCompiler
             var op = (Opcode)code[pc];
             if (jumpLabels is not null && jumpLabels.Remove(pc, out var joinLabel))
             {
-                // The END join is reachable from the then-branch's jump AND by
+                // The end join is reachable from the then-branch's jump and by
                 // falling through from the else branch; register state tracked
                 // across the join is branch-dependent → reset.
                 emit.MarkLabel(joinLabel);
@@ -624,15 +624,15 @@ public sealed partial class IlPredicateCompiler
                 // ADR-025 — the inline-ITE choice point (body-CP arity
                 // sentinel; the eligibility filters guarantee no
                 // dispatch-chain try_me_else reaches a body emit). The CP's
-                // cursor is the ELSE re-entry point, marked at TrustMe.
+                // cursor is the else re-entry point, marked at TrustMe.
                 int elseAddr = BytecodeIO.ReadInt32(code, pc + 1);
                 int elseCursor;
                 Sigil.Label elseResumeLabel;
                 if (regionCtx is not null)
                 {
-                    // ITE in a REGION member: the plan gave this try_me_else
+                    // ITE in a region member: the plan gave this try_me_else
                     // pc a cursor (it rides the BuiltinResume site kind); the
-                    // CP carries the REGION delegate + that cursor.
+                    // CP carries the region delegate + that cursor.
                     elseCursor = regionCtx.CursorBySite[
                         (regionCtx.CurrentMemberIndex, pc)];
                     elseResumeLabel = regionCtx.CursorLabels[elseCursor];
@@ -652,7 +652,7 @@ public sealed partial class IlPredicateCompiler
                 if (emitSelfDelegate is not null)
                 {
                     // Direct re-entry (ADR-025 follow-up): the CP carries this
-                    // predicate's OWN delegate + the ELSE cursor — a failed
+                    // predicate's own delegate + the else cursor — a failed
                     // condition re-enters the method straight at the cursor
                     // switch, the same contract as a clause-alt chain CP. The
                     // marker form below instead pays Resume → Pc=marker →
@@ -676,7 +676,7 @@ public sealed partial class IlPredicateCompiler
             }
             if (op == Opcode.TrustMe)
             {
-                // ADR-025 — the ELSE entry. Reached ONLY via the cursor switch
+                // ADR-025 — the else entry. Reached only via the cursor switch
                 // on backtrack (the CP pop already happened in TryBacktrack;
                 // trust_me itself needs no IL); the first pass never falls
                 // through — the preceding `jump` is unconditional.
@@ -691,7 +691,7 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.Jump)
             {
                 // ADR-025 — unconditional intra-clause branch (the then-branch
-                // END join). Forward-only by construction.
+                // end join). Forward-only by construction.
                 int target = BytecodeIO.ReadInt32(code, pc + 1);
                 jumpLabels ??= new Dictionary<int, Sigil.Label>();
                 if (!jumpLabels.TryGetValue(target, out var endLabel))
@@ -754,8 +754,8 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.SoftCut)
             {
                 // ADR-037 — inline ( Cond *-> Then ; Else ) commit. As with cut,
-                // flush pending attribute wakeups first; then neutralise ONLY the
-                // ELSE choice point named by Y[slot], leaving the condition's CPs.
+                // flush pending attribute wakeups first; then neutralise only the
+                // else choice point named by Y[slot], leaving the condition's CPs.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.Call(EngineFlushWakeupsForIlCutMethod);
@@ -848,7 +848,7 @@ public sealed partial class IlPredicateCompiler
                         // is correct.
                     }
                     // inside a region the cursor comes from the
-                    // PLAN (keyed by this site's pc) and the marker carries
+                    // plan (keyed by this site's pc) and the marker carries
                     // the REGION's fid, so the dispatch loop re-enters the
                     // region method at the right switch slot. Standalone
                     // keeps the sequential counter.
@@ -876,10 +876,10 @@ public sealed partial class IlPredicateCompiler
 
                     var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
-                    // A backtrackable builtin reached THROUGH this meta-call
+                    // A backtrackable builtin reached through this meta-call
                     // captures BuiltinReturnPc for its resume, exactly as one
                     // at a direct call_builtin site does. Without it the
-                    // builtin keeps whatever the PREVIOUS builtin call left
+                    // builtin keeps whatever the previous builtin call left
                     // there, and its first retry re-enters somewhere that was
                     // never its continuation. Tier-0's meta-call arm sets it
                     // for the same reason (BytecodeInterpreter, the IsCall
@@ -986,7 +986,7 @@ public sealed partial class IlPredicateCompiler
                 if (isBacktrackable)
                 {
                     // region members take their cursor from the
-                    // PLAN (keyed by pc) with the REGION's fid in the marker;
+                    // plan (keyed by pc) with the REGION's fid in the marker;
                     // standalone keeps the sequential counter.
                     int resumeCursor;
                     int markerOwnerFid;
@@ -1079,7 +1079,7 @@ public sealed partial class IlPredicateCompiler
                 int sz = OpcodeTable.Get(op).Size;
 
                 // Fused binary-structure peephole (2026-07), the get_list twin: the
-                // window must consume the WHOLE structure — arity exactly 2 — or
+                // window must consume the whole structure — arity exactly 2 — or
                 // the ops after it would read the mode state the fused call skips.
                 int pc1 = pc + sz;
                 int pc2 = pc1 + 5;
@@ -1255,7 +1255,7 @@ public sealed partial class IlPredicateCompiler
                 int sz = OpcodeTable.Get(op).Size;
 
                 // Fused cons peephole (2026-07): `get_list; unify_*_x; unify_variable_x`
-                // — the complete match/build of one cons — becomes ONE Activation call
+                // — the complete match/build of one cons — becomes one Activation call
                 // (see GetListVarXVarX / GetListValXVarX). Only when the whole window
                 // is inside this range and no ADR-025 label lands mid-window (a branch
                 // into the middle would skip the fused prefix).
@@ -1360,7 +1360,7 @@ public sealed partial class IlPredicateCompiler
                 // Inline-rule case 2: inline a single-clause rule that
                 // makes user calls and/or cuts. Set B0 = engine.B at the inline
                 // entry so the body's deep cut (allocate_get_level / get_level)
-                // captures THIS barrier — the inlined cut then prunes only the
+                // captures this barrier — the inlined cut then prunes only the
                 // body's own choice points, not the caller's. The body is emitted
                 // with the CALLER's threading context, so its non-tail calls take
                 // forward-resume cursors in the caller's space (already counted
@@ -1382,7 +1382,7 @@ public sealed partial class IlPredicateCompiler
                         calleeMap: calleeMap,
                         suppressProceedReturn: true,
                         cursorBase: cursorBase);
-                    // Consume + mark the dead resume cursor reserved for THIS
+                    // Consume + mark the dead resume cursor reserved for this
                     // Call site (no marker is ever set for it — the rule is
                     // inlined — but the cursor switch has a slot, so the label
                     // must be marked to keep the IL well-formed).
@@ -1392,7 +1392,7 @@ public sealed partial class IlPredicateCompiler
                     continue;
                 }
 
-                // ADR-031 G2 — a CP-free guard's call to a FAIL-DIRECT callee
+                // ADR-031 G2 — a CP-free guard's call to a fail-direct callee
                 // (multi-clause and/or self-tail-recursive; see
                 // TryDescribeFailDirectCallee) is inlined as a sequential
                 // alternative chain with an in-place loop, so its failure is a
@@ -1400,9 +1400,9 @@ public sealed partial class IlPredicateCompiler
                 // CP-free guard slices (forceLeafRuleInline).
                 //
                 // ADR-033 — with the continuation-stack mechanism on, the
-                // callee's code is NOT duplicated here: the site pushes its
+                // callee's code is not duplicated here: the site pushes its
                 // packed (ok, fail) continuation cursors and branches to the
-                // ONE shared per-method copy; the copy's epilogues pop and
+                // one shared per-method copy; the copy's epilogues pop and
                 // dispatch back through the continuation switch.
                 if (forceLeafRuleInline && calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var fdCallee)
@@ -1449,11 +1449,11 @@ public sealed partial class IlPredicateCompiler
                 // meta-CP is needed; the post-call label still gets
                 // marked for any outer logic but no choice point lives
                 // there.
-                // ADR-034 — a dynamic SNAPSHOT may be inlined ONLY under the
+                // ADR-034 — a dynamic snapshot may be inlined only under the
                 // checked-guard machinery (forceLeafRuleInline slices, whose
                 // recognizer collected the fid for the clause-entry staleness
                 // test); in any other position it takes the threaded by-fid
-                // call, which dispatches against the LIVE dynamic.
+                // call, which dispatches against the live dynamic.
                 if (calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var calleePred)
                     && (!calleePred.IsDynamicSnapshot || forceLeafRuleInline)
@@ -1488,7 +1488,7 @@ public sealed partial class IlPredicateCompiler
                 // The marker encodes (this delegate's functor id,
                 // siteIdx), so the dispatcher knows to re-invoke us at
                 // the forward-resume cursor. No recursive C# stack
-                // frame, and deliberately NO meta-CP push: backtracking
+                // frame, and deliberately no meta-CP push: backtracking
                 // through the callee's CPs naturally lands at the
                 // caller's marker again — the CP cascade alone carries
                 // the semantics.
@@ -1553,7 +1553,7 @@ public sealed partial class IlPredicateCompiler
                 // Resume label — reached via the cursor switch when the
                 // callee proceeds and the dispatcher decodes our
                 // marker. Cursor numbering: forward-resume cursors
-                // come AFTER any clause-entry cursors the outer body
+                // come after any clause-entry cursors the outer body
                 // emitter reserved.
                 emit.MarkLabel(resumeLabels[siteIdx - 1]);
 
@@ -1587,9 +1587,9 @@ public sealed partial class IlPredicateCompiler
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
 
-                // Un-tail. When this body is being INLINED at
+                // Un-tail. When this body is being inlined at
                 // a non-tail site (suppressProceedReturn), a trailing tail Execute
-                // must become a threaded NON-TAIL call: control has to return to the
+                // must become a threaded non-tail call: control has to return to the
                 // caller's continuation after the callee proceeds, not tail-return
                 // past it. Same threading as a non-tail Call (a forward-resume cursor
                 // in the caller's space, already counted by CountRuleBodyThreadedCalls
@@ -1655,7 +1655,7 @@ public sealed partial class IlPredicateCompiler
                 // indirect delegate invoke — the bulk of the per-call trampoline
                 // tax. Backtracking is unaffected: choice points are still on the
                 // WAM stack with their own continuations; this only changes how
-                // the FORWARD self-call reaches cursor 0. The Cp (the tail call's
+                // the forward self-call reaches cursor 0. The Cp (the tail call's
                 // continuation) is left as the caller set it, exactly as the
                 // marker path does.
                 if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
@@ -1664,7 +1664,7 @@ public sealed partial class IlPredicateCompiler
                     // dispatch-loop round trip would have provided — it
                     // already mirrors the loop's ADR-016 heap safe point, and
                     // it must mirror the loop's wake check too, or a wake
-                    // queued by THIS iteration's head-match (an attributed
+                    // queued by this iteration's head-match (an attributed
                     // list argument being decomposed) never fires and the
                     // recursion enumerates past a hook that had to stop it
                     // (freeze/2 went silently unhooked once $length_enum
@@ -1941,9 +1941,9 @@ public sealed partial class IlPredicateCompiler
         if (code.Length == 0) return false;
         // First instruction must be try_me_else (size 9: opcode + bp +
         // arity). ADR-025 stage (b) — clause boundaries are derived by
-        // FOLLOWING each dispatch opcode's address operand (try_me_else /
-        // retry_me_else point at the NEXT clause's dispatch op; trust_me is
-        // the last). The previous linear scan treated EVERY me-else-family
+        // following each dispatch opcode's address operand (try_me_else /
+        // retry_me_else point at the next clause's dispatch op; trust_me is
+        // the last). The previous linear scan treated every me-else-family
         // opcode as a boundary, which an inline-ITE's mid-body try_me_else /
         // trust_me would break.
         if ((Opcode)code[0] != Opcode.TryMeElse) return false;
@@ -1971,7 +1971,7 @@ public sealed partial class IlPredicateCompiler
         }
         if (clauseStarts.Count != predicate.ClauseCount) return false;
 
-        // Derive (Start, End) per clause: each body ends at the NEXT clause's
+        // Derive (Start, End) per clause: each body ends at the next clause's
         // dispatch opcode (known exactly from the operand walk); the last runs
         // to the end of the bytecode. Validate every body opcode against the
         // IL subset (the per-clause emission walks them again to emit).
@@ -2029,9 +2029,9 @@ public sealed partial class IlPredicateCompiler
             // the fused tail builtin (the linker's
             // Execute→ExecuteBuiltin rewrite for foreign / late-resolved
             // builtins in bundles). Deterministic and backtrackable entries
-            // emit; a META goal in tail position (call/N, '$call'/2) would
+            // emit; a meta goal in tail position (call/N, '$call'/2) would
             // need the meta-dispatch threading with proceed-on-sync-success —
-            // left Tier-0 (rare: only a tail Execute that RESOLVED to a meta
+            // left Tier-0 (rare: only a tail Execute that resolved to a meta
             // builtin at link time takes this form).
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                 BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 1));
@@ -2039,11 +2039,11 @@ public sealed partial class IlPredicateCompiler
         }
         if (op == Opcode.TryMeElse)
         {
-            // ADR-025 stage (b) — a MID-BODY try_me_else is the inline-ITE
+            // ADR-025 stage (b) — a mid-body try_me_else is the inline-ITE
             // choice point, carrying the body-CP arity sentinel (the variable
             // discipline keeps branch state in Y slots). A dispatch-chain
             // try_me_else never reaches this filter (the describers walk
-            // clause BODY ranges).
+            // clause body ranges).
             return BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 5) == OpcodeTable.InlineIteCpArity;
         }
         if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
@@ -2079,7 +2079,7 @@ public sealed partial class IlPredicateCompiler
     /// concrete atoms / ints / structures.
     ///
     /// <para>The IL emit (<see cref="CompileSwitchedChain"/>) does
-    /// NOT reproduce the switch dispatch — it just walks the
+    /// not reproduce the switch dispatch — it just walks the
     /// extracted clause bodies linearly, exactly like
     /// <see cref="CompileTryMeElseChain"/>. The switch tables in the
     /// bytecode are an optimisation that pre-filters by tag/key; the
@@ -2270,9 +2270,9 @@ public sealed partial class IlPredicateCompiler
         _emitOwnerFid = predicate.FunctorId;
 
         // CSE (mirrors the region Stage-11 hoist): every chain node's
-        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
-        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
-        // the cursor switch (which dominates every node label, fresh AND
+        // PushIlChoicePoint reloads the same self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to one local ahead of
+        // the cursor switch (which dominates every node label, fresh and
         // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
         // shrinks the per-invocation work.
         SelfDelegateEmitter effectiveSelf = emitSelf;
@@ -2298,7 +2298,7 @@ public sealed partial class IlPredicateCompiler
         // one O(1) jump table (IL `switch`) over the dense cursor
         // space — 0 → entry resolve; 1..K → chain node; K+1.. → call-site
         // resume — replacing the linear compare chain every invocation (fresh
-        // calls AND backtrack re-entries) used to pay in full. An out-of-range
+        // calls and backtrack re-entries) used to pay in full. An out-of-range
         // cursor falls through to the entry, exactly as the old chain did.
         var cursorLabels = new Sigil.Label[callBase + totalCallSites];
         cursorLabels[0] = selfEntry;
@@ -2334,7 +2334,7 @@ public sealed partial class IlPredicateCompiler
 
         // ---- Chain nodes: push the next-node CP (if any), run the clause body.
         //      ADR-031 indexed buckets: a node whose clause is an accepted
-        //      guard skips the push — it stores the next node's ENGINE cursor
+        //      guard skips the push — it stores the next node's engine cursor
         //      (-1 for a chain tail) in the idxnext local; the shared guard
         //      block's fail stub dispatches on it. ----
         Sigil.Local? idxNext = guardPlan is not null
@@ -2412,7 +2412,7 @@ public sealed partial class IlPredicateCompiler
                     dynamicFailDispatch: () =>
                     {
                         // Guard failed: continue at the chain's next node —
-                        // the engine cursor in idxnext indexes the SAME label
+                        // the engine cursor in idxnext indexes the same label
                         // array the method's cursor dispatch uses; the tail
                         // sentinel (-1) falls through the unsigned switch.
                         emit.LoadLocal(idxNext!);
@@ -2564,7 +2564,7 @@ public sealed partial class IlPredicateCompiler
                     EmitTagBranch(emit, tagLoc, (int)Tag.Atom, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Int, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Float, Target(node.ConstTarget));
-                    // ADR-048: a NON-EMPTY packed list is a cons and takes the
+                    // ADR-048: a non-empty packed list is a cons and takes the
                     // list bucket; the length guard keeps empty PSTR (= [])
                     // on the sound var chain, where the const bucket's []
                     // clauses are still reachable.

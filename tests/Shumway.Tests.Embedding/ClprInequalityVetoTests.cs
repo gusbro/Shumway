@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// through plain unification.
 ///
 /// <para>Two holes let it through. The hook handed back no goals for a
-/// par(Cons) attribute -- a FREE variable, whose inequalities are exactly
+/// par(Cons) attribute -- a free variable, whose inequalities are exactly
 /// what says which values it may take -- so a direct bind was never checked.
 /// And an inequality with no variables left reached a simplex with no
 /// columns, which has nothing to refute: {1 &gt; 3} succeeded on its own. The

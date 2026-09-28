@@ -8,7 +8,7 @@ namespace Shumway.Tests.Wasm;
 ///
 /// <para><c>maplist(double(2), L, D)</c> is written here and the
 /// <c>call(G, X, Y)</c> that runs it lives in library(lists), so the goal is
-/// looked up relative to LISTS and lands on the bare <c>double/3</c> -- a
+/// looked up relative to lists and lands on the bare <c>double/3</c> -- a
 /// functor that names no predicate, because the one with the code is
 /// <c>user$double/3</c>. The interpreter follows the address map and runs
 /// the right thing. The module cannot: its jump target is a marker, markers
@@ -56,8 +56,8 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
         Assert.Equal(0L, WasmTierDelegate.DiagForeignExits);
     }
 
-    /// <summary>The renaming is by ADDRESS, so it must not fire when the
-    /// names disagree about which code they mean. A predicate that is NOT
+    /// <summary>The renaming is by address, so it must not fire when the
+    /// names disagree about which code they mean. A predicate that is not
     /// installed and shares no entry with one that is still answers, the
     /// long way round.</summary>
     [Fact]
@@ -81,9 +81,9 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
             "a callee nothing compiled stopped answering");
     }
 
-    /// <summary>PROBE: does the stack grow without bound on the tier?
+    /// <summary>Probe: does the stack grow without bound on the tier?
     /// Tier 0 runs this in constant stack; the browser's clp(Z) goal dies
-    /// with resource_error(memory) whose buffer is the STACK.</summary>
+    /// with resource_error(memory) whose buffer is the stack.</summary>
     [DiagFact]
     [Trait("Category", "Slow")]
     public void DoesTheStackGrow()

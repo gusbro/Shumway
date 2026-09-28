@@ -6,13 +6,13 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary><c>min/2</c> and <c>max/2</c> over two integers, compiled.
 ///
-/// <para>Refusing one arithmetic operation refuses the whole PREDICATE, and
+/// <para>Refusing one arithmetic operation refuses the whole predicate, and
 /// that is what these cost: clp(Z)'s cis_min_/3 and cis_max_/3 were each
 /// thrown out over a single instruction, and between them they were 171 of
 /// the 199 calls a compiled chain could not continue into -- one chain
 /// closure and one fresh staging each.</para>
 ///
-/// <para>On two integers the result IS one of the operands, so there is
+/// <para>On two integers the result is one of the operands, so there is
 /// nothing to range-check. A float operand is a different question -- the
 /// standard's min/2 returns the operand, not a promoted copy -- and that
 /// stays the engine's.</para></summary>
@@ -63,7 +63,7 @@ public sealed class IntMinMaxTests(ITestOutputHelper o)
         Assert.True(tiered.Query(goal).Success, $"the tier disagrees on {goal}");
     }
 
-    /// <summary>The predicate is COMPILED now, which is the whole point: a
+    /// <summary>The predicate is compiled now, which is the whole point: a
     /// refusal is per predicate, not per instruction.</summary>
     [Fact]
     public void ThePredicateIsNoLongerRefused()

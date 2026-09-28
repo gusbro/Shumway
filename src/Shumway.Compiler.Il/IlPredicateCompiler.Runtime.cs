@@ -47,7 +47,7 @@ public sealed partial class IlPredicateCompiler
     /// table is process-wide but write-once-per-key.</summary>
     internal static class IndexedDelegateHolder
     {
-        // The store is a plain slot ARRAY indexed by
+        // The store is a plain slot array indexed by
         // the (sequential, RegistrationLock-serialised) holder key, and
         // SelfFromHolder emits a direct `ldsfld / ldc / ldelem.ref` instead
         // of a call — the Tier-1 profile showed the previous
@@ -55,7 +55,7 @@ public sealed partial class IlPredicateCompiler
         // hash+bucket probe per multi-clause region invocation; the
         // direct slot load removes the probe altogether. Publication safety: Register runs under
         // RegistrationLock; a grow copies the old entries and stores the
-        // new delegate into the NEW array BEFORE Volatile.Write publishes
+        // new delegate into the new array before Volatile.Write publishes
         // it, so any array version a reader can observe after delegate X
         // escaped (always through a fenced channel — the compile-result
         // queue or the promotion tables) already contains X's slot.
@@ -112,7 +112,7 @@ public sealed partial class IlPredicateCompiler
             // The address may be a CallTarget.ForUndefined
             // sentinel left by the linker (the IL caller's static
             // rewrite baked a direct Call/Execute against an
-            // unresolved functor) AND the implicit_dynamic auto-
+            // unresolved functor) and the implicit_dynamic auto-
             // promote may since have materialised a trampoline.
             // Re-look-up the live entry; if it's still unresolved,
             // raise existence_error.
@@ -262,7 +262,7 @@ public sealed partial class IlPredicateCompiler
                 engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // §7.8.3 — a control construct's arguments must convert
-            // BEFORE any of it runs. Same spot as the bytecode twin:
+            // before any of it runs. Same spot as the bytecode twin:
             // ahead of the route cache, so the cached path is covered.
             if (totalArity == 2 && AtomTable.GetById(atomId)?.Name
                     is "," or ";" or "->" or "*->")
@@ -372,9 +372,9 @@ public sealed partial class IlPredicateCompiler
                 return SyncFail;
             }
 
-            // Module-relative resolution FIRST — before the builtin check (the
+            // Module-relative resolution first — before the builtin check (the
             // interpreter's DispatchCall mirrors this): an export-qualified
-            // module may define its OWN version of a builtin-named predicate
+            // module may define its own version of a builtin-named predicate
             // (Scryer's iso_ext defines copy_term/3, forall/2) — `M:goal` must
             // run M$goal, not the engine builtin. A module with no such local
             // (nor import) falls through to the builtin.
@@ -434,7 +434,7 @@ public sealed partial class IlPredicateCompiler
                 || !addresses.TryGetValue(functorId, out int address))
             {
                 // Last chance: a runtime-assert MetaTransform helper linked by a
-                // DIFFERENT activation — materialize it here (the Logtalk
+                // different activation — materialize it here (the Logtalk
                 // suspended-outer-query shape; see ResolveLateHelper).
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
@@ -482,7 +482,7 @@ public sealed partial class IlPredicateCompiler
                 int fid = engine.GetHeap(fidx).AsFunctorId;
                 // Both $mqual(Module, Goal) and the ISO Module:Goal qualifier share
                 // the (Module, Goal) layout. A `M:G` with a bad module slot is
-                // the ISO error HERE — falling through used to dispatch ':'/2 as
+                // the ISO error here — falling through used to dispatch ':'/2 as
                 // a predicate, whose prelude clause is call(M:G): an infinite
                 // loop, not an error.
                 if (fid == MqualFid) { }
@@ -531,7 +531,7 @@ public sealed partial class IlPredicateCompiler
         }
 
         /// <summary>Mirror of BytecodeInterpreter.WrapGoal (ADR-037): distributes
-        /// the module INTO an if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) rather than
+        /// the module into an if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) rather than
         /// wrapping it whole, so the enclosing <c>;</c>'s structural if-then-else /
         /// soft-cut match still fires.</summary>
         private static Cell WrapGoal(Activation engine, int module, Cell goalCell)

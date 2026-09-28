@@ -111,7 +111,7 @@ internal static class RetractTrace
 
         // Suspicious-state check: the specific bug we are hunting is
         // "whole-head-bind" — after retract, the pattern's arg derefs
-        // to a STR whose functor MATCHES the pattern's own functor
+        // to a STR whose functor matches the pattern's own functor
         // (i.e., X was bound to a copy of the head wrapper). Other
         // shapes (arg derefs to a different STR) are legitimate
         // (dynamic predicates can store compound values like

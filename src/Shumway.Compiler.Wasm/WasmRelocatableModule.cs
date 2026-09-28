@@ -16,7 +16,7 @@ public sealed record WasmRelocatableMember(
     /// the member was compiled from.</summary>
     ulong Shape);
 
-/// <summary>A group module compiled once and installable into ANY process:
+/// <summary>A group module compiled once and installable into any process:
 /// every immediate that names process state is a sentinel with a
 /// relocation record (<see cref="RelocatingCompileEnv"/>), patched in
 /// place on install against the live intern tables and link. The wasm
@@ -46,7 +46,7 @@ public sealed class WasmRelocatableModule
     private WasmRelocatableModule() { }
 
     /// <summary>A process-independent fingerprint of a predicate's code: its
-    /// length, arity and call-site layout. NOT the bytes (their operands
+    /// length, arity and call-site layout. Not the bytes (their operands
     /// carry this process's atom and functor ids); enough to refuse a
     /// module whose cursor offsets were taken against other code.</summary>
     public static ulong ShapeOf(CompiledPredicate pred)
@@ -372,7 +372,7 @@ public sealed class WasmRelocatableModule
         => FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
 
     // Members are contiguous: the end of one is the start of the next, and
-    // an address at a member's bias is THAT member's entry, not the
+    // an address at a member's bias is that member's entry, not the
     // predecessor's end cursor. The end of the last member is still legal
     // (the cursor after a trailing call).
     internal static int OwnerOf(IReadOnlyList<WasmGroupMember> members, int address)
@@ -407,7 +407,7 @@ public sealed class WasmRelocatableModule
             foreach (char c in text) { h ^= c; h *= prime; }
             h ^= (ulong)value; h *= prime;
         }
-        // Constructor order IS the wire order.
+        // Constructor order is the wire order.
         foreach (var p in typeof(WasmBuiltinEvidence).GetConstructors()[0].GetParameters())
             Mix(p.ParameterType.Name + " " + p.Name, p.Position);
         foreach (var name in Enum.GetNames(typeof(WasmInlineForms)))

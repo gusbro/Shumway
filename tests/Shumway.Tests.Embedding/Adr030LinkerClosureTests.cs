@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-030 linker closure — the whole-program determinism fixpoint at link
-/// time. The elidable shape is a LAST clause ending in a trailing top-level
-/// <c>!</c> whose prefix calls a CROSS-MODULE callee: intra-module the callee
+/// time. The elidable shape is a last clause ending in a trailing top-level
+/// <c>!</c> whose prefix calls a cross-module callee: intra-module the callee
 /// is opaque (CrossModule blocker), but the linker owns every module's clauses,
 /// so the fixpoint resolves it and elides the cut when the callee is det.
 /// Purely semantics-preserving — every test checks the observable behaviour is
@@ -36,8 +36,8 @@ public class Adr030LinkerClosureTests
     [Fact]
     public void CrossModuleDetCallee_TrailingCutElided_SemanticsIntact()
     {
-        // a:main/2's LAST clause ends `check(X), R = pos, !.` — check/1 is
-        // module b's PUBLIC single-clause det predicate. Intra-module the cut
+        // a:main/2's last clause ends `check(X), R = pos, !.` — check/1 is
+        // module b's public single-clause det predicate. Intra-module the cut
         // was CrossModule-blocked; the linker closure proves check/1 det and
         // drops the trailing cut.
         var r = Link(
@@ -58,7 +58,7 @@ public class Adr030LinkerClosureTests
     [Fact]
     public void CrossModuleNondetCallee_TrailingCutKept()
     {
-        // b:pick/1 is NONDET — the fixpoint must NOT prove it det: the last
+        // b:pick/1 is nondet — the fixpoint must not prove it det: the last
         // clause's trailing cut commits to pick's first solution and must stay
         // (eliding it would leak a second answer for a free X).
         var r = Link(

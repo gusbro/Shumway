@@ -305,7 +305,7 @@ public class Chunk77Tests
     [Fact]
     public void TermVariables_IncludesAttributedVariables()
     {
-        // An attvar IS a variable (ISO/SWI/Scryer). clpz builds a
+        // An attvar is a variable (ISO/SWI/Scryer). clpz builds a
         // propagator's attachment list with term_variables over a term of
         // attvars — skipping them detached every propagator posted that way
         // (reified negation never fired).

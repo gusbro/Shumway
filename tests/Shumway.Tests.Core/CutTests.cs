@@ -174,8 +174,8 @@ public class CutTests
     public void Cut_AdjustsKeptExtraEntryMarkerToCompactedBindingPosition()
     {
         // Critical test: a single cell gets a Bind first, then a ValueChange. After cut
-        // compaction, the kept extra entry's marker MUST point AFTER the kept binding so
-        // that UnwindTrails processes the extra BEFORE the binding — otherwise the binding
+        // compaction, the kept extra entry's marker must point after the kept binding so
+        // that UnwindTrails processes the extra before the binding — otherwise the binding
         // is rolled back first and the extra writes the intermediate (bound) value over
         // the unbound state, leaving the cell with the wrong final value.
         var engine = new Activation();
@@ -235,7 +235,7 @@ public class CutTests
     [Fact]
     public void GetLevel_SavesB0IntoY()
     {
-        // GetLevel captures _b0 (the procedure-entry barrier), NOT the current
+        // GetLevel captures _b0 (the procedure-entry barrier), not the current
         // B — so the captured value survives sub-goal calls that overwrite
         // the engine's B0 register.
         var engine = new Activation();
@@ -294,7 +294,7 @@ public class CutTests
 
         engine.Cut(outerB);
         Assert.Equal(outerB, engine.B);
-        Assert.Equal(Cell.Atom(1), engine.GetHeap(v));        // cut does NOT undo
+        Assert.Equal(Cell.Atom(1), engine.GetHeap(v));        // cut does not undo
 
         engine.TrustMe();
         Assert.Equal(-1, engine.B);

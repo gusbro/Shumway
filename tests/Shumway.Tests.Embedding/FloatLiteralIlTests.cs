@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Float literals (get_float / put_float) in Tier-1 IL. The value is resolved
 /// from the predicate's float pool at emit time and baked as an ldc.r8 constant —
-/// process-independent, so it works for runtime promotion, the dump, AND persisted
+/// process-independent, so it works for runtime promotion, the dump, and persisted
 /// (--with-compiled-il / --exe) bundles with no patch. Covers static + dynamic
 /// (snapshot) predicates, in head matching (get_float) and body build (put_float).
 /// </summary>

@@ -35,7 +35,7 @@ public readonly struct Cell : IEquatable<Cell>
 
     public long Payload => Data & PayloadMask;
 
-    // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do NOT
+    // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do not
     // verify the tag; the caller is responsible for dispatching on Tag first.
     public int AsHeapIndex => (int)Data;
     public int AsAtomId => (int)Data;
@@ -146,14 +146,14 @@ public readonly struct Cell : IEquatable<Cell>
     // ---------- Float (spans two cells) ----------
 
     /// <summary>
-    /// Encodes a double across two cells: a FLOAT header carrying the 4 high bits + the heap
+    /// Encodes a double across two cells: a float header carrying the 4 high bits + the heap
     /// index of the paired cell, and an INT-tagged paired cell carrying the 60 low bits.
     /// The paired cell is structurally a valid INT but its numeric int value is meaningless
     /// — only <see cref="DecodeFloat"/> can reconstruct the original double.
     /// </summary>
     public static (Cell Header, Cell Paired) MakeFloat(double value, int pairedHeapIdx)
     {
-        // ISO's float value set has ONE zero: negative zero is unrepresentable
+        // ISO's float value set has one zero: negative zero is unrepresentable
         // as a term, so -0.0 reads, prints and sorts as 0.0 (syntax conformity
         // #364). ==/2 and compare/3 already equate the two; this single funnel
         // (every float cell is born here) makes writeq agree with them. The

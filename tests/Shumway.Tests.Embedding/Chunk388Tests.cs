@@ -47,7 +47,7 @@ public class Chunk388Tests
     [Fact]
     public void CrossRegionCallee_IsKept()
     {
-        // a→b but a does NOT absorb b (e.g. b has a backtrackable builtin → Stage 6d).
+        // a→b but a does not absorb b (e.g. b has a backtrackable builtin → Stage 6d).
         // b trampolines out → live root; b absorbs c → c prunable.
         var preds = Map(Pred(1, 2), Pred(2, 3), Pred(3));
         var regions = Regions(new() { [1] = new[] { 1 }, [2] = new[] { 2, 3 } });
@@ -60,7 +60,7 @@ public class Chunk388Tests
     [Fact]
     public void AbsorbedButAlsoPublic_IsKept()
     {
-        // a absorbs {a,b}; but b is ALSO externally reachable (public) → keep its
+        // a absorbs {a,b}; but b is also externally reachable (public) → keep its
         // standalone form even though a calls it via br.
         var preds = Map(Pred(1, 2), Pred(2));
         var regions = Regions(new() { [1] = new[] { 1, 2 } });
@@ -81,7 +81,7 @@ public class Chunk388Tests
     [Fact]
     public void SplitCaller_OneAbsorbsOneDoesnt_Kept()
     {
-        // b is called by a (absorbs b) AND by c (does NOT). The trampoline edge from c
+        // b is called by a (absorbs b) and by c (does not). The trampoline edge from c
         // keeps b's standalone form alive.
         var preds = Map(Pred(1, 2), Pred(3, 2), Pred(2));
         var regions = Regions(new() { [1] = new[] { 1, 2 }, [3] = new[] { 3 } });

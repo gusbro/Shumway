@@ -13,10 +13,10 @@ namespace Shumway.Tests.Embedding;
 /// engine) — the fast-startup deployment (no parse, no compile at load).
 ///
 /// <para>Two validation tiers. Direct-dispatch predicates are checked
-/// IN-PROCESS. Meta-call-heavy predicates (aggregate_all, foldl — they run their
+/// in-process. Meta-call-heavy predicates (aggregate_all, foldl — they run their
 /// goal via findall, resolved through the runtime functor table) are checked
-/// CROSS-PROCESS by spawning the REPL on the bundle, because building AND loading
-/// a persisted-IL bundle in the SAME process leaves the meta-call functor
+/// cross-process by spawning the REPL on the bundle, because building and loading
+/// a persisted-IL bundle in the same process leaves the meta-call functor
 /// resolution in a build-time state that a deployed app (link, then load in a
 /// fresh process) never sees.</para></summary>
 public sealed class PreludeIlBakeTests

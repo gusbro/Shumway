@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-051 phase 0: a CLP(FD) domain is a term on the heap, not a
 /// managed object named by a Foreign cell.
 ///
-/// <para>These assert the REPRESENTATION, which is the part the rest of the
+/// <para>These assert the representation, which is the part the rest of the
 /// arc depends on: a wasm module can read a term out of linear memory and
 /// cannot read a managed object, and a term is reclaimed by backtracking
 /// where a foreign-table entry lives as long as the activation. The solver's

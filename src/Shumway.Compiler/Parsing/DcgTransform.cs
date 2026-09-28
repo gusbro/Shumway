@@ -39,7 +39,7 @@ public static class DcgTransform
 {
     /// <summary><paramref name="failFast"/> gates the leading-terminal hoist +
     /// compound-head-arg defer below. Debug codegen passes false: the hoist
-    /// ERASES the first terminal's body goal (it becomes head unification), so
+    /// erases the first terminal's body goal (it becomes head unification), so
     /// its source line loses its debug stop site — the one transform outcome
     /// ADR-035's position-coverage invariant forbids.</summary>
     public static List<Clause> Apply(IEnumerable<Clause> clauses, bool failFast = true)
@@ -99,17 +99,17 @@ public static class DcgTransform
         // position (the inline-parser dispatch), every failed alternative
         // wastefully builds its output structure and then fails.
         //
-        // Two coordinated moves, applied ONLY when the body begins with a
+        // Two coordinated moves, applied only when the body begins with a
         // terminal (so there is an input test to fail on early):
         //   (a) hoist the leading ground terminal(s) into the head's input
         //       argument, so a non-matching input fails at head unification
         //       (before the frame is even allocated); and
-        //   (b) defer construction of each COMPOUND head output argument
+        //   (b) defer construction of each compound head output argument
         //       into the body (`Vi = Origi`), placed after the head match,
         //       so the output structure is only built once the input has
         //       matched.
         // Render-direction rules (`ast_html_node_(paragraph(..)) --> {..}, ...`)
-        // begin with a `{ }` goal, NOT a terminal, so neither move fires and
+        // begin with a `{ }` goal, not a terminal, so neither move fires and
         // their first-argument indexing on the bound AST node is preserved.
         (Term inputArg, Term residualBody, VarTerm residualStart, bool peeled) =
             failFast ? PeelLeadingTerminals(body, sStart, ref counter)
@@ -187,7 +187,7 @@ public static class DcgTransform
         return false;
     }
 
-    /// <summary>Replaces each COMPOUND top-level head argument with a fresh
+    /// <summary>Replaces each compound top-level head argument with a fresh
     /// variable and records a <c>V = OrigArg</c> goal, so the output structure
     /// is built in the body (after the head input match) rather than during
     /// head unification. Atom / integer / variable head arguments are left in
@@ -266,12 +266,12 @@ public static class DcgTransform
 
         // Double-quoted string terminal (standard DCG, not
         // dialect-gated). Since ADR-047 the literal survives as a
-        // StringTerm under EVERY double_quotes mode, carrying its own
+        // StringTerm under every double_quotes mode, carrying its own
         // presentation kind — the elements it consumes must match it
         // (chars under `chars`, codes under `codes`/`string`), exactly
         // like the leading-terminal hoist above. Hardcoding codes here
         // was a pre-ADR-047 leftover: under the chars default a
-        // NON-LEADING terminal ("]" after a nonterminal — Trealla's
+        // non-leading terminal ("]" after a nonterminal — Trealla's
         // json grammar) silently failed against chars input. The empty
         // string "" consumes nothing (S0 = S), mirroring the [] empty
         // terminal.
@@ -297,9 +297,9 @@ public static class DcgTransform
             return (body, sIn);
 
         // Disjunction: each branch consumes the same input range and must end
-        // at ONE shared diff-list endpoint. A branch whose
-        // endpoint is a FRESH state variable (the common case: it consumed
-        // something) gets the shared endpoint SUBSTITUTED into its body
+        // at one shared diff-list endpoint. A branch whose
+        // endpoint is a fresh state variable (the common case: it consumed
+        // something) gets the shared endpoint substituted into its body
         // directly, like SWI/GProlog's expander; only a branch whose endpoint
         // is still sIn (consumed nothing: `{G}`, `!`, `[]`) keeps an explicit
         // `SShared = SIn` reconciliation goal. This drops the two per-branch
@@ -319,12 +319,12 @@ public static class DcgTransform
                 var (elseBody, sOutB) = TransformBody(disj.Args[1], sIn, ref counter);
                 var sOutMerged = FreshState(ref counter);
                 // The then-branch's endpoint may have been minted by the
-                // CONDITION (a state-consuming nonterminal condition with a
+                // condition (a state-consuming nonterminal condition with a
                 // then part that consumes nothing, e.g. `( nt(X) -> [] ; …)`):
                 // the endpoint variable then occurs only in `cond`, so the
-                // merge substitution must cover the (cond, then) PAIR. Renaming
+                // merge substitution must cover the (cond, then) pair. Renaming
                 // the then part alone silently no-opped and left the shared
-                // endpoint UNBOUND — every goal after the if-then-else ran on a
+                // endpoint unbound — every goal after the if-then-else ran on a
                 // dangling, freshly-invented state (clpz's propagator queue
                 // vanished this way: enable_queue re-enabled a phantom queue).
                 Term condFinal, thenFinal;
@@ -337,7 +337,7 @@ public static class DcgTransform
                 else
                 {
                     // Nothing consumed by cond+then: reconcile explicitly,
-                    // INSIDE the then arm (sIn is used outside the branch and
+                    // inside the then arm (sIn is used outside the branch and
                     // cannot be renamed).
                     condFinal = cond;
                     thenFinal = new CompoundTerm(",", new[]
@@ -460,7 +460,7 @@ public static class DcgTransform
     }
 
     /// <summary>Makes a disjunction branch end at the shared
-    /// endpoint. When the branch's own endpoint is a FRESH `$Sn` variable
+    /// endpoint. When the branch's own endpoint is a fresh `$Sn` variable
     /// (it consumed input), the shared variable is substituted for it in the
     /// branch body — no reconciliation goal. When the endpoint is still
     /// <paramref name="sIn"/> (nothing consumed), an explicit
@@ -542,7 +542,7 @@ public static class DcgTransform
             // `prolog:message//1` heads): the diff-list args belong to NT,
             // not to the ':' wrapper — appending to ':' fabricates a bogus
             // :/4 head that then trips clause routing. Only when NT is
-            // concrete: a RUNTIME `M:Var` keeps the historic outer append
+            // concrete: a runtime `M:Var` keeps the historic outer append
             // (dispatched as a meta-call).
             case CompoundTerm { Functor: ":", Args: [var m, var inner] }
                 when inner is AtomTerm or CompoundTerm:

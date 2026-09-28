@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace Shumway.Core.Diagnostics;
 
 /// <summary>A real execution trace of the one thing constraint propagation
-/// IS: every write of an attribute value, in order.
+/// is: every write of an attribute value, in order.
 ///
 /// <para>It exists to be taken on both tiers and diffed until the first line
 /// that differs. Most candidate traces cannot do that. A trace of builtin
@@ -11,20 +11,20 @@ namespace Shumway.Core.Diagnostics;
 /// the very builtins a solver leans on and the interpreter does not, so the
 /// two streams disagree for a reason that has nothing to do with the bug. A
 /// trace of goals cannot be taken at all on the tier, whose goals run inside
-/// wasm and never surface. Attribute writes go through ONE funnel
+/// wasm and never surface. Attribute writes go through one funnel
 /// (<c>AttrSet</c>) that both tiers reach, because the value lives in a side
 /// table managed code owns.</para>
 ///
 /// <para>What each entry records is chosen to survive the comparison. Heap
 /// indices and variable identities differ between two runs for uninteresting
-/// reasons, so they are not the point; the domain's SHAPE is. ADR-051 makes
+/// reasons, so they are not the point; the domain's shape is. ADR-051 makes
 /// a finite domain a <c>'$fd_dom'</c> term whose arity counts its intervals,
 /// so the arity alone says how narrow the domain just became -- and a solver
 /// that prunes less writes wider domains, which is exactly the difference
 /// being looked for.</para>
 ///
 /// <para>Bounded, and it stops rather than wrapping: the question is where
-/// the two runs FIRST diverge, so the beginning is the part worth keeping
+/// the two runs first diverge, so the beginning is the part worth keeping
 /// and the end is not.</para></summary>
 public static class AttrTrace
 {

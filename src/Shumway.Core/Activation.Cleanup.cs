@@ -5,13 +5,13 @@ namespace Shumway.Core;
 // setup_call_cleanup/3 support (ADR-040 Tier-1). A "cleanup handler" ties a
 // Cleanup goal (stored stably as a '$cleanup_pending'/2 dynamic fact, keyed by an
 // integer Ref) to the choice-point level at which setup_call_cleanup registered
-// it. When that scope is discarded WITHOUT the prelude's own synchronous fire
+// it. When that scope is discarded without the prelude's own synchronous fire
 // having run — an external cut past it, an exception unwinding from below, or the
 // query being torn down — the engine enqueues the Ref so the interpreter runs the
 // cleanup at its next safe point (modelled on the wakeup drain). The dynamic-fact
 // retract inside '$scc_fire'/1 is the exactly-once guard, so a redundant enqueue
 // is harmless. The prelude's deterministic-success / failure / error paths call
-// '$scc_fire'/1 directly and FORGET the handler first, so only genuinely-leftover
+// '$scc_fire'/1 directly and forget the handler first, so only genuinely-leftover
 // handlers ever fire asynchronously.
 public sealed partial class Activation
 {
@@ -20,8 +20,8 @@ public sealed partial class Activation
         public int Level;      // the choice-point pointer (_b) at registration
         public int Ref;        // key into the '$cleanup_pending'/2 dynamic store
         public bool Enqueued;  // already moved to the pending-run queue
-        public Cell Live;      // the LIVE Cleanup term (dereffed cell) — an
-                               // async fire runs THIS, so its bindings reach
+        public Cell Live;      // the live Cleanup term (dereffed cell) — an
+                               // async fire runs this, so its bindings reach
                                // the caller (test: scc(true, scc(...), Y=3), !
                                // must leave Y=3). A GC root — see
                                // MarkCleanupRoots.
@@ -31,7 +31,7 @@ public sealed partial class Activation
     private List<(int Ref, Cell Live, bool UseLive)>? _pendingCleanupRefs;
     private int _nextCleanupRef = 1;
 
-    /// <summary>Marks the LIVE Cleanup terms as heap roots. A handler holds its
+    /// <summary>Marks the live Cleanup terms as heap roots. A handler holds its
     /// goal so an async fire runs the real term and its bindings reach the
     /// caller; nothing else need reference it, so without this the collector
     /// frees the goal out from under a handler that has not fired yet.</summary>
@@ -64,7 +64,7 @@ public sealed partial class Activation
     /// <summary>Registers a cleanup handler at the current choice-point level and
     /// returns its Ref (the key the caller stored the Cleanup goal under).
     /// <paramref name="liveCleanup"/> is the cleanup term's dereffed cell,
-    /// used by the ASYNC fire paths so bindings survive.</summary>
+    /// used by the async fire paths so bindings survive.</summary>
     public int RegisterCleanupHandler(Cell liveCleanup)
     {
         _cleanupHandlers ??= new List<CleanupHandler>();
@@ -92,14 +92,14 @@ public sealed partial class Activation
             }
     }
 
-    /// <summary>Cut hook: enqueue every handler whose registration level is AT OR
-    /// ABOVE the cut barrier — Goal's choice points sit strictly above the
+    /// <summary>Cut hook: enqueue every handler whose registration level is at or
+    /// above the cut barrier — Goal's choice points sit strictly above the
     /// registration level, so a cut to <c>barrier &lt;= Level</c> discards the
     /// whole setup_call_cleanup continuation without a backtrack into it. Cheap
     /// no-op when no handlers are live.</summary>
     /// <summary><paramref name="heapIntact"/> discriminates the trigger: a
-    /// CUT discards choice points but leaves the heap alone, so the fire may
-    /// run the LIVE Cleanup cell (bindings reach the caller); an EXCEPTION
+    /// cut discards choice points but leaves the heap alone, so the fire may
+    /// run the live Cleanup cell (bindings reach the caller); an exception
     /// unwind truncates the heap below the catcher, so the live cell may
     /// point at reclaimed memory and the fire must use the stable
     /// '$cleanup_pending' copy instead.</summary>
@@ -108,13 +108,13 @@ public sealed partial class Activation
         if (_cleanupHandlers is null || _cleanupHandlers.Count == 0) return;
         // Only handlers at or above the barrier can fire, and a cut asks that
         // question far more often than it gets a yes. Walking every live
-        // handler each time made a NEST of setup_call_cleanup quadratic:
+        // handler each time made a nest of setup_call_cleanup quadratic:
         // 4,000 deep spent 25,749,670 steps in this loop, about 1.6n^2.
         //
         // Registration level rises with registration order unless something
         // registers after backtracking below an older handler, which is
         // noticed as it happens; while that holds, the handlers that can fire
-        // are a SUFFIX and binary search finds where it starts. The scan then
+        // are a suffix and binary search finds where it starts. The scan then
         // runs forward from there, so the order they are enqueued in -- which
         // is the order they will run in -- is exactly what it was.
         for (int i = FirstCleanupAtOrAbove(barrier); i < _cleanupHandlers.Count; i++)
@@ -172,7 +172,7 @@ public sealed partial class Activation
     public bool HasCleanupHandlers => _cleanupHandlers is { Count: > 0 };
     public bool HasPendingCleanups => _pendingCleanupRefs is { Count: > 0 };
 
-    /// <summary>Pops one pending cleanup in QUEUE order — a single cut
+    /// <summary>Pops one pending cleanup in queue order — a single cut
     /// discarding nested scc scopes enqueues inside-out, so FIFO fires the
     /// inner cleanup before the outer (WG17 `innerouter`). Fails when the
     /// queue is empty; the interpreter's safe-point drain loops on this.</summary>

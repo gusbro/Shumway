@@ -9,13 +9,13 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-035 — a control construct rewritten to a synthesised helper (catch/3, \+, once/ignore,
-/// findall/bagof/setof/forall) must keep the SOURCE LINE of the goal it replaced.
+/// findall/bagof/setof/forall) must keep the source line of the goal it replaced.
 ///
 /// <para>The report: stopped on <c>main</c>'s first goal (a writeln), F10 printed the text but
 /// the caret did not move, and a second F10 ran the entire body of the following <c>catch/3</c>.
 /// The cause was in <c>MetaTransform</c>: the rewrite replaced <c>catch(...)</c> with a call to
 /// a fresh <c>'$catchgoal_N'</c> helper, and the fresh compound had no source position — so the
-/// debug compiler mapped its call port to the PREVIOUS goal's line. The step DID stop on the
+/// debug compiler mapped its call port to the previous goal's line. The step did stop on the
 /// catch; it just reported the writeln's line, so it looked like nothing had happened. The
 /// replacement now carries the construct's own position.</para>
 /// </summary>
@@ -74,7 +74,7 @@ public class Adr035CatchRepro
 
         var stops = Walk(engine, "main.", StepMode.Over, StepMode.Over);
 
-        // Step over writeln(hello) and the caret lands ON the catch, at line 4 — the feedback
+        // Step over writeln(hello) and the caret lands on the catch, at line 4 — the feedback
         // the user needs before choosing F10 (over the whole catch) or F11 (into it). Before
         // the fix this reported line 3, so the caret never moved.
         Assert.Equal(StopReason.Call, stops[1].Reason);
@@ -170,7 +170,7 @@ public class Adr035CatchRepro
         _log.WriteLine("PORTS: " + string.Join(" | ", stops.Select(s => $"{s.Reason} {s.Goal}@{s.Line}")));
 
         // Stopped on leaf(V) (line 10) inside inner/1. Step Out leaves inner/1 and lands on the
-        // next goal an ENCLOSING clause runs — use(V), line 8, back in work/1. Before the fix
+        // next goal an enclosing clause runs — use(V), line 8, back in work/1. Before the fix
         // it ran to the end of the program (the catch helper frames confused the depth walk).
         Assert.True(stops.Count >= 2, "Step Out must stop somewhere, not run to the end");
         Assert.Equal(StopReason.Call, stops[1].Reason);
@@ -180,9 +180,9 @@ public class Adr035CatchRepro
     [Fact]
     public void StepOut_FromInsideAnInlineCatchConjunction_StopsAtTheNextGoal()
     {
-        // The Blint shape: catch wraps an INLINE conjunction, so its goals are compiled INTO
+        // The Blint shape: catch wraps an inline conjunction, so its goals are compiled into
         // the '$catchgoal' helper (not a separate predicate). Stepping into one of them and
-        // then Step Out must land on the NEXT goal of that conjunction, not run to the end.
+        // then Step Out must land on the next goal of that conjunction, not run to the end.
         //   2: main :-
         //   3:     writeln(hello),
         //   4:     catch((first(V), second(V)), _E, recover),
@@ -220,7 +220,7 @@ public class Adr035CatchRepro
     [Fact]
     public void StepOut_FromInsideTheLastCatchGoal_CrossesCatchEnd_AndStopsAfterTheCatch()
     {
-        // Step Out from inside the LAST goal of the catch conjunction: after it, the only thing
+        // Step Out from inside the last goal of the catch conjunction: after it, the only thing
         // left in the '$catchgoal' helper is the internal '$catch_end', then control returns to
         // main's next goal. Step Out must cross that internal boundary and stop on done, not run
         // to the end.
@@ -299,8 +299,8 @@ public class Adr035CatchRepro
             StepMode.Over,   // [0]->[1] to catch (catch/3, line 4)
             StepMode.Into,   // [1]->[2] into catch -> body (line 4)
             StepMode.Into,   // [2]->[3] into body -> concat (line 7)
-            StepMode.Into,   // [3]->[4] into concat -> join (line 10, INSIDE concat)
-            StepMode.Out);   // [4]->[5] STEP OUT from inside concat
+            StepMode.Into,   // [3]->[4] into concat -> join (line 10, inside concat)
+            StepMode.Out);   // [4]->[5] step out from inside concat
 
         _log.WriteLine("PORTS: " + string.Join("\n       ",
             stops.Select((s, i) => $"[{i}] {s.Reason} {s.Goal}@{s.Line}")));
@@ -318,7 +318,7 @@ public class Adr035CatchRepro
         // A DCG body is translated to difference-list goals — a terminal `[x]` becomes a
         // `S0 = [x|S]` unify, a non-terminal `nt` becomes `nt(S0, S)`. Both are stop sites; a
         // fresh goal with no position mapped to the wrong line, exactly like the meta-construct
-        // helpers. Each element must keep its own DCG-body line. (A LEADING terminal is peeled
+        // helpers. Each element must keep its own DCG-body line. (A leading terminal is peeled
         // into the head by the fail-fast lowering, so the body starts with a non-terminal here
         // to keep every element a real, on-its-own-line stop site.)
         //   2: greet -->
@@ -340,7 +340,7 @@ public class Adr035CatchRepro
         var stops = Walk(engine, "phrase(greet, [hello, world, end]).",
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
-        // Each element of greet's body stops on its OWN line: pre on 3, the [world] terminal on
+        // Each element of greet's body stops on its own line: pre on 3, the [world] terminal on
         // 4, post on 5 — not all collapsed onto the first. Before the fix, [world]'s unify goal
         // had no position and reported line 3.
         var lines = stops.Where(s => s.File == "<string>").Select(s => s.Line).Distinct().ToList();

@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>A cut compacts the trails IN PLACE, without leaving the module.
+/// <summary>A cut compacts the trails in place, without leaving the module.
 ///
 /// <para>Two passes, and the first one is the reason this is sound. A walk
 /// can turn out to need a write into managed state the module cannot reach:
@@ -15,9 +15,9 @@ namespace Shumway.Tests.Wasm;
 /// decides without touching anything.</para>
 ///
 /// <para>The half that matters most here is the one no answer can show: a
-/// surviving entry's binding-trail MARKER has to be rewritten to where the
+/// surviving entry's binding-trail marker has to be rewritten to where the
 /// binding side now stands, or a later unwind interleaves the two trails in
-/// the wrong order. Every test below therefore backtracks THROUGH the cut's
+/// the wrong order. Every test below therefore backtracks through the cut's
 /// work and checks what was restored, not just what was answered.</para>
 /// </summary>
 public sealed class CutCompactsInPlaceTests(ITestOutputHelper o)
@@ -87,7 +87,7 @@ public sealed class CutCompactsInPlaceTests(ITestOutputHelper o)
     }
 
     /// <summary>The compaction really happens in the module: a cut with a
-    /// SURVIVING attribute entry on the extra trail does not step aside.
+    /// surviving attribute entry on the extra trail does not step aside.
     /// </summary>
     [DiagFact]
     public void ASurvivingEntryIsCompactedInTheModule()
@@ -99,21 +99,21 @@ public sealed class CutCompactsInPlaceTests(ITestOutputHelper o)
     public void ABindingOnlyCutIsCompactedInTheModule()
         => Assert.Equal(0L, GuardHitsOf("bind_only(R), R == yes."));
 
-    /// <summary>A DROPPED attribute entry orphans its record, and clearing
+    /// <summary>A dropped attribute entry orphans its record, and clearing
     /// that record is a write the module cannot make. It does not decline
-    /// for it: the index is PARKED and the host clears it when the chain
+    /// for it: the index is parked and the host clears it when the chain
     /// comes out, because the clearing is hygiene and not semantics.
     ///
     /// <para>The counterproof for this one is not here but in the answers
     /// above -- restores/2, nested/1 and guarded/1 all backtrack or throw
-    /// THROUGH a compaction that parked something -- and in <see
+    /// through a compaction that parked something -- and in <see
     /// cref="CutCompactsOrStepsAsideTests"/>, where the write that cannot be
     /// deferred still declines.</para></summary>
     [DiagFact]
     public void ADroppedEntryIsParkedRatherThanDeclined()
         => Assert.Equal(0L, GuardHitsOf("young(R), R == yes."));
 
-    /// <summary>And the parked record really IS cleared. Deferring a write
+    /// <summary>And the parked record really is cleared. Deferring a write
     /// is only sound if the write happens, and a leak that never fires an
     /// assertion is exactly what this would otherwise become: the engine's
     /// own comment says an orphaned record roots its home and its old value

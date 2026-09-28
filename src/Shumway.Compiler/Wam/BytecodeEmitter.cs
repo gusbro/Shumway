@@ -281,7 +281,7 @@ public sealed class BytecodeEmitter
         EmitInt(permSlot);
     }
 
-    /// <summary>ADR-025 — capture CURRENT B (not B0) as the inline-ITE
+    /// <summary>ADR-025 — capture current B (not B0) as the inline-ITE
     /// commit barrier.</summary>
     public void EmitGetLevelB(int permSlot)
     {
@@ -295,9 +295,9 @@ public sealed class BytecodeEmitter
         EmitInt(permSlot);
     }
 
-    /// <summary>ADR-037 — soft cut: neutralise the ELSE choice point named by
+    /// <summary>ADR-037 — soft cut: neutralise the else choice point named by
     /// <paramref name="permSlot"/> (captured by a <c>get_level_b</c> emitted
-    /// AFTER the <c>try_me_else</c>), committing an inline
+    /// after the <c>try_me_else</c>), committing an inline
     /// <c>( Cond *-&gt; Then ; Else )</c> while leaving the condition's choice
     /// points intact.</summary>
     public void EmitSoftCut(int permSlot)
@@ -655,7 +655,7 @@ public sealed class BytecodeEmitter
         // Coalesce consecutive void unifications into one unify_void(N), as
         // GProlog does: a compound's anonymous arguments (house(red, _, _, _))
         // become a single instruction rather than one per void. Safe because a
-        // merge only fires when this call lands EXACTLY at the end of the last
+        // merge only fires when this call lands exactly at the end of the last
         // unify_void (nothing emitted in between — within one structure's
         // argument run); any intervening instruction, label or clause boundary
         // moves the write position past it.

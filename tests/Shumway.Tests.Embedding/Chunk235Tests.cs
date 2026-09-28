@@ -52,7 +52,7 @@ public class Chunk235Tests
             engine2.ConsultFile(Path.Combine(dir, "algo"));
             Assert.Contains(engine2.QueryAll("saludo(hola)."), s => s.Success);
 
-            // An extensionless file that EXISTS still wins over the .pl probe.
+            // An extensionless file that exists still wins over the .pl probe.
             string exact = Path.Combine(dir, "exacto");
             File.WriteAllText(exact, ":- public pino/1.\npino(si).\n");
             File.WriteAllText(exact + ".pl", ":- public pino/1.\npino(no).\n");

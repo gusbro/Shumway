@@ -56,13 +56,13 @@ public static class AstTermRenderer
 
     /// <summary>ADR-035 D5+ — the <c>writeq</c>-style overload: atoms and canonical
     /// functor names that would not re-parse to the same term are single-quoted. The
-    /// debugger's displays use this — a Locals value feeds the Watch-window EDIT, and
+    /// debugger's displays use this — a Locals value feeds the Watch-window edit, and
     /// showing the atom <c>'1234'</c> as bare <c>1234</c> made the round-tripped value
-    /// an INTEGER. Operator occurrences stay unquoted (they re-parse as written).</summary>
+    /// an integer. Operator occurrences stay unquoted (they re-parse as written).</summary>
     public static string Render(Term term, int maxPrec, OperatorTable ops, bool quoted)
         => Render(term, maxPrec, ops, quoted, portrayText: false);
 
-    /// <summary>The top level's ANSWER rendering: quoted (re-readable — a raw
+    /// <summary>The top level's answer rendering: quoted (re-readable — a raw
     /// newline inside an atom never leaks into the transcript) and with text
     /// portrayed: a proper list of characters shows as <c>"..."</c> with
     /// escapes. Program text (listing, portray_clause) stays list-shaped;
@@ -70,13 +70,13 @@ public static class AstTermRenderer
     public static string RenderAnswer(Term term, OperatorTable ops)
         => Render(term, 1200, ops, quoted: true, portrayText: true);
 
-    /// <summary>Renders a term on an EXPLICIT stack. How deep a term nests is
+    /// <summary>Renders a term on an explicit stack. How deep a term nests is
     /// the program's choice, so a recursive renderer spends a C# frame per
     /// level, and a .NET stack overflow cannot be caught: it takes the process
     /// down with nothing to report.
     ///
     /// <para>The shape is post-order because the spelling of a node depends on
-    /// the TEXT of its children: a tight symbolic operator has to know whether
+    /// the text of its children: a tight symbolic operator has to know whether
     /// its operand ends in a graphic char, or <c>X = -1</c> would come back as
     /// <c>X=-1</c> and lex <c>=-</c> as one token. So children render onto a
     /// results stack and each node assembles its own text from them. What each
@@ -115,18 +115,18 @@ public static class AstTermRenderer
 
     /// <summary>Decides what a node is and queues the work: either its finished
     /// text straight onto the results, or an assembly step underneath the
-    /// children it needs. Children go on in REVERSE so they render left to
+    /// children it needs. Children go on in reverse so they render left to
     /// right and land on the results stack in that order.</summary>
     private static void Push(
         Step step, Stack<Step> work, Stack<string> done,
         OperatorTable ops, bool quoted, bool portrayText)
     {
         Term term = step.Node;
-        // An OPERAND that is a bare operator atom would not re-read (ISO
+        // An operand that is a bare operator atom would not re-read (ISO
         // 6.3.1.3, the s#378 rule the parser now enforces), so it renders
         // parenthesised — `(is)/2`, never `is/2`. Argument and list positions
         // keep the bare atom, which is exactly where ISO admits it. Decided
-        // from the TERM, so it is settled here rather than after rendering.
+        // from the term, so it is settled here rather than after rendering.
         if (step.AsOperand && term is AtomTerm operandAtom
             && IsOperatorAtom(operandAtom.Name, ops))
         {
@@ -154,7 +154,7 @@ public static class AstTermRenderer
                     work.Push(Step.Descend(openTail, 0, asOperand: false));
                     return;
                 }
-                // The spine is walked HERE, so a long list costs no depth at
+                // The spine is walked here, so a long list costs no depth at
                 // all; only its elements nest.
                 var elements = new List<Term>();
                 Term cursor = list;
@@ -252,7 +252,7 @@ public static class AstTermRenderer
                 };
                 string leftStr = parts[0], rightStr = parts[1];
                 // A tight symbolic operator fuses with a graphic-ending operand
-                // into ONE token on re-read (`.. = ..` as `..=..`; `X = -1` as
+                // into one token on re-read (`.. = ..` as `..=..`; `X = -1` as
                 // `X=-1`, lexing `=-`): pad exactly where adjacency would fuse.
                 if (sep.Length > 0 && IsGraphicChar(sep[0]))
                 {
@@ -310,10 +310,10 @@ public static class AstTermRenderer
 
     /// <summary>A proper, non-empty list of single-character atoms renders as
     /// a double-quoted string — the text reading of the default
-    /// <c>double_quotes = chars</c>. CODES stay numeric on purpose:
+    /// <c>double_quotes = chars</c>. Codes stay numeric on purpose:
     /// <c>[65, 66]</c> displaying as <c>"AB"</c> would dress arbitrary small
     /// integers up as text (the strictest engine agrees); the cell writer's
-    /// portray-text OPTION still covers codes for callers that ask.</summary>
+    /// portray-text option still covers codes for callers that ask.</summary>
     private static bool TryRenderTextList(CompoundTerm cons, out string rendered)
     {
         rendered = "";
@@ -331,12 +331,12 @@ public static class AstTermRenderer
         return true;
     }
 
-    /// <summary>The same text reading for a list left OPEN, written the way
+    /// <summary>The same text reading for a list left open, written the way
     /// it can be read back: `"abc"||T`. An answer to a grammar is a difference
     /// list, and spelling out each of its characters buries the one thing the
     /// reader is after, which is where the text ends and the tail begins.
     ///
-    /// <para>Returns the text PREFIX and the tail still to render; the tail
+    /// <para>Returns the text prefix and the tail still to render; the tail
     /// goes through the ordinary descent so it costs no C# depth.</para>
     /// </summary>
     private static bool TryOpenTextPrefix(

@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>An inline =/2 that meets a pair only the engine's unifier can
-/// decide leaves as a LEAF BUILTIN REQUEST, chain open, instead of a deopt
+/// decide leaves as a leaf builtin request, chain open, instead of a deopt
 /// that closes the chain and leaves the rest of the clause to the
 /// interpreter. When the unify binds an attributed variable it queues a
 /// wakeup, and a wakeup must fire at the next goal boundary -- boundaries
@@ -15,7 +15,7 @@ namespace Shumway.Tests.Wasm;
 /// as the deopt it replaces, none of the staging.</summary>
 public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
 {
-    /// <summary>THE ordering contract (ADR-049): the woken goal runs before
+    /// <summary>The ordering contract (ADR-049): the woken goal runs before
     /// the next user goal. The clause binds a frozen variable through =/2
     /// and the very next goal looks at what the hook was to have done --
     /// a chain that sailed past the boundary would see the variable still
@@ -63,9 +63,9 @@ public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
         Assert.True(eq >= 10,
             $"=/2 shows {eq} exits: the escape is not running, so either the "
             + "corpus stopped binding attvars or the deopt is back");
-        // The property this pins is that an ATTVAR BIND does not deopt,
-        // and the count of ALL deopts stopped being the way to say it: a
-        // cut whose compaction owes a WRITE into managed state declines on
+        // The property this pins is that an ATTVAR bind does not deopt,
+        // and the count of all deopts stopped being the way to say it: a
+        // cut whose compaction owes a write into managed state declines on
         // purpose, and there are five reasons it can. So the assertion
         // names the reasons instead of counting them.
         for (int g = 0; g < WasmTierDelegate.DiagMetaGuardHist.Length; g++)

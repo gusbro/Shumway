@@ -11,7 +11,7 @@ namespace Shumway.Tests.Wasm;
 /// a browser, the builtins of a whole run do 63 ms of work while getting to
 /// them and back costs 271 ms.</para>
 ///
-/// <para>Unlike the type tests or get_attr, this one BUILDS heap structure,
+/// <para>Unlike the type tests or get_attr, this one builds heap structure,
 /// so being wrong has more ways to look right: a list can come out with the
 /// correct elements and a broken spine, or share cells it should have copied.
 /// The tests compare answers against the interpreter and then ask the result
@@ -31,7 +31,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
     [InlineData("app([a], [b], R)", "[a,b]")]
     [InlineData("app([a, b, c], [d, e], R)", "[a,b,c,d,e]")]
     [InlineData("app([1, 2, 3], [4], R)", "[1,2,3,4]")]
-    // Nested structure in the elements: the cells are COPIED as they are.
+    // Nested structure in the elements: the cells are copied as they are.
     [InlineData("app([f(1), g(2)], [h(3)], R)", "[f(1),g(2),h(3)]")]
     // A partial list as the second argument stays partial.
     [InlineData("app([a], [b|_], R)", "partial")]
@@ -41,7 +41,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
         plain.ConsultString(Corpus);
         var (tiered, _2) = TieredEngine.Build(Corpus);
 
-        // Written, not inspected structurally: writeq renders the SPINE, so a
+        // Written, not inspected structurally: writeq renders the spine, so a
         // list whose elements are right and whose tail is wrong reads
         // differently. Comparing to the interpreter keeps the expectation
         // from being mine.
@@ -69,7 +69,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
             "the tail after three elements is not L2");
     }
 
-    /// <summary>The second argument is SHARED, not copied: appending to a
+    /// <summary>The second argument is shared, not copied: appending to a
     /// partial list and then binding its tail has to show through.</summary>
     [Fact]
     public void TheSecondArgumentIsShared()

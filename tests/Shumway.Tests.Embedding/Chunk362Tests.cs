@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 ///
 /// The inliner (chunks 358–360) merges a multi-clause FACT's clause dispatch
 /// into a hot caller's IL method, eliminating the trampoline. Chunk 361 wrongly
-/// left it OFF on a noisy reading; chunk 362 establishes the real picture: only
+/// left it off on a noisy reading; chunk 362 establishes the real picture: only
 /// one principled gate is needed — index-eligibility (every clause has a distinct
 /// constant first arg, so the Phase-1b index pre-filter makes a bound call
 /// deterministic). A non-index fact would inline as a pure linear chain with no
@@ -21,13 +21,13 @@ namespace Shumway.Tests.Embedding;
 ///
 /// A short-lived clause-count/arity "size budget" (removed) was masking an
 /// implementation flaw: backtracking re-entered the caller delegate through a
-/// LINEAR cursor compare-chain that grew with each inlined alternative, so
-/// inlining a wide fact cost MORE than the trampoline it replaced. Replacing that
+/// linear cursor compare-chain that grew with each inlined alternative, so
+/// inlining a wide fact cost more than the trampoline it replaced. Replacing that
 /// with an O(1) jump table (the cursor switch in EmitSingleClauseMetaCpBody) made
 /// re-entry constant, so even a 9-clause grammar fact inlines without regressing —
 /// no size budget required.
 ///
-/// These tests pin the OUTCOME that matters: correct answers (incl. backtracking)
+/// These tests pin the outcome that matters: correct answers (incl. backtracking)
 /// with the inliner on by default, under forced Tier-1 promotion, for both small
 /// (crypt-shaped) and wide facts.
 /// </summary>
@@ -85,7 +85,7 @@ pick(X, Y) :- d(X), d(Y).
         Assert.Equal(5, e.QueryAll("pick(6, Y).").Count());
     }
 
-    // A WIDE index-eligible fact (10 clauses) — above the (removed) size budget.
+    // A wide index-eligible fact (10 clauses) — above the (removed) size budget.
     // With the O(1) cursor jump table it inlines without regressing, and must
     // still produce correct answers both bound and via backtracking. This pins
     // that the jump table — not a clause-count cap — is what keeps wide-fact

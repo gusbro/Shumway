@@ -1,14 +1,14 @@
 namespace Shumway.Core;
 
-/// <summary>The wasm tier's execution world: the modules of ONE engine, one
+/// <summary>The wasm tier's execution world: the modules of one engine, one
 /// linear memory, one function table and one resume table, plus the
-/// machinery to run CHAINS against a live activation. A module resolving a
+/// machinery to run chains against a live activation. A module resolving a
 /// marker reads the table; when the marker belongs to a sibling module it
 /// tail-calls into it through the function table, so a chain crosses modules
 /// without leaving wasm. What comes back to the host is the entry itself,
 /// builtins, deopts, and markers no module covers.
 ///
-/// <para>Markers and choice-point BPs encode (functor, ADDRESS) -- never
+/// <para>Markers and choice-point BPs encode (functor, address) -- never
 /// cursor ordinals, which are private to a module build. The registry
 /// translates a pair to (module, cursor) through the same rows the modules
 /// read; address 0 is the fresh-entry convention.</para>
@@ -23,7 +23,7 @@ public interface IWasmExecutionWorld
     /// from whatever module covered them before (see
     /// <see cref="WasmModuleRegistry.Install"/>); <paramref
     /// name="callEdges"/> are the module's (caller, callee) pairs, and the
-    /// returned list is the functors of OTHER modules the takeover pushed
+    /// returned list is the functors of other modules the takeover pushed
     /// to bytecode -- the caller drops their delegates. Engine-thread only,
     /// never called mid-chain.</summary>
     System.Collections.Generic.IReadOnlyList<int> InstallGroup(byte[] module,
@@ -54,9 +54,9 @@ public interface IWasmExecutionWorld
     /// bytecode fallback target when an entry cannot run on the tier.</summary>
     int EntryAddressOf(int functorId);
 
-    /// <summary>A CONSULT relinks the whole static program and moves every
+    /// <summary>A consult relinks the whole static program and moves every
     /// linked address; a module's baked addresses (deopt pcs, markers, BP
-    /// encodings) then live in BUILD space, one generation behind. The
+    /// encodings) then live in build space, one generation behind. The
     /// bytecode itself does not change (it only moves), so a module stays
     /// valid — every place a build address crosses into the live code space
     /// goes through the translation below, and this hands the world the
@@ -65,7 +65,7 @@ public interface IWasmExecutionWorld
     void RefreshLiveAddresses(
         System.Collections.Generic.IReadOnlyDictionary<int, int> liveByFid);
 
-    /// <summary>The functor's entry address in the LIVE code space — where
+    /// <summary>The functor's entry address in the live code space — where
     /// the interpreter must run its bytecode now. Falls back to the build
     /// address for a world that never relinks (test harnesses).</summary>
     int LiveEntryAddressOf(int functorId);
@@ -84,7 +84,7 @@ public interface IWasmExecutionWorld
 }
 
 /// <summary>One open chain. The mailbox is authoritative between calls (the
-/// module syncs its scalars into it on every return); the ENGINE object is
+/// module syncs its scalars into it on every return); the engine object is
 /// stale until <see cref="SyncEngine"/>. Exactly one of the two is current at
 /// any moment, and Dispose only writes back when the mailbox side is.
 ///
@@ -94,7 +94,7 @@ public interface IWasmExecutionWorld
 public interface IWasmChainContext : System.IDisposable
 {
     /// <summary>Runs a module at a cursor against the current mailbox/image.
-    /// No per-call marshalling: the previous call's synced scalars ARE the
+    /// No per-call marshalling: the previous call's synced scalars are the
     /// entry state.</summary>
     WasmVerdict Call(WasmTarget target);
 
@@ -103,7 +103,7 @@ public interface IWasmChainContext : System.IDisposable
     /// the image was restaged after it.</summary>
     bool TryResolve(int functorId, int address, out WasmTarget target);
 
-    /// <summary>Translates an address of the module that produced the LAST
+    /// <summary>Translates an address of the module that produced the last
     /// verdict (a deopt pc, a marker payload falling back to bytecode) to
     /// the live code space. Identity for a world that never relinks.</summary>
     long TranslatePcToLive(long buildPc);
@@ -115,20 +115,20 @@ public interface IWasmChainContext : System.IDisposable
 
     long ReadSlot(int slot);
 
-    /// <summary>Sets one mailbox slot. For DIAGNOSTIC slots the module
+    /// <summary>Sets one mailbox slot. For diagnostic slots the module
     /// stamps and the host consumes: a stamp left standing is read again by
     /// whatever steps aside next, and attributed to it.</summary>
     void WriteSlot(int slot, long value);
 
-    /// <summary>One i64 of linear memory at an ABSOLUTE address, the way a
-    /// module's i64.load would see it. For VERIFICATION: an image the host
+    /// <summary>One i64 of linear memory at an absolute address, the way a
+    /// module's i64.load would see it. For verification: an image the host
     /// stages and only compiled code ever reads is otherwise unfalsifiable
     /// from managed tests, and a wrong offset would first show up as a wrong
     /// answer from generated code.</summary>
     long ReadWord(long address);
 
     /// <summary>Adopts the mailbox scalars into the engine (and, for a copy
-    /// world, the areas). After this the ENGINE is authoritative: managed
+    /// world, the areas). After this the engine is authoritative: managed
     /// code may run builtins, grow arrays, bind. Dispose becomes a no-op
     /// until <see cref="RefreshFromEngine"/>.</summary>
     void SyncEngine();

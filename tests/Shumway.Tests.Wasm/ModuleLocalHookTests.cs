@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>The constraint libraries' verify_attributes hooks are
-/// MODULE-LOCAL (ADR-040), not the legacy shared multifile predicate --
+/// module-local (ADR-040), not the legacy shared multifile predicate --
 /// and that is a tier property, not a style choice. A multifile predicate
 /// is registered as dynamic so clauses can accumulate across consults, a
 /// dynamic predicate stays off the tier by invariant, and so the wake
@@ -64,9 +64,9 @@ public sealed class ModuleLocalHookTests(ITestOutputHelper o)
             "csolve(5).",
             "{A + B =:= 10, A - B =:= 2}, A =:= 6.0, B =:= 4.0.",
             // Not `C = 0.0`: binding a variable that carries only
-            // INEQUALITIES is accepted unchecked today -- the hook returns
+            // inequalities is accepted unchecked today -- the hook returns
             // residual goals only for dep(...) attributes -- so that query
-            // succeeds in BOTH engines and pins nothing. Posting the value
+            // succeeds in both engines and pins nothing. Posting the value
             // as a constraint takes the path that does decide.
             "\\+ ( {C >= 1.0}, {C =:= 0.0} ).",
         })

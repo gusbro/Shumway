@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>A group is ONE wasm module: dispatcher, fail/proceed resolver,
+/// <summary>A group is one wasm module: dispatcher, fail/proceed resolver,
 /// cursor table and br_table are shared, so adding a member renumbers every
 /// cursor and the whole thing is re-emitted. Promoting n predicates one
 /// dispatch at a time therefore costs n(n+1)/2 predicate compiles, not n --
@@ -94,7 +94,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
                         {
                             // Production (BrowserWasmTier) marks a refused
                             // member unpromotable; without it the member is
-                            // a candidate again on EVERY tick, and a goal
+                            // a candidate again on every tick, and a goal
                             // that changes nothing keeps announcing builds.
                             store.Wasm?.MarkUnpromotable(
                                 m.Predicate.FunctorId, ex.Message);
@@ -129,7 +129,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         Assert.True(e.Query("run(L), length(L, N), N == 1.").Success);
         o.WriteLine($"batch: promoted={promoted} builds={builds()}");
 
-        // ANTI-VACUITY: "one build" is trivially true if nothing was promoted.
+        // Anti-vacuity: "one build" is trivially true if nothing was promoted.
         Assert.True(promoted > 5, $"only {promoted} predicates promoted");
         Assert.Equal(1, builds());
     }
@@ -137,7 +137,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     [Fact]
     public void AGoalThatChangesNothingDoesNoWork()
     {
-        // The tick runs after EVERY query, not only after a consult, and its
+        // The tick runs after every query, not only after a consult, and its
         // work is O(all installed predicates) with a bytecode hash each. A
         // goal that leaves the static program alone must therefore cost
         // nothing here: no build, no reconcile, no notice.
@@ -148,7 +148,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         // records the link the batch reconciled against.
         Assert.True(w.CompileAllTick(e) > 5);
         int afterFirst = builds();
-        Assert.Equal(1, announced);         // the real build DID announce
+        Assert.Equal(1, announced);         // the real build did announce
         announced = 0;
 
         for (int i = 0; i < 5; i++)
@@ -173,7 +173,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         // What the user saw: after a restart the whole program is already on
         // the tier (the baked prelude), the next tick still runs because the
         // link was rebuilt, and it announced a build of zero predicates. The
-        // notice has to be keyed on the candidate COUNT, which only the batch
+        // notice has to be keyed on the candidate count, which only the batch
         // itself knows, not on "a tick is about to run".
         var (e, builds, w) = Tier(batch: true, threshold: 1);
         var announcedCounts = new List<int>();
@@ -182,7 +182,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         int afterFirst = builds();
 
         // A consult that adds nothing new: it invalidates the link, so the
-        // tick DOES run, and it must still find nothing to compile.
+        // tick does run, and it must still find nothing to compile.
         e.ConsultString("% nothing here\n");
         int n2 = w.CompileAllTick(e);
 
@@ -200,7 +200,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     public void AStragglerDoesNotRebuildTheGroupInsideTheQuery()
     {
         // The group is one module, so promoting a single latecomer re-emits
-        // ALL of it. Under the batch the whole program is on the tier, which
+        // all of it. Under the batch the whole program is on the tier, which
         // makes that a full rebuild landing in the middle of the user's
         // query -- after the goal has written its output, before it answers.
         // The straggler waits for the boundary instead.
@@ -223,7 +223,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         Assert.True(afterTick > 0, "the boundary tick compiled nothing");
         Assert.True(builds() > duringQuery, "the boundary tick did not build");
 
-        // And the build NAMES who asked for it. A rebuild nobody can explain
+        // And the build names who asked for it. A rebuild nobody can explain
         // is the thing that made this hard to find in the first place: the
         // count alone leaves you guessing between the consult you just did
         // and some predicate quietly demanding one.
@@ -241,7 +241,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     [InlineData("$q$neg_2", true)]
     [InlineData("user$$q$disj_1", true)]
     [InlineData("__query__", true)]
-    // ...and what must NOT be swept up with them: consult-time helpers carry
+    // ...and what must not be swept up with them: consult-time helpers carry
     // the engine's monotonic id and are perfectly stable.
     [InlineData("$disj_1", false)]
     [InlineData("user$$disj_17", false)]
@@ -250,7 +250,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     public void QueryStubHelpersAreExcludedFromPromotion(string name, bool excluded)
     {
         // A query stub synthesises helpers for its ;, -> and \+, named with a
-        // reserved "$q" prefix precisely so the names are REUSED
+        // reserved "$q" prefix precisely so the names are reused
         // query-to-query (MetaTransform.HelperPrefix). One functor id, a
         // different body every time: the same replay hazard __query__ is
         // excluded for. On the wasm tier promoting one also rebuilt the whole
@@ -265,7 +265,7 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
     public void PromotingOneAtATimeRebuildsThatManyTimes()
     {
         // The cost this exists to prevent, stated as a fact rather than a
-        // worry: without the batch, the build count TRACKS the promotions.
+        // worry: without the batch, the build count tracks the promotions.
         var (e, builds, _) = TierCounting(batch: false, threshold: 1, out var refused);
         Assert.True(e.Query("run(L), length(L, N), N == 1.").Success);
         int n = e.IlPromotion.PromotedFunctorIds().Count();

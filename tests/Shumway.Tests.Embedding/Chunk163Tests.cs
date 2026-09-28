@@ -102,7 +102,7 @@ public class Chunk163Tests
     [Fact]
     public void Link_CrossModule_LocalNotVisible_Missing()
     {
-        // lib defines helper/1 as LOCAL, app tries to call it.
+        // lib defines helper/1 as local, app tries to call it.
         var libObj = Compile("""
             :- module(lib).
             :- public lib_main/0.
@@ -299,7 +299,7 @@ public class Chunk163Tests
     [Fact]
     public void Link_QualifiedRef_TargetNotPublic_LinksAsAnExternalSeed()
     {
-        // lib defines secret/0 as LOCAL; app calls it qualified, which is how
+        // lib defines secret/0 as local; app calls it qualified, which is how
         // code outside lib reaches it (ADR-056), so it keeps a standalone form.
         var lib = Compile("""
             :- module(lib).

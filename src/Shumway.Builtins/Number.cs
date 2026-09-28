@@ -178,7 +178,7 @@ public readonly struct Number : IEquatable<Number>
 
     /// <summary>Formats a double as a round-trippable ISO Prolog float: the
     /// mantissa always carries a decimal point and the exponent uses a
-    /// lowercase <c>e</c> with an EXPLICIT sign. .NET's <c>"R"</c> format
+    /// lowercase <c>e</c> with an explicit sign. .NET's <c>"R"</c> format
     /// emits forms like <c>1E-05</c> (no point, uppercase E) and <c>1</c>
     /// (for 1.0) that Shumway's own lexer reads back as an integer + a
     /// variable, not a float — so <c>writeq</c>/<c>write_canonical</c>

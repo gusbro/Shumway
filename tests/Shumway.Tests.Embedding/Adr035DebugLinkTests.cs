@@ -10,7 +10,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-035 — the linker preserves a <see cref="ShmoBuildMode.Debuggable"/> object's debug-shape
 /// WAM end to end: the two whole-program LTO passes (meta-wrapper unfold, redundant-cut elision)
-/// skip it, and a local <c>--entry</c>/<c>--goal</c> is promoted to public WITHOUT shifting the
+/// skip it, and a local <c>--entry</c>/<c>--goal</c> is promoted to public without shifting the
 /// source lines the debug stop sites are keyed to.
 /// </summary>
 [Collection("debugger")]
@@ -61,7 +61,7 @@ public sealed class Adr035DebugLinkTests
     [Fact]
     public void LocalEntryPromotion_DoesNotShiftStopSiteLines()
     {
-        // main/0 is LOCAL, so linking it as the entry point promotes it to public. The promotion
+        // main/0 is local, so linking it as the entry point promotes it to public. The promotion
         // must not move any line: the body goals stay on lines 3 and 4, where the debugger's
         // breakpoints are drawn. (A prepended `:- public main/0.` would slide them to 4 and 5.)
         const string prog =
@@ -102,7 +102,7 @@ public sealed class Adr035DebugLinkTests
     public void DebuggableBundle_LoadsFromBakedWam_WithoutReconsult_AndBreakpointsBind()
     {
         // Task 4a — the payoff: a Debuggable bundle loaded under a debug session runs its
-        // BAKED debug WAM directly (no re-consult from source, zero recompile at load), and its
+        // baked debug WAM directly (no re-consult from source, zero recompile at load), and its
         // baked stop sites still bind breakpoints.
         const string prog =
             ":- public run/1.\n" +   // 1
@@ -140,7 +140,7 @@ public sealed class Adr035DebugLinkTests
     public void FromBundleWithDebug_OnADebuggableBundle_TakesTheBakedWamPath()
     {
         // The exact path shumway-link --exe --debug's generated Main takes: FromBundle(bundle,
-        // DebugOptions) enables the debug session BEFORE loading, and a Debuggable bundle then
+        // DebugOptions) enables the debug session before loading, and a Debuggable bundle then
         // loads from its baked WAM — no re-consult, breakpoints bind.
         const string prog =
             ":- public run/1.\n" +   // 1

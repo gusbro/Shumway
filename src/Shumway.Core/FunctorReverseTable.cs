@@ -4,19 +4,19 @@ namespace Shumway.Core;
 /// read: an open-addressed table of i64 pairs.
 ///
 /// <para>The functor mirror answers the other direction -- a functor id gives
-/// a name and an arity -- which is all a module needs to take a term APART.
+/// a name and an arity -- which is all a module needs to take a term apart.
 /// Putting one together asks the reverse, and that is why <c>=../2</c>'s
 /// composing mode stayed the host's: the module had a name and a count and no
 /// way to turn them into the id a Str cell carries.</para>
 ///
-/// <para>Unlike every other image here it needs NO funnel. The functor table
+/// <para>Unlike every other image here it needs no funnel. The functor table
 /// is append-only and its entries never change, so a row is right forever
 /// once written and the only thing that can be missing is a functor nobody
 /// has interned yet -- which a module answers by declining, because interning
 /// one is allocation the host owns.</para>
 ///
 /// <para>Row layout, two i64 per slot: key ((atom + 1) &lt;&lt; 32) |
-/// (uint)arity, then the id. Key 0 is EMPTY and ends a probe; there are no
+/// (uint)arity, then the id. Key 0 is empty and ends a probe; there are no
 /// tombstones, because nothing is ever removed. The +1 keeps atom 0
 /// distinguishable from an empty slot.</para></summary>
 public static class FunctorReverseTable
@@ -26,7 +26,7 @@ public static class FunctorReverseTable
     private static int _filled;
     private static readonly object Lock = new();
 
-    /// <summary>The rows, for the world that stages them. REPLACED on
+    /// <summary>The rows, for the world that stages them. Replaced on
     /// growth, so a caller re-reads it per staging.</summary>
     public static long[] Rows { get { lock (Lock) { Fill(); return _rows; } } }
 
@@ -94,7 +94,7 @@ public static class FunctorReverseTable
         {
             long k = _rows[slot * 2];
             // An id already there wins: two ids for one (name, arity) cannot
-            // happen, and if it ever did the FIRST is the one every existing
+            // happen, and if it ever did the first is the one every existing
             // term already carries.
             if (k == key) return;
             if (k == 0)

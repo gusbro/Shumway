@@ -8,7 +8,7 @@ namespace Shumway.Tests.Wasm;
 /// signals (Pc plus IlTailCallPending) and mean opposite things. The
 /// Call/Execute helper re-dispatches a tail call's target through the tier,
 /// which is right for a tail call and wrong for a deopt: when the deopt's pc
-/// is the deopting predicate's OWN entry, the helper hands the instruction
+/// is the deopting predicate's own entry, the helper hands the instruction
 /// back to the module that just refused it and the two spin.
 ///
 /// <para>The arithmetic that escalates out of the 60-bit integer lane is the
@@ -25,7 +25,7 @@ public sealed class DeoptIsNotATailCallTests(ITestOutputHelper o)
         """;
 
     /// <summary>Runs one query with a bound, so the bug's signature (never
-    /// returning) is a FAILURE and not a test run that hangs. Returns the
+    /// returning) is a failure and not a test run that hangs. Returns the
     /// answer, or throws naming the deopt count reached.</summary>
     private static bool RunBounded(PrologEngine e, string goal)
     {
@@ -85,7 +85,7 @@ public sealed class DeoptIsNotATailCallTests(ITestOutputHelper o)
         var (tier, members, _) = TieredEngine.BuildWithWorld(Corpus, wasmThreshold: 1);
         WasmTierDelegate.ResetDiag();
         Assert.True(RunBounded(tier, "add(576460752303423487, 1, X), X =:= 576460752303423488."));
-        // The predicate promotes on its FIRST call, so this is checked after
+        // The predicate promotes on its first call, so this is checked after
         // the query, not before it.
         Assert.NotEmpty(members);
         o.WriteLine($"entries={WasmTierDelegate.DiagEntries} "

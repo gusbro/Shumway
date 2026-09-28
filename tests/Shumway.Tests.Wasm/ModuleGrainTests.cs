@@ -77,7 +77,7 @@ public sealed class ModuleGrainTests(ITestOutputHelper o)
             o.WriteLine($"  {per,3} per module   : {t:N0} bytes  ({(double)t / all:F2}x)");
         }
 
-        // ANTI-VACUITY: a floor of zero would mean the measurement found
+        // Anti-vacuity: a floor of zero would mean the measurement found
         // nothing to measure.
         Assert.True(floor > 0);
         Assert.True(all > 0);

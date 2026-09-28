@@ -11,7 +11,7 @@ public sealed class ParseException : Exception
 {
     public SourcePosition Position { get; }
 
-    /// <summary>Non-null when the text was syntactically PERFECT but names a
+    /// <summary>Non-null when the text was syntactically perfect but names a
     /// value the implementation cannot represent (e.g. <c>max_float</c> for a
     /// float literal past double range). Carriers that surface parse failures
     /// as ISO errors must then raise <c>representation_error(flaw)</c>, not

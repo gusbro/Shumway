@@ -2,14 +2,14 @@ namespace Shumway.Core;
 
 /// <summary>The attribute store's image in a form a compiled wasm module can
 /// read: a flat open-addressed table of (home, module) -&gt; value, all of it
-/// heap INDICES, kept by the five writers in Activation.Attrs.cs and by
+/// heap indices, kept by the five writers in Activation.Attrs.cs and by
 /// nothing else.
 ///
 /// <para>Why an image at all: the store is a Dictionary of Dictionaries, which
 /// is managed state a module cannot reach, so every get_attr/3 has to leave
 /// the module and come back. In clpr that is 12,600 exits, the single largest
 /// source of them, and only 1,200 of those fail -- so open-coding the failing
-/// path alone would buy nothing, and the module has to be able to READ the
+/// path alone would buy nothing, and the module has to be able to read the
 /// store to get rid of the rest.</para>
 ///
 /// <para>The host writes, the module only reads. That keeps the store the one
@@ -19,7 +19,7 @@ namespace Shumway.Core;
 /// came first: there is no seventh writer left to forget.</para>
 ///
 /// <para>Row layout, two i64 per slot: key ((home + 1) &lt;&lt; 32) |
-/// (uint)module, then value. Key 0 is EMPTY and stops a probe; key -1 is a
+/// (uint)module, then value. Key 0 is empty and stops a probe; key -1 is a
 /// tombstone and does not. The +1 is what keeps home 0, a real heap index,
 /// distinguishable from an empty slot.</para>
 ///
@@ -47,7 +47,7 @@ public sealed partial class Activation
     }
 
     /// <summary>The rows, for the world that stages them into linear memory.
-    /// The array is REPLACED on growth, so a caller re-reads it per chain
+    /// The array is replaced on growth, so a caller re-reads it per chain
     /// rather than caching it.</summary>
     public long[] AttrMirrorRows => _attrMirror ?? System.Array.Empty<long>();
 
@@ -71,8 +71,8 @@ public sealed partial class Activation
         }
     }
 
-    /// <summary>Counts the empty slots a MODULE took, once its chain is
-    /// out. Only where the image is SHARED (the browser pins this array
+    /// <summary>Counts the empty slots a module took, once its chain is
+    /// out. Only where the image is shared (the browser pins this array
     /// into linear memory): there the host's own AttrMirrorPut finds the
     /// module's rows already present and counts nothing, so the occupancy
     /// has to be told or the table drifts past its load factor. The number
@@ -80,7 +80,7 @@ public sealed partial class Activation
     /// it takes, value rows and count rows alike. (A flag per parked write
     /// used to carry it, and a promotion's count row never had one: on
     /// queens 24 the drift filled the table and every probe walked it.)
-    /// A world that COPIES the image gets the rows back through the host's
+    /// A world that copies the image gets the rows back through the host's
     /// own puts, which count for themselves.</summary>
     internal void AttrMirrorNoteModuleInserts(int emptySlotsTaken)
     {
@@ -100,18 +100,18 @@ public sealed partial class Activation
     private static long AttrMirrorKey(int home, int moduleId)
         => ((long)(home + 1) << 32) | (uint)moduleId;
 
-    /// <summary>A module id no module has, carrying a variable's ROW COUNT
+    /// <summary>A module id no module has, carrying a variable's row count
     /// in a row of its own.
     ///
     /// <para>Why the count is in the image at all: a module can add a row
-    /// and take one away, but it cannot CREATE or DESTROY the record --
+    /// and take one away, but it cannot create or destroy the record --
     /// promoting a plain variable to an attributed one, and demoting it
     /// back when its last attribute goes. Both turn on how many rows the
     /// variable has, which is a managed dictionary's Count, and that one
     /// number is the whole reason those two operations stayed the host's
     /// (193 of the 630 crossings clp(Z) had left).</para>
     ///
-    /// <para>In the SAME table rather than a second one, because the funnel
+    /// <para>In the same table rather than a second one, because the funnel
     /// is what makes a derived view trustworthy and there is no sense in
     /// having two of them to keep. Module ids are small and positive, so -1
     /// cannot collide with one.</para></summary>
@@ -156,8 +156,8 @@ public sealed partial class Activation
             AttrMirrorRebuild(_attrMirror.Length);
         }
         long key = AttrMirrorKey(home, moduleId);
-        // ONE pass per attempt, never an open-ended probe: the occupancy is
-        // partly TOLD (a module's fresh inserts arrive as flags), and a count
+        // One pass per attempt, never an open-ended probe: the occupancy is
+        // partly told (a module's fresh inserts arrive as flags), and a count
         // that drifts low lets the table fill past its load factor. A probe
         // that then finds neither the key nor an empty slot would cycle
         // forever, which is exactly what queens 24 under clp(Z) did in the
@@ -225,7 +225,7 @@ public sealed partial class Activation
         foreach (var unused in AttrAll()) live++;
         int slots = 64;
         while (slots * 2 < minCells) slots *= 2;
-        // Room for the COUNT rows as well as the value rows: one per home,
+        // Room for the count rows as well as the value rows: one per home,
         // so a table sized for the values alone would be rebuilt again on
         // the next write.
         while (slots < (live + _attrStore.Count + 1) * 4) slots *= 2;
@@ -234,16 +234,16 @@ public sealed partial class Activation
         _attrMirrorUsed = 0;
         foreach (var (home, module, value) in AttrAll())
             AttrMirrorPut(home, module, value);
-        // And the count rows, which are NOT in AttrAll: rebuilding without
+        // And the count rows, which are not in AttrAll: rebuilding without
         // them left every home reading zero, and a module asking whether the
-        // row it is taking is the LAST one would have been told yes and
+        // row it is taking is the last one would have been told yes and
         // demoted a variable that still had others.
         foreach (var kv in _attrStore)
             if (kv.Value.Count > 0) AttrMirrorPut(kv.Key, AttrMirrorCountModule, kv.Value.Count);
     }
 
     /// <summary>Asserts the image and the store still say the same thing, in
-    /// BOTH directions: every pair the store holds is readable from the image,
+    /// both directions: every pair the store holds is readable from the image,
     /// and the image holds no pair the store dropped. A one-directional check
     /// would pass over exactly the bug that matters, a row left behind by a
     /// del_attr that the module then reads as live.</summary>
@@ -256,7 +256,7 @@ public sealed partial class Activation
     }
 
     /// <summary>What the two disagree on, or null when they agree. The
-    /// JUDGEMENT is unconditional and only the assertion above is switched:
+    /// judgement is unconditional and only the assertion above is switched:
     /// a check compiled out of every build the tests use would pass
     /// vacuously, which is the same as not having one.</summary>
     internal string? AttrMirrorDisagreement()
@@ -270,7 +270,7 @@ public sealed partial class Activation
             if (got != value)
                 return $"var@{home} module={module} store={value} mirror={got}";
         }
-        // Every record owes a count row, and a MISSING one is exactly what
+        // Every record owes a count row, and a missing one is exactly what
         // a scan of the image cannot see: the rebuild that dropped them all
         // left nothing behind to disagree with.
         foreach (var kv in _attrStore)
@@ -297,7 +297,7 @@ public sealed partial class Activation
             int module = (int)k;
             if (module == AttrMirrorCountModule)
             {
-                // A count row is a derivation OF the rows, not one of them:
+                // A count row is a derivation of the rows, not one of them:
                 // checked against the record's size and left out of the
                 // tally below.
                 inImage--;

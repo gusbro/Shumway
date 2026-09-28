@@ -92,7 +92,7 @@ public class CellTests
     [Fact]
     public void Functor_MatchesDocumentedHexPattern()
     {
-        // FUNCTOR id=5 → 0x3000_0000_0000_0005
+        // Functor id=5 → 0x3000_0000_0000_0005
         var c = Cell.Functor(5);
         Assert.Equal(0x3000_0000_0000_0005L, c.Data);
         Assert.Equal(Tag.Functor, c.Tag);

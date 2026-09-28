@@ -8,7 +8,7 @@ namespace Shumway.Tests.Wasm;
 /// when the key holds a cell live for this activation, the way clp(Z) reads
 /// its current propagator on every step (bb_get lowers to it: 5,101 exits
 /// on queens, a third of all builtin exits). The image is complete, so a
-/// key it lacks is UNSET and the read fails in the module too (clp(Z) reads
+/// key it lacks is unset and the read fails in the module too (clp(Z) reads
 /// its current propagator before anything has set it, 6,400 times on
 /// queens24); only a snapshot the host has to re-emit goes to the host.
 /// </summary>
@@ -103,7 +103,7 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
     }
 
     /// <summary>An unset key fails in the module: the image is complete,
-    /// so absence IS the answer -- with other keys live (a cell and a
+    /// so absence is the answer -- with other keys live (a cell and a
     /// snapshot) as well as with none at all, the empty image being the
     /// shape that used to send every read out.</summary>
     [DiagFact]

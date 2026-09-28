@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>A <c>use_module(library(X))</c> naming a library the search path
 /// does not hold is a warning: reported, load continues. The warning goes to
-/// a text sink while the caller's result says only whether something THREW,
+/// a text sink while the caller's result says only whether something threw,
 /// so a consult whose every import resolved to nothing looked exactly like
 /// one that worked.
 ///
@@ -27,7 +27,7 @@ public sealed class UnresolvedImportTests
         Assert.Contains("no_such_library_xyz", e.UnresolvedImports);
     }
 
-    /// <summary>ANTI-VACUITY: a library that DOES resolve records nothing, so
+    /// <summary>Anti-vacuity: a library that does resolve records nothing, so
     /// the list means "unresolved" and not "imported".</summary>
     [Fact]
     public void AResolvedLibraryIsNotRecorded()
@@ -39,7 +39,7 @@ public sealed class UnresolvedImportTests
         Assert.Empty(e.UnresolvedImports);
     }
 
-    /// <summary>The whole point: consult reports NO error for a load that
+    /// <summary>The whole point: consult reports no error for a load that
     /// imported nothing, and the record is the only thing that says so.
     /// If consult ever starts failing here, this test says so rather than
     /// the change going unnoticed.</summary>
@@ -77,7 +77,7 @@ public sealed class UnresolvedImportTests
     }
 
     /// <summary>The goal form raises instead of warning (it always has), so
-    /// it must NOT also record: a caller that caught the error would then see
+    /// it must not also record: a caller that caught the error would then see
     /// a phantom entry for a library it already handled.</summary>
     [Fact]
     public void TheGoalFormRaisesAndDoesNotRecord()

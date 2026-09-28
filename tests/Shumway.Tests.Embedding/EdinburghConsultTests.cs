@@ -49,7 +49,7 @@ public sealed class EdinburghConsultTests
     public void ConsultUser_ReadsUntilEndOfFileLine()
     {
         // No "|: " in the transcript on purpose: the prompt belongs to the
-        // INTERACTIVE input source (the REPL's user_input reader prints it per
+        // interactive input source (the REPL's user_input reader prints it per
         // refilled line, as for read/1) — writing it here too doubled it, and
         // a piped script correctly sees none.
         var output = new StringWriter();

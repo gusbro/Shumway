@@ -46,7 +46,7 @@ public sealed partial class BytecodeInterpreter
     }
 
     /// <summary>Cheap throw: when the ball is caught by a catch frame opened
-    /// in THIS dispatch invocation (index ≥ <paramref name="frameFloor"/> —
+    /// in this dispatch invocation (index ≥ <paramref name="frameFloor"/> —
     /// no nested C# driver frames to unwind), resolve it to the recovery's
     /// address and jump, skipping .NET exception construction + EH dispatch.
     /// Returns true when handled (Pc set to the recovery).</summary>
@@ -151,13 +151,13 @@ public sealed partial class BytecodeInterpreter
     // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the
     // module of the clause that meta-called it (ModuleRewrite). Unwrapped in the
     // meta-dispatch so Goal's bare functor resolves against Module's locals first.
-    // The four cut-transparent control constructs, by ATOM. The tests that
-    // use these ask about an atom and an ARITY, not a functor, because the
+    // The four cut-transparent control constructs, by atom. The tests that
+    // use these ask about an atom and an arity, not a functor, because the
     // effective goal of a call/N is name/(goalArity + extras): the functor
     // sitting in the term is not the one being judged, so comparing against
     // ,/2 would answer wrongly whenever a meta-call carries extra arguments.
     //
-    // Interned once. This was a table read plus up to four STRING compares
+    // Interned once. This was a table read plus up to four string compares
     // at three sites, one of them the meta-call dispatch itself.
     private static readonly int ConjAtomId = AtomTable.Intern(",", permanent: true).Id;
     private static readonly int DisjAtomId = AtomTable.Intern(";", permanent: true).Id;
@@ -285,7 +285,7 @@ public sealed partial class BytecodeInterpreter
     /// and then advanced according to each instruction's semantics.
     /// </summary>
     /// <summary>Ticks spent inside the dispatch loop, counted only at the
-    /// OUTERMOST entry: Run re-enters itself (a catch frame's recovery goal,
+    /// outermost entry: Run re-enters itself (a catch frame's recovery goal,
     /// a sub-engine), and nesting would add the same time twice.
     ///
     /// <para>Splits what a browser measurement could otherwise only call
@@ -330,7 +330,7 @@ public sealed partial class BytecodeInterpreter
         // address, so CurrentFunctorAddresses maps its functor to
         // EncodeResumeMarker(fid, 0) and a caller that resolved it that way (e.g.
         // RunCatching entering a catch frame's recovery goal) hands us the marker.
-        // The dispatch loop's IsResumeMarker check — which sits BEFORE its own
+        // The dispatch loop's IsResumeMarker check — which sits before its own
         // bounds check for exactly this reason — routes it to the IL delegate.
         if ((startPc < 0 || startPc >= code.Length) && !Activation.IsResumeMarker(startPc))
             throw new ArgumentOutOfRangeException(nameof(startPc),
@@ -341,7 +341,7 @@ public sealed partial class BytecodeInterpreter
         // activation (see Activation.ReentrantSolve). The closure reads _reentrantCode
         // so it is allocated once; each Run refreshes the program view it targets.
         //
-        // SAVED AND RESTORED, because Run NESTS: a sub-query driven from inside a
+        // Saved and restored, because Run nests: a sub-query driven from inside a
         // live query (Logtalk consulting its compiled objects, a debugger
         // evaluation) re-enters here with its own view, and on return the outer
         // query's re-entrant solve has to target the outer program again. Leaving
@@ -365,8 +365,8 @@ public sealed partial class BytecodeInterpreter
     }
 
     /// <summary>Backs <see cref="Activation.ReentrantSolve"/> (the host→Prolog
-    /// SolveOnce API). Must be TRANSPARENT to the caller's argument registers: a
-    /// foreign predicate's generated bridge reads its output register AFTER the user
+    /// SolveOnce API). Must be transparent to the caller's argument registers: a
+    /// foreign predicate's generated bridge reads its output register after the user
     /// method returns, but <see cref="MetaCallInEngine"/> loads the nested goal's args
     /// into X0… So snapshot the register bank, run the nested semidet solve (which binds
     /// the shared heap/trail — the intended output), then restore the registers. The
@@ -450,11 +450,11 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
-    // IL non-tail Calls are THREADED (set Cp = resume marker, Pc = callee,
+    // IL non-tail Calls are threaded (set Cp = resume marker, Pc = callee,
     // IlTailCallPending = true, return to this loop) — never dispatched by a
     // recursive sub-Dispatch invocation, which would grow the C# stack with
     // Prolog depth and let backtracking cascade past the IL caller's CPs.
-    // SubroutineSentinelCp is NOT a leftover of that rejected design:
+    // SubroutineSentinelCp is not a leftover of that rejected design:
     // RunGoalInEngine (the in-engine sub-goal driver for findall/3 etc.)
     // uses its Pc-negative trick to exit its dispatch loop.
 
@@ -500,8 +500,8 @@ public sealed partial class BytecodeInterpreter
         bool engineDriven = _engine.CurrentProgram is not null;
         byte[] codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
         int codeLen = code.Length;
-        // Catch frames below this index belong to OUTER drivers (their C#
-        // frames sit between us and them) — a throw resolving to one of THOSE
+        // Catch frames below this index belong to outer drivers (their C#
+        // frames sit between us and them) — a throw resolving to one of those
         // must unwind via the .NET exception; frames at/above it were opened
         // by this invocation and take the cheap PC-jump path (TryInlineThrow).
         int dispatchCatchFloor = _engine.CatchFrameCount;
@@ -546,7 +546,7 @@ public sealed partial class BytecodeInterpreter
             if (pc < 0)
             {
                 if (pc == WakeReturnCp) { WakeReturn(); inClause = false; continue; }
-                // ADR-049: the ANSWER is a goal boundary too. A wake can
+                // ADR-049: the answer is a goal boundary too. A wake can
                 // reach here still pending when the tail of the query ran
                 // entirely through paths with no drain of their own — a
                 // promoted chain/indexed delegate followed by operand-gated
@@ -567,7 +567,7 @@ public sealed partial class BytecodeInterpreter
             // dispatching the callee; the callee Proceeded, setting
             // Pc=Cp=marker. Decode the marker, look up the IL
             // delegate, and re-invoke it at the forward-resume
-            // cursor. The marker check sits BEFORE the codeLen bounds
+            // cursor. The marker check sits before the codeLen bounds
             // check because the marker's int value is intentionally
             // out of the bytecode range.
             if (Activation.IsResumeMarker(pc))
@@ -580,7 +580,7 @@ public sealed partial class BytecodeInterpreter
                 // ADR-049: a threaded IL→IL transfer is a goal boundary like
                 // any Call. The chain/indexed delegate shapes carry no
                 // in-method boundaries, so a wake their head-match queued
-                // reaches HERE — without this check it stayed pending until
+                // reaches here — without this check it stayed pending until
                 // the answer and freeze/2 went silently unhooked after
                 // $length_enum promoted mid-enumeration. Cursor 0 is a
                 // forward call (the callee's arity bounds the live
@@ -619,7 +619,7 @@ public sealed partial class BytecodeInterpreter
                     // No IL delegate → the callee is bytecode-only; fall back to
                     // its WAM address. This is what lets an IL-only callee have
                     // no WAM body (WAM stripping). cursor > 0 = a genuine resume,
-                    // where a missing delegate IS a bug.
+                    // where a missing delegate is a bug.
                     if (cursor == 0)
                     {
                         var addrMap = _engine.CurrentFunctorAddresses;
@@ -627,7 +627,7 @@ public sealed partial class BytecodeInterpreter
                             && addrMap.TryGetValue(functorId, out int addr)
                             && !Shumway.Core.CallTarget.IsUnresolved(addr))
                         {
-                            // A forward call is a DISPATCH and must count as
+                            // A forward call is a dispatch and must count as
                             // one: entering the callee's bytecode directly
                             // starved the promotion counters, so a predicate
                             // reached only from promoted callers never
@@ -662,7 +662,7 @@ public sealed partial class BytecodeInterpreter
                             continue;
                         }
                         // Last chance: a MetaTransform helper whose delegate was
-                        // evicted and whose bytecode THIS activation never linked
+                        // evicted and whose bytecode this activation never linked
                         // (compiled by a different activation's setup/assert) —
                         // materialize it on demand.
                         int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
@@ -743,12 +743,12 @@ public sealed partial class BytecodeInterpreter
                         + " — bytecode corruption.");
 
                 case Opcode.Halt:
-                    // ADR-049: the ANSWER is a goal boundary too. A wake can
+                    // ADR-049: the answer is a goal boundary too. A wake can
                     // reach the query epilogue still pending when the tail of
                     // the query ran entirely through drain-free paths — a
                     // promoted chain/indexed delegate followed by
                     // operand-gated inline arithmetic was exactly that, and
-                    // freeze/2 went silently unhooked. The INTERRUPT, not the
+                    // freeze/2 went silently unhooked. The interrupt, not the
                     // nested drain: the driver runs hooks as ordinary code, so
                     // a failing hook backtracks into the remaining
                     // alternatives like any goal (the drain's once-semantics
@@ -810,9 +810,9 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Call:
                 {
-                    // Operands BEFORE the wakeup flush: the flush runs arbitrary
+                    // Operands before the wakeup flush: the flush runs arbitrary
                     // goals, and a background IL install draining inside them
-                    // (OnCalleePromoted) may rewrite THIS site in place to
+                    // (OnCalleePromoted) may rewrite this site in place to
                     // CallIl <fid>. Reading the operand after the flush would
                     // pair the already-dispatched Call opcode with the fid and
                     // jump to it as an address (the clpz cross-query crash).
@@ -865,7 +865,7 @@ public sealed partial class BytecodeInterpreter
                     opByte = _engine.BreakpointOriginalAt(pc);
                     _engine.Debug?.OnBreak(_engine, pc);
                     // Set Next Statement during the stop: the pending instruction (held in
-                    // the LOCALS pc/opByte) is abandoned; the loop re-enters at the moved P.
+                    // the locals pc/opByte) is abandoned; the loop re-enters at the moved P.
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     goto dispatch;
                 }
@@ -914,7 +914,7 @@ public sealed partial class BytecodeInterpreter
                     if (lco)
                     {
                         // Pop the frame ourselves — the deallocate that would
-                        // have preceded an Execute now lives in the stub AFTER
+                        // have preceded an Execute now lives in the stub after
                         // us, which this path skips. Deallocate also restores Cp
                         // from the frame, which is exactly the tail-call
                         // continuation.
@@ -935,7 +935,7 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Execute:
                 {
-                    // Operand BEFORE the wakeup flush — same in-place
+                    // Operand before the wakeup flush — same in-place
                     // Execute→ExecuteIl repatch hazard as the Call case above.
                     int target = ReadI32(code, codeArr, pc + 1);
                     if (_engine.HasPendingWakeups)   // ADR-049
@@ -976,7 +976,7 @@ public sealed partial class BytecodeInterpreter
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
                     // Per-query table miss → the engine-wide dispatcher. A delegate
-                    // promoted AFTER this query's setup snapshot (an interleaved
+                    // promoted after this query's setup snapshot (an interleaved
                     // debug evaluation promoting clpfd internals mid-stop is the
                     // real case) rewrote shared bytecode to CallIl; the rewrite is
                     // engine-global, the snapshot is not.
@@ -1222,10 +1222,10 @@ public sealed partial class BytecodeInterpreter
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
                     Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
-                    // NOT try/finally. Under mono's LLVM AOT (the WebShumway
+                    // Not try/finally. Under mono's LLVM AOT (the WebShumway
                     // publish) a `finally` exiting inside this frame calls the
                     // runtime's async-abort check, which walks the whole stack
-                    // (~150 us per builtin: tak went 5x SLOWER than interpreted).
+                    // (~150 us per builtin: tak went 5x slower than interpreted).
                     // A catch clause costs nothing, so the exit bookkeeping
                     // runs in the catches and after the try instead.
                     // See docs/benchmarks/wasm-split-spike.md.
@@ -1295,7 +1295,7 @@ public sealed partial class BytecodeInterpreter
                 {
                     // 2-byte layout: [op:1] [Nop:1].
                     // Mirrors Deallocate + Proceed back-to-back. The wake
-                    // check runs BEFORE the deallocate (ADR-049): resuming
+                    // check runs before the deallocate (ADR-049): resuming
                     // re-executes the whole instruction, and a deallocate
                     // must not run twice.
                     if (_engine.HasPendingWakeups)
@@ -1324,7 +1324,7 @@ public sealed partial class BytecodeInterpreter
                 {
                     // 6-byte layout: [op:1] [target:4] [Nop:1]. Mirrors
                     // Deallocate + Execute: trim the frame, then tail-call.
-                    // Wake check BEFORE the deallocate (ADR-049): resuming
+                    // Wake check before the deallocate (ADR-049): resuming
                     // re-executes the whole instruction.
                     if (_engine.HasPendingWakeups)
                     {
@@ -1354,7 +1354,7 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.CutDeallocateProceed:
                 {
                     // 7-byte layout: [op:1] [slot:4] [Nop:1] [Nop:1]. Mirrors
-                    // Cut + Deallocate + Proceed. Flush wakeups BEFORE the cut
+                    // Cut + Deallocate + Proceed. Flush wakeups before the cut
                     // commits (see NeckCut/Cut); nothing schedules a wakeup
                     // between the cut and the return, so no second flush.
                     if (!FlushPendingWakeups(code))
@@ -1441,7 +1441,7 @@ public sealed partial class BytecodeInterpreter
                     // back to the original 9-byte footprint. Skip the
                     // padding in this one step rather than dispatching
                     // four separate Nop instructions: profiling Blint
-                    // showed those pad-Nops were ~47% of ALL executed
+                    // showed those pad-Nops were ~47% of all executed
                     // opcodes (93M of 199M). A native (assertz) retry's
                     // pc+5 is a check_visible / body opcode, never Nop,
                     // so the single-byte peek distinguishes the two.
@@ -1503,7 +1503,7 @@ public sealed partial class BytecodeInterpreter
                     // ADR-041 — dispatch-time clause selection by the call's
                     // first argument. Determinism must not depend on whether
                     // the chain is indexed yet: with the arg bound and exactly
-                    // one candidate clause, jump straight to its code with NO
+                    // one candidate clause, jump straight to its code with no
                     // choice point; with zero candidates, fail outright. The
                     // host returns -2 for "no selection" (unbound arg,
                     // multiple candidates, indexed/unrecognised layout), and
@@ -1587,7 +1587,7 @@ public sealed partial class BytecodeInterpreter
                         Tag.Ref => varAddr,
                         Tag.Atom or Tag.Int or Tag.Float => constAddr,
                         Tag.Lis => listAddr,
-                        // A non-empty packed list IS a cons (ADR-047/048);
+                        // A non-empty packed list is a cons (ADR-047/048);
                         // routing it to the var chain instead cost the list
                         // bucket's determinism (nmea/jwt "succeeded
                         // non-deterministically"). Empty PSTR = [] lives in
@@ -1804,7 +1804,7 @@ public sealed partial class BytecodeInterpreter
                     // A cut is a goal boundary: any attribute-hook wakeup
                     // queued by the preceding goal (e.g. a clpfd attvar bound
                     // to a value whose domain check is still pending) must run
-                    // BEFORE the cut removes the choice points it might need to
+                    // before the cut removes the choice points it might need to
                     // backtrack into. Without this, a constraint that fails
                     // after the cut commits has no surviving CP to retry —
                     // surfacing as an unsound whole-goal failure inside an
@@ -1829,7 +1829,7 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.GetLevelB:
                 {
-                    // ADR-025 — capture CURRENT B as the inline-ITE barrier.
+                    // ADR-025 — capture current B as the inline-ITE barrier.
                     int slot = ReadI32(code, codeArr, pc + 1);
                     _engine.GetLevelB(slot);
                     _engine.SetPc(pc + 5); inClause = true;
@@ -1858,7 +1858,7 @@ public sealed partial class BytecodeInterpreter
                 {
                     // ADR-037 — commit the inline ( Cond *-> Then ; Else ): flush
                     // pending attribute wakeups first (as Cut does), then
-                    // neutralise the ELSE choice point named by the slot. Cond's
+                    // neutralise the else choice point named by the slot. Cond's
                     // choice points survive, so no over-pruning.
                     if (!FlushPendingWakeups(code))
                     {
@@ -2054,12 +2054,12 @@ public sealed partial class BytecodeInterpreter
                         Cell v = _engine.GetRegister(src);
                         // A bare ATTVAR goes in as a REF to its home, the
                         // mirror of UnifyVariableX reading one out. Copying
-                        // the cell would make a SECOND variable claiming the
+                        // the cell would make a second variable claiming the
                         // same attributes, and the attribute table keys on a
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
-                        // occurs_check flag: the store is checked AFTER the
+                        // occurs_check flag: the store is checked after the
                         // write — a failing check backtracks, and the heap
                         // above the choice point is discarded wholesale, so
                         // nothing observes the stored cell. Mode off pays one
@@ -2105,12 +2105,12 @@ public sealed partial class BytecodeInterpreter
                         Cell v = _engine.GetY(src);
                         // A bare ATTVAR goes in as a REF to its home, the
                         // mirror of UnifyVariableX reading one out. Copying
-                        // the cell would make a SECOND variable claiming the
+                        // the cell would make a second variable claiming the
                         // same attributes, and the attribute table keys on a
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
-                        // occurs_check flag: the store is checked AFTER the
+                        // occurs_check flag: the store is checked after the
                         // write — a failing check backtracks, and the heap
                         // above the choice point is discarded wholesale, so
                         // nothing observes the stored cell. Mode off pays one
@@ -2515,7 +2515,7 @@ public sealed partial class BytecodeInterpreter
                     int builtinId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-                    // Env trimming: shrink the current frame BEFORE
+                    // Env trimming: shrink the current frame before
                     // the builtin runs, so any choice point the builtin pushes
                     // (e.g. multi-solution call/N, non-deterministic
                     // append/atom_concat splits) lands at the trimmed _stackTop
@@ -2531,9 +2531,9 @@ public sealed partial class BytecodeInterpreter
                     if (entry.IsCall)
                     {
                         // A backtrackable (cursor)
-                        // builtin reached THROUGH the meta-call captures
+                        // builtin reached through the meta-call captures
                         // BuiltinReturnPc for its resume; without this it
-                        // kept the PREVIOUS call_builtin's continuation and
+                        // kept the previous call_builtin's continuation and
                         // a retry re-entered the middle of the clause
                         // (observed: call(stream_property(S, P)) re-running
                         // the call/1 with a clobbered X0 → type_error).
@@ -2594,7 +2594,7 @@ public sealed partial class BytecodeInterpreter
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                         inClause = false; continue;   // SNS during the stop: skip the builtin
                     }
-                    // NOT try/finally: a finally here costs a runtime stack
+                    // Not try/finally: a finally here costs a runtime stack
                     // walk under mono's LLVM AOT. See the call_builtin site.
                     try
                     {
@@ -2619,7 +2619,7 @@ public sealed partial class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    // deliberately AdvancePc, NOT SetPc(pc + 9) —
+                    // deliberately AdvancePc, not SetPc(pc + 9) —
                     // entry.Impl ran arbitrary builtin code between the pc
                     // capture and here, so the mechanical substitution's
                     // "P still equals pc" precondition can't be verified
@@ -2745,7 +2745,7 @@ public sealed partial class BytecodeInterpreter
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     Cell value = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
                     // ADR-020: inside a reserve-upfront inline
-                    // build the value must land in the RESERVED arg slot, not
+                    // build the value must land in the reserved arg slot, not
                     // at the heap top — a bigint cell is a single cell (the
                     // payload is the aux-table id / an immediate), so it slots
                     // in exactly like unify_integer. Without this branch the
@@ -2779,7 +2779,7 @@ public sealed partial class BytecodeInterpreter
 
                 // ---------- Rational literal opcodes (ADR-039) ----------
                 // A rational is a pair of integers, so each instruction names
-                // two entries of the SAME BigInt pool. MakeRational reduces
+                // two entries of the same BigInt pool. MakeRational reduces
                 // and collapses a whole value to an integer cell, which is
                 // what the assert that produced it did too.
 
@@ -2813,7 +2813,7 @@ public sealed partial class BytecodeInterpreter
                         ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 1)),
                         ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 5)));
                     // ADR-020, as for unify_bigint: inside a reserve-upfront
-                    // inline build the value belongs in the RESERVED slot.
+                    // inline build the value belongs in the reserved slot.
                     if (_engine.ReservedWrite)
                     {
                         _engine.UnifyArgCell(ratValue);
@@ -2848,7 +2848,7 @@ public sealed partial class BytecodeInterpreter
                     int operand = BytecodeIO.ReadInt32(code, pc + 5);
                     // ADR-049: inline arithmetic is a goal boundary. A wake
                     // queued by an earlier goal must fire before an operand
-                    // variable is READ, or it reads as unbound — but ONLY when
+                    // variable is read, or it reads as unbound — but only when
                     // this operand actually is unbound (a bound operand, the
                     // norm, skips the drain). The drain (not the interrupt) —
                     // arithmetic is deterministic and cannot suspend
@@ -3037,7 +3037,7 @@ public sealed partial class BytecodeInterpreter
         _engine.Debug?.OnCallAddress(_engine, target, tailCall);     // ADR-035 call port
         if (_engine.TakeDebugPcRedirect()) return;                   // SNS during the stop
 
-        // ADR-035 D5+ — Set Next Statement onto a SIBLING clause's head: this dispatch is
+        // ADR-035 D5+ — Set Next Statement onto a sibling clause's head: this dispatch is
         // the re-run of the caller's call after the rewind, and it enters the chosen
         // clause directly (committed — no clause choice point) instead of the predicate's
         // entry. One-shot; armed only from a stop, so the armed check costs one field
@@ -3073,7 +3073,7 @@ public sealed partial class BytecodeInterpreter
                 if (_engine.TakeIlDeopt())
                 {
                     // Not a tail call: the module stepped aside and Pc names
-                    // the instruction the INTERPRETER has to run. Re-entering
+                    // the instruction the interpreter has to run. Re-entering
                     // the loop with it as a dispatch target would hand it back
                     // to the module that just refused it, forever.
                     return;

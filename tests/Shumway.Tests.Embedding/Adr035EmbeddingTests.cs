@@ -8,11 +8,11 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-035 — debugging an EMBEDDED engine. The point is a large .NET application that uses
+/// ADR-035 — debugging an embedded engine. The point is a large .NET application that uses
 /// Shumway for one part of its work, in the application's own process: a debugger attached
 /// to that process should be able to set breakpoints in the engine's <c>.pl</c> code, the
 /// same as the standalone REPL's <c>--debug</c>. <see cref="PrologEngine.EnableDebugging"/>
-/// is that switch, and a bundle that still carries its module source is shown FROM that
+/// is that switch, and a bundle that still carries its module source is shown from that
 /// source.
 /// </summary>
 [Collection("debugger")]
@@ -107,7 +107,7 @@ public class Adr035EmbeddingTests
         Assert.Equal(expectedText, text);
         Assert.DoesNotContain('\n', text.Replace("\r\n", ""));   // no lone LF: consistent CRLF
 
-        // No hot relinking, so the materialised source is READ-ONLY — an edit there could not
+        // No hot relinking, so the materialised source is read-only — an edit there could not
         // reach the running code.
         Assert.True(File.GetAttributes(materialised).HasFlag(FileAttributes.ReadOnly),
             "the materialised source should be read-only");
@@ -117,7 +117,7 @@ public class Adr035EmbeddingTests
     public void ReMaterialisingTheSameSource_ReusesTheSamePath_AndStaysReadOnly()
     {
         // Re-running the same binary (here: a second load in the same process, same executable)
-        // must land on the SAME materialised path so the debugger reuses its window and keeps its
+        // must land on the same materialised path so the debugger reuses its window and keeps its
         // breakpoints — instead of a second identical window that orphans them. And
         // re-materialising over the now-read-only file must not throw.
         string first = MaterialisedFileAtBreak();
@@ -125,7 +125,7 @@ public class Adr035EmbeddingTests
         Assert.True(File.GetAttributes(first).HasFlag(FileAttributes.ReadOnly));
 
         string second = MaterialisedFileAtBreak();   // the "re-run" — no throw over the read-only file
-        Assert.Equal(first, second);                 // SAME path — the debugger reuses its window
+        Assert.Equal(first, second);                 // same path — the debugger reuses its window
         Assert.True(File.GetAttributes(second).HasFlag(FileAttributes.ReadOnly));
     }
 
@@ -133,7 +133,7 @@ public class Adr035EmbeddingTests
     public void FromBundleWithDebug_ProducesADebuggableEngine()
     {
         // What the `shumway-link --dll` factory's CreateEngine(debug: true) calls: the
-        // create-and-load path enables debugging on the fresh engine BEFORE it consults the
+        // create-and-load path enables debugging on the fresh engine before it consults the
         // bundle, so the modules load debuggable — a host that only has the generated factory
         // can still debug.
         PrologEngine engine = PrologEngine.FromBundle(
@@ -171,7 +171,7 @@ public class Adr035EmbeddingTests
     {
         // ADR-035 --exe --debug: a debuggable exe materialises its modules' embedded source
         // at startup for the debugger to open. A source-stripped bundle has none, so the
-        // link-time precondition must fail loudly — BEFORE any dotnet-publish — rather than
+        // link-time precondition must fail loudly — before any dotnet-publish — rather than
         // ship an undebuggable "debug" exe. (Cheap: Emit returns at the precondition.)
         var full = new Bundle(new[] { new BundleEntry("m", ":- public go/0.\ngo.\n") });
         byte[] withBc = BundleWriter.ToBytes(full, includeCompiledBytecode: true);
