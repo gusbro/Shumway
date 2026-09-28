@@ -303,7 +303,9 @@ public sealed class WasmRelocatableModule
                     && env.IsInlineGetAttr(id) == ev.InlineGetAttr
                     && env.IsInlineMetaCall(id) == ev.InlineMetaCall
                     && env.IsInlineAppend(id) == ev.InlineAppend
-                    && env.IsInlineBarrierCall(id) == ev.InlineBarrierCall;
+                    && env.IsInlineBarrierCall(id) == ev.InlineBarrierCall
+                    && WasmBuiltinEvidence.FormsOf(env, id, out int appended) == ev.Forms
+                    && appended == ev.MetaCallAppended;
             }
             if (!same) { reason = $"builtin {ev.Name}/{ev.Arity} changed form"; return false; }
         }
@@ -388,6 +390,31 @@ public sealed class WasmRelocatableModule
 
     // ---- serialization ----
 
+    /// <summary>The mailbox ABI's fingerprint mixed with the evidence
+    /// layout: the record's fields and the form flags, by name and value.
+    /// A module baked with another evidence layout would misread every
+    /// field after the first one that moved, and a library bundle kept on
+    /// disk outlives the engine that baked it. Computed, like the ABI's.
+    /// </summary>
+    internal static readonly ulong FormatStamp = ComputeFormatStamp();
+
+    private static ulong ComputeFormatStamp()
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = WasmAbi.Fingerprint;
+        void Mix(string text, long value)
+        {
+            foreach (char c in text) { h ^= c; h *= prime; }
+            h ^= (ulong)value; h *= prime;
+        }
+        // Constructor order IS the wire order.
+        foreach (var p in typeof(WasmBuiltinEvidence).GetConstructors()[0].GetParameters())
+            Mix(p.ParameterType.Name + " " + p.Name, p.Position);
+        foreach (var name in Enum.GetNames(typeof(WasmInlineForms)))
+            Mix(name, (int)Enum.Parse(typeof(WasmInlineForms), name));
+        return h;
+    }
+
     public void Write(Stream stream) => Write(stream, Relocations, Builtins);
 
     // With substituted tables: how a test forges a tampered file.
@@ -398,7 +425,7 @@ public sealed class WasmRelocatableModule
         w.Write(Magic);
         // The mailbox ABI stamp: a module compiled against another layout
         // would read shifted slots with no error anywhere downstream.
-        w.Write(WasmAbi.Fingerprint);
+        w.Write(FormatStamp);
         w.Write(RegisterDemand);
         w.Write(Bytes.Length); w.Write(Bytes);
         w.Write(Members.Count);
@@ -424,6 +451,7 @@ public sealed class WasmRelocatableModule
             w.Write((byte)b.TypeTest); w.Write(b.InlineGetAttr);
             w.Write(b.InlineMetaCall); w.Write(b.InlineAppend);
             w.Write(b.InlineBarrierCall);
+            w.Write((int)b.Forms); w.Write(b.MetaCallAppended);
         }
         w.Write(CallSites.Count);
         foreach (var (cn, ca, en, ea) in CallSites)
@@ -443,11 +471,12 @@ public sealed class WasmRelocatableModule
         var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
         if (r.ReadUInt32() != Magic)
             throw new InvalidDataException("not a relocatable wasm module");
-        if (r.ReadUInt64() != WasmAbi.Fingerprint)
+        if (r.ReadUInt64() != FormatStamp)
             throw new InvalidDataException(
                 "wasm module was baked against a different engine mailbox ABI"
-                + " -- rebake the bundle: installed as-is it would read the"
-                + " wrong mailbox slots with nothing to catch it");
+                + " or builtin evidence layout -- rebake the bundle: installed"
+                + " as-is it would read the wrong mailbox slots, or misread"
+                + " the evidence, with nothing to catch it");
         var m = new WasmRelocatableModule { RegisterDemand = r.ReadInt32() };
         m.Bytes = r.ReadBytes(r.ReadInt32());
         int n = r.ReadInt32();
@@ -479,7 +508,8 @@ public sealed class WasmRelocatableModule
             builtins.Add(new WasmBuiltinEvidence(r.ReadString(), r.ReadInt32(), r.ReadBoolean(),
                 r.ReadBoolean(), r.ReadBoolean(), r.ReadBoolean(), r.ReadBoolean(),
                 (WasmTypeTest)r.ReadByte(), r.ReadBoolean(), r.ReadBoolean(),
-                r.ReadBoolean(), r.ReadBoolean()));
+                r.ReadBoolean(), r.ReadBoolean(), (WasmInlineForms)r.ReadInt32(),
+                r.ReadInt32()));
         m.Builtins = builtins;
         n = r.ReadInt32();
         var sites2 = new List<(string, int, string, int)>(n);

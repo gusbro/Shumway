@@ -56,7 +56,69 @@ public sealed record WasmBuiltinEvidence(
     string Name, int Arity, bool Found, bool Direct, bool InlineUnify,
     bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None,
     bool InlineGetAttr = false, bool InlineMetaCall = false,
-    bool InlineAppend = false, bool InlineBarrierCall = false);
+    bool InlineAppend = false, bool InlineBarrierCall = false,
+    WasmInlineForms Forms = WasmInlineForms.None, int MetaCallAppended = 0)
+{
+    /// <summary>The inline forms <paramref name="env"/> gives a builtin, as
+    /// one value: what a bake records and what an install compares, from the
+    /// same code, so the two cannot drift.</summary>
+    public static WasmInlineForms FormsOf(IWasmCompileEnv env, int builtinId, out int appended)
+    {
+        var f = WasmInlineForms.None;
+        if (env.IsInlineMetaCallN(builtinId, out appended)) f |= WasmInlineForms.MetaCallN;
+        else appended = 0;
+        if (env.IsInlineFunctor(builtinId)) f |= WasmInlineForms.Functor;
+        if (env.IsInlineArg(builtinId)) f |= WasmInlineForms.Arg;
+        if (env.IsInlineUniv(builtinId)) f |= WasmInlineForms.Univ;
+        if (env.IsInlineGround(builtinId)) f |= WasmInlineForms.Ground;
+        if (env.IsInlineAcyclic(builtinId)) f |= WasmInlineForms.Acyclic;
+        if (env.IsInlineSort(builtinId)) f |= WasmInlineForms.Sort;
+        if (env.IsInlineGetFromAttrList(builtinId)) f |= WasmInlineForms.GetFromAttrList;
+        if (env.IsInlineAttrListWrite(builtinId, out bool isDelete))
+            f |= isDelete ? WasmInlineForms.AttrListDelete : WasmInlineForms.AttrListWrite;
+        if (env.IsInlineTrivial(builtinId, out bool succeeds))
+            f |= succeeds ? WasmInlineForms.TrivialTrue : WasmInlineForms.TrivialFail;
+        if (env.IsInlineGlobalFetch(builtinId))
+            f |= env.GlobalFetchFailsWhenUnset(builtinId)
+                ? WasmInlineForms.GlobalFetchFails : WasmInlineForms.GlobalFetchRaises;
+        if (env.IsInlineDomSame(builtinId)) f |= WasmInlineForms.DomSame;
+        if (env.IsInlineDomEmpty(builtinId)) f |= WasmInlineForms.DomEmpty;
+        if (env.IsInlineDomContains(builtinId)) f |= WasmInlineForms.DomContains;
+        if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
+        if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
+        return f;
+    }
+}
+
+/// <summary>The inline forms of a builtin beyond the ones <see
+/// cref="WasmBuiltinEvidence"/> names one by one. A form a live compile
+/// applies and a bake does not record is a baked module that quietly takes
+/// the slow path; one recorded and not re-checked is a module that runs a
+/// form the installing engine no longer gives. Serialized as its value.</summary>
+[Flags]
+public enum WasmInlineForms
+{
+    None = 0,
+    MetaCallN = 1 << 0,
+    Functor = 1 << 1,
+    Arg = 1 << 2,
+    Univ = 1 << 3,
+    Ground = 1 << 4,
+    Acyclic = 1 << 5,
+    Sort = 1 << 6,
+    GetFromAttrList = 1 << 7,
+    AttrListWrite = 1 << 8,
+    AttrListDelete = 1 << 9,
+    TrivialTrue = 1 << 10,
+    TrivialFail = 1 << 11,
+    GlobalFetchFails = 1 << 12,
+    GlobalFetchRaises = 1 << 13,
+    DomSame = 1 << 14,
+    DomEmpty = 1 << 15,
+    DomContains = 1 << 16,
+    DomDel = 1 << 17,
+    DomSingleton = 1 << 18,
+}
 
 /// <summary>A compile env that bakes a unique SENTINEL for every immediate
 /// the code names outside itself and records what each one stands for, so
@@ -194,23 +256,9 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         if (!_evidence.ContainsKey(calleeFunctorId))
         {
             var (n, a) = NameOf(calleeFunctorId);
-            bool direct = false, unify = false, compare = false, negated = false;
-            bool getAttr = false, metaCall = false, appnd = false, barrierCall = false;
-            var test = WasmTypeTest.None;
-            if (found)
-            {
-                direct = _inner.IsDirectBuiltin(builtinId);
-                unify = _inner.IsInlineUnify(builtinId);
-                compare = _inner.IsInlineCompare(builtinId, out negated);
-                _inner.TryGetInlineTypeTest(builtinId, out test);
-                getAttr = _inner.IsInlineGetAttr(builtinId);
-                metaCall = _inner.IsInlineMetaCall(builtinId);
-                appnd = _inner.IsInlineAppend(builtinId);
-                barrierCall = _inner.IsInlineBarrierCall(builtinId);
-            }
-            _evidence[calleeFunctorId] =
-                new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated,
-                                        test, getAttr, metaCall, appnd, barrierCall);
+            _evidence[calleeFunctorId] = found
+                ? EvidenceFor(n, a, builtinId)
+                : new WasmBuiltinEvidence(n, a, false, false, false, false, false);
         }
         return found;
     }
@@ -223,12 +271,20 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         int fid = FunctorTable.Intern(AtomTable.Intern(entry.Name).Id, entry.Arity);
         if (_evidence.ContainsKey(fid)) return;
-        _inner.TryGetInlineTypeTest(builtinId, out var noteTest);
-        _evidence[fid] = new WasmBuiltinEvidence(entry.Name, entry.Arity, true,
+        _evidence[fid] = EvidenceFor(entry.Name, entry.Arity, builtinId);
+    }
+
+    // Every decision asked of the INNER env: asking this one would Note again.
+    private WasmBuiltinEvidence EvidenceFor(string name, int arity, int builtinId)
+    {
+        _inner.TryGetInlineTypeTest(builtinId, out var test);
+        var forms = WasmBuiltinEvidence.FormsOf(_inner, builtinId, out int appended);
+        return new WasmBuiltinEvidence(name, arity, true,
             _inner.IsDirectBuiltin(builtinId), _inner.IsInlineUnify(builtinId),
-            _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest,
+            _inner.IsInlineCompare(builtinId, out bool neg), neg, test,
             _inner.IsInlineGetAttr(builtinId), _inner.IsInlineMetaCall(builtinId),
-            _inner.IsInlineAppend(builtinId), _inner.IsInlineBarrierCall(builtinId));
+            _inner.IsInlineAppend(builtinId), _inner.IsInlineBarrierCall(builtinId),
+            forms, appended);
     }
 
     public bool IsDirectBuiltin(int builtinId)
@@ -303,11 +359,86 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         return _inner.IsInlineBarrierCall(builtinId);
     }
 
+    public bool IsInlineMetaCallN(int builtinId, out int appended)
+    {
+        Note(builtinId);
+        return _inner.IsInlineMetaCallN(builtinId, out appended);
+    }
+
+    public bool IsInlineFunctor(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineFunctor(builtinId);
+    }
+
+    public bool IsInlineGetFromAttrList(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineGetFromAttrList(builtinId);
+    }
+
+    public bool IsInlineArg(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineArg(builtinId);
+    }
+
+    public bool IsInlineTrivial(int builtinId, out bool succeeds)
+    {
+        Note(builtinId);
+        return _inner.IsInlineTrivial(builtinId, out succeeds);
+    }
+
+    public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
+    {
+        Note(builtinId);
+        return _inner.IsInlineAttrListWrite(builtinId, out isDelete);
+    }
+
+    public bool IsInlineUniv(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineUniv(builtinId);
+    }
+
+    public bool IsInlineGround(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineGround(builtinId);
+    }
+
+    public bool IsInlineGlobalFetch(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineGlobalFetch(builtinId);
+    }
+
+    public bool GlobalFetchFailsWhenUnset(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.GlobalFetchFailsWhenUnset(builtinId);
+    }
+
+    public bool IsInlineAcyclic(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineAcyclic(builtinId);
+    }
+
+    public bool IsInlineSort(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineSort(builtinId);
+    }
+
+    // A builtin the module requests by id: relocated by name like every
+    // other request, so the live id is only the input to EncodeBuiltinId.
+    public int UnwindCpTrailsBuiltinId => _inner.UnwindCpTrailsBuiltinId;
+
     // Handed through as the LIVE id, and only ever used as the input to
     // FunctorCell, which relocates by (name, arity). Baking the id itself
     // would be a cross-process bug: functor ids are handed out in intern
     // ORDER, so the same predicate is a different id in another process.
-    public int UnwindCpTrailsBuiltinId => _inner.UnwindCpTrailsBuiltinId;
     public int MqualFunctorId => _inner.MqualFunctorId;
     public int ColonFunctorId => _inner.ColonFunctorId;
 
@@ -317,7 +448,8 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     // Every form decision has to be DELEGATED here, not inherited: the
     // interface's default answers "no", so a hook added upstream and not
     // added here silently stops applying to every baked module while the
-    // live path keeps it. That is how the type tests came to be open-coded
+    // live path keeps it (RelocatingCompileEnvTests makes that a failure).
+    // That is how the type tests came to be open-coded
     // on the desktop and not in the browser, where the libraries run from
     // baked modules -- var/1 and number/1 still topped the browser's exit
     // ranking after the change landed.
