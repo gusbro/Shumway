@@ -193,7 +193,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         private int _attrAt, _fdDomAt, _callMarkerAt, _metaCacheAt, _atomMarkerAt;
-        private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _orphanAt;
+        private int _attrLogAt, _extraTrailAt, _extraTrailStaged, _extraTrailRoom, _orphanAt;
+
+        /// <summary>Extra-trail entries a chain may append before it steps
+        /// aside for the host to grow the area (the image has no room past
+        /// what is reserved here).</summary>
+        private const int ExtraTrailHeadroom = 256;
         private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt, _globalAt;
         private readonly long[] _globalRows = new long[2 * 32];
         // Exactly one side is authoritative: the image (false) or the engine
@@ -265,7 +270,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _atomMarkerAt = _metaCacheAt + metaCache.Length * 8;
             _attrLogAt = _atomMarkerAt + atomMarkers.Length * 4;
             _extraTrailAt = (_attrLogAt + attrLogCount * 4 + 7) & ~7;
-            _orphanAt = _extraTrailAt + extraTop * WasmAbi.ExtraTrailEntryBytes;
+            // Room ABOVE the top: the module appends entries (an attribute
+            // write), and the orphan ring starts right after this area. Staged
+            // at exactly the top, the first append overwrote the ring and the
+            // ring's writes came back as entries of no known type.
+            _extraTrailRoom = System.Math.Max(extraTop,
+                System.Math.Min(extraTrail.Length - 8, extraTop + ExtraTrailHeadroom));
+            _orphanAt = _extraTrailAt + _extraTrailRoom * WasmAbi.ExtraTrailEntryBytes;
             _arithAt = _orphanAt + orphanRing.Length * 4;
             _attrWriteAt = _arithAt + arithLen * 4;
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
@@ -310,7 +321,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 ArithTableLength: arithLen,
                 AttrWriteBase: _attrWriteAt,
                 AttrWriteLimit: attrWrites.Length / WasmAbi.AttrWriteEntryInts,
-                ExtraTrailLimitEntries: extraTrail.Length - 8,
+                ExtraTrailLimitEntries: _extraTrailRoom,
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: _attrDropAt,
                 AttrDropLimit: attrDrops.Length,
@@ -518,7 +529,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraBack = (int)_mailbox[WasmAbi.ExtraTrailTop];
             if (extraBack < _extraTrailStaged) extraBack = _extraTrailStaged;
-            if (extraBack > extraTrail.Length) extraBack = extraTrail.Length;
+            if (extraBack > _extraTrailRoom) extraBack = _extraTrailRoom;
             if (extraBack > 0)
                 fixed (ExtraTrailEntry* p = extraTrail)
                     Buffer.MemoryCopy(mem + _extraTrailAt, p,

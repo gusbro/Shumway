@@ -341,6 +341,9 @@ public sealed partial class Activation
     /// has to take it out of the staging: it grows with the attribute table
     /// and a release build does not pay it. Diagnostic.</summary>
     public static long DiagStagingVerifyTicks;
+#if SHUMWAY_DIAG
+    private int _stagingsSinceVerify;
+#endif
 
     public bool TryFillWasmMailbox(System.Span<long> m, in WasmMailboxBases bases)
     {
@@ -450,13 +453,20 @@ public sealed partial class Activation
         // handover, and the image is what the module reads. A divergence
         // from the store is a module computing on a lie, and this is the
         // last moment it costs nothing to catch. Diagnostic builds only.
+        //
+        // AMORTIZED: the check walks the whole table, which a search grows
+        // (clp(Z) sudoku: ~3 ms a staging, most of a two-minute run), so it
+        // runs once per table-size/64 stagings. A small table, every test's,
+        // is still checked at every one.
 #if SHUMWAY_DIAG
-        long tv = System.Diagnostics.Stopwatch.GetTimestamp();
-#endif
-        AttrMirrorVerify("wasm staging");
-        AttrLogMirrorAssert();
-#if SHUMWAY_DIAG
-        DiagStagingVerifyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tv;
+        if (++_stagingsSinceVerify >= System.Math.Max(1, AttrTableCount / 64))
+        {
+            _stagingsSinceVerify = 0;
+            long tv = System.Diagnostics.Stopwatch.GetTimestamp();
+            AttrMirrorVerify("wasm staging");
+            AttrLogMirrorAssert();
+            DiagStagingVerifyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tv;
+        }
 #endif
         m[WasmAbi.CatchHeapFloor] = catchFloor;
         m[WasmAbi.CatchSnapBindingMax] = snapBind;
