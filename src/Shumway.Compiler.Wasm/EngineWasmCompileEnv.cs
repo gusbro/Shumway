@@ -46,8 +46,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public bool IsInlineGlobalFetch(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-        return entry.Name == "$fetch_global_var" && entry.Arity == 2;
+        return entry.Arity == 2
+            && entry.Name is "$fetch_global_var" or "b_getval" or "nb_getval";
     }
+
+    public bool GlobalFetchFailsWhenUnset(int builtinId)
+        => Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name == "$fetch_global_var";
 
     public bool IsInlineUnify(int builtinId)
     {

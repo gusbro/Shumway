@@ -26,6 +26,13 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
         loop3(0) :- !.
         loop3(N) :- ( '$fetch_global_var'(nokey, _) -> fail ; true ), N1 is N - 1, loop3(N1).
         others(N) :- b_setval(other, 1), nb_setval(other2, f(b)), loop3(N).
+        bloop(0, _) :- !.
+        bloop(N, S) :- b_getval(cur, C), C == S, nb_getval(cur, D), D == S,
+                       N1 is N - 1, bloop(N1, S).
+        bgo(N) :- put_attr(S, m, x), b_setval(cur, S), bloop(N, S).
+        bunset :- catch(b_getval(nokey, _), error(existence_error(variable, _), _), true).
+        nbunset :- catch(nb_getval(nokey, _), error(existence_error(variable, _), _), true).
+        bunset_live(N) :- b_setval(other, 1), bunset, nbunset, N > 0.
         """;
 
     [Fact]
@@ -35,18 +42,39 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string goal in new[] { "go(50).", "unset.", "undone.", "snap(50).", "loop3(50).",
-                                        "others(50)." })
+                                        "others(50).", "bgo(50).", "bunset.", "nbunset.",
+                                        "bunset_live(1)." })
         {
             Assert.True(plain.Query(goal).Success, goal);
             Assert.True(tiered.Query(goal).Success, goal + " under the module");
         }
     }
 
-    private static long FetchExits()
+    private static long FetchExits() => Exits("$fetch_global_var");
+
+    private static long Exits(string name)
     {
         foreach (var (n, a, hits) in WasmTierDelegate.BuiltinRanking())
-            if (n == "$fetch_global_var" && a == 2) return hits;
+            if (n == name && a == 2) return hits;
         return 0;
+    }
+
+    /// <summary>b_getval/2 and nb_getval/2 read the same image: a live cell
+    /// in the module. They differ from '$fetch_global_var' only on an unset
+    /// key, which they raise on, so that one goes to the host (the answers
+    /// test above checks the error).</summary>
+    [DiagFact]
+    public void GetvalReadsALiveCellInTheModule()
+    {
+        var (engine, _) = TieredEngine.Build(Corpus);
+        Assert.True(engine.Query("bgo(3).").Success);
+        WasmTierDelegate.ResetDiag();
+        Assert.True(engine.Query("bgo(300).").Success);
+        long b = Exits("b_getval"), nb = Exits("nb_getval");
+        o.WriteLine($"b_getval exits={b} nb_getval exits={nb} deopts={WasmTierDelegate.DiagDeopts}");
+        Assert.True(b < 300, $"{b} b_getval exits: the module is not reading the image");
+        Assert.True(nb < 300, $"{nb} nb_getval exits: the module is not reading the image");
+        Assert.Equal(0, WasmTierDelegate.DiagDeopts);
     }
 
     /// <summary>The counters: a live cell is read in the module (no exit,

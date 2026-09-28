@@ -204,10 +204,16 @@ public interface IWasmCompileEnv
     /// looking for an unbound variable and nothing else.</summary>
     bool IsInlineGround(int builtinId) => false;
 
-    /// <summary>Whether the builtin is '$fetch_global_var'/2, which the
-    /// compiled code answers from the global-variable image when the key is
-    /// there: the read clp(Z) makes on every propagator step.</summary>
+    /// <summary>Whether the builtin reads a global variable the compiled code
+    /// can answer from the global-variable image when the key is there:
+    /// '$fetch_global_var'/2, the read clp(Z) makes on every propagator step,
+    /// and b_getval/2 and nb_getval/2.</summary>
     bool IsInlineGlobalFetch(int builtinId) => false;
+
+    /// <summary>For an inline global read, whether an unset key FAILS
+    /// ('$fetch_global_var') rather than raising (b_getval, nb_getval: the
+    /// host raises it).</summary>
+    bool GlobalFetchFailsWhenUnset(int builtinId) => true;
 
     /// <summary>Whether the builtin is acyclic_term/1, which the compiled
     /// code walks itself (the module's own walker, beside ground/1's): the

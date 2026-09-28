@@ -1967,7 +1967,7 @@ public static class WasmPredicateCompiler
                     }
                     if (_env.IsInlineGlobalFetch(ins.I0))
                     {
-                        EmitInlineGlobalFetch(ins.Pc, () =>
+                        EmitInlineGlobalFetch(ins.Pc, _env.GlobalFetchFailsWhenUnset(ins.I0), () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
                                 _env.EncodeBuiltinId(ins.I0, ins.I1))));
@@ -2222,7 +2222,7 @@ public static class WasmPredicateCompiler
                     }
                     if (_env.IsInlineGlobalFetch(ins.I0))
                     {
-                        EmitInlineGlobalFetch(ins.Pc, () =>
+                        EmitInlineGlobalFetch(ins.Pc, _env.GlobalFetchFailsWhenUnset(ins.I0), () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
                                 () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
@@ -4701,6 +4701,35 @@ public static class WasmPredicateCompiler
             // inside $mqual -- because a wrapped goal gives up at the cache
             // probe, and a builtin is never in that cache: the host
             // publishes only the resolutions that end in a jump.
+            // `true` and `fail` (the atom in LC0) need no host: one carries
+            // on at the next instruction, the other fails here. As builtins
+            // they left the module on every call (call(G) with G = true: one
+            // exit per call). Only for call/1's own goal: call(true, X) is
+            // true/1, which is not this.
+            void EmitTrueFailGoal()
+            {
+                if (appended != 0) return;
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(_env.AtomCell(TrueAtomId)));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    if (ownFrame)
+                    {
+                        EmitAllocateFrame(0, pc);
+                        _metaFrameResume.Add(pc + 9);
+                    }
+                    GoTo(pc + 9);
+                }
+                CloseNested();
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(_env.AtomCell(FailAtomId)));
+                Op(new Int64Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+            }
+
             void EmitInlineGoalForm()
             {
                 // The goal's heap index and its functor cell, in locals of
@@ -4894,6 +4923,8 @@ public static class WasmPredicateCompiler
                     }
                     CloseNested();
                 }
+
+                EmitTrueFailGoal();
 
                 LoadSlot32(WasmAbi.AtomMarkerBase);
                 Op(new LocalSet(LT0));
@@ -5103,6 +5134,9 @@ public static class WasmPredicateCompiler
                         GoSlow();
                     }
                     CloseNested();
+                    // A variable goal in a clause arrives tagged with its
+                    // module, so the common call(G) reaches `true` here.
+                    EmitTrueFailGoal();
                     Op(new Int32Constant(1));
                     Op(new LocalSet(LMetaAtom));
                     Op(new Int32Constant(0));
@@ -7321,7 +7355,8 @@ public static class WasmPredicateCompiler
         /// the failure. The image is small (clp(Z) keeps one key) and read
         /// on every propagator step, so a linear scan is the right probe.
         /// </summary>
-        private void EmitInlineGlobalFetch(int pc, Action emitBuiltinExit)
+        private void EmitInlineGlobalFetch(int pc, bool failsWhenUnset,
+                                           Action emitBuiltinExit)
         {
             EmitFlagsCheck(pc);
             OpenBlock();                                    // $done
@@ -7357,10 +7392,12 @@ public static class WasmPredicateCompiler
                 // fails here. Measured on clp(Z): trigger_prop reads its
                 // current propagator before anything has set it, 6,400
                 // times on queens24, and every one left the module.
+                // b_getval/nb_getval raise for an unset key: the host does.
                 Op(new LocalGet(LT2));
                 Op(new Int32EqualZero());
                 OpenIf();
-                GoFail();
+                if (failsWhenUnset) GoFail();
+                else Op(new Branch(3));                     // -> $slow
                 CloseNested();
                 Op(new LocalGet(LT0));
                 Op(new Int64Load());
@@ -10249,6 +10286,10 @@ public static class WasmPredicateCompiler
         // baked id: atom ids are per process.
         private static readonly int CutAtomId =
             Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
+        private static readonly int TrueAtomId =
+            Shumway.Core.AtomTable.Intern("true", permanent: true).Id;
+        private static readonly int FailAtomId =
+            Shumway.Core.AtomTable.Intern("fail", permanent: true).Id;
 
         // ADR-051's two names, for the same reason and through the same
         // relocatable cells: a domain is '$fd_dom'(...) of some even arity,

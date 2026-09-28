@@ -156,11 +156,11 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
             Assert.True(WasmTierDelegate.DiagDeopts <= 1,
                 $"{what}: {WasmTierDelegate.DiagDeopts} deopts, so the module keeps asking the host");
         }
-        Check("go(300).", "call(true) in a module", 300);
+        Check("go(300).", "call(true) in a module: carries on in the module, no exit", 0);
         Check("goa(300).", "call(atom(a)) in a module: an inline form, no exit", 0);
         Check("goc(300).", "call(atom_codes(abc, _)) in a module", 300);
         Check("gob(300, _).", "call(succ(1), R) in a module", 300);
-        Check(UnderTheModule("ugo(300)."), "call(true) in user", 300);
+        Check(UnderTheModule("ugo(300)."), "call(true) in user: carries on in the module, no exit", 0);
         Check(UnderTheModule("ugc(300)."), "call(atom_codes(abc, _)) in user", 300);
         Check("gov(300).", "call(var(_)) in a module: a type test, no exit", 0);
         Check(UnderTheModule("ugv(300)."), "call(var(_)) in user: a type test, no exit", 0);
