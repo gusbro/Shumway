@@ -893,6 +893,19 @@ public sealed partial class Activation
         _stackTop = oldB;
     }
 
+    /// <summary>Unwinds both trails to the tops the current choice point saved,
+    /// and nothing else: the retry/trust that follows still restores the rest.
+    /// For a compiled restore that can unwind only the binding trail (the extra
+    /// trail's entries restore managed state); the retry finds the tops equal
+    /// on re-entry. No-op without a choice point.</summary>
+    public void UnwindTrailsToChoicePoint()
+    {
+        if (_b < 0) return;
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+        int ctlBase = _b + 1 + arity;
+        UnwindTrails((int)_stack[ctlBase + 4].Data, (int)_stack[ctlBase + 5].Data);
+    }
+
     /// <summary>Restores registers, E, CP, trails, and HeapTop from the current CP. Returns
     /// the saved arity. Does NOT set <see cref="Hb"/> — that differs between Retry and Trust
     /// and is the caller's responsibility.</summary>

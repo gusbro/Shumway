@@ -306,6 +306,13 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
+        // The wasm tier's retry/trust asks for this when its choice point's
+        // extra trail is above the live top: only the host can unwind it.
+        BuiltinsRegistry.Register("$unwind_cp_trails",         0, static engine =>
+        {
+            engine.UnwindTrailsToChoicePoint();
+            return true;
+        });
         // ADR-037 — soft-cut commit for a non-inline-eligible ( Cond *-> Then ; Else ).
         BuiltinsRegistry.Register("$soft_cut",                 1, MultiSolutionHelpers.SoftCut1);
         // Arity embedded native goal placeholder (ADR-022). The parser emits

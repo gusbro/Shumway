@@ -307,6 +307,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     // FunctorCell, which relocates by (name, arity). Baking the id itself
     // would be a cross-process bug: functor ids are handed out in intern
     // ORDER, so the same predicate is a different id in another process.
+    public int UnwindCpTrailsBuiltinId => _inner.UnwindCpTrailsBuiltinId;
     public int MqualFunctorId => _inner.MqualFunctorId;
     public int ColonFunctorId => _inner.ColonFunctorId;
 

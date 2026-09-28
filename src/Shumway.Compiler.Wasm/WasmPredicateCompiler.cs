@@ -8802,21 +8802,37 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64()); Op(new LocalSet(LCP));        // ctl[1]
 
             // The extra trail cannot be unwound from here; equal tops means
-            // there is nothing to unwind, anything else steps aside.
+            // there is nothing to unwind. Otherwise the host unwinds both
+            // trails (interleaved: an extra entry may restore a cell a binding
+            // entry also names) and re-enters this retry, which then finds
+            // the tops equal. Nothing above has written state the retry does
+            // not write again. Without the builtin, it steps aside.
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 });
             Op(new Int32WrapInt64());
             LoadSlot32(WasmAbi.ExtraTrailTop);
             Op(new Int32NotEqual());
             OpenIf();
-            // Leave the two operands where the host can read them: a guard
-            // that fires on every backtrack is a bug in the comparison, not
-            // a real difference, and only the values at the instant it fired
-            // tell the two apart.
-            StoreSlot64(WasmAbi.DiagA, () =>
-            { Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 }); });
-            StoreSlot64(WasmAbi.DiagB, () =>
-            { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
-            EmitDeopt(pcForDeopt, 23);
+            int unwindId = _env.UnwindCpTrailsBuiltinId;
+            if (unwindId >= 0)
+            {
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                    _env.EncodeBuiltinId(unwindId, -1))));
+                StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                    _env.EncodeAddress(pcForDeopt))));
+                EmitReturn(WasmVerdict.BuiltinRequest);
+            }
+            else
+            {
+                // Leave the two operands where the host can read them: a guard
+                // that fires on every backtrack is a bug in the comparison, not
+                // a real difference, and only the values at the instant it fired
+                // tell the two apart.
+                StoreSlot64(WasmAbi.DiagA, () =>
+                { Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 }); });
+                StoreSlot64(WasmAbi.DiagB, () =>
+                { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
+                EmitDeopt(pcForDeopt, 23);
+            }
             CloseNested();
 
             // Unwind the binding trail to the saved top.

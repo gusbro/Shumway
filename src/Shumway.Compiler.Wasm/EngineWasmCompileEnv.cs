@@ -53,6 +53,11 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public bool GlobalFetchFailsWhenUnset(int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name == "$fetch_global_var";
 
+    public int UnwindCpTrailsBuiltinId
+        => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
+               FunctorTable.Intern(AtomTable.Intern("$unwind_cp_trails", permanent: true).Id, 0),
+               out int id) ? id : -1;
+
     public bool IsInlineUnify(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

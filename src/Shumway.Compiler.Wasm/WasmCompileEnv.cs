@@ -226,6 +226,13 @@ public interface IWasmCompileEnv
     /// </summary>
     bool IsInlineSort(int builtinId) => false;
 
+    /// <summary>The builtin a retry/trust requests when its choice point's
+    /// extra trail sits below the live top: the host unwinds both trails to
+    /// the choice point and the retry runs again, now in the module. -1: the
+    /// restore steps aside instead (reason 23), leaving the whole alternative
+    /// to the interpreter.</summary>
+    int UnwindCpTrailsBuiltinId => -1;
+
     /// <summary>Whether the builtin is <c>$dom_same/2</c>, whose common
     /// answer a module can give without leaving: two IDENTICAL cells name one
     /// domain, and one domain is the same as itself. Anything else steps

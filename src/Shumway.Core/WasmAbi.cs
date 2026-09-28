@@ -111,9 +111,9 @@ public static class WasmAbi
     public const int StackLimit = 17;
     /// <summary>First binding-trail index that does not fit.</summary>
     public const int TrailLimit = 18;
-    /// <summary>The extra trail's top: saved into every choice point, and a
-    /// restore that would have to unwind it steps aside instead (nothing this
-    /// backend compiles pushes extra entries).</summary>
+    /// <summary>The extra trail's top: saved into every choice point. The
+    /// module never pushes extra entries, so a restore that would have to
+    /// unwind it asks the host to (the '$unwind_cp_trails' request).</summary>
     public const int ExtraTrailTop = 19;
     /// <summary>The logical-update view generation, saved into choice points.</summary>
     public const int ViewGen = 20;
