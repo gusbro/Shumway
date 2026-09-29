@@ -307,9 +307,11 @@ public sealed partial class IlPredicateCompiler
                     case MetaRouteKind.BarrierHelperJump:
                         engine.SetRegister(2, Cell.Int(cutBarrier));
                         engine.SetB0(cutBarrier);
+                        engine.Inferences++;   // the goal, as JumpToUserGoal counts it
                         return route.Arg;
                     case MetaRouteKind.Jump:
                         engine.SetB0(cutBarrier);
+                        engine.Inferences++;
                         return route.Arg;
                 }
             }
@@ -384,6 +386,7 @@ public sealed partial class IlPredicateCompiler
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 {
                     engine.SetB0(cutBarrier);
+                    engine.Inferences++;
                     return mangledAddr;
                 }
                 // ADR-038 — the module's import table (Source$name) before bare.
@@ -394,6 +397,7 @@ public sealed partial class IlPredicateCompiler
                     && addresses.TryGetValue(importedFid, out int importedAddr))
                 {
                     engine.SetB0(cutBarrier);
+                    engine.Inferences++;
                     return importedAddr;
                 }
             }
@@ -448,6 +452,9 @@ public sealed partial class IlPredicateCompiler
             }
             if (routeCacheable)
                 cache[routeKey] = new MetaRoute(userKind, address);
+            // The goal is one inference, as the interpreter's JumpToUserGoal
+            // counts it; the dispatch that follows does not count it again.
+            engine.Inferences++;
             return address;
         }
 

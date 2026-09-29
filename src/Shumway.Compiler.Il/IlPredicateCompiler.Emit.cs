@@ -157,6 +157,17 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
+    /// <summary>engine.Inferences++: one goal for time/1.</summary>
+    private static void EmitCountInference(Sigil.Emit<PredicateDelegate> emit)
+    {
+        emit.LoadArgument(0);
+        emit.Duplicate();
+        emit.LoadField(EngineInferencesField);
+        emit.LoadConstant(1L);
+        emit.Add();
+        emit.StoreField(EngineInferencesField);
+    }
+
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
         Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
@@ -210,6 +221,14 @@ public sealed partial class IlPredicateCompiler
                 emit.MarkLabel(joinLabel);
                 regZeroAtom = -1;
             }
+            // time/1 counts a goal wherever the interpreter would dispatch one,
+            // whatever the IL makes of the call: a branch inside the region, an
+            // inlined body, a self-tail loop. The wasm tier counts at the same
+            // opcodes (BumpGoals).
+            if (op is Opcode.Call or Opcode.Execute or Opcode.CallBuiltin
+                or Opcode.ExecuteBuiltin or Opcode.CallIl or Opcode.ExecuteIl
+                or Opcode.CallBytecode or Opcode.ExecuteBytecode)
+                EmitCountInference(emit);
             // Region compilation (Stage 3): a member block's proceed /
             // intra-region call become br's into the shared region method instead
             // of returning to the dispatch loop. Handled before the normal opcode

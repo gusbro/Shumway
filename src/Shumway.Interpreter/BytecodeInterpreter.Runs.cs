@@ -411,7 +411,6 @@ public sealed partial class BytecodeInterpreter
             if (Activation.IsResumeMarker(p) || _engine.Debug is not null
                 || Tier1Dispatcher is not { } t || !t.IsPredicateEntry(p))
                 return true;
-            _engine.Inferences++;   // time/1 goal-dispatch counter, as a call
             _engine.MaybeCollectHeapAtDispatch(p);
             var fn = t.OnDispatch(p);
             if (fn is null) return true;

@@ -1596,6 +1596,8 @@ public sealed partial class IlPredicateCompiler
         }
         else if (c.SelfTail)
         {
+            // The slice stops before the Execute, so it is counted here.
+            EmitCountInference(emit);
             emit.Branch(entry);          // staging + deallocate already in the slice
         }
         else if (c.CrossTailFid >= 0)
@@ -1606,6 +1608,7 @@ public sealed partial class IlPredicateCompiler
                 || !calleeMap.TryGetValue(c.CrossTailFid, out var tailTgt))
                 throw new InvalidOperationException(
                     "cross-tail clause emitted without a continuation context");
+            EmitCountInference(emit);
             emit.Branch(GetOrAddGuardContCopy(emit, gcCtx, c.CrossTailFid, tailTgt));
         }
         else

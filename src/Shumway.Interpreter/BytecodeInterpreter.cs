@@ -2983,8 +2983,10 @@ public sealed partial class BytecodeInterpreter
         _engine.IlTailCallPending = false;
         if (_engine.TakeIlDeopt()) return;
         int p = _engine.P;
+        // Not counted here: whoever resolved the goal counted it (the Tier-1
+        // meta-call, the wasm module's Execute).
         if (!Activation.IsResumeMarker(p) && Tier1Dispatcher is { } t && t.IsPredicateEntry(p))
-            DispatchToTier1OrBytecode(p, tailCall: true);
+            DispatchToTier1OrBytecode(p, tailCall: true, countGoal: false);
     }
 
     /// <summary>
@@ -3006,9 +3008,10 @@ public sealed partial class BytecodeInterpreter
     /// <param name="sitePc">The call instruction when the call comes from
     /// bytecode, -1 otherwise: reaching compiled code from there credits the
     /// caller (<see cref="ITier1Dispatcher.CreditCaller"/>).</param>
-    private void DispatchToTier1OrBytecode(int target, bool tailCall, int sitePc = -1)
+    private void DispatchToTier1OrBytecode(int target, bool tailCall, int sitePc = -1,
+        bool countGoal = true)
     {
-        _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
+        if (countGoal) _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
         // A resume marker (not a real bytecode address) names an IL-only
         // predicate by functor id — e.g. a --strip-wam predicate reached via
         // a runtime meta-call (CurrentFunctorAddresses maps it to the marker).
