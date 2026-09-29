@@ -825,7 +825,7 @@ public sealed partial class BytecodeInterpreter
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // Call is 9 bytes (opcode + addr + count)
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
-                    DispatchToTier1OrBytecode(target, tailCall: false);
+                    DispatchToTier1OrBytecode(target, tailCall: false, sitePc: pc);
                     break;
                 }
 
@@ -909,7 +909,7 @@ public sealed partial class BytecodeInterpreter
                         _engine.SetCp(pc + 9);
                     }
                     _engine.SetB0(_engine.B);
-                    DispatchToTier1OrBytecode(target, tailCall: lco);
+                    DispatchToTier1OrBytecode(target, tailCall: lco, sitePc: pc);
                     break;
                 }
 
@@ -936,7 +936,7 @@ public sealed partial class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
-                    DispatchToTier1OrBytecode(target, tailCall: true);
+                    DispatchToTier1OrBytecode(target, tailCall: true, sitePc: pc);
                     break;
                 }
 
@@ -970,6 +970,7 @@ public sealed partial class BytecodeInterpreter
                         HealIlSite(code, pc, functorId, isExecute: false);
                         continue;
                     }
+                    Tier1Dispatcher?.CreditCaller(pc);
                     _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (_engine.HasPendingWakeups)   // ADR-049
                     {
@@ -1074,6 +1075,7 @@ public sealed partial class BytecodeInterpreter
                         HealIlSite(code, pc, functorId, isExecute: true);
                         continue;
                     }
+                    Tier1Dispatcher?.CreditCaller(pc);
                     _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (_engine.HasPendingWakeups)   // ADR-049
                     {
@@ -1319,7 +1321,7 @@ public sealed partial class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call enters a new procedure
-                    DispatchToTier1OrBytecode(target, tailCall: true);
+                    DispatchToTier1OrBytecode(target, tailCall: true, sitePc: pc);
                     break;
                 }
 
@@ -3001,7 +3003,10 @@ public sealed partial class BytecodeInterpreter
     /// repeats the dispatch on the new target — so a chain of IL
     /// predicates that each tail-call another stays entirely in IL
     /// without bouncing through bytecode.</summary>
-    private void DispatchToTier1OrBytecode(int target, bool tailCall)
+    /// <param name="sitePc">The call instruction when the call comes from
+    /// bytecode, -1 otherwise: reaching compiled code from there credits the
+    /// caller (<see cref="ITier1Dispatcher.CreditCaller"/>).</param>
+    private void DispatchToTier1OrBytecode(int target, bool tailCall, int sitePc = -1)
     {
         _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
         // A resume marker (not a real bytecode address) names an IL-only
@@ -3048,6 +3053,11 @@ public sealed partial class BytecodeInterpreter
             {
                 _engine.SetPc(target);
                 return;
+            }
+            if (sitePc >= 0)
+            {
+                Tier1Dispatcher!.CreditCaller(sitePc);
+                sitePc = -1;   // a chained tail call comes from compiled code
             }
             if (!ilFn(_engine))
             {

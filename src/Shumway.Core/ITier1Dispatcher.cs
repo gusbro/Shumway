@@ -41,6 +41,13 @@ public interface ITier1Dispatcher
     /// accepts), as opposed to a continuation inside a clause.</summary>
     bool IsPredicateEntry(int address);
 
+    /// <summary>A call from bytecode at <paramref name="sitePc"/> reached
+    /// compiled code. Counts one invocation of the predicate that contains the
+    /// site: one called rarely but calling promoted code in a loop (a
+    /// generate-and-test driver) promotes too, where counting its own calls
+    /// alone never gets it there.</summary>
+    void CreditCaller(int sitePc);
+
     /// <summary>The delegate a functor had before it was evicted, for a
     /// resume only (a cursor past the entry): a choice point or a
     /// continuation left in a call that began before the eviction. That

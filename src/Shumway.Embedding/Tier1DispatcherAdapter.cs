@@ -76,6 +76,50 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
     public bool IsPredicateEntry(int address) => _predicatesByAddress.ContainsKey(address);
 
+    // Call site -> the predicate whose code holds it (null: none), filled on
+    // first use; the predicates' spans, sorted by address, for the lookup.
+    private readonly Dictionary<int, CompiledPredicate?> _callerBySite = new();
+    private int[]? _spanStarts;
+    private CompiledPredicate[]? _spanPreds;
+
+    public void CreditCaller(int sitePc)
+    {
+        if (!_callerBySite.TryGetValue(sitePc, out var caller))
+            _callerBySite[sitePc] = caller = PredicateContaining(sitePc);
+        if (caller is null) return;
+        int functorId = caller.FunctorId;
+        if (_store.TryGet(functorId) is not null || _store.IsUnpromotable(functorId)) return;
+        if (SuspendsWasm(functorId)) return;
+        // Counted as a dispatch of the caller, the way OnDispatch counts one:
+        // the wasm tier first, then IL.
+        if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm)
+        {
+            int addr = AddressOfFunctor(functorId);
+            if (addr >= 0) wasm.RecordDispatch(functorId, caller, addr, _engine);
+            return;
+        }
+        _store.RecordInvocation(functorId, caller, CalleeMap);
+    }
+
+    private CompiledPredicate? PredicateContaining(int pc)
+    {
+        if (_spanStarts is null)
+        {
+            var starts = new List<int>(_predicatesByAddress.Count);
+            foreach (var (addr, _) in _predicatesByAddress) starts.Add(addr);
+            starts.Sort();
+            _spanStarts = starts.ToArray();
+            _spanPreds = new CompiledPredicate[_spanStarts.Length];
+            for (int i = 0; i < _spanStarts.Length; i++)
+                _spanPreds[i] = _predicatesByAddress[_spanStarts[i]];
+        }
+        int idx = System.Array.BinarySearch(_spanStarts, pc);
+        if (idx < 0) idx = ~idx - 1;
+        if (idx < 0) return null;
+        var pred = _spanPreds![idx];
+        return pc < _spanStarts[idx] + pred.Bytecode.Length ? pred : null;
+    }
+
     public int AddressOfFunctor(int functorId)
     {
         if (_addressByFid is null)

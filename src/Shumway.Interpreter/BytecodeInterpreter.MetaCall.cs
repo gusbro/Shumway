@@ -873,7 +873,7 @@ public sealed partial class BytecodeInterpreter
         if (Activation.CpPushRing is { } jr)
             jr[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
                 = ((long)-4 << 32) | (uint)address;
-        DispatchToTier1OrBytecode(address, tail);
+        DispatchToTier1OrBytecode(address, tail, sitePc: pc);
         return true;
     }
 
