@@ -395,6 +395,35 @@ public sealed partial class BytecodeInterpreter
         return del;
     }
 
+    /// <summary><see cref="ContinueIlTailCall"/> for an alternative that
+    /// TryBacktrack resumed: a predicate entry reached by address is
+    /// dispatched like any call, and its failure is one more failure of the
+    /// backtrack in progress. False means keep backtracking; true, run from
+    /// Pc (the continuation already set, or bytecode). Under a debug session
+    /// Pc runs as bytecode, as before: debuggable code is Tier-0.</summary>
+    private bool ContinueIlTailCallOnRedo()
+    {
+        while (true)
+        {
+            _engine.IlTailCallPending = false;
+            if (_engine.TakeIlDeopt()) return true;
+            int p = _engine.P;
+            if (Activation.IsResumeMarker(p) || _engine.Debug is not null
+                || Tier1Dispatcher is not { } t || !t.IsPredicateEntry(p))
+                return true;
+            _engine.Inferences++;   // time/1 goal-dispatch counter, as a call
+            _engine.MaybeCollectHeapAtDispatch(p);
+            var fn = t.OnDispatch(p);
+            if (fn is null) return true;
+            if (!fn(_engine)) return false;
+            if (!_engine.IlTailCallPending)
+            {
+                _engine.SetPc(_engine.Cp);
+                return true;
+            }
+        }
+    }
+
     private bool TryBacktrack()
     {
         Shumway.Core.Profiler.Backtrack();
@@ -438,13 +467,10 @@ public sealed partial class BytecodeInterpreter
                     // continuation, just like bytecode proceed would.
                     if (_engine.IlTailCallPending)
                     {
-                        _engine.IlTailCallPending = false;
-                        // The resume is bytecode either way here; clear the
-                        // deopt marking so it cannot outlive this one.
-                        _engine.TakeIlDeopt();
                         if (Activation.CpPushRing is { } r1)
                             r1[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
                                 = ((long)-3 << 32) | (uint)_engine.P;
+                        if (!ContinueIlTailCallOnRedo()) continue;
                     }
                     else
                     {
@@ -496,8 +522,7 @@ public sealed partial class BytecodeInterpreter
                     {
                         if (_engine.IlTailCallPending)
                         {
-                            _engine.IlTailCallPending = false;
-                            _engine.TakeIlDeopt();
+                            if (!ContinueIlTailCallOnRedo()) continue;
                         }
                         else
                         {

@@ -14,6 +14,10 @@ public sealed class IlMetaCallTargetTests
         f(X, Y) :- A is X * 3 + 1, Y is A mod 1000 + X.
         g(X) :- X > 2.
         h(X, X).
+        k(Y) :- Y = 2.
+        t(Y) :- Y = 7.
+        pick(_, 1).
+        pick(G, X) :- call(G, X).
         drive(_, 0) :- !.
         drive(G, N) :- call(G, N, _), N1 is N - 1, drive(G, N1).
         keep(L, K) :- include(g, L, K).
@@ -53,6 +57,35 @@ public sealed class IlMetaCallTargetTests
         }
         Assert.True(promoted.Contains("f/2"),
             $"f/2 did not promote\n{e.IlPromotion.DescribePromotionState()}");
+    }
+
+    /// <summary>The same through a choice point: findall/3 asks for the next
+    /// answer from outside the region, so TryBacktrack resumes pick/2's second
+    /// clause, whose tail is the meta-call.</summary>
+    [Fact]
+    public void AMetaCallInAResumedAlternativeReachesItsTarget()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(Corpus);
+        var promoted = new HashSet<string>();
+        for (int round = 0; round < 5 && !promoted.Contains("pick/2"); round++)
+        {
+            Assert.True(e.Query("findall(Y, pick(k, Y), L), L == [1, 2].").Success);
+            e.IlPromotion.WaitForPendingPromotions();
+            promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
+        }
+        Assert.Contains("pick/2", promoted);
+        Assert.DoesNotContain("t/1", promoted);
+        for (int round = 0; round < 5 && !promoted.Contains("t/1"); round++)
+        {
+            Assert.True(e.Query("findall(Y, pick(t, Y), L), L == [1, 7].").Success);
+            e.IlPromotion.WaitForPendingPromotions();
+            promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
+        }
+        Assert.True(promoted.Contains("t/1"),
+            $"t/1 did not promote\n{e.IlPromotion.DescribePromotionState()}");
+        Assert.True(e.Query("findall(Y, pick(t, Y), L), L == [1, 7].").Success);
     }
 
     [Fact]
