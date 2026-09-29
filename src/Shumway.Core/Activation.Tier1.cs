@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Numerics;
 
 namespace Shumway.Core;
@@ -425,7 +426,12 @@ public sealed partial class Activation
     /// <c>retry_me_else</c>. The upcoming <c>CheckVisible</c> instruction
     /// reads this against a clause's <c>born</c> / <c>died</c> to honour
     /// the ISO logical update view. Zero outside dynamic dispatch.</summary>
-    public long CurrentViewGen { get; set; }
+    public long CurrentViewGen
+    {
+        get => _currentViewGen;
+        set => _currentViewGen = value;
+    }
+    [EditorBrowsable(EditorBrowsableState.Never)] public long _currentViewGen;
 
     /// <summary>Name of the builtin currently executing, set by the
     /// <c>CallBuiltin</c> dispatch right before invoking the impl. Read
@@ -1321,7 +1327,16 @@ public sealed partial class Activation
     /// every event. Used by the IL debug session to track
     /// whether a meta-CP's saved <c>_e</c> still names a valid
     /// frame at pop time.</summary>
-    public static bool TraceCpStack { get; set; }
+    public static bool TraceCpStack
+    {
+        get => _traceCpStack;
+        set
+        {
+            _traceCpStack = value;
+            FrameHooks = FrameHooksWith(value);
+        }
+    }
+    private static bool _traceCpStack;
 
     public (Func<Activation, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
     {

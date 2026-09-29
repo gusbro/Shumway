@@ -80,17 +80,61 @@ index nodes:
    point materialised at a guard's commit, and an ADR-034 dynamic fallback's.
    `rfail` resumes those of the region as ADR-057 does.
 
-6. **Deferred: the push and the restore inline in the region's IL.** Emitted
-   code reaches the activation only through public methods, because persisted
-   IL is loaded without `InternalsVisibleTo`. Inlining the frame's stores and
-   loads would mean exposing the stack array, its tops and the registers to
-   generated code, a decision of its own, for what the measurements below leave
-   (about 5 to 10%).
+6. **The region emits the push and the restore inline**, as the wasm tier does
+   (`EmitPushChoicePoint`, `EmitRestoreCommon`):
+   - the push stores the arity, the argument registers and the ten control
+     words, in the order and with the RawInt tagging of `PushChoicePoint`, then
+     sets `B`, `HB` and the stack top. It compares the new top against the
+     stack's length first and calls `EnsureStackCapacity` only when the frame
+     would not fit;
+   - a resume entry loads what `RestoreCommonFromCurrentCp` loads, and calls
+     the trail unwind only when a trail top moved since the push.
+
+   Emitted code reaches the activation only through its public members,
+   because persisted IL is an ordinary assembly. So the activation exposes the
+   state those sequences touch as a low-level public surface: the stack and
+   register arrays, the stack top, `E`, `CP`, `B`, `B0`, `HB`, the heap top,
+   the two trail tops and the view generation. They are public fields, hidden
+   from editor completion and documented as reserved for generated code. Fields
+   and not accessors: an accessor is one more call for the JIT to inline, and
+   a region has hundreds of them. One form serves the regions compiled at run
+   time, the persisted ones and the .NET Framework target.
+
+   The stack array is replaced when it grows, so the emitted code reads the
+   array reference after the capacity check and again after any call.
+
+   The inline form does not cover everything the methods do, and takes the
+   call in those cases:
+   - a hook of the push or the restore is on (`TraceCpStack`, the push ring,
+     the attribute sweep, a diagnostic or a profile build): the methods carry
+     the hooks, and the activation publishes one static flag, `FrameHooks`,
+     that says whether any is on;
+   - the activation trails everything (a debug session), where HB is not the
+     heap top;
+   - the frame does not fit the stack, which must grow;
+   - the frame on top was not pushed with the arity the resume entry expects.
+
+   A region compiled for verification or for the debugger emits the calls.
+
+   Environment frames (`Allocate`, `Deallocate`) can take the same form. They
+   are a separate step, measured on its own.
 
 Independent of the above and in the same arc: `PushChoicePoint` keeps its
 cold diagnostic branch (`TraceCpStack`) out of line. Today that branch's
 interpolated string makes the JIT zero an 80-byte frame on every push, on
 Tier-0 as well.
+
+## Alternatives considered for item 6
+
+- **Inline only in regions compiled at run time.** A `DynamicMethod` can skip
+  visibility and reach the private fields, with no change to the public
+  surface. Rejected: it leaves two emission forms for one operation, and the
+  form a program ships as (a linked bundle) would be the one without the gain.
+- **`IgnoresAccessChecksTo` on the bundle's assembly.** No public surface
+  either, but it rests on an attribute the runtimes honour without documenting
+  it, unverified for `PersistedAssemblyBuilder` and for .NET Framework 4.8.
+- **`UnsafeAccessor`.** .NET 8 and later only; the .NET Framework target
+  (ADR-043) has no equivalent.
 
 ## Why this is sound
 
@@ -105,6 +149,13 @@ The side stack's other users do not see these choice points: cut (the
 BP dead whatever it holds; `ReconcileIlChoicePointsToB` drops only entries.
 A region marker in a BP is a value the dispatch loop already resolves.
 
+The inline sequences of item 6 are the stores and loads of the methods they
+replace, on the same frame layout and from the same layout constants. The
+frame's invariants hold for that reason: control words tagged RawInt
+(ADR-016), the saved view generation (ADR-015), the saved cut barrier. A
+resume may meet a frame pushed by the method or by inline code, and the
+reverse; they are the same frame.
+
 ## Expected gain (before measuring)
 
 From the measured parts of the 95 ns cycle: the side-stack push and pop and
@@ -116,8 +167,8 @@ of the cycle. `queens(9)` has about 3M cycles (285 of its 490 ms), so 15 to
 
 ## Results
 
-Minimum over 8 processes per variant, ABBA against ADR-057, machine idle,
-both variants in the same clock mode:
+Items 1 to 5. Minimum over 8 processes per variant, ABBA against ADR-057,
+machine idle, both variants in the same clock mode:
 
 | | ADR-057 | this ADR |
 |---|---:|---:|
@@ -128,6 +179,18 @@ both variants in the same clock mode:
 Without the retry (resume entries that pop and push again), `bc` gained 5%.
 `queens(9)` gains little: its cost is mostly in the region's own code
 (unification of lists, arithmetic comparisons), not in the choice point.
+
+Item 6, ABBA against its parent commit, 12 processes per variant, heap cells
+and inferences identical in both:
+
+| | calls | inline, minimum | inline, median |
+|---|---:|---:|---:|
+| `queens(9)` by permutation (`boards.pl`) | 0.391 s | 0.354 s (-9.5%) | -8.4% |
+| `bc3(3000000)` (a push, a retry and a trust per iteration) | 0.453 s | 0.433 s (-4.4%) | -3.7% |
+| `bc(4000000)` (a push and a trust per iteration) | 0.354 s | 0.360 s (+1.7%) | -2.0% |
+
+`bc` is within the clock's noise. `queens(9)` gains the most because its
+choice points have live arguments and its frames are restored many times over.
 
 ## Risks
 
@@ -141,6 +204,13 @@ Without the retry (resume entries that pop and push again), `bc` gained 5%.
 - **Debugger.** User code runs Tier-0 under a session; the prelude's regions
   can backtrack through a marker BP, which the redo port reports as a bytecode
   choice point with the marker as its address.
+- **The frame is written in three places** (item 6): the activation's methods,
+  the IL emitter and the wasm emitter. A change to the layout that misses one
+  corrupts the stack without an error. A test compares, cell by cell, a frame
+  pushed by inline code with one pushed by `PushChoicePoint`.
+- **A public surface that can corrupt the engine** (item 6). Host code that
+  writes through the low-level members breaks invariants no check catches.
+  They are reserved for generated code and say so.
 
 ## Validation
 
@@ -150,3 +220,8 @@ gate, persisted-IL bundles, and the Logtalk and Scryer suites. Heap cells and
 inferences of `time/1` do not move. The gain: `bc`, `bt`, `queens(9)` and the
 Van Roy baseline against the parent commit, minimum over 8 processes per
 variant (the notebook's clock is bimodal per process).
+
+For item 6, in addition: the frame comparison above, the heap-cell and
+inference parity tests (Tier-1 against Tier-0), a persisted bundle whose
+regions backtrack (the same inline form, loaded from an assembly), the
+.NET Framework lane, and a run with a hook on, which must take the calls.

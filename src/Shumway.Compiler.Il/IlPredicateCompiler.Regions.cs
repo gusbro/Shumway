@@ -103,6 +103,12 @@ public sealed partial class IlPredicateCompiler
         // next) instead of popping and pushing again.
         public Dictionary<int, (int Next, Sigil.Label AfterPush)> RetryPlan = new();
         public int CurrentMemberIndex;
+        // ADR-058 item 6: whether the choice points are pushed and restored
+        // inline, the arity each alternative's choice point was pushed with,
+        // and the locals the inline sequences share.
+        public bool InlineFrames;
+        public Dictionary<int, int> AltArity = new();
+        public FrameLocals? Frame;
     }
 
     /// <summary>Stage-3 eligibility: a region this minimal emit can handle — at
@@ -489,6 +495,9 @@ public sealed partial class IlPredicateCompiler
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
             ClauseAltCursor = clauseAltCursor, IndexNodeCursor = indexNodeCursor,
             ResumeCursor = resumeCursor,
+            // Sigil's verifier rejects the write through a cell's field, and a
+            // debuggable build wants the calls it can break on.
+            InlineFrames = !(DoVerify || DebugMode),
         };
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
@@ -555,19 +564,30 @@ public sealed partial class IlPredicateCompiler
         foreach (var (alt, r) in resumeCursor)
         {
             emit.MarkLabel(cursorLabels[r]);
-            emit.LoadArgument(0);
-            if (ctx.RetryPlan.TryGetValue(alt, out var retry))
+            bool retrying = ctx.RetryPlan.TryGetValue(alt, out var retry);
+            if (ctx.InlineFrames && ctx.AltArity.TryGetValue(alt, out int altArity))
+            {
+                var frame = FrameLocalsOf(emit, ctx);
+                if (retrying)
+                {
+                    EmitResumeMarker(emit, regionFid, resumeCursor[retry.Next]);
+                    emit.StoreLocal(frame.Marker);
+                }
+                EmitInlineRestore(emit, frame, altArity, retrying);
+            }
+            else if (retrying)
             {
                 // WAM retry: restore, keep the frame, BP to the next alternative.
+                emit.LoadArgument(0);
                 EmitResumeMarker(emit, regionFid, resumeCursor[retry.Next]);
                 emit.Call(EngineRetryMeElseMethod);
-                emit.Branch(retry.AfterPush);
             }
             else
             {
+                emit.LoadArgument(0);
                 emit.Call(EngineTrustMeMethod);
-                emit.Branch(cursorLabels[alt]);
             }
+            emit.Branch(retrying ? retry.AfterPush : cursorLabels[alt]);
         }
     }
 
@@ -577,6 +597,15 @@ public sealed partial class IlPredicateCompiler
     private static void EmitRegionChoicePoint(
         Sigil.Emit<PredicateDelegate> emit, RegionEmitContext ctx, int altCursor, int arity)
     {
+        if (ctx.InlineFrames)
+        {
+            ctx.AltArity[altCursor] = arity;
+            var frame = FrameLocalsOf(emit, ctx);
+            EmitResumeMarker(emit, ctx.RegionFid, ctx.ResumeCursor[altCursor]);
+            emit.StoreLocal(frame.Marker);
+            EmitInlinePush(emit, frame, arity);
+            return;
+        }
         emit.LoadArgument(0);
         emit.LoadConstant(arity);
         EmitResumeMarker(emit, ctx.RegionFid, ctx.ResumeCursor[altCursor]);

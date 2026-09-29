@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Numerics;
 
 namespace Shumway.Core;
@@ -12,11 +13,11 @@ public sealed partial class Activation
     // the current procedure from CPs that pre-existed it. _writeMode and
     // _unifyPointer track the read/write state set up by get_structure/get_list/
     // put_structure/put_list and stepped through by the unify_* family.
-    private int _e = -1;
-    private int _b = -1;
-    private int _b0 = -1;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _e = -1;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _b = -1;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _b0 = -1;
     private int _p = -1;
-    private int _cp = -1;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _cp = -1;
     private bool _writeMode;
     private int _unifyPointer;
 
@@ -147,7 +148,7 @@ public sealed partial class Activation
             if (value) _hb = int.MaxValue;
         }
     }
-    private bool _trailEverything;
+    [EditorBrowsable(EditorBrowsableState.Never)] public bool _trailEverything;
 
     private void AssignHb(int value) => _hb = _trailEverything ? int.MaxValue : value;
 
@@ -813,6 +814,21 @@ public sealed partial class Activation
         System.Environment.GetEnvironmentVariable("SHUMWAY_PC_RING") == "1"
             ? new long[CpPushRingSize] : null;
     public static int CpPushRingPos;
+
+    /// <summary>True while a hook of the choice point push or restore is on:
+    /// the stack trace, the push ring, the attribute sweep, a diagnostic or a
+    /// profile build. The methods carry the hooks, so compiled code tests this
+    /// before its inline form and calls them when it is set (ADR-058).
+    /// Reserved for generated code.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static bool FrameHooks = FrameHooksWith(traceCpStack: false);
+
+    private static bool FrameHooksWith(bool traceCpStack) =>
+#if SHUMWAY_DIAG || SHUMWAY_PROFILE
+        true;
+#else
+        traceCpStack || CpPushRing is not null || AttrSweepEnabled;
+#endif
 
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {

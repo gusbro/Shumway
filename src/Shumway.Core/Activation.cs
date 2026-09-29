@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Numerics;
 
 namespace Shumway.Core;
@@ -29,10 +30,16 @@ public sealed partial class Activation
 {
     private readonly ActivationConfig _config;
 
+    // The fields below that are public and hidden from completion are the
+    // machine state compiled code reads and writes in place (ADR-058): a call
+    // per access is what inlining the choice point removes, and persisted IL
+    // sees public members only. Reserved for generated code: a write from
+    // anywhere else breaks invariants nothing checks.
+
     // ----- Heap -----
     private Cell[] _heap;
-    private int _heapTop;
-    private int _hb;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _heapTop;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _hb;
 
     // Monotonic count of cells reserved on the WAM heap over the engine's
     // lifetime. Backtracking rewinds _heapTop but never this counter — it
@@ -47,14 +54,14 @@ public sealed partial class Activation
     private long _cellsAllocated;
 
     // ----- Stack (storage only in this phase; no frame operations yet) -----
-    private Cell[] _stack;
+    [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _stack;
 
     // ----- Registers -----
-    private Cell[] _registers;
+    [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _registers;
 
     // ----- Trails -----
     private int[] _bindingTrail;
-    private int _bindingTrailTop;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _bindingTrailTop;
 
     private ExtraTrailEntry[] _extraTrail;
 
@@ -161,8 +168,8 @@ public sealed partial class Activation
     public List<Cell>? CompareStack;
     public HashSet<long>? CompareVisited;
 
-    private int _stackTop;
-    private int _extraTrailTop;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _stackTop;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _extraTrailTop;
 
     /// <summary>Output sink the I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="Console.Out"/>;
