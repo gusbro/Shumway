@@ -92,6 +92,16 @@ public sealed partial class IlPredicateCompiler
         public Dictionary<(int Member, int Clause), int> ClauseAltCursor = null!;
         // (member index, node index 0..K-1) → the IndexNode cursor (Stage 6c).
         public Dictionary<(int Member, int Node), int> IndexNodeCursor = null!;
+        // ADR-058: an alternative's cursor → its RESUME cursor, the entry a
+        // choice point's marker names; it restores and pops the choice point
+        // (TrustMe) and branches to the alternative's own label, which forward
+        // entries (index resolve, a CP-free guard's failure) reach directly.
+        public Dictionary<int, int> ResumeCursor = null!;
+        // An alternative that pushes the choice point for the next one on the
+        // plain path: its cursor → (the next alternative's cursor, the label
+        // right after that push). Its resume entry retries (restore, BP to the
+        // next) instead of popping and pushing again.
+        public Dictionary<int, (int Next, Sigil.Label AfterPush)> RetryPlan = new();
         public int CurrentMemberIndex;
     }
 
@@ -437,7 +447,12 @@ public sealed partial class IlPredicateCompiler
         foreach (var m in region.Members)
             memberEntry[m.FunctorId] = emit.DefineLabel($"rmember_{m.FunctorId}");
 
-        var cursorLabels = new Sigil.Label[plan.TotalCursors];
+        int resumeCount = 0;
+        foreach (var s in plan.Sites)
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                resumeCount++;
+        var cursorLabels = new Sigil.Label[plan.TotalCursors + resumeCount];
+        var resumeCursor = new Dictionary<int, int>(resumeCount);
         cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
         var cursorBySite = new Dictionary<(int, int), int>();
         var clauseAltCursor = new Dictionary<(int, int), int>();
@@ -453,6 +468,12 @@ public sealed partial class IlPredicateCompiler
                 continue;
             }
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+            {
+                int r = plan.TotalCursors + resumeCursor.Count;
+                resumeCursor[s.Cursor] = r;
+                cursorLabels[r] = emit.DefineLabel($"rresume_{s.Cursor}");
+            }
             if (s.Kind == RegionCursorKind.ClauseAlt)
                 clauseAltCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
             else if (s.Kind == RegionCursorKind.IndexNode)
@@ -467,6 +488,7 @@ public sealed partial class IlPredicateCompiler
             DispatchLabel = dispatchLabel, FailLabel = failLabel, MemberEntry = memberEntry,
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
             ClauseAltCursor = clauseAltCursor, IndexNodeCursor = indexNodeCursor,
+            ResumeCursor = resumeCursor,
         };
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
@@ -516,16 +538,49 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         if (pushSites > 0)
         {
-            // ADR-057: a choice point this region pushed is resumed here, at
+            // ADR-057/058: a choice point this region pushed is resumed here, at
             // its cursor, instead of by the interpreter re-invoking the region.
             emit.LoadArgument(0);
             effectiveSelf(emit);
+            EmitFunctorId(emit, regionFid);
             emit.LoadLocalAddress(curLoc);
-            emit.Call(EngineTryResumeOwnIlCpMethod);
+            emit.Call(EngineTryResumeOwnCpMethod);
             emit.BranchIfTrue(dispatchLabel);
         }
         emit.LoadConstant(false);
         emit.Return();
+
+        // ADR-058 resume entries: restore and pop the choice point whose marker
+        // named this cursor, then run the alternative from its own label.
+        foreach (var (alt, r) in resumeCursor)
+        {
+            emit.MarkLabel(cursorLabels[r]);
+            emit.LoadArgument(0);
+            if (ctx.RetryPlan.TryGetValue(alt, out var retry))
+            {
+                // WAM retry: restore, keep the frame, BP to the next alternative.
+                EmitResumeMarker(emit, regionFid, resumeCursor[retry.Next]);
+                emit.Call(EngineRetryMeElseMethod);
+                emit.Branch(retry.AfterPush);
+            }
+            else
+            {
+                emit.Call(EngineTrustMeMethod);
+                emit.Branch(cursorLabels[alt]);
+            }
+        }
+    }
+
+    /// <summary>ADR-058: push a plain choice point for the alternative at
+    /// <paramref name="altCursor"/>, its BP the region marker of that
+    /// alternative's resume entry. No IL side-stack entry.</summary>
+    private static void EmitRegionChoicePoint(
+        Sigil.Emit<PredicateDelegate> emit, RegionEmitContext ctx, int altCursor, int arity)
+    {
+        emit.LoadArgument(0);
+        emit.LoadConstant(arity);
+        EmitResumeMarker(emit, ctx.RegionFid, ctx.ResumeCursor[altCursor]);
+        emit.Call(EnginePushChoicePointMethod);
     }
 
     /// <summary>Emit a MULTI-clause member's block (Stage 4) — a try_me_else chain.
@@ -657,11 +712,14 @@ public sealed partial class IlPredicateCompiler
 
             if (i < n - 1)
             {
-                emit.LoadArgument(0);                         // engine
-                emitSelf(emit);                               // → region delegate
-                emit.LoadConstant(ctx.ClauseAltCursor[(mi, i + 1)]);
-                emit.LoadConstant(member.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int nextAlt = ctx.ClauseAltCursor[(mi, i + 1)];
+                EmitRegionChoicePoint(emit, ctx, nextAlt, member.Arity);
+                if (i > 0)
+                {
+                    var afterPush = emit.DefineLabel($"rretry_rm{mi}_{i}");
+                    emit.MarkLabel(afterPush);
+                    ctx.RetryPlan[ctx.ClauseAltCursor[(mi, i)]] = (nextAlt, afterPush);
+                }
             }
             EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
@@ -741,11 +799,10 @@ public sealed partial class IlPredicateCompiler
             }
             else if (next >= 0)
             {
-                emit.LoadArgument(0);                            // engine
-                emitSelf(emit);                                 // → region delegate
-                emit.LoadConstant(ctx.IndexNodeCursor[(mi, next)]);   // next node's region cursor
-                emit.LoadConstant(member.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int nextNode = ctx.IndexNodeCursor[(mi, next)];
+                EmitRegionChoicePoint(emit, ctx, nextNode, member.Arity);
+                ctx.RetryPlan[ctx.IndexNodeCursor[(mi, n)]] =
+                    (nextNode, bodyLabels[info.Nodes[n].ClauseIndex]);
             }
             emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
         }

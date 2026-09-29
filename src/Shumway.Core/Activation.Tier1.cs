@@ -1247,6 +1247,40 @@ public sealed partial class Activation
         return true;
     }
 
+    /// <summary>ADR-058 — as <see cref="TryResumeOwnIlChoicePoint"/>, and also
+    /// for a plain choice point whose BP is a resume marker of the region rooted
+    /// at <paramref name="rootFunctorId"/>. That one is not restored here: the
+    /// cursor it names is the alternative's resume entry, which restores and
+    /// pops it itself (TrustMe), as a bytecode retry does.</summary>
+    public bool TryResumeOwnChoicePoint(
+        Func<Activation, int, bool> self, int rootFunctorId, out int cursor)
+    {
+        if (_b > BacktrackFloor && Debug is null
+            && !(_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key == _b))
+        {
+            int arity = (int)_stack[_b + CpArityOffset].Data;
+            int bp = (int)_stack[_b + CpBpOffset(arity)].Data;
+            if (IsResumeMarker(bp))
+            {
+                var (fid, cur) = DecodeResumeMarker(bp);
+                if (fid == rootFunctorId)
+                {
+                    Profiler.Backtrack();
+                    BacktrackSafePoint();
+                    if (CpPushRing is { } ring)
+                        ring[CpPushRingPos++ & (CpPushRingSize - 1)] = ((long)-6 << 32) | (uint)cur;
+                    CountLocalResume(0);
+                    cursor = cur;
+                    return true;
+                }
+            }
+            CountLocalResume(2);
+            cursor = 0;
+            return false;
+        }
+        return TryResumeOwnIlChoicePoint(self, out cursor);
+    }
+
     /// <summary>ADR-057 local resumptions, by outcome: [0] resumed, [1] at
     /// the floor or no IL choice point, [2] another code's choice point,
     /// [3] declined for a debug session. Diagnostic.</summary>

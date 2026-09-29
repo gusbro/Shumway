@@ -45,6 +45,29 @@ public sealed class IlLocalBacktrackTests
         "findall(Q, queens(6, Q), L).",
     };
 
+    /// <summary>A failure-driven loop whose every retry fails outside the region
+    /// (the fail/0 is in the query) re-enters it through TryBacktrack's marker
+    /// path, and that path is the only safe point the loop passes: without it
+    /// time_out/3 never fired and the query ran forever.</summary>
+    [Fact]
+    public void AFailureDrivenLoopIntoARegionStaysInterruptible()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        e.IlPromotion.Threshold = 1;
+        // length/2's open enumeration: its retry extends the list without a
+        // call, so no call-boundary safe point interrupts it either.
+        for (int i = 0; i < 3; i++) e.Query("length(L, N), N >= 50, !.");
+        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.PromotedFunctorIds().Any(), "length/2's enumerator did not promote");
+
+        bool? done = null;
+        var t = new System.Threading.Thread(() =>
+            done = e.Query("time_out((length(_, _), fail), 200, R), R == time_out.").Success);
+        t.Start();
+        Assert.True(t.Join(30_000), "time_out/3 never interrupted the loop");
+        Assert.True(done, "the loop did not end in time_out");
+    }
+
     private static string Answer(PrologEngine e, string goal)
     {
         var r = e.Query(goal);

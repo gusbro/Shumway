@@ -822,8 +822,7 @@ public sealed partial class Activation
         int size = CpSize(arity);
         EnsureStackCapacity(size);
 
-        if (TraceCpStack)
-            System.Console.Error.WriteLine($"[cp-stack] push  _b={_b} _e={_e} _stackTop={_stackTop} bp=0x{nextClauseAddr:X} arity={arity} -> newB={_stackTop}");
+        if (TraceCpStack) TracePush(nextClauseAddr, arity);
         int newB = _stackTop;
         // Control words are tagged RawInt (ADR-016) so the heap GC never
         // mistakes a small control value for a heap Ref; only the saved
@@ -856,6 +855,13 @@ public sealed partial class Activation
         _b = newB;
         AssignHb(_heapTop);
     }
+
+    // Out of line: the interpolated string made the JIT zero an 80-byte frame
+    // on every push, Tier-0 and Tier-1 alike, for a branch that never runs.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void TracePush(int nextClauseAddr, int arity)
+        => System.Console.Error.WriteLine($"[cp-stack] push  _b={_b} _e={_e} _stackTop={_stackTop} bp=0x{nextClauseAddr:X} arity={arity} -> newB={_stackTop}");
 
     /// <summary>
     /// Restores engine state from the current choice point and updates its BP slot to

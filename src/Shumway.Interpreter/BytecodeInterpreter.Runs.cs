@@ -380,6 +380,21 @@ public sealed partial class BytecodeInterpreter
         _engine.SetPc(pc);
     }
 
+    /// <summary>The compiled code a resume marker names: the link-time table
+    /// first, then the dispatcher for a delegate promoted mid-query, then, for
+    /// a resume (cursor &gt; 0) into a call that began before its predicate was
+    /// evicted, the code it began with (ADR-054).</summary>
+    private Func<Activation, int, bool>? ResolveMarkerDelegate(int functorId, int cursor)
+    {
+        var ilTable = IlByFunctorId;
+        var del = ilTable is not null && (uint)functorId < (uint)ilTable.Length
+            ? ilTable[functorId] : null;
+        del ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+        if (del is null && cursor > 0)
+            del = Tier1Dispatcher?.ResolveRetiredResume(functorId);
+        return del;
+    }
+
     private bool TryBacktrack()
     {
         Shumway.Core.Profiler.Backtrack();
@@ -455,6 +470,43 @@ public sealed partial class BytecodeInterpreter
                 // falls through to the choice point that preceded the *-> .
                 _engine.TrustMe();
                 continue;
+            }
+            if (Activation.IsResumeMarker(bp))
+            {
+                // ADR-058: a plain choice point whose alternative is compiled
+                // code (a region's, a wasm module's), which restores the state
+                // itself. Invoked here rather than by setting the pc: the
+                // dispatch loop's marker path is the RETURN path, and its
+                // collection and wakeup checks would run before the restore,
+                // firing a wake whose binding is about to be undone.
+                var (fid, cursor) = Activation.DecodeResumeMarker(bp);
+                var resume = ResolveMarkerDelegate(fid, cursor);
+                if (resume is not null)
+                {
+                    // The cancellation and deadline safe point the IL branch
+                    // above takes: a failure-driven loop whose retries all
+                    // come through here (length(L, N), fail under time_out/3)
+                    // reaches no other one.
+                    _engine.BacktrackSafePoint();
+                    _engine.Debug?.OnRedo(_engine, -1);
+                    if (Activation.CpPushRing is { } r4)
+                        r4[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                            = ((long)-7 << 32) | (uint)bp;
+                    if (resume(_engine, cursor))
+                    {
+                        if (_engine.IlTailCallPending)
+                        {
+                            _engine.IlTailCallPending = false;
+                            _engine.TakeIlDeopt();
+                        }
+                        else
+                        {
+                            _engine.SetPc(_engine.Cp);
+                        }
+                        return true;
+                    }
+                    continue;
+                }
             }
             // ADR-035 redo port. Raised before the jump, while B still names
             // the choice point being resumed — the session identifies which
