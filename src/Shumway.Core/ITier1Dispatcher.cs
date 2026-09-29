@@ -36,6 +36,11 @@ public interface ITier1Dispatcher
     /// rewritten): the site goes back to a plain <c>Call</c>.</summary>
     int AddressOfFunctor(int functorId);
 
+    /// <summary>Whether <paramref name="address"/> is the entry of a
+    /// predicate in the running program (what <see cref="OnDispatch"/>
+    /// accepts), as opposed to a continuation inside a clause.</summary>
+    bool IsPredicateEntry(int address);
+
     /// <summary>The delegate a functor had before it was evicted, for a
     /// resume only (a cursor past the entry): a choice point or a
     /// continuation left in a call that began before the eviction. That

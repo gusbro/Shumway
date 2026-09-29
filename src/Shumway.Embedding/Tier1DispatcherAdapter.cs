@@ -74,6 +74,8 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // eviction between queries, not a per-dispatch event.
     private Dictionary<int, int>? _addressByFid;
 
+    public bool IsPredicateEntry(int address) => _predicatesByAddress.ContainsKey(address);
+
     public int AddressOfFunctor(int functorId)
     {
         if (_addressByFid is null)
