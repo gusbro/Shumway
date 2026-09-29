@@ -574,9 +574,44 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// to a known system predicate rather than an undefined one.</summary>
     internal readonly HashSet<int> _preludeFunctors = new();
 
-    /// <summary>True for a predicate the prelude defines — library code a
-    /// program sees as built_in, so current_predicate/1 skips it.</summary>
-    internal bool IsPreludeFunctor(int functorId) => _preludeFunctors.Contains(functorId);
+    /// <summary>A predicate the prelude or a library provides and the program
+    /// has not redefined (ADR-059): library surface, not the program's.</summary>
+    internal bool IsPreludeFunctor(int functorId)
+        => _preludeFunctors.Contains(functorId) && !_redefinedFunctors.Contains(functorId);
+
+    /// <summary>ADR-059 — library predicates a file in the global module
+    /// redefined. Their clauses are the program's, so the introspection
+    /// reports them as such.</summary>
+    internal readonly HashSet<int> _redefinedFunctors = new();
+
+    /// <summary>ADR-059 — the predicates a library loaded into the global
+    /// module defined; a subset of <see cref="_preludeFunctors"/>.</summary>
+    internal readonly HashSet<int> _libraryFunctors = new();
+
+    /// <summary>ADR-059 — the kind of a system predicate, or null for a
+    /// predicate the system does not provide. The compiler lowers the control
+    /// connectives and \+/1, which have no entry of their own; everything else
+    /// takes the kind its registration or prelude documentation declares. An
+    /// undocumented prelude predicate is engine, one a library brought is
+    /// library.</summary>
+    internal Shumway.Builtins.PredicateKind? SystemKindOf(int functorId)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        if ((name, arity) is (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0))
+            return Shumway.Builtins.PredicateKind.Control;
+        if ((name, arity) is ("\\+", 1))
+            return Shumway.Builtins.PredicateKind.Iso;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int id))
+            return Shumway.Builtins.BuiltinsRegistry.GetById(id).Kind;
+        if (PredicateDoc.KindOf(name, arity) is { } documented)
+            return documented;
+        if (_libraryFunctors.Contains(functorId))
+            return Shumway.Builtins.PredicateKind.Library;
+        if (_preludeFunctors.Contains(functorId))
+            return Shumway.Builtins.PredicateKind.Engine;
+        return null;
+    }
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;

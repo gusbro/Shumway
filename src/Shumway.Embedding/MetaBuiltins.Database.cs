@@ -34,7 +34,7 @@ public static partial class MetaBuiltins
         AtomTerm a => a.Name is "built_in" or "dynamic" or "static" or "defined"
             or "multifile" or "discontiguous" or "control_construct"
             or "logtalk" or "foreign" or "iso" or "deterministic"
-            or "non_terminal",
+            or "non_terminal" or "redefined",
         CompoundTerm { Functor: "imported_from", Args.Length: 1 } => true,
         CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } => true,
         CompoundTerm { Functor: "number_of_clauses", Args.Length: 1 } => true,

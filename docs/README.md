@@ -11,6 +11,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 | [webshumway.md](guide/webshumway.md) | Prolog in the browser: the top level, workspaces, imported libraries, sharing, hosting |
 | [interop.md](guide/interop.md) | C# ↔ Prolog interop: typed foreign predicates, typed queries, re-entrant `SolveOnce`, and the zero-copy cell-access hot path |
 | [predicates.md](guide/predicates.md) | Reference of every builtin and library predicate (auto-generated — do not edit) |
+| [redefining-predicates.md](guide/redefining-predicates.md) | Which system predicates a program may redefine, in a file and in a module, and what the tools report after it |
 | [debugger.md](guide/debugger.md) | Source-level debugging in Visual Studio |
 | [debugger-vscode.md](guide/debugger-vscode.md) | Source-level debugging in VS Code |
 | [embedded-native-c.md](guide/embedded-native-c.md) | `:- c` declarations and `{...}` embedded native C blocks |

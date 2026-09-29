@@ -54,14 +54,14 @@ public class Adr035ControlTransparencyTests
     public void StepIntoAUserWrapperCall_DescendsIntoItsDefinition_WithNoControlFrames()
     {
         //  2: top(A) :-
-        //  3:     ifthenelse(cond(A), (used(A), more(A)), other(A)).
-        //  4: ifthenelse(X,Y,Z):-
+        //  3:     if_then_else(cond(A), (used(A), more(A)), other(A)).
+        //  4: if_then_else(X,Y,Z):-
         //  5:     X->Y;Z.
         //  6: cond(1). 7: used(1). 8: more(1). 9: other(0).
         var engine = DebugEngine("""
             top(A) :-
-                ifthenelse(cond(A), (used(A), more(A)), other(A)).
-            ifthenelse(X,Y,Z):-
+                if_then_else(cond(A), (used(A), more(A)), other(A)).
+            if_then_else(X,Y,Z):-
                 X->Y;Z.
             cond(1).
             used(1).
@@ -70,9 +70,9 @@ public class Adr035ControlTransparencyTests
             """);
         var stops = Walk(engine, bpLine: 3, "top(A).", StepMode.Into);
 
-        // The meta-wrapper unfold is off under debug, so the call to ifthenelse/3 stays a real
+        // The meta-wrapper unfold is off under debug, so the call to if_then_else/3 stays a real
         // call and the walk descends into the wrapper's own clause.
-        Assert.Contains(stops, s => s.Frames.Any(f => f.Name == "ifthenelse" && f.Arity == 3));
+        Assert.Contains(stops, s => s.Frames.Any(f => f.Name == "if_then_else" && f.Arity == 3));
         // Its `X->Y;Z` body and the runtime dispatch of the variable branches are transparent:
         // we stop on the real user goals...
         Assert.Contains(stops, s => s.Goal is "cond/1" or "used/1" or "more/1");

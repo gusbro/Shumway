@@ -30,6 +30,10 @@ public sealed class BuiltinEntry
     /// or null for an undocumented internal helper.</summary>
     public string? Summary { get; }
 
+    /// <summary>ADR-059: whether a program may define a predicate of this
+    /// name and arity, and where.</summary>
+    public PredicateKind Kind { get; }
+
     /// <summary>True for the <c>call/1..7</c> family. Precomputed so the
     /// dispatch hot paths test a bool instead of comparing
     /// <see cref="Name"/> against <c>"call"</c> per call.</summary>
@@ -52,9 +56,11 @@ public sealed class BuiltinEntry
     public bool IsBacktrackable => BacktrackableDetector.IsBacktrackable(Impl);
 
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
-        string? category = null, string? template = null, string? summary = null)
+        string? category = null, string? template = null, string? summary = null,
+        PredicateKind kind = PredicateKind.Engine)
     {
         Id = id;
+        Kind = kind;
         Name = name;
         Arity = arity;
         Impl = impl;

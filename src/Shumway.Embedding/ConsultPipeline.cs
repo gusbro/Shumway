@@ -162,55 +162,85 @@ internal sealed class ConsultPipeline
         }
     }
 
-    /// <summary>Rejects clauses whose head is a procedure of the processor
-    /// (see the call site): a control connective always; a builtin or prelude
-    /// predicate when the clause would land in the global module — inside a
-    /// named module the same head is an ADR-008 local that shadows the
-    /// builtin for that module only, which stays legal. Reported through the
-    /// warnings channel and dropped, so the rest of the file still loads —
-    /// the SWI-style file behavior of the error assertz/1 raises for the
-    /// same head.</summary>
-    private List<Clause> DropProtectedHeads(List<Clause> clauses, bool globalModule)
+    /// <summary>Where a clause is being loaded, for ADR-059's table.</summary>
+    internal enum HeadContext
     {
+        /// <summary>The prelude itself: it defines the system's predicates.</summary>
+        Prelude,
+        /// <summary>A program file without a module: the global module.</summary>
+        GlobalProgram,
+        /// <summary>A library or dialect shim loading into the global module.</summary>
+        GlobalLibrary,
+        /// <summary>A named module.</summary>
+        Module,
+    }
+
+    /// <summary>ADR-059: drops the clauses whose head is a system predicate the
+    /// context may not define, reporting each through the warnings channel as
+    /// the error assertz/1 raises for the same head, and loads the rest.
+    /// Control constructs and ISO builtins: never; a dialect-tagged library
+    /// that defines one is another system's implementation of the standard,
+    /// so its clauses are dropped without a report. Engine builtins: only in a
+    /// module or a library. Library predicates: anywhere, with a warning when a
+    /// program file in the global module redefines one, which is recorded so
+    /// the introspection reports the program's definition.</summary>
+    private List<Clause> DropProtectedHeads(List<Clause> clauses, HeadContext context)
+    {
+        if (context == HeadContext.Prelude) return clauses;
         List<Clause>? kept = null;
+        HashSet<int>? warned = null;
         for (int i = 0; i < clauses.Count; i++)
         {
-            bool bad = TryReadClauseHead(clauses[i], out var spec)
-                && IsProtectedHead(spec, globalModule);
-            if (bad)
+            bool bad = false;
+            if (TryReadClauseHead(clauses[i], out var spec))
             {
-                kept ??= new List<Clause>(clauses.GetRange(0, i));
-                E.Warn($"error: no permission to modify static procedure "
-                     + $"({spec.Name})/{spec.Arity} — clause ignored");
+                int fid = FunctorTable.Intern(
+                    AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity);
+                switch (HeadVerdict(fid, context))
+                {
+                    case HeadRule.Refuse:
+                        bad = true;
+                        E.Warn($"error: no permission to modify static procedure "
+                             + $"({spec.Name})/{spec.Arity} — clause ignored");
+                        break;
+                    case HeadRule.Drop:
+                        bad = true;
+                        break;
+                    case HeadRule.Redefine:
+                        if ((warned ??= new HashSet<int>()).Add(fid)
+                            && E._redefinedFunctors.Add(fid))
+                        {
+                            string where = E._currentLoadFile is { } f
+                                ? System.IO.Path.GetFileName(f) : "this source";
+                            E.Warn($"% {spec.Name}/{spec.Arity}: the definition in {where} "
+                                 + "overrides the library predicate");
+                        }
+                        break;
+                }
             }
+            if (bad) kept ??= new List<Clause>(clauses.GetRange(0, i));
             else kept?.Add(clauses[i]);
         }
         return kept ?? clauses;
     }
 
-    private bool IsProtectedHead((string Name, int Arity) spec, bool globalModule)
+    private enum HeadRule { Allow, Refuse, Drop, Redefine }
+
+    private HeadRule HeadVerdict(int fid, HeadContext context)
     {
-        // Control connectives can never be dispatched (the compiler lowers
-        // them inline unconditionally) — rejected in any module.
-        if (spec is (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0))
-            return true;
-        if (!globalModule) return false;
-        int fid = FunctorTable.Intern(
-            AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity);
+        var kind = E.SystemKindOf(fid);
+        if (kind is null) return HeadRule.Allow;
+        // ISO makes control constructs and its builtins static: no module,
+        // no library, no hook may add clauses to them.
+        if (kind is Shumway.Builtins.PredicateKind.Control or Shumway.Builtins.PredicateKind.Iso)
+            return E.ActiveLibraryDialect is null ? HeadRule.Refuse : HeadRule.Drop;
+        if (context != HeadContext.GlobalProgram) return HeadRule.Allow;
         // The global hooks are designed to be defined by user code.
-        if (PrologEngine.IsGlobalHookFunctor(fid)) return false;
+        if (PrologEngine.IsGlobalHookFunctor(fid)) return HeadRule.Allow;
         // A predicate the user already made dynamic is theirs (a preceding
         // `:- dynamic` on a protected name raised its own error).
-        if (E._dynStore.IsDynamic(fid)) return false;
-        // ISO 7.5.2 makes every built-in static, and the REGISTRY's native
-        // ones are protected here. The prelude's Prolog-defined library
-        // predicates are deliberately not: defining append/3 or member/2 in
-        // a plain file is ordinary Prolog (every tutorial does it), and the
-        // user's definition shadows the library's — the same line SWI draws
-        // between locked system predicates and redefinable library ones.
-        // assertz/1 still refuses both kinds: mutating a loaded library
-        // predicate at runtime is a different act from loading your own.
-        return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _);
+        if (E._dynStore.IsDynamic(fid)) return HeadRule.Allow;
+        return kind == Shumway.Builtins.PredicateKind.Library ? HeadRule.Redefine : HeadRule.Refuse;
     }
 
     // ---- ADR-055: clauses for another module ------------------------------
@@ -429,7 +459,9 @@ internal sealed class ConsultPipeline
             foreach (var (tgt, list0) in byTarget)
             {
                 var list = DropProtectedHeads(list0,
-                    globalModule: globalModuleProtected && tgt == PrologEngine.DefaultModuleName);
+                    tgt != PrologEngine.DefaultModuleName ? HeadContext.Module
+                    : globalModuleProtected ? HeadContext.GlobalProgram
+                    : HeadContext.GlobalLibrary);
                 if (list.Count == 0) continue;
                 if (!E._modules.TryGetValue(tgt, out var tm))
                     E._modules[tgt] = tm = new ModuleManifest(tgt);
@@ -1303,7 +1335,11 @@ internal sealed class ConsultPipeline
         if (preludeSource || librarySource)
             foreach (var c in (List<Clause>)rawClauses)
                 if (c.Kind != ClauseKind.Directive)
-                    E._preludeFunctors.Add(HeadFunctorIdOf(c));
+                {
+                    int headFid = HeadFunctorIdOf(c);
+                    E._preludeFunctors.Add(headFid);
+                    if (librarySource) E._libraryFunctors.Add(headFid);
+                }
 
         // a source-carrying bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
@@ -1936,8 +1972,10 @@ internal sealed class ConsultPipeline
         // predicates through this very pipeline — and a named module's
         // clause is an ADR-008 local shadow, which stays legal.
         clauses = DropProtectedHeads(clauses,
-            globalModule: !preludeSource && !librarySource
-                && moduleName == PrologEngine.DefaultModuleName);
+            preludeSource ? HeadContext.Prelude
+            : moduleName != PrologEngine.DefaultModuleName ? HeadContext.Module
+            : librarySource ? HeadContext.GlobalLibrary
+            : HeadContext.GlobalProgram);
 
         // In-file term_expansion hooks defined this consult: their unexpanded
         // clauses (a grammar operator like clpz's `++>`, all sharing one head

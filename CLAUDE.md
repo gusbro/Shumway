@@ -331,6 +331,7 @@ When proposing changes:
 | A module's private predicates stay private | ADR-056 |
 | Local backtracking in Tier-1 IL regions | ADR-057 |
 | A region's choice points are WAM choice points | ADR-058 |
+| What a program may redefine | ADR-059 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

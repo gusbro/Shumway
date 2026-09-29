@@ -1025,13 +1025,13 @@ public sealed partial class PrologEngine
                     // filter above cannot catch its predicates — the
                     // functor-level prelude set (librarySource consults)
                     // does. They are library surface, not the program's.
-                    if (seen.Add(fid) && !_preludeFunctors.Contains(fid))
+                    if (seen.Add(fid) && !IsPreludeFunctor(fid))
                         yield return (fid, false);
                 }
         }
         foreach (var (fid, clauses) in _dynStore.Slots)
             if (clauses.Count > 0 && seen.Add(fid)
-                && !_preludeFunctors.Contains(fid))
+                && !IsPreludeFunctor(fid))
                 yield return (fid, true);
         // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
@@ -1219,9 +1219,11 @@ public sealed partial class PrologEngine
         if (!HasPredicate(functorId) && !IsControlConstructFid(functorId))
             return props;
         int kind;
-        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
-            || IsControlConstructFid(functorId)
-            || _preludeFunctors.Contains(functorId))
+        bool redefined = _redefinedFunctors.Contains(functorId);
+        if (!redefined
+            && (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
+                || IsControlConstructFid(functorId)
+                || _preludeFunctors.Contains(functorId)))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
         else if (_dynStore.IsDynamic(functorId))
             kind = AtomTable.Intern("dynamic", permanent: true).Id;
@@ -1229,6 +1231,10 @@ public sealed partial class PrologEngine
             kind = AtomTable.Intern("static", permanent: true).Id;
         props.Add(kind);
         props.Add(AtomTable.Intern("defined", permanent: true).Id);
+        if (redefined) props.Add(AtomTable.Intern("redefined", permanent: true).Id);
+        else if (SystemKindOf(functorId) is Shumway.Builtins.PredicateKind.Iso
+                 or Shumway.Builtins.PredicateKind.Control)
+            props.Add(AtomTable.Intern("iso", permanent: true).Id);
         return props;
     }
 

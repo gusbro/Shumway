@@ -40,7 +40,7 @@ public static class StandardBuiltins
 
         const string Cmp = "Unification & comparison";
         BuiltinsRegistry.Register("=",   2, UnifyBuiltins.Unify,
-            Cmp, "=(?Term1, ?Term2)", "Unifies the two terms.");
+            Cmp, "=(?Term1, ?Term2)", "Unifies the two terms.", kind: PredicateKind.Iso);
         // \=/2 itself is a prelude wrapper over this three-state core: the
         // trial-only builtin cannot run attvar hooks (freeze must fire, dif
         // may veto), so an attvar-touching trial defers to \+ X = Y there.
@@ -49,34 +49,34 @@ public static class StandardBuiltins
             "Trial-unification verdict behind \\=/2: t (cannot unify), f (unifies), "
             + "m (bound an attributed variable - the wrapper must re-decide with hooks).");
         BuiltinsRegistry.Register("==",  2, UnifyBuiltins.StructurallyEqual,
-            Cmp, "==(@Term1, @Term2)", "Succeeds if the two terms are structurally identical.");
+            Cmp, "==(@Term1, @Term2)", "Succeeds if the two terms are structurally identical.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("\\==",2, UnifyBuiltins.StructurallyNotEqual,
-            Cmp, "\\==(@Term1, @Term2)", "Succeeds if the two terms are not structurally identical.");
+            Cmp, "\\==(@Term1, @Term2)", "Succeeds if the two terms are not structurally identical.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("unify_with_occurs_check", 2,
             UnifyBuiltins.UnifyWithOccursCheck,
             Cmp, "unify_with_occurs_check(?Term1, ?Term2)",
-            "Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification.");
+            "Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification.", kind: PredicateKind.Iso);
 
         // Arithmetic.
         const string Arith = "Arithmetic";
         BuiltinsRegistry.Register("is",  2, ArithmeticBuiltins.Is,
-            Arith, "is(?Result, +Expr)", "Evaluates the arithmetic expression on the right and unifies it with the left.");
+            Arith, "is(?Result, +Expr)", "Evaluates the arithmetic expression on the right and unifies it with the left.", kind: PredicateKind.Iso);
         // ADR-018 — `X is A op B` and the comparisons compile to the a_eval_*
         // instruction set, so the old internal `$arith2`/`$arith1` rewrite
         // builtins are gone; the `is`/`=:=`/... builtins above remain for the
         // runtime meta-call path (e.g. `call(X is Y)`).
         BuiltinsRegistry.Register("=:=", 2, ArithmeticBuiltins.ArithEqual,
-            Arith, "=:=(+Expr1, +Expr2)", "Succeeds if the two arithmetic expressions are equal.");
+            Arith, "=:=(+Expr1, +Expr2)", "Succeeds if the two arithmetic expressions are equal.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("=\\=",2, ArithmeticBuiltins.ArithNotEqual,
-            Arith, "=\\=(+Expr1, +Expr2)", "Succeeds if the two arithmetic expressions are unequal.");
+            Arith, "=\\=(+Expr1, +Expr2)", "Succeeds if the two arithmetic expressions are unequal.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("<",   2, ArithmeticBuiltins.ArithLess,
-            Arith, "<(+Expr1, +Expr2)", "Arithmetic less-than comparison.");
+            Arith, "<(+Expr1, +Expr2)", "Arithmetic less-than comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register(">",   2, ArithmeticBuiltins.ArithGreater,
-            Arith, ">(+Expr1, +Expr2)", "Arithmetic greater-than comparison.");
+            Arith, ">(+Expr1, +Expr2)", "Arithmetic greater-than comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("=<",  2, ArithmeticBuiltins.ArithLessOrEqual,
-            Arith, "=<(+Expr1, +Expr2)", "Arithmetic less-than-or-equal comparison.");
+            Arith, "=<(+Expr1, +Expr2)", "Arithmetic less-than-or-equal comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register(">=",  2, ArithmeticBuiltins.ArithGreaterOrEqual,
-            Arith, ">=(+Expr1, +Expr2)", "Arithmetic greater-than-or-equal comparison.");
+            Arith, ">=(+Expr1, +Expr2)", "Arithmetic greater-than-or-equal comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("between", 3, ArithmeticBuiltins.Between,
             Arith, "between(+Low, +High, ?X)", "Succeeds when X is in the inclusive integer range; enumerates it when unbound.");
         BuiltinsRegistry.Register("succ",    2, ArithmeticBuiltins.Succ,
@@ -87,25 +87,25 @@ public static class StandardBuiltins
         // Type tests.
         const string Types = "Type checking";
         BuiltinsRegistry.Register("var",     1, TypeBuiltins.IsVar,
-            Types, "var(@Term)", "Succeeds if the argument is an unbound variable.");
+            Types, "var(@Term)", "Succeeds if the argument is an unbound variable.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("nonvar",  1, TypeBuiltins.IsNonVar,
-            Types, "nonvar(@Term)", "Succeeds if the argument is not an unbound variable.");
+            Types, "nonvar(@Term)", "Succeeds if the argument is not an unbound variable.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom",    1, TypeBuiltins.IsAtom,
-            Types, "atom(@Term)", "Succeeds if the argument is an atom.");
+            Types, "atom(@Term)", "Succeeds if the argument is an atom.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("integer", 1, TypeBuiltins.IsInteger,
-            Types, "integer(@Term)", "Succeeds if the argument is an integer.");
+            Types, "integer(@Term)", "Succeeds if the argument is an integer.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("float",   1, TypeBuiltins.IsFloat,
-            Types, "float(@Term)", "Succeeds if the argument is a float.");
+            Types, "float(@Term)", "Succeeds if the argument is a float.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("rational", 1, TypeBuiltins.IsRational,
             Types, "rational(@Term)", "Succeeds if the argument is a rational number (an integer is a rational with denominator 1).");
         BuiltinsRegistry.Register("number",  1, TypeBuiltins.IsNumber,
-            Types, "number(@Term)", "Succeeds if the argument is a number.");
+            Types, "number(@Term)", "Succeeds if the argument is a number.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atomic",  1, TypeBuiltins.IsAtomic,
-            Types, "atomic(@Term)", "Succeeds if the argument is atomic (atom, number or string).");
+            Types, "atomic(@Term)", "Succeeds if the argument is atomic (atom, number or string).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("compound",1, TypeBuiltins.IsCompound,
-            Types, "compound(@Term)", "Succeeds if the argument is a compound term.");
+            Types, "compound(@Term)", "Succeeds if the argument is a compound term.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("callable",1, TypeBuiltins.IsCallable,
-            Types, "callable(@Term)", "Succeeds if the argument is an atom or a compound term.");
+            Types, "callable(@Term)", "Succeeds if the argument is an atom or a compound term.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList,
             Types, "is_list(@Term)", "Succeeds if the argument is a proper list.");
         BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
@@ -115,9 +115,9 @@ public static class StandardBuiltins
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,
-            Types, "ground(@Term)", "Succeeds if the argument contains no unbound variables.");
+            Types, "ground(@Term)", "Succeeds if the argument contains no unbound variables.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("acyclic_term", 1, TypeBuiltins.AcyclicTerm,
-            Types, "acyclic_term(@Term)", "Succeeds if the argument is a finite (acyclic) term.");
+            Types, "acyclic_term(@Term)", "Succeeds if the argument is a finite (acyclic) term.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("cyclic_term", 1, TypeBuiltins.CyclicTerm,
             Types, "cyclic_term(@Term)", "Succeeds if the argument is a cyclic (infinite/rational) term.");
         // SWI kernel type-check internals (library(error)'s has_type/2 uses them).
@@ -156,25 +156,25 @@ public static class StandardBuiltins
         // I/O.
         const string Io = "Input / output";
         BuiltinsRegistry.Register("write",      1, IOBuiltins.Write,
-            Io, "write(+Term)", "Writes a term to the current output stream.");
+            Io, "write(+Term)", "Writes a term to the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("nl",         0, IOBuiltins.Nl,
-            Io, "nl", "Writes a newline to the current output stream.");
+            Io, "nl", "Writes a newline to the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("writeln",    1, IOBuiltins.Writeln,
             Io, "writeln(+Term)", "Writes a term followed by a newline.");
         BuiltinsRegistry.Register("write_term",      2, IOBuiltins.WriteTerm,
-            Io, "write_term(+Term, +Options)", "Writes a term honouring the given list of write options.");
+            Io, "write_term(+Term, +Options)", "Writes a term honouring the given list of write options.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("format",          2, IOBuiltins.Format,
             Io, "format(+Format, +Arguments)", "Writes formatted output from a control string and an argument list.");
         BuiltinsRegistry.Register("write_canonical", 1, IOBuiltins.WriteCanonical,
-            Io, "write_canonical(+Term)", "Writes a term in a quoted, operator-free form that reads back.");
+            Io, "write_canonical(+Term)", "Writes a term in a quoted, operator-free form that reads back.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("write_canonical", 2, IOBuiltins.WriteCanonical2,
-            Io, "write_canonical(+Stream, +Term)", "Writes a term in canonical form to a stream (ISO §8.14.6).");
+            Io, "write_canonical(+Stream, +Term)", "Writes a term in canonical form to a stream (ISO §8.14.6).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("write_term",      3, IOBuiltins.WriteTerm3,
-            Io, "write_term(+Stream, +Term, +Options)", "Writes a term to a stream honouring options (ISO §8.14.3).");
+            Io, "write_term(+Stream, +Term, +Options)", "Writes a term to a stream honouring options (ISO §8.14.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("writeq",          1, IOBuiltins.Writeq1,
-            Io, "writeq(+Term)", "Writes a term in quoted (parseable) form (ISO §8.14.5).");
+            Io, "writeq(+Term)", "Writes a term in quoted (parseable) form (ISO §8.14.5).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("writeq",          2, IOBuiltins.Writeq2,
-            Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).");
+            Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print,
             Io, "print(+Term)", "Writes a term using print conventions.");
         BuiltinsRegistry.Register("print",           2, IOBuiltins.Print2,
@@ -182,77 +182,77 @@ public static class StandardBuiltins
 
         // Streams: write + read modes; format/3 stream-aware.
         BuiltinsRegistry.Register("open",      3, StreamBuiltins.Open,
-            Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.");
+            Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
             "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
-            + "eof_action). ISO §8.11.5.");
+            + "eof_action). ISO §8.11.5.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
-            Io, "close(+Stream)", "Closes an open stream.");
+            Io, "close(+Stream)", "Closes an open stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,
             Io, "close(+Stream, +Options)",
             "Closes an open stream. Options list (force(Bool), timeout) is parsed "
-            + "shallowly: force(true) suppresses close-time exceptions.");
+            + "shallowly: force(true) suppresses close-time exceptions.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("write",     2, StreamBuiltins.WriteToStream,
-            Io, "write(+Stream, +Term)", "Writes a term to the given stream.");
+            Io, "write(+Stream, +Term)", "Writes a term to the given stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("nl",        1, StreamBuiltins.NlOnStream,
-            Io, "nl(+Stream)", "Writes a newline to the given stream.");
+            Io, "nl(+Stream)", "Writes a newline to the given stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("$lazy_window", 6, StreamBuiltins.LazyWindow);
         BuiltinsRegistry.Register("partial_string", 3, StreamBuiltins.PartialString,
             Io, "partial_string(+Text, ?Ls, ?Ls0)",
             "Ls is the packed list of Text's characters with Ls0 as its tail.");
         BuiltinsRegistry.Register("get_char",  2, StreamBuiltins.GetChar,
-            Io, "get_char(+Stream, -Char)", "Reads and consumes one character from a stream.");
+            Io, "get_char(+Stream, -Char)", "Reads and consumes one character from a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar,
-            Io, "peek_char(+Stream, -Char)", "Peeks the next character of a stream without consuming it.");
+            Io, "peek_char(+Stream, -Char)", "Peeks the next character of a stream without consuming it.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_char",  1, StreamBuiltins.GetChar0,
-            Io, "get_char(-Char)", "Reads one character from the current input stream (ISO §8.12.1).");
+            Io, "get_char(-Char)", "Reads one character from the current input stream (ISO §8.12.1).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_char", 1, StreamBuiltins.PeekChar0,
-            Io, "peek_char(-Char)", "Peeks one character from the current input stream (ISO §8.12.2).");
+            Io, "peek_char(-Char)", "Peeks one character from the current input stream (ISO §8.12.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_char",  1, StreamBuiltins.PutChar1,
-            Io, "put_char(+Char)", "Writes a single-character atom to the current output stream (ISO §8.12.3).");
+            Io, "put_char(+Char)", "Writes a single-character atom to the current output stream (ISO §8.12.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_char",  2, StreamBuiltins.PutChar2,
-            Io, "put_char(+Stream, +Char)", "Writes a single-character atom to the given stream (ISO §8.12.3).");
+            Io, "put_char(+Stream, +Char)", "Writes a single-character atom to the given stream (ISO §8.12.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_code",  1, StreamBuiltins.GetCode0,
-            Io, "get_code(-Code)", "Reads one character code from the current input stream (ISO §8.12.4).");
+            Io, "get_code(-Code)", "Reads one character code from the current input stream (ISO §8.12.4).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_code",  2, StreamBuiltins.GetCode2,
-            Io, "get_code(+Stream, -Code)", "Reads one character code from a stream (ISO §8.12.4).");
+            Io, "get_code(+Stream, -Code)", "Reads one character code from a stream (ISO §8.12.4).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_code", 1, StreamBuiltins.PeekCode0,
-            Io, "peek_code(-Code)", "Peeks one character code from current input (ISO §8.12.5).");
+            Io, "peek_code(-Code)", "Peeks one character code from current input (ISO §8.12.5).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_code", 2, StreamBuiltins.PeekCode2,
-            Io, "peek_code(+Stream, -Code)", "Peeks one character code from a stream (ISO §8.12.5).");
+            Io, "peek_code(+Stream, -Code)", "Peeks one character code from a stream (ISO §8.12.5).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_code",  1, StreamBuiltins.PutCode1,
-            Io, "put_code(+Code)", "Writes the character for Code to the current output stream (ISO §8.12.6).");
+            Io, "put_code(+Code)", "Writes the character for Code to the current output stream (ISO §8.12.6).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_code",  2, StreamBuiltins.PutCode2,
-            Io, "put_code(+Stream, +Code)", "Writes the character for Code to a stream (ISO §8.12.6).");
+            Io, "put_code(+Stream, +Code)", "Writes the character for Code to a stream (ISO §8.12.6).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_byte",  1, StreamBuiltins.GetByte0,
-            Io, "get_byte(-Byte)", "Reads one byte from the current input binary stream (ISO §8.13.1).");
+            Io, "get_byte(-Byte)", "Reads one byte from the current input binary stream (ISO §8.13.1).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_byte",  2, StreamBuiltins.GetByte2,
-            Io, "get_byte(+Stream, -Byte)", "Reads one byte from a binary stream (ISO §8.13.1).");
+            Io, "get_byte(+Stream, -Byte)", "Reads one byte from a binary stream (ISO §8.13.1).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_byte", 1, StreamBuiltins.PeekByte0,
-            Io, "peek_byte(-Byte)", "Peeks one byte from the current input binary stream (ISO §8.13.2).");
+            Io, "peek_byte(-Byte)", "Peeks one byte from the current input binary stream (ISO §8.13.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_byte", 2, StreamBuiltins.PeekByte2,
-            Io, "peek_byte(+Stream, -Byte)", "Peeks one byte from a binary stream (ISO §8.13.2).");
+            Io, "peek_byte(+Stream, -Byte)", "Peeks one byte from a binary stream (ISO §8.13.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_byte",  1, StreamBuiltins.PutByte1,
-            Io, "put_byte(+Byte)", "Writes one byte to the current output binary stream (ISO §8.13.3).");
+            Io, "put_byte(+Byte)", "Writes one byte to the current output binary stream (ISO §8.13.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_byte",  2, StreamBuiltins.PutByte2,
-            Io, "put_byte(+Stream, +Byte)", "Writes one byte to a binary stream (ISO §8.13.3).");
+            Io, "put_byte(+Stream, +Byte)", "Writes one byte to a binary stream (ISO §8.13.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_input",  1, StreamBuiltins.CurrentInput,
-            Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).");
+            Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_output", 1, StreamBuiltins.CurrentOutput,
-            Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream (ISO §8.11.2).");
+            Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream (ISO §8.11.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_input",  1, StreamBuiltins.SetInput,
-            Io, "set_input(+Stream)", "Sets the current input stream (ISO §8.11.3).");
+            Io, "set_input(+Stream)", "Sets the current input stream (ISO §8.11.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_output", 1, StreamBuiltins.SetOutput,
-            Io, "set_output(+Stream)", "Sets the current output stream (ISO §8.11.4).");
+            Io, "set_output(+Stream)", "Sets the current output stream (ISO §8.11.4).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
-            Io, "flush_output", "Flushes the current output stream (ISO §8.11.7).");
+            Io, "flush_output", "Flushes the current output stream (ISO §8.11.7).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,
-            Io, "flush_output(+Stream)", "Flushes the given stream (ISO §8.11.7).");
+            Io, "flush_output(+Stream)", "Flushes the given stream (ISO §8.11.7).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("at_end_of_stream", 0, StreamBuiltins.AtEndOfStream0,
-            Io, "at_end_of_stream", "Succeeds if the current input stream is at end of file (ISO §8.11.9).");
+            Io, "at_end_of_stream", "Succeeds if the current input stream is at end of file (ISO §8.11.9).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("at_end_of_stream", 1, StreamBuiltins.AtEndOfStream1,
-            Io, "at_end_of_stream(+Stream)", "Succeeds if the given stream is at end of file (ISO §8.11.9).");
+            Io, "at_end_of_stream(+Stream)", "Succeeds if the given stream is at end of file (ISO §8.11.9).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("format",    3, IOBuiltins.Format3,
             Io, "format(+Stream, +Format, +Arguments)", "Writes formatted output to the given stream.");
 
@@ -265,21 +265,21 @@ public static class StandardBuiltins
         const string Lists = "Lists";
         const string Strings = "Atoms & strings";
         BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append,
-            Lists, "append(?List1, ?List2, ?List)", "Concatenates List1 and List2 into List; backtracks over splits of List.");
+            Lists, "append(?List1, ?List2, ?List)", "Concatenates List1 and List2 into List; backtracks over splits of List.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("atom_codes",   2, AtomListBuiltins.AtomCodes,
-            Strings, "atom_codes(?Atom, ?Codes)", "Converts between an atom and its list of character codes.");
+            Strings, "atom_codes(?Atom, ?Codes)", "Converts between an atom and its list of character codes.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom_concat",  3, AtomListBuiltins.AtomConcat,
-            Strings, "atom_concat(?Atom1, ?Atom2, ?Atom)", "Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom.");
+            Strings, "atom_concat(?Atom1, ?Atom2, ?Atom)", "Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom_length",  2, AtomCharBuiltins.AtomLength,
-            Strings, "atom_length(+Atom, ?Length)", "Relates an atom to its length in characters.");
+            Strings, "atom_length(+Atom, ?Length)", "Relates an atom to its length in characters.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom_chars",   2, AtomCharBuiltins.AtomChars,
-            Strings, "atom_chars(?Atom, ?Chars)", "Converts between an atom and its list of one-character atoms.");
+            Strings, "atom_chars(?Atom, ?Chars)", "Converts between an atom and its list of one-character atoms.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("char_code",    2, AtomCharBuiltins.CharCode,
-            Strings, "char_code(?Char, ?Code)", "Relates a one-character atom to its character code.");
+            Strings, "char_code(?Char, ?Code)", "Relates a one-character atom to its character code.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("number_codes", 2, AtomCharBuiltins.NumberCodes,
-            Strings, "number_codes(?Number, ?Codes)", "Converts between a number and its list of character codes.");
+            Strings, "number_codes(?Number, ?Codes)", "Converts between a number and its list of character codes.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("number_chars", 2, AtomCharBuiltins.NumberChars,
-            Strings, "number_chars(?Number, ?Chars)", "Converts between a number and its list of one-character atoms.");
+            Strings, "number_chars(?Number, ?Chars)", "Converts between a number and its list of one-character atoms.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom_string",  2, AtomCharBuiltins.AtomString,
             Strings, "atom_string(?Atom, ?String)", "Converts between an atom and a string.");
         BuiltinsRegistry.Register("atom_number",  2, AtomCharBuiltins.AtomNumber,
@@ -348,37 +348,37 @@ public static class StandardBuiltins
         // Standard order of terms.
         const string Order = "Term ordering";
         BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3,
-            Order, "compare(?Order, @Term1, @Term2)", "Unifies Order with the relation (<, = or >) between the two terms.");
+            Order, "compare(?Order, @Term1, @Term2)", "Unifies Order with the relation (<, = or >) between the two terms.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("@<",      2, StandardOrderBuiltins.TermLess,
-            Order, "@<(@Term1, @Term2)", "Standard-order-of-terms less-than comparison.");
+            Order, "@<(@Term1, @Term2)", "Standard-order-of-terms less-than comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("@>",      2, StandardOrderBuiltins.TermGreater,
-            Order, "@>(@Term1, @Term2)", "Standard-order-of-terms greater-than comparison.");
+            Order, "@>(@Term1, @Term2)", "Standard-order-of-terms greater-than comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("@=<",     2, StandardOrderBuiltins.TermLessOrEqual,
-            Order, "@=<(@Term1, @Term2)", "Standard-order-of-terms less-than-or-equal comparison.");
+            Order, "@=<(@Term1, @Term2)", "Standard-order-of-terms less-than-or-equal comparison.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("@>=",     2, StandardOrderBuiltins.TermGreaterOrEqual,
-            Order, "@>=(@Term1, @Term2)", "Standard-order-of-terms greater-than-or-equal comparison.");
+            Order, "@>=(@Term1, @Term2)", "Standard-order-of-terms greater-than-or-equal comparison.", kind: PredicateKind.Iso);
 
         // Sorting.
         BuiltinsRegistry.Register("sort",  2, SortBuiltins.Sort,
-            Lists, "sort(+List, -Sorted)", "Sorts a list into standard order, removing duplicates.");
+            Lists, "sort(+List, -Sorted)", "Sorts a list into standard order, removing duplicates.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("msort", 2, SortBuiltins.Msort,
             Lists, "msort(+List, -Sorted)", "Sorts a list into standard order, keeping duplicates.");
         BuiltinsRegistry.Register("keysort", 2, SortBuiltins.Keysort,
             Lists, "keysort(+Pairs, -Sorted)",
             "Stable-sort a list of K-V pairs by K in the standard order of terms. "
             + "Each element must be a -/2 compound; relative order of equal-key "
-            + "pairs is preserved. ISO §8.4.4.");
+            + "pairs is preserved. ISO §8.4.4.", kind: PredicateKind.Iso);
 
         // Control.
         const string Control = "Control";
         BuiltinsRegistry.Register("fail", 0, ControlBuiltins.Fail,
-            Control, "fail", "Always fails.");
+            Control, "fail", "Always fails.", kind: PredicateKind.Control);
         BuiltinsRegistry.Register("true", 0, ControlBuiltins.True,
-            Control, "true", "Always succeeds.");
+            Control, "true", "Always succeeds.", kind: PredicateKind.Control);
         BuiltinsRegistry.Register("halt", 0, ControlBuiltins.Halt0,
-            Control, "halt", "Halts the engine with exit code 0.");
+            Control, "halt", "Halts the engine with exit code 0.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1,
-            Control, "halt(+Status)", "Halts the engine with the given exit code.");
+            Control, "halt(+Status)", "Halts the engine with the given exit code.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("jit_compile", 1, ControlBuiltins.JitCompile,
             Control, "jit_compile(+Mode)",
             "Sets Tier-1 promotion for the goals that follow: off returns the engine to the interpreter, all promotes each predicate on its first call, and a positive integer is the call threshold. Fails if the build has no Tier-1 to set.");
@@ -394,14 +394,14 @@ public static class StandardBuiltins
         // first-solution builtin; ListBuiltins.Member is unreachable from
         // Prolog source.
         BuiltinsRegistry.Register("nth0",         3, ListBuiltins.Nth0,
-            Lists, "nth0(?Index, ?List, ?Elem)", "Relates a 0-based index to the list element at that position.");
+            Lists, "nth0(?Index, ?List, ?Elem)", "Relates a 0-based index to the list element at that position.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("nth1",         3, ListBuiltins.Nth1,
-            Lists, "nth1(?Index, ?List, ?Elem)", "Relates a 1-based index to the list element at that position.");
+            Lists, "nth1(?Index, ?List, ?Elem)", "Relates a 1-based index to the list element at that position.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("reverse",      2, ListBuiltins.Reverse,
-            Lists, "reverse(?List, ?Reversed)", "Relates a list to its reverse.");
+            Lists, "reverse(?List, ?Reversed)", "Relates a list to its reverse.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("last",         2, ListBuiltins.Last,
-            Lists, "last(?List, ?Last)", "Relates a list to its last element.");
+            Lists, "last(?List, ?Last)", "Relates a list to its last element.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("list_to_set",  2, ListBuiltins.ListToSet,
-            Lists, "list_to_set(+List, -Set)", "Removes duplicates from a list, keeping the first occurrence of each.");
+            Lists, "list_to_set(+List, -Set)", "Removes duplicates from a list, keeping the first occurrence of each.", kind: PredicateKind.Library);
     }
 }
