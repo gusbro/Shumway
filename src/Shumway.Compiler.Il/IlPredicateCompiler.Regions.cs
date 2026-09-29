@@ -416,7 +416,10 @@ public sealed partial class IlPredicateCompiler
         foreach (var s in plan.Sites)
             if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
                 pushSites++;
+        // ADR-057: a region that pushes choice points on itself also reads the
+        // delegate in its fail handler, so one push site is already two uses.
         int hoistGate = selfDelType == typeof(PredicateDelegate) ? 3 : 2;
+        if (pushSites >= 1) hoistGate = 1;
         if (pushSites >= hoistGate)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "rselfdel");
@@ -511,6 +514,16 @@ public sealed partial class IlPredicateCompiler
         emit.Return();
 
         emit.MarkLabel(failLabel);
+        if (pushSites > 0)
+        {
+            // ADR-057: a choice point this region pushed is resumed here, at
+            // its cursor, instead of by the interpreter re-invoking the region.
+            emit.LoadArgument(0);
+            effectiveSelf(emit);
+            emit.LoadLocalAddress(curLoc);
+            emit.Call(EngineTryResumeOwnIlCpMethod);
+            emit.BranchIfTrue(dispatchLabel);
+        }
         emit.LoadConstant(false);
         emit.Return();
     }

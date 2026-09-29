@@ -1217,6 +1217,44 @@ public sealed partial class Activation
     public bool TopChoicePointIsIl =>
         _b >= 0 && _ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key == _b;
 
+    /// <summary>The lowest choice point the current run may backtrack into:
+    /// an in-engine sub-goal (the interpreter's RunGoalInEngine) raises it to
+    /// its entry B so its failures cannot unwind the outer computation's
+    /// choice points. On the activation, not the interpreter, because compiled
+    /// code that resumes its own choice points reads it too (ADR-057).</summary>
+    public int BacktrackFloor { get; set; } = -1;
+
+    /// <summary>ADR-057 — resumes the top choice point in the compiled code
+    /// that pushed it, when that code is <paramref name="self"/>: the same
+    /// sequence the interpreter's TryBacktrack runs for an IL choice point
+    /// before it invokes the delegate, minus the invocation. False, touching
+    /// nothing, when the top is not an IL choice point of <paramref
+    /// name="self"/>, lies at or below the floor, or a debug session needs
+    /// the redo port the interpreter raises.</summary>
+    public bool TryResumeOwnIlChoicePoint(Func<Activation, int, bool> self, out int cursor)
+    {
+        cursor = 0;
+        if (_b <= BacktrackFloor || _ilCpTop == 0) { CountLocalResume(1); return false; }
+        ref var top = ref _ilCpStack[_ilCpTop - 1];
+        if (top.Key != _b || !ReferenceEquals(top.Del, self)) { CountLocalResume(2); return false; }
+        if (Debug is not null) { CountLocalResume(3); return false; }
+        Profiler.Backtrack();
+        BacktrackSafePoint();
+        if (CpPushRing is { } ring)
+            ring[CpPushRingPos++ & (CpPushRingSize - 1)] = ((long)-6 << 32) | (uint)top.Cursor;
+        (_, cursor) = PopIlChoicePointAndRestore();
+        CountLocalResume(0);
+        return true;
+    }
+
+    /// <summary>ADR-057 local resumptions, by outcome: [0] resumed, [1] at
+    /// the floor or no IL choice point, [2] another code's choice point,
+    /// [3] declined for a debug session. Diagnostic.</summary>
+    public static readonly long[] DiagLocalResumes = new long[4];
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountLocalResume(int outcome) => DiagLocalResumes[outcome]++;
+
     /// <summary>Drop IL choice-point entries the current <c>_b</c> has moved
     /// below. The wasm tier owns the memory-side choice-point stack and cuts,
     /// trusts and backtracks over it without touching this managed parallel

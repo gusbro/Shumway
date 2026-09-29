@@ -189,6 +189,10 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(
             nameof(Activation.PushIlChoicePoint),
             new[] { typeof(Func<Activation, int, bool>), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineTryResumeOwnIlCpMethod =
+        typeof(Activation).GetMethod(
+            nameof(Activation.TryResumeOwnIlChoicePoint),
+            new[] { typeof(Func<Activation, int, bool>), typeof(int).MakeByRefType() })!;
     // PGO: instrumented IL calls this on each clause success.
     private static readonly MethodInfo IlProfileCountersBump =
         typeof(IlProfileCounters).GetMethod(nameof(IlProfileCounters.Bump))!;

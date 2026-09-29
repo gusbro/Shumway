@@ -394,7 +394,7 @@ public sealed partial class BytecodeInterpreter
         // through to the next choice point without burning stack. The
         // floor keeps an in-engine sub-goal's backtracking
         // from unwinding choice points the outer computation owns.
-        while (_engine.B > _backtrackFloor)
+        while (_engine.B > _engine.BacktrackFloor)
         {
             if (_engine.TopChoicePointIsIl)
             {

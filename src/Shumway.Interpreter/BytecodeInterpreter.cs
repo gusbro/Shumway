@@ -90,12 +90,6 @@ public sealed partial class BytecodeInterpreter
     private IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
 
-    /// <summary>Floor for <see cref="TryBacktrack"/>: choice points at or
-    /// below this stack index belong to an outer computation and must
-    /// not be unwound. <c>-1</c> (no floor) during normal execution;
-    /// <see cref="RunGoalInEngine"/> raises it so an in-engine sub-goal's
-    /// backtracking stays contained at its entry level.</summary>
-    private int _backtrackFloor = -1;
 
     // Backing state for Activation.ReentrantSolve (the host→Prolog re-entrant
     // solve API): one cached closure, the current ProgramView held in a field so

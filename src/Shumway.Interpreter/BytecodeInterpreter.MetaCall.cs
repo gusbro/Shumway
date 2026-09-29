@@ -1081,11 +1081,11 @@ public sealed partial class BytecodeInterpreter
         int savedB0    = _engine.B0;
         int savedB     = _engine.B;
         int savedE     = _engine.E;
-        int savedFloor = _backtrackFloor;
+        int savedFloor = _engine.BacktrackFloor;
         int entryCatchFrames = _engine.CatchFrameCount;
 
         // Inner backtracking may not unwind past the entry CP level.
-        _backtrackFloor = savedB;
+        _engine.BacktrackFloor = savedB;
         _engine.SetB0(savedB);               // a cut inside the goal stops here
         _engine.SetCp(SubroutineSentinelCp); // the goal's final proceed → Halted
         if (Activation.CpPushRing is { } gr)
@@ -1112,7 +1112,7 @@ public sealed partial class BytecodeInterpreter
             }
         }
 
-        _backtrackFloor = savedFloor;
+        _engine.BacktrackFloor = savedFloor;
         _engine.SetPc(savedPc);
         _engine.SetCp(savedCp);
         _engine.SetB0(savedB0);
