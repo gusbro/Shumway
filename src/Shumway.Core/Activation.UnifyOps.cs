@@ -172,9 +172,11 @@ public sealed partial class Activation
                 return c.Data == value.Data;
         }
 
-        int valueSlot = AllocateHeap(1);
-        _heap[valueSlot] = value;
-        return Unify(heapIdx, valueSlot);
+        // The cells unify as they are, as the interpreter's unify_value_x read
+        // arm does. Not a throwaway heap slot holding the value: Tier-1 reaches
+        // here for every unify_value in read mode, and the slot cost it 40% more
+        // heap than Tier-0 on list code.
+        return UnifyCells(value, Cell.Ref(heapIdx));
     }
 
     // ----- Compound / list construction (write-mode entry points) -----
