@@ -389,6 +389,23 @@ public sealed partial class Activation
         _heapTop = newTop;
     }
 
+    /// <summary><c>==/2</c> on two argument registers, for compiled code that
+    /// calls it without the builtin dispatch. Once resolved, a variable, an
+    /// atom or a small integer is its cell, so a pair with one of them on
+    /// either side is decided by the cells; anything else takes
+    /// <see cref="AreStructurallyEqual"/>.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool AreRegistersIdentical(int r0, int r1)
+    {
+        Cell a = ResolveForStructuralCompare(_registers[r0]);
+        Cell b = ResolveForStructuralCompare(_registers[r1]);
+        if (a == b) return true;
+        if (a.Tag is Tag.Ref or Tag.Atom or Tag.Int
+            || b.Tag is Tag.Ref or Tag.Atom or Tag.Int) return false;
+        return AreStructurallyEqual(a, b);
+    }
+
     /// <summary>Returns true if the two cells are structurally identical — same
     /// shape, same atom/integer values, same variable identities (an unbound
     /// REF is equal to another unbound REF only when they point at the same

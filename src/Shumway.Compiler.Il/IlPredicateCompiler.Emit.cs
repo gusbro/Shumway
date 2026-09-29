@@ -968,6 +968,20 @@ public sealed partial class IlPredicateCompiler
                     continue;
                 }
 
+                // ==/2 and \==/2 without the builtin dispatch, as the wasm tier
+                // decides them in the module (EmitInlineCompare).
+                if (builtinArity == 2 && builtinEntry.Name is "==" or "\\==")
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(0);
+                    emit.LoadConstant(1);
+                    emit.Call(EngineRegistersIdenticalMethod);
+                    if (builtinEntry.Name == "==") emit.BranchIfFalse(failLabel);
+                    else emit.BranchIfTrue(failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 // Regular builtin (non-meta) — invoke entry.Impl directly.
                 // entry = BuiltinsRegistry.GetById(id)
                 // if (!entry.Impl(engine)) goto fail
@@ -1732,81 +1746,22 @@ public sealed partial class IlPredicateCompiler
                 continue;
             }
             // ---------- ADR-018 arithmetic instruction set ----------
-            // Each opcode maps to one static call into ArithEvalStack, so
-            // Tier-1 evaluates over the same Number eval stack as Tier-0 with
-            // no heap allocation. Operand kinds 1/2 (bigint/float literals) are
+            // A whole a_eval sequence runs on method locals when it has an
+            // integer form (TryEmitIntArithSequence); otherwise each opcode maps
+            // to one static call into ArithEvalStack, the Number eval stack
+            // Tier-0 uses. Operand kinds 1/2 (bigint/float literals) are
             // filtered out by IsSupportedAEval before promotion, so only kinds
             // 0 (int32), 3 (X-reg) and 4 (Y-slot) reach here.
-            if (op == Opcode.AEvalPush)
+            if (op == Opcode.AEvalPush
+                && TryEmitIntArithSequence(emit, code, pc, failLabel, out int arithEnd))
             {
-                // ADR-049: fire a pending wake before an operand variable is
-                // read — but only at the start of the expression (empty eval
-                // stack), since the drain runs nested arithmetic on this same
-                // static stack.
-                EmitArithWakeFlush(emit, failLabel);
-                int kind = BytecodeIO.ReadInt32(code, pc + 1);
-                int operand = BytecodeIO.ReadInt32(code, pc + 5);
-                if (kind == 0)
-                {
-                    emit.LoadConstant((long)operand);
-                    emit.Call(ArithPushIntMethod);
-                }
-                else
-                {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(operand);
-                    emit.Call(kind == 4 ? ArithPushYMethod : ArithPushRegMethod);
-                }
-                pc += OpcodeTable.Get(op).Size;
+                pc = arithEnd;
                 continue;
             }
-            if (op == Opcode.AEvalBin)
+            if (op is Opcode.AEvalPush or Opcode.AEvalBin or Opcode.AEvalUn
+                or Opcode.AEvalIs or Opcode.AEvalCmp)
             {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.LoadArgument(0);                 // engine
-                emit.Call(PreferRationalsGetter);     // → prefer_rationals flag
-                emit.Call(ArithBinMethod);
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalUn)
-            {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithUnMethod);
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalIs)
-            {
-                int kind = BytecodeIO.ReadInt32(code, pc + 1);
-                int target = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(target);
-                switch (kind)
-                {
-                    case 5:   // store into first-occurrence X register (void, no branch)
-                        emit.Call(ArithSetRegMethod);
-                        break;
-                    case 6:   // store into first-occurrence Y slot (void, no branch)
-                        emit.Call(ArithSetPermMethod);
-                        break;
-                    case 4:   // unify with existing Y slot
-                        emit.Call(ArithIsPermMethod);
-                        emit.BranchIfFalse(failLabel);
-                        break;
-                    default:  // unify with existing X register
-                        emit.Call(ArithIsRegMethod);
-                        emit.BranchIfFalse(failLabel);
-                        break;
-                }
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalCmp)
-            {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithCmpMethod);
-                emit.BranchIfFalse(failLabel);
+                EmitStackArithOp(emit, code, pc, failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

@@ -171,6 +171,9 @@ public sealed partial class IlPredicateCompiler
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
     private static readonly MethodInfo CellIntMethod =
         typeof(Cell).GetMethod(nameof(Cell.Int), new[] { typeof(long) })!;
+    private static readonly MethodInfo EngineRegistersIdenticalMethod =
+        typeof(Activation).GetMethod(nameof(Activation.AreRegistersIdentical))!;
+
     private static readonly MethodInfo EngineUnifyMethod =
         typeof(Activation).GetMethod(
             nameof(Activation.UnifyRegisterWithCell),
