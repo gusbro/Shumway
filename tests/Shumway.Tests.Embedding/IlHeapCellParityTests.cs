@@ -17,6 +17,11 @@ public sealed class IlHeapCellParityTests
         perm(L, [X|P]) :- sel(X, L, R), perm(R, P).
         same(X, Y, f(X, Y), g(Y)).
         match(f(A, B), [A, B]).
+        heads([H|T], H, T).
+        pairs([], []).
+        pairs([f(A, B)|T], [A-B|R]) :- pairs(T, R).
+        keep([H|T], X) :- inner(T, X), H = X.
+        inner([Y|_], Y).
         """;
 
     private static readonly string[] Goals =
@@ -26,6 +31,11 @@ public sealed class IlHeapCellParityTests
         "findall(Z, (between(1, 200, I), same(V, W, T, U), V = I, W = f(I), T = f(_, _), U = g(Z)), _).",
         "findall(L, (between(1, 200, I), match(f(I, g(I)), L)), _).",
         "findall(L, (between(1, 200, I), F is I * 1.5, match(f(F, x), L)), _).",
+        // Read through a reference: the arguments are variables bound to the
+        // list or structure, so the register holds a REF, not the cell.
+        "findall(H-T, (between(1, 200, _), L = [a, b], X = L, heads(X, H, T)), _).",
+        "findall(R, (between(1, 200, I), X = [f(I, a), f(b, I)], pairs(X, R)), _).",
+        "findall(X, (between(1, 200, I), L = [I, I], keep(L, X)), _).",
     };
 
     private static string Name(int fid)
@@ -45,7 +55,7 @@ public sealed class IlHeapCellParityTests
         var tiered = new PrologEngine();
         tiered.IlPromotion.Threshold = 1;
         tiered.ConsultString(Corpus);
-        string[] expected = { "sel/3", "perm/2", "same/4", "match/2" };
+        string[] expected = { "sel/3", "perm/2", "same/4", "match/2", "heads/3", "pairs/2", "keep/2" };
         var promoted = new HashSet<string>();
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
@@ -59,6 +69,12 @@ public sealed class IlHeapCellParityTests
 
         foreach (string g in Goals)
         {
+            var answer = plain.Query(g.Replace(", _).", ", Out)."));
+            var answerIl = tiered.Query(g.Replace(", _).", ", Out)."));
+            Assert.Equal(answer.Success, answerIl.Success);
+            Assert.Equal(
+                string.Join(", ", answer.Bindings.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key} = {kv.Value}")),
+                string.Join(", ", answerIl.Bindings.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key} = {kv.Value}")));
             Assert.True(plain.Query(g).Success, g);
             long t0 = plain.LastQueryCellsAllocated;
             Assert.True(tiered.Query(g).Success, g);

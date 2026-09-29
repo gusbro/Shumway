@@ -474,30 +474,39 @@ public sealed partial class Activation
 
     /// <summary><c>unify_variable_y</c>: first occurrence of a
     /// permanent variable inside a compound.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void UnifyVariableY(int slot)
     {
-        int ptr = _unifyPointer;
-        if (_writeMode)
-        {
-            if (_reservedWrite)
-            {
-                _heap[ptr] = Cell.UnboundVar(ptr);
-                SetY(slot, Cell.Ref(ptr));
-                _unifyPointer = ptr + 1;
-                OnReservedArgWritten();
-                return;
-            }
-            int idx = AllocateHeap(1);
-            _heap[idx] = Cell.UnboundVar(idx);
-            SetY(slot, Cell.Ref(idx));
-        }
-        else
+        if (!_writeMode)
         {
             // See UnifyVariableX: a bare ATTVAR is captured as a REF to
             // its home so its identity survives the copy.
-            Cell src = _heap[ptr];
-            SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
+            int rp = _unifyPointer;
+            Cell src = _heap[rp];
+            SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(rp) : src);
+            _unifyPointer = rp + 1;
+            return;
         }
+        UnifyVariableYWrite(slot);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void UnifyVariableYWrite(int slot)
+    {
+        int ptr = _unifyPointer;
+        if (_reservedWrite)
+        {
+            _heap[ptr] = Cell.UnboundVar(ptr);
+            SetY(slot, Cell.Ref(ptr));
+            _unifyPointer = ptr + 1;
+            OnReservedArgWritten();
+            return;
+        }
+        int idx = AllocateHeap(1);
+        _heap[idx] = Cell.UnboundVar(idx);
+        SetY(slot, Cell.Ref(idx));
         _unifyPointer = ptr + 1;
     }
 
@@ -604,6 +613,17 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Lis)
+            {
+                // Read through a reference: an argument bound to a list, the
+                // usual register content. The fast path's read, one deref on.
+                int ptr = fc.AsHeapIndex;
+                Cell hc = _heap[ptr];
+                _registers[h] = hc.Tag == Tag.AttVar ? Cell.Ref(ptr) : hc;
+                Cell tc = _heap[ptr + 1];
+                _registers[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
                 // Write: one bump for the pair; bind the var to an inline LIS
@@ -653,6 +673,15 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Lis)
+            {
+                // Read through a reference, as GetListVarXVarXSlow.
+                int ptr = fc.AsHeapIndex;
+                if (!UnifyHeapWithCell(ptr, _registers[v])) return false;
+                Cell tc = _heap[ptr + 1];
+                _registers[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
                 // Write: store the value cell verbatim (unify_value_x write
@@ -708,6 +737,17 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Str)
+            {
+                // Read through a reference, as GetListVarXVarXSlow.
+                int f = fc.AsHeapIndex;
+                if (_heap[f].AsFunctorId != functorId) return false;
+                Cell ac = _heap[f + 1];
+                _registers[a] = ac.Tag == Tag.AttVar ? Cell.Ref(f + 1) : ac;
+                Cell bc = _heap[f + 2];
+                _registers[b] = bc.Tag == Tag.AttVar ? Cell.Ref(f + 2) : bc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
                 // Write: functor + both args in one bump; inline STR bind

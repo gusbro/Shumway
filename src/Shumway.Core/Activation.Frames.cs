@@ -552,6 +552,14 @@ public sealed partial class Activation
     /// before any read, so this marker is never actually dereferenced. After the call
     /// <see cref="E"/> points at the new frame.
     /// </summary>
+    // Out of line: the interpolated string would make every Allocate set up
+    // and zero a frame for it, as PushChoicePoint's did (ADR-058).
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void TraceAlloc(int numPermanents)
+        => System.Console.Error.WriteLine(
+            $"[cp-stack] alloc(n={numPermanents}) _b={_b} _e={_e} _stackTop={_stackTop} -> newE={_stackTop}");
+
     public void Allocate(int numPermanents)
     {
         if (numPermanents < 0)
@@ -560,8 +568,7 @@ public sealed partial class Activation
         int frameSize = EnvSize(numPermanents);
         EnsureStackCapacity(frameSize);
 
-        if (TraceCpStack)
-            System.Console.Error.WriteLine($"[cp-stack] alloc(n={numPermanents}) _b={_b} _e={_e} _stackTop={_stackTop} -> newE={_stackTop}");
+        if (TraceCpStack) TraceAlloc(numPermanents);
         int newE = _stackTop;
         // CE / CP / N are control words: tag them RawInt (ADR-016) so the
         // heap GC never mistakes one for a heap Ref. N is the per-frame
