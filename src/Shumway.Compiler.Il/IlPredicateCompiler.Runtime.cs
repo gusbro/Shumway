@@ -595,11 +595,11 @@ public sealed partial class IlPredicateCompiler
         var notRef = emit.DefineLabel("a1_not_ref");
         emit.LoadArgument(0);
         emit.LoadConstant(0);
-        emit.Call(EngineGetRegisterMethod);
+        EmitHelperCall(emit, EngineGetRegisterMethod);
         emit.StoreLocal(a1Tmp);
 
         emit.LoadLocalAddress(a1Tmp);
-        emit.Call(CellTagGetter);
+        EmitHelperCall(emit, CellTagGetter);
         emit.LoadConstant((int)Tag.Ref);
         emit.UnsignedBranchIfNotEqual(notRef);
 
@@ -607,9 +607,9 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadArgument(0);
         emit.LoadLocalAddress(a1Tmp);
-        emit.Call(CellAsHeapIndexGetter);
-        emit.Call(EngineDerefMethod);
-        emit.Call(EngineGetHeapMethod);
+        EmitHelperCall(emit, CellAsHeapIndexGetter);
+        EmitHelperCall(emit, EngineDerefMethod);
+        EmitHelperCall(emit, EngineGetHeapMethod);
         emit.StoreLocal(a1Tmp);
 
         emit.MarkLabel(notRef);

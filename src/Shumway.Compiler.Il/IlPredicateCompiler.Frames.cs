@@ -230,7 +230,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadConstant(arity);
         emit.LoadLocal(l.Marker);
-        emit.Call(EnginePushChoicePointMethod);
+        EmitHelperCall(emit, EnginePushChoicePointMethod);
         emit.MarkLabel(done);
     }
 
@@ -295,7 +295,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadLocal(l.BindingTop);
         emit.LoadLocal(l.ExtraTop);
-        emit.Call(EngineUnwindTrailsMethod);
+        EmitHelperCall(emit, EngineUnwindTrailsMethod);
         EmitLoadEngineField(emit, EngStack);
         emit.StoreLocal(l.Stack);
         emit.MarkLabel(unwound);
@@ -341,11 +341,11 @@ public sealed partial class IlPredicateCompiler
         if (retry)
         {
             emit.LoadLocal(l.Marker);
-            emit.Call(EngineRetryMeElseMethod);
+            EmitHelperCall(emit, EngineRetryMeElseMethod);
         }
         else
         {
-            emit.Call(EngineTrustMeMethod);
+            EmitHelperCall(emit, EngineTrustMeMethod);
         }
         emit.MarkLabel(done);
     }

@@ -226,24 +226,24 @@ public sealed partial class IlPredicateCompiler
             // cell = deref(X0) (one level)
             emit.LoadArgument(0);
             emit.LoadConstant(0);
-            emit.Call(EngineGetRegisterMethod);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
             emit.StoreLocal(cellLoc);
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.LoadConstant((int)Tag.Ref);
             var notRef = emit.DefineLabel($"inl{u}_notref");
             emit.UnsignedBranchIfNotEqual(notRef);
             emit.LoadArgument(0);
             emit.LoadArgument(0);
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellAsHeapIndexGetter);
-            emit.Call(EngineDerefMethod);
-            emit.Call(EngineGetHeapMethod);
+            EmitHelperCall(emit, CellAsHeapIndexGetter);
+            EmitHelperCall(emit, EngineDerefMethod);
+            EmitHelperCall(emit, EngineGetHeapMethod);
             emit.StoreLocal(cellLoc);
             emit.MarkLabel(notRef);
 
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.StoreLocal(tagLoc);
             var notWant = emit.DefineLabel($"inl{u}_notwant");
             emit.LoadLocal(tagLoc);
@@ -254,7 +254,7 @@ public sealed partial class IlPredicateCompiler
             {
                 var keyLoc = emit.DeclareLocal<int>($"inl{u}_key");
                 emit.LoadLocalAddress(cellLoc);
-                emit.Call(CellAsAtomIdGetter);
+                EmitHelperCall(emit, CellAsAtomIdGetter);
                 emit.StoreLocal(keyLoc);
                 for (int c = 0; c < k; c++)
                 {
@@ -271,7 +271,7 @@ public sealed partial class IlPredicateCompiler
             {
                 var vLoc = emit.DeclareLocal<long>($"inl{u}_v");
                 emit.LoadLocalAddress(cellLoc);
-                emit.Call(CellAsIntGetter);
+                EmitHelperCall(emit, CellAsIntGetter);
                 emit.StoreLocal(vLoc);
                 for (int c = 0; c < k; c++)
                 {
@@ -313,7 +313,7 @@ public sealed partial class IlPredicateCompiler
                 emitSelf(emit);                            // → this PredicateDelegate
                 emit.LoadConstant(site.BaseCursor + c);    // alternative cursor (next clause)
                 emit.LoadConstant(factArity);              // save the fact's argument registers
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
             }
             EmitClauseBody(emit, fcode, site.ClauseRanges[c].Start, site.ClauseRanges[c].End,
                 failLabel, Array.Empty<CallSite>(),
@@ -475,7 +475,7 @@ public sealed partial class IlPredicateCompiler
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
     }
 
     // Builtins that push a CP and call

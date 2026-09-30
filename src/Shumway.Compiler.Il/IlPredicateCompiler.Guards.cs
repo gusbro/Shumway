@@ -303,12 +303,12 @@ public sealed partial class IlPredicateCompiler
         var targets = ctx.ContLabels.ToArray();
         emit.MarkLabel(ctx.OkEpilogue);
         emit.LoadArgument(0);
-        emit.Call(EnginePopGuardContOkMethod);
+        EmitHelperCall(emit, EnginePopGuardContOkMethod);
         emit.Switch(targets);
         emit.Branch(methodFail);                 // out of range — unreachable
         emit.MarkLabel(ctx.FailEpilogue);
         emit.LoadArgument(0);
-        emit.Call(EnginePopGuardContFailMethod);
+        EmitHelperCall(emit, EnginePopGuardContFailMethod);
         emit.Switch(targets);
         emit.Branch(methodFail);
     }
@@ -1463,24 +1463,24 @@ public sealed partial class IlPredicateCompiler
         {
             // Cancellation poll at the loop head (throttled field read).
             emit.LoadArgument(0);
-            emit.Call(EngineBacktrackSafePointMethod);
+            EmitHelperCall(emit, EngineBacktrackSafePointMethod);
         }
         for (int r = 0; r < arity; r++)
         {
             emit.LoadArgument(0);
             emit.LoadConstant(r);
-            emit.Call(EngineGetRegisterMethod);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
             emit.StoreLocal(argSaves[r]);
         }
-        emit.LoadArgument(0); emit.Call(EngineBindingTrailTopGetter); emit.StoreLocal(mBt);
-        emit.LoadArgument(0); emit.Call(EngineExtraTrailTopGetter); emit.StoreLocal(mXt);
-        emit.LoadArgument(0); emit.Call(EngineHeapTopGetter); emit.StoreLocal(mH);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineBindingTrailTopGetter); emit.StoreLocal(mBt);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineExtraTrailTopGetter); emit.StoreLocal(mXt);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(mH);
         // Nested HB raise: the guard's own staging creates fresh vars after the
         // guard-level raise (put_variable_y outputs) — young w.r.t. the guard's
         // HB, so a callee binding them would go untrailed and survive the
         // per-alternative untrail. Raising HB again to the CALLEE-entry heap
         // top makes every pre-callee term old; restored at the join.
-        emit.LoadArgument(0); emit.Call(EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
 
         byte[] code = callee.BytecodeUnfused;
         for (int i = 0; i < k; i++)
@@ -1497,13 +1497,13 @@ public sealed partial class IlPredicateCompiler
                 // must trail too.
                 emit.LoadArgument(0);
                 emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mH); emit.LoadLocal(mH);
-                emit.Call(EngineFailIlGuardMethod);
+                EmitHelperCall(emit, EngineFailIlGuardMethod);
                 for (int r = 0; r < arity; r++)
                 {
                     emit.LoadArgument(0);
                     emit.LoadConstant(r);
                     emit.LoadLocal(argSaves[r]);
-                    emit.Call(EngineSetRegisterMethod);
+                    EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
 
@@ -1528,7 +1528,7 @@ public sealed partial class IlPredicateCompiler
                 // hook backtracks into the next alternative, pre-commit) — but
                 // no engine Cut call: a fail-direct callee pushed nothing.
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(preCutFail);
                 // Slice 2 — post-commit: failures exit the callee.
                 Sigil.Label committedFail = outerFail;
@@ -1542,7 +1542,7 @@ public sealed partial class IlPredicateCompiler
                     EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
                     emit.MarkLabel(df2);
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                     emit.Branch(outerFail);
                 }
                 else
@@ -1565,7 +1565,7 @@ public sealed partial class IlPredicateCompiler
             {
                 emit.MarkLabel(deallocFail);
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
                 emit.Branch(altLabels[i + 1]);
             }
         }
@@ -1575,7 +1575,7 @@ public sealed partial class IlPredicateCompiler
         // clause-entry HB itself.)
         emit.LoadArgument(0);
         emit.LoadLocal(mHb);
-        emit.Call(EngineCommitIlGuardMethod);
+        EmitHelperCall(emit, EngineCommitIlGuardMethod);
     }
 
     /// <summary>The terminator of one inlined fail-direct clause: rejoin the
@@ -1591,7 +1591,7 @@ public sealed partial class IlPredicateCompiler
         if (c.DeallocProceed)
         {
             emit.LoadArgument(0);
-            emit.Call(EngineDeallocateMethod);
+            EmitHelperCall(emit, EngineDeallocateMethod);
             emit.Branch(join);
         }
         else if (c.SelfTail)
@@ -1669,7 +1669,7 @@ public sealed partial class IlPredicateCompiler
                 regs[r] = emit.DeclareLocal<Cell>($"cf_r{r}{salt}");
                 emit.LoadArgument(0);
                 emit.LoadConstant(r);
-                emit.Call(EngineGetRegisterMethod);
+                EmitHelperCall(emit, EngineGetRegisterMethod);
                 emit.StoreLocal(regs[r]);
             }
         }
@@ -1680,11 +1680,11 @@ public sealed partial class IlPredicateCompiler
             h = emit.DeclareLocal<int>($"cf_h{salt}");
             hb = emit.DeclareLocal<int>($"cf_hb{salt}");
             ee = emit.DeclareLocal<int>($"cf_e{salt}");
-            emit.LoadArgument(0); emit.Call(EngineBindingTrailTopGetter); emit.StoreLocal(bt);
-            emit.LoadArgument(0); emit.Call(EngineExtraTrailTopGetter); emit.StoreLocal(xt);
-            emit.LoadArgument(0); emit.Call(EngineHeapTopGetter); emit.StoreLocal(h);
-            emit.LoadArgument(0); emit.Call(EngineEGetter); emit.StoreLocal(ee);
-            emit.LoadArgument(0); emit.Call(EngineBeginIlGuardMethod); emit.StoreLocal(hb);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineBindingTrailTopGetter); emit.StoreLocal(bt);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineExtraTrailTopGetter); emit.StoreLocal(xt);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(h);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(ee);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(hb);
         }
         if (needsStub)
             guardFail = emit.DefineLabel($"cf_restore{salt}");
@@ -1699,12 +1699,12 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, g.CutPc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineCutToLevelMethod);
+                EmitHelperCall(emit, EngineCutToLevelMethod);
             }
             else
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineNeckCutMethod);
+                EmitHelperCall(emit, EngineNeckCutMethod);
             }
         }
 
@@ -1712,11 +1712,11 @@ public sealed partial class IlPredicateCompiler
         var rare = emit.DefineLabel($"cf_rare{salt}");
         var after = emit.DefineLabel($"cf_after{salt}");
         emit.LoadArgument(0);
-        emit.Call(EngineHasPendingWakeupsGetter);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        { emit.LoadArgument(0); emit.LoadLocal(hb!); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
         emit.Branch(after);
         emit.MarkLabel(rare);
         Sigil.Label? rareNoCp = null;
@@ -1738,11 +1738,11 @@ public sealed partial class IlPredicateCompiler
         {
             emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!);
             emit.LoadLocal(hb!); emit.LoadLocal(ee!);
-            emit.Call(EnginePushIlCpWithMarksMethod);
+            EmitHelperCall(emit, EnginePushIlCpWithMarksMethod);
         }
         else
         {
-            emit.Call(EnginePushIlCpMethod);
+            EmitHelperCall(emit, EnginePushIlCpMethod);
         }
         // The push saved the current registers — but the guard may have
         // clobbered argument registers with call staging (regSave). Patch the
@@ -1760,16 +1760,16 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(r);
                 emit.LoadLocal(regs[r]);
-                emit.Call(EngineSetTopCpArgRegisterMethod);
+                EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
             }
         }
         if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
         emit.LoadArgument(0);
-        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        { emit.LoadArgument(0); emit.LoadLocal(hb!); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
         emit.MarkLabel(after);
 
         emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
@@ -1788,13 +1788,13 @@ public sealed partial class IlPredicateCompiler
             if (g.Framed)
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
             }
             if (g.NeedsSnapshot)
             {
                 emit.LoadArgument(0);
                 emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!); emit.LoadLocal(hb!);
-                emit.Call(EngineFailIlGuardMethod);
+                EmitHelperCall(emit, EngineFailIlGuardMethod);
             }
             if (regs is not null)
             {
@@ -1803,7 +1803,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadArgument(0);
                     emit.LoadConstant(r);
                     emit.LoadLocal(regs[r]);
-                    emit.Call(EngineSetRegisterMethod);
+                    EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
             if (dynamicFailDispatch is not null) dynamicFailDispatch();

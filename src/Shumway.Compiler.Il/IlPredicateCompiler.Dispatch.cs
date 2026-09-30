@@ -136,7 +136,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -174,7 +174,7 @@ public sealed partial class IlPredicateCompiler
                     effectiveSelf(emit);
                     emit.LoadConstant(i + 1);
                     emit.LoadConstant(predicate.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)predicate.BytecodeUnfused[ginfo.CutPc]).Size;
                     // localSalt: the fallback re-emits the same pcs the
@@ -205,7 +205,7 @@ public sealed partial class IlPredicateCompiler
                 effectiveSelf(emit);                       // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(i + 1);                  // next cursor
                 emit.LoadConstant(predicate.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
             }
 
             // Emit the clause body. The shared siteCounter assigns a
@@ -228,7 +228,7 @@ public sealed partial class IlPredicateCompiler
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
     }
 
     /// <summary>Recognises the shape:
@@ -513,7 +513,7 @@ public sealed partial class IlPredicateCompiler
         emit.StoreLocal(a1Local);
 
         emit.LoadLocalAddress(a1Local);
-        emit.Call(CellTagGetter);
+        EmitHelperCall(emit, CellTagGetter);
         var tagLocal = emit.DeclareLocal<byte>("tag");
         emit.StoreLocal(tagLocal);
 
@@ -534,7 +534,7 @@ public sealed partial class IlPredicateCompiler
         // jump to that clause's body on match.
         emit.MarkLabel(groundDispatchLabel);
         emit.LoadLocalAddress(a1Local);
-        emit.Call(CellAsAtomIdGetter);
+        EmitHelperCall(emit, CellAsAtomIdGetter);
         var atomIdLocal = emit.DeclareLocal<int>("atomId");
         emit.StoreLocal(atomIdLocal);
 
@@ -559,7 +559,7 @@ public sealed partial class IlPredicateCompiler
                 emit.MarkLabel(successLabels[ci]);
                 emit.LoadConstant(profileKey);
                 emit.LoadConstant(ci);
-                emit.Call(IlProfileCountersBump);
+                EmitHelperCall(emit, IlProfileCountersBump);
                 emit.Branch(bodyLabels[ci]);
             }
         }
@@ -586,7 +586,7 @@ public sealed partial class IlPredicateCompiler
                 effectiveSelf(emit);                   // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(i + 1);              // next cursor
                 emit.LoadConstant(1);                  // arity
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
             }
             emit.Branch(bodyLabels[i]);
         }
@@ -610,7 +610,7 @@ public sealed partial class IlPredicateCompiler
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
     }
 
     /// <summary>A counter the IL emission embeds into the bytecode as a

@@ -58,11 +58,11 @@ internal static class NativeBlockInliner
         if (!ctx.HasReftype) return false;
         emit.LoadArgument(0);
         emit.LoadConstant(1);
-        emit.Call(ctx.ReadReftypeSlot!);            // slot
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.ReadReftypeSlot!);            // slot
         emit.LoadArgument(0);
         emit.LoadConstant(0);
-        emit.Call(ctx.ReadRegisterAsTerm);          // term
-        emit.Call(ctx.SlotSetValue!);               // slot.SetValue(term)
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.ReadRegisterAsTerm);          // term
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.SlotSetValue!);               // slot.SetValue(term)
         return true;
     }
 
@@ -77,9 +77,9 @@ internal static class NativeBlockInliner
         emit.LoadConstant(0);                       // reg 0
         emit.LoadArgument(0);
         emit.LoadConstant(1);
-        emit.Call(ctx.ReadReftypeSlot!);            // slot
-        emit.Call(ctx.SlotMaterialize!);            // slot.Materialize() -> Term
-        emit.Call(ctx.UnifyRegisterWithTerm);       // -> bool
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.ReadReftypeSlot!);            // slot
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.SlotMaterialize!);            // slot.Materialize() -> Term
+        IlPredicateCompiler.EmitHelperCall(emit, ctx.UnifyRegisterWithTerm);       // -> bool
         emit.BranchIfFalse(failLabel);
         return true;
     }
@@ -154,21 +154,21 @@ internal static class NativeBlockInliner
             {
                 _emit.LoadArgument(0);
                 _emit.LoadConstant(Reg(v.Name));
-                _emit.Call(_ctx.ReadReftypeSlot!);
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.ReadReftypeSlot!);
                 _emit.StoreLocal(_locals[v.Name]);
                 return;
             }
             var model = NativeBlockTyping.ModelType(v.Kind);
             // host = (PrologEngine)engine.Host
             _emit.LoadArgument(0);
-            _emit.Call(_ctx.HostGetter);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.HostGetter);
             _emit.CastClass(_ctx.HostType);
             // term = RegisterMarshalling.ReadRegisterAsTerm(engine, reg)
             _emit.LoadArgument(0);
             _emit.LoadConstant(Reg(v.Name));
-            _emit.Call(_ctx.ReadRegisterAsTerm);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.ReadRegisterAsTerm);
             // local = host.FromTerm<model>(term)
-            _emit.Call(_ctx.FromTermFor(model));
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.FromTermFor(model));
             _emit.StoreLocal(_locals[v.Name]);
         }
 
@@ -183,8 +183,8 @@ internal static class NativeBlockInliner
                 _emit.LoadConstant(Reg(v.Name));
                 _emit.LoadArgument(0);                       // engine (for MakeForeign)
                 _emit.LoadLocal(_locals[v.Name]);            // slot (a TermSlot, an object)
-                _emit.Call(_ctx.MakeForeign!);               // -> Cell
-                _emit.Call(_ctx.UnifyRegisterWithCell!);     // -> bool
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.MakeForeign!);               // -> Cell
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.UnifyRegisterWithCell!);     // -> bool
                 _emit.BranchIfFalse(_fail);
                 return;
             }
@@ -200,12 +200,12 @@ internal static class NativeBlockInliner
             else
             {
                 _emit.LoadArgument(0);
-                _emit.Call(_ctx.HostGetter);
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.HostGetter);
                 _emit.CastClass(_ctx.HostType);
                 _emit.LoadLocal(_locals[v.Name]);
-                _emit.Call(_ctx.ToTermFor(model));           // host.ToTerm<model>(value)
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.ToTermFor(model));           // host.ToTerm<model>(value)
             }
-            _emit.Call(_ctx.UnifyRegisterWithTerm);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.UnifyRegisterWithTerm);
             _emit.BranchIfFalse(_fail);
         }
 
@@ -251,11 +251,11 @@ internal static class NativeBlockInliner
             if (_scalarFloat.TryGetValue(target, out bool isFloat) && _emit is not null)
             {
                 _emit.LoadArgument(0);
-                _emit.Call(_ctx.HostGetter);
+                IlPredicateCompiler.EmitHelperCall(_emit, _ctx.HostGetter);
                 _emit.CastClass(_ctx.HostType);
                 _emit.LoadConstant(target);
                 _emit.LoadLocal(_locals[target]);
-                _emit.Call(isFloat ? _ctx.SetNativeGlobalFloat : _ctx.SetNativeGlobalInt);
+                IlPredicateCompiler.EmitHelperCall(_emit, isFloat ? _ctx.SetNativeGlobalFloat : _ctx.SetNativeGlobalInt);
             }
         }
 
@@ -264,10 +264,10 @@ internal static class NativeBlockInliner
         {
             if (_emit is null) return;
             _emit.LoadArgument(0);
-            _emit.Call(_ctx.HostGetter);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.HostGetter);
             _emit.CastClass(_ctx.HostType);
             _emit.LoadConstant(g.Name);
-            _emit.Call(g.IsFloat ? _ctx.GetNativeGlobalFloat : _ctx.GetNativeGlobalInt);
+            IlPredicateCompiler.EmitHelperCall(_emit, g.IsFloat ? _ctx.GetNativeGlobalFloat : _ctx.GetNativeGlobalInt);
             _emit.StoreLocal(_locals[g.Name]);
         }
 
@@ -276,10 +276,10 @@ internal static class NativeBlockInliner
         {
             if (_emit is null) return;
             _emit.LoadArgument(0);
-            _emit.Call(_ctx.HostGetter);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.HostGetter);
             _emit.CastClass(_ctx.HostType);
             _emit.LoadConstant(name);
-            _emit.Call(_ctx.GetOrCreateReftypeSlot!);
+            IlPredicateCompiler.EmitHelperCall(_emit, _ctx.GetOrCreateReftypeSlot!);
         }
 
         private static string? ReftypeArgName(CExpr e) => e switch

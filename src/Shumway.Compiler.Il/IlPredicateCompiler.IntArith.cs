@@ -151,14 +151,14 @@ public sealed partial class IlPredicateCompiler
                     emit.NewObject(CellCtor);
                     switch (a1)
                     {
-                        case 5: emit.Call(EngineSetRegisterMethod); break;
-                        case 6: emit.Call(EngineSetYMethod); break;
+                        case 5: EmitHelperCall(emit, EngineSetRegisterMethod); break;
+                        case 6: EmitHelperCall(emit, EngineSetYMethod); break;
                         case 4:
-                            emit.Call(EngineUnifyPermanentMethod);
+                            EmitHelperCall(emit, EngineUnifyPermanentMethod);
                             emit.BranchIfFalse(failLabel);
                             break;
                         default:
-                            emit.Call(EngineUnifyMethod);
+                            EmitHelperCall(emit, EngineUnifyMethod);
                             emit.BranchIfFalse(failLabel);
                             break;
                     }
@@ -190,7 +190,7 @@ public sealed partial class IlPredicateCompiler
         var notRef = emit.DefineLabel($"iar_notref_{NextLabelSeq()}");
         emit.LoadArgument(0);
         emit.LoadConstant(val);
-        emit.Call(kind == 4 ? EngineGetYMethod : EngineGetRegisterMethod);
+        EmitHelperCall(emit, kind == 4 ? EngineGetYMethod : EngineGetRegisterMethod);
         emit.LoadField(CellDataField);
         emit.StoreLocal(data);
         // Tag.Ref is 0: any other tag needs no deref.
@@ -203,8 +203,8 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadLocal(data);
         emit.Convert<int>();
-        emit.Call(EngineDerefMethod);
-        emit.Call(EngineGetHeapMethod);
+        EmitHelperCall(emit, EngineDerefMethod);
+        EmitHelperCall(emit, EngineGetHeapMethod);
         emit.LoadField(CellDataField);
         emit.StoreLocal(data);
         emit.MarkLabel(notRef);
@@ -257,25 +257,25 @@ public sealed partial class IlPredicateCompiler
                 if (kind == 0)
                 {
                     emit.LoadConstant((long)operand);
-                    emit.Call(ArithPushIntMethod);
+                    EmitHelperCall(emit, ArithPushIntMethod);
                 }
                 else
                 {
                     emit.LoadArgument(0);
                     emit.LoadConstant(operand);
-                    emit.Call(kind == 4 ? ArithPushYMethod : ArithPushRegMethod);
+                    EmitHelperCall(emit, kind == 4 ? ArithPushYMethod : ArithPushRegMethod);
                 }
                 break;
             }
             case Opcode.AEvalBin:
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
                 emit.LoadArgument(0);
-                emit.Call(PreferRationalsGetter);
-                emit.Call(ArithBinMethod);
+                EmitHelperCall(emit, PreferRationalsGetter);
+                EmitHelperCall(emit, ArithBinMethod);
                 break;
             case Opcode.AEvalUn:
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithUnMethod);
+                EmitHelperCall(emit, ArithUnMethod);
                 break;
             case Opcode.AEvalIs:
             {
@@ -284,14 +284,14 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));
                 switch (kind)
                 {
-                    case 5: emit.Call(ArithSetRegMethod); break;     // first-occurrence X
-                    case 6: emit.Call(ArithSetPermMethod); break;    // first-occurrence Y
+                    case 5: EmitHelperCall(emit, ArithSetRegMethod); break;     // first-occurrence X
+                    case 6: EmitHelperCall(emit, ArithSetPermMethod); break;    // first-occurrence Y
                     case 4:                                          // bound Y
-                        emit.Call(ArithIsPermMethod);
+                        EmitHelperCall(emit, ArithIsPermMethod);
                         emit.BranchIfFalse(failLabel);
                         break;
                     default:                                         // bound X
-                        emit.Call(ArithIsRegMethod);
+                        EmitHelperCall(emit, ArithIsRegMethod);
                         emit.BranchIfFalse(failLabel);
                         break;
                 }
@@ -299,7 +299,7 @@ public sealed partial class IlPredicateCompiler
             }
             case Opcode.AEvalCmp:
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithCmpMethod);
+                EmitHelperCall(emit, ArithCmpMethod);
                 emit.BranchIfFalse(failLabel);
                 break;
             default:

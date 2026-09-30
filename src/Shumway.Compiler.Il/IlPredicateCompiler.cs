@@ -963,7 +963,7 @@ public sealed partial class IlPredicateCompiler
             selfFunctorId: predicate.FunctorId, selfTailLabel: selfEntry);
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
     }
 
     /// <summary>defines a static method named

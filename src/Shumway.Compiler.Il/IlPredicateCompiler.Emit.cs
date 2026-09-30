@@ -251,8 +251,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -264,8 +264,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellIntMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -281,9 +281,9 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(regIdx);
                 emit.LoadArgument(0);
                 emit.LoadConstant(_ilFloatPool![literalId]);
-                emit.Call(EngineMakeFloatMethod);
-                emit.Call(CellRefMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, EngineMakeFloatMethod);
+                EmitHelperCall(emit, CellRefMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -294,8 +294,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -307,7 +307,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(srcReg);
                 emit.LoadConstant(argReg);
-                emit.Call(EngineUnifyRegistersMethod);
+                EmitHelperCall(emit, EngineUnifyRegistersMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -321,8 +321,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(dest);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineGetRegisterMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -331,7 +331,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(dest);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckGetVariableXMethod);
+                    EmitHelperCall(emit, DbgCheckGetVariableXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -346,8 +346,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(slot);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetYMethod);
+                EmitHelperCall(emit, EngineGetRegisterMethod);
+                EmitHelperCall(emit, EngineSetYMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -356,7 +356,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckGetVariableYMethod);
+                    EmitHelperCall(emit, DbgCheckGetVariableYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -371,8 +371,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetYMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, EngineGetYMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -385,8 +385,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -397,8 +397,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, CellIntMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -411,9 +411,9 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadArgument(0);
                 emit.LoadConstant(_ilFloatPool![literalId]);
-                emit.Call(EngineMakeFloatMethod);
-                emit.Call(CellRefMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineMakeFloatMethod);
+                EmitHelperCall(emit, CellRefMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -423,8 +423,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -437,8 +437,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadArgument(0);
                 emit.LoadConstant(src);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineGetRegisterMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -447,7 +447,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(src);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutValueXMethod);
+                    EmitHelperCall(emit, DbgCheckPutValueXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -462,8 +462,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetYMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineGetYMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -472,7 +472,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutValueYMethod);
+                    EmitHelperCall(emit, DbgCheckPutValueYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -487,19 +487,19 @@ public sealed partial class IlPredicateCompiler
                 // assign it to both X[dest] and X[arg].
                 var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}{lt}");
                 emit.LoadArgument(0);
-                emit.Call(EngineAllocateHeapUnboundMethod);
-                emit.Call(CellRefMethod);
+                EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
+                EmitHelperCall(emit, CellRefMethod);
                 emit.StoreLocal(refLocal);
                 // X[dest] = local
                 emit.LoadArgument(0);
                 emit.LoadConstant(dest);
                 emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
                 // X[arg] = local
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -508,7 +508,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(dest);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutVariableXMethod);
+                    EmitHelperCall(emit, DbgCheckPutVariableXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -521,17 +521,17 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}{lt}");
                 emit.LoadArgument(0);
-                emit.Call(EngineAllocateHeapUnboundMethod);
-                emit.Call(CellRefMethod);
+                EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
+                EmitHelperCall(emit, CellRefMethod);
                 emit.StoreLocal(refLocal);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 emit.LoadLocal(refLocal);
-                emit.Call(EngineSetYMethod);
+                EmitHelperCall(emit, EngineSetYMethod);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitHelperCall(emit, EngineSetRegisterMethod);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -540,7 +540,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutVariableYMethod);
+                    EmitHelperCall(emit, DbgCheckPutVariableYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -554,24 +554,24 @@ public sealed partial class IlPredicateCompiler
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_alloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineEGetter);
+                    EmitHelperCall(emit, EngineEGetter);
                     emit.StoreLocal(preELocal);
                     emit.LoadArgument(0);
                     emit.LoadConstant(n);
-                    emit.Call(EngineAllocateMethod);
+                    EmitHelperCall(emit, EngineAllocateMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(_emitOwnerFid);
                     emit.LoadConstant(n);
                     emit.LoadConstant(pc);
                     emit.LoadLocal(preELocal);
-                    emit.Call(DbgCheckAllocateMethod);
+                    EmitHelperCall(emit, DbgCheckAllocateMethod);
                 }
                 else
 #endif
                 {
                     emit.LoadArgument(0);
                     emit.LoadConstant(n);
-                    emit.Call(EngineAllocateMethod);
+                    EmitHelperCall(emit, EngineAllocateMethod);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -583,21 +583,21 @@ public sealed partial class IlPredicateCompiler
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_dealloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineEGetter);
+                    EmitHelperCall(emit, EngineEGetter);
                     emit.StoreLocal(preELocal);
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(_emitOwnerFid);
                     emit.LoadLocal(preELocal);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckDeallocateMethod);
+                    EmitHelperCall(emit, DbgCheckDeallocateMethod);
                 }
                 else
 #endif
                 {
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -610,22 +610,22 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(n);
-                emit.Call(EngineAllocateMethod);
+                EmitHelperCall(emit, EngineAllocateMethod);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelMethod);
+                EmitHelperCall(emit, EngineGetLevelMethod);
                 pc += OpcodeTable.Get(op).Size;   // 10
                 continue;
             }
             if (op == Opcode.DeallocateProceed)
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
                 // Proceed semantics in IL: success return.
                 if (!suppressProceedReturn)
                 {
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                 }
                 pc += OpcodeTable.Get(op).Size;   // 2
                 continue;
@@ -689,7 +689,7 @@ public sealed partial class IlPredicateCompiler
                     EmitResumeMarker(emit, _emitOwnerFid, elseCursor);
                 }
                 emit.LoadConstant(0);
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -727,10 +727,10 @@ public sealed partial class IlPredicateCompiler
                 // Flush pending attribute wakeups before committing — a failed
                 // constraint must backtrack while choice points still exist.
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
-                emit.Call(EngineNeckCutMethod);
+                EmitHelperCall(emit, EngineNeckCutMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -740,7 +740,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelMethod);
+                EmitHelperCall(emit, EngineGetLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -750,7 +750,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelBMethod);
+                EmitHelperCall(emit, EngineGetLevelBMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -762,11 +762,11 @@ public sealed partial class IlPredicateCompiler
                 // about-to-be-pruned choice points.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineCutToLevelMethod);
+                EmitHelperCall(emit, EngineCutToLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -777,11 +777,11 @@ public sealed partial class IlPredicateCompiler
                 // else choice point named by Y[slot], leaving the condition's CPs.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineSoftCutToLevelMethod);
+                EmitHelperCall(emit, EngineSoftCutToLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -912,13 +912,13 @@ public sealed partial class IlPredicateCompiler
                     if (tailCall)
                     {
                         emit.LoadArgument(0);
-                        emit.Call(EngineCpGetter);
+                        EmitHelperCall(emit, EngineCpGetter);
                     }
                     else
                     {
                         EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
                     }
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
 
                     // Compute the call arity and cut barrier per builtin.
                     //   call/N : arity = N, barrier = engine.B
@@ -931,18 +931,18 @@ public sealed partial class IlPredicateCompiler
                         // X[1] cell once and extracts the int payload.
                         emit.LoadArgument(0);
                         emit.LoadConstant(1);
-                        emit.Call(IlMetaCallHelperReadIntRegisterMethod);
+                        EmitHelperCall(emit, IlMetaCallHelperReadIntRegisterMethod);
                     }
                     else
                     {
                         emit.LoadConstant(builtinArity);
                         emit.LoadArgument(0);
-                        emit.Call(EngineBGetter);
+                        EmitHelperCall(emit, EngineBGetter);
                     }
                     // convertBody: call/N converts (SS7.6.2); $call/2
                     // dispatches an already-converted body.
                     emit.LoadConstant(!builtinEntry.IsDollarCall);
-                    emit.Call(IlMetaCallHelperDispatchMethod);
+                    EmitHelperCall(emit, IlMetaCallHelperDispatchMethod);
                     emit.StoreLocal(target);
 
                     // target == -1 → fail
@@ -971,16 +971,16 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
-                        emit.Call(EngineSetCpMethod);
+                        EmitHelperCall(emit, EngineSetCpMethod);
                     }
                     emit.LoadArgument(0);
                     emit.LoadLocal(target);
-                    emit.Call(EngineSetPcMethod);
+                    EmitHelperCall(emit, EngineSetPcMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(true);
-                    emit.Call(EngineIlTailCallPendingSetter);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
 
                     emit.MarkLabel(metaResumeLabel);
                     pc += OpcodeTable.Get(op).Size;
@@ -994,7 +994,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadArgument(0);
                     emit.LoadConstant(0);
                     emit.LoadConstant(1);
-                    emit.Call(EngineRegistersIdenticalMethod);
+                    EmitHelperCall(emit, EngineRegistersIdenticalMethod);
                     if (builtinEntry.Name == "==") emit.BranchIfFalse(failLabel);
                     else emit.BranchIfTrue(failLabel);
                     pc += OpcodeTable.Get(op).Size;
@@ -1043,13 +1043,13 @@ public sealed partial class IlPredicateCompiler
                     // engine.BuiltinReturnPc = EncodeResumeMarker(ownerFid, resumeCursor);
                     emit.LoadArgument(0);
                     EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                 }
                 EmitBuiltinId(emit, builtinId);
-                emit.Call(BuiltinsRegistryGetByIdMethod);
-                emit.Call(BuiltinEntryImplGetter);
+                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
+                EmitHelperCall(emit, BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
-                emit.Call(BuiltinImplInvokeMethod);
+                EmitHelperCall(emit, BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
                 if (isBacktrackable)
                 {
@@ -1087,21 +1087,21 @@ public sealed partial class IlPredicateCompiler
                     // A preceding Deallocate emit already restored Cp.
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
-                    emit.Call(EngineCpGetter);
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineCpGetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                 }
                 EmitBuiltinId(emit, tailBuiltinId);
-                emit.Call(BuiltinsRegistryGetByIdMethod);
-                emit.Call(BuiltinEntryImplGetter);
+                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
+                EmitHelperCall(emit, BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
-                emit.Call(BuiltinImplInvokeMethod);
+                EmitHelperCall(emit, BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
                 // Proceed. A builtin that itself threaded a tail dispatch set
                 // IlTailCallPending + Pc; returning true defers to the outer
                 // dispatch loop either way (it honours pending, else runs the
                 // caller's continuation).
                 emit.LoadConstant(true);
-                emit.Return();
+                EmitReturn(emit);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1136,7 +1136,7 @@ public sealed partial class IlPredicateCompiler
                         emit.LoadConstant(arg);
                         emit.LoadConstant(slot1);
                         emit.LoadConstant(slot2);
-                        emit.Call(varVar
+                        EmitHelperCall(emit, varVar
                             ? EngineGetStruct2VarXVarXMethod
                             : EngineGetStruct2ValXValXMethod);
                         emit.BranchIfFalse(failLabel);
@@ -1148,7 +1148,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
-                emit.Call(EngineGetStructureMethod);
+                EmitHelperCall(emit, EngineGetStructureMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += sz;
                 continue;
@@ -1160,7 +1160,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutStructureMethod);
+                EmitHelperCall(emit, EnginePutStructureMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1172,7 +1172,7 @@ public sealed partial class IlPredicateCompiler
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(packed & 0xFFFFFF);
                 emit.LoadConstant(packed >> 24);
-                emit.Call(EnginePutStructureReservedMethod);
+                EmitHelperCall(emit, EnginePutStructureReservedMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1181,7 +1181,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutListReservedMethod);
+                EmitHelperCall(emit, EnginePutListReservedMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1190,8 +1190,8 @@ public sealed partial class IlPredicateCompiler
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1201,8 +1201,8 @@ public sealed partial class IlPredicateCompiler
                 int value = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellIntMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1211,8 +1211,8 @@ public sealed partial class IlPredicateCompiler
             {
                 emit.LoadArgument(0);
                 emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += 1;
                 continue;
@@ -1222,7 +1222,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyVariableXMethod);
+                EmitHelperCall(emit, EngineUnifyVariableXMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1231,7 +1231,7 @@ public sealed partial class IlPredicateCompiler
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
-                emit.Call(EngineUnifyStructureMethod);
+                EmitHelperCall(emit, EngineUnifyStructureMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1239,7 +1239,7 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.UnifyList)   // ADR-019
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineUnifyListMethod);
+                EmitHelperCall(emit, EngineUnifyListMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += 1;
                 continue;
@@ -1249,7 +1249,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyValueXMethod);
+                EmitHelperCall(emit, EngineUnifyValueXMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1259,7 +1259,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyVariableYMethod);
+                EmitHelperCall(emit, EngineUnifyVariableYMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1268,7 +1268,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyValueYMethod);
+                EmitHelperCall(emit, EngineUnifyValueYMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1278,7 +1278,7 @@ public sealed partial class IlPredicateCompiler
                 int count = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(count);
-                emit.Call(EngineUnifyVoidMethod);
+                EmitHelperCall(emit, EngineUnifyVoidMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1310,7 +1310,7 @@ public sealed partial class IlPredicateCompiler
                         emit.LoadConstant(arg);
                         emit.LoadConstant(slot1);
                         emit.LoadConstant(slot2);
-                        emit.Call(op1 == Opcode.UnifyVariableX
+                        EmitHelperCall(emit, op1 == Opcode.UnifyVariableX
                             ? EngineGetListVarXVarXMethod
                             : EngineGetListValXVarXMethod);
                         emit.BranchIfFalse(failLabel);
@@ -1321,7 +1321,7 @@ public sealed partial class IlPredicateCompiler
 
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EngineGetListMethod);
+                EmitHelperCall(emit, EngineGetListMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += sz;
                 continue;
@@ -1331,7 +1331,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutListMethod);
+                EmitHelperCall(emit, EnginePutListMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1342,7 +1342,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(literalId);
                 emit.LoadConstant(arg);
-                emit.Call(IlGetPstrHelperMethod);
+                EmitHelperCall(emit, IlGetPstrHelperMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1354,7 +1354,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(literalId);
                 emit.LoadConstant(arg);
-                emit.Call(IlPutPstrHelperMethod);
+                EmitHelperCall(emit, IlPutPstrHelperMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1405,8 +1405,8 @@ public sealed partial class IlPredicateCompiler
                 {
                     emit.LoadArgument(0);                    // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     EmitClauseBody(emit, ruleCallee.BytecodeUnfused, 0, ruleCallee.BytecodeUnfused.Length,
                         failLabel, ruleCallee.CallSites,
                         callSiteIndexCounter: callSiteIndexCounter,
@@ -1449,7 +1449,7 @@ public sealed partial class IlPredicateCompiler
                         int failCur = guardContCtx.AllocCursor(failLabel);
                         emit.LoadArgument(0);
                         emit.LoadConstant((okCur << 16) | failCur);
-                        emit.Call(EnginePushGuardContMethod);
+                        EmitHelperCall(emit, EnginePushGuardContMethod);
                         if (!guardContCtx.CalleeEntry.TryGetValue(
                                 siteFunctorId, out var entryLbl))
                         {
@@ -1545,8 +1545,8 @@ public sealed partial class IlPredicateCompiler
                 // engine.SetB0(engine.B);  — cut barrier for the callee
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.Call(EngineSetB0Method);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
 
 #if DEBUG
                 if (DebugMode)
@@ -1557,14 +1557,14 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPreCallMethod);
+                    EmitHelperCall(emit, DbgCheckPreCallMethod);
                 }
 #endif
 
                 // engine.SetCp(EncodeResumeMarker(ownerFid, resumeCursor));
                 emit.LoadArgument(0);
                 EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
-                emit.Call(EngineSetCpMethod);
+                EmitHelperCall(emit, EngineSetCpMethod);
 
                 // engine.SetPc(Activation.EncodeResumeMarker(siteFunctorId, 0));
                 // The dispatcher routes the marker to the callee's IL delegate
@@ -1573,15 +1573,15 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, siteFunctorId);
                 emit.LoadConstant(0);
-                emit.Call(EngineEncodeResumeMarkerMethod);
-                emit.Call(EngineSetPcMethod);
+                EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                EmitHelperCall(emit, EngineSetPcMethod);
 
                 // engine.IlTailCallPending = true; return true.
                 emit.LoadArgument(0);
                 emit.LoadConstant(true);
-                emit.Call(EngineIlTailCallPendingSetter);
+                EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                 emit.LoadConstant(true);
-                emit.Return();
+                EmitReturn(emit);
 
                 // Resume label — reached via the cursor switch when the
                 // callee proceeds and the dispatcher decodes our
@@ -1599,7 +1599,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPostCallMethod);
+                    EmitHelperCall(emit, DbgCheckPostCallMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -1638,21 +1638,21 @@ public sealed partial class IlPredicateCompiler
                     int untailCursor = cursorBase + untailIdx - 1;
                     emit.LoadArgument(0);                 // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     emit.LoadArgument(0);                 // engine.SetCp(resume marker)
                     EmitResumeMarker(emit, _emitOwnerFid, untailCursor);
-                    emit.Call(EngineSetCpMethod);
+                    EmitHelperCall(emit, EngineSetCpMethod);
                     emit.LoadArgument(0);                 // engine.SetPc(callee entry marker)
                     EmitFunctorId(emit, siteFunctorId);
                     emit.LoadConstant(0);
-                    emit.Call(EngineEncodeResumeMarkerMethod);
-                    emit.Call(EngineSetPcMethod);
+                    EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                    EmitHelperCall(emit, EngineSetPcMethod);
                     emit.LoadArgument(0);                 // IlTailCallPending = true; return true
                     emit.LoadConstant(true);
-                    emit.Call(EngineIlTailCallPendingSetter);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                     // Resume → fall through to the post-inline continuation.
                     emit.MarkLabel(resumeLabels[untailIdx - 1]);
                     pc += OpcodeTable.Get(op).Size;
@@ -1705,7 +1705,7 @@ public sealed partial class IlPredicateCompiler
                     // iteration when no wake pends.
                     var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineHasPendingWakeupsGetter);
+                    EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
                     emit.BranchIfFalse(skipWake);
                     EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
                     emit.MarkLabel(skipWake);
@@ -1713,11 +1713,11 @@ public sealed partial class IlPredicateCompiler
                     // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     emit.LoadArgument(0);
                     emit.LoadConstant(selfFunctorId);
-                    emit.Call(EngineMaybeCollectHeapAtCallMethod);
+                    EmitHelperCall(emit, EngineMaybeCollectHeapAtCallMethod);
                     // A chain predicate's cursor-0 entry re-reads the incoming
                     // cursor (arg 1) to pick clause 0; a fresh self-call must
                     // restart from clause 0, so reset it. Harmless for the
@@ -1741,7 +1741,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPreCallMethod);
+                    EmitHelperCall(emit, DbgCheckPreCallMethod);
                 }
 #endif
                 // int target = IlExecuteHelper.Resolve(engine, siteFunctorId);
@@ -1749,18 +1749,18 @@ public sealed partial class IlPredicateCompiler
                 // engine.IlTailCallPending = true; return true;
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.Call(EngineSetB0Method);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, siteFunctorId);
                 emit.LoadConstant(0);
-                emit.Call(EngineEncodeResumeMarkerMethod);
-                emit.Call(EngineSetPcMethod);
+                EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                EmitHelperCall(emit, EngineSetPcMethod);
                 emit.LoadArgument(0);
                 emit.LoadConstant(true);
-                emit.Call(EngineIlTailCallPendingSetter);
+                EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                 emit.LoadConstant(true);
-                emit.Return();
+                EmitReturn(emit);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1804,7 +1804,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
                 emit.LoadConstant((packed >> 16) & 0xFF);               // tKind
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 13)); // tVal
-                emit.Call(ArithFusedBinMethod);
+                EmitHelperCall(emit, ArithFusedBinMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1825,7 +1825,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));  // aVal
                 emit.LoadConstant((packed >> 8) & 0xFF);                // bKind
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
-                emit.Call(ArithFusedCmpMethod);
+                EmitHelperCall(emit, ArithFusedCmpMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1839,7 +1839,7 @@ public sealed partial class IlPredicateCompiler
                 if (!suppressProceedReturn)
                 {
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                 }
                 pc += 1;
                 continue;
@@ -2297,7 +2297,7 @@ public sealed partial class IlPredicateCompiler
             var entry = emit.DeclareLocal<int>("idx_entry");
             emit.LoadArgument(0);
             EmitFunctorId(emit, predicate.FunctorId);
-            emit.Call(IlIndexedDispatchResolveByFidMethod);
+            EmitHelperCall(emit, IlIndexedDispatchResolveByFidMethod);
             emit.StoreLocal(entry);
             // node indices are dense 0..K-1 → O(1) jump table
             // instead of a linear compare chain.
@@ -2328,7 +2328,7 @@ public sealed partial class IlPredicateCompiler
                 effectiveSelf(emit);             // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(next + 1);     // resume cursor of the next node
                 emit.LoadConstant(predicate.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
             }
             emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
         }
@@ -2355,7 +2355,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -2408,7 +2408,7 @@ public sealed partial class IlPredicateCompiler
                     effectiveSelf(emit);
                     emit.LoadLocal(idxNext!);
                     emit.LoadConstant(predicate.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
                     emit.MarkLabel(skipPush);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)predicate.BytecodeUnfused[guardEnd]).Size;
@@ -2443,7 +2443,7 @@ public sealed partial class IlPredicateCompiler
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
     }
 
     /// <summary>Emits the first-/multi-argument index decision as inline IL —
@@ -2494,20 +2494,20 @@ public sealed partial class IlPredicateCompiler
             //       like IlIndexGraph.DerefArg). -----
             emit.LoadArgument(0);
             emit.LoadConstant(node.ArgIdx);
-            emit.Call(EngineGetRegisterMethod);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
             emit.StoreLocal(cellLoc);
             // if cellLoc.Tag == Ref: cellLoc = engine.GetHeap(engine.Deref(cellLoc.AsHeapIndex))
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.LoadConstant((int)Tag.Ref);
             var notRef = emit.DefineLabel($"idx_g{i}_notref{salt}");
             emit.UnsignedBranchIfNotEqual(notRef);
             emit.LoadArgument(0);                       // engine (receiver of GetHeap)
             emit.LoadArgument(0);                       // engine (receiver of Deref)
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellAsHeapIndexGetter);
-            emit.Call(EngineDerefMethod);
-            emit.Call(EngineGetHeapMethod);
+            EmitHelperCall(emit, CellAsHeapIndexGetter);
+            EmitHelperCall(emit, EngineDerefMethod);
+            EmitHelperCall(emit, EngineGetHeapMethod);
             emit.StoreLocal(cellLoc);
             emit.MarkLabel(notRef);
 
@@ -2521,13 +2521,13 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadLocal(cellLoc);        // cell (deref'd arg)
                 emit.LoadConstant(node.Sub0);
                 emit.LoadConstant(node.Sub1);
-                emit.Call(IlWalkSubOrMissMethod);
+                EmitHelperCall(emit, IlWalkSubOrMissMethod);
                 emit.StoreLocal(cellLoc);       // cell = terminal sub-cell (or miss)
             }
 
             // ----- Load the (deref'd) tag once. -----
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.StoreLocal(tagLoc);
 
             switch (node.Kind)
@@ -2543,7 +2543,7 @@ public sealed partial class IlPredicateCompiler
                     // on the sound var chain, where the const bucket's []
                     // clauses are still reachable.
                     emit.LoadLocal(cellLoc);
-                    emit.Call(IlIsNonEmptyPstrMethod);
+                    EmitHelperCall(emit, IlIsNonEmptyPstrMethod);
                     emit.BranchIfTrue(Target(node.ListTarget));
                     emit.Branch(Target(node.VarTarget));   // Ref / anything else
                     break;
@@ -2554,7 +2554,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant((int)Tag.Int);
                     emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsIntGetter);
+                    EmitHelperCall(emit, CellAsIntGetter);
                     emit.StoreLocal(longLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
@@ -2573,7 +2573,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant((int)Tag.Atom);
                     emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsAtomIdGetter);
+                    EmitHelperCall(emit, CellAsAtomIdGetter);
                     emit.StoreLocal(keyLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
@@ -2600,11 +2600,11 @@ public sealed partial class IlPredicateCompiler
                     // fid = engine.GetHeap(cellLoc.AsHeapIndex).AsFunctorId
                     emit.LoadArgument(0);
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsHeapIndexGetter);
-                    emit.Call(EngineGetHeapMethod);
+                    EmitHelperCall(emit, CellAsHeapIndexGetter);
+                    EmitHelperCall(emit, EngineGetHeapMethod);
                     emit.StoreLocal(tmpCell);
                     emit.LoadLocalAddress(tmpCell);
-                    emit.Call(CellAsFunctorIdGetter);
+                    EmitHelperCall(emit, CellAsFunctorIdGetter);
                     emit.StoreLocal(keyLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
