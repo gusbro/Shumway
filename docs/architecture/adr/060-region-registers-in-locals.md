@@ -195,7 +195,7 @@ its benchmark without losing on the others.
 | 1 | the locals, the load and spill points, the table, the checked mode; no operation converted | none: the time must not move |
 | 2a | `allocate`, `deallocate`, cut, call and proceed over the control registers (`E`, `CP`, `B`, `B0`, the stack top and array) | `tak` (control and arithmetic, no heap construction), `queens(9)` |
 | 2b | the push ladder; the restore in the fail path | `queens(10)`, `bc3` |
-| 3 | heap construction: `put` and `unify` in write mode | `nreverse` |
+| 3 | heap construction: `put` and `unify` in write mode (measured, not kept: see Results) | `nreverse` |
 | 4 | `unify` in read mode and binding (the `HB` test, the trail push) | `queens(9)`, `zebra` |
 | 5 | the wasm tier: its long sequences as functions of the module | measured in a browser |
 
@@ -262,6 +262,24 @@ no program in the suites resumes a clause whose cut reads a `B0` a nested call
 moved, and the attempt at one (`IlInlineFrameTests`, a cut after a failed
 nested call) finds the barrier right without it. The restore stays because
 `RestoreCommonFromCurrentCp` does it; the gap is open.
+
+Stage 3, not kept. Two forms were measured in one process:
+- the heap top, the heap array and the register array held in the regions
+  that build on the heap, with `put_structure` and `put_list` and their
+  unify instructions as one reservation and a store per cell: `queens(10)`
+  9% slower. Every unify helper writes the heap top and the heap array, and
+  the region reloads both after each call; the unification is still calls
+  until stage 4;
+- the same blocks reading those fields once per block, nothing held: neutral
+  within 1.5% on `nreverse` and `queens(10)`.
+
+A first measurement of the second form gave `queens(10)` 6-10% slower: its
+region sits at the JIT's inlining budget, and 300 bytes more of IL left three
+calls to `Cell.AsInt` inside the arithmetic helpers not inlined. `Cell.AsInt`
+is now branchless and marked for inlining, which removed them; alone it is
+neutral in time on Tier-0 and Tier-1. The blocks wait for stage 4, where the
+unification over the locals removes the reloads that made holding the heap
+registers lose.
 
 ## Alternatives considered
 

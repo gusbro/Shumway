@@ -48,15 +48,13 @@ public readonly struct Cell : IEquatable<Cell>
     /// Decodes the inline 60-bit signed integer, sign-extending into the upper 4 bits.
     /// Only meaningful for cells with <see cref="Tag.Int"/>.
     /// </summary>
+    // Branchless, and marked for inlining: compiled regions reach it inside
+    // helpers the JIT inlines, and a large region runs out of inlining budget
+    // for anything that is not (ADR-060).
     public long AsInt
     {
-        get
-        {
-            long p = Payload;
-            if ((p & (1L << 59)) != 0)
-                p |= unchecked((long)0xF000_0000_0000_0000UL);
-            return p;
-        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Data << 4) >> 4;
     }
 
     // ---------- Factories ----------
