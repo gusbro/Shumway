@@ -400,6 +400,7 @@ public sealed partial class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_indexed_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
+        AttachRegisterFile(emit);   // ADR-060
         EmitIndexedAtomBody(emit, predicate, info, emitSelf,
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             profileKey, groundOrder, calleeMap);

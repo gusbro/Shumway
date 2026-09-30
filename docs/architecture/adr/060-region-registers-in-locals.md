@@ -311,6 +311,15 @@ attribute, `freeze/2`, `dif/2` and CLP tests. The reserved public surface
 grows by the heap array, the cell counter and the unify mode fields
 (`_writeMode`, `_unifyPointer`, `_reservedWrite`), and `Activation.TrailBind`.
 
+A second profile of `queens(10)` still put 6% in the slow paths of `get_list`:
+`select/3` and `no_attack/3` also compile as methods outside any region,
+which had no register file. Every method now gets one, holding nothing when
+it is not a region, so the same emission runs there (not under verification
+or the debugger). Against the previous step, in one process: `nreverse` -8%
+minimum and -6% median, `qsort` -2%, `crypt` and `zebra` unchanged,
+`queens(10)` unchanged in the median; its minimum moved by the spread of the
+code's placement between engines (3.18 to 4.55 s for the same build).
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

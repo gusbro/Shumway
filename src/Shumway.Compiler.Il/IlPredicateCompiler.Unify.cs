@@ -50,7 +50,7 @@ public sealed partial class IlPredicateCompiler
         int arg, int s1, int s2, Sigil.Label failLabel)
     {
         var rf = RegisterFileOf(emit);
-        if (!InlineUnify || rf is null || rf.Held == MachineRegs.None) return false;
+        if (!InlineUnify || rf is null) return false;
 
         var regs = rf.Temp(typeof(Cell[]), KU);
         var heap = rf.Temp(typeof(Cell[]), KU + 1);

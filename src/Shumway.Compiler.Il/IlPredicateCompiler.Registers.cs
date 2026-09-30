@@ -225,6 +225,17 @@ public sealed partial class IlPredicateCompiler
         rf.EmitLoad(emit, rf.Held);
     }
 
+    /// <summary>A method outside a region gets a register file that holds
+    /// nothing, for the operations emitted over fields (get_list,
+    /// SetRegister). Not under verification or the debugger, which want the
+    /// calls.</summary>
+    private void AttachRegisterFile(Sigil.Emit<PredicateDelegate> emit)
+    {
+        if (DoVerify || DebugMode) return;
+        RegisterFiles.Remove(emit);
+        RegisterFiles.Add(emit, new RegisterFile(emit, MachineRegs.None));
+    }
+
     /// <summary>ADR-060 item 3: a call to a helper, with the held registers it
     /// reads spilled before and the ones it writes reloaded after. A method
     /// without a row reads and writes all of them. Outside a region, or when
@@ -232,9 +243,15 @@ public sealed partial class IlPredicateCompiler
     internal static void EmitHelperCall(Sigil.Emit<PredicateDelegate> emit, MethodInfo method)
     {
         var rf = RegisterFileOf(emit);
-        if (rf is null || rf.Held == MachineRegs.None)
+        if (rf is null)
         {
             emit.Call(method);
+            return;
+        }
+        if (rf.Held == MachineRegs.None)
+        {
+            if (method != EngineSetRegisterMethod || !TryEmitSetRegister(emit, rf))
+                emit.Call(method);
             return;
         }
         if (TryEmitIntrinsic(emit, rf, method)) return;

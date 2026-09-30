@@ -927,6 +927,7 @@ public sealed partial class IlPredicateCompiler
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}",
                 doVerify: DoVerify || DebugMode);
+            AttachRegisterFile(emit);   // ADR-060
             EmitSingleClauseLeafBody(emit, predicate, calleeMap);
             return FinishEmit(emit,
                 $"single-leaf fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}");
@@ -1002,6 +1003,7 @@ public sealed partial class IlPredicateCompiler
             System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
             System.Reflection.CallingConventions.Standard,
             doVerify: DoVerify || DebugMode);
+        AttachRegisterFile(emit);   // ADR-060
 
         SelfDelegateEmitter? emitSelf = delegatesField is null
             ? null
@@ -1134,6 +1136,7 @@ public sealed partial class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
             doVerify: DoVerify || DebugMode);
+        AttachRegisterFile(emit);   // ADR-060
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             ruleInlineSites);                  // precomputed by the caller

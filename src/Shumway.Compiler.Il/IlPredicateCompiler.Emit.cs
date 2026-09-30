@@ -2205,6 +2205,7 @@ public sealed partial class IlPredicateCompiler
             var emitSelf = SelfFromHolder(holderKey);
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
+            AttachRegisterFile(emit);   // ADR-060
             EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf,
                 typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
             var del = FinishEmit(emit,
@@ -2661,6 +2662,7 @@ public sealed partial class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_tryelse_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
+        AttachRegisterFile(emit);   // ADR-060
         EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf,
             typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
 
