@@ -124,4 +124,49 @@ public sealed class IlInlineFrameTests
         // With the hook on, that push went through the method, which traced it.
         Assert.Contains($"bp=0x{bp:X} arity=2", stderr.ToString());
     }
+
+    // The first clause calls b/0 and fails; the second, resumed through the
+    // region's own restore, cuts at its neck, which must remove a/1's choice
+    // point: the third clause must not answer. b/0 is not a fact, which the
+    // region would inline instead of calling.
+    private const string CutProgram = """
+        b :- d(_).
+        d(1).
+        d(2).
+        a(_) :- b, fail.
+        a(X) :- !, X = 1.
+        a(2).
+        t(X) :- a(X), X > 0.
+        """;
+
+    [Fact]
+    public void AResumedClauseCutsToTheRestoredBarrier()
+    {
+        var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
+        plain.ConsultString(CutProgram);
+        Assert.True(plain.Query("findall(X, t(X), L), L == [1].").Success);
+
+        var tiered = new PrologEngine();
+        tiered.IlPromotion.Threshold = 1;
+        tiered.ConsultString(CutProgram);
+        int sitesBefore = IlPredicateCompiler.InlineFrameSites;
+        for (int i = 0; i < 4; i++)
+        {
+            tiered.Query("findall(X, t(X), L).");
+            tiered.IlPromotion.WaitForPendingPromotions();
+        }
+        // ANTI-VACUITY: t/1 promoted, and its region pushed its own frames.
+        var promoted = tiered.IlPromotion.PromotedFunctorIds().Select(fid =>
+        {
+            var (atom, arity) = FunctorTable.Lookup(fid);
+            string n = AtomTable.GetById(atom)?.Name ?? "";
+            return $"{n[(n.LastIndexOf('$') + 1)..]}/{arity}";
+        }).ToList();
+        Assert.True(promoted.Contains("a/1"), "a/1 did not promote: " + string.Join(" ", promoted));
+        Assert.True(IlPredicateCompiler.InlineFrameSites > sitesBefore,
+            "no choice point was emitted over the region's locals");
+        Assert.True(tiered.Query("findall(X, t(X), L), L == [1].").Success,
+            "the neck cut left a/1's choice point alive");
+    }
 }

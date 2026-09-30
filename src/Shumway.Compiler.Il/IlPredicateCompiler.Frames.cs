@@ -1,19 +1,24 @@
+using System.Collections.Generic;
 using System.Reflection;
 using Shumway.Core;
 
 namespace Shumway.Compiler.Il;
 
-// ADR-058 item 6: a region's choice point push and restore, emitted in the
-// method as the wasm tier emits them in the module (EmitPushChoicePoint,
-// EmitRestoreCommon). The sequences are PushChoicePoint's stores and
-// RestoreCommonFromCurrentCp's loads on the same frame layout, over the
-// activation's public fields, so nothing here depends on the JIT inlining a
-// call. A hook, the debugger's trail-everything mode, a stack that must grow
-// or a frame of another arity take the methods instead.
+// ADR-058 item 6 in the form of ADR-060 item 6: a region's choice point push
+// and restore over the locals of its control registers, each emitted once per
+// region. A push site branches to a ladder with one entry per arity (the
+// entry for arity n stores argument n and falls into n - 1, then the control
+// words) and returns through a switch. The restore common to retry and trust
+// sits between the fail handler and the dispatch switch, where every
+// resumption passes; a resume entry keeps the two or three stores that tell
+// the two apart. The stores and loads are those of PushChoicePoint and
+// RestoreCommonFromCurrentCp on the same frame layout. A hook or the
+// debugger's trail-everything mode, read at the region's entry, and a stack
+// that must grow take the methods.
 public sealed partial class IlPredicateCompiler
 {
-    /// <summary>Choice point pushes and restores emitted inline, over every
-    /// region compiled in this process.</summary>
+    /// <summary>Choice point pushes and restores emitted over the region's
+    /// locals, over every region compiled in this process.</summary>
     public static int InlineFrameSites;
 
     private static FieldInfo EngineField(string name) => typeof(Activation).GetField(name)!;
@@ -38,32 +43,22 @@ public sealed partial class IlPredicateCompiler
 
     private const long RawIntTag = (long)Tag.RawInt << Cell.TagShift;
 
-    // Offsets of the control words from the frame's base, after the arity
+    // Offsets of the control words from the first of them, after the arity
     // cell and the saved arguments: the layout of Activation.Cp*Offset.
     private const int CtlCe = 0, CtlCp = 1, CtlB = 2, CtlBp = 3, CtlBindingTrail = 4,
-        CtlExtraTrail = 5, CtlHeapTop = 6, CtlHb = 7, CtlViewGen = 8, CtlB0 = 9;
+        CtlExtraTrail = 5, CtlHeapTop = 6, CtlHb = 7, CtlViewGen = 8, CtlB0 = 9, CtlCount = 10;
 
-    /// <summary>The locals the inline sequences share, one set per method: a
-    /// region has many push and restore sites, and the JIT stops inlining in a
-    /// method with too many locals.</summary>
+    /// <summary>What the push sites, the ladder, the common restore and the
+    /// resume entries of one region share.</summary>
     private sealed class FrameLocals
     {
-        public Sigil.Local Stack = null!, Registers = null!, Base = null!,
-            Marker = null!, BindingTop = null!, ExtraTop = null!, Cell = null!;
+        public Sigil.Local Slow = null!, Marker = null!, Arity = null!, Return = null!,
+            Ctl = null!, Registers = null!, Index = null!, BindingTop = null!, ExtraTop = null!;
+        public readonly Dictionary<int, Sigil.Label> Entries = new();
+        public readonly List<Sigil.Label> Returns = new();
+        public Sigil.Label Restore = null!;
+        public int MaxArity = -1;
     }
-
-    private static FrameLocals FrameLocalsOf(
-        Sigil.Emit<PredicateDelegate> emit, RegionEmitContext ctx)
-        => ctx.Frame ??= new FrameLocals
-        {
-            Stack = emit.DeclareLocal<Cell[]>(),
-            Registers = emit.DeclareLocal<Cell[]>(),
-            Base = emit.DeclareLocal<int>(),
-            Marker = emit.DeclareLocal<int>(),
-            BindingTop = emit.DeclareLocal<int>(),
-            ExtraTop = emit.DeclareLocal<int>(),
-            Cell = emit.DeclareLocal<Cell>(),
-        };
 
     /// <summary>The value of an activation field; the region's local when
     /// the region holds that register (ADR-060).</summary>
@@ -78,41 +73,61 @@ public sealed partial class IlPredicateCompiler
         emit.LoadField(field);
     }
 
-    /// <summary>The stack array and the index of the frame's cell at
-    /// <paramref name="offset"/>, for the ldelem or stelem that follows. Not
-    /// ldelema: a region with one does not pass the JIT.</summary>
-    private static void EmitFrameCellIndex(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int offset)
+    /// <summary>At the region's entry, when the region holds its control
+    /// registers and pushes choice points: the frame locals, and whether the
+    /// methods must run instead (a hook is on, or the activation trails
+    /// everything, where HB is not the heap top).</summary>
+    private static FrameLocals EmitFrameLocalsEntry(Sigil.Emit<PredicateDelegate> emit)
     {
-        emit.LoadLocal(l.Stack);
-        emit.LoadLocal(l.Base);
-        if (offset != 0)
+        var l = new FrameLocals
         {
-            emit.LoadConstant(offset);
-            emit.Add();
-        }
+            Slow = emit.DeclareLocal<bool>("frame_slow"),
+            Marker = emit.DeclareLocal<int>("frame_marker"),
+            Arity = emit.DeclareLocal<int>("frame_arity"),
+            Return = emit.DeclareLocal<int>("frame_return"),
+            Ctl = emit.DeclareLocal<int>("frame_ctl"),
+            Registers = emit.DeclareLocal<Cell[]>("frame_regs"),
+            Index = emit.DeclareLocal<int>("frame_i"),
+            BindingTop = emit.DeclareLocal<int>("frame_bt"),
+            ExtraTop = emit.DeclareLocal<int>("frame_xt"),
+            Restore = emit.DefineLabel($"frame_restore_{NextLabelSeq()}"),
+        };
+        emit.LoadField(FrameHooksField);
+        emit.LoadArgument(0);
+        emit.LoadField(EngTrailEverything);
+        emit.Or();
+        emit.StoreLocal(l.Slow);
+        return l;
     }
 
-    /// <summary>frame[offset] = a cell of the raw bits that
+    private static Sigil.Local Reg(Sigil.Emit<PredicateDelegate> emit, MachineRegs r)
+        => RegisterFileOf(emit)!.Local(r);
+
+    /// <summary>stack[from + offset] := a cell of the raw bits that
     /// <paramref name="pushBits"/> leaves on the stack (an int64). The cell is
-    /// built in a local through its field: a constructor call would be one
-    /// more call for the JIT to inline.</summary>
-    private static void EmitStoreFrameBits(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int offset, System.Action pushBits)
+    /// built in a local through its field: not ldelema, which makes the JIT
+    /// reject a region, and not the constructor, one more call to inline.</summary>
+    private static void EmitStoreCellBits(Sigil.Emit<PredicateDelegate> emit,
+        Sigil.Local from, int offset, System.Action pushBits)
     {
-        emit.LoadLocalAddress(l.Cell);
+        var rf = RegisterFileOf(emit)!;
+        var cell = rf.Temp(typeof(Cell), 0);
+        emit.LoadLocalAddress(cell);
         pushBits();
         emit.StoreField(CellDataField);
-        EmitFrameCellIndex(emit, l, offset);
-        emit.LoadLocal(l.Cell);
+        emit.LoadLocal(rf.Local(MachineRegs.StackArray));
+        emit.LoadLocal(from);
+        emit.LoadConstant(offset);
+        emit.Add();
+        emit.LoadLocal(cell);
         emit.StoreElement<Cell>();
     }
 
-    /// <summary>frame[offset] = Cell.RawInt(value), the value an int32 that
+    /// <summary>stack[from + offset] := Cell.RawInt(value), the int32 that
     /// <paramref name="pushValue"/> leaves on the stack.</summary>
-    private static void EmitStoreFrameInt(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int offset, System.Action pushValue)
-        => EmitStoreFrameBits(emit, l, offset, () =>
+    private static void EmitStoreCellInt(Sigil.Emit<PredicateDelegate> emit,
+        Sigil.Local from, int offset, System.Action pushValue)
+        => EmitStoreCellBits(emit, from, offset, () =>
         {
             pushValue();
             emit.Convert<long>();
@@ -122,62 +137,48 @@ public sealed partial class IlPredicateCompiler
             emit.Or();
         });
 
-    /// <summary>frame[offset].Data on the stack.</summary>
-    private static void EmitLoadFrameBits(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int offset)
+    /// <summary>stack[from + offset].Data on the stack.</summary>
+    private static void EmitLoadCellBits(Sigil.Emit<PredicateDelegate> emit, Sigil.Local from, int offset)
     {
-        EmitFrameCellIndex(emit, l, offset);
+        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
+        emit.LoadLocal(from);
+        emit.LoadConstant(offset);
+        emit.Add();
         emit.LoadElement<Cell>();
         emit.LoadField(CellDataField);
     }
 
-    /// <summary>(int)frame[offset].Data on the stack.</summary>
-    private static void EmitLoadFrameInt(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int offset)
+    private static void EmitLoadCellInt(Sigil.Emit<PredicateDelegate> emit, Sigil.Local from, int offset)
     {
-        EmitLoadFrameBits(emit, l, offset);
+        EmitLoadCellBits(emit, from, offset);
         emit.Convert<int>();
     }
 
-    /// <summary>Branches to <paramref name="slow"/> when the methods must run
-    /// instead of the inline form: a hook is on, or the activation trails
-    /// everything (a debug session), where HB is not the heap top.</summary>
-    private static void EmitFrameFormGuard(
-        Sigil.Emit<PredicateDelegate> emit, Sigil.Label slow)
-    {
-        emit.LoadField(FrameHooksField);
-        emit.BranchIfTrue(slow);
-        EmitLoadEngineField(emit, EngTrailEverything);
-        emit.BranchIfTrue(slow);
-    }
-
-    /// <summary>PushChoicePoint(arity, marker) inline. The marker is already in
-    /// the frame locals.</summary>
-    private static void EmitInlinePush(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int arity)
+    /// <summary>A push site: PushChoicePoint(arity, marker), the marker
+    /// already in the frame locals. The frame is written by the ladder.</summary>
+    private static void EmitFramePushSite(Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int arity)
     {
         System.Threading.Interlocked.Increment(ref InlineFrameSites);
-        int size = Activation.CpSize(arity);
-        int ctl = 1 + arity;
         var slow = emit.DefineLabel($"cpush_slow_{NextLabelSeq()}");
-        var done = emit.DefineLabel($"cpush_done_{NextLabelSeq()}");
+        var back = emit.DefineLabel($"cpush_back_{NextLabelSeq()}");
+        if (!l.Entries.ContainsKey(arity))
+            l.Entries[arity] = emit.DefineLabel($"cpush_entry{arity}_{NextLabelSeq()}");
+        if (arity > l.MaxArity) l.MaxArity = arity;
 
-        EmitFrameFormGuard(emit, slow);
-        EmitLoadEngineField(emit, EngStack);
-        emit.StoreLocal(l.Stack);
-        EmitLoadEngineField(emit, EngStackTop);
-        emit.StoreLocal(l.Base);
+        emit.LoadLocal(l.Slow);
+        emit.BranchIfTrue(slow);
         // The frame must fit: growing the stack replaces the array.
-        emit.LoadLocal(l.Base);
-        emit.LoadConstant(size);
+        emit.LoadLocal(Reg(emit, MachineRegs.StackTop));
+        emit.LoadConstant(Activation.CpSize(arity));
         emit.Add();
-        emit.LoadLocal(l.Stack);
+        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
         emit.LoadLength<Cell>();
         emit.Convert<int>();
         emit.BranchIfGreater(slow);
         if (arity > 0)
         {
-            EmitLoadEngineField(emit, EngRegisters);
+            emit.LoadArgument(0);
+            emit.LoadField(EngRegisters);
             emit.StoreLocal(l.Registers);
             emit.LoadConstant(arity);
             emit.LoadLocal(l.Registers);
@@ -185,32 +186,69 @@ public sealed partial class IlPredicateCompiler
             emit.Convert<int>();
             emit.BranchIfGreater(slow);
         }
+        emit.LoadConstant(arity);
+        emit.StoreLocal(l.Arity);
+        emit.LoadConstant(l.Returns.Count);
+        emit.StoreLocal(l.Return);
+        l.Returns.Add(back);
+        emit.Branch(l.Entries[arity]);
 
-        EmitStoreFrameBits(emit, l, Activation.CpArityOffset,
-            () => emit.LoadConstant(RawIntTag | (uint)arity));
-        for (int i = 0; i < arity; i++)
+        emit.MarkLabel(slow);
+        emit.LoadArgument(0);
+        emit.LoadConstant(arity);
+        emit.LoadLocal(l.Marker);
+        EmitHelperCall(emit, EnginePushChoicePointMethod);
+        emit.MarkLabel(back);
+    }
+
+    /// <summary>The push ladder, after the method's code: the entry for arity
+    /// n stores argument n and falls into the entry for n - 1; the entry for 0
+    /// writes the arity and the control words and returns to the site.</summary>
+    private static void EmitFramePushLadder(Sigil.Emit<PredicateDelegate> emit, FrameLocals l)
+    {
+        if (l.Returns.Count == 0) return;
+        var st = Reg(emit, MachineRegs.StackTop);
+        var stack = Reg(emit, MachineRegs.StackArray);
+        for (int n = l.MaxArity; n >= 0; n--)
         {
-            emit.LoadLocal(l.Stack);
-            emit.LoadLocal(l.Base);
-            emit.LoadConstant(Activation.CpArg1Offset + i);
+            if (!l.Entries.TryGetValue(n, out var entry))
+                l.Entries[n] = entry = emit.DefineLabel($"cpush_entry{n}_{NextLabelSeq()}");
+            emit.MarkLabel(entry);
+            if (n == 0) break;
+            emit.LoadLocal(stack);
+            emit.LoadLocal(st);
+            emit.LoadConstant(Activation.CpArg1Offset + n - 1);
             emit.Add();
             emit.LoadLocal(l.Registers);
-            emit.LoadConstant(i);
+            emit.LoadConstant(n - 1);
             emit.LoadElement<Cell>();
             emit.StoreElement<Cell>();
         }
-        EmitStoreFrameInt(emit, l, ctl + CtlCe, () => EmitLoadEngineField(emit, EngE));
-        EmitStoreFrameInt(emit, l, ctl + CtlCp, () => EmitLoadEngineField(emit, EngCp));
-        EmitStoreFrameInt(emit, l, ctl + CtlB, () => EmitLoadEngineField(emit, EngB));
-        EmitStoreFrameInt(emit, l, ctl + CtlBp, () => emit.LoadLocal(l.Marker));
-        EmitStoreFrameInt(emit, l, ctl + CtlBindingTrail,
-            () => EmitLoadEngineField(emit, EngBindingTrailTop));
-        EmitStoreFrameInt(emit, l, ctl + CtlExtraTrail,
-            () => EmitLoadEngineField(emit, EngExtraTrailTop));
-        EmitStoreFrameInt(emit, l, ctl + CtlHeapTop, () => EmitLoadEngineField(emit, EngHeapTop));
-        EmitStoreFrameInt(emit, l, ctl + CtlHb, () => EmitLoadEngineField(emit, EngHb));
+
+        // The arity is not negative: its cell needs no mask.
+        EmitStoreCellBits(emit, st, Activation.CpArityOffset, () =>
+        {
+            emit.LoadLocal(l.Arity);
+            emit.Convert<long>();
+            emit.LoadConstant(RawIntTag);
+            emit.Or();
+        });
+        emit.LoadLocal(st);
+        emit.LoadConstant(Activation.CpArg1Offset);
+        emit.Add();
+        emit.LoadLocal(l.Arity);
+        emit.Add();
+        emit.StoreLocal(l.Ctl);
+        EmitStoreCellInt(emit, l.Ctl, CtlCe, () => emit.LoadLocal(Reg(emit, MachineRegs.E)));
+        EmitStoreCellInt(emit, l.Ctl, CtlCp, () => emit.LoadLocal(Reg(emit, MachineRegs.Cp)));
+        EmitStoreCellInt(emit, l.Ctl, CtlB, () => emit.LoadLocal(Reg(emit, MachineRegs.B)));
+        EmitStoreCellInt(emit, l.Ctl, CtlBp, () => emit.LoadLocal(l.Marker));
+        EmitStoreCellInt(emit, l.Ctl, CtlBindingTrail, () => EmitLoadEngineField(emit, EngBindingTrailTop));
+        EmitStoreCellInt(emit, l.Ctl, CtlExtraTrail, () => EmitLoadEngineField(emit, EngExtraTrailTop));
+        EmitStoreCellInt(emit, l.Ctl, CtlHeapTop, () => EmitLoadEngineField(emit, EngHeapTop));
+        EmitStoreCellInt(emit, l.Ctl, CtlHb, () => EmitLoadEngineField(emit, EngHb));
         // The view generation is a 60-bit long, not an int.
-        EmitStoreFrameBits(emit, l, ctl + CtlViewGen, () =>
+        EmitStoreCellBits(emit, l.Ctl, CtlViewGen, () =>
         {
             EmitLoadEngineField(emit, EngViewGen);
             emit.LoadConstant(Cell.PayloadMask);
@@ -218,79 +256,88 @@ public sealed partial class IlPredicateCompiler
             emit.LoadConstant(RawIntTag);
             emit.Or();
         });
-        EmitStoreFrameInt(emit, l, ctl + CtlB0, () => EmitLoadEngineField(emit, EngB0));
+        EmitStoreCellInt(emit, l.Ctl, CtlB0, () => emit.LoadLocal(Reg(emit, MachineRegs.B0)));
 
-        emit.LoadArgument(0);
-        emit.LoadLocal(l.Base);
-        emit.LoadConstant(size);
-        emit.Add();
-        EmitStoreEngineField(emit, EngStackTop);
-        emit.LoadArgument(0);
-        emit.LoadLocal(l.Base);
-        EmitStoreEngineField(emit, EngB);
+        var rf = RegisterFileOf(emit)!;
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => emit.LoadLocal(st));
+        EmitStoreRegister(emit, rf, MachineRegs.StackTop, () =>
+        {
+            emit.LoadLocal(l.Ctl);
+            emit.LoadConstant(CtlCount);
+            emit.Add();
+        });
         emit.LoadArgument(0);
         EmitLoadEngineField(emit, EngHeapTop);
         EmitStoreEngineField(emit, EngHb);
-        emit.Branch(done);
 
-        emit.MarkLabel(slow);
-        emit.LoadArgument(0);
-        emit.LoadConstant(arity);
-        emit.LoadLocal(l.Marker);
-        EmitHelperCall(emit, EnginePushChoicePointMethod);
-        emit.MarkLabel(done);
+        emit.LoadLocal(l.Return);
+        emit.Switch(l.Returns.ToArray());
+        emit.Branch(l.Returns[0]);   // out of range: no site stores one
     }
 
-    /// <summary>RetryMeElse(marker) inline when <paramref name="retry"/>, the
-    /// marker in the frame locals; TrustMe() otherwise.</summary>
-    private static void EmitInlineRestore(
-        Sigil.Emit<PredicateDelegate> emit, FrameLocals l, int arity, bool retry)
+    /// <summary>The restore common to retry and trust, reached from the fail
+    /// handler and from an entry at a resume cursor, before the dispatch: the
+    /// arguments, E, CP, the trails, the heap top, the view generation and B0
+    /// from the frame on top. Leaves the base of its control words in
+    /// <c>Ctl</c> for the resume entry. With the methods in force the resume
+    /// entry calls them and this does nothing.</summary>
+    private static void EmitFrameRestoreCommon(Sigil.Emit<PredicateDelegate> emit, FrameLocals l,
+        Sigil.Label dispatch)
     {
-        System.Threading.Interlocked.Increment(ref InlineFrameSites);
-        int ctl = 1 + arity;
-        var slow = emit.DefineLabel($"crest_slow_{NextLabelSeq()}");
-        var done = emit.DefineLabel($"crest_done_{NextLabelSeq()}");
+        var b = Reg(emit, MachineRegs.B);
+        var loop = emit.DefineLabel($"crest_loop_{NextLabelSeq()}");
+        var loopTest = emit.DefineLabel($"crest_test_{NextLabelSeq()}");
         var unwind = emit.DefineLabel($"crest_unwind_{NextLabelSeq()}");
         var unwound = emit.DefineLabel($"crest_unwound_{NextLabelSeq()}");
+        var rf = RegisterFileOf(emit)!;
 
-        EmitFrameFormGuard(emit, slow);
-        EmitLoadEngineField(emit, EngB);
-        emit.StoreLocal(l.Base);
-        EmitLoadEngineField(emit, EngStack);
-        emit.StoreLocal(l.Stack);
-        // The frame on top is the one this alternative's push wrote.
-        EmitLoadFrameBits(emit, l, Activation.CpArityOffset);
-        emit.LoadConstant(RawIntTag | (uint)arity);
-        emit.UnsignedBranchIfNotEqual(slow);
+        emit.MarkLabel(l.Restore);
+        emit.LoadLocal(l.Slow);
+        emit.BranchIfTrue(dispatch);
+        EmitLoadCellInt(emit, b, Activation.CpArityOffset);
+        emit.StoreLocal(l.Arity);
+        emit.LoadLocal(b);
+        emit.LoadConstant(Activation.CpArg1Offset);
+        emit.Add();
+        emit.LoadLocal(l.Arity);
+        emit.Add();
+        emit.StoreLocal(l.Ctl);
 
-        if (arity > 0)
-        {
-            EmitLoadEngineField(emit, EngRegisters);
-            emit.StoreLocal(l.Registers);
-            for (int i = 0; i < arity; i++)
-            {
-                emit.LoadLocal(l.Registers);
-                emit.LoadConstant(i);
-                emit.LoadLocal(l.Stack);
-                emit.LoadLocal(l.Base);
-                emit.LoadConstant(Activation.CpArg1Offset + i);
-                emit.Add();
-                emit.LoadElement<Cell>();
-                emit.StoreElement<Cell>();
-            }
-        }
+        // registers[i] := stack[B + 1 + i] for i < arity
         emit.LoadArgument(0);
-        EmitLoadFrameInt(emit, l, ctl + CtlCe);
-        EmitStoreEngineField(emit, EngE);
-        emit.LoadArgument(0);
-        EmitLoadFrameInt(emit, l, ctl + CtlCp);
-        EmitStoreEngineField(emit, EngCp);
+        emit.LoadField(EngRegisters);
+        emit.StoreLocal(l.Registers);
+        emit.LoadConstant(0);
+        emit.StoreLocal(l.Index);
+        emit.Branch(loopTest);
+        emit.MarkLabel(loop);
+        emit.LoadLocal(l.Registers);
+        emit.LoadLocal(l.Index);
+        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
+        emit.LoadLocal(b);
+        emit.LoadConstant(Activation.CpArg1Offset);
+        emit.Add();
+        emit.LoadLocal(l.Index);
+        emit.Add();
+        emit.LoadElement<Cell>();
+        emit.StoreElement<Cell>();
+        emit.LoadLocal(l.Index);
+        emit.LoadConstant(1);
+        emit.Add();
+        emit.StoreLocal(l.Index);
+        emit.MarkLabel(loopTest);
+        emit.LoadLocal(l.Index);
+        emit.LoadLocal(l.Arity);
+        emit.BranchIfLess(loop);
+
+        EmitStoreRegister(emit, rf, MachineRegs.E, () => EmitLoadCellInt(emit, l.Ctl, CtlCe));
+        EmitStoreRegister(emit, rf, MachineRegs.Cp, () => EmitLoadCellInt(emit, l.Ctl, CtlCp));
 
         // The unwind is a call, and only when something was trailed since
         // the push.
-        EmitLoadFrameInt(emit, l, ctl + CtlBindingTrail);
+        EmitLoadCellInt(emit, l.Ctl, CtlBindingTrail);
         emit.StoreLocal(l.BindingTop);
-        EmitLoadFrameInt(emit, l, ctl + CtlExtraTrail);
+        EmitLoadCellInt(emit, l.Ctl, CtlExtraTrail);
         emit.StoreLocal(l.ExtraTop);
         emit.LoadLocal(l.BindingTop);
         EmitLoadEngineField(emit, EngBindingTrailTop);
@@ -303,51 +350,57 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(l.BindingTop);
         emit.LoadLocal(l.ExtraTop);
         EmitHelperCall(emit, EngineUnwindTrailsMethod);
-        EmitLoadEngineField(emit, EngStack);
-        emit.StoreLocal(l.Stack);
         emit.MarkLabel(unwound);
 
         emit.LoadArgument(0);
-        EmitLoadFrameInt(emit, l, ctl + CtlHeapTop);
+        EmitLoadCellInt(emit, l.Ctl, CtlHeapTop);
         EmitStoreEngineField(emit, EngHeapTop);
         emit.LoadArgument(0);
-        EmitLoadFrameBits(emit, l, ctl + CtlViewGen);
+        EmitLoadCellBits(emit, l.Ctl, CtlViewGen);
         emit.LoadConstant(Cell.PayloadMask);
         emit.And();
         emit.StoreField(EngViewGen);
-        emit.LoadArgument(0);
-        EmitLoadFrameInt(emit, l, ctl + CtlB0);
-        EmitStoreEngineField(emit, EngB0);
+        EmitStoreRegister(emit, rf, MachineRegs.B0, () => EmitLoadCellInt(emit, l.Ctl, CtlB0));
+        emit.Branch(dispatch);
+    }
 
-        if (retry)
+    /// <summary>A resume entry after the common restore: RetryMeElse's tail
+    /// when <paramref name="nextMarker"/> is given (HB to the heap top, BP to
+    /// the next alternative), TrustMe's otherwise (HB and B as before the
+    /// push, the frame popped).</summary>
+    private static void EmitFrameResumeTail(Sigil.Emit<PredicateDelegate> emit, FrameLocals l,
+        System.Action? nextMarker)
+    {
+        System.Threading.Interlocked.Increment(ref InlineFrameSites);
+        var slow = emit.DefineLabel($"crest_slow_{NextLabelSeq()}");
+        var done = emit.DefineLabel($"crest_done_{NextLabelSeq()}");
+        var rf = RegisterFileOf(emit)!;
+        var b = Reg(emit, MachineRegs.B);
+
+        emit.LoadLocal(l.Slow);
+        emit.BranchIfTrue(slow);
+        if (nextMarker is not null)
         {
-            // The frame stays: HB to the restored heap top, BP to the next
-            // alternative.
             emit.LoadArgument(0);
             EmitLoadEngineField(emit, EngHeapTop);
             EmitStoreEngineField(emit, EngHb);
-            EmitStoreFrameInt(emit, l, ctl + CtlBp, () => emit.LoadLocal(l.Marker));
+            EmitStoreCellInt(emit, l.Ctl, CtlBp, nextMarker);
         }
         else
         {
-            // The frame goes: HB and B as they were before the push.
             emit.LoadArgument(0);
-            EmitLoadFrameInt(emit, l, ctl + CtlHb);
+            EmitLoadCellInt(emit, l.Ctl, CtlHb);
             EmitStoreEngineField(emit, EngHb);
-            emit.LoadArgument(0);
-            EmitLoadFrameInt(emit, l, ctl + CtlB);
-            EmitStoreEngineField(emit, EngB);
-            emit.LoadArgument(0);
-            emit.LoadLocal(l.Base);
-            EmitStoreEngineField(emit, EngStackTop);
+            EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
+            EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
         }
         emit.Branch(done);
 
         emit.MarkLabel(slow);
         emit.LoadArgument(0);
-        if (retry)
+        if (nextMarker is not null)
         {
-            emit.LoadLocal(l.Marker);
+            nextMarker();
             EmitHelperCall(emit, EngineRetryMeElseMethod);
         }
         else

@@ -142,21 +142,29 @@ What the operations of this ADR cost today, in calls per run:
      arity n stores argument n and falls into the entry for n - 1. An
      argument's cell is at a fixed offset from the frame's base whatever the
      arity, so each step is one store. After the last step come the control
-     words, whose base depends on the arity the site left in a local, the
-     frame hooks test and the return.
+     words, whose base depends on the arity the site left in a local, and the
+     return. The site keeps what is cheap and differs per site: the hooks
+     test (a local the region's entry sets from the frame hooks flag and the
+     trail-everything mode), the room check for its own frame size, and the
+     method call on either's slow path.
    - *Restore.* Every resumption inside the region passes through the fail
      handler and the dispatch switch. The restore (arguments, control words,
      trail unwind) goes between the two, once per region, and needs no
      return: the dispatch is its return. A resume entry keeps the two or
      three stores that tell a retry from a trust. A resumption from outside
-     enters the region at a resume cursor and takes the same path.
+     enters the region at a resume cursor and takes the same path: the
+     region's entry sends any cursor past the plan's to the restore.
 
-7. **The region keeps room for its largest frame.** The ladder stores before
-   any check, so the check moves: inside the region the stack always has room
-   above its top for the largest frame the region writes, a size known when
-   the region is compiled. The region establishes it at entry, after each
-   frame it writes, and after a call whose row says it writes the stack top
-   or replaces the stack array. It is one check per frame, as today.
+   Without held registers (item 9, or `SHUMWAY_IL_HELD_REGS=0`) a region
+   calls `PushChoicePoint`, `RetryMeElse` and `TrustMe`: the per-site inline
+   form of ADR-058 item 6 is gone.
+
+7. **The push site checks the room for its own frame.** A headroom invariant
+   (room for the region's largest frame, established at entry and after
+   every call that can move the stack top) would take the check off the
+   site but put one after every call whose row writes the stack top, and
+   the rows of the arithmetic and wakeup helpers say they write everything:
+   more checks than pushes. The site's check is four instructions.
 
 8. **The table is verified twice.** A test reads the IL of every method with
    a row, and of everything it calls, and fails with the corrected rows when
@@ -186,7 +194,7 @@ its benchmark without losing on the others.
 |---|---|---|
 | 1 | the locals, the load and spill points, the table, the checked mode; no operation converted | none: the time must not move |
 | 2a | `allocate`, `deallocate`, cut, call and proceed over the control registers (`E`, `CP`, `B`, `B0`, the stack top and array) | `tak` (control and arithmetic, no heap construction), `queens(9)` |
-| 2b | the push ladder; the restore in the fail path | `queens(9)`, `bc3` |
+| 2b | the push ladder; the restore in the fail path | `queens(10)`, `bc3` |
 | 3 | heap construction: `put` and `unify` in write mode | `nreverse` |
 | 4 | `unify` in read mode and binding (the `HB` test, the trail push) | `queens(9)`, `zebra` |
 | 5 | the wasm tier: its long sequences as functions of the module | measured in a browser |
@@ -230,6 +238,30 @@ a third of them. Runs of 0.15 s (`bench(30)`) gave the opposite ranking in
 The IL of the `queens/2` region grows from 12,049 to 19,167 bytes and its
 native code from 28,619 to 29,999; `tak`'s from 2,290 to 6,664 and 8,101 to
 10,553. All compile optimized.
+
+Stage 2b. Measured against stage 2a in one process: each build in its own
+assembly load context, fresh engines interleaved ABBA, each measurement the
+minimum of 3 runs; minimum and median over the measurements, heap cells
+identical:
+
+| | stage 2a | stage 2b |
+|---|---:|---:|
+| `queens(10)` | 3.906, 4.076 s | 3.609, 3.637 s (-8%, -11%) |
+| `bc3(12000000)` | 1.658, 1.876 s | 1.609, 1.788 s (-3%, -5%) |
+| `tak`, `bench(300)` | 1.080, 1.134 s | 1.048, 1.118 s (noise: `tak` pushes few frames) |
+
+Code size, stage 2a to 2b: `queens/2`'s region 19,167 to 14,565 bytes of IL
+and 29,999 to 25,516 of native code; the three Van Roy regions measured
+19,823-22,562 to 13,912-16,718 of IL and 31,129-47,778 to 26,311-43,779 of
+native code.
+
+Counter-proofs of stage 2b: without the argument restore six of six frame and
+parity tests fail; entering at a resume cursor without the restore crashes the
+test host in the trail unwind. Without the restore of `B0` every test passes:
+no program in the suites resumes a clause whose cut reads a `B0` a nested call
+moved, and the attempt at one (`IlInlineFrameTests`, a cut after a failed
+nested call) finds the barrier right without it. The restore stays because
+`RestoreCommonFromCurrentCp` does it; the gap is open.
 
 ## Alternatives considered
 
