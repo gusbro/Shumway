@@ -25,6 +25,8 @@ public class Adr025StageBTests
         // Two passes: record + promote.
         Assert.True(e.Query(warmQuery).Success);
         Assert.True(e.Query(warmQuery).Success);
+        // Promotion compiles on a worker: wait for it before asking.
+        e.IlPromotion.WaitForPendingPromotions();
         int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
         Assert.True(e.IlPromotion.IsPromoted(fid),
             $"{name}/{arity} must promote to IL (stage-b emit)");

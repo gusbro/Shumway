@@ -192,6 +192,16 @@ and inferences identical in both:
 `bc` is within the clock's noise. `queens(9)` gains the most because its
 choice points have live arguments and its frames are restored many times over.
 
+The cost of item 6 is code size. Each inline push or restore is about 180 IL
+instructions and 820 bytes of native code, against 25 for a call:
+
+| region | IL, calls | IL, inline | native, calls | native, inline |
+|---|---:|---:|---:|---:|
+| `queens/2` (`boards.pl`), 7 pushes and 7 restores | 4,768 | 12,049 | 17,589 | 28,619 |
+| the four Van Roy regions measured | 5,583 to 7,608 | 14,371 to 16,312 | 17,632 to 34,421 | 29,286 to 52,069 |
+
+All of them still compile optimized.
+
 ## Risks
 
 - **Two entries per alternative.** Every site that branches to an
@@ -208,6 +218,10 @@ choice points have live arguments and its frames are restored many times over.
   the IL emitter and the wasm emitter. A change to the layout that misses one
   corrupts the stack without an error. A test compares, cell by cell, a frame
   pushed by inline code with one pushed by `PushChoicePoint`.
+- **A region's IL is not bounded** (item 6). The JIT stops optimizing a
+  method past a size of its own, and the inline sequences multiply a region's
+  IL by 2.5. The promotion cap is on a predicate's bytecode, not on the IL of
+  the region it roots.
 - **A public surface that can corrupt the engine** (item 6). Host code that
   writes through the low-level members breaks invariants no check catches.
   They are reserved for generated code and say so.
