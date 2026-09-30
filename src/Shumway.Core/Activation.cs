@@ -197,7 +197,8 @@ public sealed partial class Activation
     /// redo, fail) on it as it runs. When null, each port site costs one
     /// predicted-not-taken null test and nothing else, so a release run pays
     /// no measurable price for the seam.</summary>
-    public IDebugSession? Debug { get; set; }
+    public IDebugSession? Debug { get => _debug; set => _debug = value; }
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)] public IDebugSession? _debug;
 
     /// <summary>ADR-035 — whether last-call optimisation is in effect for the
     /// <see cref="Opcode.DebugLastCall"/> sites this activation runs. True (the

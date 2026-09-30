@@ -557,6 +557,9 @@ public sealed partial class IlPredicateCompiler
         EmitReturn(emit);
 
         emit.MarkLabel(failLabel);
+        var failOut = emit.DefineLabel("rfail_out");
+        if (frames is not null)
+            EmitResumeOwnFast(emit, frames, regionFid, curLoc, resumeCheck, failOut);
         if (pushSites > 0)
         {
             // ADR-057/058: a choice point this region pushed is resumed here, at
@@ -568,6 +571,7 @@ public sealed partial class IlPredicateCompiler
             EmitHelperCall(emit, EngineTryResumeOwnCpMethod);
             emit.BranchIfTrue(resumeCheck);
         }
+        emit.MarkLabel(failOut);
         emit.LoadConstant(false);
         EmitReturn(emit);
 

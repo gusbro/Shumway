@@ -35,6 +35,7 @@ public class Phase33Wave4Tests
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("inc(1, Y), Y == 2.").Success);
         // Default mode: the threshold-crossing call waited for the compile.
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("inc(41, Y), Y == 42.").Success);
     }
@@ -183,6 +184,7 @@ public class Phase33Wave4Tests
         // persistent-buffer self-call site is patched to ExecuteIl/CallIl for the
         // remaining recursion. sum(2*i, i=1..100) = 10100 must still come out.
         Assert.True(e.Query("sumd(100, 0, S), S == 10100.").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         // Subsequent queries keep working through the patched persistent code.
         Assert.True(e.Query("sumd(10, 0, S), S == 110.").Success);

@@ -364,6 +364,91 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(dispatch);
     }
 
+    private static readonly FieldInfo EngBacktrackFloor = EngineField(nameof(Activation._backtrackFloor));
+    private static readonly FieldInfo EngDebug = EngineField(nameof(Activation._debug));
+    private static readonly FieldInfo EngCancelCountdown = EngineField(nameof(Activation._backtrackCancelCountdown));
+    private static readonly FieldInfo ResumeMarkerPairsField =
+        typeof(Activation).GetField(nameof(Activation._resumeMarkerPairs))!;
+    private static readonly MethodInfo EngineBacktrackSafePointDueMethod =
+        typeof(Activation).GetMethod(nameof(Activation.BacktrackSafePointDue))!;
+
+    /// <summary>The fail handler's common case, before the call to
+    /// TryResumeOwnChoicePoint: the choice point on top is this region's own,
+    /// its BP a resume marker of the region. BP is read first: a choice point
+    /// of the IL side stack has BP -1, never a marker, so the side stack need
+    /// not be looked at. Reaches <paramref name="resumeCheck"/> with the
+    /// marker's cursor in <paramref name="cur"/>, or <paramref name="failOut"/>
+    /// when the top is another code's marker; anything else (a hook or a debug
+    /// session on, the floor, BP not a marker) falls through to the call.</summary>
+    private static void EmitResumeOwnFast(Sigil.Emit<PredicateDelegate> emit, FrameLocals l,
+        int regionFid, Sigil.Local cur, Sigil.Label resumeCheck, Sigil.Label failOut)
+    {
+        var rf = RegisterFileOf(emit)!;
+        var b = Reg(emit, MachineRegs.B);
+        var bp = rf.Temp(typeof(int), 70);
+        var pair = rf.Temp(typeof((int, int)), 0);
+        var countdown = rf.Temp(typeof(int), 71);
+        var callMethod = emit.DefineLabel($"rfail_call_{NextLabelSeq()}");
+        var safe = emit.DefineLabel($"rfail_safe_{NextLabelSeq()}");
+
+        emit.LoadLocal(l.Slow);
+        emit.BranchIfTrue(callMethod);
+        emit.LoadLocal(b);
+        emit.LoadArgument(0);
+        emit.LoadField(EngBacktrackFloor);
+        emit.BranchIfLessOrEqual(callMethod);
+        emit.LoadArgument(0);
+        emit.LoadField(EngDebug);
+        emit.BranchIfTrue(callMethod);
+        // BP of the frame on top: B + 1 + arity + CtlBp.
+        EmitLoadCellInt(emit, b, Activation.CpArityOffset);
+        emit.StoreLocal(l.Arity);
+        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
+        emit.LoadLocal(b);
+        emit.LoadConstant(Activation.CpArg1Offset + CtlBp);
+        emit.Add();
+        emit.LoadLocal(l.Arity);
+        emit.Add();
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.Convert<int>();
+        emit.StoreLocal(bp);
+        emit.LoadLocal(bp);
+        emit.LoadConstant(Activation.ResumeMarkerBase);
+        emit.BranchIfLess(callMethod);
+        // The marker's (functor, cursor).
+        emit.LoadField(ResumeMarkerPairsField);
+        emit.LoadLocal(bp);
+        emit.LoadConstant(Activation.ResumeMarkerBase);
+        emit.Subtract();
+        emit.LoadElement<(int, int)>();
+        emit.StoreLocal(pair);
+        emit.LoadLocal(pair);
+        emit.LoadField(typeof((int, int)).GetField("Item1")!);
+        EmitFunctorId(emit, regionFid);
+        emit.UnsignedBranchIfNotEqual(failOut);
+        // BacktrackSafePoint: the countdown here, the rest when it runs out.
+        emit.LoadArgument(0);
+        emit.LoadField(EngCancelCountdown);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(countdown);
+        emit.LoadArgument(0);
+        emit.LoadLocal(countdown);
+        emit.StoreField(EngCancelCountdown);
+        emit.LoadLocal(countdown);
+        emit.LoadConstant(0);
+        emit.BranchIfGreater(safe);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineBacktrackSafePointDueMethod);
+        emit.MarkLabel(safe);
+        emit.LoadLocal(pair);
+        emit.LoadField(typeof((int, int)).GetField("Item2")!);
+        emit.StoreLocal(cur);
+        emit.Branch(resumeCheck);
+        emit.MarkLabel(callMethod);
+    }
+
     /// <summary>A resume entry after the common restore: RetryMeElse's tail
     /// when <paramref name="nextMarker"/> is given (HB to the heap top, BP to
     /// the next alternative), TrustMe's otherwise (HB and B as before the

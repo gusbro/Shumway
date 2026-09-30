@@ -49,6 +49,7 @@ public class Chunk339Tests
             Assert.Equal(new IntTerm(3), sol["X"]);
         }
 
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("choose", 2)));
     }
 
@@ -76,6 +77,7 @@ public class Chunk339Tests
             Assert.Equal(new AtomTerm("b"), sol["R"]);
         }
 
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("m", 2)));
     }
 }

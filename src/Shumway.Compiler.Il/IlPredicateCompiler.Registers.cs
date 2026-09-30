@@ -336,6 +336,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineAllocateHeapUnboundMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray, MachineRegs.HeapTop | MachineRegs.HeapArray);
         Row(EngineAllocateMethod, MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.StackTop | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray, MachineRegs.E | MachineRegs.StackTop | MachineRegs.StackArray);
         Row(EngineBGetter, MachineRegs.B, MachineRegs.None);
+        Row(EngineBacktrackSafePointDueMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop, MachineRegs.None);
         Row(EngineBacktrackSafePointMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop, MachineRegs.None);
         Row(EngineBeginIlGuardMethod, MachineRegs.HeapTop | MachineRegs.Hb, MachineRegs.Hb);
         Row(EngineBindingTrailTopGetter, MachineRegs.TrailTop, MachineRegs.None);

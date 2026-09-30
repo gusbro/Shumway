@@ -58,6 +58,7 @@ public class Chunk47Tests
             """);
         // First call warms p/1.
         Assert.True(engine.Query("p(red).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 1)));
         // Subsequent ground / unbound queries still work.
         Assert.True(engine.Query("p(green).").Success);
@@ -98,6 +99,7 @@ public class Chunk47Tests
             p(X) :- atom(X), q(X).
             """);
         Assert.True(engine.Query("p(known).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 1)));
         Assert.False(engine.Query("p(42).").Success);   // atom check fails
         Assert.False(engine.Query("p(unknown).").Success);

@@ -38,6 +38,7 @@ public class DynamicPersistedIlTests
         int fid = Fid("d", 1);
 
         // Installed from the bundle — promoted at load, no warm-up, Threshold 0.
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("d(2).").Success);
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2, 3].").Success);
@@ -55,6 +56,7 @@ public class DynamicPersistedIlTests
     {
         // `:- visible` is dynamic; with clauses it bakes the same way.
         var e = LoadWithPersistedIl(":- visible v/2.\nv(a, 1).\nv(b, 2).\n");
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(Fid("v", 2)));
         Assert.True(e.Query("v(b, X), X == 2.").Success);
     }
@@ -66,6 +68,7 @@ public class DynamicPersistedIlTests
         // dynamic snapshot bakes too (the old index-addressed limitation is gone).
         var e = LoadWithPersistedIl(":- dynamic f/1.\nf(1.5).\n");
         int fid = Fid("f", 1);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("f(1.5).").Success);
         Assert.True(e.Query("f(X), X =:= 1.5.").Success);

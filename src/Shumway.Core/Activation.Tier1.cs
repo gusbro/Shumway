@@ -899,7 +899,8 @@ public sealed partial class Activation
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, int>
         _resumeMarkerByPair = new();
-    private static (int Fid, int Cursor)[] _resumeMarkerPairs = new (int, int)[4096];
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static (int Fid, int Cursor)[] _resumeMarkerPairs = new (int, int)[4096];
     private static int _resumeMarkerCount;
     private static readonly object _resumeMarkerLock = new();
 
@@ -1228,7 +1229,8 @@ public sealed partial class Activation
     /// its entry B so its failures cannot unwind the outer computation's
     /// choice points. On the activation, not the interpreter, because compiled
     /// code that resumes its own choice points reads it too (ADR-057).</summary>
-    public int BacktrackFloor { get; set; } = -1;
+    public int BacktrackFloor { get => _backtrackFloor; set => _backtrackFloor = value; }
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)] public int _backtrackFloor = -1;
 
     /// <summary>ADR-057 — resumes the top choice point in the compiled code
     /// that pushed it, when that code is <paramref name="self"/>: the same

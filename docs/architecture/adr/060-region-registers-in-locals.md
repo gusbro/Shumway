@@ -331,6 +331,22 @@ step, in one process: `queens(10)` -4% minimum and -14% median, `qsort` -8%
 and -9%, `serialize` -1% and -5%, `zebra` and `nreverse` unchanged. Leaving
 the Y variable unset in the write branch fails 4 of 7 parity and frame tests.
 
+The fail handler's common case is now emitted before its call to
+`TryResumeOwnChoicePoint`: the frame on top is the region's own, its BP a
+resume marker of the region. BP is read first. A choice point of the IL side
+stack always has BP -1, never a marker, so the side stack is not looked at.
+The region reads the floor, the debug session and the frame's BP, finds the
+marker's cursor in the marker table, decrements the backtrack safe point's
+countdown and calls the rest of the safe point (`BacktrackSafePointDue`)
+only when it runs out. A hook, a debug session, the floor or any other BP
+takes the call. The reserved surface grows by the backtrack floor, the debug
+session, the countdown and the marker table. In one process against the
+previous step, `bc3(12000000)` (a push, a retry and a trust per iteration)
+-6.6% minimum and -6.2% median over 16 measurements; `queens(10)`, `zebra`
+and `crypt` within noise. A failure-driven loop over the region's own choice
+points with no other safe point (`IlLocalBacktrackTests`) stays interruptible;
+without the countdown `time_out/3` never fires.
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

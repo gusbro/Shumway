@@ -68,6 +68,47 @@ public sealed class IlLocalBacktrackTests
         Assert.True(done, "the loop did not end in time_out");
     }
 
+    /// <summary>A failure-driven loop over the region's own choice points: a
+    /// chain of calls inside the region to a two-clause predicate, 2^40
+    /// combinations, with no call-boundary safe point on the way. The region
+    /// resumes each alternative in its fail handler, whose countdown is the
+    /// only safe point the loop passes.</summary>
+    [Fact]
+    public void AFailureDrivenLoopInsideARegionStaysInterruptible()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        e.IlPromotion.Threshold = 1;
+        string calls = string.Join(", ", Enumerable.Repeat("b(_)", 40));
+        e.ConsultString($"""
+            b(X) :- X = 0.
+            b(X) :- X = 1.
+            spin :- {calls}, fail.
+            spin_once(K) :- b(K), K > 0, !.
+            """);
+        for (int i = 0; i < 3; i++) Assert.True(e.Query("spin_once(K).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
+        for (int i = 0; i < 4; i++)
+        {
+            e.Query("time_out(spin, 20, _).");
+            e.IlPromotion.WaitForPendingPromotions();
+        }
+        // ANTI-VACUITY: spin/0 runs as compiled code.
+        var promoted = e.IlPromotion.PromotedFunctorIds().Select(fid =>
+        {
+            var (atom, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            string n = Shumway.Core.AtomTable.GetById(atom)?.Name ?? "";
+            return $"{n[(n.LastIndexOf('$') + 1)..]}/{arity}";
+        }).ToList();
+        Assert.True(promoted.Contains("spin/0"), "spin/0 did not promote: " + string.Join(" ", promoted));
+
+        bool? done = null;
+        var t = new System.Threading.Thread(() =>
+            done = e.Query("time_out(spin, 200, R), R == time_out.").Success);
+        t.Start();
+        Assert.True(t.Join(30_000), "time_out/3 never interrupted the loop");
+        Assert.True(done, "the loop did not end in time_out");
+    }
+
     private static string Answer(PrologEngine e, string goal)
     {
         var r = e.Query(goal);

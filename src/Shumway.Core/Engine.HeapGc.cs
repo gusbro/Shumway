@@ -156,7 +156,7 @@ public sealed partial class Activation
     // Clause-backtracking loops re-satisfy via Call and are already cancellable
     // there, so they never reach this and pay nothing.
     private const int BacktrackCancelInterval = 4096;
-    private int _backtrackCancelCountdown = BacktrackCancelInterval;
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)] public int _backtrackCancelCountdown = BacktrackCancelInterval;
 
     // call_with_timeout/2,3 deadlines, checked at the same safe points as
     // cancellation — which is what lets `(repeat, fail)` time out: it grows no
@@ -215,6 +215,19 @@ public sealed partial class Activation
     public void BacktrackSafePoint()
     {
         if (--_backtrackCancelCountdown > 0) return;
+        _backtrackCancelCountdown = BacktrackCancelInterval;
+        if (_cancelRequested) ThrowQueryCancelled();
+        if (_deadlineAt != 0) CheckDeadline();
+    }
+
+    /// <summary>The half of <see cref="BacktrackSafePoint"/> after the
+    /// countdown reached zero, for generated code that decrements the
+    /// countdown itself (ADR-060).</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public void BacktrackSafePointDue()
+    {
         _backtrackCancelCountdown = BacktrackCancelInterval;
         if (_cancelRequested) ThrowQueryCancelled();
         if (_deadlineAt != 0) CheckDeadline();

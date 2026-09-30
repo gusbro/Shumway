@@ -35,8 +35,11 @@ public class Chunk216Tests
 
         Assert.Equal(r0, r1);
         if (promoted is var (n, a))
+        {
+            t1.IlPromotion.WaitForPendingPromotions();
             Assert.True(t1.IlPromotion.IsPromoted(Fid(n, a)),
                 $"{n}/{a} expected to promote to indexed IL");
+        }
         return r1;
     }
 

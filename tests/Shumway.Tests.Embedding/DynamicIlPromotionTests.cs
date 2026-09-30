@@ -43,6 +43,7 @@ public sealed class DynamicIlPromotionTests
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("color(green).").Success);
 
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));                 // promoted as a snapshot
         Assert.True(e.Query("findall(X, color(X), L), length(L, N), N == 3.").Success);
         Assert.False(e.Query("color(yellow).").Success);
@@ -60,6 +61,7 @@ public sealed class DynamicIlPromotionTests
         int fid = Fid("color", 1);
 
         for (int i = 0; i < 5; i++) Assert.True(e.Query("color(green).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
 
         Assert.True(e.Query("assertz(color(yellow)).").Success);    // mutation
@@ -71,6 +73,7 @@ public sealed class DynamicIlPromotionTests
 
         // Re-warms and re-promotes the new snapshot.
         for (int i = 0; i < 5; i++) Assert.True(e.Query("color(yellow).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
     }
 
@@ -85,6 +88,7 @@ public sealed class DynamicIlPromotionTests
             """);
         int fid = Fid("n", 1);
         for (int i = 0; i < 5; i++) Assert.True(e.Query("n(2).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
 
         Assert.True(e.Query("retract(n(2)).").Success);
@@ -136,6 +140,7 @@ public sealed class DynamicIlPromotionTests
         // Mutation-free reads: pin re-arms after ChurnRearmCalls, then the
         // (primed) predicate re-promotes; results stay correct throughout.
         for (int i = 0; i < 60; i++) Assert.True(e.Query("d(0).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("findall(X, d(X), L), length(L, N), N == 7.").Success);
         // A returning mutation phase evicts + one more churn re-pins quickly.
@@ -162,6 +167,7 @@ public sealed class DynamicIlPromotionTests
         int fid = Fid("color", 1);
         Assert.False(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("color(green).").Success);   // One call
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));       // primed → already IL
         // unchanged mutability: a mutation evicts the snapshot, new state is live.
         Assert.True(e.Query("assertz(color(yellow)).").Success);
@@ -215,6 +221,7 @@ public sealed class DynamicIlPromotionTests
         int fid = Fid("mc", 1);
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("mc(green).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid), "a module's dynamic predicate was not promoted");
         Assert.True(e.Query("assertz(mc(blue)), mc(green), mc(red), mcs(L), L == [red, green, blue].").Success);
         Assert.True(e.Query("retract(mc(red)), mc(green), mcs(L), L == [green, blue].").Success);
@@ -237,6 +244,7 @@ public sealed class DynamicIlPromotionTests
             """);
         int fid = Fid("d", 1);
         for (int i = 0; i < 5; i++) Assert.True(e.Query("d(2).").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));                // snapshot active
 
         // iter sees [1,2,3] — not 99 (asserted during the iteration).

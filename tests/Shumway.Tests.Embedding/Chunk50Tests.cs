@@ -50,6 +50,7 @@ public class Chunk50Tests
             p :- q, r.
             """);
         Assert.True(engine.Query("p.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 0)));
     }
 
@@ -68,6 +69,7 @@ public class Chunk50Tests
             chain :- a, b, c.
             """);
         Assert.True(engine.Query("chain.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("chain", 0)));
     }
 
@@ -85,6 +87,7 @@ public class Chunk50Tests
             """);
         Assert.True(engine.Query("main(ok).").Success);
         Assert.False(engine.Query("main(no).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("main", 1)));
     }
 
@@ -169,6 +172,7 @@ public class Chunk50Tests
             """);
         Assert.True(engine.Query("greet(\"hello\").").Success);
         Assert.False(engine.Query("greet(\"world\").").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
     }
 

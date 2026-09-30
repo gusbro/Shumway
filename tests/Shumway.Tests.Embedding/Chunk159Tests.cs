@@ -43,6 +43,7 @@ public class Chunk159Tests
         e.Query("assertz(d(b)).");
         // Several calls — enough to cross IL threshold (no mutation in between).
         for (int i = 0; i < 10; i++) e.Query("d(a).");
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(Fid("d", 1)));
         Assert.False(e.IlPromotion.IsUnpromotable(Fid("d", 1)));
     }

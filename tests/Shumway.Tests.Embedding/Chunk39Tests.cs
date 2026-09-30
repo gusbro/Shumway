@@ -155,6 +155,7 @@ public class Chunk39Tests
         Assert.True(engine.Query("greet(world).").Success);
         Assert.False(engine.IlPromotion.IsPromoted(fid));
         Assert.True(engine.Query("greet(world).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(fid));
     }
 
@@ -182,6 +183,7 @@ public class Chunk39Tests
         Assert.True(solA.Success);
         Assert.True(solB.Success);
         Assert.Equal(solA["X"], solB["X"]);
+        engineB.IlPromotion.WaitForPendingPromotions();
         Assert.True(engineB.IlPromotion.IsPromoted(FunctorId("answer", 1)));
     }
 
@@ -198,6 +200,7 @@ public class Chunk39Tests
             """);
 
         Assert.True(engine.Query("colour(red).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("colour", 1)));
         Assert.False(engine.Query("colour(blue).").Success);
         // Re-run the matching arg through the promoted path.
