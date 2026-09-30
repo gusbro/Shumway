@@ -281,6 +281,36 @@ neutral in time on Tier-0 and Tier-1. The blocks wait for stage 4, where the
 unification over the locals removes the reloads that made holding the heap
 registers lose.
 
+Stage 4, first step. A CPU profile of `queens(10)` sampled every 0.125 ms put
+13% of the process in the NoInlining slow paths of `get_list` (`GetListSlow`
+and the fused `GetListVarXVarXSlow`, `GetListValXVarXSlow`) and 5% in
+`SetRegister`, which the region called instead of inlining it. The inlined
+fast path of `get_list` covers a register that holds the list itself; the
+cases a program meets most, a reference to the list and an unbound variable
+to bind to a new one, are in the slow paths. `get_list`, alone and in the
+fused windows, is now emitted in the region with both: the read through one
+reference, and the write over a plain unbound variable with the binding rule
+of `Bind` (the store, and `TrailBind` when the variable is older than `HB`).
+An attributed variable, a longer chain, a packed string, a register bank or
+heap that must grow and the occurs check take the helper before anything is
+written. `SetRegister` is emitted with the bank's capacity check. Nothing is
+held: the site reads the register and heap arrays from their fields.
+Measured in one process against the helpers:
+
+| | minimum | median |
+|---|---:|---:|
+| `nreverse`, `bench(100000)` | -19% | -23% |
+| `queens(10)` | -7% | -3.5% |
+| `crypt`, `bench(1500)` | -6% | -5% |
+| `zebra`, `bench(500)` | -1.6% | -2.7% |
+| `tak`, `bench(300)` | -2.6% | +1% |
+
+Counter-proofs: the write without the trail fails 2 of 149 backtracking and
+frame tests; reading an attributed variable as itself fails 14 of 362
+attribute, `freeze/2`, `dif/2` and CLP tests. The reserved public surface
+grows by the heap array, the cell counter and the unify mode fields
+(`_writeMode`, `_unifyPointer`, `_reservedWrite`), and `Activation.TrailBind`.
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

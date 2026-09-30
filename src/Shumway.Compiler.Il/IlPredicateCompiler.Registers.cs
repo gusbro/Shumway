@@ -86,8 +86,9 @@ public sealed partial class IlPredicateCompiler
         f[Index(MachineRegs.TrailTop)] = EngineField(nameof(Activation._bindingTrailTop));
         f[Index(MachineRegs.StackArray)] = EngineField(nameof(Activation._stack));
         f[Index(MachineRegs.RegisterArray)] = EngineField(nameof(Activation._registers));
-        // The heap and binding trail arrays are not on the public surface yet
-        // (ADR-060 item 10); a region cannot hold them until they are.
+        f[Index(MachineRegs.HeapArray)] = EngineField(nameof(Activation._heap));
+        // The binding trail array is not on the public surface (ADR-060 item
+        // 10); a region cannot hold it.
         return f;
     }
 
@@ -353,6 +354,9 @@ public sealed partial class IlPredicateCompiler
         Row(EngineMaybeCollectHeapAtCallMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineMaybeCollectHeapMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineNeckCutMethod, MachineRegs.All, MachineRegs.All);
+        Row(EngineOccursModeGetter, MachineRegs.None, MachineRegs.None);
+        Row(EngineTrailBindMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.TrailArray, MachineRegs.TrailTop | MachineRegs.TrailArray);
+        Row(EngineUnifyHeapWithCellMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EnginePopGuardContFailMethod, MachineRegs.None, MachineRegs.None);
         Row(EnginePopGuardContOkMethod, MachineRegs.None, MachineRegs.None);
         Row(EnginePushChoicePointMethod, MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.B0 | MachineRegs.StackTop | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.RegisterArray, MachineRegs.B | MachineRegs.StackTop | MachineRegs.Hb | MachineRegs.StackArray | MachineRegs.RegisterArray);

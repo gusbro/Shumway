@@ -1302,6 +1302,13 @@ public sealed partial class IlPredicateCompiler
                     {
                         int slot1 = BytecodeIO.ReadInt32(code, pc1 + 1);
                         int slot2 = BytecodeIO.ReadInt32(code, pc2 + 1);
+                        if (TryEmitGetList(emit, op1 == Opcode.UnifyVariableX
+                                ? ListWindow.VarXVarX : ListWindow.ValXVarX,
+                            arg, slot1, slot2, failLabel))
+                        {
+                            pc = pc2 + 5;
+                            continue;
+                        }
                         emit.LoadArgument(0);
                         emit.LoadConstant(arg);
                         emit.LoadConstant(slot1);
@@ -1315,10 +1322,13 @@ public sealed partial class IlPredicateCompiler
                     }
                 }
 
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                EmitHelperCall(emit, EngineGetListMethod);
-                emit.BranchIfFalse(failLabel);
+                if (!TryEmitGetList(emit, ListWindow.Plain, arg, 0, 0, failLabel))
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, EngineGetListMethod);
+                    emit.BranchIfFalse(failLabel);
+                }
                 pc += sz;
                 continue;
             }

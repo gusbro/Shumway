@@ -685,6 +685,12 @@ public sealed partial class Activation
             TrailBinding(varAddr);
     }
 
+    /// <summary>Records the binding of <paramref name="varAddr"/> on the
+    /// binding trail: the half of <see cref="Bind"/> generated code calls
+    /// when the variable is older than HB (ADR-060).</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public void TrailBind(int varAddr) => TrailBinding(varAddr);
+
     // AggressiveInlining: with the capacity compare now inline
     // in EnsureBindingTrailCapacity this whole method flattens into the
     // Bind call sites as compare + store + increment.

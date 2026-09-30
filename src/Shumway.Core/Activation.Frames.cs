@@ -18,8 +18,8 @@ public sealed partial class Activation
     [EditorBrowsable(EditorBrowsableState.Never)] public int _b0 = -1;
     private int _p = -1;
     [EditorBrowsable(EditorBrowsableState.Never)] public int _cp = -1;
-    private bool _writeMode;
-    private int _unifyPointer;
+    [EditorBrowsable(EditorBrowsableState.Never)] public bool _writeMode;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _unifyPointer;
 
     // ADR-020 reserve-upfront write mode. When _reservedWrite is true the cells
     // at _unifyPointer are pre-allocated (by put_structure_r / put_list_r), so a
@@ -28,7 +28,7 @@ public sealed partial class Activation
     // compound completes. Set only by the _r roots; cleared by the on-demand /
     // read entries and when the base frame pops. Ephemeral within one structure
     // build (no choice point spans it, so it is never trailed).
-    private bool _reservedWrite;
+    [EditorBrowsable(EditorBrowsableState.Never)] public bool _reservedWrite;
     // Each frame: the parent-resume unify pointer (high 32) and the remaining
     // arg count (low 32), packed so the stack is one long[]. Depth = nesting
     // depth of the term being built; 32 is far beyond any real clause.

@@ -37,7 +37,7 @@ public sealed partial class Activation
     // anywhere else breaks invariants nothing checks.
 
     // ----- Heap -----
-    private Cell[] _heap;
+    [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _heap;
     [EditorBrowsable(EditorBrowsableState.Never)] public int _heapTop;
     [EditorBrowsable(EditorBrowsableState.Never)] public int _hb;
 
@@ -51,7 +51,7 @@ public sealed partial class Activation
     // UnifyHeapWithCell, whose whole effect is skipping one cell per
     // matched literal. Present in every build, so it cancels exactly when
     // comparing two builds. See the harness --alloc mode.
-    private long _cellsAllocated;
+    [EditorBrowsable(EditorBrowsableState.Never)] public long _cellsAllocated;
 
     // ----- Stack (storage only in this phase; no frame operations yet) -----
     [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _stack;

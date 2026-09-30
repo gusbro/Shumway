@@ -21,6 +21,8 @@ public sealed partial class IlPredicateCompiler
     private static bool TryEmitIntrinsic(
         Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MethodInfo method)
     {
+        if (method == EngineSetRegisterMethod && !rf.Holds(MachineRegs.RegisterArray))
+            return TryEmitSetRegister(emit, rf);
         if (method == EngineEGetter) return EmitRegisterRead(emit, rf, MachineRegs.E);
         if (method == EngineBGetter) return EmitRegisterRead(emit, rf, MachineRegs.B);
         if (method == EngineCpGetter) return EmitRegisterRead(emit, rf, MachineRegs.Cp);
