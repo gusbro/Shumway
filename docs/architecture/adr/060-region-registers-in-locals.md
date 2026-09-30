@@ -320,6 +320,17 @@ minimum and -6% median, `qsort` -2%, `crypt` and `zebra` unchanged,
 `queens(10)` unchanged in the median; its minimum moved by the spread of the
 code's placement between engines (3.18 to 4.55 s for the same build).
 
+The two unify instructions after a `get_list`, of any of the simple kinds
+(variable or value, X or Y, atom, integer, nil, one void), now compile with
+it as one window: past the `get_list` the mode is known in each branch, so the
+read branch works on the pair's cells and the write branch allocates the pair
+at once and stores its two cells, instead of helpers that read the mode from
+the activation at every instruction and whose write paths are not inlined.
+The fused windows of two X registers keep their form. Against the previous
+step, in one process: `queens(10)` -4% minimum and -14% median, `qsort` -8%
+and -9%, `serialize` -1% and -5%, `zebra` and `nreverse` unchanged. Leaving
+the Y variable unset in the write branch fails 4 of 7 parity and frame tests.
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

@@ -210,6 +210,9 @@ public sealed partial class IlPredicateCompiler
         // resume label (a cursor-switch target) is marked at the trust_me.
         Dictionary<int, Sigil.Label>? jumpLabels = null;
         Dictionary<int, Sigil.Label>? iteElseLabels = null;
+        // ADR-060: a window of instructions cannot span a pc a branch lands on.
+        bool LabelAt(int p) => (jumpLabels?.ContainsKey(p) ?? false)
+            || (iteElseLabels?.ContainsKey(p) ?? false);
         while (pc < end)
         {
             var op = (Opcode)code[pc];
@@ -1322,6 +1325,12 @@ public sealed partial class IlPredicateCompiler
                     }
                 }
 
+                int windowEnd = TryEmitGetListWindow(emit, code, pc, end, arg, LabelAt, failLabel);
+                if (windowEnd >= 0)
+                {
+                    pc = windowEnd;
+                    continue;
+                }
                 if (!TryEmitGetList(emit, ListWindow.Plain, arg, 0, 0, failLabel))
                 {
                     emit.LoadArgument(0);
