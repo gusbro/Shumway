@@ -833,7 +833,8 @@ public static partial class MetaBuiltins
     /// sub-engine, and every side effect the goal made (an <c>op/3</c>, an
     /// <c>assertz</c>, a flag) silently vanished with it.</summary>
     public static bool WotBegin(Activation engine)
-        => WotBeginWithLimit(engine, Shumway.Core.Cell.MaxPstrLength);
+        => WotBeginWithLimit(engine, engine.Host is PrologEngine host
+            ? host.CaptureCeiling : Shumway.Core.Cell.MaxPstrLength);
 
     /// <summary><c>'$wot_begin'(+Sink, +MaxChars)</c> — a capture with a
     /// smaller ceiling than what a term can hold. For a caller that only

@@ -255,6 +255,12 @@ public sealed partial class PrologEngine
 
     /// <summary>Clauses copied out of live lists by retract enumerations —
     /// the window's exact cost measure.</summary>
+    /// <summary>The most text <c>with_output_to/2</c> captures before it
+    /// refuses with <c>resource_error(text_length)</c>: what a term can hold.
+    /// Lower only for tests, which reach the refusal without writing tens of
+    /// millions of characters first.</summary>
+    internal int CaptureCeiling { get; set; } = Shumway.Core.Cell.MaxPstrLength;
+
     internal long ClausesCopiedOut
     {
         get => _dynStore.ClausesCopiedOut;

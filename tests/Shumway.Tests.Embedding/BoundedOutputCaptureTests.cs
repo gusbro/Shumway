@@ -17,11 +17,29 @@ public sealed class BoundedOutputCaptureTests
     [Fact]
     public void CapturingAGoalThatWritesWithoutEnd_IsACatchableRefusal()
     {
-        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        // The ceiling lowered: the refusal is the same at any size, and the
+        // real one is tens of millions of characters away.
+        var e = new PrologEngine { Out = new System.IO.StringWriter(), CaptureCeiling = 100_000 };
         Assert.True(e.Query(
             "catch(with_output_to(atom(_), (repeat, write(hello), fail)), "
             + "error(resource_error(text_length), _), true).").Success);
         // ...and the engine is still usable.
+        Assert.True(e.Query("with_output_to(atom(A), write(ok)), A == ok.").Success);
+        // Anti-vacuity: below the ceiling the capture is whole.
+        Assert.True(e.Query("with_output_to(atom(A), (between(1, 1000, _), write(hello), fail ; true)), "
+            + "atom_length(A, 5000).").Success);
+    }
+
+    // At the real ceiling: hundreds of megabytes of text, and the collections
+    // it forces slow down every test sharing the process.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void CapturingAGoalThatWritesWithoutEnd_RefusesAtTheRealCeiling()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        Assert.True(e.Query(
+            "catch(with_output_to(atom(_), (repeat, write(hello), fail)), "
+            + "error(resource_error(text_length), _), true).").Success);
         Assert.True(e.Query("with_output_to(atom(A), write(ok)), A == ok.").Success);
     }
 
