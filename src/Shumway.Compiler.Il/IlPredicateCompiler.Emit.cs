@@ -569,9 +569,7 @@ public sealed partial class IlPredicateCompiler
                 else
 #endif
                 {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(n);
-                    EmitHelperCall(emit, EngineAllocateMethod);
+                    EmitAllocateOp(emit, n);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -608,9 +606,7 @@ public sealed partial class IlPredicateCompiler
             {
                 int n = BytecodeIO.ReadInt32(code, pc + 1);
                 int slot = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(n);
-                EmitHelperCall(emit, EngineAllocateMethod);
+                EmitAllocateOp(emit, n);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 EmitHelperCall(emit, EngineGetLevelMethod);

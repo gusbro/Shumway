@@ -65,8 +65,15 @@ public sealed partial class IlPredicateCompiler
             Cell = emit.DeclareLocal<Cell>(),
         };
 
+    /// <summary>The value of an activation field; the region's local when
+    /// the region holds that register (ADR-060).</summary>
     private static void EmitLoadEngineField(Sigil.Emit<PredicateDelegate> emit, FieldInfo field)
     {
+        if (HeldLocalOf(emit, field) is { } local)
+        {
+            emit.LoadLocal(local);
+            return;
+        }
         emit.LoadArgument(0);
         emit.LoadField(field);
     }
@@ -217,13 +224,13 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(l.Base);
         emit.LoadConstant(size);
         emit.Add();
-        emit.StoreField(EngStackTop);
+        EmitStoreEngineField(emit, EngStackTop);
         emit.LoadArgument(0);
         emit.LoadLocal(l.Base);
-        emit.StoreField(EngB);
+        EmitStoreEngineField(emit, EngB);
         emit.LoadArgument(0);
         EmitLoadEngineField(emit, EngHeapTop);
-        emit.StoreField(EngHb);
+        EmitStoreEngineField(emit, EngHb);
         emit.Branch(done);
 
         emit.MarkLabel(slow);
@@ -274,10 +281,10 @@ public sealed partial class IlPredicateCompiler
         }
         emit.LoadArgument(0);
         EmitLoadFrameInt(emit, l, ctl + CtlCe);
-        emit.StoreField(EngE);
+        EmitStoreEngineField(emit, EngE);
         emit.LoadArgument(0);
         EmitLoadFrameInt(emit, l, ctl + CtlCp);
-        emit.StoreField(EngCp);
+        EmitStoreEngineField(emit, EngCp);
 
         // The unwind is a call, and only when something was trailed since
         // the push.
@@ -302,7 +309,7 @@ public sealed partial class IlPredicateCompiler
 
         emit.LoadArgument(0);
         EmitLoadFrameInt(emit, l, ctl + CtlHeapTop);
-        emit.StoreField(EngHeapTop);
+        EmitStoreEngineField(emit, EngHeapTop);
         emit.LoadArgument(0);
         EmitLoadFrameBits(emit, l, ctl + CtlViewGen);
         emit.LoadConstant(Cell.PayloadMask);
@@ -310,7 +317,7 @@ public sealed partial class IlPredicateCompiler
         emit.StoreField(EngViewGen);
         emit.LoadArgument(0);
         EmitLoadFrameInt(emit, l, ctl + CtlB0);
-        emit.StoreField(EngB0);
+        EmitStoreEngineField(emit, EngB0);
 
         if (retry)
         {
@@ -318,7 +325,7 @@ public sealed partial class IlPredicateCompiler
             // alternative.
             emit.LoadArgument(0);
             EmitLoadEngineField(emit, EngHeapTop);
-            emit.StoreField(EngHb);
+            EmitStoreEngineField(emit, EngHb);
             EmitStoreFrameInt(emit, l, ctl + CtlBp, () => emit.LoadLocal(l.Marker));
         }
         else
@@ -326,13 +333,13 @@ public sealed partial class IlPredicateCompiler
             // The frame goes: HB and B as they were before the push.
             emit.LoadArgument(0);
             EmitLoadFrameInt(emit, l, ctl + CtlHb);
-            emit.StoreField(EngHb);
+            EmitStoreEngineField(emit, EngHb);
             emit.LoadArgument(0);
             EmitLoadFrameInt(emit, l, ctl + CtlB);
-            emit.StoreField(EngB);
+            EmitStoreEngineField(emit, EngB);
             emit.LoadArgument(0);
             emit.LoadLocal(l.Base);
-            emit.StoreField(EngStackTop);
+            EmitStoreEngineField(emit, EngStackTop);
         }
         emit.Branch(done);
 

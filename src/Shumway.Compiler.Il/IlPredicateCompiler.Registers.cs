@@ -60,10 +60,16 @@ public sealed partial class IlPredicateCompiler
     /// over every region compiled in this process.</summary>
     public static int RegisterChecksEmitted;
 
+    /// <summary>ADR-060 stage 2: the control registers.</summary>
+    internal const MachineRegs ControlRegs = MachineRegs.E | MachineRegs.Cp | MachineRegs.B
+        | MachineRegs.B0 | MachineRegs.StackTop | MachineRegs.StackArray;
+
     /// <summary>ADR-060 item 1: the registers a region holds. With none held
     /// a region compiles to the code it compiles to without a register
     /// file.</summary>
-    internal static MachineRegs HeldByDefault { get; set; } = MachineRegs.None;
+    internal static MachineRegs HeldByDefault { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_HELD_REGS") == "0"
+            ? MachineRegs.None : ControlRegs;
 
     private static readonly FieldInfo?[] RegisterFields = BuildRegisterFields();
 
@@ -97,13 +103,35 @@ public sealed partial class IlPredicateCompiler
     /// <summary>ADR-060 item 2: the locals of one region method and what they
     /// hold. Between two synchronization points the local of a held register
     /// is the truth and its field is stale.</summary>
+    // Stores are written through: a store to a held register writes its local
+    // and its field, so the fields are current at every call, return and
+    // exception, and a call only reloads what its row says it writes.
     private sealed class RegisterFile
     {
         public MachineRegs Held;
         private readonly Sigil.Local?[] _locals = new Sigil.Local?[12];
+        private readonly Sigil.Emit<PredicateDelegate> _emit;
+        private readonly Dictionary<(Type, int), Sigil.Local> _temps = new();
+
+        public bool Holds(MachineRegs regs) => (Held & regs) == regs;
+
+        public Sigil.Local? LocalOf(int index) => _locals[index];
+
+        public Sigil.Local Local(MachineRegs one) => _locals[Index(one)]!;
+
+        /// <summary>A scratch local of <paramref name="type"/>, the
+        /// <paramref name="k"/>-th of its type. Shared by every sequence of the
+        /// method, none of which is live across another.</summary>
+        public Sigil.Local Temp(Type type, int k = 0)
+        {
+            if (!_temps.TryGetValue((type, k), out var l))
+                _temps[(type, k)] = l = _emit.DeclareLocal(type, $"regtmp_{type.Name}_{k}");
+            return l;
+        }
 
         public RegisterFile(Sigil.Emit<PredicateDelegate> emit, MachineRegs held)
         {
+            _emit = emit;
             Held = held;
             for (int i = 0; i < 12; i++)
             {
@@ -125,19 +153,6 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadField(RegisterFields[i]!);
                 emit.StoreLocal(_locals[i]!);
-            }
-        }
-
-        /// <summary>local to field, for every register in <paramref name="regs"/> that is held.</summary>
-        public void EmitSpill(Sigil.Emit<PredicateDelegate> emit, MachineRegs regs)
-        {
-            regs &= Held;
-            for (int i = 0; i < 12; i++)
-            {
-                if ((regs & (MachineRegs)(1 << i)) == 0) continue;
-                emit.LoadArgument(0);
-                emit.LoadLocal(_locals[i]!);
-                emit.StoreField(RegisterFields[i]!);
             }
         }
 
@@ -175,12 +190,35 @@ public sealed partial class IlPredicateCompiler
     private static RegisterFile? RegisterFileOf(Sigil.Emit<PredicateDelegate> emit)
         => RegisterFiles.TryGetValue(emit, out var rf) ? rf : null;
 
+    /// <summary>The local that holds the register stored in <paramref
+    /// name="field"/>, when the region holds it.</summary>
+    private static Sigil.Local? HeldLocalOf(Sigil.Emit<PredicateDelegate> emit, FieldInfo field)
+    {
+        var rf = RegisterFileOf(emit);
+        if (rf is null) return null;
+        for (int i = 0; i < 12; i++)
+            if (RegisterFields[i] == field) return rf.LocalOf(i);
+        return null;
+    }
+
+    /// <summary>field := value, the stack holding [activation, value]; the
+    /// register's local too when the region holds it.</summary>
+    private static void EmitStoreEngineField(Sigil.Emit<PredicateDelegate> emit, FieldInfo field)
+    {
+        if (HeldLocalOf(emit, field) is { } local)
+        {
+            emit.Duplicate();
+            emit.StoreLocal(local);
+        }
+        emit.StoreField(field);
+    }
+
     /// <summary>Gives a region method its register file, holding <see
     /// cref="HeldByDefault"/>, and loads the held registers: the region's
     /// entry (ADR-060 item 2).</summary>
-    private static void EmitRegionRegistersEntry(Sigil.Emit<PredicateDelegate> emit)
+    private static void EmitRegionRegistersEntry(Sigil.Emit<PredicateDelegate> emit, bool hold)
     {
-        var rf = new RegisterFile(emit, HeldByDefault);
+        var rf = new RegisterFile(emit, hold ? HeldByDefault : MachineRegs.None);
         RegisterFiles.Remove(emit);
         RegisterFiles.Add(emit, rf);
         rf.EmitLoad(emit, rf.Held);
@@ -198,23 +236,22 @@ public sealed partial class IlPredicateCompiler
             emit.Call(method);
             return;
         }
+        if (TryEmitIntrinsic(emit, rf, method)) return;
+        EmitRowCall(emit, rf, method);
+    }
+
+    /// <summary>The call itself, with the reload of what its row writes.</summary>
+    private static void EmitRowCall(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MethodInfo method)
+    {
         var fx = HelperTable.TryGetValue(method, out var row) ? row : HelperEffects.Everything;
-        // Checked: everything spilled, so that a field the row says the method
-        // leaves alone must still equal its local afterwards.
-        rf.EmitSpill(emit, CheckedRegisters ? MachineRegs.All : fx.Reads);
         emit.Call(method);
         if (CheckedRegisters) rf.EmitCheck(emit, ~fx.Writes, $"changed by {method.Name}");
         rf.EmitLoad(emit, fx.Writes);
     }
 
-    /// <summary>A return from a region or a standalone method: the held
-    /// registers are spilled first, since the caller reads the fields.</summary>
-    private static void EmitReturn(Sigil.Emit<PredicateDelegate> emit)
-    {
-        var rf = RegisterFileOf(emit);
-        if (rf is not null) rf.EmitSpill(emit, rf.Held);
-        emit.Return();
-    }
+    /// <summary>A return from a region or a standalone method. The fields are
+    /// current: stores are written through.</summary>
+    private static void EmitReturn(Sigil.Emit<PredicateDelegate> emit) => emit.Return();
 
     /// <summary>ADR-060 item 3: one row per helper the emitter calls. Verified
     /// against the methods' own code by a test; a row that is wider than the
@@ -285,6 +322,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineBeginIlGuardMethod, MachineRegs.HeapTop | MachineRegs.Hb, MachineRegs.Hb);
         Row(EngineBindingTrailTopGetter, MachineRegs.TrailTop, MachineRegs.None);
         Row(EngineBuiltinReturnPcSetter, MachineRegs.None, MachineRegs.None);
+        Row(EngineCallSafePointDueGetter, MachineRegs.HeapTop, MachineRegs.None);
         Row(EngineCommitIlGuardMethod, MachineRegs.None, MachineRegs.Hb);
         Row(EngineCpGetter, MachineRegs.Cp, MachineRegs.None);
         Row(EngineCurrentFunctorAddressesGetter, MachineRegs.None, MachineRegs.None);

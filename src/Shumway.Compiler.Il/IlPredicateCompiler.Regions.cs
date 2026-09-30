@@ -497,12 +497,10 @@ public sealed partial class IlPredicateCompiler
             ResumeCursor = resumeCursor,
             // Sigil's verifier rejects the write through a cell's field, and a
             // debuggable build wants the calls it can break on.
-            // ADR-060: the inline frames read the fields; while a register is
-            // held they take the methods, whose rows spill and reload it.
-            InlineFrames = !(DoVerify || DebugMode) && HeldByDefault == MachineRegs.None,
+            InlineFrames = !(DoVerify || DebugMode),
         };
 
-        EmitRegionRegistersEntry(emit);   // ADR-060
+        EmitRegionRegistersEntry(emit, hold: !(DoVerify || DebugMode));   // ADR-060
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
         emit.LoadArgument(1);

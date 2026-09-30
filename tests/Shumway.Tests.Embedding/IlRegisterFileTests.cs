@@ -136,14 +136,19 @@ public sealed class IlRegisterFileTests
             IlPredicateCompiler.OverrideHelperRow(pushes[i], new(rows[i].Reads, rows[i].Writes & ~MachineRegs.B));
         try
         {
-            var engine = new PrologEngine();
+            // A region emits its own clause pushes inline; the push of an
+            // inline disjunction is still a call.
+            var engine = new PrologEngine { EnableInlineIte = true };
             engine.IlPromotion.Threshold = 1;
-            engine.ConsultString(Corpus);
+            engine.ConsultString("""
+                pick(X, Y) :- (X = a ; X = b), Y = X.
+                walk(Y) :- pick(_, Y), atom(Y).
+                """);
             var ex = Assert.ThrowsAny<Exception>(() =>
             {
                 for (int round = 0; round < 6; round++)
                 {
-                    engine.Query("findall(P, perm([1, 2, 3, 4], P), Out).");
+                    engine.Query("findall(Y, walk(Y), Out).");
                     engine.IlPromotion.WaitForPendingPromotions();
                 }
             });

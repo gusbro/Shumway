@@ -277,6 +277,16 @@ public sealed partial class Activation
     /// carries.</summary>
     public bool GcPreciseRegisterBounds { get; set; } = true;
 
+    /// <summary>Whether <see cref="MaybeCollectHeapAtCall"/> has anything to
+    /// do. Compiled code tests this and makes the call only then (ADR-060).</summary>
+    public bool CallSafePointDue =>
+#if SHUMWAY_DIAG
+        true;
+#else
+        _cancelRequested || _deadlineAt != 0 || _debugArmPending
+        || _gcDiagActive || _heapTop >= _gcThreshold;
+#endif
+
     /// <summary>Safe point at a call boundary where the callee's functor is
     /// in hand: only its arguments are live registers. Same steady-state cost
     /// as <see cref="MaybeCollectHeap"/> — the arity lookup happens on the

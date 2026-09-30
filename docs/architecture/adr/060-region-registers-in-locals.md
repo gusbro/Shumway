@@ -83,18 +83,20 @@ What the operations of this ADR cost today, in calls per run:
    through the field, as today. A region whose operations are all helper
    calls holds nothing and compiles to the code it compiles to today.
 
-2. **Inside the region the local is the truth.** For a held register the
-   field is stale between two points of synchronization:
-   - *load*: at the region's entry, every held register;
-   - *spill*: before anything outside the region's own code reads the
-     register: a helper call, a builtin, a return (success, failure, a
-     continuation elsewhere), a call that can throw, a wakeup, a heap
-     collection;
-   - *reload*: after a call that can write the register.
+2. **Inside the region the local is read, and every store is written
+   through.** A store to a held register writes its local and its field, so
+   the fields are current wherever anything outside the region's own code
+   can look: a helper call, a builtin, a return, an exception, a wakeup, a
+   heap collection. The local is:
+   - *loaded* at the region's entry, for every held register;
+   - *reloaded* after a call whose row says it writes the register.
 
-   The emitter knows, along straight-line code, whether a held register was
-   written since its last spill, and omits the spill of one that was not. At a
-   label it assumes every held register was written.
+   What the region saves is the loads, and the calls of the operations it
+   emits itself (item 6); the stores stay. Deferring them to the next point
+   where the field is read (a spill before each such point) would save the
+   stores too, at the cost of tracking, along the emitted code, which
+   registers were written since their last spill. That is left until a
+   measurement shows the stores matter.
 
 3. **One table of helpers.** Every method handle the emitter owns (121) has
    a row: the registers the method reads and the registers it writes, read
@@ -107,8 +109,8 @@ What the operations of this ADR cost today, in calls per run:
    current heap top and unwinds the trails from the current tops before it
    rolls the rest of the machine back from the catch frame.
 
-   Every call is emitted through one function that spills what the row reads,
-   calls, and reloads what the row writes. A method without a row (a handle
+   Every call is emitted through one function that calls and reloads what
+   the row writes. A method without a row (a handle
    made per host, in an embedded native block) is called as if it read and
    wrote every register.
 
@@ -133,7 +135,7 @@ What the operations of this ADR cost today, in calls per run:
    | choice point push | about 180 | shared |
    | choice point restore | about 180 | shared |
    | `allocate` | about 30 | at the site |
-   | `deallocate`, without reclaiming | about 15 | at the site; the reclaiming path is a call |
+   | `deallocate`, the reclaim of the popped frame included | about 60 | at the site |
    | cut, nothing to discard | about 6 | at the site; discarding is a call |
 
    - *Push.* One ladder per region with an entry per arity: the entry for
@@ -160,15 +162,13 @@ What the operations of this ADR cost today, in calls per run:
    a row, and of everything it calls, and fails with the corrected rows when
    a row differs from the code: a method that starts reading one more register
    changes the table or breaks the gate. A checked emission mode verifies the
-   writes and the emitter's own bookkeeping at run time: under it every call
-   spills all held registers and, after the call, every field the row says
-   the method does not write must still equal its local. The test gate runs
+   writes and the emitter's own bookkeeping at run time: under it, after
+   every call, every field the row says the method does not write must still
+   equal its local. The test gate runs
    regions in this mode; a release build does not.
 
 9. **A region compiled for verification or for the debugger holds nothing**,
-   the rule ADR-058 has for its inline frames. Until stage 2 emits those
-   frames over the locals, a region that holds a register takes the frame
-   methods, whose rows spill and reload it.
+   the rule ADR-058 has for its inline frames.
 
 10. **The low-level public surface grows** by the heap and binding trail
     arrays and the binding trail top, under the terms of ADR-058 item 6:
@@ -185,7 +185,8 @@ its benchmark without losing on the others.
 | stage | content | benchmark |
 |---|---|---|
 | 1 | the locals, the load and spill points, the table, the checked mode; no operation converted | none: the time must not move |
-| 2 | `allocate`, `deallocate`, cut, call and proceed over locals; the push ladder; the restore in the fail path | `tak` (control and arithmetic, no heap construction), `queens(9)` |
+| 2a | `allocate`, `deallocate`, cut, call and proceed over the control registers (`E`, `CP`, `B`, `B0`, the stack top and array) | `tak` (control and arithmetic, no heap construction), `queens(9)` |
+| 2b | the push ladder; the restore in the fail path | `queens(9)`, `bc3` |
 | 3 | heap construction: `put` and `unify` in write mode | `nreverse` |
 | 4 | `unify` in read mode and binding (the `HB` test, the trail push) | `queens(9)`, `zebra` |
 | 5 | the wasm tier: its long sequences as functions of the module | measured in a browser |
@@ -207,6 +208,28 @@ and four arithmetic entries. With every exposed register held and the checked mo
 a region computes what Tier-0 computes over choice points, cuts, a caught
 error, a 20,000-frame recursion and builtin choice points; a row that hides
 the write of `B` by a push fails at the call.
+
+Stage 2a. The control registers held and written through; `allocate`,
+`deallocate` (with its reclaim), the cut tests, the Y slots, `get_level`, the
+register reads and writes, and the frames of ADR-058 item 6 over the locals;
+the wakeup check and the call safe point as a test inline and the call behind
+it. Minimum and median of 4 processes per variant, each the minimum of 7 runs
+of a goal of about 1.3 s, heap cells and inferences identical:
+
+| | stage 1 | stage 2a |
+|---|---:|---:|
+| `tak`, `bench(300)` | 1.369, 1.401 s | 1.062, 1.083 s (-22%) |
+| `queens(9)` four times | 1.380, 1.402 s | 1.295, 1.312 s (-6%) |
+
+A CPU profile of `tak` sampled every 0.125 ms places a quarter of stage 1's
+samples in `Allocate`, `Deallocate` and the `Cell.RawInt` they call without
+inlining it; in stage 2a those samples are gone and the region's own grow by
+a third of them. Runs of 0.15 s (`bench(30)`) gave the opposite ranking in
+14 of 16 processes: they measure the warm-up, not the steady state.
+
+The IL of the `queens/2` region grows from 12,049 to 19,167 bytes and its
+native code from 28,619 to 29,999; `tak`'s from 2,290 to 6,664 and 8,101 to
+10,553. All compile optimized.
 
 ## Alternatives considered
 
