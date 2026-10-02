@@ -378,6 +378,53 @@ and still read 4% slower on `nrev/2` and 3 to 6% on `tak/4`.
 Runs of 10 to 70 ms, as the first measurements of this round took, gave
 apparent losses of 50 to 80%.
 
+### What a promotion costs
+
+With the emitter linear (ADR-062), most of a promotion's cost is the JIT's.
+Blint linting itself three times in the REPL, threshold promotion, JIT time
+of the generated methods:
+
+| Tier-1 form | methods | IL | JIT |
+|---|---:|---:|---:|
+| regions | 115 | 2.9 MB | 5.6 s |
+| standalone (`SHUMWAY_REGION=0`) | 154 | 0.30 MB | 1.1 s |
+| continuation methods: delegates | 138 | | 1.15 s |
+| continuation methods: continuations | 474 | 1.01 MB | 2.07 s |
+| continuation methods: alternatives | 101 | 0.55 MB | 2.01 s |
+| continuation methods: cold | 97 | 0.41 MB | 1.63 s |
+
+A runtime region holds its root's closure, and the closures of the roots
+overlap: 202 predicates appear 962 times. Twenty-nine regions passed the
+JIT's size limits and ran without optimization. Continuation methods
+repeat each predicate instead: its delegate, its cold method and its
+alternatives method are each about the whole body.
+
+Against regions the continuation methods are as fast or faster once
+compiled (one process, ABBA, two copies per variant, runs of about 1 s;
+continuation methods / regions, minimum and median): `sendmore`
+0.82/0.81, `crypt` 0.73/0.97, `zebra` 0.93/0.90, `boyer` 0.96/1.06,
+`flatten` 0.75/0.67, `nreverse` 0.84/1.05, `qsort` 0.78/0.82, `queens`
+0.88/0.86, `serialize` 0.78/0.91, `tak` 0.80/0.82. Blint's fifth pass:
+0.87 to 1.08 s against 1.03 to 1.07 s.
+
+- The methods of a collectible `AssemblyBuilder` are not tiered: without
+  `AggressiveOptimization` they still compile with full optimization. The
+  one choice per method is `NoOptimization`.
+- The alternatives method compiles at its first use
+  (`CpsLazyAlternatives`): in Blint 46 of the 101 are ever entered. Its
+  pointer is then the method's stub, one jump more per entry, which
+  measures nothing (`crypt` compiled at install and entered through the
+  stub: 0.99/1.01). `CpsCompileEveryMethod` compiles every method at
+  install, for the test that has the JIT check all the IL.
+- The JIT inlines engine methods with their dynamic PGO profile, and a
+  method compiled later finds more of it: `crypt`'s meta-call alternatives
+  method had 16 inlinees with profile data compiled at first use, 9 at
+  install. The profile comes from the engine's own use of those methods,
+  mostly the interpreter's, and here it made the code worse: `crypt` read
+  1.17 to 1.25 with the alternatives compiled at first use, and 1.000 with
+  `DOTNET_TieredPGO=0`. When a method compiles moves its machine code;
+  this is part of `crypt`'s sensitivity.
+
 ### Tried in the engine and rejected
 
 Each was built and measured against the stage 1 shape above. They are

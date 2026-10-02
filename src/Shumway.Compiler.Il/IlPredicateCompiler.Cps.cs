@@ -133,6 +133,19 @@ public sealed partial class IlPredicateCompiler
     // enum lacks and its runtime ignores.
     private const MethodImplAttributes CpsAggressiveOptimization = (MethodImplAttributes)0x0200;
 
+    /// <summary>ADR-061: the alternatives method compiles at its first use, not
+    /// at install. Backtracking already pays for the path not taken first, and
+    /// many hot predicates never backtrack into their own choice points. Entry
+    /// and continuation methods compile at install; the cold method at its first
+    /// call.</summary>
+    internal static bool CpsLazyAlternatives { get; set; } = true;
+
+    /// <summary>Tests only: every method compiles at install, the cold and the
+    /// alternatives method too, so that the JIT checks all the emitted IL. The
+    /// counters record those two kinds compiled so.</summary>
+    internal static bool CpsCompileEveryMethod { get; set; }
+    internal static int CpsCompiledColdMethods, CpsCompiledAlternativesMethods;
+
     // A predicate's code must stay alive while any activation's table points
     // into it; stage 1 keeps every generation.
     private static readonly List<Type> CpsGenerations = new();
@@ -194,11 +207,24 @@ public sealed partial class IlPredicateCompiler
         var byCursor = new nint[maxCursor + 1];
         foreach (var (cursor, name) in ctx.Methods)
         {
-            if (cursor == CpsColdCursor) continue;   // reached by its hot methods only
             var handle = created.GetMethod(name)!.MethodHandle;
+            if (cursor == CpsColdCursor)   // reached by its hot methods only
+            {
+                if (CpsCompileEveryMethod)
+                {
+                    System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
+                    Interlocked.Increment(ref CpsCompiledColdMethods);
+                }
+                continue;
+            }
             // The native code, not the precode stub (one jump less per transfer).
-            // Compiling here also surfaces an access or verification failure now.
-            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
+            // A lazy method's pointer is its stub, which compiles it at first use.
+            if (cursor != CpsAltCursor || !CpsLazyAlternatives || CpsCompileEveryMethod)
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
+                if (cursor == CpsAltCursor && CpsCompileEveryMethod)
+                    Interlocked.Increment(ref CpsCompiledAlternativesMethods);
+            }
             nint code = handle.GetFunctionPointer();
             if (cursor == CpsAltCursor)
             {
