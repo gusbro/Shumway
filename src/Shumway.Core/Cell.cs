@@ -91,7 +91,7 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Atom(int atomId)
         => new(((long)Tag.Atom << TagShift) | (uint)atomId);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static Cell Int(long value)
     {
         if (value < MinInt60 || value > MaxInt60)

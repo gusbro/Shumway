@@ -957,6 +957,7 @@ public sealed partial class Activation
     /// emit does an intra-method <c>br</c>); otherwise (a different functor, or not
     /// a marker at all — the region's own caller-continuation) it returns −1 and the
     /// member returns to the dispatch loop, which runs <c>Cp</c>.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int RegionReturnCursor(int regionRootFunctorId)
     {
         int cp = _cp;
@@ -1023,7 +1024,7 @@ public sealed partial class Activation
     /// dispatch loop sets it; 0 when the call must go through the loop (a safe
     /// point is due, a wake is pending, a debug session is attached, or the
     /// callee has no continuation methods).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public nint CpsCallTarget(int functorId, int entryMarker)
     {
         var t = _cpsEntry;
@@ -1038,7 +1039,7 @@ public sealed partial class Activation
     /// <summary>ADR-061: the code a proceed may enter by a tail call (the
     /// continuation <see cref="Cp"/> names), with Pc set to Cp; 0 when the
     /// proceed must return to the dispatch loop.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public nint CpsProceedTarget()
     {
         var t = _cpsResume;
@@ -1065,7 +1066,7 @@ public sealed partial class Activation
 
     /// <summary>ADR-061: fails the guard whose marks are in the fields when it
     /// bound nothing; false, doing nothing, when bindings must be undone.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool TryFailIlGuardQuick()
     {
         if (_bindingTrailTop != _cpsGuardBt || _extraTrailTop != _cpsGuardXt) return false;
@@ -1251,6 +1252,7 @@ public sealed partial class Activation
     /// bytecode address. State preservation matches the bytecode CP
     /// machinery exactly — the only difference is what happens at retry
     /// time.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PushIlChoicePoint(Func<Activation, int, bool> del, int nextCursor, int arity)
         => PushIlChoicePoint(del, nextCursor, arity, onPrune: null);
 
@@ -1263,6 +1265,7 @@ public sealed partial class Activation
     /// barrier are <em>not</em> pruned — callers should keep the
     /// callback small and safe (a single Dispose, no
     /// arbitrary user code).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PushIlChoicePoint(
         Func<Activation, int, bool> del, int nextCursor, int arity, Action? onPrune)
     {
@@ -1407,7 +1410,7 @@ public sealed partial class Activation
     /// the exact restore the skipped choice point's pop would have performed.
     /// Registers / E / CP / B0 need no restore: the guard op whitelist writes
     /// no argument register and makes no calls.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void FailIlGuard(int bindingTop, int extraTop, int heapTop, int savedHb)
     {
         // A guard that bound nothing has nothing to undo: the common case.

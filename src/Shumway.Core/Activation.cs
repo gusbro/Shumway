@@ -301,8 +301,7 @@ public sealed partial class Activation
             GrowIfNeeded(ref _stack, _stackTop, extra, _config.MaxStackSize, "stack");
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     private void EnsureBindingTrailCapacity(int extra)
     {
         if (_bindingTrailTop + extra > _bindingTrail.Length)
@@ -406,8 +405,7 @@ public sealed partial class Activation
     /// already (two Y slots): a variable, an atom or a small integer, one
     /// dereference away, is decided here; anything else by
     /// <see cref="AreRegistersIdentical"/>'s rule, out of line.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool AreCellsIdentical(Cell a, Cell b)
     {
         Cell x = a, y = b;
@@ -447,8 +445,7 @@ public sealed partial class Activation
     /// atom or a small integer is its cell, so a pair with one of them on
     /// either side is decided by the cells; anything else takes
     /// <see cref="AreStructurallyEqual"/>.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool AreRegistersIdentical(int r0, int r1)
     {
         Cell a = ResolveForStructuralCompare(_registers[r0]);
@@ -842,6 +839,7 @@ public sealed partial class Activation
     /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.
     /// public so persisted-IL assemblies (loaded into the
     /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void SetPc(int pc)
     {
         if (TrapPc >= 0 && pc == TrapPc) TrapPcHit(pc);

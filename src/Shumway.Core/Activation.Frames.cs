@@ -150,6 +150,7 @@ public sealed partial class Activation
     }
     [EditorBrowsable(EditorBrowsableState.Never)] public bool _trailEverything;
 
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void AssignHb(int value) => _hb = _trailEverything ? int.MaxValue : value;
 
     /// <summary>Monotonic count of WAM heap cells reserved over this engine's
@@ -165,8 +166,7 @@ public sealed partial class Activation
 
     /// <summary>Reserves <paramref name="count"/> uninitialised cells on the heap and returns
     /// the index of the first one.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public int AllocateHeap(int count)
     {
         if (count <= 0) ThrowBadAlloc();
@@ -185,8 +185,7 @@ public sealed partial class Activation
 
     /// <summary>Allocates a fresh unbound variable on the heap (a self-pointing REF) and
     /// returns its index.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public int AllocateHeapUnbound()
     {
         int idx = _heapTop;
@@ -649,8 +648,7 @@ public sealed partial class Activation
     // the inline throw blocked JIT inlining of these two,
     // which every Y-slot opcode in both tiers calls. Hoisted to the cold
     // ThrowNoEnv helper (the ThrowBadAlloc pattern) + AggressiveInlining.
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public Cell GetY(int slot)
     {
         if (_e < 0) ThrowNoEnv();
@@ -660,6 +658,7 @@ public sealed partial class Activation
     /// <summary>ADR-035 — a Y slot of a named environment, rather than the current one:
     /// a debugger reads the variables of every frame on the stack, not just the
     /// innermost.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public Cell GetY(int env, int slot)
     {
         if (env < 0) ThrowNoEnv();
@@ -744,8 +743,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void SetY(int slot, Cell value)
     {
         if (_e < 0) ThrowNoEnv();

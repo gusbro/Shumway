@@ -136,6 +136,7 @@ public sealed partial class Activation
     /// caller's resume marker for a non-tail call; the region's inherited CP
     /// for a tail call): the wake frame captures it, and the resume is a
     /// forward marker that dispatches the callee.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int Tier1WakeBoundaryCall(int calleeFunctorId)
     {
         if (_pendingWakeups.Count == 0) return 0;
@@ -146,12 +147,14 @@ public sealed partial class Activation
     /// <summary>The wake boundary at a region proceed (after any deallocate):
     /// no argument registers are live, and the resume simply jumps to the
     /// continuation CP already holds.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int Tier1WakeBoundaryProceed()
     {
         if (_pendingWakeups.Count == 0) return 0;
         return WakeInterruptOrDrain(0, Cp);
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private int WakeInterruptOrDrain(int arity, int resumePc)
     {
         Profiler.Note("wakeup_flush");

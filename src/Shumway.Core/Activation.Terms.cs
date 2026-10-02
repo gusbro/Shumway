@@ -656,8 +656,7 @@ public sealed partial class Activation
     /// or a self-pointing REF (unbound variable). Returns the final heap index. Reading
     /// <see cref="GetHeap"/> at the returned index yields the dereferenced cell.
     /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public int Deref(int heapIdx)
     {
         while (true)
@@ -2088,8 +2087,7 @@ public sealed partial class Activation
     /// ~ns-per-cut cost is below the wall-clock noise floor and only applies to
     /// opt-in Tier-1 IL, so the simple always-on runtime guard wins for now.</para>
     /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool FlushWakeupsForIlCut()
     {
         if (_pendingWakeups.Count == 0) return true;

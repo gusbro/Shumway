@@ -11,6 +11,7 @@ public sealed partial class Activation
     public const int MinRegisterCount = 64;
 
     public Cell GetRegister(int idx) => _registers[idx];
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void SetRegister(int idx, Cell value)
     {
         if (idx >= _registers.Length) EnsureRegisterCapacity(idx + 1);
@@ -191,6 +192,7 @@ public sealed partial class Activation
     /// separate on-heap STR header), then enters write mode with <see cref="UnifyPointer"/>
     /// at the position where the first argument will be written.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutStructure(int functorId, int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
@@ -212,6 +214,7 @@ public sealed partial class Activation
     /// mode with a fresh write-pointer stack, so a non-last nested compound arg
     /// can write its ref into a pre-reserved slot and resume the parent. The
     /// reserve size is baked by the compiler — no functor-table lookup.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutStructureReserved(int functorId, int regIdx, int argCount)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
@@ -240,6 +243,7 @@ public sealed partial class Activation
         PushWriteFrame(0, 2);
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void PushWriteFrame(int resume, int remaining)
     {
         if (_writeSp >= _writeResume.Length)
@@ -281,8 +285,7 @@ public sealed partial class Activation
     // slot, so no deref, no allocation — the common case when matching an
     // already-built compound), and a NoInlining cold body for everything
     // else (deref, var-binding write mode, attvar, fail).
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStructure(int functorId, int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved
@@ -366,8 +369,7 @@ public sealed partial class Activation
 
     /// <summary>Mode-aware <c>unify_*</c> for ground value cells
     /// (atom / int / nil / float-via-ref / etc.).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool UnifyArgCell(Cell value)
     {
         int ptr = _unifyPointer;
@@ -415,8 +417,7 @@ public sealed partial class Activation
     // temp register, no heap allocation, no register grow) and a cold slow path
     // (write mode, or a slot beyond the register bank). Surfaced as ~13% of a
     // list-processing tight loop in a dotnet-trace profile.
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void UnifyVariableX(int slot)
     {
         if (!_writeMode && slot < _registers.Length)
@@ -478,8 +479,7 @@ public sealed partial class Activation
 
     /// <summary><c>unify_variable_y</c>: first occurrence of a
     /// permanent variable inside a compound.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void UnifyVariableY(int slot)
     {
         if (!_writeMode)
@@ -556,6 +556,7 @@ public sealed partial class Activation
     /// stores a REF in <c>X[<paramref name="regIdx"/>]</c>, and enters write mode with
     /// <see cref="UnifyPointer"/> at the head position.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutList(int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
@@ -588,8 +589,7 @@ public sealed partial class Activation
     /// <summary><c>get_list Ai; unify_variable_x H; unify_variable_x T</c> —
     /// destructure (read) or build (write) a cons whose head and tail are both
     /// fresh temp variables.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetListVarXVarX(int reg, int h, int t)
     {
         Cell regCell = _registers[reg];
@@ -652,8 +652,7 @@ public sealed partial class Activation
     /// the cons whose head is an already-seen value (the classic list-builder
     /// clause head <c>[H|R]</c> after <c>H</c> was extracted from another
     /// argument — nreverse's <c>conc</c>, partition outputs).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetListValXVarX(int reg, int v, int t)
     {
         Cell regCell = _registers[reg];
@@ -711,8 +710,7 @@ public sealed partial class Activation
     /// <summary><c>get_structure f/2 Ai; unify_variable_x A; unify_variable_x B</c> —
     /// the arity-2 twin of <see cref="GetListVarXVarX"/> (serialize's
     /// <c>pair(X,Y)</c> tree nodes and every binary-constructor head).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStruct2VarXVarX(int functorId, int reg, int a, int b)
     {
         Cell regCell = _registers[reg];
@@ -774,8 +772,7 @@ public sealed partial class Activation
 
     /// <summary><c>get_structure f/2 Ai; unify_value_x A; unify_value_x B</c> —
     /// both args already-seen values (serialize's tree-rebuild heads).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStruct2ValXValX(int functorId, int reg, int a, int b)
     {
         Cell regCell = _registers[reg];
@@ -822,8 +819,7 @@ public sealed partial class Activation
     // allocation; the common case when consuming an existing list) and a cold
     // slow path (deref, var-binding write mode, attvar, fail). ~10% of a
     // list-processing tight loop in a dotnet-trace profile.
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetList(int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved

@@ -596,6 +596,7 @@ public static class IlIndexedDispatch
     /// <paramref name="sub1"/> if &gt;= 0) from a deref'd <paramref name="cell"/>;
     /// returns the deref'd terminal, or false on a non-compound / out-of-range
     /// hop. Mirrors <c>BytecodeInterpreter.TrySubCell</c>.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private static bool TrySubCell(Activation engine, Cell cell, int sub0, int sub1, out Cell result)
     {
         if (!TryHop(engine, cell, sub0, out result)) return false;
@@ -611,12 +612,14 @@ public static class IlIndexedDispatch
     /// default — exactly the runtime walk's semantics. Public because the emitted
     /// IL (loaded via <c>Assembly.Load</c> in a fresh process for a persisted
     /// bundle) calls it directly.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public static Cell WalkSubOrMiss(Activation engine, Cell cell, int sub0, int sub1)
         => TrySubCell(engine, cell, sub0, sub1, out Cell r) ? r : Cell.Ref(0);
 
     /// <summary>True for a non-empty packed list — the emitted term-switch
     /// routes such an argument to its list bucket (a packed list is a cons,
     /// ADR-047/048). Public because persisted-bundle IL calls it.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public static bool IsNonEmptyPstr(Cell cell)
         => cell.Tag == Tag.Pstr && cell.AsPstrLength > 0;
 

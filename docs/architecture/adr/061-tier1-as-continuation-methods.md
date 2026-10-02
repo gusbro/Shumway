@@ -424,6 +424,16 @@ continuation methods / regions, minimum and median): `sendmore`
   1.17 to 1.25 with the alternatives compiled at first use, and 1.000 with
   `DOTNET_TieredPGO=0`. When a method compiles moves its machine code;
   this is part of `crypt`'s sensitivity.
+- What compiled code inlines is a property of the engine, not of the
+  profile a run leaves. The 56 branching engine methods compiled code
+  inlines (the JIT's inlining events over Blint and the ten programs) are
+  marked `HelperImpl.Fixed` (`AggressiveOptimization`): never
+  instrumented, so the same code wherever and whenever they are inlined
+  (`crypt` with the alternatives at first use: 1.01/0.97). Without the
+  profile they cost 0 to 5%, up to 14% (`serialize` with regions, `zebra`
+  with continuation methods, `sendmore` on Tier-0) until each is written
+  with the layout the profile gave it: the common path first, the rare one
+  in a call. In progress.
 
 ### Tried in the engine and rejected
 

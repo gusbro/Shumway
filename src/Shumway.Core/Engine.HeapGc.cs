@@ -210,8 +210,7 @@ public sealed partial class Activation
     /// path — see <see cref="RequestCancellation"/>. Throttled by a counter so
     /// the volatile flag is read only periodically; throws
     /// <see cref="OperationCanceledException"/> when a cancellation is pending.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void BacktrackSafePoint()
     {
         if (--_backtrackCancelCountdown > 0) return;
@@ -308,8 +307,7 @@ public sealed partial class Activation
     /// in hand: only its arguments are live registers. Same steady-state cost
     /// as <see cref="MaybeCollectHeap"/> — the arity lookup happens on the
     /// collection path only.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void MaybeCollectHeapAtCall(int functorId)
     {
         // The Tier-0 half of the area trace. A call is the densest point

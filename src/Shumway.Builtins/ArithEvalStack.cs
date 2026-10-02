@@ -51,7 +51,7 @@ public static class ArithEvalStack
     /// only case a wake flush is needed before reading it. A bound operand
     /// (the norm, and every operand a clp propagator computes on) skips the
     /// flush for the price of one deref.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static bool OperandUnbound(Activation engine, int kind, int val)
     {
         if (kind == 0) return false;   // int literal
@@ -87,7 +87,7 @@ public static class ArithEvalStack
     // address across the caller's fast lane. The init/grow check collapses to
     // one predicted-not-taken branch (a null _i routes to PushIntSlow, which
     // subsumes EnsureInit).
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static void PushIntLane(long v)
     {
         long[]? ia = _i;
@@ -145,7 +145,7 @@ public static class ArithEvalStack
 
     /// <summary>Evaluates the permanent (Y) slot and pushes the result
     /// (a_eval_push kind 4).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static void PushY(Activation engine, int slot)
     {
         Cell c = engine.GetY(slot);
@@ -169,7 +169,7 @@ public static class ArithEvalStack
     /// (a_eval_bin), leaving the result on top. Stays on raw longs when both
     /// operands are in the int lane and the op is integer-closed within 60
     /// bits; otherwise escalates to the <see cref="Number"/> path.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static void Bin(int op, bool preferRationals = false)
     {
         int ai = _top - 2, bi = _top - 1;
@@ -256,7 +256,7 @@ public static class ArithEvalStack
 
     /// <summary>Pops the top two entries and applies an arithmetic comparison
     /// (a_eval_cmp). Returns whether the relation holds.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static bool Cmp(int rel)
     {
         int ai = _top - 2, bi = _top - 1;
@@ -287,7 +287,7 @@ public static class ArithEvalStack
     // cannot raise a Prolog error, so the fast lane is try/catch-free (a
     // try/catch would block inlining of the whole method); the catch lives in
     // the cold slow path.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static bool FusedBin(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
     {
@@ -321,7 +321,7 @@ public static class ArithEvalStack
     /// <summary>ADR-061: the integer result of <see cref="FusedBin"/> alone, for
     /// compiled code that delivers it itself. False when an operand is not an
     /// integer or the result leaves the 60-bit range: the caller runs FusedBin.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static bool TryFusedBinInt(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, out long result)
     {
@@ -333,7 +333,7 @@ public static class ArithEvalStack
 
     /// <summary>ADR-061: <see cref="FusedCmp"/> over integers only: 1 true, 0
     /// false, -1 when an operand is not an integer (the caller runs FusedCmp).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static int TryFusedCmpInt(Activation engine, int rel,
         int aKind, int aVal, int bKind, int bVal)
     {
@@ -343,7 +343,7 @@ public static class ArithEvalStack
     }
 
     /// <summary><c>A cmp B</c> over two simple leaf operands.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static bool FusedCmp(Activation engine, int rel,
         int aKind, int aVal, int bKind, int bVal)
     {
@@ -374,7 +374,7 @@ public static class ArithEvalStack
     // var) returns false, so the caller falls to the slow path which runs the
     // full ReadOperand (whose Evaluate raises instantiation_error / type_error)
     // under the try/catch.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static bool TryReadInt(Activation engine, int kind, int val, out long iVal)
     {
         if (kind == 0) { iVal = val; return true; }
@@ -401,7 +401,7 @@ public static class ArithEvalStack
         return false;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static bool Deliver(Activation engine, int tKind, int tVal, Cell result)
     {
         switch (tKind)
@@ -428,14 +428,14 @@ public static class ArithEvalStack
     // AggressiveInlining matters: inside a big Tier-1 delegate the JIT's inline
     // budget is exhausted by the time it reaches this leaf, and without it this
     // survives as a real CALL in the integer hot loop. Two compares beat a call.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static bool Fits60(long v) => v >= Cell.MinInt60 && v <= Cell.MaxInt60;
 
     /// <summary>Integer-closed binary ops on 60-bit longs. Returns false (→
     /// Number path) for a non-fast op, a zero divisor, or a result that
     /// overflows the 60-bit inline range (the Number path then promotes to
     /// BigInteger or raises the error, identically to <c>is/2</c>).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static bool TryFastBin(int op, long a, long b, out long r)
     {
         switch ((ArithmeticEvaluator.BinOp)op)
@@ -483,7 +483,7 @@ public static class ArithEvalStack
         }
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     private static bool FastCmp(int rel, long a, long b) => (ArithmeticEvaluator.RelOp)rel switch
     {
         ArithmeticEvaluator.RelOp.Eq => a == b,
