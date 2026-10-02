@@ -152,7 +152,7 @@ public class Chunk88Tests
     [Fact]
     public void CutInThenBranch_CommitsThroughTheCall()
     {
-        // A `!` in the THEN branch is cut-transparent: it commits the
+        // A `!` in the then branch is cut-transparent: it commits the
         // choice points created inside the call (m/1's), so only X = 1.
         var engine = new PrologEngine();
         engine.ConsultString("""

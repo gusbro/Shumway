@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The same defect issue #76 reported for frozen goals, swept
 /// through the constraint libraries: an argument the library inspects by
-/// SHAPE — a list, a relation, a domain, a reified goal, a constraint —
-/// reaching a clause head that matches a pattern, and being BOUND by it.
+/// shape — a list, a relation, a domain, a reified goal, a constraint —
+/// reaching a clause head that matches a pattern, and being bound by it.
 ///
 /// <para>Three symptoms, all present before: a silent wrong answer
 /// (label(V) bound V to [] and succeeded, sum([1,2], R, T) picked the
@@ -88,7 +88,7 @@ public class SolverVariableArgumentTests
         => Assert.Equal("instantiation_error", ErrorKindOf("clpr", goal));
 
     [Theory]
-    // The error names the predicate the USER called, not what it delegates
+    // The error names the predicate the user called, not what it delegates
     // to internally — the convention GNU Prolog follows for this same
     // family (error(instantiation_error, fd_domain/3)), and the reason
     // '$must_be'/3 exists.
@@ -123,8 +123,8 @@ public class SolverVariableArgumentTests
         => Assert.Equal(expected, ErrorKindOf("clpfd", goal));
 
     [Theory]
-    // Reification is the ONE place a variable is not a missing value: a 0/1
-    // variable IS a reifiable constraint, which is what makes B1 #\/ B2 over
+    // Reification is the one place a variable is not a missing value: a 0/1
+    // variable is a reifiable constraint, which is what makes B1 #\/ B2 over
     // two booleans mean what it says. Left to fall through, such a variable
     // unified with the comparison pattern and became `_ #= _` — a constraint
     // nobody wrote. Answers checked against the reference implementation.

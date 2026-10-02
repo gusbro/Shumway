@@ -14,7 +14,7 @@ namespace Shumway.Embedding;
 /// <c>:- dynamic</c> declaration with no clauses yet has a mark and no
 /// slot.</para>
 ///
-/// <para><see cref="Functors"/> is the LIVE set, exposed read-only: consumers
+/// <para><see cref="Functors"/> is the live set, exposed read-only: consumers
 /// (module rewrite contexts, the module compiler) hold the reference and see
 /// later marks — the sharing the compile pipeline relies on. Mutations go
 /// through the store. Not thread-safe on its own; access is serialized by the
@@ -29,11 +29,11 @@ internal sealed class DynamicClauseStore
     //
     // Removing a clause from an array-backed list shifts everything above it,
     // so draining a big predicate from the head is quadratic in its size. A
-    // retract therefore leaves a TOMBSTONE in the slot and the slot closes up
+    // retract therefore leaves a tombstone in the slot and the slot closes up
     // later, in a compaction -- the same shape as the chain's dead chunks and
     // the linker's dead regions.
     //
-    // The tombstones are STRICTLY INTERNAL. Every reader compacts the slot
+    // The tombstones are strictly internal. Every reader compacts the slot
     // before looking, so outside this class the list is always dense and no
     // consumer's idea of a clause position changes; the only code that walks
     // over a tombstone is the retract path, which asks for the physical list
@@ -41,7 +41,7 @@ internal sealed class DynamicClauseStore
     // makes that sound: between reads only retract runs, and at every read
     // the state collapses to exactly what eager removal produced.
     //
-    // Compaction is PROPORTIONAL, not periodic: compacting every K retracts
+    // Compaction is proportional, not periodic: compacting every K retracts
     // is n/K passes of O(n), still quadratic. Compacting when tombstones
     // reach half the slot makes each pass pay for the retracts that caused
     // it -- amortised O(1) -- and keeps a never-returning query compacting.
@@ -55,7 +55,7 @@ internal sealed class DynamicClauseStore
 
     // Fenwick tree over tombstone positions, one per tombstoned slot. The
     // chain's entries stay dense (a retracted entry leaves it), so handing
-    // the chain a PHYSICAL position as a hint needs the translation
+    // the chain a physical position as a hint needs the translation
     // dense = physical - tombstonesBefore(physical), and computing that by
     // scanning would put the walk right back. O(log n) per tombstone and per
     // query; gone when the slot compacts. asserta compacts first, because a
@@ -155,22 +155,22 @@ internal sealed class DynamicClauseStore
     { Abolished.ExceptWith(fids); ImplicitOnly.ExceptWith(fids); _functors.UnionWith(fids); }
 
     /// <summary>Tombstones left by abolish/1: dispatching one of these
-    /// raises existence_error (the predicate is UNDEFINED) instead of
+    /// raises existence_error (the predicate is undefined) instead of
     /// failing over its dead chain. Re-marking dynamic clears the
     /// tombstone.</summary>
     public readonly HashSet<int> Abolished = new();
 
-    /// <summary>Functors marked dynamic ONLY by the implicit_dynamic
+    /// <summary>Functors marked dynamic only by the implicit_dynamic
     /// consult-time scan — a literal <c>assertz(Head)</c> was seen in some
     /// clause body, so the linker must emit a real trampoline for calls to
-    /// Head, but nothing has DECLARED or asserted it yet.
+    /// Head, but nothing has declared or asserted it yet.
     ///
     /// <para>Such a predicate is not yet in the database: current_predicate/1
     /// does not enumerate it and calling it goes through the <c>unknown</c>
     /// flag like any other undefined procedure — which is what GNU Prolog,
     /// SWI and Scryer all do, and what §8.8.2.1 says. A real
     /// <c>:- dynamic</c> declaration or the first assert clears the mark and
-    /// it becomes an ordinary dynamic (empty chain FAILS, and it
+    /// it becomes an ordinary dynamic (empty chain fails, and it
     /// enumerates).</para></summary>
     public readonly HashSet<int> ImplicitOnly = new();
 
@@ -267,18 +267,18 @@ internal sealed class DynamicClauseStore
     // ----- open retract enumerations -----
 
     /// <summary>A retract/1 enumeration that has not copied its remaining
-    /// candidates yet. It holds a window [start, end) of the LIVE clause
+    /// candidates yet. It holds a window [start, end) of the live clause
     /// list instead, and the store tells it about mutations so it can either
     /// adjust the window or copy the window out before it is disturbed.
     ///
     /// <para>The window is the enumeration's ISO logical-update view, so a
-    /// clause removed from inside it must be COPIED OUT first: the view
+    /// clause removed from inside it must be copied out first: the view
     /// still contains it. Everything outside the window is free.</para></summary>
     internal interface IClauseWindow
     {
         /// <summary>The clause at <paramref name="index"/> is about to become
         /// a tombstone. Its position does not move, so a window materializes
-        /// only when the slot is INSIDE it -- the view keeps the clause, and
+        /// only when the slot is inside it -- the view keeps the clause, and
         /// the copy runs while it is still there.</summary>
         void BeforeRemoveAt(int index);
         /// <summary>A clause is about to be inserted at <paramref name="index"/>.</summary>
@@ -315,7 +315,7 @@ internal sealed class DynamicClauseStore
     /// through one of these three so no open window can be disturbed behind
     /// its back; the fast path is a dictionary miss.</summary>
     // A window that copies out closes itself, which removes it from `ws`
-    // mid-notification: walk DOWNWARDS so a removal at or above the cursor
+    // mid-notification: walk downwards so a removal at or above the cursor
     // cannot make the walk skip an entry, and never copy the list (this runs
     // on every assert and retract).
     private void NotifyRemoveAt(int fid, int index)
@@ -383,9 +383,20 @@ internal sealed class DynamicClauseStore
         if (_indexes.TryGetValue(fid, out var ix)) ix.Prepend(c);
     }
 
-    /// <summary>Retires the clause at <paramref name="index"/> (a PHYSICAL
+    /// <summary>Inserts at a dense position: a consult placing a clause that
+    /// term_expansion produced where its source line stood. The index is
+    /// dropped rather than patched, as for <see cref="ReplaceClauseAt"/>;
+    /// this runs at consult time only.</summary>
+    public void InsertClauseAt(int fid, int index, Clause c)
+    {
+        var slot = Slot(fid);
+        NotifyInsertAt(fid, index);
+        slot.Insert(index, c);
+        _indexes.Remove(fid);
+    }
+    /// <summary>Retires the clause at <paramref name="index"/> (a physical
     /// position). The slot becomes a tombstone, so no position moves: a
-    /// window is told first only when the slot is INSIDE it, because its view
+    /// window is told first only when the slot is inside it, because its view
     /// must keep the clause and the copy has to happen while the clause is
     /// still there. Half the slot tombstoned triggers the compaction.</summary>
     public void RemoveClauseAt(int fid, int index)

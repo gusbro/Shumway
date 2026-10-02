@@ -15,7 +15,7 @@ public class Chunk161Tests
 {
     /// <summary>Chunk 441 changed call-graph edges from bare
     /// <see cref="PredicateRef"/>s to <see cref="ShmoCallEdge"/>s (the
-    /// DIRECT/META marker). These tests assert on targets only.</summary>
+    /// direct/meta marker). These tests assert on targets only.</summary>
     private static List<PredicateRef> Targets(IReadOnlyList<ShmoCallEdge> edges)
         => edges.Select(e => e.Target).ToList();
 
@@ -33,7 +33,7 @@ public class Chunk161Tests
     public void NoModuleDirective_UsesPerFileFallback()
     {
         // Chunk 440 (reverses chunk 209's forcing): without a
-        // `:- module(name).` directive the fallback IS the module name —
+        // `:- module(name).` directive the fallback is the module name —
         // per-file module identity is what lets two module-less files
         // link together without their locals aliasing. The consumers
         // chunk 209's "user" forcing protected (dynamic-seed rehydration,
@@ -113,7 +113,7 @@ public class Chunk161Tests
         // pipeline with ConsultString's, control structures like
         // `(A ; B)` and `(A -> B ; C)` get rewritten into
         // `$disj_N`/`$neg_N` helpers before the call-graph walk.
-        // The helpers' OWN call-graph entries hold the original
+        // The helpers' own call-graph entries hold the original
         // branch goals; the caller's edge points at the helper.
         var obj = ShmoCompiler.CompileSource("""
             f(X) :- (a(X) ; b(X) -> c(X) ; d(X)), e(X).
@@ -126,7 +126,7 @@ public class Chunk161Tests
         Assert.DoesNotContain(new PredicateRef(",", 2), edges);
         Assert.DoesNotContain(new PredicateRef(";", 2), edges);
         Assert.DoesNotContain(new PredicateRef("->", 2), edges);
-        // The disjunction-helper edge IS present.
+        // The disjunction-helper edge is present.
         Assert.Contains(edges, e => e.Name.StartsWith("$disj_"));
         // Walking transitively from the helper, we should still see
         // every branch goal somewhere in the defined set.
@@ -157,10 +157,10 @@ public class Chunk161Tests
         Assert.Contains(new PredicateRef("h", 1), edges);
         Assert.DoesNotContain(new PredicateRef("\\+", 1), edges);
         Assert.DoesNotContain(new PredicateRef("call", 1), edges);
-        // Chunk 441 — h/1 is referenced ONLY inside call/1, so its edge
-        // carries the META marker; g/1 (inside \+, also a meta position)
+        // Chunk 441 — h/1 is referenced only inside call/1, so its edge
+        // carries the meta marker; g/1 (inside \+, also a meta position)
         // likewise. A defined predicate's meta marking is harmless — the
-        // linker only consults IsMeta for UNRESOLVED references.
+        // linker only consults IsMeta for unresolved references.
         Assert.True(rawEdges.Single(e => e.Target == new PredicateRef("h", 1)).IsMeta);
         // g/1 is reachable via the negation helper's own callgraph.
         var negHelper = edges.First(e => e.Name.StartsWith("$neg_"));

@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Wasm;
 
 /// <summary>The functor table is managed state a compiled module cannot
-/// reach, so the host mirrors it into linear memory. The mirror is an EXACT
+/// reach, so the host mirrors it into linear memory. The mirror is an exact
 /// copy of the table's own packed (atomId, arity) array, not a projection of
 /// it: a value that diverges wasm-side can then be named rather than only
 /// counted, and the copy is a memcpy instead of a probe per id.</summary>
@@ -35,7 +35,7 @@ public sealed class FunctorMirrorTests
             Assert.Equal(want, h.MirroredFunctor(fid));
             checked_++;
         }
-        // ANTI-VACUITY: an empty table would make the loop above prove nothing.
+        // Anti-vacuity: an empty table would make the loop above prove nothing.
         Assert.True(checked_ > 300, $"only {checked_} functors mirrored");
     }
 }

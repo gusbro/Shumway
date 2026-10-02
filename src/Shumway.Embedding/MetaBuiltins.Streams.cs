@@ -52,7 +52,7 @@ public static partial class MetaBuiltins
     /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
     /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
     /// <c>end_of_stream(at|not)</c>.</summary>
-    /// <summary>Property names stream_property/2 recognises — a BOUND
+    /// <summary>Property names stream_property/2 recognises — a bound
     /// second argument outside this set is domain_error(stream_property).</summary>
     private static readonly HashSet<string> KnownStreamProperties = new()
     {
@@ -67,7 +67,7 @@ public static partial class MetaBuiltins
         // §8.11.8.3: a bound first argument that is not a stream term is
         // domain_error(stream, S); a bound property outside the recognised
         // set is domain_error(stream_property, P).
-        // What makes a stream-term is its FORM: '$stream'(foo) is none and is
+        // What makes a stream-term is its form: '$stream'(foo) is none and is
         // a domain error, while '$stream'(53) is one whether or not a stream
         // by that id exists -- an id that names nothing is handled below the
         // same way a closed one is.
@@ -90,7 +90,7 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.DomainError("stream_property", pArg));
         // Bound-argument filtering: with the stream and/or the property
         // functor known, only matching pairs enter the enumeration — a
-        // ground query like stream_property(S, mode(M)) is DETERMINISTIC
+        // ground query like stream_property(S, mode(M)) is deterministic
         // (the SICStus conformity tests assert no choice point is left).
         Shumway.Core.StreamHandle? onlyStream = null;
         if (sArg is CompoundTerm { Functor: "$stream", Args: [IntTerm sid] })
@@ -98,7 +98,7 @@ public static partial class MetaBuiltins
             onlyStream = registry.GetById((int)sid.Value);
             // A closed stream leaves the registry but is still a stream-term,
             // and 8.11.8.3 lists no existence_error: a query about a stream
-            // that is no longer there simply has no properties, so it FAILS.
+            // that is no longer there simply has no properties, so it fails.
             if (onlyStream is null) return false;
         }
         string? onlyProp = pArg switch
@@ -141,7 +141,7 @@ public static partial class MetaBuiltins
             }
             // position/1 — seekable position when the underlying .NET
             // stream has one; otherwise the chars-consumed count of a
-            // tracking reader still IS a stream position (user_input has
+            // tracking reader still is a stream position (user_input has
             // one this way — GNU and SWI report one for stdin too), it
             // just cannot be repositioned to.
             long? pos = TryGetStreamPosition(h);
@@ -163,8 +163,8 @@ public static partial class MetaBuiltins
                     new Term[] { new AtomTerm(h.EofAction) })));
         }
         // The name filter above still leaves one candidate per stream for a
-        // property like `alias(user_output)`. Compare the GROUND arguments too,
-        // so the cursor enumerates SOLUTIONS and a fully-specified query is
+        // property like `alias(user_output)`. Compare the ground arguments too,
+        // so the cursor enumerates solutions and a fully-specified query is
         // deterministic.
         if (pArg is CompoundTerm pWanted)
             pairs.RemoveAll(pr => !PropertyArgsCanMatch(pr.Property, pWanted));
@@ -176,7 +176,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>Cheap pre-unification filter: could this candidate property
-    /// unify with the bound one? Only GROUND atom / integer arguments are
+    /// unify with the bound one? Only ground atom / integer arguments are
     /// compared — anything else is left for the real unification.</summary>
     private static bool PropertyArgsCanMatch(Term candidate, CompoundTerm wanted)
     {
@@ -322,10 +322,10 @@ public static partial class MetaBuiltins
     /// <c>.</c> followed by whitespace or EOF, parses the buffer as a
     /// Prolog term, and unifies the result with <c>Term</c>. Hits EOF
     /// before any text yields the atom <c>end_of_file</c>.</summary>
-    /// <summary>read_term/2 has TWO readings: ISO §8.14.1's
+    /// <summary>read_term/2 has two readings: ISO §8.14.1's
     /// <c>read_term(-Term, +Options)</c> over current input, and the
     /// stream-first <c>read_term(+Stream, -Term)</c> Shumway also accepts.
-    /// A LIST (or <c>[]</c>) in argument 2 selects the ISO form — a stream
+    /// A list (or <c>[]</c>) in argument 2 selects the ISO form — a stream
     /// term is never a list, so the two never collide.</summary>
     public static bool ReadTermFromStream(Activation engine)
     {
@@ -375,7 +375,7 @@ public static partial class MetaBuiltins
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
         // §8.14.1.3: reading from an output stream is
         // permission_error(input, stream, S) — with the stream-or-alias
-        // ARGUMENT as culprit; a binary one is permission_error(input,
+        // argument as culprit; a binary one is permission_error(input,
         // binary_stream, S).
         if (!h.IsReader)
             throw new Shumway.Core.PrologRuntimeException(
@@ -419,7 +419,7 @@ public static partial class MetaBuiltins
             if (ReferenceEquals(h.Reader, reader)) { h.PastEof = true; return; }
     }
 
-    /// <summary>The §8.11 past-end discipline for the TERM readers, mirroring
+    /// <summary>The §8.11 past-end discipline for the term readers, mirroring
     /// what get_char and friends already do: a read on a stream that is
     /// already past end-of-stream raises permission_error(input,
     /// past_end_of_stream, S) under eof_action(error) — the ISO default for
@@ -461,7 +461,7 @@ public static partial class MetaBuiltins
         string? text = SentenceScanner.ReadSentenceText(
             reader, out _, allowRawControls: LiveFlags(engine).ArityCompat);
         if (text is null) return null;
-        // Parse with the engine's LIVE operator table, not the static
+        // Parse with the engine's live operator table, not the static
         // default: a runtime `op/3` (e.g. the classic `op(200, fy, ['#'])`
         // before reading a spec file) must be in force for read/1,2, exactly
         // as it already is for consult and string_term/2.
@@ -506,9 +506,9 @@ public static partial class MetaBuiltins
             Cell head = ResolveLocal(engine, engine.GetHeap(hb));
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
-            // Only the option NAME is validated here. The list-valued options
-            // are OUTPUT arguments: their value unifies after the read, so
-            // read_term(T, [singletons(1)]) on "a." FAILS (Cor.3, Neumerkel
+            // Only the option name is validated here. The list-valued options
+            // are output arguments: their value unifies after the read, so
+            // read_term(T, [singletons(1)]) on "a." fails (Cor.3, Neumerkel
             // cases 47-49/69-70) — it is not a domain_error, and a syntax
             // error in the input still surfaces first.
             bool ok = false;
@@ -563,7 +563,7 @@ public static partial class MetaBuiltins
         CollectNamedVars(parsed, order, counts);
 
         // Wrap the term with the option-value lists so a single materialize
-        // call binds each `Name = VarTerm(Name)` pair to the SAME heap variable
+        // call binds each `Name = VarTerm(Name)` pair to the same heap variable
         // the term uses (VarTerm equality is by name; the materializer shares
         // named vars within one call).
         Term vnList = new AtomTerm("[]");
@@ -574,8 +574,8 @@ public static partial class MetaBuiltins
             Term pair = new CompoundTerm("=",
                 new Term[] { new AtomTerm(nm), new VarTerm(nm) });
             vnList = new CompoundTerm(".", new Term[] { pair, vnList });
-            // `_X` IS a singleton for read_term/2,3: only `_` itself is
-            // anonymous. (The compiler's singleton WARNING is the place where
+            // `_X` is a singleton for read_term/2,3: only `_` itself is
+            // anonymous. (The compiler's singleton warning is the place where
             // a leading underscore means "deliberately unused" — not here.)
             if (counts[nm] == 1)
                 singList = new CompoundTerm(".", new Term[] { pair, singList });
@@ -718,7 +718,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>The <see cref="Activation.NumberFromChars"/> hook: reads
-    /// <paramref name="chars"/> as a full Prolog TERM (the ISO number_chars
+    /// <paramref name="chars"/> as a full Prolog term (the ISO number_chars
     /// semantics) and, if it is a number, returns its boxed value
     /// (<see cref="long"/> / <see cref="double"/> /
     /// <see cref="System.Numerics.BigInteger"/>); otherwise <c>null</c>. Lets
@@ -728,16 +728,16 @@ public static partial class MetaBuiltins
     /// dot terminate the clause (space so a graphic-atom tail can't fuse the dot).</summary>
     private static object? NumberFromCharsHook(Activation engine, string chars)
     {
-        // number_chars is STRICTER than a clause read: the chars must be
-        // exactly layout* + number, with NOTHING after — `"3 "`, `"3."`,
+        // number_chars is stricter than a clause read: the chars must be
+        // exactly layout* + number, with nothing after — `"3 "`, `"3."`,
         // `"3% junk"` and `"0%0'"` are all syntax errors, though a clause
         // read would skip the trailing layout/comment or treat `.` as the
         // terminator (GNU agrees on every one). Enforced positionally: the
         // parse must succeed at EOF (rejects `"3."` — the Dot token
-        // survives) AND the last real token must end exactly where the
+        // survives) and the last real token must end exactly where the
         // string does (rejects any trailing layout or comment — parser
         // lookahead lexes past those to find EOF, so IsAtEnd alone cannot
-        // see them). Layout and comments BEFORE or INSIDE the term stay
+        // see them). Layout and comments before or inside the term stay
         // fine: `" 0"`, `"- /**/1"`.
         Term parsed;
         try
@@ -783,7 +783,7 @@ public static partial class MetaBuiltins
 
     /// <summary>Installs the <c>portray/1</c> hook write_term's
     /// <c>portrayed(true)</c> and print/1,2 call for every subterm. The user's
-    /// portray/1 runs RE-ENTRANTLY on the live activation with current output
+    /// portray/1 runs re-entrantly on the live activation with current output
     /// redirected at <paramref name="engine"/>'s writer, so whatever it writes
     /// lands where the term would have. Succeeding means "I produced the
     /// output"; failing means "render it normally".</summary>
@@ -800,14 +800,14 @@ public static partial class MetaBuiltins
         if (!host.HasPredicate(_portrayFunctorId)) return false;
         if (engine.ReentrantSolve is not { } solve) return false;
 
-        // portray/1's argument is the subterm ITSELF — no copy: the hook is
+        // portray/1's argument is the subterm itself — no copy: the hook is
         // allowed to inspect bindings, and copying would hide them.
         int goalBase = engine.AllocateHeap(2);
         engine.SetHeap(goalBase, Cell.Functor(_portrayFunctorId));
         engine.SetHeap(goalBase + 1, cell);
         Cell goal = Cell.Str(goalBase);
 
-        // Whatever portray/1 writes has to land in THIS renderer's sink, which
+        // Whatever portray/1 writes has to land in this renderer's sink, which
         // is not necessarily current output (format_to_atom, with_output_to,
         // write_term to a stream).
         var registry = engine.Streams;
@@ -826,17 +826,18 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$wot_begin'(Sink)</c> — the primitive under the prelude's
     /// <c>with_output_to/2</c>: validates the sink (<c>atom(_)</c> /
-    /// <c>string(_)</c>) and redirects CURRENT OUTPUT — the stream registry's,
+    /// <c>string(_)</c>) and redirects current output — the stream registry's,
     /// which is where every write-family builtin actually writes — to an
-    /// in-memory stream, remembering the handle it displaced. The GOAL then
-    /// runs in the LIVE engine — the old C# implementation spawned a
+    /// in-memory stream, remembering the handle it displaced. The goal then
+    /// runs in the live engine — the old C# implementation spawned a
     /// sub-engine, and every side effect the goal made (an <c>op/3</c>, an
     /// <c>assertz</c>, a flag) silently vanished with it.</summary>
     public static bool WotBegin(Activation engine)
-        => WotBeginWithLimit(engine, Shumway.Core.Cell.MaxPstrLength);
+        => WotBeginWithLimit(engine, engine.Host is PrologEngine host
+            ? host.CaptureCeiling : Shumway.Core.Cell.MaxPstrLength);
 
     /// <summary><c>'$wot_begin'(+Sink, +MaxChars)</c> — a capture with a
-    /// SMALLER ceiling than what a term can hold. For a caller that only
+    /// smaller ceiling than what a term can hold. For a caller that only
     /// needs to compare the text against something it already has (the quad
     /// harness): past its own longest pattern the text can only be "more
     /// than that", so accumulating megabytes of it buys nothing.</summary>
@@ -895,7 +896,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$wot_mark'(-Chars)</c> — how much the innermost active
     /// capture has taken so far, in characters. It is the only way to say
-    /// WHEN something was written relative to what a goal was doing: the
+    /// when something was written relative to what a goal was doing: the
     /// quad harness reads a mark as each answer arrives, and the marks cut
     /// the captured text into the piece each answer wrote. Zero when no
     /// capture is active, so a caller outside one gets an answer rather than

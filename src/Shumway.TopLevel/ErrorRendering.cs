@@ -14,7 +14,7 @@ public static class ErrorRendering
     /// <summary>The whole diagnostic a top level shows for a failed goal: the
     /// error itself, then the engine's call stack with source positions where it
     /// has them. Returns the lines unprefixed — a console puts <c>%</c> in front,
-    /// a web UI styles them — so the two agree on WHAT is reported and differ
+    /// a web UI styles them — so the two agree on what is reported and differ
     /// only in how it looks.
     ///
     /// <para>Frames whose name starts with <c>$</c> are the engine's own
@@ -33,7 +33,7 @@ public static class ErrorRendering
                 ShumwayPrologException pex =>
                     $"error: {TryRender(pex.Term) ?? "..."}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",
-                // A query whose TEXT is perfect syntax naming an
+                // A query whose text is perfect syntax naming an
                 // unrepresentable value (a float above max_float): the ISO
                 // error shape, though the goal never ran so nothing catches it.
                 Shumway.Compiler.Parsing.ParseException { RepresentationFlaw: { } flaw } =>
@@ -68,7 +68,7 @@ public static class ErrorRendering
     /// the frame is engine machinery and is dropped.
     ///
     /// <para>A module-local predicate is stored mangled as
-    /// <c>module$name</c>. The decision is made on the LOCAL part: a
+    /// <c>module$name</c>. The decision is made on the local part: a
     /// <c>$</c>-named local is a meta-call helper or a compiler-generated
     /// disjunction body, not a predicate anyone called by that name, so it
     /// goes (the same rule bare <c>$</c> names already followed, which
@@ -88,7 +88,7 @@ public static class ErrorRendering
     }
 
     /// <summary>Formats a <see cref="PrologRuntimeException"/> by rendering
-    /// the SAME ISO ball term catch/3 would unify with (issue #65 pinned
+    /// the same ISO ball term catch/3 would unify with (issue #65 pinned
     /// the drift: the message said <c>existence_error(inex/0)</c> while the
     /// ball carried <c>existence_error(procedure, inex/0)</c>, and a float
     /// culprit printed as the C# default <c>0</c> instead of <c>0.0</c>).
@@ -97,7 +97,7 @@ public static class ErrorRendering
     /// <c>$</c>-named internal helper, which is engine machinery, not a
     /// predicate the user called (the same rule the stack frames follow).
     ///
-    /// <para>A syntax_error's detail is a reader MESSAGE with positions,
+    /// <para>A syntax_error's detail is a reader message with positions,
     /// not a term; it keeps its plain formatting.</para></summary>
     public static string FormatRuntimeError(PrologRuntimeException re)
     {
@@ -123,7 +123,7 @@ public static class ErrorRendering
         return body;
     }
 
-    /// <summary>Renders a term that is about to be REPORTED, or null when it
+    /// <summary>Renders a term that is about to be reported, or null when it
     /// cannot be. Reporting must not be able to fail: the culprit of an error
     /// is user data, and a term nested past what the renderer's guard allows
     /// would otherwise throw a second error out of the error printer, where
@@ -136,7 +136,7 @@ public static class ErrorRendering
     /// spelling that walks nothing.</para></summary>
     private static string? TryRender(Shumway.Compiler.Ast.Term term)
     {
-        // The cycle elision walks the term too, so it belongs INSIDE the try:
+        // The cycle elision walks the term too, so it belongs inside the try:
         // as an argument it ran first and its refusal escaped past the catch.
         try { return AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(term)); }
         catch (PrologRuntimeException deep) when (deep.Kind == "resource_error")

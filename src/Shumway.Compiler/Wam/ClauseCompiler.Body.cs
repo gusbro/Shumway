@@ -56,9 +56,9 @@ public sealed partial class ClauseCompiler
 
     /// <summary>tries to compile <c>A = B</c> inline as head-style
     /// get / unify instead of a call to the <c>=/2</c> builtin. Handles the case
-    /// where one side is a temporary (X-register) variable: a SEEN temp unifies
+    /// where one side is a temporary (X-register) variable: a seen temp unifies
     /// the other side against its register (via <see cref="CompileHeadArg"/>); a
-    /// FIRST-OCCURRENCE temp is bound to the other side (built with
+    /// first-occurrence temp is bound to the other side (built with
     /// <see cref="CompileBodyArg"/> for a non-var, aliased for a seen var).
     /// Returns false — fall back to the builtin call — for permanent (Y)
     /// variables, both-first-occurrence vars, the anonymous variable, and
@@ -195,7 +195,7 @@ public sealed partial class ClauseCompiler
                 bool last = i == comp.Args.Length - 1;
                 if (multiCellTemps.TryGetValue(i, out int t))
                     s.Emitter.EmitUnifyValueX(t);
-                // ADR-019: a nested compound in the LAST argument position is
+                // ADR-019: a nested compound in the last argument position is
                 // built inline in the same write stream (unify_structure /
                 // unify_list), dropping the temp + deferred get_structure per
                 // nesting level. Last position only → the build stays linear
@@ -216,7 +216,7 @@ public sealed partial class ClauseCompiler
     }
 
     /// <summary>A canonical structural key for CSE, distinguishing functor,
-    /// arity, atoms / integers and variable NAMES. Returns null for a term that
+    /// arity, atoms / integers and variable names. Returns null for a term that
     /// can't be safely shared: one containing an anonymous variable (each <c>_</c>
     /// is a distinct fresh variable) or a multi-cell literal (float / string).</summary>
     private static string? StructuralKey(Term t)
@@ -233,9 +233,9 @@ public sealed partial class ClauseCompiler
     private const int StructuralKeyMaxDepth = 64;
 
     /// <summary>Serialized-key length past which CSE keying is abandoned.
-    /// The depth bound alone does NOT bound the WORK: an AST that shares
+    /// The depth bound alone does not bound the work: an AST that shares
     /// subterms (a DAG — the runtime materializer preserves sharing, so an
-    /// asserted clause's head can carry one) serializes as its unshared TREE,
+    /// asserted clause's head can carry one) serializes as its unshared tree,
     /// exponential in depth — observed as a multi-GB StringBuilder hanging a
     /// Logtalk library load inside a runtime assertz. One shared
     /// budget threaded through the walk bounds total work to O(this) per key,
@@ -288,7 +288,7 @@ public sealed partial class ClauseCompiler
 
     private void CompileUnifyArgInline(CompileState s, CompoundTerm c)
     {
-        // The inline build recurses only into the LAST argument, so the chain
+        // The inline build recurses only into the last argument, so the chain
         // is linear — walk it as a loop rather than one C# frame per level.
         // the former recursion overflowed on a long list (whose
         // tail is always the last argument), crashing the host at compile time.
@@ -412,7 +412,7 @@ public sealed partial class ClauseCompiler
 
     /// <summary>Builds a nested compound inline inside a reserved build: emits
     /// <c>unify_structure</c> / <c>unify_list</c> (which push a write-pointer
-    /// frame at runtime) and recurses for nested compounds at ANY position
+    /// frame at runtime) and recurses for nested compounds at any position
     /// (last or not — the frame stack resumes the parent). CSE still shares a
     /// repeated structure.</summary>
     private void CompileReservedUnify(CompileState s, CompoundTerm c)
@@ -727,7 +727,7 @@ public sealed partial class ClauseCompiler
         int maxLiveYIdx = -1;
         for (int i = n - 1; i >= 0; i--)
         {
-            // result[i] is the live count AFTER goal i, so it reflects
+            // result[i] is the live count after goal i, so it reflects
             // accumulated uses from goals[i+1..n-1] only.
             result[i] = Math.Min(maxLiveYIdx + 1, totalPerms);
             // Now fold in goal[i]'s own usage so result[i-1] sees it.
@@ -741,8 +741,8 @@ public sealed partial class ClauseCompiler
             else
             {
                 // ADR-025 bring-up fix — an inline ITE reads its barrier
-                // Y slot (get_level_b … cut), which sits ABOVE the named
-                // permanents; goals BEFORE the ITE must keep the frame at
+                // Y slot (get_level_b … cut), which sits above the named
+                // permanents; goals before the ITE must keep the frame at
                 // least that big, exactly like the deep-cut slot above.
                 // Without this, a pre-ITE call's env trim let the cond's
                 // callee overwrite the slot → a garbage cut barrier
@@ -844,12 +844,12 @@ public sealed partial class ClauseCompiler
     private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
     {
         // Constant folding: a fully-literal arithmetic expression is
-        // evaluated at compile time and delivered as a DIRECT unification of the
+        // evaluated at compile time and delivered as a direct unification of the
         // target with the resulting literal — `X is 1*2` becomes `X = 2` (a
         // put_integer; no eval stack, no runtime multiply). The fold reuses the
         // runtime ArithmeticEvaluator, so overflow→bigint, integer division and
         // float coercion are bit-identical to evaluating at run time. An
-        // expression that would raise (zero divisor, non-evaluable leaf) is NOT
+        // expression that would raise (zero divisor, non-evaluable leaf) is not
         // folded — it falls through so the error fires at the right time.
         if (TryFoldConstExpr(expr, out Term folded))
         {
@@ -1116,7 +1116,7 @@ public sealed partial class ClauseCompiler
                 else
                     s.Emitter.EmitPutStructure(InternFunctor(c.Functor, c.Args.Length), argSlot);
                 // Sub-args run in write mode; the same CompileUnifyArg dispatcher
-                // handles them. A nested compound in the LAST position is built
+                // handles them. A nested compound in the last position is built
                 // inline (ADR-019); other nested compounds are deferred onto the
                 // pending queue and drained by DrainPendingCompounds.
                 for (int i = 0; i < c.Args.Length; i++)

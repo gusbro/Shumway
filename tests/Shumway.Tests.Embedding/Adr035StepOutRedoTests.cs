@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// from a real program (its <c>concat/2</c>): F11 into a backtracking
 /// predicate lands on its redo port, which reports the retried goal's CALL
 /// depth (one shallower than its body); Step Out there must land on the goal
-/// AFTER the predicate, not run out of the whole enclosing clause. The
+/// after the predicate, not run out of the whole enclosing clause. The
 /// synthetic program reproduces the shape self-contained: a multi-clause
 /// predicate whose first clause fails after a head match (the redo), called
 /// mid-conjunction inside a catch, with a builtin goal right after it.</summary>
@@ -129,8 +129,8 @@ public class Adr035StepOutRedoTests
             Assert.True(stops.Count > redo + 1,
                 "Step Out ran off the end instead of stopping");
             var landed = stops[redo + 1];
-            // The landing must be the goal AFTER weld in main's catch
-            // conjunction — NOT StepAbandoned (ran to end) and NOT out at
+            // The landing must be the goal after weld in main's catch
+            // conjunction — not StepAbandoned (ran to end) and not out at
             // main's own depth.
             Assert.NotEqual(StopReason.StepAbandoned, landed.Reason);
             Assert.Equal("current_prolog_flag/2", landed.Goal);

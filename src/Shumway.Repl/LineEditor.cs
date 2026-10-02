@@ -68,10 +68,10 @@ public sealed class LineEditor
             return raw;
         }
 
-        // Ctrl+C must terminate the REPL, and normally the CONSOLE delivers it as a
+        // Ctrl+C must terminate the REPL, and normally the console delivers it as a
         // signal (the default handler kills the process). But a Visual Studio debugger
-        // attach/detach cycle can leave the console with processed input OFF — Ctrl+C
-        // then arrives as an ordinary KEYSTROKE, which this editor used to swallow as an
+        // attach/detach cycle can leave the console with processed input off — Ctrl+C
+        // then arrives as an ordinary keystroke, which this editor used to swallow as an
         // unrecognised key: Ctrl+C silently dead (the user's report; ESC unaffected,
         // being a plain key either way). Restore the signal route every prompt, and — as
         // the belt to that suspender — treat a Ctrl+C that still arrives as a key below

@@ -44,7 +44,7 @@ public class Chunk158Tests
         e.Query("assertz(d(1)).");
         e.Query("assertz(d(2)).");
         e.Query("assertz(d(3)).");
-        // Counter now at 3, threshold met. The NEXT query's setup
+        // Counter now at 3, threshold met. The next query's setup
         // triggers the auto-compaction → counter resets.
         Assert.Equal(3, e.PersistentMutationsSinceCompact);
         // d(_) query is the trigger; its setup compacts.

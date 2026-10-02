@@ -4,14 +4,14 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 402 (Phase 29) — regression guard for a PRE-EXISTING <c>--strip-wam</c> bug
+/// Chunk 402 (Phase 29) — regression guard for a pre-existing <c>--strip-wam</c> bug
 /// (independent of region compilation, present since the chunk-27x strip):
 /// <c>catch/3</c>'s recovery path resolves the recovery predicate through
 /// <c>CurrentFunctorAddresses</c>, and a stripped predicate's "address" there is its
 /// resume-marker alias (<c>EncodeResumeMarker(fid, 0)</c>, far above the code range).
 /// <c>RunCatching</c> then called <c>interp.Run(program, marker)</c> whose entry bounds
 /// guard threw <c>ArgumentOutOfRangeException: startPc 0x40… is outside [0, …)</c>
-/// BEFORE the dispatch loop's <c>IsResumeMarker</c> routing could see it. Observed on
+/// before the dispatch loop's <c>IsResumeMarker</c> routing could see it. Observed on
 /// Blint built as <c>--exe --strip-wam</c> when given a non-existent file: the
 /// file-open existence_error unwinds into <c>main/0</c>'s catch, whose recovery lives
 /// in a stripped predicate. Fix: <c>Run</c> admits a resume-marker start PC (the loop
@@ -22,7 +22,7 @@ public class Chunk402Tests
 {
     // handler/2 is a plain single-clause predicate → standalone IL → its WAM is
     // stripped under --strip-wam. catch/3 names it as the recovery goal, so the
-    // throw → TryCatch → Run(recovery address) path runs it BY ADDRESS — the address
+    // throw → TryCatch → Run(recovery address) path runs it by address — the address
     // being the resume-marker alias once the WAM is gone.
     private const string Source =
         ":- public go/2.\n"

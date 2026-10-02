@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-027 — second-level (sub-argument) indexing, end-to-end. Verifies the
 /// runtime <c>switch_on_atom_sub</c> / <c>switch_on_integer_sub</c> dispatch is
-/// sound across the list-head, token-stream and struct-sub-arg shapes in BOTH
+/// sound across the list-head, token-stream and struct-sub-arg shapes in both
 /// tiers, and that a distinct-key call is deterministic. Tier-1 is exercised
 /// deterministically through an IL bundle (baked delegates registered at load) —
 /// both with the WAM present (the bytecode-walking resolver) and stripped (the

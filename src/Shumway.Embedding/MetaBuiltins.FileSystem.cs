@@ -104,7 +104,7 @@ public static partial class MetaBuiltins
     /// <c>read</c> / <c>write</c> / <c>execute</c> / <c>search</c>. Windows
     /// has no execute bit, so <c>execute</c> follows the platform convention
     /// (executable extension); <c>search</c> means a traversable directory.
-    /// A nonexistent path FAILS (GProlog behaviour) — the errors are for
+    /// A nonexistent path fails (GProlog behaviour) — the errors are for
     /// uninstantiated / mistyped arguments only.</summary>
     public static bool FilePermission2(Activation engine)
     {
@@ -209,11 +209,11 @@ public static partial class MetaBuiltins
             System.IO.File.AppendAllText(tracePath, command + "\n");
             return 0;
         }
-        // Code written for SWI's shell/1 — which does NOT wrap in cmd —
+        // Code written for SWI's shell/1 — which does not wrap in cmd —
         // prepends its own "cmd.exe /C " (Logtalk's library(os) does). Adding
-        // OUR wrapper on top hands the operators (&&, &) to the OUTER cmd, so
+        // our wrapper on top hands the operators (&&, &) to the outer cmd, so
         // in `cd X && <destructive-op>` the cd runs in a throwaway inner cmd
-        // and the destructive op runs in the PROCESS cwd — observed deleting a
+        // and the destructive op runs in the process cwd — observed deleting a
         // whole test tree. Strip the caller's wrapper so exactly one cmd
         // parses the command, which is every caller's intent.
         if (OperatingSystem.IsWindows())

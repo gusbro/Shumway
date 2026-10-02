@@ -42,7 +42,7 @@ public sealed class Adr035EntryBreakTests
         var service = new DebugService(engine, (_, _) => { });
         int fired = 0;
         string topFrameAtFire = "";
-        // Resolve the stack AT FIRE TIME: the activation's P moves on as the query runs, so
+        // Resolve the stack at fire time: the activation's P moves on as the query runs, so
         // reading it after QueryAll would see wherever execution ended, not the entry stop.
         service.EntryBreak = act =>
         {
@@ -59,7 +59,7 @@ public sealed class Adr035EntryBreakTests
         // (there are several: first/1, second/1).
         Assert.Equal(1, fired);
 
-        // And it fired from INSIDE the user's own predicate (go), not at the synthesized
+        // And it fired from inside the user's own predicate (go), not at the synthesized
         // top-level wrapper that calls it. The wrapper is a disable_debug goal whose port maps
         // to the end of the file — landing there put the caret on the last source line instead
         // of the first goal.

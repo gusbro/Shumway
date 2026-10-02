@@ -23,12 +23,12 @@ public static class RuntimeCaps
     ///
     /// <para>A <b>feature switch</b>, so a host that will never emit IL can have the
     /// trimmer fold this to a constant and delete the whole Tier-1 subtree — the IL
-    /// compiler and its Sigil dependency included. Set it in the consuming project:
+    /// compiler included. Set it in the consuming project:
     /// <code>&lt;RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
     ///     Value="false" Trim="true" /&gt;</code>
     /// Nothing changes for a normal build: the getter stays an ordinary check, and
     /// both operands are JIT intrinsics that fold to a constant anyway, so reading
-    /// it costs nothing. Callers must consult THIS property rather than caching it
+    /// it costs nothing. Callers must consult this property rather than caching it
     /// in a static field, or the trimmer has nothing to fold and the subtree
     /// survives.</para></summary>
     [FeatureSwitchDefinition("Shumway.RuntimeCodegen")]
@@ -46,7 +46,7 @@ public static class RuntimeCaps
     /// <summary>True when the engine may compile predicates to WebAssembly
     /// modules and run them natively — the browser's Tier-1
     /// (docs/design/wasm-tier1-plan.md), where IL emission is unavailable but
-    /// the host IS a wasm engine. Default false everywhere: only Shumway.Web
+    /// the host is a wasm engine. Default false everywhere: only Shumway.Web
     /// turns the switch on, and desktop builds trim the whole
     /// Shumway.Compiler.Wasm subtree (plan D7). Same discipline as
     /// <see cref="SupportsRuntimeCodegen"/>: consult the property, never cache
@@ -55,23 +55,23 @@ public static class RuntimeCaps
     public static bool SupportsWasmCodegen =>
         AppContext.TryGetSwitch("Shumway.WasmCodegen", out bool enabled) && enabled;
 
-    /// <summary>The largest arity a compound TERM can be represented with —
-    /// an ADDRESS-SPACE capacity, not the <c>max_arity</c> flag. A term of
+    /// <summary>The largest arity a compound term can be represented with —
+    /// an address-space capacity, not the <c>max_arity</c> flag. A term of
     /// arity N occupies N+1 heap cells of eight bytes, so the cap is the
     /// arity whose term fills 4 GiB where addresses are 64 bits and 128 MiB
     /// where they are 32 (a browser, a 32-bit host).
     ///
-    /// <para>The FLAG reports <c>unbounded</c> (issue #106, following
+    /// <para>The flag reports <c>unbounded</c> (issue #106, following
     /// SICStus): terms have no arity limit of their own, only capacity.
     /// Asking past this cap is answered with
-    /// <c>resource_error(finite_memory)</c> — checked BEFORE any allocation,
+    /// <c>resource_error(finite_memory)</c> — checked before any allocation,
     /// so <c>functor(T, f, 2^29)</c> errors instead of thrashing the host
     /// toward the very limit it is probing.</para></summary>
     public static int MaxArity => System.IntPtr.Size >= 8
         ? (1 << 29) - 1     // 4 GiB
         : (1 << 24) - 1;    // 128 MiB
 
-    /// <summary>The largest arity a PREDICATE (procedure) may be defined
+    /// <summary>The largest arity a predicate (procedure) may be defined
     /// with — the <c>max_procedure_arity</c> flag of stc#70, defined exactly
     /// for processors whose <c>max_arity</c> is <c>unbounded</c>. Terms stay
     /// unbounded; defining a clause, asserting one, or naming an indicator

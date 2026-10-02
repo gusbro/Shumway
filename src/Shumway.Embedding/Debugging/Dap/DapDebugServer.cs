@@ -11,7 +11,7 @@ using System.Threading;
 namespace Shumway.Embedding.Debugging.Dap;
 
 /// <summary>
-/// ADR-036 — the VS Code frontend: a Debug Adapter Protocol server hosted IN-PROCESS by
+/// ADR-036 — the VS Code frontend: a Debug Adapter Protocol server hosted in-process by
 /// the engine, over TCP on the loopback interface only.
 ///
 /// <para>It is a peer of the Concord transport, not a replacement: it drives the same
@@ -20,7 +20,7 @@ namespace Shumway.Embedding.Debugging.Dap;
 /// engine thread blocks inside <see cref="ChannelDebugSession.NotifyOverride"/> until the
 /// DAP client says how to resume — where the VS transport traps into a hidden breakpoint,
 /// this transport waits on a semaphore. Stack and variables requests are served on the
-/// client's reader thread from the snapshot the engine wrote BEFORE stopping, so nothing
+/// client's reader thread from the snapshot the engine wrote before stopping, so nothing
 /// runs in the suspended machine to answer them — the same
 /// write-before-notify discipline, without the pinned-memory indirection.</para>
 ///
@@ -71,7 +71,7 @@ public sealed class DapDebugServer : IDisposable
     /// user drew (the launch race). Never reset — the door is held once, at birth.</summary>
     internal readonly ManualResetEventSlim ConfiguredEvent = new ManualResetEventSlim(false);
 
-    /// <summary>Blocks until a client has connected AND finished configuring (or the
+    /// <summary>Blocks until a client has connected and finished configuring (or the
     /// timeout). The DAP form of ADR-035's "attached is not ready".</summary>
     public bool WaitUntilConfigured(TimeSpan timeout) => ConfiguredEvent.Wait(timeout);
 
@@ -87,7 +87,7 @@ public sealed class DapDebugServer : IDisposable
 
             var conn = new DapConnection(this, tcp);
 
-            // ONE driver. A native debugger already attached owns the session (ADR-036
+            // One driver. A native debugger already attached owns the session (ADR-036
             // arbitration), and so does an earlier DAP client. The loser gets a real DAP
             // answer — its initialize fails with the reason — not a slammed socket.
             if (System.Diagnostics.Debugger.IsAttached)
@@ -127,7 +127,7 @@ public sealed class DapDebugServer : IDisposable
         }
     }
 
-    /// <summary>The session's stop, routed to the connected client. Runs on the ENGINE
+    /// <summary>The session's stop, routed to the connected client. Runs on the engine
     /// thread; blocks there until the client resumes. False = no client (or it left
     /// mid-stop), which the session treats as a detach.</summary>
     private bool OnEngineStop(int reason)
@@ -169,10 +169,10 @@ internal sealed class DapConnection
     private DebugCommand? _pendingResume;
 
     // ----- ADR-036 V5: logpoints -----
-    // A breakpoint with a log message stops the MACHINE (the engine's ordinary Break)
-    // but never the USER: the stop is answered here with an output event and an
+    // A breakpoint with a log message stops the machine (the engine's ordinary Break)
+    // but never the user: the stop is answered here with an output event and an
     // immediate resume, and no `stopped` ever reaches the client. Keyed by the
-    // (file, line) THE CLIENT SET — which is exactly what the snapshot's
+    // (file, line) the client set — which is exactly what the snapshot's
     // BreakFile/BreakLine report a hit as.
     private readonly Dictionary<string, string> _logpoints
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -180,7 +180,7 @@ internal sealed class DapConnection
     private static string LogKey(string file, int line) => file + "|" + line;
 
     // ----- ADR-036 V4: Jump to Cursor -----
-    // DAP's goto carries no frame, so the target frame is the Call Stack SELECTION,
+    // DAP's goto carries no frame, so the target frame is the Call Stack selection,
     // inferred from the last `scopes` request — the same inference the VS frontend
     // formalised (GetFrameLocals → MsgSelectedFrame). Targets minted by gotoTargets
     // live until the next stop.
@@ -214,7 +214,7 @@ internal sealed class DapConnection
         }
         catch (Exception ex)
         {
-            // Usually a torn socket = the client leaving; under diagnostics, say WHICH
+            // Usually a torn socket = the client leaving; under diagnostics, say which
             // exception — a parse or handler failure dying here looks identical to a
             // disconnect and is undiagnosable without this line.
             ShumwayDebugHelper.DiagLine(
@@ -352,7 +352,7 @@ internal sealed class DapConnection
             switch (command)
             {
                 case "initialize":
-                    // These capabilities are MIRRORED by DapProxy's own initialize
+                    // These capabilities are mirrored by DapProxy's own initialize
                     // response (the adapter answers before this server exists) — the
                     // two lists must say the same thing.
                     SendResponse(seq, command, true, w =>
@@ -378,7 +378,7 @@ internal sealed class DapConnection
                     // Hold the door (the DAP form of WaitForDebuggerCommands): the client
                     // is about to let the program run, and the breakpoints it just sent
                     // are still in the command region until the engine's idle watcher or
-                    // poll drains them. Answer once they are ARMED, so a program started
+                    // poll drains them. Answer once they are armed, so a program started
                     // on this response cannot run past them. Timeboxed: an engine blocked
                     // in a stop drains at resume instead, and a client is never hung.
                     for (int i = 0; i < 200; i++)
@@ -511,7 +511,7 @@ internal sealed class DapConnection
 
         lock (_stateLock)
         {
-            // DAP semantics: this request REPLACES the file's breakpoints.
+            // DAP semantics: this request replaces the file's breakpoints.
             if (wanted.Count == 0) _breakpoints.Remove(path);
             else _breakpoints[path] = wanted;
             foreach (string stale in _logpoints.Keys
@@ -580,7 +580,7 @@ internal sealed class DapConnection
 
     /// <summary>Not Path.GetFileName: an in-memory source's File is a
     /// '&lt;consult&gt;'-style pseudo-path, and .NET Framework's Path.GetFileName
-    /// VALIDATES (throws on '&lt;'); slicing at the last separator is what the
+    /// validates (throws on '&lt;'); slicing at the last separator is what the
     /// modern one does anyway.</summary>
     private static string FileDisplayName(string file)
     {
@@ -588,7 +588,7 @@ internal sealed class DapConnection
         return i < 0 ? file : file.Substring(i + 1);
     }
 
-    /// <summary>A variables reference above this bit addresses a frame's CONSTRAINTS
+    /// <summary>A variables reference above this bit addresses a frame's constraints
     /// (residuals of its attributed variables) rather than its Locals. Frame ids stay
     /// small (the frame cap is 120), so the flag never collides.</summary>
     private const int ConstraintsReferenceFlag = 0x40000000;
@@ -680,9 +680,9 @@ internal sealed class DapConnection
     }
 
     /// <summary>ADR-036 V4 — Jump to Cursor, step 1: which lines can the arrow move to?
-    /// Valid targets are what the engine PUBLISHED for this stop (the per-frame
+    /// Valid targets are what the engine published for this stop (the per-frame
     /// SetNextLines the marks machinery derives — ADR-035's Set Next Statement), read
-    /// for the SELECTED frame. An empty answer is how the editor greys the action.</summary>
+    /// for the selected frame. An empty answer is how the editor greys the action.</summary>
     private void HandleGotoTargets(int seq, JsonElement args)
     {
         int line = args.GetProperty("line").GetInt32();
@@ -761,11 +761,11 @@ internal sealed class DapConnection
     }
 
     /// <summary>ADR-036 V3 — the Debug Console (context "repl") is the Immediate window:
-    /// the goal runs in the LIVE suspended engine, bindings can be committed into the
+    /// the goal runs in the live suspended engine, bindings can be committed into the
     /// frame, and "<c>;</c>" pumps the next solution — the engine machinery is ADR-035's,
     /// called directly from this thread while the engine thread is parked in the stop.
     /// Every other context (watch, hover) is NoSideEffects: it answers only frame
-    /// VARIABLES, from the snapshot — hovering a predicate name must not run it (the
+    /// variables, from the snapshot — hovering a predicate name must not run it (the
     /// DataTip lesson).</summary>
     private void HandleEvaluate(int seq, JsonElement args)
     {
@@ -823,7 +823,7 @@ internal sealed class DapConnection
             }
         }
 
-        // The engine thread is parked inside the stop holding its gate, so a NESTED stop
+        // The engine thread is parked inside the stop holding its gate, so a nested stop
         // raised by the evaluated goal — routed to this thread — would deadlock against
         // it. Under DAP an evaluation therefore runs straight through breakpoints (the
         // engine's documented suppression mode); a nested VS-style break state has no
@@ -952,7 +952,7 @@ internal sealed class DapConnection
         {
             if (!_stopped)
             {
-                // BreakNow = stop at the next port, where a stack MEANS something. The
+                // BreakNow = stop at the next port, where a stack means something. The
                 // running engine's poll drains it; the idle watcher answers for an
                 // engine that is standing still.
                 WriteChannelState(new DebugCommand(DebugCommandKind.BreakNow));
@@ -973,11 +973,11 @@ internal sealed class DapConnection
         Drop();   // releases a blocked engine; Run() then unwires the session
     }
 
-    /// <summary>Rewrites the engine's command region with the client's FULL desired state:
+    /// <summary>Rewrites the engine's command region with the client's full desired state:
     /// clear + every breakpoint of every file, then the one-shot commands. The same
     /// idempotent model the Concord component uses — a region, not a queue, so every
     /// write must carry everything. Callers hold <see cref="_stateLock"/>.</summary>
-    /// <param name="freshResume">True when the caller has JUST set
+    /// <param name="freshResume">True when the caller has just set
     /// <see cref="_pendingResume"/> — which must ride this write. Only a rewrite that
     /// carries no new resume may retire a drained one-shot: the region reads as consumed
     /// the whole time between two stops, and dropping the fresh step on that evidence is

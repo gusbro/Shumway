@@ -5,10 +5,10 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// A cut-transparent <c>!</c> nested inside a <c>-&gt;</c> inside a <c>;</c> must
-/// commit the HOST clause (ISO 7.8.8). The barrier that carries the host's cut
+/// commit the host clause (ISO 7.8.8). The barrier that carries the host's cut
 /// level is threaded through every synthesized disjunction helper; a regression
 /// (<c>ReplaceTransparentCuts</c> not descending into a nested <c>;</c>/<c>-&gt;</c>)
-/// left the barrier variable out of the OUTER helper's head, so the INNER helper
+/// left the barrier variable out of the outer helper's head, so the inner helper
 /// read a garbage barrier — a crash (<c>IndexOutOfRangeException</c> in
 /// <c>Activation.Cut</c>) surfaced by running such a predicate under
 /// <c>findall/3</c>.

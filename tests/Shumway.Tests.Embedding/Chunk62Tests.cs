@@ -77,7 +77,7 @@ public class Chunk62Tests
         // foo(X, Y) :- p(X), q(Y), r(X, Y).
         //   X and Y both perm (used after first call). Their head args
         //   are X[0] and X[1], and r reads them in arg order with no
-        //   clobber. The pass should NOT emit unnecessary saves here.
+        //   clobber. The pass should not emit unnecessary saves here.
         //   We exercise the path with a real query rather than
         //   instruction-counting — the simpler signal that nothing's
         //   broken.

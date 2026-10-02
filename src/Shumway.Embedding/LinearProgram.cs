@@ -17,15 +17,15 @@ internal enum LpStatus
 /// Two-phase simplex over the CLP(R) store's inequalities.
 ///
 /// <para>It answers what Fourier-Motzkin cannot: not just the bound on an
-/// objective but a POINT that attains it. That point is what branch and bound
+/// objective but a point that attains it. That point is what branch and bound
 /// needs — it is how you learn which integer variable came out fractional and
 /// where to split — so <c>bb_inf/3</c> rests on this and <c>inf/2</c> stops
 /// paying for an elimination whose intermediate systems can square in size per
 /// variable removed.</para>
 ///
 /// <para>The store hands over only inequalities: equalities are already in
-/// solved form (each dependent variable IS a linear form of the others), so
-/// expanding an inequality substitutes them away. Every variable is FREE, as a
+/// solved form (each dependent variable is a linear form of the others), so
+/// expanding an inequality substitutes them away. Every variable is free, as a
 /// real is, so each is split into a difference of two non-negative columns
 /// rather than assumed non-negative.</para>
 ///
@@ -141,7 +141,7 @@ internal static class LinearProgram
         if (m > 0)
         {
             Pivot(t, basis, m + 1, m, cols, rhs);
-            // The cost row carries the NEGATED objective in its RHS cell, so
+            // The cost row carries the negated objective in its RHS cell, so
             // artificials still summing to something is -rhs > 0.
             if (-t[m + 1][rhs] > Eps) return LpStatus.Infeasible;
             DriveArtificialsOut(t, basis, m, cols, rhs, artificial);

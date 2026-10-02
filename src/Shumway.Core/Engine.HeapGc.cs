@@ -22,6 +22,32 @@ public sealed partial class Activation
     private int _gcMarkCount;
     private int[]? _gcForward;
     private int[]? _gcWork;
+    // ADR-053: which foreign ids the trace reached, this collection. Filled
+    // by GcMarkReferents' Foreign case -- the only place a foreign cell is
+    // ever looked at -- and read once by the sweep.
+    private bool[]? _gcForeignLive;
+    // ADR-053: and the same for the numeric side tables, whose own
+    // reclamation only fires on backtracking and so does nothing in the
+    // deterministic loop an embedded system lives in.
+    private bool[]? _gcBigIntLive;
+    private bool[]? _gcRationalLive;
+
+    /// <summary>ADR-053: clears the per-collection sets of reached side-table
+    /// ids. Each is sized to its table, so a program that never makes one of
+    /// these allocates nothing and its sweep has nothing to do.</summary>
+    private void ResetSideTableLiveSets()
+    {
+        ResetLiveSet(ref _gcForeignLive, _foreignTable.Count);
+        ResetLiveSet(ref _gcBigIntLive, _bigIntTable.Count);
+        ResetLiveSet(ref _gcRationalLive, _rationalTable.Count);
+    }
+
+    private static void ResetLiveSet(ref bool[]? set, int n)
+    {
+        if (n == 0) return;
+        if (set is null || set.Length < n) set = new bool[System.Math.Max(n, 16)];
+        else System.Array.Clear(set, 0, n);
+    }
     // mark-phase state for the de-closured GcMarkCell /
     // GcMarkReferents (they were closure-capturing locals invoked through
     // Action<int> / Action<Cell> — a delegate call per register / stack
@@ -96,9 +122,9 @@ public sealed partial class Activation
 
     // Cooperative cancellation (theme 2): the embedding layer sets this from a
     // CancellationToken; the interpreter observes it the next time the heap GC
-    // watermark is crossed inside MaybeCollectHeap (NOT every goal — see the
+    // watermark is crossed inside MaybeCollectHeap (not every goal — see the
     // note there) and aborts the query by throwing OperationCanceledException,
-    // which propagates to the host (it is NOT a Prolog ball, so catch/3 never
+    // which propagates to the host (it is not a Prolog ball, so catch/3 never
     // intercepts it). Checking only at the already-paid-for watermark keeps the
     // common per-goal path free; the trade-off is that a heap-bounded loop is
     // not cancellable. volatile so a request from another thread is seen
@@ -130,13 +156,13 @@ public sealed partial class Activation
     // Clause-backtracking loops re-satisfy via Call and are already cancellable
     // there, so they never reach this and pay nothing.
     private const int BacktrackCancelInterval = 4096;
-    private int _backtrackCancelCountdown = BacktrackCancelInterval;
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)] public int _backtrackCancelCountdown = BacktrackCancelInterval;
 
     // call_with_timeout/2,3 deadlines, checked at the same safe points as
     // cancellation — which is what lets `(repeat, fail)` time out: it grows no
     // heap and never crosses a call boundary, so only the backtrack poll sees
-    // it. A stack, because the calls nest; the EFFECTIVE deadline is the
-    // EARLIEST, so an inner call can tighten the budget but never extend past
+    // it. A stack, because the calls nest; the effective deadline is the
+    // earliest, so an inner call can tighten the budget but never extend past
     // a promise an outer one already made.
     private long[] _deadlines = new long[4];
     private int _deadlineCount;
@@ -184,11 +210,23 @@ public sealed partial class Activation
     /// path — see <see cref="RequestCancellation"/>. Throttled by a counter so
     /// the volatile flag is read only periodically; throws
     /// <see cref="OperationCanceledException"/> when a cancellation is pending.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void BacktrackSafePoint()
     {
         if (--_backtrackCancelCountdown > 0) return;
+        _backtrackCancelCountdown = BacktrackCancelInterval;
+        if (_cancelRequested) ThrowQueryCancelled();
+        if (_deadlineAt != 0) CheckDeadline();
+    }
+
+    /// <summary>The half of <see cref="BacktrackSafePoint"/> after the
+    /// countdown reached zero, for generated code that decrements the
+    /// countdown itself (ADR-060).</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public void BacktrackSafePointDue()
+    {
         _backtrackCancelCountdown = BacktrackCancelInterval;
         if (_cancelRequested) ThrowQueryCancelled();
         if (_deadlineAt != 0) CheckDeadline();
@@ -207,7 +245,8 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeap()
     {
-        // Cooperative cancellation: checked at EVERY safe point (not only at the
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
+        // Cooperative cancellation: checked at every safe point (not only at the
         // GC watermark). Lazy Y-slot allocation made many loops heap-light, so a
         // watermark-only check left them uncancellable — and the watermark may
         // now never be crossed. `_cancelRequested` is volatile and the branch is
@@ -220,7 +259,7 @@ public sealed partial class Activation
         if (_deadlineAt != 0)
             CheckDeadline();
         // ADR-035 D5+ — a lazily-opened debug session arming itself mid-run (a
-        // debugger just attached): applied HERE, on the engine's own thread at a
+        // debugger just attached): applied here, on the engine's own thread at a
         // goal boundary, because the watcher thread that noticed the attach must
         // never mutate a running activation. Same cost class as the cancel flag.
         if (_debugArmPending)
@@ -250,14 +289,31 @@ public sealed partial class Activation
     /// carries.</summary>
     public bool GcPreciseRegisterBounds { get; set; } = true;
 
-    /// <summary>Safe point at a call boundary where the callee's FUNCTOR is
+    /// <summary>Whether <see cref="MaybeCollectHeapAtCall"/> has anything to
+    /// do. Compiled code tests this and makes the call only then (ADR-060).</summary>
+    public bool CallSafePointDue
+    {
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        get =>
+#if SHUMWAY_DIAG
+        true;
+#else
+        _cancelRequested || _deadlineAt != 0 || _debugArmPending
+        || _gcDiagActive || _heapTop >= _gcThreshold;
+#endif
+    }
+
+    /// <summary>Safe point at a call boundary where the callee's functor is
     /// in hand: only its arguments are live registers. Same steady-state cost
     /// as <see cref="MaybeCollectHeap"/> — the arity lookup happens on the
     /// collection path only.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void MaybeCollectHeapAtCall(int functorId)
     {
+        // The Tier-0 half of the area trace. A call is the densest point
+        // both tiers reach, and the sampler compiles away without the
+        // diag symbol, so the steady-state path is unchanged.
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
@@ -275,6 +331,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeapAtDispatch(int target)
     {
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
@@ -294,6 +351,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeapAtReturn()
     {
+        Diagnostics.AreaTrace.Note(_cellsAllocated, _stackTop, _b, _heapTop);
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
@@ -333,7 +391,7 @@ public sealed partial class Activation
     private volatile bool _debugArmPending;
     private System.Action<Activation>? _debugArmAction;
 
-    /// <summary>Asks this activation to run <paramref name="arm"/> on its OWN thread at
+    /// <summary>Asks this activation to run <paramref name="arm"/> on its own thread at
     /// the next safe point — the one sound way a watcher thread turns full debug on for
     /// a machine that is mid-run. Harmless on an activation that already finished: the
     /// flag is simply never consumed.</summary>
@@ -353,9 +411,8 @@ public sealed partial class Activation
         arm?.Invoke(this);
     }
 
+    // Not NoInlining: see ThrowNoEnv.
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void ThrowQueryCancelled()
         => throw new OperationCanceledException("Prolog query cancelled at a safe point.");
 
@@ -410,13 +467,13 @@ public sealed partial class Activation
 
     public int HeapGcCount { get; private set; }
 
-    /// <summary>How many times the collector RAN, whether or not it found
+    /// <summary>How many times the collector ran, whether or not it found
     /// anything to move. The two numbers differ by the collections that marked
     /// the whole heap live and returned without compacting, and telling them
     /// apart is the difference between "the collector never engaged" and "it
     /// engaged and there was nothing to give back" — which
     /// <c>statistics/0</c> reported as the same thing, `0 collections`, on a
-    /// query whose memory came back through BACKTRACKING rather than through
+    /// query whose memory came back through backtracking rather than through
     /// the collector.</summary>
     public int HeapGcRuns { get; private set; }
 
@@ -437,7 +494,7 @@ public sealed partial class Activation
         // relocated explicitly — see MarkExternalHolders /
         // RelocateExternalHolders.
         //
-        // What that bail ALSO did, without saying so, was make the wakeup drain
+        // What that bail also did, without saying so, was make the wakeup drain
         // atomic with respect to collection: it builds a verify_attributes goal
         // from heap indices held in C# locals and then meta-calls it, and a
         // collection in the middle leaves those locals naming moved cells. That
@@ -458,13 +515,15 @@ public sealed partial class Activation
         // remain only for the external OnGcMark hook.
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
+        ResetSideTableLiveSets();
 
         MarkRoots(oldTop);
-        // Attributed variables: the attr table is keyed by the variable's home
-        // heap index and its entries hold attribute-term indices, so both are
-        // roots. Same for the transient wakeup queue. Marking them is the half
-        // of "collect with attvars live" that is purely additive; relocating
-        // them is the other half.
+        // The attribute trail log, the wakeup queue and the cleanup handlers
+        // hold heap indices the heap walk does not reach, so they are roots.
+        // The attribute table is not one of them (ADR-052): its rows are
+        // reached through their own live variables and swept when they are
+        // not. Marking these is the half of "collect with attvars live" that
+        // is purely additive; relocating them is the other half.
         MarkExternalHolders(oldTop);
         // Pending b_setval restores hold old-value cells (possibly compounds).
         MarkExternalTrailRoots(GcMarkReferents);
@@ -474,6 +533,21 @@ public sealed partial class Activation
         // re-read the field each iteration.)
         while (_gcWorkTop > 0)
             GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
+
+        // ADR-052: the trace has now decided which attributed variables are
+        // reachable, so the rows of the ones that are not are garbage. They
+        // must go before relocation: a dead home relocates to wherever the
+        // next live cell landed, and the row would come to answer for an
+        // unrelated variable. Dropping them also stops the table itself
+        // from growing without bound, which freeing their cells does not.
+        AttrSweepUnmarked(marked, oldTop);
+
+        // ADR-053: and the same for the side tables, off the ids the trace
+        // recorded. Before relocation for the same reason -- though the ids
+        // do not move, the AttrSnapshot relocation below walks the foreign
+        // table and should not be handed entries the collector disproved.
+        ForeignSweepUnmarked(_gcForeignLive);
+        NumericSweepUnmarked(_gcBigIntLive, _gcRationalLive);
 
         // ---- forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -508,7 +582,7 @@ public sealed partial class Activation
 
         // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
-        RelocateExternalHolders(forward);
+        RelocateExternalHolders(forward, oldTop);
         RelocateExternalTrail(c => RelocateCell(c, forward));
         OnGcRelocate?.Invoke(
             idx => RelocIndex(idx, forward),
@@ -521,23 +595,22 @@ public sealed partial class Activation
         return oldTop - live;
     }
 
-    /// <summary>Marks the roots that live OUTSIDE the heap-root set. Each of
+    /// <summary>Marks the roots that live outside the heap-root set. Each of
     /// these is a structure the collector does not otherwise walk but which
     /// holds heap indices, so a cell reachable only from one of them would be
     /// freed under a live reference.
     ///
     /// <para>The attribute trail log is the subtle one: it holds an attribute's
-    /// PREVIOUS value so backtracking can restore it. Nothing else need
+    /// previous value so backtracking can restore it. Nothing else need
     /// reference that term — the current value replaced it — so without this it
-    /// is collected and backtracking restores a dangling index.</para></summary>
+    /// is collected and backtracking restores a dangling index.</para>
+    ///
+    /// <para>The attribute table is deliberately absent (ADR-052). A row is
+    /// not a reason to keep its variable: it is reached through the variable
+    /// (GcMarkReferents' AttVar case), never the other way round, and the
+    /// rows the trace disproves are swept before relocation.</para></summary>
     private void MarkExternalHolders(int oldTop)
     {
-        foreach (var kv in _attrTable)
-        {
-            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
-            foreach (var (_, attrValueIdx) in kv.Value)
-                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
-        }
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
             if (home == int.MinValue) continue;   // dead record (cut-dropped entry)
@@ -556,31 +629,19 @@ public sealed partial class Activation
     /// <summary>Relocates every external holder's heap indices. Runs in the
     /// same pass as the rest of the relocation: compaction reuses addresses, so
     /// an index left unmapped can come to name an unrelated cell.</summary>
-    private void RelocateExternalHolders(int[] forward)
+    private void RelocateExternalHolders(int[] forward, int oldTop)
     {
-        // The attribute table is rebuilt: its KEYS are heap indices, so this is
+        // The attribute table is rebuilt: its keys are heap indices, so this is
         // a re-key, not an in-place edit.
-        if (_attrTable.Count > 0)
-        {
-            var moved = new System.Collections.Generic.List<(int Home,
-                System.Collections.Generic.Dictionary<int, int> Record)>(_attrTable.Count);
-            foreach (var kv in _attrTable)
-            {
-                var record = kv.Value;
-                foreach (int module in
-                    new System.Collections.Generic.List<int>(record.Keys))
-                    record[module] = RelocIndex(record[module], forward);
-                moved.Add((RelocIndex(kv.Key, forward), record));
-            }
-            _attrTable.Clear();
-            foreach (var (home, record) in moved) _attrTable[home] = record;
-        }
+        AttrRekeyAll(idx => RelocIndex(idx, forward));
 
         for (int i = 0; i < _attrTrailLog.Count; i++)
         {
             var (home, module, oldValue) = _attrTrailLog[i];
-            _attrTrailLog[i] = (RelocIndex(home, forward), module,
+            int moved = RelocIndex(home, forward);
+            _attrTrailLog[i] = (moved, module,
                                 oldValue < 0 ? oldValue : RelocIndex(oldValue, forward));
+            AttrLogMirrorSet(i, moved);
         }
 
         for (int i = 0; i < _pendingWakeups.Count; i++)
@@ -595,20 +656,32 @@ public sealed partial class Activation
         RelocateCleanupRoots(c => RelocateCell(c, forward));
 
         // call_residue_vars snapshots observe by raw address and deliberately
-        // do NOT retain, so they are relocated but never marked.
+        // do not retain, so they are relocated but never marked.
+        //
+        // ADR-052: which makes a dead home the hazard AttrSnapshot's own
+        // comment warns about -- RelocIndex on an unmarked index yields
+        // where the next live cell landed, so the entry would come to name
+        // an unrelated variable and '$attv_new_since' would read a
+        // genuinely new attributed variable as already-seen. An entry the
+        // collector did not mark is dropped instead of mapped.
+        bool[]? live = _gcMarked;
         foreach (object? o in _foreignTable)
             if (o is AttrSnapshot snap)
             {
                 var mapped = new System.Collections.Generic.HashSet<int>(snap.Homes.Count);
                 foreach (int home in snap.Homes)
+                {
+                    if (live is not null && (uint)home < (uint)oldTop && !live[home])
+                        continue;                       // died in this collection
                     mapped.Add(RelocIndex(home, forward));
+                }
                 snap.Homes.Clear();
                 foreach (int home in mapped) snap.Homes.Add(home);
             }
     }
 
 
-    /// <summary>TEMPORARY PROBE — how many cells are reachable right now.
+    /// <summary>Temporary probe — how many cells are reachable right now.
     /// Runs the mark phase and reports; moves nothing.</summary>
     public (int Live, int Total) HeapLiveProbe()
     {
@@ -630,10 +703,10 @@ public sealed partial class Activation
         return (live, oldTop);
     }
 
-    /// <summary>DIAGNOSTIC (the stack-roots GC arc): attributes retained heap
-    /// cells to individual roots. Marks from every root EXCEPT the register
+    /// <summary>Diagnostic (the stack-roots GC arc): attributes retained heap
+    /// cells to individual roots. Marks from every root except the register
     /// bank and the control stack first (the baseline), then feeds registers
-    /// and stack slots one at a time, charging each the cells only IT newly
+    /// and stack slots one at a time, charging each the cells only it newly
     /// reaches (order-dependent: an earlier slot absorbs shared structure —
     /// good enough to name the offenders). Stack slots are classified by
     /// walking the live frame/CP chains: Y-slot i of the frame at base b
@@ -656,7 +729,7 @@ public sealed partial class Activation
                 GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
         }
 
-        // Baseline: everything EXCEPT registers + control stack, each
+        // Baseline: everything except registers + control stack, each
         // category charged separately.
         int c0 = _gcMarkCount;
         for (int k = 0; k < _bindingTrailTop; k++) GcMarkCell(_bindingTrail[k]);
@@ -681,14 +754,12 @@ public sealed partial class Activation
         Drain();
         int cCatch = _gcMarkCount - c0; c0 = _gcMarkCount;
         int h0 = _gcMarkCount;
-        foreach (var kv in _attrTable)
-        {
-            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
-            foreach (var (_, attrValueIdx) in kv.Value)
-                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
-        }
-        Drain();
-        int hTable = _gcMarkCount - h0; h0 = _gcMarkCount;
+        // ADR-052: the table is not a root. It is charged nothing here on
+        // purpose -- a breakdown that marked it would over-report against
+        // the collection it is meant to explain. An attribute term reached
+        // through its live variable is charged to whatever root reached the
+        // variable, which is the honest attribution.
+        int hTable = 0;
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
             if (home == int.MinValue) continue;   // dead record
@@ -710,7 +781,7 @@ public sealed partial class Activation
         int hClean = _gcMarkCount - h0;
         int cHolders = _gcMarkCount - c0; c0 = _gcMarkCount;
         System.Console.Error.WriteLine(
-            $"[gc-roots] holders breakdown: attrTable={hTable} (n={_attrTable.Count})"
+            $"[gc-roots] holders breakdown: attrTable={hTable} (n={AttrRecordTotal})"
             + $" attrTrailLog={hLog} (n={_attrTrailLog.Count}) wakeups={hWake} (n={_pendingWakeups.Count})"
             + $" cleanups={hClean}");
         MarkExternalTrailRoots(GcMarkReferents);
@@ -859,7 +930,7 @@ public sealed partial class Activation
     // (without marking the value cell itself — used both for heap cells
     // during the trace and for root cells that live off-heap in registers /
     // Y slots). The whole stack is scanned conservatively (see MarkRoots),
-    // so a value cell can be a genuine live reference OR a stale leftover in
+    // so a value cell can be a genuine live reference or a stale leftover in
     // a dead slot. Every payload is bounds-guarded, and a Str is only
     // followed when its target really is a Functor cell — a stale Str
     // pointing at a non-functor (or out of range) is left as a leaf
@@ -874,8 +945,22 @@ public sealed partial class Activation
         switch (c.Tag)
         {
             case Tag.Ref:
+                GcMarkCell(c.AsHeapIndex);
+                break;
             case Tag.AttVar:
                 GcMarkCell(c.AsHeapIndex);
+                // ADR-052: reaching an attributed variable reaches its
+                // attributes, and this is the only way a row is reached --
+                // the table itself is not a root. Costs nothing for a cell
+                // that is not an attributed variable, which is the reason
+                // the edge lives here and not in GcMarkCell.
+                //
+                // A conservatively-scanned slot holding a stale cell that
+                // reads as AttVar probes a home that may no longer be that
+                // variable's: over-retention, never a wrong answer, exactly
+                // as the note above this method describes for every other
+                // stale-but-plausible payload.
+                AttrMarkValuesOf(c.AsHeapIndex);
                 break;
             case Tag.Str:
             {
@@ -896,6 +981,36 @@ public sealed partial class Activation
             }
             case Tag.Float:
                 GcMarkCell(c.FloatPairedIndex);
+                break;
+            case Tag.BigInt:
+                // ADR-053: a big integer's slot is reachable only through
+                // cells like this one. Recording the id is what lets the
+                // sweep release the rest -- the trail reclaims a slot only
+                // when backtracking unwinds past the allocation, which a
+                // deterministic loop never does.
+                if (_gcBigIntLive is { } bg
+                    && (uint)c.AsBigIntId < (uint)bg.Length)
+                    bg[c.AsBigIntId] = true;
+                break;
+            case Tag.Rational:
+                if (_gcRationalLive is { } rt
+                    && (uint)c.AsRationalId < (uint)rt.Length)
+                    rt[c.AsRationalId] = true;
+                break;
+            case Tag.Foreign:
+                // ADR-053: the one place a foreign cell is ever looked
+                // at. Recording the id here is what makes the foreign
+                // table a weak holder: an entry the trace never reaches
+                // is released by the sweep. Costs nothing for any other
+                // tag, which is why the edge lives here.
+                //
+                // Bounds-guarded like every other payload: the stack is
+                // scanned conservatively, so a stale slot can read as
+                // Foreign with an id past the table. Ignoring that is
+                // the safe direction -- it can only over-retain.
+                if (_gcForeignLive is { } fgn
+                    && (uint)c.AsForeignId < (uint)fgn.Length)
+                    fgn[c.AsForeignId] = true;
                 break;
             case Tag.Pstr:
             {
@@ -944,7 +1059,7 @@ public sealed partial class Activation
     private void MarkRoots(int oldTop)
     {
         // X registers. With a live bound (a call boundary whose callee arity
-        // is known) only the arguments are roots, and the DEAD registers are
+        // is known) only the arguments are roots, and the dead registers are
         // cleared to a harmless leaf — a stale one would re-root its dead
         // structure at the next conservative collection, or dangle after
         // this one slides the heap. Without a bound: the whole bank,

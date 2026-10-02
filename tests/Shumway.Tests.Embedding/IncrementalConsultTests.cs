@@ -30,8 +30,8 @@ public class IncrementalConsultTests
     [Fact]
     public void IncludePredicateCall_DoesNotForceTheEagerPath()
     {
-        // A source that CALLS include/3 (the list predicate — clpz does, 6×) must
-        // still get incremental consult: only a real `:- include(File)` DIRECTIVE
+        // A source that calls include/3 (the list predicate — clpz does, 6×) must
+        // still get incremental consult: only a real `:- include(File)` directive
         // forces the eager path. Here the use_module operators must reach the later
         // clause even though the file also mentions include(.
         var e = new PrologEngine();
@@ -60,7 +60,7 @@ public class IncrementalConsultTests
     [Fact]
     public void InFileTermExpansion_AppliesToLaterClausesInTheSameFile()
     {
-        // A term_expansion defined in a file must expand that file's OWN later
+        // A term_expansion defined in a file must expand that file's own later
         // clauses — the in-file case (clpz's `++>` grammar depends on it).
         var e = new PrologEngine();
         e.ConsultString("""
@@ -73,8 +73,8 @@ public class IncrementalConsultTests
     [Fact]
     public void InFileTermExpansion_IsOrderSensitive_LikeSwiAndScryer()
     {
-        // Verified identical on SWI 9.2.3 and Scryer: a hook applies ONLY to
-        // clauses AFTER its definition. A matching term before the definition
+        // Verified identical on SWI 9.2.3 and Scryer: a hook applies only to
+        // clauses after its definition. A matching term before the definition
         // survives unexpanded.
         var e = new PrologEngine();
         e.ConsultString("""
@@ -110,7 +110,7 @@ public class IncrementalConsultTests
         // clpz's exact shape: a `:- multifile user:term_expansion/6` whose body
         // calls a module-local helper inside once/1. A global hook declared
         // multifile must stay on the static pipeline (where MetaTransform lowers
-        // once so the local mangles) — NOT be routed to the dynamic store, whose
+        // once so the local mangles) — not be routed to the dynamic store, whose
         // pre-mangle leaves the once-nested call bare.
         var e = new PrologEngine();
         e.ConsultString("""
@@ -143,7 +143,7 @@ public class IncrementalConsultTests
     public void UseModuleHook_AppliesToLaterClausesInTheSameConsult()
     {
         // clpz's shape: a file `:- use_module`s a library that defines a
-        // term_expansion hook, then uses that hook LATER in the same file. The
+        // term_expansion hook, then uses that hook later in the same file. The
         // hook must be active for those later clauses — hasTermExp is re-checked
         // as the loop advances, not fixed at the start (before the use_module ran).
         string dir = System.IO.Path.Combine(
@@ -152,14 +152,14 @@ public class IncrementalConsultTests
         try
         {
             // ADR-046 — module operators are scoped; a library meant to
-            // hand its syntax to importers EXPORTS the op (how real
+            // hand its syntax to importers exports the op (how real
             // SWI/Scryer libraries are written).
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "declmac.pl"),
                 ":- module(declmac, [op(1150, fx, decl)]).\n" +
                 "user:term_expansion((:- decl X), marked(X)).");
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
-            // use_module AND the hook's use in ONE consult.
+            // use_module and the hook's use in one consult.
             e.ConsultString("""
                 :- use_module(library(declmac)).
                 :- decl hi.
@@ -173,7 +173,7 @@ public class IncrementalConsultTests
     public void NestedLibraryWithHooks_DoesNotCorruptTheOuterConsult()
     {
         // The atts.pl regression: a library that both use_modules another library
-        // AND defines a term_expansion hook. The nested dep's re-expansion runs a
+        // and defines a term_expansion hook. The nested dep's re-expansion runs a
         // sub-query mid-consult; it must not break the hook for a later consult.
         string dir = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "shumway-nested-" + System.Guid.NewGuid().ToString("N"));
@@ -200,7 +200,7 @@ public class IncrementalConsultTests
     public void GoalExpansion_AppliesToOwnClausesInAnExportQualifiedNestedLibrary()
     {
         // clpz's shape: an export-qualified `:- module(m, [...])` library, loaded
-        // via use_module, defines its OWN goal_expansion/2 macro and uses it in
+        // via use_module, defines its own goal_expansion/2 macro and uses it in
         // its own clause bodies (clpz's `cis_leq`). The hook must be applied to
         // the library's clauses even though it is a nested consult — the
         // re-expansion pass runs for nested libraries, not only top level.
@@ -260,16 +260,16 @@ public class IncrementalConsultTests
     {
         // The dcgs→atts silent failure: term_expansion/2 promoted to Tier-1 IL
         // (here: forced by calling it between consults, threshold 2, sync
-        // compile), then a LATER consult appends its own hook clause to the same
+        // compile), then a later consult appends its own hook clause to the same
         // global predicate. The consult commit must evict the promoted delegate,
         // or the stale IL silently hides the new clause.
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 2;
         e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString("term_expansion(first(X), got_first(X)).");
-        // Cross the threshold OUTSIDE any consult so the promotion installs.
+        // Cross the threshold outside any consult so the promotion installs.
         for (int i = 0; i < 4; i++) e.Query("\\+ term_expansion(nomatch, _).");
-        // A later consult adds a second hook clause AND uses it.
+        // A later consult adds a second hook clause and uses it.
         e.ConsultString("""
             term_expansion(second(X), got_second(X)).
             second(a).
@@ -282,7 +282,7 @@ public class IncrementalConsultTests
     {
         // Promotions are suspended while program text loads: a first library
         // whose consult calls term_expansion once per clause (crossing the
-        // threshold) must NOT freeze the hook predicate mid-load — a second
+        // threshold) must not freeze the hook predicate mid-load — a second
         // library's hook clauses, added later in the same load, must fire.
         string dir = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "shumway-promo-" + System.Guid.NewGuid().ToString("N"));
@@ -317,7 +317,7 @@ public class IncrementalConsultTests
     {
         // The Scryer hook idiom: a var head narrowed by a body unification.
         // The discriminator index extracts `special/1` from `T0 = special(A)`
-        // and must still RUN the hook for a matching term (and keep, unharmed,
+        // and must still run the hook for a matching term (and keep, unharmed,
         // terms the index skips — the numeric fact and other(b)).
         var e = new PrologEngine();
         e.ConsultString("""
@@ -339,7 +339,7 @@ public class IncrementalConsultTests
     {
         // One analyzable clause + one the analysis can't see through (its body
         // starts with an opaque call). The family must fall back to always-try:
-        // the opaque hook still fires for the shape only IT accepts.
+        // the opaque hook still fires for the shape only it accepts.
         var e = new PrologEngine();
         e.ConsultString("""
             term_expansion(T0, done1(A)) :- nonvar(T0), T0 = alpha(A).
@@ -375,9 +375,9 @@ public class IncrementalConsultTests
     [Fact]
     public void GoalExpansion_NeverTouchesAVariableGoal()
     {
-        // A VARIABLE goal is a runtime meta-call. A hook with an unguarded
+        // A variable goal is a runtime meta-call. A hook with an unguarded
         // head pattern (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))`
-        // is a fact) must NOT unify its pattern INTO the variable — that
+        // is a fact) must not unify its pattern into the variable — that
         // replaced clpz's `( Repeat -> ... )` condition with an orphaned
         // phrase/3 and destroyed the goal.
         var e = new PrologEngine();

@@ -124,7 +124,7 @@ public class Chunk67Tests
             """);
         // mix(a, x) matches all three.
         Assert.Equal(3, engine.QueryAll("mix(a, x).").Count());
-        // mix(b, x) matches clause 1 (var arg 0, atom x) and clause 3 (both var). NOT clause 2 (atom a, not b).
+        // mix(b, x) matches clause 1 (var arg 0, atom x) and clause 3 (both var). Not clause 2 (atom a, not b).
         Assert.Equal(2, engine.QueryAll("mix(b, x).").Count());
         // mix(b, y) matches only clause 3.
         Assert.Single(engine.QueryAll("mix(b, y)."));
@@ -148,7 +148,7 @@ public class Chunk67Tests
         Assert.False(engine.Query("triple(a, x, 4).").Success);
         // Unbound arg 0, all-bound rest: multi-arg fallback to args 1, 2.
         Assert.Single(engine.QueryAll("triple(_, y, 2)."));
-        // Unbound arg 0 AND arg 1, bound arg 2.
+        // Unbound arg 0 and arg 1, bound arg 2.
         Assert.Single(engine.QueryAll("triple(_, _, 3)."));
     }
 

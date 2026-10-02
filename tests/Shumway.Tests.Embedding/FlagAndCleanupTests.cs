@@ -34,7 +34,7 @@ public sealed class FlagAndCleanupTests
     public void Flag_PersistsAcrossFailureDrivenLoop()
     {
         var e = new PrologEngine();
-        // The gensym idiom: a flag counter is NOT backtracked, so it survives a
+        // The gensym idiom: a flag counter is not backtracked, so it survives a
         // failure-driven loop and ends at the number of iterations.
         e.Query("( between(1, 5, _), flag(counter, Old, Old+1), fail ; true ).");
         Assert.True(e.Query("get_flag(counter, V), V == 5.").Success);
@@ -86,7 +86,7 @@ public sealed class FlagAndCleanupTests
         // SWI's determinism-detection idiom: setup_call_cleanup(true, G, Det=true)
         // — the cleanup goal shares variables with the caller, so its binding must
         // survive into the continuation. Regression: the cleanup used to run the
-        // assertz-retract COPY of the goal (renamed variables), so Det stayed
+        // assertz-retract copy of the goal (renamed variables), so Det stayed
         // unbound outside.
         var e = new PrologEngine();
         Assert.Equal("yes", e.QueryFirst<string>(
@@ -211,7 +211,7 @@ public sealed class FlagAndCleanupTests
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(closed/0).");
         // A nondet Goal succeeds leaving choice points, then an exception is
-        // thrown AFTER it and caught by an outer catch — unwinding past the
+        // thrown after it and caught by an outer catch — unwinding past the
         // leftover scope must fire cleanup.
         Assert.True(e.Query(
             "catch((setup_call_cleanup(true, member(_,[1,2,3]), assertz(closed)), throw(boom)), boom, true).").Success);
@@ -249,7 +249,7 @@ public sealed class FlagAndCleanupTests
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(closed/0).");
-        // The caller takes the FIRST solution and stops (no cut) — the leftover
+        // The caller takes the first solution and stops (no cut) — the leftover
         // choice points are abandoned at query teardown, firing cleanup (the SWI
         // toplevel-cancel case).
         Assert.True(e.Query(
@@ -295,9 +295,43 @@ public sealed class FlagAndCleanupTests
         e.ConsultString(":- dynamic(cc2/1).");
         // A non-deterministic goal whose choice points are fully backtracked:
         // one solution, cleanup exactly once (on exhaustion). (Cleanup on an
-        // ABANDONED first solution is the documented limitation.)
+        // abandoned first solution is the documented limitation.)
         int n = e.QueryAll("call_cleanup(member(2, [1,2,3]), assertz(cc2(ok))).").Count();
         Assert.Equal(1, n);
         Assert.Single(e.QueryAll("cc2(ok)."));
+    }
+
+    /// <summary>WG17: a Cleanup unbound at the call is an instantiation
+    /// error. A clause's X reaches setup_call_cleanup/3 module-qualified
+    /// (ADR-056), so the check must look past the qualifier; a user clause,
+    /// a module clause and a query all see the error.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(":- module(sccm, [probe/0]).\n")]
+    public void Cleanup_UnboundInAClause_IsAnInstantiationError(string header)
+    {
+        var e = new PrologEngine();
+        e.ConsultString(header
+            + "probe :- catch((setup_call_cleanup(true, X = true, X), fail), "
+            + "error(instantiation_error, _), true).\n");
+        Assert.True(e.Query("probe.").Success);
+        Assert.True(e.Query("catch((setup_call_cleanup(true, X = true, X), fail), "
+            + "error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query("catch((setup_call_cleanup(true, true, 3), fail), "
+            + "error(type_error(callable, 3), _), true).").Success);
+    }
+
+    /// <summary>A flag current_prolog_flag/2 enumerates exists, so setting
+    /// it to its own value is accepted or refused with a permission error,
+    /// never a domain error (8.17.1.3).</summary>
+    [Fact]
+    public void EveryListedFlag_IsSettableOrReadOnly_NeverUnknown()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query("current_prolog_flag(tabling, _).").Success);
+        Assert.True(e.Query("\\+ ( current_prolog_flag(F, V), "
+            + "catch((set_prolog_flag(F, V), R = ok), error(R, _), true), "
+            + "R = domain_error(prolog_flag, _) ).").Success,
+            "a listed flag raised domain_error(prolog_flag, F)");
     }
 }

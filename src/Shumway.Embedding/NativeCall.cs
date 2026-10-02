@@ -144,12 +144,12 @@ internal static class NativeCall
     // native signature. Args are boxed; each is unboxed to its CLR param type, the
     // function pointer pushed, calli, the result boxed (null for void).
     //
-    // One invoker per (return, params) SHAPE, process-wide and rooted for the
+    // One invoker per (return, params) shape, process-wide and rooted for the
     // process lifetime. An invoker is a pure function of its CLR signature, so
     // sharing is semantics-free and the set is small (one per distinct `:- c`
     // prototype shape). It is also load-bearing: on .NET Framework x86, LCG
     // reclaims a dead DynamicMethod's code on the finalizer thread, and that
-    // reclamation racing the first-call JIT of a NEW invoker on the same code
+    // reclamation racing the first-call JIT of a new invoker on the same code
     // heap corrupted the fresh code (~10% of test processes: callee received
     // arg0 intact and stack garbage for the rest — AV or a silently wrong
     // answer). Rooted invokers are never reclaimed, so the race has no window.

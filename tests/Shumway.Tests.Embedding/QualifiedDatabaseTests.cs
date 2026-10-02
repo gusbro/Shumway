@@ -5,10 +5,10 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Stage 3 of the M:P story — the database side. Dynamics are
 /// flat-global (invariant), so a <c>Module:</c> qualifier on
-/// assert/retract/retractall/abolish VALIDATES and DROPS: every module
+/// assert/retract/retractall/abolish validates and drops: every module
 /// reaches the one shared store. Assert accepts the qualifier around the
 /// whole clause, around a rule, and around a rule's head; retract peels the
-/// pattern ON THE HEAP so the caller's variables keep binding (a copy would
+/// pattern on the heap so the caller's variables keep binding (a copy would
 /// silently stop); abolish takes both indicator spellings. Errors pinned:
 /// variable module → instantiation_error, non-atom → type_error(atom).</summary>
 public sealed class QualifiedDatabaseTests
@@ -69,7 +69,7 @@ public sealed class QualifiedDatabaseTests
     public void QualifiedAbolish_BothIndicatorSpellings()
     {
         var e = new PrologEngine();
-        // After abolish the predicate is UNDEFINED — a new call raises
+        // After abolish the predicate is undefined — a new call raises
         // existence_error (§8.9.4), it does not quietly fail.
         Assert.True(e.Query(
             "assertz(qd_k(1)), abolish(m:qd_k/1), "
@@ -101,7 +101,7 @@ public sealed class QualifiedDatabaseTests
         var e = new PrologEngine();
         e.ConsultString(":- module(qd_m, []).\nqd_loc(1).\n");
         // Same protection as the bare spelling: the local's name resolves to
-        // the module's STATIC predicate — no quiet bare dynamic minted over it.
+        // the module's static predicate — no quiet bare dynamic minted over it.
         Assert.True(e.Query(
             "catch(assertz(qd_m:qd_loc(9)), "
             + "error(permission_error(modify, static_procedure, _), _), true).").Success);

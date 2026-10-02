@@ -203,7 +203,7 @@ Shumway uses two tiers:
 **Tier 1 — IL compilation**:
 
 - Two emission targets:
-  - **Runtime**: `DynamicMethod` + Sigil. Promotion happens in a background thread when a predicate is identified as hot (via invocation count threshold).
+  - **Runtime**: `DynamicMethod`, written by Shumway's own emitter (ADR-062). Promotion happens in a background thread when a predicate is identified as hot (via invocation count threshold).
   - **Build time**: `PersistedAssemblyBuilder`. `shumway-link --with-compiled-il` produces a bundle whose IL loads at startup — no runtime promotion wait.
 - **Region compilation is the default** (Phase 29, `docs/design/il-region-compilation.md`): a predicate and its local-predicate closure compile into ONE IL method, intra-region calls becoming branches; the linker prunes now-unreachable standalone bodies.
 - Code is **engine-agnostic**: every compiled method takes the activation as a parameter.

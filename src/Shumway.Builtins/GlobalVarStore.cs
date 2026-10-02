@@ -18,11 +18,11 @@ namespace Shumway.Builtins;
 /// </list>
 ///
 /// <para>Two shelves, and a key lives on exactly one of them. A
-/// BACKTRACKABLE write stores the live cell: the write is undone by the
+/// backtrackable write stores the live cell: the write is undone by the
 /// trail, so it cannot outlive the heap state it was taken from, and the
 /// sharing is what a propagation queue driven through
 /// <c>bb_b_put/2</c> relies on. A NON-backtrackable write stores a
-/// heap-independent PAYLOAD instead (<see cref="SetPayload"/>) — it has to
+/// heap-independent payload instead (<see cref="SetPayload"/>) — it has to
 /// survive the backtracking it is defined to survive, and a raw cell does
 /// not: once the heap unwinds past the write, the address holds whatever
 /// came later. An immediate (an integer, an atom) is its own payload and
@@ -31,7 +31,7 @@ namespace Shumway.Builtins;
 ///
 /// <para>The store survives across queries on the hosting engine.</para>
 ///
-/// <para>Keyed by ATOM ID, not name string — the id is what the builtin
+/// <para>Keyed by atom id, not name string — the id is what the builtin
 /// already has in hand, and keying by string paid a name lookup plus a
 /// string hash per access on hot nb_getval loops. Atom ids are stable
 /// for the lifetime of the atom (ADR-003); the lifetime itself is
@@ -47,6 +47,40 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     private readonly Dictionary<int, int> _owner = new();
     private readonly Dictionary<int, object> _retained = new();
 
+    /// <summary>Bumped by every write, so a mirror of the store can tell a
+    /// stale image from a current one without walking it.</summary>
+    public int Version { get; private set; }
+
+    /// <summary>Every key a read by <paramref name="ownerId"/> would find,
+    /// as (atom id, cell) pairs in <paramref name="rows"/>: a cell live for
+    /// it as itself, a payload (a snapshot the host re-emits) as
+    /// <see cref="WasmAbi.GlobalVarPayloadSentinel"/>. Another activation's
+    /// backtrackable write is not among them, and the read side drops it
+    /// too. The rows are complete, so a compiled module answers an absent
+    /// key with failure and only a sentinel sends a read to the host.
+    /// Returns the pair count, or -1 when the rows cannot hold them all.
+    /// </summary>
+    public int WriteLiveCells(long[] rows, int ownerId)
+    {
+        int n = 0;
+        foreach (var (atomId, cell) in _byAtomId)
+        {
+            if (_owner.TryGetValue(atomId, out int owner) && owner != ownerId) continue;
+            if (n * 2 + 2 > rows.Length) return -1;
+            rows[n * 2] = atomId;
+            rows[n * 2 + 1] = cell.Data;
+            n++;
+        }
+        foreach (int atomId in _payloads.Keys)
+        {
+            if (n * 2 + 2 > rows.Length) return -1;
+            rows[n * 2] = atomId;
+            rows[n * 2 + 1] = WasmAbi.GlobalVarPayloadSentinel;
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>A backtrackable write keeps the live cell, so it is only
     /// meaningful while the heap it points into is the one being run. The
     /// owning activation is recorded and the read checks it: a query is a
@@ -60,6 +94,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId[atomId] = value;
         if (backtrackable) _owner[atomId] = ownerId;
         else _owner.Remove(atomId);
+        Version++;
     }
 
     /// <summary>False when the key holds a backtrackable write from another
@@ -70,6 +105,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         if (!_owner.TryGetValue(atomId, out int owner) || owner == ownerId) return true;
         _byAtomId.Remove(atomId);
         _owner.Remove(atomId);
+        Version++;
         return false;
     }
 
@@ -82,6 +118,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId.Remove(atomId);
         _owner.Remove(atomId);
         _payloads[atomId] = payload;
+        Version++;
     }
 
     public bool TryGetPayload(int atomId, out object payload) =>
@@ -102,6 +139,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     {
         if (hadOldValue) _byAtomId[key] = oldValue;
         else { _byAtomId.Remove(key); _owner.Remove(key); }
+        Version++;
     }
 
     public bool TryGet(int atomId, out Cell value) =>
@@ -122,6 +160,7 @@ public sealed class GlobalVarStore : IExternalTrailTarget
         _byAtomId.Remove(atomId);
         _payloads.Remove(atomId);
         _owner.Remove(atomId);
+        Version++;
     }
 
     /// <summary>ADR-016 — rewrites every stored cell through the heap

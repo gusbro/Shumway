@@ -8,7 +8,7 @@ namespace Shumway.Embedding;
 /// specific "unify the current value" delegate — plus cached <c>Resume</c> and
 /// <c>OnPrune</c> delegates.
 ///
-/// <para>The source generator instantiates ONE of these per foreign call and
+/// <para>The source generator instantiates one of these per foreign call and
 /// re-pushes the cached <c>Resume</c> unchanged on every backtrack, rather than
 /// allocating a fresh closure (and a fresh <c>Dispose</c> Action) per solution
 /// as the pre-cursor generated bridge did. <paramref name="unifyCurrent"/> is a

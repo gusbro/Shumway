@@ -27,7 +27,7 @@ public sealed class PstrDispatchTests
     public void PackedCodesArgument_MatchesConsDeterminismExactly()
     {
         // Integer-sub indexing may or may not fire for this clause shape —
-        // the pin is PARITY: a packed codes argument must leave exactly as
+        // the pin is parity: a packed codes argument must leave exactly as
         // many choice points behind as the equivalent cons list does.
         var e = new PrologEngine();
         e.ConsultString(
@@ -45,7 +45,7 @@ public sealed class PstrDispatchTests
     public void EmptyPackedList_StillReachesTheNilClause()
     {
         // The list-bucket routing is guarded on non-empty: an empty packed
-        // list IS [] and its clause lives in the const bucket.
+        // list is [] and its clause lives in the const bucket.
         var e = new PrologEngine();
         e.ConsultString("s([], empty). s([_|_], cons).");
         Assert.True(e.Query(

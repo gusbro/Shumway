@@ -28,7 +28,7 @@ public static class ShmoReader
                 ".shmo: magic bytes don't match 'SHMO' — not a Shumway object file.");
 
         uint version = headerReader.ReadUInt32();
-        // Pre-release format policy (see ShmoFormat): exactly ONE supported
+        // Pre-release format policy (see ShmoFormat): exactly one supported
         // layout, frozen version number, no backward compatibility — a stale
         // .shmo (older layout under the same number) fails on a truncated
         // section below; regenerate it by recompiling.

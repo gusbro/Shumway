@@ -6,7 +6,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>A <c>format/2,3</c> format string may be an atom, a list of
-/// character CODES, or a list of one-char atoms — which is what
+/// character codes, or a list of one-char atoms — which is what
 /// <c>format("...", …)</c> becomes under each <c>double_quotes</c> setting.
 /// Only the atom form was accepted; the other two raised
 /// <c>type_error(atom, _)</c>.</summary>

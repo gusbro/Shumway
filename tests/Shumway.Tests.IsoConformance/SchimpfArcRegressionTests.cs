@@ -7,7 +7,7 @@ namespace Shumway.Tests.IsoConformance;
 
 /// <summary>Regression pins for the engine fixes the 2026-09 Schimpf
 /// conformance arc produced (error shapes, context indicators, meta-call
-/// conversion, stream eof discipline). Every query is OUR OWN formulation
+/// conversion, stream eof discipline). Every query is our own formulation
 /// of the fixed behavior; the suite itself stays in its author's tree.</summary>
 public sealed class SchimpfArcRegressionTests
 {
@@ -37,7 +37,7 @@ public sealed class SchimpfArcRegressionTests
         }
     }
 
-    // ---- §7.12.2: the Context slot names the PUBLIC builtin ----
+    // ---- §7.12.2: the Context slot names the public builtin ----
 
     [Fact] public void Asserta_NonCallable_ContextIsAsserta1() =>
         True("catch(asserta(4), error(type_error(callable, 4), asserta/1), true).");
@@ -60,14 +60,14 @@ public sealed class SchimpfArcRegressionTests
     [Fact] public void CallN_NonCallableClosure_ManyExtras() =>
         Raises("call(7, _, _, _, _)", "type_error(callable, 7)");
 
-    // ---- §7.8.3.1: conversion happens AT the call boundary ----
+    // ---- §7.8.3.1: conversion happens at the call boundary ----
 
     [Fact] public void MetacallCut_BoundBeforeCall_IsARealCut() =>
         // X already names ! when call/1 converts its goal: the cut is
         // literal and commits within the call — one solution.
         True("X = !, findall(Y, call(((Y=1 ; Y=2), X)), L), L == [1].");
     [Fact] public void MetacallCut_BoundMidBody_CutsNothing() =>
-        // Z is a VARIABLE at conversion time, so it converts to call(Z)
+        // Z is a variable at conversion time, so it converts to call(Z)
         // and the ! it is later bound to is local — both solutions.
         True("findall(Y, call((Z = !, (Y=1 ; Y=2), Z)), L), L == [1, 2].");
     [Fact] public void MetacallCut_AssembledConjunction_ConvertsToo() =>

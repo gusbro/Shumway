@@ -8,7 +8,7 @@ namespace Shumway.Builtins;
 ///
 /// <list type="number">
 /// <item>Variables (compared by heap address — older / lower comes first)</item>
-/// <item>Numbers (ISO §7.2.1: ALL floats before all integers;
+/// <item>Numbers (ISO §7.2.1: All floats before all integers;
 /// by value within a type)</item>
 /// <item>Atoms (alphabetical by name)</item>
 /// <item>Strings (alphabetical, treated as opaque)</item>
@@ -162,7 +162,7 @@ public static class StandardOrderComparator
     {
         Number na = ToNumber(engine, a);
         Number nb = ToNumber(engine, b);
-        // ISO §7.2.1: a Float ALWAYS precedes an Integer, whatever the
+        // ISO §7.2.1: a Float always precedes an Integer, whatever the
         // values — msort([3, 1.5, 2, 0.5, 1]) is [0.5, 1.5, 1, 2, 3], not
         // numeric order (verified against GNU; SICStus and Scryer agree).
         // Only within one type does the value decide. Rationals are exact,
@@ -195,7 +195,7 @@ public static class StandardOrderComparator
         Atom? bAtom = AtomTable.GetById(b.AsAtomId);
         string aName = aAtom?.Name ?? "";
         string bName = bAtom?.Name ?? "";
-        // The standard order is by CODE POINT. Unit-wise ordinal order
+        // The standard order is by code point. Unit-wise ordinal order
         // agrees for all-BMP names (the near-universal case, O(1) via the
         // intern-time shape flag); a surrogate on either side takes the
         // remapped comparison so astral atoms sort above U+E000–U+FFFF.

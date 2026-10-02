@@ -42,21 +42,21 @@ public readonly record struct QualifiedPredicateRef(string Module, string Name, 
 /// the DIRECT-vs-META marker.
 ///
 /// <para><see cref="IsMeta"/> is <c>true</c> when every reference this
-/// MODULE makes to <see cref="Target"/> sits inside a meta-call argument
+/// module makes to <see cref="Target"/> sits inside a meta-call argument
 /// — <c>call/1</c>, the <c>call/N</c> closure goal, or the goal argument
 /// of <c>findall</c> / <c>bagof</c> / <c>setof</c> / <c>forall</c> /
 /// <c>once</c> / <c>ignore</c> / <c>catch</c> / <c>\+</c> / <c>not</c> —
 /// and <c>false</c> when at least one reference is a plain body goal
 /// (or the target only appears in synthesised helper bodies the
 /// transform pipeline produced). The bit is computed module-wide per
-/// TARGET (not per call site): the MetaTransform pipeline erases the
+/// target (not per call site): the MetaTransform pipeline erases the
 /// meta wrappers before the call-graph walk (rewrites
 /// <c>call(g(X))</c> to a direct <c>g(X)</c>; findall goals are inlined
 /// into <c>$disj</c> helper bodies), so a per-site bit measured on the
 /// transformed bodies would mis-mark exactly the sites that matter. A
 /// module-wide bit is also the conservative direction — one direct
 /// reference anywhere in the module marks every edge to that target
-/// DIRECT.</para>
+/// direct.</para>
 ///
 /// <para>The linker uses the marker for Arity call semantics (an
 /// undeclared predicate that is only ever meta-called links as an
@@ -70,7 +70,7 @@ public readonly record struct ShmoCallEdge(PredicateRef Target, bool IsMeta)
 /// <summary>One <c>:- op/3</c> definition a module's source executed at
 /// compile time. Carried through
 /// <c>.shmo</c> → <c>.shum</c> so <c>LoadBundle</c> can replay it into the
-/// runtime engine's operator table — a SOURCE-STRIPPED bundle otherwise
+/// runtime engine's operator table — a source-stripped bundle otherwise
 /// loses the ops, and any runtime <c>read/1</c> / <c>string_term/2</c> of
 /// text using them mis-parses (the debug path never noticed: it re-consults
 /// the source, re-executing the directives). <see cref="Type"/> is the
@@ -140,7 +140,7 @@ public sealed class ShmoDefinedPredicate
 /// is not dead-code-eliminated.</item>
 /// <item><see cref="CallGraph"/> — for each defined predicate, the set
 /// of unqualified call targets the linker should follow, each marked
-/// DIRECT or META (<see cref="ShmoCallEdge"/>).</item>
+/// direct or meta (<see cref="ShmoCallEdge"/>).</item>
 /// <item><see cref="QualifiedRefs"/> — explicit <c>Module:Goal</c> call
 /// sites. Rare; resolved against the named module's public set rather
 /// than the flat global namespace.</item>
@@ -191,8 +191,8 @@ public sealed class ShmoObject
     /// store. Empty for V1/V2 objects.</summary>
     public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
 
-    /// <summary>the module's STATIC clauses as
-    /// <see cref="TermCodec"/>-encoded terms, RAW (post-parse, pre-DCG /
+    /// <summary>the module's static clauses as
+    /// <see cref="TermCodec"/>-encoded terms, raw (post-parse, pre-DCG /
     /// pre-MetaTransform / pre-unfold; dynamic-head clauses excluded — those
     /// travel in <see cref="DynamicSeeds"/>). The LTO channel (user decision,
     /// mirroring fat object files): always present, Release included — the
@@ -353,8 +353,8 @@ public sealed class ShmoDynamicSeed
     public PredicateRef Indicator { get; }
     public IReadOnlyList<byte[]> EncodedClauses { get; }
     /// <summary>True for a <c>:- multifile</c> predicate. Its clauses are
-    /// module-rewritten at COMPILE time under their origin module, so the
-    /// load path must NOT record a per-fid seed module for them — several
+    /// module-rewritten at compile time under their origin module, so the
+    /// load path must not record a per-fid seed module for them — several
     /// modules contribute to one fid, and a single module context would
     /// rewrite the other contributors' clauses under the wrong locals.</summary>
     public bool Multifile { get; }

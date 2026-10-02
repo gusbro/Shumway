@@ -14,7 +14,7 @@ namespace Shumway.Builtins;
 public static class StreamBuiltins
 {
     /// <summary>The stream-term's functor name. A stream-term is an
-    /// ORDINARY ground term on purpose: it must survive everything a term
+    /// ordinary ground term on purpose: it must survive everything a term
     /// survives — <c>copy_term/2</c>, <c>findall/3</c>, and above all
     /// <c>assertz/1</c> followed by a later <c>clause</c>/<c>retract</c>,
     /// across queries. A managed handle inside a cell cannot (the payload
@@ -74,7 +74,7 @@ public static class StreamBuiltins
         if (IsPartialStreamTerm(engine, d))
             throw new PrologRuntimeException("instantiation_error");
         // Neither a stream-term nor an alias, and no instance of it could be
-        // one: ISO 8.11 domain_error (`stream_or_alias` names a DOMAIN, not a
+        // one: ISO 8.11 domain_error (`stream_or_alias` names a domain, not a
         // type).
         throw new PrologRuntimeException(
             "domain_error", "stream_or_alias", engine, d);
@@ -82,7 +82,7 @@ public static class StreamBuiltins
 
     /// <summary>True when <paramref name="d"/> is the stream-term
     /// <c>'$stream'(Id)</c> with an integer id — a malformed
-    /// <c>'$stream'(foo)</c> or <c>'$stream'(1,2)</c> is NOT a stream-term
+    /// <c>'$stream'(foo)</c> or <c>'$stream'(1,2)</c> is not a stream-term
     /// and falls through to the domain error.</summary>
     private static bool TryReadStreamId(Activation engine, Cell d, out int id)
     {
@@ -101,7 +101,7 @@ public static class StreamBuiltins
     }
 
     /// <summary>True when <paramref name="d"/> has the stream-term shape with
-    /// an UNBOUND id. It is not a stream-term yet, but every stream-term is an
+    /// an unbound id. It is not a stream-term yet, but every stream-term is an
     /// instance of it, so what is wrong with it is the missing information and
     /// not the domain: an instantiation_error can be made good by binding it,
     /// a domain error says nothing ever could (stc#72).</summary>
@@ -135,7 +135,7 @@ public static class StreamBuiltins
         return false;
     }
 
-    /// <summary>§8.11.5.3.e/f: the source/sink must be an ATOM (or the
+    /// <summary>§8.11.5.3.e/f: the source/sink must be an atom (or the
     /// chars-list / PSTR spellings SourceSinkText accepts). A compound is
     /// domain_error(source_sink, S); a number is type_error(atom, S).</summary>
     private static void ValidateSourceSink(Activation engine, Cell pathCell)
@@ -158,7 +158,7 @@ public static class StreamBuiltins
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsReader)
-            // The culprit is the stream-or-alias ARGUMENT as written
+            // The culprit is the stream-or-alias argument as written
             // (§8.12.1.3.d wants e.g. user_output, not a fresh var).
             throw new PrologRuntimeException("permission_error", "input,stream",
                 engine, Resolve(engine, cell));
@@ -186,7 +186,7 @@ public static class StreamBuiltins
         return w;
     }
 
-    /// <summary>Opens a TEXT read stream: BOM detection (default ON, and a
+    /// <summary>Opens a text read stream: BOM detection (default on, and a
     /// found BOM takes precedence over the encoding option), else the
     /// requested encoding, else strict UTF-8 — an ill-formed sequence there
     /// raises representation_error(character) instead of decoding to
@@ -246,7 +246,7 @@ public static class StreamBuiltins
         ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
-        // §8.11.5.3: the Stream argument must be UNBOUND.
+        // §8.11.5.3: the Stream argument must be unbound.
         Cell streamOut = Resolve(engine, engine.GetRegister(2));
         if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
             throw new PrologRuntimeException(
@@ -312,7 +312,7 @@ public static class StreamBuiltins
     }
 
     /// <summary>The source-sink argument's text: an atom as always, or —
-    /// Scryer-compat, where text IS a chars list — a proper list of one-char
+    /// Scryer-compat, where text is a chars list — a proper list of one-char
     /// atoms (a PSTR included). Anything else keeps the ISO
     /// type_error(atom).</summary>
     internal static string SourceSinkText(Activation engine, Cell pathCell)
@@ -368,7 +368,7 @@ public static class StreamBuiltins
         ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
-        // §8.11.5.3: the Stream argument must be UNBOUND.
+        // §8.11.5.3: the Stream argument must be unbound.
         Cell streamOut = Resolve(engine, engine.GetRegister(2));
         if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
             throw new PrologRuntimeException(
@@ -415,7 +415,7 @@ public static class StreamBuiltins
                         throw new PrologRuntimeException("instantiation_error");
                     // ISO §8.11.5.3: alias(A) with A not an atom makes the whole
                     // option invalid → domain_error(stream_option, alias(A))
-                    // (GNU + Neumerkel agree), NOT type_error(atom) — consistent
+                    // (GNU + Neumerkel agree), not type_error(atom) — consistent
                     // with the type(...) case below.
                     if (argCell.Tag != Tag.Atom)
                         throw new PrologRuntimeException(
@@ -429,7 +429,7 @@ public static class StreamBuiltins
                         throw new PrologRuntimeException(
                             "domain_error", "stream_option", engine, head);
                     string typeName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
-                    // A repeated option: the LAST one wins.
+                    // A repeated option: the last one wins.
                     if (typeName is "binary" or "text") binary = typeName == "binary";
                     else
                         throw new PrologRuntimeException(
@@ -438,7 +438,7 @@ public static class StreamBuiltins
                 case "encoding":
                     // encoding(utf8 | iso_latin_1 | ascii | utf16le | utf16be
                     // | utf32le | utf32be); default UTF-8. iso_latin_1 maps
-                    // bytes 0x80–0xFF to the SAME code points (Latin-1 is the
+                    // bytes 0x80–0xFF to the same code points (Latin-1 is the
                     // first 256 of Unicode), so reading a Latin-1 file with
                     // it is byte-value-faithful — a UTF-8 read turns each
                     // such byte into U+FFFD.
@@ -458,8 +458,8 @@ public static class StreamBuiltins
                     break;
                 case "bom":
                     // bom(false) on read disables BOM detection (a leading
-                    // U+FEFF is then DATA); bom(true) on write emits one.
-                    // Read-side default is detection ON.
+                    // U+FEFF is then data); bom(true) on write emits one.
+                    // Read-side default is detection on.
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom
@@ -513,7 +513,7 @@ public static class StreamBuiltins
         // requested alias is already taken.
         if (alias is not null && registry.IsAliasTaken(alias))
         {
-            // Culprit is the OPTION term alias(A) (§8.11.5.3.j).
+            // Culprit is the option term alias(A) (§8.11.5.3.j).
             int aliasFid = FunctorTable.Intern(
                 AtomTable.Intern("alias", permanent: true).Id, 1);
             int ab = engine.AllocateHeap(2);
@@ -939,7 +939,7 @@ public static class StreamBuiltins
     /// <c>permission_error(input, past_end_of_stream, S)</c>. All other
     /// combinations read normally (eof keeps yielding <c>end_of_file</c> —
     /// GNU's default behaviour).</summary>
-    /// <summary>§8.12.1.3.c: a BOUND output argument that could never be a
+    /// <summary>§8.12.1.3.c: a bound output argument that could never be a
     /// read result is a type error up front — get_char(S, 1) raises
     /// type_error(in_character, 1), it does not just fail. in_character =
     /// one-char atom or end_of_file.</summary>
@@ -995,7 +995,7 @@ public static class StreamBuiltins
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
                 return force;
             if (cur.Tag != Tag.Lis)
-                // Culprit is the WHOLE options argument, not the improper
+                // Culprit is the whole options argument, not the improper
                 // tail alone (same rule as §8.16.7.3's list culprits).
                 throw new PrologRuntimeException("type_error", "list", engine, given);
             Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
@@ -1040,10 +1040,10 @@ public static class StreamBuiltins
     /// <paramref name="Offset"/>, as a packed list, plus how many there are
     /// (0 at end of input).
     ///
-    /// <para>IDEMPOTENT, which is the whole point. Reading is a side effect and
+    /// <para>Idempotent, which is the whole point. Reading is a side effect and
     /// backtracking cannot undo it: a grammar that tries one clause, fails and
     /// tries the next wakes the same lazy cell twice, and a plain read would
-    /// hand it the NEXT characters the second time — silently parsing a
+    /// hand it the next characters the second time — silently parsing a
     /// different input. One window is cached per stream, keyed by its offset,
     /// so a re-run gets the same characters back and the memory stays
     /// bounded.</para>
@@ -1283,15 +1283,15 @@ public static class StreamBuiltins
     }
 
     /// <summary>current_input/1 and current_output/1 take a variable or a
-    /// STREAM-TERM; their domain is `stream`, not `stream_or_alias`, so an
-    /// alias atom is domain_error(stream, X) too. A CLOSED stream is still a
+    /// stream-term; their domain is `stream`, not `stream_or_alias`, so an
+    /// alias atom is domain_error(stream, X) too. A closed stream is still a
     /// stream-term, so it passes here and the unification below simply fails:
-    /// these are queries ABOUT a stream, and ISO 8.11.1.3 lists no
-    /// existence_error for them. Only a term that can NEVER be a stream-term
-    /// is a domain error, and that is decided by FORM alone: 7.10.2.1 makes
+    /// these are queries about a stream, and ISO 8.11.1.3 lists no
+    /// existence_error for them. Only a term that can never be a stream-term
+    /// is a domain error, and that is decided by form alone: 7.10.2.1 makes
     /// the shape of a stream-term implementation defined, and ours is
     /// '$stream'(Integer). Whether that id names a live stream is a question
-    /// about EXISTENCE, not about the domain, exactly as it is for an alias
+    /// about existence, not about the domain, exactly as it is for an alias
     /// atom -- which is why a never-opened '$stream'(53) behaves like a closed
     /// one rather than like '$stream'(foo). Deciding it by consulting the
     /// registry would make the domain vary as the program runs.
@@ -1357,9 +1357,9 @@ public static class StreamBuiltins
     // ---------- at_end_of_stream ----------
 
     /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. Defined by
-    /// stream PROPERTY (end_of_stream at/past), and §8.11.8.3 lists no
+    /// stream property (end_of_stream at/past), and §8.11.8.3 lists no
     /// permission error — an output stream simply lacks the property, so
-    /// the call FAILS rather than raising.</summary>
+    /// the call fails rather than raising.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
@@ -1373,7 +1373,7 @@ public static class StreamBuiltins
         return h is not null && AtEnd(engine, h);
     }
 
-    /// <summary>True when the position is at OR past end (§8.11.9). A
+    /// <summary>True when the position is at or past end (§8.11.9). A
     /// binary reader has no TextReader — probe the seekable stream.</summary>
     private static bool AtEnd(Activation engine, StreamHandle h)
     {

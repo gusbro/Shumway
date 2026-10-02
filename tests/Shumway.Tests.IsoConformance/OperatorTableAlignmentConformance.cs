@@ -19,7 +19,7 @@ public class OperatorTableAlignmentConformance
     [Fact]
     public void ModuleQualifierIsLooserThanSlash()
     {
-        // GNU, SWI and Scryer all put `:` at 600 xfy — LOOSER than `/` (400),
+        // GNU, SWI and Scryer all put `:` at 600 xfy — looser than `/` (400),
         // so a qualified indicator reads as :(Module, /(Name, Arity)).
         Succeeds("current_op(600, xfy, :).");
         Succeeds("X = (m:f/0), X = :(m, /(f, 0)).");
@@ -33,7 +33,7 @@ public class OperatorTableAlignmentConformance
     [Fact]
     public void QualifiedIndicatorDirectivesTakeBothGroupings()
     {
-        // The reader accepts the looser grouping AND the tighter one, so a
+        // The reader accepts the looser grouping and the tighter one, so a
         // source written for a table that puts `:` below `/` still loads.
         var engine = new PrologEngine();
         engine.ConsultString(
@@ -54,7 +54,7 @@ public class OperatorTableAlignmentConformance
     [Fact]
     public void NonIsoDialectOperatorsAreNotInTheDefaultTable()
     {
-        // A non-ISO operator in the INITIAL table changes how a strictly
+        // A non-ISO operator in the initial table changes how a strictly
         // conforming program reads. Scryer's own library declares this one
         // (lib/ops_and_meta_predicates.pl); Shumway's scryer shim does the
         // same, globally, instead of building it in.

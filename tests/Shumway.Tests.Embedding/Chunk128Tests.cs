@@ -91,7 +91,7 @@ public class Chunk128Tests
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic d/1.");
-        // After abolish the predicate is UNDEFINED — the mid-query call
+        // After abolish the predicate is undefined — the mid-query call
         // raises existence_error (§8.9.4), it does not fail over the
         // patched-dead chain.
         Assert.True(e.Query(

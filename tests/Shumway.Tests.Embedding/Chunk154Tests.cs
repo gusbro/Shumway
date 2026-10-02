@@ -115,16 +115,16 @@ public class Chunk154Tests
         e.Query("d(2).");
         // Within a single query: assertz then call. The new clause
         // must be visible to the call that follows the assertz in
-        // the SAME query.
+        // the same query.
         // Note: the chunk-154 invalidate-on-mutate forces a rebuild
-        // for the NEXT query; within-query the call goes through
+        // for the next query; within-query the call goes through
         // the existing dispatch. With sentinel born=0/died=MaxValue
         // the existing clauses stay visible — the question is
         // whether the just-asserted clause appears in the live
         // dispatch within this query. With chunk-154's rebuild model
         // it doesn't (the rebuild happens on the next query). This
         // matches Phase-8 chunk-114 expectations for chain dispatch
-        // ONLY when the chain extension hooks have run; for the
+        // only when the chain extension hooks have run; for the
         // indexed case, the chunk-127 extension is a no-op (silently
         // returns because there's no chain). So within-query visibility
         // for indexed dynamics doesn't work in chunk 154 — it's a

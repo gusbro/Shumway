@@ -53,11 +53,24 @@ Remove-Item (Join-Path $logDir '*.log') -Force -ErrorAction SilentlyContinue
 # rides alone; the engine ADRs and chunk families pad the lighter buckets.
 # Each partition expression is fully parenthesized BEFORE the Slow exclusion
 # is AND-ed on ('&' binds tighter than '|' in vstest filters).
+# Everything the named buckets leave, split by the first letter of the class
+# (2026-09-30 timing: one bucket of it ran 9-10 minutes while the others
+# finished in under two). A letter matches the class right after the
+# namespace, never a method.
+$rest = "(FullyQualifiedName!~.Adr0)&(FullyQualifiedName!~.Chunk1)&(FullyQualifiedName!~.Chunk2)&(FullyQualifiedName!~.Chunk3)&(FullyQualifiedName!~.Phase)"
+function Letters([string] $l) {
+    ($l.ToCharArray() | ForEach-Object { "(FullyQualifiedName~Embedding.$_)" }) -join '|'
+}
 $parts = @(
     @{ Name = 'dbg35';   Expr = "(FullyQualifiedName~.Adr035)" },
     @{ Name = 'dbg36+';  Expr = "(FullyQualifiedName~.Adr036)|((FullyQualifiedName~.Adr0)&(FullyQualifiedName!~.Adr035))|(FullyQualifiedName~.Chunk1)" },
     @{ Name = 'ch23-ph'; Expr = "(FullyQualifiedName~.Chunk2)|(FullyQualifiedName~.Chunk3)|(FullyQualifiedName~.Phase)" },
-    @{ Name = 'rest';    Expr = "(FullyQualifiedName!~.Adr0)&(FullyQualifiedName!~.Chunk1)&(FullyQualifiedName!~.Chunk2)&(FullyQualifiedName!~.Chunk3)&(FullyQualifiedName!~.Phase)" }
+    @{ Name = 'rest-ac'; Expr = "$rest&($(Letters 'ABC'))" },
+    @{ Name = 'rest-di'; Expr = "$rest&($(Letters 'DEFGHI'))" },
+    @{ Name = 'rest-jp'; Expr = "$rest&($(Letters 'JKLMNOP'))" },
+    # The complement of the other three: Q to Z, and a class outside the
+    # namespace, so every test still runs exactly once.
+    @{ Name = 'rest-qz'; Expr = "$rest&(FullyQualifiedName!~Embedding.A)&(FullyQualifiedName!~Embedding.B)&(FullyQualifiedName!~Embedding.C)&(FullyQualifiedName!~Embedding.D)&(FullyQualifiedName!~Embedding.E)&(FullyQualifiedName!~Embedding.F)&(FullyQualifiedName!~Embedding.G)&(FullyQualifiedName!~Embedding.H)&(FullyQualifiedName!~Embedding.I)&(FullyQualifiedName!~Embedding.J)&(FullyQualifiedName!~Embedding.K)&(FullyQualifiedName!~Embedding.L)&(FullyQualifiedName!~Embedding.M)&(FullyQualifiedName!~Embedding.N)&(FullyQualifiedName!~Embedding.O)&(FullyQualifiedName!~Embedding.P)" }
 )
 # Two phases. The buckets run the PARALLEL population — in-process xUnit
 # parallelism is on (AssemblyInfo: MaxParallelThreads=3), so each bucket

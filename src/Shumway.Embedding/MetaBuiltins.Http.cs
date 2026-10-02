@@ -11,7 +11,7 @@ public static partial class MetaBuiltins
     private static System.Net.Http.HttpClient HttpClientInstance
         => _httpClient ??= new System.Net.Http.HttpClient();
 
-    /// <summary><c>http_download(+URL, +File)</c> — downloads URL's RAW BYTES
+    /// <summary><c>http_download(+URL, +File)</c> — downloads URL's raw bytes
     /// to File. Byte-fidelity is the contract: no text decoding happens, so a
     /// page in any charset round-trips exactly. Synchronous (the engine's
     /// builtins run within the interpreter thread); a network/HTTP failure is

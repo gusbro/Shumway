@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-035 phase D1 — breakpoints. Debug-compiled code emits NO extra instructions;
+/// ADR-035 phase D1 — breakpoints. Debug-compiled code emits no extra instructions;
 /// it records, per predicate, the offsets a debugger may stop at (clause entries and
 /// the first instruction of each body goal) against interned source sites. Arming a
 /// breakpoint patches the single opcode byte at such an offset to <c>Break</c> and
@@ -168,7 +168,7 @@ public class Adr035BreakTests
     [Fact]
     public void ABreakpointSurvivesAcrossQueries()
     {
-        // The armed SITE is the truth; the byte patches are re-derived per query,
+        // The armed site is the truth; the byte patches are re-derived per query,
         // because the code space can be relinked or compacted between them.
         var engine = DebugEngine("""
             p(a).

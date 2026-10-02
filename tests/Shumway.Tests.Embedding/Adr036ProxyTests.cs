@@ -81,7 +81,7 @@ public class Adr036ProxyTests
         {
             DapTestClient client = harness.Client;
 
-            // initialize is answered by the ADAPTER (no debuggee yet).
+            // initialize is answered by the adapter (no debuggee yet).
             JsonElement init = client.Request("initialize");
             Assert.True(init.GetProperty("body")
                 .GetProperty("supportsConditionalBreakpoints").GetBoolean());
@@ -114,7 +114,7 @@ public class Adr036ProxyTests
     [Fact]
     public void Launch_RunInTerminalHandshake_ThenDebugs()
     {
-        // The launch flow, with the test playing BOTH ends: VS Code (answer the
+        // The launch flow, with the test playing both ends: VS Code (answer the
         // runInTerminal reverse request) and the terminal (the "launched" debuggee is a
         // server this test starts on the port the adapter chose).
         PrologEngine? engine = null;

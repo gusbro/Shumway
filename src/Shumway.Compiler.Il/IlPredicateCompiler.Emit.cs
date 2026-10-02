@@ -9,7 +9,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Enable native-block inlining for subsequent compiles on this
     /// thread (see <see cref="_nativeInline"/>). Returns the previous context so
     /// the caller can restore it. Static — the context is thread-static, so it must
-    /// be set on whichever thread actually runs the Sigil emit.</summary>
+    /// be set on whichever thread actually runs the emit.</summary>
     public static Shumway.Compiler.NativeC.NativeInlineContext? BeginNativeInline(
         Shumway.Compiler.NativeC.NativeInlineContext? context)
     {
@@ -24,7 +24,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The float-literal pool the predicate currently being compiled
     /// indexes (its own module's <c>FloatLiterals</c>), set by the driver before
     /// compiling. <c>get_float</c>/<c>put_float</c> resolve their <c>literalId</c>
-    /// against this and bake the VALUE as an <c>ldc.r8</c> constant — so the IL is
+    /// against this and bake the value as an <c>ldc.r8</c> constant — so the IL is
     /// process-independent (no patch needed for persisted bundles). When null,
     /// the float opcodes report as unsupported and the predicate stays Tier-0
     /// (safe fallback). Thread-static: set on whichever thread runs the emit.</summary>
@@ -80,7 +80,7 @@ public sealed partial class IlPredicateCompiler
         _persistPatches = null;
     }
 
-    private static void EmitAtomId(Sigil.Emit<PredicateDelegate> emit, int atomId)
+    private static void EmitAtomId(IlEmit emit, int atomId)
     {
         if (_persistPatches is null) { emit.LoadConstant(atomId); return; }
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
@@ -98,7 +98,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
-    private static void EmitFunctorId(Sigil.Emit<PredicateDelegate> emit, int functorId)
+    private static void EmitFunctorId(IlEmit emit, int functorId)
     {
         if (_persistPatches is null) { emit.LoadConstant(functorId); return; }
         var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
@@ -118,7 +118,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static void EmitResumeMarker(
-        Sigil.Emit<PredicateDelegate> emit, int functorId, int cursor)
+        IlEmit emit, int functorId, int cursor)
     {
         if (_persistPatches is null)
         {
@@ -142,7 +142,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
-    private static void EmitBuiltinId(Sigil.Emit<PredicateDelegate> emit, int builtinId)
+    private static void EmitBuiltinId(IlEmit emit, int builtinId)
     {
         if (_persistPatches is null) { emit.LoadConstant(builtinId); return; }
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
@@ -157,17 +157,20 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
+    /// <summary>The IL of bytecode [start, end). In a continuation method with
+    /// a resume point (ADR-061, CpsResumePoint), only the emission that holds
+    /// the point runs, and from the point on.</summary>
     private static void EmitClauseBody(
-        Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
-        Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
+        IlEmit emit, byte[] code, int start, int end,
+        IlLabel failLabel, IReadOnlyList<CallSite> callSites,
         Func<int>? callSiteIndexCounter = null,
-        Sigil.Label[]? resumeLabels = null,
+        IlLabel[]? resumeLabels = null,
         SelfDelegateEmitter? emitSelfDelegate = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
         bool suppressProceedReturn = false,
         int cursorBase = 1,
         int selfFunctorId = -1,
-        Sigil.Label? selfTailLabel = null,
+        IlLabel? selfTailLabel = null,
         bool resetCursorBeforeSelfTail = false,
         IReadOnlyDictionary<int, InlineSite>? inlineSites = null,
         IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null,
@@ -176,7 +179,50 @@ public sealed partial class IlPredicateCompiler
         string localSalt = "",
         GuardContEmitContext? guardContCtx = null)
     {
-        // In region mode every member is emitted into ONE shared IL method, so a
+        var rp = _cps?.Prune;
+        if (rp is null || rp.State == CpsPruneState.Active)
+        {
+            EmitClauseBodyCore(emit, code, start, end, failLabel, callSites, callSiteIndexCounter, resumeLabels,
+            emitSelfDelegate, calleeMap, suppressProceedReturn, cursorBase, selfFunctorId, selfTailLabel,
+            resetCursorBeforeSelfTail, inlineSites, ruleInlineSites, regionCtx, forceLeafRuleInline,
+            localSalt, guardContCtx, resumeFrom: null);
+            return;
+        }
+        if (rp.State == CpsPruneState.Done || !ReferenceEquals(code, rp.Code)
+            || rp.PcAfter <= start || rp.PcAfter >= end)
+            return;
+        rp.State = CpsPruneState.Active;
+        try
+        {
+            EmitClauseBodyCore(emit, code, start, end, failLabel, callSites, callSiteIndexCounter, resumeLabels,
+            emitSelfDelegate, calleeMap, suppressProceedReturn, cursorBase, selfFunctorId, selfTailLabel,
+            resetCursorBeforeSelfTail, inlineSites, ruleInlineSites, regionCtx, forceLeafRuleInline,
+            localSalt, guardContCtx, resumeFrom: rp);
+        }
+        finally { rp.State = CpsPruneState.Done; }
+    }
+
+    private static void EmitClauseBodyCore(
+        IlEmit emit, byte[] code, int start, int end,
+        IlLabel failLabel, IReadOnlyList<CallSite> callSites,
+        Func<int>? callSiteIndexCounter,
+        IlLabel[]? resumeLabels,
+        SelfDelegateEmitter? emitSelfDelegate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        bool suppressProceedReturn,
+        int cursorBase,
+        int selfFunctorId,
+        IlLabel? selfTailLabel,
+        bool resetCursorBeforeSelfTail,
+        IReadOnlyDictionary<int, InlineSite>? inlineSites,
+        IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites,
+        RegionEmitContext? regionCtx,
+        bool forceLeafRuleInline,
+        string localSalt,
+        GuardContEmitContext? guardContCtx,
+        CpsResumePoint? resumeFrom)
+    {
+        // In region mode every member is emitted into one shared IL method, so a
         // pc-based local name (unique within a single predicate, where pc starts at
         // 0) collides across members — two members each with, say, a put_variable at
         // pc 0 would both declare `freshRef_pc0`. Salt every per-member-emitted local
@@ -188,28 +234,35 @@ public sealed partial class IlPredicateCompiler
         // region method, or an inlined callee body (whose callee-relative pcs
         // collide with the caller's own pc-named locals).
         string lt = regionCtx is null ? localSalt : $"_rm{regionCtx.CurrentMemberIndex}";
-        int pc = start;
+        int pc = resumeFrom is null ? start
+            : CpsEnterResumePoint(emit, resumeFrom, callSiteIndexCounter, resumeLabels);
         // ADR-022 item 2 — the atom most recently put into argument register 0, or
         // -1. A `'$native_run'('$nb$…', regs)` goal loads its block-name atom into
         // A0 just before the call (see the disasm in NativeBundleTests); tracking it
         // lets the CallBuiltin handler recover which block to inline.
         int regZeroAtom = -1;
-        // ADR-025 stage (b) — inline-ITE labels. `jump` targets (the END join)
-        // get a label marked when the walk reaches the address; the ELSE
+        // ADR-025 stage (b) — inline-ITE labels. `jump` targets (the end join)
+        // get a label marked when the walk reaches the address; the else
         // resume label (a cursor-switch target) is marked at the trust_me.
-        Dictionary<int, Sigil.Label>? jumpLabels = null;
-        Dictionary<int, Sigil.Label>? iteElseLabels = null;
+        Dictionary<int, IlLabel>? jumpLabels = null;
+        Dictionary<int, IlLabel>? iteElseLabels = null;
+        // ADR-060: a window of instructions cannot span a pc a branch lands on.
+        bool LabelAt(int p) => (jumpLabels?.ContainsKey(p) ?? false)
+            || (iteElseLabels?.ContainsKey(p) ?? false);
         while (pc < end)
         {
             var op = (Opcode)code[pc];
             if (jumpLabels is not null && jumpLabels.Remove(pc, out var joinLabel))
             {
-                // The END join is reachable from the then-branch's jump AND by
+                // The end join is reachable from the then-branch's jump and by
                 // falling through from the else branch; register state tracked
                 // across the join is branch-dependent → reset.
                 emit.MarkLabel(joinLabel);
                 regZeroAtom = -1;
             }
+            // Compiled code counts no inferences: only the interpreter does
+            // (time/1, statistics(inferences, _)).
+            CpsInstructionBoundary(emit, regionCtx is not null);   // ADR-061
             // Region compilation (Stage 3): a member block's proceed /
             // intra-region call become br's into the shared region method instead
             // of returning to the dispatch loop. Handled before the normal opcode
@@ -232,8 +285,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -245,8 +298,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellIntMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -262,9 +315,9 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(regIdx);
                 emit.LoadArgument(0);
                 emit.LoadConstant(_ilFloatPool![literalId]);
-                emit.Call(EngineMakeFloatMethod);
-                emit.Call(CellRefMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, EngineMakeFloatMethod);
+                EmitHelperCall(emit, CellRefMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -275,8 +328,8 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -288,7 +341,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(srcReg);
                 emit.LoadConstant(argReg);
-                emit.Call(EngineUnifyRegistersMethod);
+                EmitHelperCall(emit, EngineUnifyRegistersMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -298,12 +351,12 @@ public sealed partial class IlPredicateCompiler
                 // X[dest] := X[arg]
                 int dest = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(dest);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, dest, () =>
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, EngineGetRegisterMethod);
+                });
 #if DEBUG
                 if (DebugMode)
                 {
@@ -312,7 +365,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(dest);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckGetVariableXMethod);
+                    EmitHelperCall(emit, DbgCheckGetVariableXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -323,12 +376,12 @@ public sealed partial class IlPredicateCompiler
                 // Y[slot] := X[arg]
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(slot);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetYMethod);
+                EmitStoreY(emit, slot, () =>
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, EngineGetRegisterMethod);
+                });
 #if DEBUG
                 if (DebugMode)
                 {
@@ -337,7 +390,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckGetVariableYMethod);
+                    EmitHelperCall(emit, DbgCheckGetVariableYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -350,10 +403,8 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.LoadArgument(0);
-                emit.LoadConstant(slot);
-                emit.Call(EngineGetYMethod);
-                emit.Call(EngineUnifyMethod);
+                EmitLoadY(emit, slot);
+                EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -363,11 +414,11 @@ public sealed partial class IlPredicateCompiler
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 if (arg == 0) regZeroAtom = atomId;   // ADR-022 — track A0 for $native_run
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () =>
+                {
+                    EmitAtomId(emit, atomId);
+                    EmitHelperCall(emit, CellAtomMethod);
+                });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -375,11 +426,11 @@ public sealed partial class IlPredicateCompiler
             {
                 int value = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () =>
+                {
+                    emit.LoadConstant((long)value);
+                    EmitHelperCall(emit, CellIntMethod);
+                });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -388,24 +439,24 @@ public sealed partial class IlPredicateCompiler
                 // reg := Cell.Ref(MakeFloat(value)); value baked as ldc.r8.
                 int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadArgument(0);
-                emit.LoadConstant(_ilFloatPool![literalId]);
-                emit.Call(EngineMakeFloatMethod);
-                emit.Call(CellRefMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () =>
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(_ilFloatPool![literalId]);
+                    EmitHelperCall(emit, EngineMakeFloatMethod);
+                    EmitHelperCall(emit, CellRefMethod);
+                });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.PutNil)
             {
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () =>
+                {
+                    emit.LoadConstant(AtomTable.EmptyListId);
+                    EmitHelperCall(emit, CellAtomMethod);
+                });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -414,12 +465,12 @@ public sealed partial class IlPredicateCompiler
                 // X[arg] := X[src]
                 int src = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadArgument(0);
-                emit.LoadConstant(src);
-                emit.Call(EngineGetRegisterMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () =>
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(src);
+                    EmitHelperCall(emit, EngineGetRegisterMethod);
+                });
 #if DEBUG
                 if (DebugMode)
                 {
@@ -428,10 +479,17 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(src);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutValueXMethod);
+                    EmitHelperCall(emit, DbgCheckPutValueXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutValueY
+                && TryEmitSlotIdentity(emit, code, pc, end, callSites, failLabel, out int afterIdentity))
+            {
+                regZeroAtom = -1;
+                pc = afterIdentity;
                 continue;
             }
             if (op == Opcode.PutValueY)
@@ -439,12 +497,7 @@ public sealed partial class IlPredicateCompiler
                 // X[arg] := Y[slot]
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadArgument(0);
-                emit.LoadConstant(slot);
-                emit.Call(EngineGetYMethod);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () => EmitLoadY(emit, slot));
 #if DEBUG
                 if (DebugMode)
                 {
@@ -453,7 +506,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutValueYMethod);
+                    EmitHelperCall(emit, DbgCheckPutValueYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -468,19 +521,13 @@ public sealed partial class IlPredicateCompiler
                 // assign it to both X[dest] and X[arg].
                 var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}{lt}");
                 emit.LoadArgument(0);
-                emit.Call(EngineAllocateHeapUnboundMethod);
-                emit.Call(CellRefMethod);
+                EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
+                EmitHelperCall(emit, CellRefMethod);
                 emit.StoreLocal(refLocal);
                 // X[dest] = local
-                emit.LoadArgument(0);
-                emit.LoadConstant(dest);
-                emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, dest, () => emit.LoadLocal(refLocal));
                 // X[arg] = local
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitSetRegisterConst(emit, arg, () => emit.LoadLocal(refLocal));
 #if DEBUG
                 if (DebugMode)
                 {
@@ -489,7 +536,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(dest);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutVariableXMethod);
+                    EmitHelperCall(emit, DbgCheckPutVariableXMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -502,17 +549,11 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}{lt}");
                 emit.LoadArgument(0);
-                emit.Call(EngineAllocateHeapUnboundMethod);
-                emit.Call(CellRefMethod);
+                EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
+                EmitHelperCall(emit, CellRefMethod);
                 emit.StoreLocal(refLocal);
-                emit.LoadArgument(0);
-                emit.LoadConstant(slot);
-                emit.LoadLocal(refLocal);
-                emit.Call(EngineSetYMethod);
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.LoadLocal(refLocal);
-                emit.Call(EngineSetRegisterMethod);
+                EmitStoreY(emit, slot, () => emit.LoadLocal(refLocal));
+                EmitSetRegisterConst(emit, arg, () => emit.LoadLocal(refLocal));
 #if DEBUG
                 if (DebugMode)
                 {
@@ -521,7 +562,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(slot);
                     emit.LoadConstant(arg);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPutVariableYMethod);
+                    EmitHelperCall(emit, DbgCheckPutVariableYMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -535,24 +576,22 @@ public sealed partial class IlPredicateCompiler
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_alloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineEGetter);
+                    EmitHelperCall(emit, EngineEGetter);
                     emit.StoreLocal(preELocal);
                     emit.LoadArgument(0);
                     emit.LoadConstant(n);
-                    emit.Call(EngineAllocateMethod);
+                    EmitHelperCall(emit, EngineAllocateMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(_emitOwnerFid);
                     emit.LoadConstant(n);
                     emit.LoadConstant(pc);
                     emit.LoadLocal(preELocal);
-                    emit.Call(DbgCheckAllocateMethod);
+                    EmitHelperCall(emit, DbgCheckAllocateMethod);
                 }
                 else
 #endif
                 {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(n);
-                    emit.Call(EngineAllocateMethod);
+                    EmitAllocateOp(emit, n);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -564,21 +603,21 @@ public sealed partial class IlPredicateCompiler
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_dealloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineEGetter);
+                    EmitHelperCall(emit, EngineEGetter);
                     emit.StoreLocal(preELocal);
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(_emitOwnerFid);
                     emit.LoadLocal(preELocal);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckDeallocateMethod);
+                    EmitHelperCall(emit, DbgCheckDeallocateMethod);
                 }
                 else
 #endif
                 {
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -589,24 +628,23 @@ public sealed partial class IlPredicateCompiler
             {
                 int n = BytecodeIO.ReadInt32(code, pc + 1);
                 int slot = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(n);
-                emit.Call(EngineAllocateMethod);
+                EmitAllocateOp(emit, n);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelMethod);
+                EmitHelperCall(emit, EngineGetLevelMethod);
                 pc += OpcodeTable.Get(op).Size;   // 10
                 continue;
             }
             if (op == Opcode.DeallocateProceed)
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
                 // Proceed semantics in IL: success return.
                 if (!suppressProceedReturn)
                 {
+                    EmitCpsProceed(emit);   // ADR-061
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                 }
                 pc += OpcodeTable.Get(op).Size;   // 2
                 continue;
@@ -624,15 +662,15 @@ public sealed partial class IlPredicateCompiler
                 // ADR-025 — the inline-ITE choice point (body-CP arity
                 // sentinel; the eligibility filters guarantee no
                 // dispatch-chain try_me_else reaches a body emit). The CP's
-                // cursor is the ELSE re-entry point, marked at TrustMe.
+                // cursor is the else re-entry point, marked at TrustMe.
                 int elseAddr = BytecodeIO.ReadInt32(code, pc + 1);
                 int elseCursor;
-                Sigil.Label elseResumeLabel;
+                IlLabel elseResumeLabel;
                 if (regionCtx is not null)
                 {
-                    // ITE in a REGION member: the plan gave this try_me_else
+                    // ITE in a region member: the plan gave this try_me_else
                     // pc a cursor (it rides the BuiltinResume site kind); the
-                    // CP carries the REGION delegate + that cursor.
+                    // CP carries the region delegate + that cursor.
                     elseCursor = regionCtx.CursorBySite[
                         (regionCtx.CurrentMemberIndex, pc)];
                     elseResumeLabel = regionCtx.CursorLabels[elseCursor];
@@ -648,11 +686,20 @@ public sealed partial class IlPredicateCompiler
                     elseResumeLabel = resumeLabels[iteSiteIdx - 1];
                 }
                 (iteElseLabels ??= new())[elseAddr] = elseResumeLabel;
+                if (emitSelfDelegate is not null && WamCps)
+                {
+                    // ADR-061: the else choice point is a WAM one, as the
+                    // predicate's other choice points.
+                    int wamElse = elseCursor;
+                    EmitPushIlChoicePoint(emit, emitSelfDelegate, e => e.LoadConstant(wamElse), 0, wamElse);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 if (emitSelfDelegate is not null)
                 {
                     // Direct re-entry (ADR-025 follow-up): the CP carries this
-                    // predicate's OWN delegate + the ELSE cursor — a failed
+                    // predicate's own delegate + the else cursor — a failed
                     // condition re-enters the method straight at the cursor
                     // switch, the same contract as a clause-alt chain CP. The
                     // marker form below instead pays Resume → Pc=marker →
@@ -670,19 +717,31 @@ public sealed partial class IlPredicateCompiler
                     EmitResumeMarker(emit, _emitOwnerFid, elseCursor);
                 }
                 emit.LoadConstant(0);
-                emit.Call(EnginePushIlCpMethod);
+                EmitHelperCall(emit, EnginePushIlCpMethod);
+                if (emitSelfDelegate is not null)
+                {
+                    CpsRecordAlternative(elseCursor);
+                    EmitCpsTagChoicePoint(emit);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.TrustMe)
             {
-                // ADR-025 — the ELSE entry. Reached ONLY via the cursor switch
+                // ADR-025 — the else entry. Reached only via the cursor switch
                 // on backtrack (the CP pop already happened in TryBacktrack;
                 // trust_me itself needs no IL); the first pass never falls
                 // through — the preceding `jump` is unconditional.
                 if (iteElseLabels is null || !iteElseLabels.Remove(pc, out var elseLabel))
-                    throw new InvalidOperationException(
-                        $"trust_me at pc={pc} has no pending inline-ITE else label.");
+                {
+                    // ADR-061: a continuation method that starts inside the
+                    // construct never reaches its else (the alternatives
+                    // method does).
+                    if (_cps?.Prune is not { State: CpsPruneState.Active })
+                        throw new InvalidOperationException(
+                            $"trust_me at pc={pc} has no pending inline-ITE else label.");
+                    elseLabel = emit.DefineLabel($"ite_else_unreached_{NextLabelSeq()}");
+                }
                 emit.MarkLabel(elseLabel);
                 regZeroAtom = -1;
                 pc += 1;
@@ -691,9 +750,9 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.Jump)
             {
                 // ADR-025 — unconditional intra-clause branch (the then-branch
-                // END join). Forward-only by construction.
+                // end join). Forward-only by construction.
                 int target = BytecodeIO.ReadInt32(code, pc + 1);
-                jumpLabels ??= new Dictionary<int, Sigil.Label>();
+                jumpLabels ??= new Dictionary<int, IlLabel>();
                 if (!jumpLabels.TryGetValue(target, out var endLabel))
                 {
                     endLabel = emit.DefineLabel($"ite_end_{target}_{NextLabelSeq()}");
@@ -708,10 +767,10 @@ public sealed partial class IlPredicateCompiler
                 // Flush pending attribute wakeups before committing — a failed
                 // constraint must backtrack while choice points still exist.
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
-                emit.Call(EngineNeckCutMethod);
+                EmitHelperCall(emit, EngineNeckCutMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -721,7 +780,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelMethod);
+                EmitHelperCall(emit, EngineGetLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -731,7 +790,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineGetLevelBMethod);
+                EmitHelperCall(emit, EngineGetLevelBMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -743,26 +802,26 @@ public sealed partial class IlPredicateCompiler
                 // about-to-be-pruned choice points.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineCutToLevelMethod);
+                EmitHelperCall(emit, EngineCutToLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.SoftCut)
             {
                 // ADR-037 — inline ( Cond *-> Then ; Else ) commit. As with cut,
-                // flush pending attribute wakeups first; then neutralise ONLY the
-                // ELSE choice point named by Y[slot], leaving the condition's CPs.
+                // flush pending attribute wakeups first; then neutralise only the
+                // else choice point named by Y[slot], leaving the condition's CPs.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineSoftCutToLevelMethod);
+                EmitHelperCall(emit, EngineSoftCutToLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -848,12 +907,12 @@ public sealed partial class IlPredicateCompiler
                         // is correct.
                     }
                     // inside a region the cursor comes from the
-                    // PLAN (keyed by this site's pc) and the marker carries
+                    // plan (keyed by this site's pc) and the marker carries
                     // the REGION's fid, so the dispatch loop re-enters the
                     // region method at the right switch slot. Standalone
                     // keeps the sequential counter.
                     int resumeCursor;
-                    Sigil.Label metaResumeLabel;
+                    IlLabel metaResumeLabel;
                     int markerOwnerFid;
                     if (regionCtx is not null)
                     {
@@ -876,10 +935,10 @@ public sealed partial class IlPredicateCompiler
 
                     var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
-                    // A backtrackable builtin reached THROUGH this meta-call
+                    // A backtrackable builtin reached through this meta-call
                     // captures BuiltinReturnPc for its resume, exactly as one
                     // at a direct call_builtin site does. Without it the
-                    // builtin keeps whatever the PREVIOUS builtin call left
+                    // builtin keeps whatever the previous builtin call left
                     // there, and its first retry re-enters somewhere that was
                     // never its continuation. Tier-0's meta-call arm sets it
                     // for the same reason (BytecodeInterpreter, the IsCall
@@ -893,13 +952,14 @@ public sealed partial class IlPredicateCompiler
                     if (tailCall)
                     {
                         emit.LoadArgument(0);
-                        emit.Call(EngineCpGetter);
+                        EmitHelperCall(emit, EngineCpGetter);
                     }
                     else
                     {
                         EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
+                        CpsRecordContinuation(resumeCursor);   // ADR-061
                     }
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
 
                     // Compute the call arity and cut barrier per builtin.
                     //   call/N : arity = N, barrier = engine.B
@@ -912,18 +972,18 @@ public sealed partial class IlPredicateCompiler
                         // X[1] cell once and extracts the int payload.
                         emit.LoadArgument(0);
                         emit.LoadConstant(1);
-                        emit.Call(IlMetaCallHelperReadIntRegisterMethod);
+                        EmitHelperCall(emit, IlMetaCallHelperReadIntRegisterMethod);
                     }
                     else
                     {
                         emit.LoadConstant(builtinArity);
                         emit.LoadArgument(0);
-                        emit.Call(EngineBGetter);
+                        EmitHelperCall(emit, EngineBGetter);
                     }
                     // convertBody: call/N converts (SS7.6.2); $call/2
                     // dispatches an already-converted body.
                     emit.LoadConstant(!builtinEntry.IsDollarCall);
-                    emit.Call(IlMetaCallHelperDispatchMethod);
+                    EmitHelperCall(emit, IlMetaCallHelperDispatchMethod);
                     emit.StoreLocal(target);
 
                     // target == -1 → fail
@@ -952,18 +1012,43 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
-                        emit.Call(EngineSetCpMethod);
+                        EmitHelperCall(emit, EngineSetCpMethod);
                     }
                     emit.LoadArgument(0);
                     emit.LoadLocal(target);
-                    emit.Call(EngineSetPcMethod);
+                    EmitHelperCall(emit, EngineSetPcMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(true);
-                    emit.Call(EngineIlTailCallPendingSetter);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
 
                     emit.MarkLabel(metaResumeLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
+                // ADR-061: fail/0 is the fail branch, not a builtin dispatch. A
+                // conditional branch on a constant: the emitter rejects the code after
+                // an unconditional one as unreachable; the JIT folds it.
+                if (CpsEmitting && builtinArity == 0 && builtinEntry.Name is "fail" or "false")
+                {
+                    emit.LoadConstant(1);
+                    emit.BranchIfTrue(failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
+                // ==/2 and \==/2 without the builtin dispatch, as the wasm tier
+                // decides them in the module (EmitInlineCompare).
+                if (builtinArity == 2 && builtinEntry.Name is "==" or "\\==")
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(0);
+                    emit.LoadConstant(1);
+                    EmitHelperCall(emit, EngineRegistersIdenticalMethod);
+                    if (builtinEntry.Name == "==") emit.BranchIfFalse(failLabel);
+                    else emit.BranchIfTrue(failLabel);
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
@@ -982,11 +1067,11 @@ public sealed partial class IlPredicateCompiler
                 // the post-builtin label. Non-backtrackable builtins skip
                 // the cursor allocation — straight invocation.
                 bool isBacktrackable = builtinEntry.IsBacktrackable;
-                Sigil.Label? builtinResumeLabel = null;
+                IlLabel? builtinResumeLabel = null;
                 if (isBacktrackable)
                 {
                     // region members take their cursor from the
-                    // PLAN (keyed by pc) with the REGION's fid in the marker;
+                    // plan (keyed by pc) with the REGION's fid in the marker;
                     // standalone keeps the sequential counter.
                     int resumeCursor;
                     int markerOwnerFid;
@@ -1010,13 +1095,14 @@ public sealed partial class IlPredicateCompiler
                     // engine.BuiltinReturnPc = EncodeResumeMarker(ownerFid, resumeCursor);
                     emit.LoadArgument(0);
                     EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
+                    CpsRecordContinuation(resumeCursor);   // ADR-061
                 }
                 EmitBuiltinId(emit, builtinId);
-                emit.Call(BuiltinsRegistryGetByIdMethod);
-                emit.Call(BuiltinEntryImplGetter);
+                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
+                EmitHelperCall(emit, BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
-                emit.Call(BuiltinImplInvokeMethod);
+                EmitHelperCall(emit, BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
                 if (isBacktrackable)
                 {
@@ -1054,21 +1140,21 @@ public sealed partial class IlPredicateCompiler
                     // A preceding Deallocate emit already restored Cp.
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
-                    emit.Call(EngineCpGetter);
-                    emit.Call(EngineBuiltinReturnPcSetter);
+                    EmitHelperCall(emit, EngineCpGetter);
+                    EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                 }
                 EmitBuiltinId(emit, tailBuiltinId);
-                emit.Call(BuiltinsRegistryGetByIdMethod);
-                emit.Call(BuiltinEntryImplGetter);
+                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
+                EmitHelperCall(emit, BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
-                emit.Call(BuiltinImplInvokeMethod);
+                EmitHelperCall(emit, BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
                 // Proceed. A builtin that itself threaded a tail dispatch set
                 // IlTailCallPending + Pc; returning true defers to the outer
                 // dispatch loop either way (it honours pending, else runs the
                 // caller's continuation).
                 emit.LoadConstant(true);
-                emit.Return();
+                EmitReturn(emit);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1079,7 +1165,7 @@ public sealed partial class IlPredicateCompiler
                 int sz = OpcodeTable.Get(op).Size;
 
                 // Fused binary-structure peephole (2026-07), the get_list twin: the
-                // window must consume the WHOLE structure — arity exactly 2 — or
+                // window must consume the whole structure — arity exactly 2 — or
                 // the ops after it would read the mode state the fused call skips.
                 int pc1 = pc + sz;
                 int pc2 = pc1 + 5;
@@ -1103,7 +1189,7 @@ public sealed partial class IlPredicateCompiler
                         emit.LoadConstant(arg);
                         emit.LoadConstant(slot1);
                         emit.LoadConstant(slot2);
-                        emit.Call(varVar
+                        EmitHelperCall(emit, varVar
                             ? EngineGetStruct2VarXVarXMethod
                             : EngineGetStruct2ValXValXMethod);
                         emit.BranchIfFalse(failLabel);
@@ -1115,7 +1201,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
-                emit.Call(EngineGetStructureMethod);
+                EmitHelperCall(emit, EngineGetStructureMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += sz;
                 continue;
@@ -1127,7 +1213,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutStructureMethod);
+                EmitHelperCall(emit, EnginePutStructureMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1139,7 +1225,7 @@ public sealed partial class IlPredicateCompiler
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(packed & 0xFFFFFF);
                 emit.LoadConstant(packed >> 24);
-                emit.Call(EnginePutStructureReservedMethod);
+                EmitHelperCall(emit, EnginePutStructureReservedMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1148,7 +1234,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutListReservedMethod);
+                EmitHelperCall(emit, EnginePutListReservedMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1157,8 +1243,8 @@ public sealed partial class IlPredicateCompiler
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 EmitAtomId(emit, atomId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1168,8 +1254,8 @@ public sealed partial class IlPredicateCompiler
                 int value = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant((long)value);
-                emit.Call(CellIntMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellIntMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1178,8 +1264,8 @@ public sealed partial class IlPredicateCompiler
             {
                 emit.LoadArgument(0);
                 emit.LoadConstant(AtomTable.EmptyListId);
-                emit.Call(CellAtomMethod);
-                emit.Call(EngineUnifyArgCellMethod);
+                EmitHelperCall(emit, CellAtomMethod);
+                EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += 1;
                 continue;
@@ -1189,7 +1275,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyVariableXMethod);
+                EmitHelperCall(emit, EngineUnifyVariableXMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1198,7 +1284,7 @@ public sealed partial class IlPredicateCompiler
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
-                emit.Call(EngineUnifyStructureMethod);
+                EmitHelperCall(emit, EngineUnifyStructureMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1206,7 +1292,7 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.UnifyList)   // ADR-019
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineUnifyListMethod);
+                EmitHelperCall(emit, EngineUnifyListMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += 1;
                 continue;
@@ -1216,7 +1302,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyValueXMethod);
+                EmitHelperCall(emit, EngineUnifyValueXMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1226,7 +1312,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyVariableYMethod);
+                EmitHelperCall(emit, EngineUnifyVariableYMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1235,7 +1321,7 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineUnifyValueYMethod);
+                EmitHelperCall(emit, EngineUnifyValueYMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1245,7 +1331,7 @@ public sealed partial class IlPredicateCompiler
                 int count = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(count);
-                emit.Call(EngineUnifyVoidMethod);
+                EmitHelperCall(emit, EngineUnifyVoidMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1255,7 +1341,7 @@ public sealed partial class IlPredicateCompiler
                 int sz = OpcodeTable.Get(op).Size;
 
                 // Fused cons peephole (2026-07): `get_list; unify_*_x; unify_variable_x`
-                // — the complete match/build of one cons — becomes ONE Activation call
+                // — the complete match/build of one cons — becomes one Activation call
                 // (see GetListVarXVarX / GetListValXVarX). Only when the whole window
                 // is inside this range and no ADR-025 label lands mid-window (a branch
                 // into the middle would skip the fused prefix).
@@ -1273,11 +1359,18 @@ public sealed partial class IlPredicateCompiler
                     {
                         int slot1 = BytecodeIO.ReadInt32(code, pc1 + 1);
                         int slot2 = BytecodeIO.ReadInt32(code, pc2 + 1);
+                        if (TryEmitGetList(emit, op1 == Opcode.UnifyVariableX
+                                ? ListWindow.VarXVarX : ListWindow.ValXVarX,
+                            arg, slot1, slot2, failLabel))
+                        {
+                            pc = pc2 + 5;
+                            continue;
+                        }
                         emit.LoadArgument(0);
                         emit.LoadConstant(arg);
                         emit.LoadConstant(slot1);
                         emit.LoadConstant(slot2);
-                        emit.Call(op1 == Opcode.UnifyVariableX
+                        EmitHelperCall(emit, op1 == Opcode.UnifyVariableX
                             ? EngineGetListVarXVarXMethod
                             : EngineGetListValXVarXMethod);
                         emit.BranchIfFalse(failLabel);
@@ -1286,10 +1379,19 @@ public sealed partial class IlPredicateCompiler
                     }
                 }
 
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                emit.Call(EngineGetListMethod);
-                emit.BranchIfFalse(failLabel);
+                int windowEnd = TryEmitGetListWindow(emit, code, pc, end, arg, LabelAt, failLabel);
+                if (windowEnd >= 0)
+                {
+                    pc = windowEnd;
+                    continue;
+                }
+                if (!TryEmitGetList(emit, ListWindow.Plain, arg, 0, 0, failLabel))
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, EngineGetListMethod);
+                    emit.BranchIfFalse(failLabel);
+                }
                 pc += sz;
                 continue;
             }
@@ -1298,7 +1400,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.Call(EnginePutListMethod);
+                EmitHelperCall(emit, EnginePutListMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1309,7 +1411,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(literalId);
                 emit.LoadConstant(arg);
-                emit.Call(IlGetPstrHelperMethod);
+                EmitHelperCall(emit, IlGetPstrHelperMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1321,7 +1423,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(literalId);
                 emit.LoadConstant(arg);
-                emit.Call(IlPutPstrHelperMethod);
+                EmitHelperCall(emit, IlPutPstrHelperMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1360,7 +1462,7 @@ public sealed partial class IlPredicateCompiler
                 // Inline-rule case 2: inline a single-clause rule that
                 // makes user calls and/or cuts. Set B0 = engine.B at the inline
                 // entry so the body's deep cut (allocate_get_level / get_level)
-                // captures THIS barrier — the inlined cut then prunes only the
+                // captures this barrier — the inlined cut then prunes only the
                 // body's own choice points, not the caller's. The body is emitted
                 // with the CALLER's threading context, so its non-tail calls take
                 // forward-resume cursors in the caller's space (already counted
@@ -1372,8 +1474,8 @@ public sealed partial class IlPredicateCompiler
                 {
                     emit.LoadArgument(0);                    // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     EmitClauseBody(emit, ruleCallee.BytecodeUnfused, 0, ruleCallee.BytecodeUnfused.Length,
                         failLabel, ruleCallee.CallSites,
                         callSiteIndexCounter: callSiteIndexCounter,
@@ -1382,7 +1484,7 @@ public sealed partial class IlPredicateCompiler
                         calleeMap: calleeMap,
                         suppressProceedReturn: true,
                         cursorBase: cursorBase);
-                    // Consume + mark the dead resume cursor reserved for THIS
+                    // Consume + mark the dead resume cursor reserved for this
                     // Call site (no marker is ever set for it — the rule is
                     // inlined — but the cursor switch has a slot, so the label
                     // must be marked to keep the IL well-formed).
@@ -1392,7 +1494,7 @@ public sealed partial class IlPredicateCompiler
                     continue;
                 }
 
-                // ADR-031 G2 — a CP-free guard's call to a FAIL-DIRECT callee
+                // ADR-031 G2 — a CP-free guard's call to a fail-direct callee
                 // (multi-clause and/or self-tail-recursive; see
                 // TryDescribeFailDirectCallee) is inlined as a sequential
                 // alternative chain with an in-place loop, so its failure is a
@@ -1400,9 +1502,9 @@ public sealed partial class IlPredicateCompiler
                 // CP-free guard slices (forceLeafRuleInline).
                 //
                 // ADR-033 — with the continuation-stack mechanism on, the
-                // callee's code is NOT duplicated here: the site pushes its
+                // callee's code is not duplicated here: the site pushes its
                 // packed (ok, fail) continuation cursors and branches to the
-                // ONE shared per-method copy; the copy's epilogues pop and
+                // one shared per-method copy; the copy's epilogues pop and
                 // dispatch back through the continuation switch.
                 if (forceLeafRuleInline && calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var fdCallee)
@@ -1416,7 +1518,7 @@ public sealed partial class IlPredicateCompiler
                         int failCur = guardContCtx.AllocCursor(failLabel);
                         emit.LoadArgument(0);
                         emit.LoadConstant((okCur << 16) | failCur);
-                        emit.Call(EnginePushGuardContMethod);
+                        EmitHelperCall(emit, EnginePushGuardContMethod);
                         if (!guardContCtx.CalleeEntry.TryGetValue(
                                 siteFunctorId, out var entryLbl))
                         {
@@ -1449,11 +1551,11 @@ public sealed partial class IlPredicateCompiler
                 // meta-CP is needed; the post-call label still gets
                 // marked for any outer logic but no choice point lives
                 // there.
-                // ADR-034 — a dynamic SNAPSHOT may be inlined ONLY under the
+                // ADR-034 — a dynamic snapshot may be inlined only under the
                 // checked-guard machinery (forceLeafRuleInline slices, whose
                 // recognizer collected the fid for the clause-entry staleness
                 // test); in any other position it takes the threaded by-fid
-                // call, which dispatches against the LIVE dynamic.
+                // call, which dispatches against the live dynamic.
                 if (calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var calleePred)
                     && (!calleePred.IsDynamicSnapshot || forceLeafRuleInline)
@@ -1488,7 +1590,7 @@ public sealed partial class IlPredicateCompiler
                 // The marker encodes (this delegate's functor id,
                 // siteIdx), so the dispatcher knows to re-invoke us at
                 // the forward-resume cursor. No recursive C# stack
-                // frame, and deliberately NO meta-CP push: backtracking
+                // frame, and deliberately no meta-CP push: backtracking
                 // through the callee's CPs naturally lands at the
                 // caller's marker again — the CP cascade alone carries
                 // the semantics.
@@ -1512,8 +1614,8 @@ public sealed partial class IlPredicateCompiler
                 // engine.SetB0(engine.B);  — cut barrier for the callee
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.Call(EngineSetB0Method);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
 
 #if DEBUG
                 if (DebugMode)
@@ -1524,38 +1626,43 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPreCallMethod);
+                    EmitHelperCall(emit, DbgCheckPreCallMethod);
                 }
 #endif
 
                 // engine.SetCp(EncodeResumeMarker(ownerFid, resumeCursor));
                 emit.LoadArgument(0);
                 EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
-                emit.Call(EngineSetCpMethod);
+                EmitHelperCall(emit, EngineSetCpMethod);
+                CpsRecordContinuation(resumeCursor);   // ADR-061
+                if (!EmitCpsCall(emit, siteFunctorId))
+                {
+                    // engine.SetPc(Activation.EncodeResumeMarker(siteFunctorId, 0));
+                    // The dispatcher routes the marker to the callee's IL delegate
+                    // (by functor id, cursor 0 = entry) or falls back to its WAM
+                    // address — no resolution through the callee's WAM address here.
+                    emit.LoadArgument(0);
+                    EmitFunctorId(emit, siteFunctorId);
+                    emit.LoadConstant(0);
+                    EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                    EmitHelperCall(emit, EngineSetPcMethod);
 
-                // engine.SetPc(Activation.EncodeResumeMarker(siteFunctorId, 0));
-                // The dispatcher routes the marker to the callee's IL delegate
-                // (by functor id, cursor 0 = entry) or falls back to its WAM
-                // address — no resolution through the callee's WAM address here.
-                emit.LoadArgument(0);
-                EmitFunctorId(emit, siteFunctorId);
-                emit.LoadConstant(0);
-                emit.Call(EngineEncodeResumeMarkerMethod);
-                emit.Call(EngineSetPcMethod);
-
-                // engine.IlTailCallPending = true; return true.
-                emit.LoadArgument(0);
-                emit.LoadConstant(true);
-                emit.Call(EngineIlTailCallPendingSetter);
-                emit.LoadConstant(true);
-                emit.Return();
+                    // engine.IlTailCallPending = true; return true.
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(true);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
+                    emit.LoadConstant(true);
+                    EmitReturn(emit);
+                }
 
                 // Resume label — reached via the cursor switch when the
                 // callee proceeds and the dispatcher decodes our
                 // marker. Cursor numbering: forward-resume cursors
-                // come AFTER any clause-entry cursors the outer body
+                // come after any clause-entry cursors the outer body
                 // emitter reserved.
                 emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                CpsRecordResumePoint(resumeCursor, code, pc + OpcodeTable.Get(op).Size, end, siteIdx,
+                    regionCtx is null, callSites, selfFunctorId, selfTailLabel is not null);
 
 #if DEBUG
                 if (DebugMode)
@@ -1566,7 +1673,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPostCallMethod);
+                    EmitHelperCall(emit, DbgCheckPostCallMethod);
                 }
 #endif
                 pc += OpcodeTable.Get(op).Size;
@@ -1587,9 +1694,9 @@ public sealed partial class IlPredicateCompiler
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
 
-                // Un-tail. When this body is being INLINED at
+                // Un-tail. When this body is being inlined at
                 // a non-tail site (suppressProceedReturn), a trailing tail Execute
-                // must become a threaded NON-TAIL call: control has to return to the
+                // must become a threaded non-tail call: control has to return to the
                 // caller's continuation after the callee proceeds, not tail-return
                 // past it. Same threading as a non-tail Call (a forward-resume cursor
                 // in the caller's space, already counted by CountRuleBodyThreadedCalls
@@ -1605,21 +1712,25 @@ public sealed partial class IlPredicateCompiler
                     int untailCursor = cursorBase + untailIdx - 1;
                     emit.LoadArgument(0);                 // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     emit.LoadArgument(0);                 // engine.SetCp(resume marker)
                     EmitResumeMarker(emit, _emitOwnerFid, untailCursor);
-                    emit.Call(EngineSetCpMethod);
-                    emit.LoadArgument(0);                 // engine.SetPc(callee entry marker)
-                    EmitFunctorId(emit, siteFunctorId);
-                    emit.LoadConstant(0);
-                    emit.Call(EngineEncodeResumeMarkerMethod);
-                    emit.Call(EngineSetPcMethod);
-                    emit.LoadArgument(0);                 // IlTailCallPending = true; return true
-                    emit.LoadConstant(true);
-                    emit.Call(EngineIlTailCallPendingSetter);
-                    emit.LoadConstant(true);
-                    emit.Return();
+                    EmitHelperCall(emit, EngineSetCpMethod);
+                    CpsRecordContinuation(untailCursor);  // ADR-061
+                    if (!EmitCpsCall(emit, siteFunctorId))
+                    {
+                        emit.LoadArgument(0);                 // engine.SetPc(callee entry marker)
+                        EmitFunctorId(emit, siteFunctorId);
+                        emit.LoadConstant(0);
+                        EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                        EmitHelperCall(emit, EngineSetPcMethod);
+                        emit.LoadArgument(0);                 // IlTailCallPending = true; return true
+                        emit.LoadConstant(true);
+                        EmitHelperCall(emit, EngineIlTailCallPendingSetter);
+                        emit.LoadConstant(true);
+                        EmitReturn(emit);
+                    }
                     // Resume → fall through to the post-inline continuation.
                     emit.MarkLabel(resumeLabels[untailIdx - 1]);
                     pc += OpcodeTable.Get(op).Size;
@@ -1655,16 +1766,20 @@ public sealed partial class IlPredicateCompiler
                 // indirect delegate invoke — the bulk of the per-call trampoline
                 // tax. Backtracking is unaffected: choice points are still on the
                 // WAM stack with their own continuations; this only changes how
-                // the FORWARD self-call reaches cursor 0. The Cp (the tail call's
+                // the forward self-call reaches cursor 0. The Cp (the tail call's
                 // continuation) is left as the caller set it, exactly as the
                 // marker path does.
+                // In a continuation method this is not a loop when the clause
+                // makes a non-tail call: the branch continues with the entry's code
+                // up to that call, which leaves the method. Continuing beats a
+                // transfer to the entry method (an epilogue, a jump and its prologue).
                 if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
                 {
                     // ADR-049: the back-edge is the goal boundary the skipped
                     // dispatch-loop round trip would have provided — it
                     // already mirrors the loop's ADR-016 heap safe point, and
                     // it must mirror the loop's wake check too, or a wake
-                    // queued by THIS iteration's head-match (an attributed
+                    // queued by this iteration's head-match (an attributed
                     // list argument being decomposed) never fires and the
                     // recursion enumerates past a hook that had to stop it
                     // (freeze/2 went silently unhooked once $length_enum
@@ -1672,7 +1787,7 @@ public sealed partial class IlPredicateCompiler
                     // iteration when no wake pends.
                     var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
                     emit.LoadArgument(0);
-                    emit.Call(EngineHasPendingWakeupsGetter);
+                    EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
                     emit.BranchIfFalse(skipWake);
                     EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
                     emit.MarkLabel(skipWake);
@@ -1680,11 +1795,11 @@ public sealed partial class IlPredicateCompiler
                     // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.Call(EngineSetB0Method);
+                    EmitHelperCall(emit, EngineBGetter);
+                    EmitHelperCall(emit, EngineSetB0Method);
                     emit.LoadArgument(0);
                     emit.LoadConstant(selfFunctorId);
-                    emit.Call(EngineMaybeCollectHeapAtCallMethod);
+                    EmitHelperCall(emit, EngineMaybeCollectHeapAtCallMethod);
                     // A chain predicate's cursor-0 entry re-reads the incoming
                     // cursor (arg 1) to pick clause 0; a fresh self-call must
                     // restart from clause 0, so reset it. Harmless for the
@@ -1708,7 +1823,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(siteFunctorId);
                     emit.LoadConstant(calleeArity);
                     emit.LoadConstant(pc);
-                    emit.Call(DbgCheckPreCallMethod);
+                    EmitHelperCall(emit, DbgCheckPreCallMethod);
                 }
 #endif
                 // int target = IlExecuteHelper.Resolve(engine, siteFunctorId);
@@ -1716,97 +1831,41 @@ public sealed partial class IlPredicateCompiler
                 // engine.IlTailCallPending = true; return true;
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.Call(EngineSetB0Method);
-                emit.LoadArgument(0);
-                EmitFunctorId(emit, siteFunctorId);
-                emit.LoadConstant(0);
-                emit.Call(EngineEncodeResumeMarkerMethod);
-                emit.Call(EngineSetPcMethod);
-                emit.LoadArgument(0);
-                emit.LoadConstant(true);
-                emit.Call(EngineIlTailCallPendingSetter);
-                emit.LoadConstant(true);
-                emit.Return();
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
+                if (!EmitCpsCall(emit, siteFunctorId))   // ADR-061
+                {
+                    emit.LoadArgument(0);
+                    EmitFunctorId(emit, siteFunctorId);
+                    emit.LoadConstant(0);
+                    EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                    EmitHelperCall(emit, EngineSetPcMethod);
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(true);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
+                    emit.LoadConstant(true);
+                    EmitReturn(emit);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             // ---------- ADR-018 arithmetic instruction set ----------
-            // Each opcode maps to one static call into ArithEvalStack, so
-            // Tier-1 evaluates over the same Number eval stack as Tier-0 with
-            // no heap allocation. Operand kinds 1/2 (bigint/float literals) are
+            // A whole a_eval sequence runs on method locals when it has an
+            // integer form (TryEmitIntArithSequence); otherwise each opcode maps
+            // to one static call into ArithEvalStack, the Number eval stack
+            // Tier-0 uses. Operand kinds 1/2 (bigint/float literals) are
             // filtered out by IsSupportedAEval before promotion, so only kinds
             // 0 (int32), 3 (X-reg) and 4 (Y-slot) reach here.
-            if (op == Opcode.AEvalPush)
+            if (op == Opcode.AEvalPush
+                && TryEmitIntArithSequence(emit, code, pc, failLabel, out int arithEnd))
             {
-                // ADR-049: fire a pending wake before an operand variable is
-                // read — but only at the start of the expression (empty eval
-                // stack), since the drain runs nested arithmetic on this same
-                // static stack.
-                EmitArithWakeFlush(emit, failLabel);
-                int kind = BytecodeIO.ReadInt32(code, pc + 1);
-                int operand = BytecodeIO.ReadInt32(code, pc + 5);
-                if (kind == 0)
-                {
-                    emit.LoadConstant((long)operand);
-                    emit.Call(ArithPushIntMethod);
-                }
-                else
-                {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(operand);
-                    emit.Call(kind == 4 ? ArithPushYMethod : ArithPushRegMethod);
-                }
-                pc += OpcodeTable.Get(op).Size;
+                pc = arithEnd;
                 continue;
             }
-            if (op == Opcode.AEvalBin)
+            if (op is Opcode.AEvalPush or Opcode.AEvalBin or Opcode.AEvalUn
+                or Opcode.AEvalIs or Opcode.AEvalCmp)
             {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.LoadArgument(0);                 // engine
-                emit.Call(PreferRationalsGetter);     // → prefer_rationals flag
-                emit.Call(ArithBinMethod);
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalUn)
-            {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithUnMethod);
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalIs)
-            {
-                int kind = BytecodeIO.ReadInt32(code, pc + 1);
-                int target = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(target);
-                switch (kind)
-                {
-                    case 5:   // store into first-occurrence X register (void, no branch)
-                        emit.Call(ArithSetRegMethod);
-                        break;
-                    case 6:   // store into first-occurrence Y slot (void, no branch)
-                        emit.Call(ArithSetPermMethod);
-                        break;
-                    case 4:   // unify with existing Y slot
-                        emit.Call(ArithIsPermMethod);
-                        emit.BranchIfFalse(failLabel);
-                        break;
-                    default:  // unify with existing X register
-                        emit.Call(ArithIsRegMethod);
-                        emit.BranchIfFalse(failLabel);
-                        break;
-                }
-                pc += OpcodeTable.Get(op).Size;
-                continue;
-            }
-            if (op == Opcode.AEvalCmp)
-            {
-                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
-                emit.Call(ArithCmpMethod);
-                emit.BranchIfFalse(failLabel);
+                EmitStackArithOp(emit, code, pc, failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1822,6 +1881,13 @@ public sealed partial class IlPredicateCompiler
                 }
                 // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);
+                if (CpsHotExit && ((packed >> 16) & 0xFF) != 4)
+                {
+                    EmitHotFusedBin(emit, packed, BytecodeIO.ReadInt32(code, pc + 5),
+                        BytecodeIO.ReadInt32(code, pc + 9), BytecodeIO.ReadInt32(code, pc + 13), failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant((packed >> 24) & 0xFF);               // op
                 emit.LoadConstant(packed & 0xFF);                       // aKind
@@ -1830,7 +1896,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
                 emit.LoadConstant((packed >> 16) & 0xFF);               // tKind
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 13)); // tVal
-                emit.Call(ArithFusedBinMethod);
+                EmitHelperCall(emit, ArithFusedBinMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1845,13 +1911,20 @@ public sealed partial class IlPredicateCompiler
                 }
                 // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);
+                if (CpsHotExit)
+                {
+                    EmitHotFusedCmp(emit, packed, BytecodeIO.ReadInt32(code, pc + 5),
+                        BytecodeIO.ReadInt32(code, pc + 9), failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant((packed >> 16) & 0xFF);               // rel
                 emit.LoadConstant(packed & 0xFF);                       // aKind
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));  // aVal
                 emit.LoadConstant((packed >> 8) & 0xFF);                // bKind
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
-                emit.Call(ArithFusedCmpMethod);
+                EmitHelperCall(emit, ArithFusedCmpMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1864,8 +1937,9 @@ public sealed partial class IlPredicateCompiler
                 // in inlined-Execute mode) proceed = return true.
                 if (!suppressProceedReturn)
                 {
+                    EmitCpsProceed(emit);   // ADR-061
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                 }
                 pc += 1;
                 continue;
@@ -1941,9 +2015,9 @@ public sealed partial class IlPredicateCompiler
         if (code.Length == 0) return false;
         // First instruction must be try_me_else (size 9: opcode + bp +
         // arity). ADR-025 stage (b) — clause boundaries are derived by
-        // FOLLOWING each dispatch opcode's address operand (try_me_else /
-        // retry_me_else point at the NEXT clause's dispatch op; trust_me is
-        // the last). The previous linear scan treated EVERY me-else-family
+        // following each dispatch opcode's address operand (try_me_else /
+        // retry_me_else point at the next clause's dispatch op; trust_me is
+        // the last). The previous linear scan treated every me-else-family
         // opcode as a boundary, which an inline-ITE's mid-body try_me_else /
         // trust_me would break.
         if ((Opcode)code[0] != Opcode.TryMeElse) return false;
@@ -1971,7 +2045,7 @@ public sealed partial class IlPredicateCompiler
         }
         if (clauseStarts.Count != predicate.ClauseCount) return false;
 
-        // Derive (Start, End) per clause: each body ends at the NEXT clause's
+        // Derive (Start, End) per clause: each body ends at the next clause's
         // dispatch opcode (known exactly from the operand walk); the last runs
         // to the end of the bytecode. Validate every body opcode against the
         // IL subset (the per-clause emission walks them again to emit).
@@ -2029,9 +2103,9 @@ public sealed partial class IlPredicateCompiler
             // the fused tail builtin (the linker's
             // Execute→ExecuteBuiltin rewrite for foreign / late-resolved
             // builtins in bundles). Deterministic and backtrackable entries
-            // emit; a META goal in tail position (call/N, '$call'/2) would
+            // emit; a meta goal in tail position (call/N, '$call'/2) would
             // need the meta-dispatch threading with proceed-on-sync-success —
-            // left Tier-0 (rare: only a tail Execute that RESOLVED to a meta
+            // left Tier-0 (rare: only a tail Execute that resolved to a meta
             // builtin at link time takes this form).
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                 BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 1));
@@ -2039,11 +2113,11 @@ public sealed partial class IlPredicateCompiler
         }
         if (op == Opcode.TryMeElse)
         {
-            // ADR-025 stage (b) — a MID-BODY try_me_else is the inline-ITE
+            // ADR-025 stage (b) — a mid-body try_me_else is the inline-ITE
             // choice point, carrying the body-CP arity sentinel (the variable
             // discipline keeps branch state in Y slots). A dispatch-chain
             // try_me_else never reaches this filter (the describers walk
-            // clause BODY ranges).
+            // clause body ranges).
             return BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 5) == OpcodeTable.InlineIteCpArity;
         }
         if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
@@ -2079,7 +2153,7 @@ public sealed partial class IlPredicateCompiler
     /// concrete atoms / ints / structures.
     ///
     /// <para>The IL emit (<see cref="CompileSwitchedChain"/>) does
-    /// NOT reproduce the switch dispatch — it just walks the
+    /// not reproduce the switch dispatch — it just walks the
     /// extracted clause bodies linearly, exactly like
     /// <see cref="CompileTryMeElseChain"/>. The switch tables in the
     /// bytecode are an optimisation that pre-filters by tag/key; the
@@ -2223,8 +2297,8 @@ public sealed partial class IlPredicateCompiler
         {
             int holderKey = _nextHolderKey;
             var emitSelf = SelfFromHolder(holderKey);
-            var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-                $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
+            var emit = NewPredicateEmit($"ShumwayIl_idx_{predicate.FunctorId}");
+            AttachRegisterFile(emit);   // ADR-060
             EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf,
                 typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
             var del = FinishEmit(emit,
@@ -2236,7 +2310,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static void EmitIndexedDispatchBody(
-        Sigil.Emit<PredicateDelegate> emit,
+        IlEmit emit,
         CompiledPredicate predicate,
         IlIndexedDispatchInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -2259,27 +2333,28 @@ public sealed partial class IlPredicateCompiler
         int callBase = K + 1;
 
         var failLabel = emit.DefineLabel("idx_fail");
-        var nodeLabels = new Sigil.Label[K];
+        var nodeLabels = new IlLabel[K];
         for (int n = 0; n < K; n++) nodeLabels[n] = emit.DefineLabel($"idx_node_{n}");
-        var bodyLabels = new Sigil.Label[N];
+        var bodyLabels = new IlLabel[N];
         for (int i = 0; i < N; i++) bodyLabels[i] = emit.DefineLabel($"idx_body_{i}");
-        var resumeLabels = new Sigil.Label[totalCallSites];
+        var resumeLabels = new IlLabel[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             resumeLabels[j] = emit.DefineLabel($"idx_call_resume_{j + 1}");
 
         _emitOwnerFid = predicate.FunctorId;
 
         // CSE (mirrors the region Stage-11 hoist): every chain node's
-        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
-        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
-        // the cursor switch (which dominates every node label, fresh AND
+        // PushIlChoicePoint reloads the same self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to one local ahead of
+        // the cursor switch (which dominates every node label, fresh and
         // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
         // shrinks the per-invocation work.
         SelfDelegateEmitter effectiveSelf = emitSelf;
         int pushSites = 0;
         for (int n = 0; n < K; n++)
             if (info.Nodes[n].NextCursor >= 0) pushSites++;
-        if (pushSites >= 2)
+        // Under WAM choice points (ADR-061) a push takes a marker, not the delegate.
+        if (pushSites >= 2 && !WamCps)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "iselfdel");
             emitSelf(emit);
@@ -2298,15 +2373,14 @@ public sealed partial class IlPredicateCompiler
         // one O(1) jump table (IL `switch`) over the dense cursor
         // space — 0 → entry resolve; 1..K → chain node; K+1.. → call-site
         // resume — replacing the linear compare chain every invocation (fresh
-        // calls AND backtrack re-entries) used to pay in full. An out-of-range
+        // calls and backtrack re-entries) used to pay in full. An out-of-range
         // cursor falls through to the entry, exactly as the old chain did.
-        var cursorLabels = new Sigil.Label[callBase + totalCallSites];
+        var cursorLabels = new IlLabel[callBase + totalCallSites];
         cursorLabels[0] = selfEntry;
         for (int n = 0; n < K; n++) cursorLabels[n + 1] = nodeLabels[n];
         for (int j = 0; j < totalCallSites; j++)
             cursorLabels[callBase + j] = resumeLabels[j];
-        emit.LoadArgument(1);
-        emit.Switch(cursorLabels);
+        EmitCursorSwitch(emit, cursorLabels);
         emit.Branch(selfEntry);     // cursor out of range (unreachable) → entry
         emit.MarkLabel(selfEntry);
         // cursor 0 — the initial call: decide the entry node from the indexed
@@ -2315,7 +2389,10 @@ public sealed partial class IlPredicateCompiler
         // GProlog-style compiled switch), eliminating the per-call resolver
         // (a per-engine dictionary lookup + a runtime graph walk). Falls back
         // to that resolver only when the graph can't be built.
-        if (!TryEmitInlineIndexResolve(emit, info, nodeLabels))
+        // ADR-061: a continuation method that starts at its resume point
+        // reaches neither the decision nor the nodes.
+        if (CpsPruning) { }
+        else if (!TryEmitInlineIndexResolve(emit, info, nodeLabels))
         {
             // Fallback. The functor id is emitted through EmitFunctorId
             // so a persisted-bundle .dll gets it patched at
@@ -2323,7 +2400,7 @@ public sealed partial class IlPredicateCompiler
             var entry = emit.DeclareLocal<int>("idx_entry");
             emit.LoadArgument(0);
             EmitFunctorId(emit, predicate.FunctorId);
-            emit.Call(IlIndexedDispatchResolveByFidMethod);
+            EmitHelperCall(emit, IlIndexedDispatchResolveByFidMethod);
             emit.StoreLocal(entry);
             // node indices are dense 0..K-1 → O(1) jump table
             // instead of a linear compare chain.
@@ -2334,27 +2411,46 @@ public sealed partial class IlPredicateCompiler
 
         // ---- Chain nodes: push the next-node CP (if any), run the clause body.
         //      ADR-031 indexed buckets: a node whose clause is an accepted
-        //      guard skips the push — it stores the next node's ENGINE cursor
+        //      guard skips the push — it stores the next node's engine cursor
         //      (-1 for a chain tail) in the idxnext local; the shared guard
         //      block's fail stub dispatches on it. ----
-        Sigil.Local? idxNext = guardPlan is not null
+        IlLocal? idxNext = guardPlan is not null
             ? emit.DeclareLocal<int>("idxnext") : null;
-        for (int n = 0; n < K; n++)
+        // ADR-061: in a continuation method the next node lives in the
+        // activation, so the cold method can resume inside the guard.
+        bool nextInField = CpsEmitting;
+        void LoadNext(IlEmit e)
+        {
+            if (nextInField)
+            {
+                e.LoadArgument(0);
+                e.LoadField(CpsGuardNextField);
+            }
+            else e.LoadLocal(idxNext!);
+        }
+        for (int n = 0; n < K && !CpsPruning; n++)
         {
             emit.MarkLabel(nodeLabels[n]);
             int next = info.Nodes[n].NextCursor;
+            if (next >= 0) CpsRecordAlternative(next + 1);
             if (guardPlan is not null && guardPlan.GuardOk[info.Nodes[n].ClauseIndex])
             {
-                emit.LoadConstant(next >= 0 ? next + 1 : -1);
-                emit.StoreLocal(idxNext!);
+                if (nextInField)
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(next >= 0 ? next + 1 : -1);
+                    emit.StoreField(CpsGuardNextField);
+                }
+                else
+                {
+                    emit.LoadConstant(next >= 0 ? next + 1 : -1);
+                    emit.StoreLocal(idxNext!);
+                }
             }
             else if (next >= 0)
             {
-                emit.LoadArgument(0);            // engine
-                effectiveSelf(emit);             // → PredicateDelegate (hoisted local)
-                emit.LoadConstant(next + 1);     // resume cursor of the next node
-                emit.LoadConstant(predicate.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int alt = next + 1;
+                EmitPushIlChoicePoint(emit, effectiveSelf, e => e.LoadConstant(alt), predicate.Arity, alt);
             }
             emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
         }
@@ -2363,6 +2459,7 @@ public sealed partial class IlPredicateCompiler
         int siteCounter = 0;
         for (int i = 0; i < N; i++)
         {
+            if (CpsPrunedAway(info.Clauses[i].Start, info.Clauses[i].End)) continue;
             emit.MarkLabel(bodyLabels[i]);
             if (guardPlan is not null && guardPlan.GuardOk[i])
             {
@@ -2372,7 +2469,7 @@ public sealed partial class IlPredicateCompiler
                 // tests + a fallback (CP materialized from idxnext + plain
                 // guard slice + jump into the shared post-commit body).
                 var dynFids = ginfo.EmbeddedDynamicFids;
-                Sigil.Label? dynFb = null, dynBody = null;
+                IlLabel? dynFb = null, dynBody = null;
                 if (dynFids is { Count: > 0 })
                 {
                     dynFb = emit.DefineLabel($"idx_dynfb_{i}");
@@ -2381,7 +2478,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -2412,14 +2509,14 @@ public sealed partial class IlPredicateCompiler
                     dynamicFailDispatch: () =>
                     {
                         // Guard failed: continue at the chain's next node —
-                        // the engine cursor in idxnext indexes the SAME label
+                        // the engine cursor in idxnext indexes the same label
                         // array the method's cursor dispatch uses; the tail
                         // sentinel (-1) falls through the unsigned switch.
-                        emit.LoadLocal(idxNext!);
+                        LoadNext(emit);
                         emit.Switch(cursorLabels);
                         emit.Branch(failLabel);
                     },
-                    dynamicCursor: e2 => e2.LoadLocal(idxNext!));
+                    dynamicCursor: LoadNext);
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -2427,14 +2524,10 @@ public sealed partial class IlPredicateCompiler
                     // then the plain un-inlined guard + cut, then join the
                     // shared post-commit body.
                     var skipPush = emit.DefineLabel($"idx_dynfb_nopush_{i}");
-                    emit.LoadLocal(idxNext!);
+                    LoadNext(emit);
                     emit.LoadConstant(0);
                     emit.BranchIfLess(skipPush);
-                    emit.LoadArgument(0);
-                    effectiveSelf(emit);
-                    emit.LoadLocal(idxNext!);
-                    emit.LoadConstant(predicate.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    EmitPushIlChoicePoint(emit, effectiveSelf, LoadNext, predicate.Arity);
                     emit.MarkLabel(skipPush);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)predicate.BytecodeUnfused[guardEnd]).Size;
@@ -2468,8 +2561,7 @@ public sealed partial class IlPredicateCompiler
             EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(failLabel);
-        emit.LoadConstant(false);
-        emit.Return();
+        EmitFailReturn(emit);
     }
 
     /// <summary>Emits the first-/multi-argument index decision as inline IL —
@@ -2489,15 +2581,15 @@ public sealed partial class IlPredicateCompiler
     /// the default — exactly the runtime walk's semantics — so no range guard
     /// is needed.</para></summary>
     private static bool TryEmitInlineIndexResolve(
-        Sigil.Emit<PredicateDelegate> emit, IlIndexedDispatchInfo info,
-        Sigil.Label[] nodeLabels, string salt = "")
+        IlEmit emit, IlIndexedDispatchInfo info,
+        IlLabel[] nodeLabels, string salt = "")
     {
         // `salt` makes the label / local names unique when several indexed members
         // share one IL method (region compilation) — empty for the standalone path.
         IndexGraph? graph = IlIndexGraph.Build(info);
         if (graph is null) return false;
         IndexNode[] gnodes = graph.Nodes;
-        var gLabels = new Sigil.Label[gnodes.Length];
+        var gLabels = new IlLabel[gnodes.Length];
         for (int i = 0; i < gnodes.Length; i++)
             gLabels[i] = emit.DefineLabel($"idx_g{i}{salt}");
 
@@ -2507,7 +2599,7 @@ public sealed partial class IlPredicateCompiler
         var keyLoc = emit.DeclareLocal<int>($"idx_key{salt}");
         var longLoc = emit.DeclareLocal<long>($"idx_long{salt}");
 
-        Sigil.Label Target(IndexTarget t) => t.IsNode ? gLabels[t.Value] : nodeLabels[t.Value];
+        IlLabel Target(IndexTarget t) => t.IsNode ? gLabels[t.Value] : nodeLabels[t.Value];
 
         emit.Branch(gLabels[0]);
 
@@ -2520,20 +2612,20 @@ public sealed partial class IlPredicateCompiler
             //       like IlIndexGraph.DerefArg). -----
             emit.LoadArgument(0);
             emit.LoadConstant(node.ArgIdx);
-            emit.Call(EngineGetRegisterMethod);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
             emit.StoreLocal(cellLoc);
             // if cellLoc.Tag == Ref: cellLoc = engine.GetHeap(engine.Deref(cellLoc.AsHeapIndex))
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.LoadConstant((int)Tag.Ref);
             var notRef = emit.DefineLabel($"idx_g{i}_notref{salt}");
             emit.UnsignedBranchIfNotEqual(notRef);
             emit.LoadArgument(0);                       // engine (receiver of GetHeap)
             emit.LoadArgument(0);                       // engine (receiver of Deref)
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellAsHeapIndexGetter);
-            emit.Call(EngineDerefMethod);
-            emit.Call(EngineGetHeapMethod);
+            EmitHelperCall(emit, CellAsHeapIndexGetter);
+            EmitHelperCall(emit, EngineDerefMethod);
+            EmitHelperCall(emit, EngineGetHeapMethod);
             emit.StoreLocal(cellLoc);
             emit.MarkLabel(notRef);
 
@@ -2547,13 +2639,13 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadLocal(cellLoc);        // cell (deref'd arg)
                 emit.LoadConstant(node.Sub0);
                 emit.LoadConstant(node.Sub1);
-                emit.Call(IlWalkSubOrMissMethod);
+                EmitHelperCall(emit, IlWalkSubOrMissMethod);
                 emit.StoreLocal(cellLoc);       // cell = terminal sub-cell (or miss)
             }
 
             // ----- Load the (deref'd) tag once. -----
             emit.LoadLocalAddress(cellLoc);
-            emit.Call(CellTagIdGetter);
+            EmitHelperCall(emit, CellTagIdGetter);
             emit.StoreLocal(tagLoc);
 
             switch (node.Kind)
@@ -2564,12 +2656,12 @@ public sealed partial class IlPredicateCompiler
                     EmitTagBranch(emit, tagLoc, (int)Tag.Atom, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Int, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Float, Target(node.ConstTarget));
-                    // ADR-048: a NON-EMPTY packed list is a cons and takes the
+                    // ADR-048: a non-empty packed list is a cons and takes the
                     // list bucket; the length guard keeps empty PSTR (= [])
                     // on the sound var chain, where the const bucket's []
                     // clauses are still reachable.
                     emit.LoadLocal(cellLoc);
-                    emit.Call(IlIsNonEmptyPstrMethod);
+                    EmitHelperCall(emit, IlIsNonEmptyPstrMethod);
                     emit.BranchIfTrue(Target(node.ListTarget));
                     emit.Branch(Target(node.VarTarget));   // Ref / anything else
                     break;
@@ -2580,7 +2672,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant((int)Tag.Int);
                     emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsIntGetter);
+                    EmitHelperCall(emit, CellAsIntGetter);
                     emit.StoreLocal(longLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
@@ -2599,7 +2691,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant((int)Tag.Atom);
                     emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsAtomIdGetter);
+                    EmitHelperCall(emit, CellAsAtomIdGetter);
                     emit.StoreLocal(keyLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
@@ -2626,11 +2718,11 @@ public sealed partial class IlPredicateCompiler
                     // fid = engine.GetHeap(cellLoc.AsHeapIndex).AsFunctorId
                     emit.LoadArgument(0);
                     emit.LoadLocalAddress(cellLoc);
-                    emit.Call(CellAsHeapIndexGetter);
-                    emit.Call(EngineGetHeapMethod);
+                    EmitHelperCall(emit, CellAsHeapIndexGetter);
+                    EmitHelperCall(emit, EngineGetHeapMethod);
                     emit.StoreLocal(tmpCell);
                     emit.LoadLocalAddress(tmpCell);
-                    emit.Call(CellAsFunctorIdGetter);
+                    EmitHelperCall(emit, CellAsFunctorIdGetter);
                     emit.StoreLocal(keyLoc);
                     int[] keys = node.Keys!;
                     for (int k = 0; k < keys.Length; k++)
@@ -2648,7 +2740,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static void EmitTagBranch(
-        Sigil.Emit<PredicateDelegate> emit, Sigil.Local tagLoc, int tag, Sigil.Label target)
+        IlEmit emit, IlLocal tagLoc, int tag, IlLabel target)
     {
         emit.LoadLocal(tagLoc);
         emit.LoadConstant(tag);
@@ -2678,9 +2770,8 @@ public sealed partial class IlPredicateCompiler
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
 
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_tryelse_{predicate.FunctorId}",
-            doVerify: DoVerify || DebugMode);
+        var emit = NewPredicateEmit($"ShumwayIl_tryelse_{predicate.FunctorId}");
+        AttachRegisterFile(emit);   // ADR-060
         EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf,
             typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
 

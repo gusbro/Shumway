@@ -30,6 +30,9 @@ this ADR.
 >   meta-calls all IL-emittable, cross-process persisted name-relative IL
 >   bundles, and **dynamic predicates promoted as IL snapshots (ADR-023)** —
 >   so the "only static predicates" note below is no longer true.
+> - **The emitter is Shumway's own (ADR-062)**, one class for both targets,
+>   over `ILGenerator`. Sigil, described below for runtime emission, is no
+>   longer a dependency, and there is no `IIlEmitter` interface.
 >
 > For the current surface see the user guide, ADR-016, ADR-023, and the
 > `Shumway.Compiler.Il` sources.

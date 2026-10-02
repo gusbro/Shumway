@@ -29,4 +29,31 @@ public interface ITier1Dispatcher
     /// delegate at the forward-resume cursor without creating a
     /// recursive C# stack frame.</summary>
     Func<Activation, int, bool>? ResolveByFunctorId(int functorId);
+
+    /// <summary>The linked address of the predicate with this functor id
+    /// in the running program, or -1. The interpreter needs it when a
+    /// <c>CallIl</c> site finds no delegate (evicted since the site was
+    /// rewritten): the site goes back to a plain <c>Call</c>.</summary>
+    int AddressOfFunctor(int functorId);
+
+    /// <summary>Whether <paramref name="address"/> is the entry of a
+    /// predicate in the running program (what <see cref="OnDispatch"/>
+    /// accepts), as opposed to a continuation inside a clause.</summary>
+    bool IsPredicateEntry(int address);
+
+    /// <summary>A call from bytecode at <paramref name="sitePc"/> reached
+    /// compiled code. Counts one invocation of the predicate that contains the
+    /// site: one called rarely but calling promoted code in a loop (a
+    /// generate-and-test driver) promotes too, where counting its own calls
+    /// alone never gets it there.</summary>
+    void CreditCaller(int sitePc);
+
+    /// <summary>The delegate a functor had before it was evicted, for a
+    /// resume only (a cursor past the entry): a choice point or a
+    /// continuation left in a call that began before the eviction. That
+    /// call finishes on the code it began with, which is the logical update
+    /// view when the eviction was a mutation (ADR-054). Never for a fresh
+    /// call, which must reach the predicate as it is now. Null when the
+    /// functor never had one.</summary>
+    Func<Activation, int, bool>? ResolveRetiredResume(int functorId);
 }

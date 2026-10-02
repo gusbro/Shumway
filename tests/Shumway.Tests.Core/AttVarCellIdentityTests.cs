@@ -5,8 +5,8 @@ namespace Shumway.Tests.Core;
 
 /// <summary>An ATTVAR cell is the one cell that names its own slot: the
 /// payload is its home address, and that address is the key into the
-/// attribute table. It may therefore be REFERENCED from anywhere but never
-/// COPIED to another address — a copy is a second cell claiming a home that
+/// attribute table. It may therefore be referenced from anywhere but never
+/// copied to another address — a copy is a second cell claiming a home that
 /// is not its own slot, and the first lookup through it finds no record.
 ///
 /// <para><see cref="Activation.TryUnconsListLike"/> is the chokepoint every
@@ -17,7 +17,7 @@ namespace Shumway.Tests.Core;
 /// the copy up.</para></summary>
 public class AttVarCellIdentityTests
 {
-    /// <summary>A one-element list whose head slot IS the attributed
+    /// <summary>A one-element list whose head slot is the attributed
     /// variable's home — the shape the engine's own list building produces,
     /// and the only one where peeling can copy an ATTVAR cell.</summary>
     private static (Activation Engine, int Pair) ListHoldingAnAttvarInline()

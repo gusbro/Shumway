@@ -51,7 +51,7 @@ public static class ChoicePointTrace
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
         {
             string desc = engine.ResolveAddressToLabel?.Invoke(retAddr - 1) ?? $"@0x{retAddr:X}";
-            // -1 because the return address is the instruction AFTER the
+            // -1 because the return address is the instruction after the
             // Call, but our label resolver finds the predicate the address
             // falls inside — same target either way unless the Call was
             // the last byte of its predicate's bytecode.

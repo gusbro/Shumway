@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>Stage 4 of the M:P story — the goal side, audited. The core has
 /// long worked (static rewrite + $mqual + the ':'/2 prelude predicate); this
 /// pins it and the edges the audit found: a qualified goal whose module slot
-/// is unbound or a non-atom used to LOOP FOREVER — the meta-dispatch
+/// is unbound or a non-atom used to loop forever — the meta-dispatch
 /// declined to unwrap it and dispatched ':'/2 as a predicate, whose prelude
 /// clause is call(M:G) all over again. Now they are the ISO errors, shapes
 /// pinned against SWI: instantiation_error / type_error(atom, Culprit).</summary>
@@ -76,7 +76,7 @@ public sealed class QualifiedGoalTests
             "catch(call(1:foo), error(type_error(atom, 1), _), true).").Success);
         Assert.True(e.Query(
             "catch(1:foo, error(type_error(atom, 1), _), true).").Success);
-        // Nested with a bad INNER module: the bad slot is the one reported.
+        // Nested with a bad inner module: the bad slot is the one reported.
         Assert.True(e.Query(
             "catch(call(qg:2:foo), error(type_error(atom, 2), _), true).").Success);
     }

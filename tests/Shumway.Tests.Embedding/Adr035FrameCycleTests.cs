@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-035 — cycle-aware frame elision. A stack too deep to show whole is almost
-/// always a recursion; the middle is elided on CYCLE boundaries so whole cycles survive at the
+/// always a recursion; the middle is elided on cycle boundaries so whole cycles survive at the
 /// innermost end (where the machine is) and the outermost end (where the recursion began,
 /// with the non-recursive origin frames), instead of a blind head/tail cut.</summary>
 [Collection("debugger")]
@@ -90,7 +90,7 @@ public class Adr035FrameCycleTests
         Assert.Contains("deep", innerNames);
         Assert.True(innerNames.Count(n => n == "deep") >= 2, "keep >= 2 innermost cycles");
 
-        // Outermost side (after the sentence): kept outermost cycles THEN the origin, so the
+        // Outermost side (after the sentence): kept outermost cycles then the origin, so the
         // user can see where the chain started and Run-to-cursor onto the goal after it.
         var outerNames = frames.Skip(oi + 1).Select(f => f.Name).ToList();
         Assert.True(outerNames.Count(n => n == "deep") >= 2, "keep >= 2 outermost cycles");
@@ -119,14 +119,14 @@ public class Adr035FrameCycleTests
         int oi = OmittedIndex(frames);
         Assert.True(oi >= 0, "expected an omitted-frames sentence for a 400-deep mutual recursion");
 
-        // The cut is on CYCLE boundaries: a whole number of period-2 cycles is elided, so the
+        // The cut is on cycle boundaries: a whole number of period-2 cycles is elided, so the
         // omitted count is even — the tell-tale that neither end was sliced through a ping/pong.
         Assert.Equal(0, OmittedCount(frames[oi]) % 2);
 
         // Budget kept: at least ~100 frames still show.
         Assert.True(frames.Count >= 100, $"should keep the ~100-frame budget, got {frames.Count}");
 
-        // Both ends must show BOTH members of the cycle — ping and pong — so a whole cycle is
+        // Both ends must show both members of the cycle — ping and pong — so a whole cycle is
         // visible, not half of one.
         var inner = frames.Take(oi).Select(f => f.Name).ToList();
         var outer = frames.Skip(oi + 1).Select(f => f.Name).ToList();

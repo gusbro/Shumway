@@ -25,9 +25,9 @@ public enum IlPatchKind : byte
 
     /// <summary>Builtin registry id — emitted by the <c>CallBuiltin</c> /
     /// <c>ExecuteBuiltin</c> dispatch (<c>GetById(id).Impl</c>). Registry
-    /// ids are assigned in REGISTRATION ORDER, which concurrent engine
+    /// ids are assigned in registration order, which concurrent engine
     /// construction in the building process can shuffle — a baked absolute
-    /// id then dispatches a DIFFERENT builtin in the loading process (the
+    /// id then dispatches a different builtin in the loading process (the
     /// cross-process bundle flake: type_error(evaluable)/fd_bound/
     /// '$native_run' zoo). Resolved by (Name, Arity) through
     /// <c>BuiltinsRegistry.TryGetByFunctor</c>, exactly like the bytecode
@@ -97,13 +97,13 @@ public sealed class IlPersistedEntry
     /// predicate dispatches without a WAM body.</summary>
     public byte[]? IndexGraph { get; init; }
 
-    /// <summary>For a REGION method, the non-root members' external-entry
+    /// <summary>For a region method, the non-root members' external-entry
     /// cursor table: <c>(memberFunctorName, arity, entryCursor)</c> per absorbed member
     /// (the <c>RegionCursorKind.MemberEntry</c> cursors in the method's dispatch
     /// switch). Name-relative like <see cref="Name"/>. LoadBundle uses it to alias a
     /// member with no standalone form (no own IL, WAM stripped) to
     /// <c>EncodeResumeMarker(thisEntry'sRuntimeFid, entryCursor)</c> in
-    /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches INTO the region at
+    /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches into the region at
     /// that member. Null/empty for a non-region method.</summary>
     public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
 }
@@ -223,7 +223,7 @@ public static class IlPatchSiteCodec
     /// <summary>Sentinel range used by the emit pipeline. Sentinels are
     /// assigned sequentially starting at <see cref="SentinelBase"/>; any
     /// value &gt;= base and &lt; base+0x10_0000 may be a patch sentinel.
-    /// The range is chosen to be a large positive int (so Sigil emits the
+    /// The range is chosen to be a large positive int (so the emitter uses the
     /// 5-byte long form of <c>ldc.i4</c>) and well outside the typical
     /// atom-id / functor-id range an unpatched bundle would naturally use.</summary>
     public const int SentinelBase = 0x7E000000;

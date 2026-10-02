@@ -4,7 +4,7 @@ namespace Shumway.Compiler.Parsing;
 
 /// <summary>
 /// Conservative unfolding of
-/// user-defined META-WRAPPER predicates at their call sites.
+/// user-defined meta-wrapper predicates at their call sites.
 ///
 /// <para>Arity-compat programs define control wrappers like
 /// <c>ifthen(X,Y) :- X -&gt; !, Y.  ifthen(_,_) :- !.</c> and call them with
@@ -16,12 +16,12 @@ namespace Shumway.Compiler.Parsing;
 /// <c>( not(flag) -&gt; writeln(A), writeln(B) ; true )</c> — turns all of it
 /// into compile-time-lowered control flow with direct calls.</para>
 ///
-/// <para>v1 is deliberately TEMPLATE-CONSERVATIVE (the user-decided scope; the
+/// <para>v1 is deliberately template-conservative (the user-decided scope; the
 /// general single-clause partial-deduction unfold is reserved for the future
 /// multi-module phase). A predicate is a wrapper iff its clause group matches
 /// exactly one of:</para>
 /// <list type="bullet">
-/// <item><b>T1 — pure control body</b>: a SINGLE clause whose head arguments
+/// <item><b>T1 — pure control body</b>: a single clause whose head arguments
 ///   are distinct variables and whose body is built solely of <c>,</c> /
 ///   <c>;</c> / <c>-&gt;</c> / <c>*-&gt;</c> / <c>\+</c> / <c>not</c> over
 ///   those variables (each used exactly once) and the atoms
@@ -37,24 +37,24 @@ namespace Shumway.Compiler.Parsing;
 ///   <c>w(_) [:- !]</c> ≡ <c>\+ G</c>.</item>
 /// </list>
 ///
-/// <para>A call site is unfolded only when EVERY argument is a statically
+/// <para>A call site is unfolded only when every argument is a statically
 /// callable term (atom or compound). A variable argument means a runtime goal
 /// (the wrapper handles it); a number/string argument would raise
 /// <c>type_error(callable)</c> lazily at run time inside the wrapper —
 /// unfolding would move that error to a different place, so we leave it.
-/// Cut opacity is preserved: a <c>!</c> INSIDE a passed goal is opaque both
+/// Cut opacity is preserved: a <c>!</c> Inside a passed goal is opaque both
 /// ways (meta-called goal: cut barrier at the call; unfolded: the
 /// if-then-else condition is opaque to cut per ISO).</para>
 ///
-/// <para>The wrapper's own clauses are LEFT INTACT and compiled normally — a
+/// <para>The wrapper's own clauses are left intact and compiled normally — a
 /// runtime-constructed goal (<c>call(ifthen(A,B))</c>, <c>=..</c>) must keep
 /// dispatching to the standalone predicate (fid-reachability is not statically
-/// decidable). Only STATIC predicates can match (the
+/// decidable). Only static predicates can match (the
 /// drivers run this over the static clause set; dynamic-head clauses are
 /// routed elsewhere before the pipeline), so the unfolded semantics can never
 /// go stale (static predicates are immutable).</para>
 ///
-/// <para>Runs BEFORE <see cref="ClausePipeline"/> (the unfold inserts
+/// <para>Runs before <see cref="ClausePipeline"/> (the unfold inserts
 /// <c>-&gt;</c>/<c>;</c>/<c>\+</c> that <see cref="MetaTransform"/> then
 /// lowers), driven by whoever holds a whole module's clause list
 /// (ConsultString, ShmoCompiler; the linker for the cross-module closure).</para>
@@ -99,7 +99,7 @@ public static class MetaWrapperUnfold
         public IEnumerable<(string Name, int Arity)> Keys => Map.Keys;
 
         /// <summary>A registry restricted to the given predicate indicators
-        /// (the linker keeps only a module's PUBLIC wrappers for export).</summary>
+        /// (the linker keeps only a module's public wrappers for export).</summary>
         public WrapperRegistry Restrict(System.Func<string, int, bool> keep)
         {
             var m = new Dictionary<(string, int), WrapperTemplate>();
@@ -108,7 +108,7 @@ public static class MetaWrapperUnfold
             return new WrapperRegistry(m);
         }
 
-        /// <summary>Merges with <paramref name="fallback"/>; entries in THIS
+        /// <summary>Merges with <paramref name="fallback"/>; entries in this
         /// registry win (caller-module locals shadow global publics).</summary>
         public WrapperRegistry MergeOver(WrapperRegistry fallback)
         {
@@ -171,7 +171,7 @@ public static class MetaWrapperUnfold
         IReadOnlyList<Clause> clauses)
     {
         // Group Rule/Fact clauses by head (name, arity), preserving order; a
-        // predicate qualifies only if its ENTIRE group matches one template.
+        // predicate qualifies only if its entire group matches one template.
         var groups = new Dictionary<(string, int), List<(Term Head, Term? Body)>>();
         var order = new List<(string, int)>();
         foreach (var clause in clauses)
@@ -287,7 +287,7 @@ public static class MetaWrapperUnfold
         return new WrapperTemplate { Body = template, ArgVars = argVars };
     }
 
-    /// <summary>Head args as DISTINCT named variable names; null if any arg is
+    /// <summary>Head args as distinct named variable names; null if any arg is
     /// a non-var, anonymous, or repeated (a repeated head var constrains the
     /// arguments to unify — not a transparent wrapper).</summary>
     private static string[]? DistinctVarArgs(Term head)
@@ -313,9 +313,9 @@ public static class MetaWrapperUnfold
         if (body is not null && body is not AtomTerm { Name: "!" }) return false;
         if (head is AtomTerm) return arity == 0;
         if (head is not CompoundTerm c || c.Args.Length != arity) return false;
-        // Every arg an INDEPENDENT variable: anonymous, or a named var used
+        // Every arg an independent variable: anonymous, or a named var used
         // only once across the head (a repeated var — w(A,A) — constrains the
-        // args to unify and is NOT a catch-all). The body is cut-only or
+        // args to unify and is not a catch-all). The body is cut-only or
         // absent, so head vars cannot occur there.
         var seen = new HashSet<string>();
         foreach (var a in c.Args)
@@ -346,7 +346,7 @@ public static class MetaWrapperUnfold
 
     /// <summary>Rewrites goal positions. Descends through the control
     /// constructs only — an argument of <c>call/N</c> / <c>findall</c> / any
-    /// other goal is DATA here (a runtime term); rewriting it would change what
+    /// other goal is data here (a runtime term); rewriting it would change what
     /// the program can observe, so it is left alone (the wrapper's standalone
     /// form serves it at run time).</summary>
     private static Term RewriteGoal(

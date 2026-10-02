@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// CHUNK 173 UPDATE: with the new SHUMWAY_IL_DEBUG mode (per-
+/// Chunk 173 update: with the new SHUMWAY_IL_DEBUG mode (per-
 /// opcode WAM-semantics assertions injected into the IL), the
 /// bug now isolates cleanly. Run as
 /// <c>SHUMWAY_IL_PROMOTE=32 SHUMWAY_IL_DEBUG=1 ./blint &lt;file&gt;</c>
@@ -16,18 +16,18 @@ namespace Shumway.Tests.Embedding;
 ///      that REF (its postcall trace shows X[2]=Ref(N1:Int)).
 ///   3. parse_postfix_op/6 pc=0x95 does
 ///      <c>put_value_y slot=1 arg=1</c> but Y[1]=Ref(N2) — a
-///      DIFFERENT heap home from N1, and unbound.
+///      different heap home from N1, and unbound.
 /// The same Y slot in the same predicate's body now contains a
 /// different Cell value across the call boundary, with no
 /// SetY between. Almost certainly a meta-CP push/pop cycle in
-/// the IL (chunk 66) restored _e but did NOT preserve the Y[1]
+/// the IL (chunk 66) restored _e but did not preserve the Y[1]
 /// stack slot at that frame address — either because something
 /// overwrote it via a stale _stackTop, or because the meta-CP
 /// resume re-entered with a different frame at the same _e.
 ///
 /// Documented investigation of the Tier-1 IL correctness bug
 /// that surfaces when promotion is enabled against Blint.pl.
-/// Both tests in this class currently PASS — neither reproduces
+/// Both tests in this class currently pass — neither reproduces
 /// the actual Blint failure mode despite mirroring the DCG-
 /// transformed predicate shape that fails there. The bug is
 /// state / timing dependent in ways the synthetic repros so far
@@ -57,11 +57,11 @@ namespace Shumway.Tests.Embedding;
 ///   fine) but X[1]=Ref(N→N:Ref) — truly unbound. X[1] should
 ///   have been <c>OpPrec</c>, set by <c>put_value_y 1, 1</c>
 ///   from <c>parse_postfix_op</c>'s Y[1].</item>
-/// <item>X[1]'s heap home (N) does NOT match the OpPrec heap
+/// <item>X[1]'s heap home (N) does not match the OpPrec heap
 ///   home (M) that the immediately preceding parse_op invocation
 ///   bound. They are two different cells — so the running theory
 ///   is that <c>parse_postfix_op</c>'s Y[1] held a Ref to a
-///   different cell from the one passed to parse_op, OR the
+///   different cell from the one passed to parse_op, or the
 ///   meta-CP / resume cascade rewrote Y[1] mid-body.</item>
 /// <item>The IL's <c>put_value_y</c> emission itself looks
 ///   correct in isolation (SetRegister(arg, GetY(slot))) — the

@@ -50,7 +50,7 @@ public class NativeReftypeMarshalTests
     [Fact]
     public void StructLayout_MatchesTheDeclaredContract()
     {
-        // The blittable contract a native C function RECOMPILED against our
+        // The blittable contract a native C function recompiled against our
         // t_reftype declaration relies on (Shumway's own layout): ntype at +0,
         // nelem at +8, pars at +16, crep at +24; a functor's name is in
         // crep.cstr and its args are t_reftype* in the pars array.

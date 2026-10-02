@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// above it, so draining a big predicate from the head was quadratic three
 /// times over -- once in the store's clause list, once in the index's
 /// sequence numbers, once in the chain's entries. A retract now leaves a
-/// TOMBSTONE (the store) or retires the entry in place (the chain), and the
+/// tombstone (the store) or retires the entry in place (the chain), and the
 /// slots close up in a compaction, the same shape as the chain's dead chunks
 /// and the linker's dead regions.
 ///
@@ -18,7 +18,7 @@ namespace Shumway.Tests.Embedding;
 /// tombstone cannot reach anything that shows a clause to a program. Only the
 /// retract path walks over them, and skips them by reference.</para>
 ///
-/// <para>Compaction is PROPORTIONAL -- when the tombstones reach half the
+/// <para>Compaction is proportional -- when the tombstones reach half the
 /// slot -- because compacting every K retracts is n/K passes of O(n), still
 /// quadratic. Proportional makes each pass pay for the retracts that caused
 /// it, and it is also what keeps a query that never returns compacting: the
@@ -33,7 +33,7 @@ public sealed class ClauseTombstoneTests
         drain(N) :- retract(tok(N)), M is N - 1, drain(M).
         """;
 
-    /// <summary>COUNTED, not timed: a drain of n compacts O(log n) times --
+    /// <summary>Counted, not timed: a drain of n compacts O(log n) times --
     /// the halving trigger gives 15/16/17 at 32,000/64,000/128,000 -- where a
     /// periodic trigger gives O(n) passes and eager removal shifted on every
     /// single retract. More than a few dozen compactions here means the
@@ -47,7 +47,7 @@ public sealed class ClauseTombstoneTests
             e.ConsultString(Program);
             e.ConsultString($":- mk({n}), drain({n}).");
             Assert.False(e.Query("tok(_).").Success);
-            // ANTI-VACUITY on both sides: it compacted, and it compacted few.
+            // Anti-vacuity on both sides: it compacted, and it compacted few.
             Assert.True(e.ClauseSlotCompactions > 3,
                 $"{e.ClauseSlotCompactions} compactions -- tombstoning inert?");
             Assert.True(e.ClauseSlotCompactions < 40,
@@ -57,7 +57,7 @@ public sealed class ClauseTombstoneTests
         }
     }
 
-    /// <summary>A reader BETWEEN retracts, inside the same query, while the
+    /// <summary>A reader between retracts, inside the same query, while the
     /// slot still holds tombstones: it must see exactly the live clauses.
     /// This is the compact-on-read seam -- the one place a tombstone could
     /// leak into clause/2, findall or listing if a reader were handed the
@@ -82,7 +82,7 @@ public sealed class ClauseTombstoneTests
     }
 
     /// <summary>The chain's retired entries and the bypass replay: after
-    /// retracts, asserts at BOTH ends, and enough churn to sweep and compact,
+    /// retracts, asserts at both ends, and enough churn to sweep and compact,
     /// dispatch and enumeration still answer in clause order. An entry
     /// bypassed wrongly shows up as a clause that stops answering; a replay
     /// that clobbers a link shows up as one that disappears after an
@@ -114,7 +114,7 @@ public sealed class ClauseTombstoneTests
         Assert.False(e.Query("r(a0).").Success);
     }
 
-    /// <summary>An append AFTER a retirement, BEFORE the sweep replays the
+    /// <summary>An append after a retirement, before the sweep replays the
     /// bypass: the replay reads the retired entry's <c>next</c> slot at
     /// replay time, which is exactly where the append linked in. Getting
     /// that wrong disconnects the appended clause.</summary>
@@ -123,7 +123,7 @@ public sealed class ClauseTombstoneTests
     {
         var e = new PrologEngine { Out = new StringWriter() };
         e.ConsultString(":- dynamic(s/1).");
-        // Build, retract the TAIL (its bypass stays pending), append more,
+        // Build, retract the tail (its bypass stays pending), append more,
         // then churn enough for sweeps to replay.
         Assert.True(e.Query("assertz(s(1)), assertz(s(2)), assertz(s(3)).").Success);
         Assert.True(e.Query("retract(s(3)).").Success);

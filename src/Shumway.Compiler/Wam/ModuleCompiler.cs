@@ -196,7 +196,7 @@ public sealed class ModuleCompiler
         };
         foreach (int fid in order)
         {
-            // Reusable when compiled against THESE pools (persistent,
+            // Reusable when compiled against these pools (persistent,
             // append-only — literal ids stable), or pool-free (safe against
             // any pools; covers bundle-decoded entries).
             if (cache is not null && cache.TryGetValue(fid, out var cached))
@@ -281,14 +281,14 @@ public sealed class ModuleCompiler
             {
                 // every literal pool (float, bigint, string/PSTR)
                 // is a per-engine LiteralPool<T>: append-only and deduplicating,
-                // so the value at a given id NEVER moves, and the only flow that
+                // so the value at a given id never moves, and the only flow that
                 // consults the cross-query caches (query setup) always compiles
                 // against the engine's persistent `_literalPools` instances.
                 // A literal id is therefore as stable as an atom/functor id
                 // within its engine, and predicates carrying float, bigint or
                 // string literals are all cache-reusable (floats, bigint and
                 // PSTR each audited before being exempted).
-                // The guard remains for any FUTURE LiteralId carrier outside
+                // The guard remains for any future LiteralId carrier outside
                 // this audited set.
                 bool stableLiteralOp = opByte is (byte)Opcode.GetFloat
                     or (byte)Opcode.PutFloat or (byte)Opcode.UnifyFloat

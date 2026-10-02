@@ -18,7 +18,7 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class StringBuiltins
 {
-    // The SWI `string_*` family produces text as a SEQUENCE, and
+    // The SWI `string_*` family produces text as a sequence, and
     // double_quotes=string is a compatibility alias for chars (ADR-047
     // decision 5) — so what it builds is a list of chars.
     private const TextKind StringKind = TextKind.Chars;
@@ -268,7 +268,7 @@ public static class StringBuiltins
     private static string ReadStringOrAtom(Activation engine, int regIdx, string builtinName)
     {
         Cell c = engine.NormalizeListCell(Resolve(engine, engine.GetRegister(regIdx)));
-        // `[]` is the empty TEXT here, not the two-character atom name: a
+        // `[]` is the empty text here, not the two-character atom name: a
         // zero-length literal denotes the empty list (ADR-047), and
         // string_concat("", X, X) has to keep holding.
         if (c.Tag == Tag.Atom)

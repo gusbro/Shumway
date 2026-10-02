@@ -73,8 +73,8 @@ public class LazyPhraseTests : IDisposable
     public void TheWindowIsIdempotentUnderBacktracking()
     {
         // The grammar tries line//1's first clause (a newline), fails on the
-        // first character, and tries the second — waking the SAME lazy cell
-        // twice. A plain read would hand it the NEXT characters the second
+        // first character, and tries the second — waking the same lazy cell
+        // twice. A plain read would hand it the next characters the second
         // time, and the parse would quietly see an input the file does not
         // contain. The window is far larger than the file here, so every one
         // of those re-wakes is a re-read of offset 0.

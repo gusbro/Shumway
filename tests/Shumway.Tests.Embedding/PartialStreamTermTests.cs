@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// stream-term is an instance of it. So what is wrong with it is the missing
 /// binding, and the error has to be one that binding could make good:
 /// instantiation_error, not domain_error(stream_or_alias, ...). stc#72 puts it
-/// as the rule this engine now follows -- (a) a variable OR a non-ground term
+/// as the rule this engine now follows -- (a) a variable or a non-ground term
 /// with instances that are stream-terms is instantiation_error; (d) a term
 /// with no instance that is a stream-term is the domain error.
 ///
@@ -37,7 +37,7 @@ public sealed class PartialStreamTermTests
         Assert.True(Raises($"S = '$stream'(_), {goal}", "instantiation_error"));
     }
 
-    /// <summary>ANTI-VACUITY: a term no binding can rescue keeps its domain
+    /// <summary>Anti-vacuity: a term no binding can rescue keeps its domain
     /// error, so the change did not turn every stream complaint into
     /// instantiation. Covers stc#72's rule (d) explicitly with f(X): non-ground,
     /// yet no instance of it is a stream-term.</summary>
@@ -53,7 +53,7 @@ public sealed class PartialStreamTermTests
                            "domain_error(stream_or_alias, _)"));
     }
 
-    /// <summary>ANTI-VACUITY: the unchanged neighbours. A bare variable was
+    /// <summary>Anti-vacuity: the unchanged neighbours. A bare variable was
     /// always instantiation_error, and a real stream still works.</summary>
     [Fact]
     public void TheSurroundingCasesAreUnchanged()

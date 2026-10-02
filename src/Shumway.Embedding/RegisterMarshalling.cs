@@ -55,7 +55,7 @@ public static class RegisterMarshalling
 
     /// <summary>cell-direct scalar read for a generated
     /// [PrologPredicate] bridge's <c>+</c> parameter: an Int cell yields its
-    /// payload with ZERO allocation (the Term path allocated one IntTerm per
+    /// payload with zero allocation (the Term path allocated one IntTerm per
     /// scalar argument per call — measured 120 B/call on a 3-arg foreign).
     /// An unbound register raises the same instantiation_error the bridge
     /// raised; anything else (BigInt, wrong type) falls back to the exact

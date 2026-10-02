@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>findall/3 over a cyclic solution. FindallSnapshot's spine walk
-/// consulted structMap to stop, but the CURRENT spine's conses are only
+/// consulted structMap to stop, but the current spine's conses are only
 /// registered after the walk — so a list cycling back into its own spine
 /// (L = [a|L]) re-walked itself until the image overflowed: an
 /// engine-killing OutOfMemoryException, where HeapTermCopy (copy_term's

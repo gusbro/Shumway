@@ -3,7 +3,7 @@ using Shumway.Core;
 
 namespace Shumway.Builtins;
 
-/// <summary>One flag value. Flags hold an ATOMIC value (SWI: a number or an
+/// <summary>One flag value. Flags hold an atomic value (SWI: a number or an
 /// atom). Stored as a managed value — a number as a <see cref="Number"/>, an atom
 /// as its id — rather than a heap <see cref="Cell"/>, so it survives across
 /// queries: a Cell holding a heap index (Float / BigInt) would dangle once the
@@ -36,7 +36,7 @@ public readonly struct FlagValue
 /// <summary>The per-engine <c>flag/3</c> store: a global, non-backtrackable
 /// key → value map. Its own namespace, distinct from the
 /// <see cref="GlobalVarStore"/> (SWI keeps flags and global variables separate).
-/// A key is an atom OR a ground compound (SWI's <c>library(gensym)</c> keys on
+/// A key is an atom or a ground compound (SWI's <c>library(gensym)</c> keys on
 /// <c>gensym(Base)</c>), canonicalised to a string by <see cref="FlagBuiltins"/>;
 /// an unset key reads as 0.</summary>
 public sealed class FlagStore
@@ -58,7 +58,7 @@ public interface IFlagHost
 }
 
 /// <summary>Host-side interface for dialect-sensitive builtins (ADR-040). A
-/// builtin whose STRICT ISO behaviour is about to raise consults this to learn
+/// builtin whose strict ISO behaviour is about to raise consults this to learn
 /// whether its caller lives in a module loaded as a particular dialect (SWI,
 /// Scryer, …) and, if so, applies that dialect's more permissive behaviour.
 /// Implemented by <c>PrologEngine</c>; only reached on the would-raise path, so

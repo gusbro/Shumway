@@ -45,7 +45,7 @@ public sealed class GcRegisterBoundTier1Tests
         return e;
     }
 
-    /// <summary>A collection at EVERY safe point, under promoted IL: every
+    /// <summary>A collection at every safe point, under promoted IL: every
     /// structure a live register points at must survive every one of them.
     /// Before the fix this died in the first hundred iterations.</summary>
     [Fact]

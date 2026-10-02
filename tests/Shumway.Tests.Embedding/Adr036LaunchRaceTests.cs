@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Repro of the user's --dap-wait corruption: breakpoints armed BEFORE the
+/// <summary>Repro of the user's --dap-wait corruption: breakpoints armed before the
 /// consult (the launch flow), consult after, then run — expect a working program.</summary>
 [Collection("debugger")]
 public class Adr036LaunchRaceTests
@@ -49,7 +49,7 @@ public class Adr036LaunchRaceTests
                 using var client = new DapTestClient(session.DapPort!.Value);
                 client.Request("initialize");
                 client.WaitEvent("initialized");
-                // The user's flow: breakpoints for the file BEFORE it is consulted.
+                // The user's flow: breakpoints for the file before it is consulted.
                 client.Request("setBreakpoints",
                     "{\"source\":{\"path\":" + JsonSerializer.Serialize(file) + "},"
                     + "\"breakpoints\":[{\"line\":2}]}");   // test/0's body: hit once
@@ -68,8 +68,8 @@ public class Adr036LaunchRaceTests
                     for (; seen < 500; seen++)
                     {
                         // 30 s, not 10: under the parallel suite on a saturated runner a
-                        // DELAYED stop (starved engine thread, socket latency) arrives
-                        // late and is fine; a LOST stop never arrives and fails at any
+                        // delayed stop (starved engine thread, socket latency) arrives
+                        // late and is fine; a lost stop never arrives and fails at any
                         // timeout - so the generous wait discriminates the two instead
                         // of conflating them.
                         JsonElement ev = client.WaitEvent("stopped", 30000);
@@ -97,7 +97,7 @@ public class Adr036LaunchRaceTests
                 var listing = new QueryRun(engine, "listing.");
                 Assert.True(listing.Join(20_000), "round " + round + ": listing done");
 
-                // And the code must still RUN after everything.
+                // And the code must still run after everything.
                 var again = new QueryRun(engine, "test.");
                 for (int stops = 0; stops < 5 && !again.Join(50); stops++)
                 {
@@ -110,7 +110,7 @@ public class Adr036LaunchRaceTests
                         // The forensics run (CI 33508179775, both lanes) settled
                         // this shape: the rerun's stops all fired and were
                         // continued, the query just needed more than Join(50)'s
-                        // grace to FINISH — so this loop entered a wait for a
+                        // grace to finish — so this loop entered a wait for a
                         // stop that never existed. A completed query here is
                         // the test's own ghost wait, i.e. success; only a query
                         // still running after a silent 30 s is a real failure

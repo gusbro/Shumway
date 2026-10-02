@@ -73,7 +73,7 @@ public class Adr036EvalTests
         {
             QueryRun query = StopAtLine5(engine, client);
 
-            // A side-effecting goal, in the LIVE engine: the assert persists.
+            // A side-effecting goal, in the live engine: the assert persists.
             JsonElement eval = client.Request("evaluate",
                 "{\"expression\":\"assertz(log(desde_consola))\","
                 + "\"frameId\":1,\"context\":\"repl\"}");
@@ -172,7 +172,7 @@ public class Adr036EvalTests
         {
             QueryRun query = StopAtLine5(engine, client);
 
-            // A breakpoint INSIDE the code the console goal calls (line 10, mark's
+            // A breakpoint inside the code the console goal calls (line 10, mark's
             // clause — reached only via helper). The evaluation must run straight
             // through it: a nested stop routed to the reader thread would deadlock
             // against the parked engine thread's gate.
@@ -193,7 +193,7 @@ public class Adr036EvalTests
     [Fact]
     public void DebugConsole_BareVariableName_PrintsItsValue()
     {
-        //  X is BOUND at the stop (step(X) bound 1 before line 5).
+        //  X is bound at the stop (step(X) bound 1 before line 5).
         var (engine, session, server) = StartDebuggee("""
             :- dynamic(log/1).
             run(Out) :-
@@ -241,7 +241,7 @@ public class Adr036EvalTests
             Assert.StartsWith("_", hover.GetProperty("body")
                 .GetProperty("result").GetString());   // Out is still free
 
-            // A predicate name: REFUSED — hovering `run` must not run run/1 (the
+            // A predicate name: Refused — hovering `run` must not run run/1 (the
             // DataTip lesson, ADR-035).
             JsonElement refused = client.Request("evaluate",
                 "{\"expression\":\"emit(1)\",\"frameId\":1,\"context\":\"hover\"}",
@@ -279,7 +279,7 @@ public class Adr036EvalTests
     [Fact]
     public void SetVariable_Underscore_Uninstantiates()
     {
-        //  program with X BOUND at the stop: step(X) binds 1, bp at line 5.
+        //  program with X bound at the stop: step(X) binds 1, bp at line 5.
         var (engine, session, server) = StartDebuggee("""
             :- dynamic(log/1).
             run(Out) :-
@@ -302,7 +302,7 @@ public class Adr036EvalTests
 
             client.Request("continue", "{\"threadId\":1}");
             Assert.True(query.Join(20_000), "query must complete");
-            // X arrived at emit UNBOUND: nothing was asserted.
+            // X arrived at emit unbound: nothing was asserted.
             Assert.Empty(engine.QueryAll("log(V).").ToList());
         }
     }
@@ -317,7 +317,7 @@ public class Adr036EvalTests
         {
             QueryRun query = StopAtLine5(engine, client);
 
-            // A quoted atom that LOOKS like a number: the response must render writeq
+            // A quoted atom that looks like a number: the response must render writeq
             // ('1234' with quotes), or a copy-paste edit would silently change its type.
             JsonElement set = client.Request("setVariable",
                 "{\"variablesReference\":1,\"name\":\"X\",\"value\":\"hola('1234')\"}");

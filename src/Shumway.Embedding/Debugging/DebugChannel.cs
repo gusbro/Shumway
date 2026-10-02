@@ -16,7 +16,7 @@ public readonly record struct DebugCommand(
 /// <summary>
 /// ADR-035 — the pinned-memory channel between the engine and the debugger.
 ///
-/// The engine serialises each stop into the snapshot buffer BEFORE tripping the notify
+/// The engine serialises each stop into the snapshot buffer before tripping the notify
 /// breakpoint; the debugger reads it with <c>DkmProcess.ReadMemory</c> and writes
 /// commands back with <c>WriteMemory</c>, drained before resume. No code runs in the
 /// debuggee while stopped — a func-eval in breakpoint-notification context deadlocks
@@ -95,7 +95,7 @@ public sealed class DebugChannel : IDisposable
             DebugWire.WriteInt(_snapshot, ref at, setNext[i]);
 
         // Strings are deduplicated into a table (frames of a recursion share almost all
-        // of them); frames carry indices. Each frame is PRICED before any byte of it is
+        // of them); frames carry indices. Each frame is priced before any byte of it is
         // written and the counts written are the counts actually present — writing the
         // real count and then running out of room lets the reader walk into the tail of
         // an older, longer stop and read stale bytes as lengths.
@@ -191,7 +191,7 @@ public sealed class DebugChannel : IDisposable
         return cost;
     }
 
-    /// <summary>Marks the buffer as the record of a FINISHED stop. Without it, a
+    /// <summary>Marks the buffer as the record of a finished stop. Without it, a
     /// process frozen from outside (Break All, a stop in C#) would be shown the Prolog
     /// stack of the last breakpoint as if current. One word, poked at every resume —
     /// keeping a continuously fresh stack instead means rendering the whole environment
@@ -203,7 +203,7 @@ public sealed class DebugChannel : IDisposable
     }
 
     /// <summary>How many foreign calls the engine is inside. Above zero, the stack in
-    /// the buffer is the one UNDER the C# the debugger sees (the mixed-stack case);
+    /// the buffer is the one under the C# the debugger sees (the mixed-stack case);
     /// zero returns the buffer to being a past stop's record.</summary>
     public void SetInteropDepth(int depth)
     {

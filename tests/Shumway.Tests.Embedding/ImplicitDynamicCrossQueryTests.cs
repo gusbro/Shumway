@@ -55,7 +55,7 @@ public class ImplicitDynamicCrossQueryTests
     [Fact]
     public void TopLevelAssertz_ThenCall_SameQuery()
     {
-        // assertz and call in the SAME query body — the pre-scan of
+        // assertz and call in the same query body — the pre-scan of
         // the synthetic __query__ clause should pick up the literal
         // head and pre-declare it dynamic.
         var engine = new PrologEngine();

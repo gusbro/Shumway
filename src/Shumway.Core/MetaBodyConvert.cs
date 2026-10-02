@@ -5,7 +5,7 @@ namespace Shumway.Core;
 /// skeleton (<c>,</c>/<c>;</c>/<c>-&gt;</c>/<c>*-&gt;</c>) is wrapped as
 /// <c>call(V)</c>, sharing the variable cell so later bindings flow.
 ///
-/// <para>The conversion happens ONCE, at the call boundary — never at the
+/// <para>The conversion happens once, at the call boundary — never at the
 /// <c>'$call'/2</c> sub-dispatches, which execute a body this conversion
 /// already produced. Converting lazily is wrong: by the time a sub-dispatch
 /// reaches a variable sub-goal its home cell may already hold the value it
@@ -30,15 +30,15 @@ public static class MetaBodyConvert
         FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
 
     /// <summary>SS7.8.3: a control construct's arguments must convert to a
-    /// body BEFORE any of it runs — a number in goal position anywhere in the
-    /// skeleton makes the WHOLE construct the type_error culprit, and nothing
+    /// body before any of it runs — a number in goal position anywhere in the
+    /// skeleton makes the whole construct the type_error culprit, and nothing
     /// executes. Expects the construct's two arguments in X0/X1 (the shape
     /// both dispatchers have built by the time they route). Sees through
     /// '$mqual'/':' tags — PrepareMqualGoal distributes the module tag over a
     /// construct's args before this check runs — and strips them from the
     /// culprit so the ball names the goal the caller wrote.
     ///
-    /// <para>Also APPLIES the conversion: a variable in goal position within
+    /// <para>Also applies the conversion: a variable in goal position within
     /// the assembled construct is wrapped as <c>call(V)</c> in place, exactly
     /// as WrapVariableSubgoals does for a whole-goal <c>call/1</c>. Without
     /// it a metacalled <c>call(',', X=!, (Y=1,X ; Y=2))</c> executes the
@@ -118,7 +118,7 @@ public static class MetaBodyConvert
     /// which is allocation-free.
     ///
     /// <para>Besides wrapping unbound sub-goals as <c>call(V)</c>, this
-    /// NORMALISES bound goal positions: a cell that reaches a value through a
+    /// normalises bound goal positions: a cell that reaches a value through a
     /// REF chain is replaced by the dereferenced cell. Downstream a raw REF
     /// in goal position then means exactly "was a variable at the call
     /// boundary" — the discriminator DispatchCall's fresh-barrier rule needs.
@@ -145,7 +145,7 @@ public static class MetaBodyConvert
                 int fid = engine.GetHeap(fIdx).AsFunctorId;
                 // A module qualifier is transparent to the conversion: the
                 // module is data, the goal is arg 1 — and PrepareMqualGoal
-                // DISTRIBUTES '$mqual' over a control construct's args, so
+                // distributes '$mqual' over a control construct's args, so
                 // by the time the boundary converts, every sub-goal may
                 // already sit under one.
                 if (fid == MqualFid || fid == ColonFid)

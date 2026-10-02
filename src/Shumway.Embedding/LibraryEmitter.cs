@@ -25,7 +25,7 @@ public sealed class LibraryEmitResult
 }
 
 /// <summary>
-/// produces a .NET CLASS LIBRARY (<c>.dll</c>) that embeds a
+/// produces a .NET class library (<c>.dll</c>) that embeds a
 /// <see cref="Bundle"/> and exposes a small generated factory so a host .NET
 /// application can spin up a Shumway engine with the bundled program already
 /// loaded — no <c>MemoryStream</c> / reflection boilerplate on the consumer side:
@@ -36,7 +36,7 @@ public sealed class LibraryEmitResult
 /// </code>
 ///
 /// <para>The contrast with <see cref="ExecutableEmitter"/> (<c>--exe</c>): there is
-/// NO Prolog goal entry point — the host decides which goals to run, when. The DLL
+/// no Prolog goal entry point — the host decides which goals to run, when. The DLL
 /// is a library, not a self-launching program.</para>
 ///
 /// <para>Mechanism (like <c>--exe</c>): shells out to <c>dotnet build</c> on a
@@ -150,8 +150,8 @@ public static class LibraryEmitter
                 }
 
 #if NETFRAMEWORK
-            // A Framework CONSUMER exe needs binding redirects that match the
-            // versions DEPLOYED HERE — its own build's auto-generated ones can
+            // A Framework consumer exe needs binding redirects that match the
+            // versions deployed here — its own build's auto-generated ones can
             // land lower (RAR only walks the references it was handed, not
             // this folder). Ship a ready-to-merge sample computed from the
             // actual files, plus the gcAllowVeryLargeObjects knob the
@@ -179,7 +179,7 @@ public static class LibraryEmitter
 #if NETFRAMEWORK
     /// <summary>Binding redirects for every strong-named assembly deployed in
     /// <paramref name="dir"/>, each redirected to exactly the version that
-    /// sits there — the one configuration that is correct for THIS folder.</summary>
+    /// sits there — the one configuration that is correct for this folder.</summary>
     private static string BuildConsumerConfigSample(string dir)
     {
         var sb = new StringBuilder();
@@ -257,7 +257,7 @@ public static class LibraryEmitter
             references.AppendLine($"      <Private>true</Private>");
             references.AppendLine($"    </Reference>");
         }
-        // The stub inherits the RUNNING toolchain's TFM: the linker's own
+        // The stub inherits the running toolchain's TFM: the linker's own
         // directory holds the matching Shumway flavors, and a net48 toolchain
         // exists to serve Framework consumers. LangVersion latest on net48
         // (the factory uses nullable annotations; net48 defaults to C# 7.3).

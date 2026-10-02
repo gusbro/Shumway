@@ -115,7 +115,7 @@ public static class Profiler
 
     /// <summary>Records one retry_me_else execution at <paramref name="pc"/>
     /// (diagnosis aid). The report buckets these by the owning
-    /// predicate (nearest predicate entry at-or-below the pc) — naming WHICH
+    /// predicate (nearest predicate entry at-or-below the pc) — naming which
     /// predicates burn time scanning linear clause chains on backtrack.</summary>
     [Conditional("SHUMWAY_PROFILE")]
     public static void RetryAt(int pc)
@@ -262,7 +262,7 @@ public static class Profiler
         if (_retryByPc.Count > 0)
         {
             // attribute retry_me_else executions (linear clause-chain
-            // scanning on backtrack) to the OWNING predicate — group the per-pc
+            // scanning on backtrack) to the owning predicate — group the per-pc
             // counters by the nearest predicate entry at-or-below each pc.
             var byPred = new Dictionary<string, long>();
             foreach (var (pc, count) in _retryByPc)

@@ -71,7 +71,7 @@ public sealed class NativeInferenceTests
     {
         // strcmp_p: &LS/&RS via MakeCString → string inputs; X is strcmp(...) →
         // int output (from the :- c prototype). The length args LLen/RLen — Prolog
-        // vars here — are consumed by the intrinsic and must NOT need a type.
+        // vars here — are consumed by the intrinsic and must not need a type.
         var i = Infer(
             "strcmp_p(LS, RS, X):- LLen = 255, RLen = 255, "
             + "{ 'MakeCString'(lbuf, LLen, &LS); 'MakeCString'(rbuf, RLen, &RS); X is 'strcmp'(lbuf, rbuf) }, !.\n",

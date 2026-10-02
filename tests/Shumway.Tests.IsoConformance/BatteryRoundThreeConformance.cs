@@ -31,7 +31,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void BodyConversion_NumberInGoalPosition_RaisesBeforeRunning()
     {
-        // The conversion happens BEFORE the body runs, so the leading `fail`
+        // The conversion happens before the body runs, so the leading `fail`
         // never gets to decide the outcome. The culprit is the whole
         // construct (GNU agrees); the battery accepts the subterm too.
         Succeeds("catch(call((fail, 3)), "
@@ -43,7 +43,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void BodyConversion_ReachedThroughCallN_Raises()
     {
-        // call(',', fail, X) builds the conjunction at RUNTIME; the static
+        // call(',', fail, X) builds the conjunction at runtime; the static
         // call/N rewrite must not inline it and skip the conversion.
         Succeeds("X = 3, catch(call(',', fail, X), "
             + "error(type_error(callable, (fail, 3)), _), true).");
@@ -55,7 +55,7 @@ public class BatteryRoundThreeConformance
     public void CallN_BuiltConjunction_KeepsMetacalledCutLocal()
     {
         // The counterpart: a call/N-built conjunction whose arguments are all
-        // callable still inlines, and a `!` reached through a VARIABLE is
+        // callable still inlines, and a `!` reached through a variable is
         // local to its own metacall — the disjunction keeps its second answer.
         Succeeds("findall(X, call(',', C = (!), (X = 1, C ; X = 2)), L), "
             + "L == [1, 2].");
@@ -119,7 +119,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void Format_EmptyControlStringWritesNothing()
     {
-        // "" is the empty code LIST under double_quotes=codes, not the
+        // "" is the empty code list under double_quotes=codes, not the
         // atom named "[]".
         Assert.Equal("", Formatted("", "[]"));
     }
@@ -151,7 +151,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void SolutionCollectors_ResultArgumentMustBeAPartialList()
     {
-        // Checked BEFORE the goal runs, so a goal with solutions still raises.
+        // Checked before the goal runs, so a goal with solutions still raises.
         Succeeds("catch(findall(X, (X = 1 ; X = 2), 12), "
             + "error(type_error(list, 12), _), true).");
         Succeeds("catch(bagof(X, X = 1, 12), error(type_error(list, 12), _), true).");
@@ -163,7 +163,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void SolutionCollectors_GroundResultListStillUnifies()
     {
-        // A ground list IS a partial list — the check must not reject the
+        // A ground list is a partial list — the check must not reject the
         // common "check the solutions" idiom.
         Succeeds("findall(X, member(X, [1,2]), [1,2]).");
     }
@@ -256,7 +256,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void DeclaredButUndefinedPredicateIsKnown()
     {
-        // A `:- discontiguous` / `:- multifile` declaration DEFINES the
+        // A `:- discontiguous` / `:- multifile` declaration defines the
         // predicate as far as current_predicate/1 is concerned, and calling it
         // fails instead of raising existence_error.
         var engine = new PrologEngine();
@@ -311,7 +311,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void StreamOptionsRepeatedAndRepositionFalse()
     {
-        // A repeated option: the LAST one wins.
+        // A repeated option: the last one wins.
         Succeeds("atom_concat('shumway_opt_', 'test.tmp', F), "
             + "open(F, write, S, [type(binary), type(text)]), "
             + "stream_property(S, type(text)), close(S).");
@@ -374,7 +374,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void ConversionDescendsTheControlSkeletonOnly()
     {
-        // §7.6.2 covers ','/2, ';'/2 and '->'/2. `\+` is NOT converted —
+        // §7.6.2 covers ','/2, ';'/2 and '->'/2. `\+` is not converted —
         // GNU Prolog, the reference here, leaves it alone (SWI does convert
         // it, and *-> too).
         Succeeds("assertz((r1(X) :- (X ; true))), clause(r1(_), B), "
@@ -396,7 +396,7 @@ public class BatteryRoundThreeConformance
         // …the converted form matches too (the clause/2 round trip)…
         Succeeds("assertz((z2(X) :- X, call(X))), clause(z2(W), B), "
             + "retract((z2(W) :- B)).");
-        // …and a body that is a bare VARIABLE stays the pattern's wildcard,
+        // …and a body that is a bare variable stays the pattern's wildcard,
         // not a goal to convert: it must still match anything.
         Succeeds("assertz((z3(X) :- X, call(X))), retract((z3(_) :- Body)), "
             + "Body = ','(call(_), call(_)).");
@@ -409,7 +409,7 @@ public class BatteryRoundThreeConformance
     public void RawControlCharactersAreRejectedInEveryQuotedToken()
     {
         // §6.4.2.1 — a raw tab or newline has to be written as an escape.
-        // Quoted ATOMS and back-quoted tokens already refused them; strings
+        // Quoted atoms and back-quoted tokens already refused them; strings
         // are the same token class and now agree.
         // 34 is `"`, 9 is tab, 10 is newline — spelled as codes so the C#
         // and Prolog escaping stay out of each other's way.
@@ -417,7 +417,7 @@ public class BatteryRoundThreeConformance
             + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
         Succeeds("atom_codes(S, [34, 0'a, 10, 0'b, 34]), "
             + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
-        // A quoted ATOM and a back-quoted token follow the same rule.
+        // A quoted atom and a back-quoted token follow the same rule.
         Succeeds("atom_codes(S, [39, 0'a, 9, 0'b, 39]), "
             + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
         // The escaped spellings still read.
@@ -439,7 +439,7 @@ public class BatteryRoundThreeConformance
             "findall(Z-X, call((Z = (!), cb(X), Z)), L), L == [(!)-1, (!)-2].").Success);
         Assert.True(engine.Query(
             "findall(X, call((C = (!), (X = 1, C ; X = 2))), L), L == [1, 2].").Success);
-        // A cut written LITERALLY inside the called term still commits to it.
+        // A cut written literally inside the called term still commits to it.
         Assert.True(engine.Query(
             "findall(X, call((cb(X), !)), L), L == [1].").Success);
         Assert.False(engine.Query("call((cb(_), !, fail)).").Success);
@@ -454,9 +454,9 @@ public class BatteryRoundThreeConformance
     public void ScannedAssertTargetIsNotInTheDatabaseYet()
     {
         // The implicit_dynamic pre-scan marks a literal assertz/1 target
-        // dynamic at CONSULT time so the linker emits a real trampoline for
+        // dynamic at consult time so the linker emits a real trampoline for
         // calls to it. That is a codegen preparation, not a definition:
-        // §8.8.2.1 enumerates the procedures IN THE DATABASE, and GNU, SWI
+        // §8.8.2.1 enumerates the procedures in the database, and GNU, SWI
         // and Scryer all agree the predicate is not one of them yet.
         var engine = new PrologEngine();
         engine.ConsultString("scan_p :- assertz(scan_foo(bar)).\n");
@@ -475,8 +475,8 @@ public class BatteryRoundThreeConformance
     public void DeclaredDynamicIsInTheDatabaseEvenWithNoClauses()
     {
         // The counterpart, and the reason the two marks have to be told
-        // apart: a DECLARED dynamic is defined — it enumerates, and calling
-        // it FAILS rather than raising, whatever the `unknown` flag says.
+        // apart: a declared dynamic is defined — it enumerates, and calling
+        // it fails rather than raising, whatever the `unknown` flag says.
         var engine = new PrologEngine();
         engine.ConsultString(":- dynamic(decl_empty/1).\n");
         Assert.True(engine.Query("current_predicate(decl_empty/1).").Success);

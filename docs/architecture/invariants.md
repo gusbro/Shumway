@@ -74,6 +74,10 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   qualification** — all its predicates mangle `Name$x`; resolution is
   local → imports → bare-global, identically at compile time and runtime.
   (ADR-038.)
+- **A module's private predicate is reached only by qualifying** (`m:p(X)`)
+  from outside the module: the top level, another module and a file without
+  a module directive all get `existence_error` for the bare name, as the
+  linker does. (ADR-056.)
 - **Static predicates are immutable once compiled.** `assertz`/`retract` on a
   static predicate is an error.
 - **Dynamic predicates** are declared with `:- dynamic foo/N` or auto-promoted
@@ -126,10 +130,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   a cached IL delegate. Enforced at promotion: a predicate whose bytecode
   opens with `enter_dynamic` is permanently excluded
   (`IlPromotionStore.IsExcludedByLayout`). The ONE sanctioned exception is
-  ADR-023's snapshot model: a STATIC-style IL snapshot of a dynamic predicate
-  may run only under eviction-on-mutation plus clause-entry staleness tests
-  (ADR-034); anything else must decline to Tier 0. (Historically "the
-  chunk-159 invariant".)
+  the snapshot model: a STATIC-style snapshot of a dynamic predicate may run
+  in IL only under eviction-on-mutation plus clause-entry staleness tests
+  (ADR-023, ADR-034), and in the wasm tier only as a shadow region retired on
+  the first mutation, with no direct jump to it (ADR-054); anything else must
+  decline to Tier 0. (Historically "the chunk-159 invariant".)
 - **Compiled IL is engine-agnostic**: it takes the activation as a parameter;
   the code cache is shared across engines. Persisted IL is name-relative
   (sentinel ids patched at load). (ADR-011, Phase 17.)
@@ -158,6 +163,22 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
+- **Every side table is a WEAK holder** — foreign, BigInteger and
+  rational: an entry lives only while a
+  FOREIGN cell naming it is reachable. Dead entries are NULLED (surviving
+  ids stay positional, so no id is reused under a live reference) and only
+  the tail is removed, while its last entry is provably dead. Judged by
+  liveness, never by the stored value: null and zero are things a program
+  can store on purpose. The BigIntAlloc/RationalAlloc trail entries reclaim
+  a slot only when BACKTRACKING unwinds past the allocation, which does
+  nothing in the deterministic loop an embedded system lives in; the sweep
+  is what covers that. (ADR-053.)
+- **The attribute table is a WEAK root** — a row does not keep its variable
+  alive. The attribute value is reached from the live variable, never the
+  variable from its row, and rows the trace disproves are swept before
+  relocation. Adding the table back as a root reintroduces a leak that
+  retained 54,570 of 54,574 live cells, and makes `call_residue_vars/2`
+  report variables the program cannot reach. (ADR-052.)
 
 ## Debugger
 

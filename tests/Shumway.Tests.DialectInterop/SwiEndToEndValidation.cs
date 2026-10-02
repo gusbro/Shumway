@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.DialectInterop;
 
 /// <summary>End-to-end validation of real SWI libraries: load each (under the swi
-/// dialect, so the shim auto-loads) and EXERCISE a representative predicate — not
+/// dialect, so the shim auto-loads) and exercise a representative predicate — not
 /// just load. Records load + smoke outcomes and writes a report to
 /// SHUMWAY_TRIAGE_OUT. Opt-in (SHUMWAY_SWI_LIB). This is the truthful runtime
 /// measure the static missing-predicate survey cannot give.</summary>
@@ -91,7 +91,7 @@ public sealed class SwiEndToEndValidation
                 if (lib == "record")
                     e.ConsultString(":- record point(x:integer=0, y:integer=0).");
                 // Lambda-using smokes need yall pre-loaded as a separate step —
-                // the harness runs ONE query, and an in-query use_module cannot
+                // the harness runs one query, and an in-query use_module cannot
                 // affect that same query's already-set-up resolution.
                 if (lib is "apply" or "sort")
                     e.ConsultString(":- use_module(library(yall)).");
@@ -100,7 +100,7 @@ public sealed class SwiEndToEndValidation
 
             string warn = errCapture.ToString();
             // The top-level use_module either threw (real load failure) or not. A
-            // "failed:" warning means a DEPENDENCY couldn't load — the library
+            // "failed:" warning means a dependency couldn't load — the library
             // itself may still be usable, so we still run the smoke.
             bool topLevelOk = e is not null && !warn.Contains("EXC:");
             bool depWarn = warn.IndexOf("failed:", StringComparison.Ordinal) >= 0;

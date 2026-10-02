@@ -18,7 +18,7 @@ public class AcyclicTermTests
     [Fact] public void Unbound_IsAcyclic() => Assert.True(Holds("acyclic_term(_)."));
 
     [Fact] public void SharedDag_IsAcyclic() =>
-        // Shared (non-cyclic) subterm must NOT be mistaken for a cycle.
+        // Shared (non-cyclic) subterm must not be mistaken for a cycle.
         Assert.True(Holds("S = shared, acyclic_term(pair(S, S))."));
 
     [Fact] public void SelfReferentialCompound_IsCyclic() =>

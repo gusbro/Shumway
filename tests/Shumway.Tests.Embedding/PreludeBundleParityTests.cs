@@ -5,14 +5,12 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>The prelude's user-facing surface must survive the BAKED-bundle
-/// boot path. A live consult reaches every prelude predicate through the
-/// consult-direct fallback, but an engine booted from a bundle (FromBundle —
-/// every --exe, WebShumway's stdlib) resolves only the module's PUBLICS bare:
-/// a documented predicate missing from the `:- public` header works in the
-/// REPL and raises existence_error from a bundle. That drift shipped once
-/// (countall/2 and the prologue batch listed in the browser's own reference
-/// while its engine could not call them) — these pins close the class.</summary>
+/// <summary>The prelude's user-facing surface must be public. Only a
+/// module's publics resolve bare from outside it (ADR-056), in a live
+/// engine and in one booted from a bundle (FromBundle: every --exe,
+/// WebShumway's stdlib) alike, so a documented predicate missing from the
+/// `:- public` header raises existence_error. These pins keep every
+/// documented predicate either a builtin or declared public.</summary>
 public sealed class PreludeBundleParityTests
 {
     // ---- source invariant: documented ⇒ builtin or :- public ----
@@ -24,7 +22,7 @@ public sealed class PreludeBundleParityTests
         _ = new PrologEngine();
 
         // The `:- public` spellings the prelude uses: name/A, 'name'/A,
-        // (name)/A and ('name')/A — the last is how an OPERATOR atom's
+        // (name)/A and ('name')/A — the last is how an operator atom's
         // indicator must be written (ISO 6.3.1.3, s#378).
         var publics = new System.Collections.Generic.HashSet<(string, int)>();
         foreach (Match m in Regex.Matches(Prelude.Source,
@@ -95,8 +93,9 @@ public sealed class PreludeBundleParityTests
             "countall(between(1, 10, _), N), N == 10.",
             "nth0(1, [a, b, c], b, R), R == [a, c].",
             "nth1(2, [a, b, c], b, R), R == [a, c].",
-            "maplist(add3, [1, 2], [10, 20], [100, 200], L), L == [111, 222].",
-            "foldl(acc3, [1, 2], [3, 4], [5, 6], 0, S), S == 21.",
+            // add3 and acc3 are the probe module's privates (ADR-056).
+            "maplist(probe:add3, [1, 2], [10, 20], [100, 200], L), L == [111, 222].",
+            "foldl(probe:acc3, [1, 2], [3, 4], [5, 6], 0, S), S == 21.",
         })
         {
             Assert.True(engine.Query(q).Success, q);
@@ -106,7 +105,7 @@ public sealed class PreludeBundleParityTests
     [Fact]
     public void BakedBundle_TreatsPreludePredicatesAsBuiltIn()
     {
-        // The introspection contract must not depend on HOW the prelude got
+        // The introspection contract must not depend on how the prelude got
         // installed: a baked $prelude entry records its predicates as
         // prelude functors exactly like the live consult, so
         // predicate_property reports built_in, current_predicate skips them
@@ -132,7 +131,7 @@ public sealed class PreludeBundleParityTests
             "\\+ current_predicate(findall/3).",
             // The prelude's :- meta_predicate directives never execute on
             // the baked path — the templates are recovered from the source
-            // constant, so the ENUMERATION (findall over properties) is
+            // constant, so the enumeration (findall over properties) is
             // identical too, template included.
             "findall(X, predicate_property(findall(_, _, _), X), L), "
                 + "memberchk(meta_predicate(findall(*, 0, *)), L).",

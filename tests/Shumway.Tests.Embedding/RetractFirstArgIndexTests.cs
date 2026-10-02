@@ -10,14 +10,14 @@ namespace Shumway.Tests.Embedding;
 /// in turn" loop that is O(clauses) per call and quadratic over the loop --
 /// 74% of the time of one such loop over 16,000 clauses.
 ///
-/// <para>The store now keeps a first-argument index over the PHYSICAL clause
-/// list. It answers a NECESSARY condition and never a verdict: the key comes
+/// <para>The store now keeps a first-argument index over the physical clause
+/// list. It answers a necessary condition and never a verdict: the key comes
 /// from a clause's head first argument, which never changes once asserted, and
-/// any shape that cannot PROVE a mismatch keys "anything" and stays a
+/// any shape that cannot prove a mismatch keys "anything" and stays a
 /// candidate for every call. The trial unification still decides.</para>
 ///
 /// <para>That is what makes it sound under the logical update view. Born and
-/// died move over time; the key does not. A view can only ever make FEWER
+/// died move over time; the key does not. A view can only ever make fewer
 /// clauses visible than the physical list holds, so a clause the index rules
 /// out is ruled out for every view, and the index is maintained on physical
 /// insertion and removal only -- never on a clause merely becoming
@@ -39,13 +39,13 @@ public sealed class RetractFirstArgIndexTests
         return e;
     }
 
-    /// <summary>COUNTED, not timed: the clauses TRIED is the cost. Retracting
+    /// <summary>Counted, not timed: the clauses tried is the cost. Retracting
     /// n clauses by key tries n of them -- one per call, the one that matches
     /// -- at both sizes. The scan tried n(n+1)/2 (32 million over 8,000),
     /// which is what made the loop quadratic.
     ///
     /// <para>The keys here are retracted in the opposite order to the one they
-    /// were asserted in, so every match sits at the END of the list: the worst
+    /// were asserted in, so every match sits at the end of the list: the worst
     /// case for the scan, and indifferent to the index.</para></summary>
     [Fact]
     public void RetractingByKeyTriesOneClausePerCall()
@@ -57,7 +57,7 @@ public sealed class RetractFirstArgIndexTests
             e.RetractCandidatesTried = 0;
             Assert.True(e.Query($"drain(1, {n}).").Success);
             Assert.Equal(n, e.RetractCandidatesTried);
-            // ANTI-VACUITY: all of them really went.
+            // Anti-vacuity: all of them really went.
             Assert.False(e.Query("cp(_, _).").Success);
             // The index was maintained, never rebuilt from scratch.
             Assert.Equal(0L, e.ClauseIndexRebuilds);
@@ -65,7 +65,7 @@ public sealed class RetractFirstArgIndexTests
     }
 
     /// <summary>A clause whose first argument rules nothing out is a candidate
-    /// for EVERY call, so it must be tried alongside the keyed ones and in
+    /// for every call, so it must be tried alongside the keyed ones and in
     /// clause order. Leaving it out would be a solution that never runs.</summary>
     [Fact]
     public void AVariableFirstArgumentIsACandidateForEveryKey()
@@ -85,7 +85,7 @@ public sealed class RetractFirstArgIndexTests
         Assert.Equal("2", first[1]);
         // Both went, so only the untouched keyed clause is left.
         Assert.Single(e.QueryAll("w(_, _)."));
-        // And on a fresh copy, a key NO clause names still reaches the
+        // And on a fresh copy, a key no clause names still reaches the
         // general one -- the index cannot rule it out for anything.
         var e2 = new PrologEngine { Out = new StringWriter() };
         e2.ConsultString("""
@@ -120,7 +120,7 @@ public sealed class RetractFirstArgIndexTests
     }
 
     /// <summary>Every key shape the index distinguishes, retracted by key:
-    /// atom, integer, list, and compound (by functor AND arity, so f/1 and
+    /// atom, integer, list, and compound (by functor and arity, so f/1 and
     /// f/2 are different keys).</summary>
     [Fact]
     public void EveryKeyShapeSelectsItsOwnClause()
@@ -146,7 +146,7 @@ public sealed class RetractFirstArgIndexTests
     }
 
     /// <summary>asserta and assertz both have to land in the index at the
-    /// right END of it, or clause order breaks: the index is what decides
+    /// right end of it, or clause order breaks: the index is what decides
     /// which clause a keyed retract reaches first.</summary>
     [Fact]
     public void AssertaAndAssertzKeepClauseOrderInTheIndex()

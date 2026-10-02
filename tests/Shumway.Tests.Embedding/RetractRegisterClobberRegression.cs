@@ -9,11 +9,11 @@ namespace Shumway.Tests.Embedding;
 /// dynamic-mutation load (Blint.pl's <c>retract(next_char_i(X))</c>
 /// loop linting Blint.pl) the saved arg slot in the CP frame would
 /// get clobbered between push and pop, so the resume read a stale
-/// REF and bound the pattern's variable to the WHOLE candidate STR
+/// REF and bound the pattern's variable to the whole candidate STR
 /// term instead of its argument:
 ///
 /// <code>
-///   retract(next_char_i(X))  →  X = next_char_i(a)   // WRONG (was the whole head)
+///   retract(next_char_i(X))  →  X = next_char_i(a)   // wrong (was the whole head)
 ///                                                     // expected X = a
 /// </code>
 ///

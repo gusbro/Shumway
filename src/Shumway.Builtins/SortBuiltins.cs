@@ -35,12 +35,12 @@ public static class SortBuiltins
         int index = 0;
         // §8.4.3/8.4.4: the list argument is checked as a whole first —
         // an unbound one is an instantiation_error, a bound non-list (or
-        // improper tail) is type_error(list, L) with the WHOLE argument
+        // improper tail) is type_error(list, L) with the whole argument
         // as culprit — before any element's pair shape is looked at.
         CheckSortListArgument(engine, listStart);
         Cell sortedArg = Resolve(engine, engine.GetRegister(1));
         CheckPartialListArgument(engine, sortedArg);
-        // §8.4.4.3: the SORTED argument's bound elements have to be pairs too.
+        // §8.4.4.3: the sorted argument's bound elements have to be pairs too.
         for (Cell sc = sortedArg; sc.Tag == Tag.Lis;
              sc = Resolve(engine, engine.GetHeap(sc.AsHeapIndex + 1)))
         {
@@ -75,8 +75,8 @@ public static class SortBuiltins
     /// <summary>The sort family's list argument (§8.4.3.3): unbound (or
     /// with an unbound tail) is an instantiation_error; a bound
     /// non-list — including an improper tail — is type_error(list, L),
-    /// the WHOLE argument being the culprit.</summary>
-    /// <summary>§8.4: the SORTED argument is checked too — it has to be a
+    /// the whole argument being the culprit.</summary>
+    /// <summary>§8.4: the sorted argument is checked too — it has to be a
     /// partial list (a variable, or a list ending in [] or a variable).
     /// <c>sort([], 3)</c> is type_error(list, 3), not a quiet failure.</summary>
     private static void CheckPartialListArgument(Activation engine, Cell listStart)
@@ -96,7 +96,7 @@ public static class SortBuiltins
 
     private static void CheckSortListArgument(Activation engine, Cell listStart)
     {
-        // Through the list-like cursor: a packed list IS a list (ADR-047).
+        // Through the list-like cursor: a packed list is a list (ADR-047).
         Cell cur = engine.NormalizeListCell(listStart);
         while (true)
         {

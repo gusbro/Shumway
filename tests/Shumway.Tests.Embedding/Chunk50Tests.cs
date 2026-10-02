@@ -17,7 +17,7 @@ public class Chunk50Tests
 {
     private static Term Atom(string n) => new AtomTerm(n);
     private static Term Int(long v) => new IntTerm(v);
-    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // A double-quoted literal reaches C# as the list it is (ADR-047 decision 6):
     // the representation is not observable at the boundary, so what arrives is
     // the same whether or not the engine stored it packed.
     private static Term Pstr(string s)
@@ -50,6 +50,7 @@ public class Chunk50Tests
             p :- q, r.
             """);
         Assert.True(engine.Query("p.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 0)));
     }
 
@@ -68,6 +69,7 @@ public class Chunk50Tests
             chain :- a, b, c.
             """);
         Assert.True(engine.Query("chain.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("chain", 0)));
     }
 
@@ -85,6 +87,7 @@ public class Chunk50Tests
             """);
         Assert.True(engine.Query("main(ok).").Success);
         Assert.False(engine.Query("main(no).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("main", 1)));
     }
 
@@ -169,6 +172,7 @@ public class Chunk50Tests
             """);
         Assert.True(engine.Query("greet(\"hello\").").Success);
         Assert.False(engine.Query("greet(\"world\").").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
     }
 

@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// implementation of <c>term_residual_goals/2</c> over the engine's attvar
 /// machinery — and <c>library(loader)</c> (no-op; strip_module/3 is in the
 /// prelude). Plus the <c>M:G</c> resolution-precedence fix they surfaced: a
-/// module-qualified call must reach the module's OWN version of a
+/// module-qualified call must reach the module's own version of a
 /// builtin-named predicate (Scryer's iso_ext defines copy_term/3) before the
 /// engine builtin.
 /// </summary>
@@ -104,7 +104,7 @@ public class ProjectAttsShimTests
             // qualification — it used to discard the module and call bare).
             Assert.True(e.Query("shadow:copy_term(x, y, R), R == marker.").Success);
             // Runtime meta-call form (DispatchCall's Colon unwrap; the mangled
-            // local must be tried BEFORE the builtin).
+            // local must be tried before the builtin).
             Assert.True(e.Query("G = shadow:copy_term(x, y, R), call(G), R == marker.").Success);
             // Internal call (compile-time ModuleRewrite local resolution).
             Assert.True(e.Query("runct(R), R == marker.").Success);
@@ -118,7 +118,7 @@ public class ProjectAttsShimTests
         var e = BuiltinShadowEngine(out string dir);
         try
         {
-            // The importer ASKED for shadow's exports: its bare copy_term/3 is
+            // The importer asked for shadow's exports: its bare copy_term/3 is
             // the imported one (import table before builtin) — exactly why a
             // Scryer program importing iso_ext gets ISO_EXT's copy_term/3.
             Assert.True(e.Query("copy_term(x, y, R), R == marker.").Success);
@@ -140,7 +140,7 @@ public class ProjectAttsShimTests
         var e = BuiltinShadowEngine(out string dir);
         try
         {
-            // shadow does NOT define length/2 — M:length falls through the
+            // shadow does not define length/2 — M:length falls through the
             // module-local and import steps to the builtin.
             Assert.True(e.Query("shadow:length([a, b], N), N == 2.").Success);
         }

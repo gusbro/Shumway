@@ -7,8 +7,8 @@ namespace Shumway.Tests.Embedding;
 /// shape nobody would write, is not an error report. Two families are pinned
 /// here.
 ///
-/// <para>The first is the ball's SHAPE: several loading predicates built the
-/// whole formal as one string, so the ball carried the ATOM
+/// <para>The first is the ball's shape: several loading predicates built the
+/// whole formal as one string, so the ball carried the atom
 /// <c>'existence_error(source_sink, \'f\')'</c> where a catcher expects the
 /// compound <c>existence_error(source_sink, f)</c>. Every such catcher
 /// silently missed.</para>
@@ -43,7 +43,7 @@ public sealed class ErrorBallShapeTests
     [Fact]
     public void TheFormalIsACompoundAndNotAnAtomSpellingOne()
     {
-        // The defect stated directly: the formal used to be an atom whose NAME
+        // The defect stated directly: the formal used to be an atom whose name
         // read like the compound, so functor/3 saw arity 0 and every catcher
         // written against the ISO shape missed.
         var e = Engine();

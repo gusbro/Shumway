@@ -4,6 +4,8 @@
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
     <ProjectReference Include="..\Shumway.Compiler\Shumway.Compiler.csproj" />
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <!-- The baker behind the wasm option of create; this tool is net10 only, so no net48 guard. -->
+    <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

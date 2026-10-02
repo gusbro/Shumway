@@ -10,7 +10,7 @@ namespace Shumway.Tests.Wasm;
 /// <summary>The attributed-variable corpus of the IL differential, run
 /// against the WASM tier with Tier-0 as the oracle. An attvar cell exists
 /// only at its home — Deref does not follow AttVar — so a tier that copies
-/// one leaves an ORPHAN the attribute machinery cannot see; the probe scans
+/// one leaves an orphan the attribute machinery cannot see; the probe scans
 /// for exactly that after every shape.</summary>
 public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 {
@@ -97,11 +97,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 
         void Install()
         {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
-            var addrMap = new Dictionary<int, int>(members.Count);
-            foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, addrMap, entry.RegisterDemand);
+            TieredEngine.Install(world, members, env);
         }
 
         store.Wasm = new WasmPromotionStore(store)
@@ -165,7 +161,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
 
-            // ANTI-VACUITY: a goal calling a corpus predicate must have run ON
+            // Anti-vacuity: a goal calling a corpus predicate must have run on
             // the tier, or this compares Tier-0 with Tier-0.
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
@@ -223,7 +219,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Ok, b.Ok);
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
-            // The library must actually be ON the tier, or this proves nothing.
+            // The library must actually be on the tier, or this proves nothing.
             Assert.True(members.Count > 5,
                 $"expected the library in the group, saw {members.Count}");
         }

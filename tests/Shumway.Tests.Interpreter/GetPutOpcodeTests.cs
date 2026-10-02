@@ -449,7 +449,7 @@ public class GetPutOpcodeTests
         //   42:   put_value_y Y[0], X[0]          (9 → PC 51)            ; restore X for r
         //   51:   deallocate                      (1 → PC 52)            ; can't, q is here. Let me move q.
         //
-        // Even simpler: put q AFTER everything, and use execute instead of call for r so we
+        // Even simpler: put q after everything, and use execute instead of call for r so we
         // can skip the second deallocate. Final layout:
         //
         //   0:    put_atom 'a', X[0]             (9 → 9)

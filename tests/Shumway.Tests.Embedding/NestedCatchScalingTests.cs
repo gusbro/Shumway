@@ -12,7 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A catch frame is never popped, only marked inactive, because its
 /// push and deactivate records are still on the extra trail and a physically
 /// shorter stack underflows the replay. Leaving control of a guarded goal
-/// therefore had to FIND the top-most still-active frame, and it did that by
+/// therefore had to find the top-most still-active frame, and it did that by
 /// scanning down from the top -- past every frame the ascent had already
 /// closed.
 ///
@@ -51,8 +51,8 @@ public sealed class NestedCatchScalingTests
             + "it was quadratic in the nest depth before and is linear now");
     }
 
-    /// <summary>ANTI-VACUITY, and the reason the frames cannot simply be
-    /// popped: the nest still CATCHES, at the right depth, and the recovery
+    /// <summary>Anti-vacuity, and the reason the frames cannot simply be
+    /// popped: the nest still catches, at the right depth, and the recovery
     /// runs in the right place.</summary>
     [Fact]
     public void ADeepNestStillCatchesAtTheRightFrame()
@@ -63,16 +63,16 @@ public sealed class NestedCatchScalingTests
         // so it travels to the outer catch/3.
         Assert.True(e.Query(
             "catch(deep(10000, throw(ball)), ball, true).").Success);
-        // A ball the nest DOES catch is caught by the innermost frame, so the
+        // A ball the nest does catch is caught by the innermost frame, so the
         // goal simply succeeds without reaching the outer catcher.
         Assert.True(e.Query("deep(10000, throw(-)).").Success);
-        // And a ball no frame in the nest matches escapes ALL of them,
+        // And a ball no frame in the nest matches escapes all of them,
         // including the outer catcher, which is `-` too.
         Assert.Throws<ShumwayPrologException>(
             () => e.Query("catch(deep(100, throw(other)), -, true)."));
     }
 
-    /// <summary>Backtracking INTO a guarded goal re-activates its frame, which
+    /// <summary>Backtracking into a guarded goal re-activates its frame, which
     /// is what the scan bound has to respect: after redoing, the catch is live
     /// again and takes the ball.</summary>
     [Fact]
@@ -110,13 +110,13 @@ public sealed class NestedCatchScalingTests
             .Success);
     }
 
-    /// <summary>A frame is otherwise reclaimed only by BACKTRACKING, through
+    /// <summary>A frame is otherwise reclaimed only by backtracking, through
     /// its push record, so a deterministic loop kept one per catch/3 forever:
     /// four million calls were most of a gigabyte. An exit that nothing can
     /// come back to now drops the frame outright.
     ///
     /// <para>Counted rather than weighed. Managed memory was the obvious
-    /// measure and the wrong one: the loop also grows the PROLOG heap by two
+    /// measure and the wrong one: the loop also grows the prolog heap by two
     /// cells a call, which at these sizes is the same order as the frames, so
     /// the test was really measuring legitimate allocation and it failed on
     /// .NET Framework where the two land differently. The frame count is the
@@ -139,9 +139,9 @@ public sealed class NestedCatchScalingTests
             "a frame per catch/3 is being kept");
     }
 
-    /// <summary>ANTI-VACUITY for the reclamation, and the condition it turns
+    /// <summary>Anti-vacuity for the reclamation, and the condition it turns
     /// on: a choice point that outlives the guarded goal is exactly what can
-    /// come back for the catcher, so the frame must NOT be dropped then. The
+    /// come back for the catcher, so the frame must not be dropped then. The
     /// third solution throws, and the catch has to still be there.</summary>
     [Fact]
     public void ALiveChoicePointKeepsTheCatcher()

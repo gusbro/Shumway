@@ -57,7 +57,7 @@ public static class AtomCharBuiltins
         }
         Atom? atom = AtomTable.GetById(atomCell.AsAtomId);
         string name = atom?.Name ?? "";
-        // Length is CODE POINTS. The per-atom shape (computed at intern)
+        // Length is code points. The per-atom shape (computed at intern)
         // keeps the common all-BMP case at the exact unit count, O(1).
         return engine.UnifyRegisterWithCell(1, Cell.Int(
             atom is null || atom.IsAllBmp
@@ -109,7 +109,7 @@ public static class AtomCharBuiltins
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // Both bound: the char list is still type-checked (§8.16.4.3).
-            // Only a PROPER list is validated-and-compared: a partial
+            // Only a proper list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
             if (ListCursor.IsProperListCell(engine, charsCell))
                 return ReadCharAtomsToString(engine, charsCell) == name;
@@ -161,7 +161,7 @@ public static class AtomCharBuiltins
     {
         Cell charCell = Resolve(engine, engine.GetRegister(0));
         Cell codeCell = Resolve(engine, engine.GetRegister(1));
-        // §8.16.5.3.c: a BOUND non-integer Code is type_error(integer, C),
+        // §8.16.5.3.c: a bound non-integer Code is type_error(integer, C),
         // checked even when Char is a usable character.
         if (codeCell.Tag is not (Tag.Ref or Tag.AttVar) && codeCell.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer", engine, codeCell);
@@ -170,7 +170,7 @@ public static class AtomCharBuiltins
         {
             string name = AtomTable.GetById(charCell.AsAtomId)?.Name ?? "";
             // ISO §8.16.5: a non-character first arg is type_error(character).
-            // A character is ONE code point — an astral one spans two units.
+            // A character is one code point — an astral one spans two units.
             if (!Utf16Text.IsOneCodePoint(name))
                 throw new PrologRuntimeException(
                     "type_error", "character", engine, charCell);
@@ -202,7 +202,7 @@ public static class AtomCharBuiltins
         if (charCell.Tag is Tag.Ref or Tag.AttVar && codeCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         // Bound to something other than atom / int: report the offending
-        // argument's expected type AND value. Char takes precedence when
+        // argument's expected type and value. Char takes precedence when
         // both are bound (a non-atom Char is what ISO checks first).
         if (charCell.Tag is not (Tag.Ref or Tag.AttVar))
             throw new PrologRuntimeException(
@@ -237,7 +237,7 @@ public static class AtomCharBuiltins
 
         //  (c) The list argument, when instantiated, is type-checked and — if
         //      fully bound — parsed as a number and unified with Number (the
-        //      PRIMARY direction, so number_chars(1, "01") parses "01"→1 and
+        //      primary direction, so number_chars(1, "01") parses "01"→1 and
         //      succeeds). A bound element that is not a character is a
         //      type_error even past an earlier unbound one (§8.16.8); a list
         //      that only has unbound elements/tail falls through to generate.
@@ -256,12 +256,12 @@ public static class AtomCharBuiltins
                 if (floatRangeFlaw is not null)
                     throw new PrologRuntimeException(
                         "representation_error", floatRangeFlaw);
-                // ISO §8.16.8 reads the chars as a TERM that must be a number, so
+                // ISO §8.16.8 reads the chars as a term that must be a number, so
                 // `'-'1` (quoted prefix minus) is -1 and `'\n-' 3` is -3 — cases the
                 // token parser above doesn't cover. Fall back to the host's full
                 // term reader (wired on the engine); a non-number result stays a
                 // syntax error.
-                // A parenthesized term is NOT a number token sequence — "(0)"
+                // A parenthesized term is not a number token sequence — "(0)"
                 // is a syntax error (number_chars_cont case 73) even though
                 // the term reader below would happily parse it to 0.
                 int open = SkipLayout(s, 0);
@@ -298,7 +298,7 @@ public static class AtomCharBuiltins
             Tag.Int => numCell.AsInt.ToString(CultureInfo.InvariantCulture),
             Tag.Float => Number.FormatPrologFloat(
                 Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex))),
-            // The text a rational is WRITTEN as (ADR-039). It does not read
+            // The text a rational is written as (ADR-039). It does not read
             // back through the number parser, which knows no rational syntax:
             // the same asymmetry the ADR accepts for a value that has no
             // source literal. The catch-all below would have taken it for a
@@ -322,7 +322,7 @@ public static class AtomCharBuiltins
     /// (<paramref name="floatIdx"/> = −1) or <paramref name="floatIdx"/>
     /// is the heap index of a materialised float. Returns false when the
     /// text is not a number (caller raises
-    /// <c>syntax_error(illegal_number)</c>) — except a float whose SYNTAX is
+    /// <c>syntax_error(illegal_number)</c>) — except a float whose syntax is
     /// perfect but whose value exceeds double range, reported through
     /// <paramref name="floatRangeFlaw"/> (<c>max_float</c>, or
     /// <c>min_float</c> when the unary minus makes the literal negative):
@@ -338,14 +338,14 @@ public static class AtomCharBuiltins
         floatIdx = -1;
         floatRangeFlaw = null;
         int i = 0, n = s.Length;
-        // Leading layout — whitespace AND comments (§6.4.1), so a number token
+        // Leading layout — whitespace and comments (§6.4.1), so a number token
         // may be preceded by `/* */` or a `%` line comment.
         i = SkipLayout(s, i);
         // ISO §6.3.1: a numeric constant has no leading '+' — only a '-' sign
         // (which yields a negative number). Layout after the sign includes
-        // comments — but ONLY after real WHITESPACE: `- /**/1` is -1 (Neumerkel
+        // comments — but only after real whitespace: `- /**/1` is -1 (Neumerkel
         // number_chars_cont row 40) exactly as `- 1` is (row 36). A comment glued
-        // to the sign (`-/**/1`, row 41) is NOT layout — `-/**/` is all graphic
+        // to the sign (`-/**/1`, row 41) is not layout — `-/**/` is all graphic
         // chars, one atom — so it stays a syntax error; `-1` (digit glued) is a
         // literal.
         bool neg = false;
@@ -418,7 +418,7 @@ public static class AtomCharBuiltins
         {
             int j = i + 1;
             if (j < n && (s[j] == '+' || s[j] == '-')) j++;
-            // The exponent starts with a DIGIT — a separator may only sit
+            // The exponent starts with a digit — a separator may only sit
             // between two of them, so `1.0e_5` has no exponent at all.
             if (j < n && IsDecimalDigit(s[j]))
             {
@@ -426,7 +426,7 @@ public static class AtomCharBuiltins
                 ScanDecimalRun(s, ref i, ref cuts);
             }
         }
-        // ISO §6.3.1.2: a float MUST have a fractional part (a decimal point
+        // ISO §6.3.1.2: a float must have a fractional part (a decimal point
         // followed by digits); an exponent alone (1e1) is not a valid float.
         if (!sawFraction) return false;
         if (i != n) return false;
@@ -434,7 +434,7 @@ public static class AtomCharBuiltins
                 CultureInfo.InvariantCulture, out double dv))
             return false;
         // An exponent past double's range parses to Infinity in .NET — the
-        // syntax is valid, the VALUE is unrepresentable (number_chars_cont
+        // syntax is valid, the value is unrepresentable (number_chars_cont
         // case 82): signal the range flaw, never hand back an infinity. The
         // sign follows the syntax — a unary minus puts the literal below
         // min_float. Underflow to 0.0 stays accepted (case 80).
@@ -638,7 +638,7 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException(
                 "representation_error", "character_code");
 
-        // A surrogate value is a legitimate QUERY here (category Cs) but
+        // A surrogate value is a legitimate query here (category Cs) but
         // not a legitimate ConvertFromUtf32 argument — the BMP path asks the
         // char overload, which answers Surrogate without building a string.
         string category = code <= 0xFFFF
@@ -870,7 +870,7 @@ public static class AtomCharBuiltins
         }
 
         // Unsupported modes bottom out here; the ISO-appropriate
-        // diagnostic is instantiation_error (the missing args ARE the
+        // diagnostic is instantiation_error (the missing args are the
         // problem).
         throw new PrologRuntimeException("instantiation_error");
     }
@@ -900,7 +900,7 @@ public static class AtomCharBuiltins
         hasUnbound = false;
         var sb = new StringBuilder();
         Cell cursor = ListCursor.Resolve(engine, listCell);
-        // A packed run whose presentation MATCHES what this call wants is
+        // A packed run whose presentation matches what this call wants is
         // consumed in bulk; one that does not falls through to the element
         // loop, which raises the ISO element error from the element's own tag
         // rather than from an assumption about the representation (ADR-047).
@@ -910,12 +910,12 @@ public static class AtomCharBuiltins
             sb.Append(engine.ReadPstrChain(cursor, out cursor));
             cursor = ListCursor.Resolve(engine, cursor);
         }
-        // ISO §8.16.8.3.a — when Number is a VARIABLE, a partial list (unbound
+        // ISO §8.16.8.3.a — when Number is a variable, a partial list (unbound
         // tail) is instantiation_error, which takes precedence over a type_error
         // on any element. Detect it by walking the spine first, so
         // `number_chars(N, [1|_])` reports instantiation_error (via the
         // hasUnbound path the caller checks) rather than type_error(character) on
-        // the head 1. Gated on !numberBound: when Number is BOUND we are
+        // the head 1. Gated on !numberBound: when Number is bound we are
         // generating + unifying, so a partial list is fine but a bad element
         // (`number_chars(1, [[]|_])`) must still type_error — the element walk
         // below does that. A proper list always gets the element checks; an
@@ -957,7 +957,8 @@ public static class AtomCharBuiltins
             {
                 // ISO §8.16.8.3.d: an element that is not a character code —
                 // an atom, a compound, an out-of-range integer alike — is
-                // representation_error(character_code). The chars side keeps
+                // representation_error(character_code), Number bound or not
+                // (Schimpf's number_codes(1, [[]])). The chars side keeps
                 // its own type_error(character, E) (§8.16.7.3): the standard
                 // is asymmetric here on purpose.
                 if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
@@ -981,7 +982,7 @@ public static class AtomCharBuiltins
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             hasUnbound = true;
         else if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            // Culprit is the WHOLE list argument (§8.16.7.3), not the
+            // Culprit is the whole list argument (§8.16.7.3), not the
             // improper tail alone.
             throw new PrologRuntimeException("type_error", "list", engine, listCell);
         return sb.ToString();
@@ -998,7 +999,7 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
-            // A packed run of CODES is consumed in bulk; a packed run of chars
+            // A packed run of codes is consumed in bulk; a packed run of chars
             // falls through to the element loop, where its one-character atom
             // heads raise the ISO element error like any other non-integer.
             if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
@@ -1043,7 +1044,7 @@ public static class AtomCharBuiltins
             && cursor.Tag is not (Tag.Ref or Tag.AttVar))
             throw new PrologRuntimeException("type_error", "list", engine, cursor);
         // A packed list is a list, and whether its elements are chars or codes
-        // is in its header — not in its tag (ADR-047). A packed CODE list still
+        // is in its header — not in its tag (ADR-047). A packed code list still
         // raises type_error(character) here, but because its elements are
         // integers, which the loop below decides, rather than by assumption.
         while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell hTail))

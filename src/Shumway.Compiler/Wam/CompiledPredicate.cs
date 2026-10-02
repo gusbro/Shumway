@@ -25,9 +25,9 @@ public sealed class CompiledPredicate
     /// opcode (<c>cut_deallocate_proceed</c> / <c>cut_proceed</c>) expanded back
     /// to its two components (<c>cut</c> + <c>deallocate_proceed</c> / <c>cut</c>
     /// + <c>proceed</c>). The fused forms are Nop-padded to the summed width, so
-    /// this array is the SAME length and every recorded offset (CallSites,
+    /// this array is the same length and every recorded offset (CallSites,
     /// DispatchSites, clause ranges) stays valid against it. The Tier-1 IL
-    /// describers / emitters read THIS, so they never encounter a fused opcode
+    /// describers / emitters read this, so they never encounter a fused opcode
     /// and need no per-opcode handling; the Tier-0 interpreter runs the fused
     /// <see cref="Bytecode"/>. Lazily computed; returns <see cref="Bytecode"/>
     /// itself when nothing is fused (fusion disabled, or a predicate with no
@@ -105,7 +105,7 @@ public sealed class CompiledPredicate
     /// <summary>The <see cref="LiteralPools"/> instance this predicate's
     /// bytecode was compiled against, when the caller supplied a persistent
     /// (engine-lifetime, append-only) pool set — literal ids are stable
-    /// there, so the predicate is skip-cache-reusable against the SAME pools
+    /// there, so the predicate is skip-cache-reusable against the same pools
     /// even when its bytecode references pool literals (the pool-free test
     /// is only needed for a foreign-pool predicate, e.g. one decoded from a
     /// bundle). Null when compiled against a method-local pool set.</summary>
@@ -131,18 +131,18 @@ public sealed class CompiledPredicate
     /// <summary>See <see cref="IlIndexedShapeMemo"/>.</summary>
     internal object? IlIndexedAtomShapeMemo;
 
-    /// <summary>ADR-034 — this predicate is a STATIC-style SNAPSHOT of a
+    /// <summary>ADR-034 — this predicate is a STATIC-style snapshot of a
     /// dynamic predicate's clauses (ADR-023 <c>BuildDynamicSnapshot</c>): no
     /// <c>enter_dynamic</c>/<c>check_visible</c>, so it is structurally
     /// indistinguishable from a static predicate — but its truth can change
-    /// at runtime (assert/retract). Callers must NOT inline it except through
+    /// at runtime (assert/retract). Callers must not inline it except through
     /// the ADR-034 checked-guard machinery (a clause-entry staleness test +
-    /// un-inlined fallback); the predicate's OWN delegate is evictable
+    /// un-inlined fallback); the predicate's own delegate is evictable
     /// (<c>IlPromotionStore.EvictDelegate</c>) so by-fid dispatch stays
     /// live.</summary>
     public bool IsDynamicSnapshot { get; set; }
 
-    /// <summary>ADR-034 — the snapshot's clause set contains RULE clauses
+    /// <summary>ADR-034 — the snapshot's clause set contains rule clauses
     /// (bodies). The practical Arity model: a dynamic that ships rules
     /// (<c>:- visible</c> for findall/setof meta-call visibility) is
     /// mutation-cold and eligible for checked caller-inlining; a fact-only

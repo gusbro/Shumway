@@ -11,7 +11,7 @@ namespace Shumway.Embedding;
 
 /// <summary>
 /// The native-interop runtime (extracted component): the ADR-022 interop
-/// class binding, embedded native blocks, the per-engine native ARENA
+/// class binding, embedded native blocks, the per-engine native arena
 /// (chunked bump allocator with mark/restore), loaded native libraries and
 /// their prototypes, the per-functor call-resolution cache, native globals,
 /// reftype slots and the native-inline context. Owned by a PrologEngine,
@@ -63,7 +63,7 @@ internal sealed class NativeRuntime
     /// An application that relies on auto-discovery under trimming must root the
     /// class itself, or call <see cref="UseNativeInterop"/> explicitly, which is
     /// annotated and trim-safe.</summary>
-    /// <para>Suppressed rather than propagated: the lookup DEGRADES, it does not
+    /// <para>Suppressed rather than propagated: the lookup degrades, it does not
     /// break. If trimming removed the class, no assembly reports it, the map stays
     /// empty and every native-block call reports an unresolved function — the same
     /// outcome as a program that never defined one. Propagating
@@ -99,7 +99,7 @@ internal sealed class NativeRuntime
 
 
 
-    // the per-engine NATIVE ARENA: a chunked unmanaged bump
+    // the per-engine native arena: a chunked unmanaged bump
     // allocator with mark/restore, serving every call-scoped native buffer a
     // `:- native` P/Invoke needs — out-scalar/out-string cells (D4), and now
     // (D1) the whole t_reftype graph: nodes, pars arrays and char* buffers.
@@ -109,7 +109,7 @@ internal sealed class NativeRuntime
     // release is a mark restore — no graph walk, no per-node free.
     //
     // Safety contract (same as the recorded-allocations mode this replaces):
-    // release frees exactly the memory WE allocated for the call — a native
+    // release frees exactly the memory we allocated for the call — a native
     // function that swapped a cstr/pars with its own allocator leaves our
     // (now unlinked) block to die with the mark and its foreign pointer is
     // never touched. Nested native calls compose via mark/restore; the
@@ -154,7 +154,7 @@ internal sealed class NativeRuntime
         }
     }
 
-    // the per-dispatch block lookup keyed by ATOM ID: '$native_run'
+    // the per-dispatch block lookup keyed by atom id: '$native_run'
     // reads the block-name register as a raw atom cell (no Term materialization)
     // and probes this int-keyed cache instead of hashing the name string per call.
     // Populated lazily; cleared whenever a block is (re)registered.
@@ -249,7 +249,7 @@ internal sealed class NativeRuntime
     internal System.Collections.Generic.IReadOnlyDictionary<string, Shumway.Compiler.NativeC.CType>? NativeTypedefsView
         => _nativeTypedefs;
 
-    // ADR-024 — native libraries are loaded ONCE PER PATH for the process lifetime,
+    // ADR-024 — native libraries are loaded once per path for the process lifetime,
     // not once per engine. The OS maps a module once (LoadLibrary/dlopen refcounts),
     // so a per-engine Load would leak one refcount per engine under churn; this
     // process-global table makes the shared mapping explicit and deduplicates the
@@ -358,7 +358,7 @@ internal sealed class NativeRuntime
             + "by any registered native library (UseNativeLibrary).");
     }
 
-    // ADR-022 — per-engine persistent storage for SCALAR `:- c` globals (a plain
+    // ADR-022 — per-engine persistent storage for scalar `:- c` globals (a plain
     // int/long/float/double global, as opposed to a char*/reftype holder). Like
     // _reftypeSlots these persist across calls/queries — Arity static-storage
     // semantics. A native block seeds its value on entry and writes it through on

@@ -18,7 +18,7 @@ public enum DoubleQuotesMode
     /// <c>'abc'</c>.</summary>
     Atom,
     /// <summary>SWI compatibility alias for <see cref="Chars"/>. There is no
-    /// string TYPE (ADR-047 decision 5); the value is kept distinct only so
+    /// string type (ADR-047 decision 5); the value is kept distinct only so
     /// <c>current_prolog_flag/2</c> reports back what was set.</summary>
     String,
 }
@@ -52,7 +52,7 @@ public sealed class PrologFlags
     /// --arity</c>). Off by default. Enables, and will keep
     /// accumulating, Arity dialect features: <c>$...$</c> quoted
     /// atoms (a <c>$</c> inside doubles, a <c>'</c> needs no
-    /// escape), C-preprocessor <c>#line</c> markers (skipped AND
+    /// escape), C-preprocessor <c>#line</c> markers (skipped and
     /// honoured — the lexer adopts the directive's line number so
     /// error positions track the original source), and annotated
     /// directive indicators (<c>:- public foo/8:far.</c>,
@@ -62,13 +62,13 @@ public sealed class PrologFlags
 
     /// <summary>Digit separators (<c>1_000</c>, <c>1_ 000</c>,
     /// <c>1_ /*c*/ 000</c>) — see <c>Lexer.DigitSeparators</c> for the shape.
-    /// ON by default: the older standard lexes <c>1_000</c> as the integer 1
+    /// On by default: the older standard lexes <c>1_000</c> as the integer 1
     /// followed by the variable <c>_000</c>, which no term position accepts,
     /// so giving the spelling a meaning cannot change any conforming
     /// program.</summary>
     public bool DigitSeparators { get; set; } = true;
 
-    /// <summary>What a same-file predicate whose clauses are NOT adjacent
+    /// <summary>What a same-file predicate whose clauses are not adjacent
     /// (and not declared <c>:- discontiguous</c>) does at load time:
     /// <c>"error"</c> (the default — the split is almost always a bug) or
     /// <c>"warning"</c> (report and accept, the SWI/Trealla field behavior;
@@ -174,9 +174,9 @@ public sealed class PrologFlags
     /// <c>set_prolog_flag(prefer_rationals, true)</c>.</summary>
     public bool PreferRationals { get; set; } = false;
 
-    /// <summary>How much of an answer a TOP LEVEL prints before eliding: a list
+    /// <summary>How much of an answer a top level prints before eliding: a list
     /// shows this many elements and then <c>|...</c>, a subterm nested deeper
-    /// than this shows as <c>...</c>, and the answer as a WHOLE shows at most
+    /// than this shows as <c>...</c>, and the answer as a whole shows at most
     /// this many items. Zero means print everything.
     ///
     /// <para>The total is what actually bounds the output. Per list is not a
@@ -185,7 +185,7 @@ public sealed class PrologFlags
     /// 55,000 characters with every other rule here respected.</para>
     ///
     /// <para>An answer is read by a person, and <c>numlist(1, 10000000, X)</c>
-    /// has an answer nobody wants delivered in full. This affects ONLY what a
+    /// has an answer nobody wants delivered in full. This affects only what a
     /// top level displays — <c>write/1</c> and friends print what they are
     /// given, because a program's output is not a summary of itself.
     /// <c>set_prolog_flag(answer_max_depth, 0)</c> when the whole thing is

@@ -20,6 +20,8 @@ public sealed class ActivationConfig
     public int InitialExtraTrailSize { get; init; } = 64;
     public int MaxExtraTrailSize { get; init; }
 
+    /// <summary>The register bank's initial size; never below
+    /// <see cref="Activation.MinRegisterCount"/>.</summary>
     public int InitialRegisterCount { get; init; } = 64;
     public int MaxRegisterCount { get; init; }
 
@@ -31,7 +33,7 @@ public sealed class ActivationConfig
     /// disables automatic collection (explicit <c>garbage_collect/0</c>
     /// still works).
     ///
-    /// <para>Default <c>1&lt;&lt;20</c> (1 M cells ≈ 8 MB). TRAP the
+    /// <para>Default <c>1&lt;&lt;20</c> (1 M cells ≈ 8 MB). Trap the
     /// default guards against: control words (notably the <c>get_level</c>
     /// cut barrier) must be <c>Tag.RawInt</c>-tagged, or the conservative
     /// stack scan relocates them as heap refs. The watermark was raised from

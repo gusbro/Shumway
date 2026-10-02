@@ -11,7 +11,7 @@ namespace Shumway.Tests.Embedding;
 /// `answer_max_depth` elements and ends the way every top level says there is
 /// more: `|...`.
 ///
-/// <para>This is a DISPLAY rule. write/1 still prints what it is given — a
+/// <para>This is a display rule. write/1 still prints what it is given — a
 /// program's output is not a summary of itself.</para>
 /// </summary>
 public sealed class AnswerElisionTests
@@ -30,7 +30,7 @@ public sealed class AnswerElisionTests
     {
         // The expansion hooks read term_expansion's output through a
         // solution's bindings — the same path a displayed answer takes. With
-        // the top level's elision on, a hook returning a LIST of clauses came
+        // the top level's elision on, a hook returning a list of clauses came
         // back cut off at the display depth: an atts-style library lost most
         // of its generated predicates, and the elision marker itself spliced
         // in as clauses of './2'. The limit is for answers a person looks at.
@@ -103,7 +103,7 @@ public sealed class AnswerElisionTests
     [Fact]
     public void WriteIsNotElided()
     {
-        // The program's own output is untouched: only the ANSWER is a summary.
+        // The program's own output is untouched: only the answer is a summary.
         var sink = new StringWriter();
         var e = new PrologEngine { Out = sink };
         e.Flags.AnswerMaxDepth = 3;
@@ -115,7 +115,7 @@ public sealed class AnswerElisionTests
     public void NestingDoesNotMultiplyTheAnswer()
     {
         // Per-list elision alone is not a bound: a list of lists shows the
-        // limit SQUARED. This answer respected every per-list and per-depth
+        // limit squared. This answer respected every per-list and per-depth
         // rule and still came to 55,000 characters.
         var e = new PrologEngine();
         var sol = e.Query("findall(L, (between(1, 1000, X), length(L, X)), Ls).");
@@ -129,7 +129,7 @@ public sealed class AnswerElisionTests
     [Fact]
     public void TheBudgetIsSpentOnTheFrontOfTheAnswer()
     {
-        // What survives has to be the BEGINNING: an elision that dropped the
+        // What survives has to be the beginning: an elision that dropped the
         // first elements would be worse than no elision at all.
         var e = new PrologEngine();
         var sol = e.Query("findall(L, (between(1, 1000, X), length(L, X)), Ls).");
@@ -138,7 +138,7 @@ public sealed class AnswerElisionTests
         Assert.Matches(@"Ls = \[\[_[A-Za-z0-9]+\], \[_[A-Za-z0-9]+, _[A-Za-z0-9]+\],", shown);
     }
 
-    // ----- eliding the WORK, not just the output -----
+    // ----- eliding the work, not just the output -----
 
     [Fact]
     public void AnEmbedderGetsTheWholeTerm()
@@ -199,7 +199,7 @@ public sealed class AnswerElisionTests
 
 /// <summary>
 /// <c>statistics/0</c> — the report a person reads after a run. Its counters
-/// are the RUNNING activation's, because that is where a heap and a trail
+/// are the running activation's, because that is where a heap and a trail
 /// exist: they belong to the query in progress.
 /// </summary>
 public sealed class Statistics0Tests

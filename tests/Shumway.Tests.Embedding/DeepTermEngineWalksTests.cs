@@ -9,9 +9,9 @@ namespace Shumway.Tests.Embedding;
 /// with no goal to unwind and nothing to report -- so neither may spend a C#
 /// frame per level without a ceiling.
 ///
-/// <para>Both are MIXED: recursive while the depth is known to be safe, and
+/// <para>Both are mixed: recursive while the depth is known to be safe, and
 /// past that the remaining work goes on a list the entry point drains at depth
-/// zero. Unify could take that shape because unification is CONFLUENT (which
+/// zero. Unify could take that shape because unification is confluent (which
 /// equation you solve first cannot change the answer) and its pair set is
 /// append-only; copy_term because every destination slot is reserved before
 /// anything is copied into it.</para></summary>
@@ -39,7 +39,7 @@ public sealed class DeepTermEngineWalksTests
             $"nest({Deep}, X), nest({Deep}, Y), X = Y, X == Y.").Success);
     }
 
-    /// <summary>ANTI-VACUITY: it is still deciding, not just surviving. One
+    /// <summary>Anti-vacuity: it is still deciding, not just surviving. One
     /// level shorter and the unification has to FAIL.</summary>
     [Fact]
     public void UnifyingTermsThatDiffer_StillFails()
@@ -66,7 +66,7 @@ public sealed class DeepTermEngineWalksTests
         Assert.True(e.Query($"nest({Deep}, X), copy_term(X, C), C == X.").Success);
     }
 
-    /// <summary>ANTI-VACUITY for the copy: a copy is FRESH, so its variables
+    /// <summary>Anti-vacuity for the copy: a copy is fresh, so its variables
     /// are not the original's however deep it is.</summary>
     [Fact]
     public void ADeepCopyIsStillACopy()
@@ -103,10 +103,10 @@ public sealed class DeepTermEngineWalksTests
             $"nest({Deep}, _), A = f(A), B = f(B), A = B.").Success);
     }
 
-    /// <summary>The occurs-checked unifier could NOT take the deferral the
-    /// plain one takes: its pair set is a PATH, removed on the way out, so a
+    /// <summary>The occurs-checked unifier could not take the deferral the
+    /// plain one takes: its pair set is a path, removed on the way out, so a
     /// pair put off until later would no longer see the ancestors that make a
-    /// cyclic term terminate. It walks an explicit stack with LEAVE items
+    /// cyclic term terminate. It walks an explicit stack with leave items
     /// instead, which keeps enter and leave nested the way a `finally`
     /// did.</summary>
     [Fact]
@@ -116,13 +116,13 @@ public sealed class DeepTermEngineWalksTests
         Assert.True(e.Query(
             $"nest({Deep}, X), nest({Deep}, Y), unify_with_occurs_check(X, Y).")
             .Success);
-        // ANTI-VACUITY: still deciding, not just surviving.
+        // Anti-vacuity: still deciding, not just surviving.
         Assert.True(e.Query(
             $"nest({Deep}, X), nest({Deep - 1}, Y), "
             + $"\\+ unify_with_occurs_check(X, Y).").Success);
     }
 
-    /// <summary>What the path set is FOR, unchanged: two cyclic terms unify
+    /// <summary>What the path set is for, unchanged: two cyclic terms unify
     /// coinductively, two that cannot do not, and the check still refuses to
     /// build a new cycle.</summary>
     [Fact]
@@ -139,7 +139,7 @@ public sealed class DeepTermEngineWalksTests
         Assert.True(e.Query($"\\+ unify_with_occurs_check(V, f(V)).").Success);
     }
 
-    /// <summary>The FLAG routes every unification through that path, including
+    /// <summary>The flag routes every unification through that path, including
     /// a deep one, and mode 2 still raises rather than failing.</summary>
     [Fact]
     public void TheOccursCheckFlagHandlesAnyDepthAndStillRaises()

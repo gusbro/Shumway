@@ -12,7 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// corrupt — S2 is the exact shape that exposed the chunk-404 interpreter-side
 /// unlink as unsound (bytecode pointers patched behind the C#-side
 /// DynChainEntry records, so the next assertz appended to a bypassed tail and
-/// the clause vanished). The reclamation path re-threads FROM the records, so
+/// the clause vanished). The reclamation path re-threads from the records, so
 /// both stay in lockstep; these pin that contract under churn well past the
 /// reclaim threshold.
 /// </summary>
@@ -67,7 +67,7 @@ public class Chunk420Tests
     public void ChurnWithFrontPushes_HeadDemotionSurvives()
     {
         // Mixed asserta/assertz churn (fuzz S4): every 7th round re-inserts
-        // at the FRONT, exercising head demotion + reclamation together.
+        // at the front, exercising head demotion + reclamation together.
         var e = Make(
             "loop(0) :- !.\n" +
             "loop(N) :- take(C), ( 0 is N mod 7 -> front(C) ; back(C) ),\n" +
@@ -85,7 +85,7 @@ public class Chunk420Tests
     [Fact]
     public void ManyLiveClauses_ReclaimStillFires()
     {
-        // The chunk-420 fix proper: 100 LIVE clauses + churn. The old
+        // The chunk-420 fix proper: 100 live clauses + churn. The old
         // dead < Entries.Count gate never reclaimed here (dead capped at
         // the threshold but live stayed higher), leaving every read to
         // walk ~live-count tombstones forever.

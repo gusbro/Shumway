@@ -6,11 +6,11 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>The <c>--quads</c> flag as a test runner: it consults the
-/// transcripts, runs them, and ENDS. A run that leaves a prompt behind
+/// transcripts, runs them, and ends. A run that leaves a prompt behind
 /// cannot be scripted, and its verdict has to reach the caller, so the exit
 /// code is zero only when every quad passed.
 ///
-/// <para>Each test here holds the child's standard input OPEN and writes
+/// <para>Each test here holds the child's standard input open and writes
 /// nothing to it. That is what makes the claim testable: a top level that
 /// stayed interactive would sit there waiting, and the wait is what these
 /// assert against.</para></summary>
@@ -45,7 +45,7 @@ public sealed class QuadsCommandLineTests
 
     /// <summary>Runs `shumway --quads &lt;file&gt;` with an input that never
     /// arrives, and returns its exit code. Fails the test if it is still
-    /// running after the deadline: that IS the regression.</summary>
+    /// running after the deadline: that is the regression.</summary>
     private static int RunQuads(string content, out string output)
     {
         string dir = Path.Combine(Path.GetTempPath(), "quads_cli_" + Guid.NewGuid().ToString("N"));

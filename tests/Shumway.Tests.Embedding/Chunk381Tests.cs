@@ -9,10 +9,10 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 381 (Phase 29, region compilation — Stage 6c): INDEXED members in a region.
+/// Chunk 381 (Phase 29, region compilation — Stage 6c): Indexed members in a region.
 /// An indexed (switch_on_term/arg) callee can now be a region member — the region
 /// emits its inline index decision + per-node choice points instead of leaving it a
-/// cross-region trampoline boundary. These tests pin the cursor PLANNER extension
+/// cross-region trampoline boundary. These tests pin the cursor planner extension
 /// (each dispatch node gets an <see cref="RegionCursorKind.IndexNode"/> cursor); the
 /// end-to-end emit is validated by the full Embedding suite at SHUMWAY_REGION=1 + the
 /// Blint self-lint (byte-identical, 24 regions fire incl. x3/x10/x16 indexed members)

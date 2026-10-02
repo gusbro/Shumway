@@ -1,6 +1,6 @@
 namespace Shumway.Core;
 
-/// <summary>Reading a whole file the way a Prolog TEXT stream reads it
+/// <summary>Reading a whole file the way a Prolog text stream reads it
 /// (ADR-045). <c>consult/1</c>, <c>:- include/1</c> and the offline
 /// compilers slurp a source file with <c>File.ReadAllText</c> rather than
 /// through a stream handle; without this they would see the CR that
@@ -10,7 +10,7 @@ public static class TextFile
 {
     /// <summary>Applies the text-stream newline rule to already-read text:
     /// a CR-LF pair becomes <c>\n</c> where the platform calls for it. A
-    /// LONE CR is left alone — only the pair is a line terminator.</summary>
+    /// lone CR is left alone — only the pair is a line terminator.</summary>
     public static string NormalizeNewlines(string text) =>
         PositionTrackingReader.TranslateNewlinesByDefault && text.Contains('\r')
             ? text.Replace("\r\n", "\n")
@@ -23,7 +23,7 @@ public static class TextFile
         NormalizeNewlines(DecodeSource(System.IO.File.ReadAllBytes(path), defaultEncoding));
 
     /// <summary>Decodes source bytes honouring a BOM and a leading
-    /// <c>:- encoding(E)</c> directive. Decoding is TOLERANT throughout —
+    /// <c>:- encoding(E)</c> directive. Decoding is tolerant throughout —
     /// a file whose bytes are not valid under the default encoding but
     /// which carries the directive must not blow up before the directive
     /// is found: every attempted decode replaces ill-formed input instead
@@ -61,10 +61,10 @@ public static class TextFile
         { "utf16le", "utf16be", "utf32le", "utf32be" };
 
     /// <summary>Textual sniff of a leading <c>:- encoding(Name)</c> —
-    /// deliberately NOT the lexer (the surrounding text may be garbage under
+    /// deliberately not the lexer (the surrounding text may be garbage under
     /// the attempted decoding; only the directive itself must be legible).
     /// Leading whitespace and %-comments may precede it, matching the "first
-    /// term" rule loosely. Returns the ENGINE encoding name, or null.</summary>
+    /// term" rule loosely. Returns the engine encoding name, or null.</summary>
     internal static string? SniffEncodingDirective(string text)
     {
         int i = 0, n = text.Length;

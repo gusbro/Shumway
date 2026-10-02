@@ -200,7 +200,7 @@ public class Chunk91Tests
     [Fact]
     public void Reify_UnreifiableTerm_RaisesDomainError()
     {
-        // A term that is not a constraint is outside the DOMAIN of reifiable
+        // A term that is not a constraint is outside the domain of reifiable
         // expressions rather than of the wrong type — the reading both
         // reference implementations report.
         Assert.True(Fd().Query(

@@ -37,7 +37,7 @@ public class EnvFrameTests
         Assert.Equal(100, (int)engine.GetStack(1).Data); // CP = previous _cp
         Assert.Equal(2, (int)engine.GetStack(2).Data);  // N = permanent count (ADR-016)
 
-        // Y slots are left UNINITIALISED (lazy allocation): RawInt(0), a
+        // Y slots are left uninitialised (lazy allocation): RawInt(0), a
         // GC-skipped sentinel overwritten at the permanent's first occurrence.
         AssertUninitialisedYSlot(engine.GetStack(3));
         AssertUninitialisedYSlot(engine.GetStack(4));
@@ -55,7 +55,7 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_DoesNotGrowTheHeap()
     {
-        // Lazy Y-slot allocation: `allocate` must NOT allocate a heap cell per
+        // Lazy Y-slot allocation: `allocate` must not allocate a heap cell per
         // permanent (the old behaviour generated one dead heap cell per Y slot,
         // driving the heap GC in permanent-heavy loops). The Y slots are the
         // uninitialised RawInt sentinel until first written.

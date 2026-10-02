@@ -8,7 +8,7 @@ namespace Shumway.Tests.Compiler.Wam;
 /// <summary>
 /// ADR-031 — the fold recogniser (<see cref="ClauseFold"/>). Pins which clause
 /// groups match the <c>Guard,!,Body / Rest</c> shape and how their heads classify.
-/// The fold TRANSFORM itself is not implemented: disassembly showed routing the
+/// The fold transform itself is not implemented: disassembly showed routing the
 /// fold through the existing ITE-helper path is a structural no-op (the helper is
 /// byte-identical <c>try_me_else+cut</c>), so the recogniser exists for the
 /// <c>--foldcensus</c> sizing pass and any future CP-free-codegen prototype.

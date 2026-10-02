@@ -28,8 +28,8 @@ public class Chunk238Tests
         Assert.IsType<IntTerm>(engine.ToTerm((byte)9));
         Assert.IsType<FloatTerm>(engine.ToTerm(3.14));
         Assert.IsType<FloatTerm>(engine.ToTerm(3.14f));
-        // A .NET string is text as a VALUE, which is an atom (ADR-047
-        // decision 6). Text as a SEQUENCE is asked for as a list.
+        // A .NET string is text as a value, which is an atom (ADR-047
+        // decision 6). Text as a sequence is asked for as a list.
         Assert.IsType<AtomTerm>(engine.ToTerm("hello"));
         Assert.IsType<AtomTerm>(engine.ToTerm(true));
         Assert.IsType<AtomTerm>(engine.ToTerm('x'));

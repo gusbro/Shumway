@@ -38,10 +38,10 @@ public class ExpansionHooksTests
     public void PrologLoadContext_InsideAHook_ReportsTheLoadedFile_NotTheHooksModule()
     {
         var e = new PrologEngine();
-        // A GLOBAL (user) term_expansion hook records the module it is invoked for.
+        // A global (user) term_expansion hook records the module it is invoked for.
         e.ConsultString("term_expansion(mark(_), (:- assertz(loaded_from(M)))) :- prolog_load_context(module, M).");
-        // Load a file with its OWN module; its mark(_) triggers the hook. The hook
-        // must see clientmod (the file being loaded), NOT user (the hook's module).
+        // Load a file with its own module; its mark(_) triggers the hook. The hook
+        // must see clientmod (the file being loaded), not user (the hook's module).
         e.ConsultString("""
             :- module(clientmod, []).
             mark(here).
@@ -71,7 +71,7 @@ public class ExpansionHooksTests
                     new CompoundTerm("is_color", new[] { c }),
                 }
                 : null);
-        // One defcolor → two DISTINCT predicates (contiguous); a second defcolor
+        // One defcolor → two distinct predicates (contiguous); a second defcolor
         // would interleave color/is_color (our engine enforces contiguity), which
         // real term_expansion avoids by grouping — so keep one here.
         e.ConsultString("""

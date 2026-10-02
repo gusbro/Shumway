@@ -83,7 +83,7 @@ public sealed class DialectAwareBuiltinsTests
         try
         {
             // An SWI module is loaded (so the dialect machinery is armed), but a
-            // direct user-level atom_concat call is NOT in an SWI module — it
+            // direct user-level atom_concat call is not in an SWI module — it
             // stays strict. This checks the caller-module resolution actually
             // distinguishes callers rather than flipping a global switch.
             var e = EngineWithSwiModule(
@@ -138,11 +138,11 @@ public sealed class DialectAwareBuiltinsTests
     [Fact]
     public void SubAtom_Coercion_DependsOnSurvivingSwiFrame()
     {
-        // sub_atom/5 is a PRELUDE wrapper over the $sub_atom_enum builtin, so —
+        // sub_atom/5 is a prelude wrapper over the $sub_atom_enum builtin, so —
         // unlike the direct builtins where engine.P is in the SWI caller's code —
         // the SWI caller is reached only via the call-return chain. The chain-walk
-        // follows CONTINUATION (return) addresses, which survive last-call
-        // optimisation, so an SWI module IS found whenever some SWI predicate
+        // follows continuation (return) addresses, which survive last-call
+        // optimisation, so an SWI module is found whenever some SWI predicate
         // above the wrapper keeps a live frame (i.e. it is not a pure tail-call).
         //
         // (a) the SWI predicate does work after sub_atom → its own frame survives.
@@ -173,7 +173,7 @@ public sealed class DialectAwareBuiltinsTests
     [Fact]
     public void AtomConcat_Coercion_SurvivesSourceStrippedBundle()
     {
-        // The limitation fix: a linked, SOURCE-STRIPPED bundle carries the module
+        // The limitation fix: a linked, source-stripped bundle carries the module
         // dialect, so atom_concat coercion still applies after a bare load (no
         // use_module at runtime).
         string tmp = Path.Combine(Path.GetTempPath(), "swidialbundle-" + Guid.NewGuid());
@@ -207,7 +207,7 @@ public sealed class DialectAwareBuiltinsTests
             e.LoadBundle(bundle);
 
             // go/2 reaches swimod$cat → atom_concat(foo, 42, R); swimod is swi, so
-            // the numeric arg coerces — with NO source and NO use_module at runtime.
+            // the numeric arg coerces — with no source and no use_module at runtime.
             Assert.True(e.Query("go(42, R), R == foo42.").Success);
         }
         finally { try { Directory.Delete(tmp, true); } catch { } }

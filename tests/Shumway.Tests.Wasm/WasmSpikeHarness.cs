@@ -31,6 +31,7 @@ public sealed class WasmSpikeHarness : IDisposable
     /// <summary>Where a heap would sit. This predicate never touches it.</summary>
     public const int HeapAt = 4096;
 
+    private readonly FunctionTable _functions = new(16, null);
     private readonly UnmanagedMemory _memory;
     private readonly Instance<WasmPredicateExports> _instance;
 
@@ -42,6 +43,9 @@ public sealed class WasmSpikeHarness : IDisposable
         var imports = new ImportDictionary
         {
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
+            // Every module imports the thread's function table now: it is how
+            // one reaches another without going out to the host.
+            { WasmAbi.TableModule, WasmAbi.TableField, _functions },
         };
         _instance = creator(imports);
 

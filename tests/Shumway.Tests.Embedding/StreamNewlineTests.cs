@@ -6,8 +6,8 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-045 end to end: a CR-LF file read as TEXT yields <c>\n</c>
-/// (on Windows, matching GNU/C stdio), and the same file read as BINARY
+/// <summary>ADR-045 end to end: a CR-LF file read as text yields <c>\n</c>
+/// (on Windows, matching GNU/C stdio), and the same file read as binary
 /// still yields both bytes. The pair is what the ISO text/binary
 /// distinction is for, so both halves are pinned together.</summary>
 public sealed class StreamNewlineTests
@@ -68,7 +68,7 @@ public sealed class StreamNewlineTests
     [Fact]
     public void Consult_AndRead_AgreeOnACrLfSource()
     {
-        // A RAW newline inside a quoted atom is an ISO error, so the construct
+        // A raw newline inside a quoted atom is an ISO error, so the construct
         // that legally spans lines is the continuation escape. What this pins
         // is that the two load routes agree on one file: consult/1 slurps it
         // with File.ReadAllText while open/3 + read/2 goes through a stream

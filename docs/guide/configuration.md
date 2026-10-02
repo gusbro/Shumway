@@ -25,7 +25,7 @@ Useful on a stock build, for someone running or embedding Shumway.
 | Variable | Effect |
 |---|---|
 | `SHUMWAY_IL_PROMOTE` | Tier-1 IL promotion threshold: a predicate is compiled to IL after this many calls. Default `32`. `0` or negative disables IL promotion (Tier-0 only). |
-| `SHUMWAY_LIBRARY_PATH` | Extra directories (OS path-separated) searched to resolve `:- use_module(library(X))`, in addition to the configured `file_search_path(library, _)` and the shipped `lib/`. |
+| `SHUMWAY_LIBRARY_PATH` | Extra directories (OS path-separated) searched to resolve `:- use_module(library(X))`, in addition to the configured `file_search_path(library, _)` and the shipped `lib/`. An entry may name the dialect of the library it holds, as `-L` does: `scryer:C:/Scryer/lib` loads that tree with its compatibility layer (its operators, among others). |
 | `SHUMWAY_TIMING` | `=1` makes the REPL print a per-phase wall-clock breakdown (parse / consult / link / run) to stderr. |
 | `SHUMWAY_LOAD_PROF` | `=1` enables load-profiling counters (time spent per consult phase), printed on exit. |
 | `SHUMWAY_HISTORY` | Path to the REPL history file. Defaults to `~/.shumway_history`; redirect or disable by pointing it elsewhere. |
@@ -98,7 +98,7 @@ Declared in `Directory.Build.props`.
 
 | Property | Constant | Enables |
 |---|---|---|
-| `ShumwayDiag` | `SHUMWAY_DIAG` | The whole developer-diagnostics family above (the `SHUMWAY_*_DIAG` / dump / survey env-vars become live). |
+| `ShumwayDiag` | `SHUMWAY_DIAG` | The whole developer-diagnostics family above (the `SHUMWAY_*_DIAG` / dump / survey env-vars become live), and the WebAssembly tier's counters: chains, hops, host switches, deopts and the rankings of deopt sites and builtin exits that `jit_compile(status)` reports. Without it the tier runs and counts nothing, and the status says so rather than printing zeros. |
 | `ShumwayProfile` | `SHUMWAY_PROFILE` | The `Profiler` hooks: opcode histogram, per-predicate/builtin counts and inclusive time, backtrack/unify/choice-point counters. |
 | `ShumwayRetractTrace` | `SHUMWAY_RETRACT_TRACE` | Trace of dynamic-store retract/assert bookkeeping. |
 | `ShumwayCpTrace` | `SHUMWAY_CP_TRACE` | Choice-point stack dumps (`ChoicePointTrace`). |

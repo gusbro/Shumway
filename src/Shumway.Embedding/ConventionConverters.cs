@@ -72,7 +72,7 @@ internal static class ConventionConverters
     private static ConvertersEntry BuildEntry(
         [DynamicallyAccessedMembers(ConventionMembers)] Type type)
     {
-        // the resolved MethodInfos are COMPILED to delegates here,
+        // the resolved MethodInfos are compiled to delegates here,
         // once per type, instead of MethodInfo.Invoke (+ a fresh object[]) per
         // conversion (~100× a direct call). Expression.Compile falls back to its
         // interpreter under Native AOT, so this stays AOT-correct. A direct

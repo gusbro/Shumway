@@ -44,14 +44,14 @@ internal static class ReplTopLevel
         catch { /* headless host without a console — keep the default */ }
         // The same reasoning for input, and only where it applies. A terminal
         // is left alone: the encoding there must match what it actually
-        // sends. REDIRECTED input is not a terminal, it is bytes, and by
+        // sends. Redirected input is not a terminal, it is bytes, and by
         // convention those are UTF-8 — what every peer emits and what a
         // consulted file already is. Read through the console's codepage
         // instead, a piped `X = "ä"` arrived as two characters.
         if (Console.IsInputRedirected)
             Console.SetIn(new System.IO.StreamReader(
                 Console.OpenStandardInput(), new System.Text.UTF8Encoding(false)));
-        // -h / --help — only among the REPL's OWN arguments: anything after the `--`
+        // -h / --help — only among the REPL's own arguments: anything after the `--`
         // separator belongs to the consulted program (the argv Prolog flag), including
         // a --help of its own.
         int helpSep = Array.IndexOf(args, "--");
@@ -92,9 +92,9 @@ internal static class ReplTopLevel
         Console.WriteLine(
             $"End a query with '.'  —  'halt.' or {eofKey} exits.");
 #if DEBUG
-        // A Debug BUILD of the engine itself (unoptimised C#) is markedly
-        // slower and is NOT what Prolog-level debugging needs: that is a
-        // RELEASE build run with --debug / --debug-wait, which compiles the
+        // A Debug build of the engine itself (unoptimised C#) is markedly
+        // slower and is not what Prolog-level debugging needs: that is a
+        // release build run with --debug / --debug-wait, which compiles the
         // consulted program debuggable while the engine keeps release speed.
         Console.WriteLine(
             "note: this is a Debug build of Shumway itself, markedly slower than Release."
@@ -112,7 +112,7 @@ internal static class ReplTopLevel
         string[] programArgs = sep < 0 ? Array.Empty<string>() : args.Skip(sep + 1).ToArray();
 
         // --foreign-dll <path> / --native-dll <path>, repeatable. The linker records these in
-        // a bundle and LoadBundle honours them; consulting SOURCE had no way to say them at
+        // a bundle and LoadBundle honours them; consulting source had no way to say them at
         // all, which meant a program with interop could only be run compiled — and therefore
         // could not be debugged, since debugging is a property of source. Same flag names as
         // shumway-link, on purpose.
@@ -201,7 +201,7 @@ internal static class ReplTopLevel
             engine.IlPromotion.Threshold = promoteN;
         if (stopwatch is not null)
             setupMsAtConsultStart = stopwatch.ElapsedMilliseconds;
-        // --clpfd / --clpr: enable the constraint library BEFORE consulting, so
+        // --clpfd / --clpr: enable the constraint library before consulting, so
         // its operators (#=, in, .., {}/1, ...) are in the operator table when
         // the named files are parsed (a `:- use_module(library(clpfd))` directive
         // inside a file is too late — the file is parsed before directives run).
@@ -226,7 +226,7 @@ internal static class ReplTopLevel
         }
 
         // ADR-035 — --debug opens a debug session before anything is consulted, because
-        // debuggability is a property of the CODE, decided when it is compiled: an engine
+        // debuggability is a property of the code, decided when it is compiled: an engine
         // told to debug afterwards would already have thrown away the variable names, the
         // frames and the source positions the debugger exists to show. --debug-wait also
         // holds the process at the door until a debugger is actually attached, which is
@@ -239,7 +239,7 @@ internal static class ReplTopLevel
             // The whole of --debug is now one embedding call: it sets the debug flags, turns
             // LCO off (honouring the SHUMWAY_DEBUG_LCO pin), arms the SHUMWAY_DEBUG_DIAG
             // exception log, announces the files we are about to consult, and opens the
-            // channel session. It is the SAME entry point a .NET host uses to debug an
+            // channel session. It is the same entry point a .NET host uses to debug an
             // embedded engine — the REPL is just the first caller. We keep the wait here so
             // the console can narrate it (the API's own WaitForAttach is the silent variant
             // for a host that has no console).
@@ -253,7 +253,7 @@ internal static class ReplTopLevel
             if (session.DapPort is int boundDap)
                 Console.WriteLine($"% DAP endpoint listening on 127.0.0.1:{boundDap} (VS Code).");
 
-            // --dap-wait: hold the door until the client's breakpoints are ARMED
+            // --dap-wait: hold the door until the client's breakpoints are armed
             // (configurationDone), so the very first goal typed at the prompt cannot
             // run past them — the launch race the plain prompt otherwise loses. The
             // DAP twin of --debug-wait, with the same no-deadline honesty: a program
@@ -299,7 +299,7 @@ internal static class ReplTopLevel
         }
         // --quads <file>, repeatable: load the quad-transcript library (it
         // brings coroutining itself), consult each transcript, run every
-        // loaded quad, and END there. A transcript is a test run, not a
+        // loaded quad, and end there. A transcript is a test run, not a
         // session, and a run that leaves a prompt behind cannot be scripted:
         // the exit code carries the verdict, zero only when every quad
         // passed. An interactive session is still one `use_module`,
@@ -381,7 +381,7 @@ internal static class ReplTopLevel
         }
 
         // --goal / -g: run one goal exactly as if it were the first query typed at the
-        // prompt — solutions print, a non-deterministic answer offers ';' — and then STAY
+        // prompt — solutions print, a non-deterministic answer offers ';' — and then stay
         // in the top level (end the goal with halt to exit instead; SHUMWAY_GOAL above is
         // the run-and-exit variant). Runs after every file is consulted, and under
         // --debug-wait after the debugger armed its breakpoints, so a program can be
@@ -530,8 +530,8 @@ internal static class ReplTopLevel
         {
             // .shum bundle (binary) → LoadBundle; everything else →
             // ConsultString on the file's text. Useful for measuring
-            // persisted-IL load + run times without going through
-            // Sigil at runtime.
+            // persisted-IL load + run times without emitting IL at
+            // runtime.
             if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
             {
                 engine.LoadBundle(path);
@@ -579,7 +579,7 @@ internal static class ReplTopLevel
         }
         catch (Shumway.Core.PrologHaltException)
         {
-            // `:- initialization(main)` where main halts: the program HAS run, and it asked
+            // `:- initialization(main)` where main halts: the program has run, and it asked
             // to end. Falling through to the top-level prompt here would leave a program
             // that said halt sitting at a `?- ` nobody typed at — which is what happened
             // until the engine learned to re-raise a halt out of a load.
@@ -631,7 +631,7 @@ internal static class ReplTopLevel
         finally { _engineReadingInput = false; }
     }
 
-    /// <summary>Reads one query — ONE SENTENCE — from the type-ahead buffer,
+    /// <summary>Reads one query — one sentence — from the type-ahead buffer,
     /// prompting for (and joining) more lines until the buffer holds a
     /// complete sentence. Text beyond the sentence stays buffered: it is the
     /// next query, or an in-query <c>read/1</c>'s input. Returns the empty
@@ -660,9 +660,9 @@ internal static class ReplTopLevel
                 {
                     // No continuation can complete this sentence (a raw
                     // control char sits inside a quoted token): hand it to
-                    // the parser NOW so the user sees the syntax error
+                    // the parser now so the user sees the syntax error
                     // instead of a continuation prompt that cannot help.
-                    // Untrimmed — the poisoning character IS the diagnosis.
+                    // Untrimmed — the poisoning character is the diagnosis.
                     pending.Consume(s.Length);
                     return s;
                 }
@@ -773,7 +773,7 @@ internal static class ReplTopLevel
         if (Console.IsInputRedirected)
             return run.MoveNext();
 
-        // Keep Ctrl+C on the SIGNAL route while a query runs (a debugger attach/detach
+        // Keep Ctrl+C on the signal route while a query runs (a debugger attach/detach
         // can leave the console delivering it as a keystroke — see LineEditor.ReadLine).
         try { Console.TreatControlCAsInput = false; }
         catch { /* no interactive console */ }
@@ -828,7 +828,7 @@ internal static class ReplTopLevel
                         run.Cancel();
                         return;
                     }
-                    // Ctrl+C arriving as a KEYSTROKE (post-debugger console-mode skew —
+                    // Ctrl+C arriving as a keystroke (post-debugger console-mode skew —
                     // see LineEditor.ReadLine): behave as the signal — terminate.
                     if (k.Key == ConsoleKey.C
                         && (k.Modifiers & ConsoleModifiers.Control) != 0)
@@ -927,11 +927,11 @@ internal static class ReplTopLevel
     }
 
     /// <summary>After a solution, asks what to do next. One keypress, no
-    /// RETURN — <c>;</c>, SPACE, Tab or <c>n</c> for the next one, <c>a</c> for
+    /// return — <c>;</c>, space, Tab or <c>n</c> for the next one, <c>a</c> for
     /// all of them, <c>f</c> for the next chunk of five, <c>h</c> for the list;
     /// anything else stops.
     ///
-    /// <para>With redirected/piped input the top-level takes only the FIRST
+    /// <para>With redirected/piped input the top-level takes only the first
     /// solution and does not consume any input — every <c>.</c>-terminated
     /// line in the script is an independent query (SWI/GProlog <c>-g</c>
     /// batch behaviour). Reading a line here to check for <c>;</c> used to

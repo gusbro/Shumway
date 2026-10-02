@@ -14,19 +14,19 @@ public sealed partial class DebugService
     /// <summary>ADR-035 D5+ — Set Next Statement onto a sibling clause's head: rewind to
     /// the CALLER's mark for the goal that called this predicate, point P at that goal's
     /// site (its argument setup re-runs — it reads only Y slots and heap), and arm the
-    /// dispatch intercept so the call enters the CHOSEN clause instead of the predicate's
+    /// dispatch intercept so the call enters the chosen clause instead of the predicate's
     /// entry. Committed to that clause — the user picked it; if its head fails to unify,
     /// the call fails. The caller's own stop decisions are suppressed (the arrow shows
     /// the chosen head; the next visible stop is inside the chosen clause).</summary>
     /// <summary>ADR-035 D5+ — the caller anchor a clause re-enter rewinds to: the newest
-    /// valid mark recorded in an ANCESTOR environment of the frame being re-entered —
-    /// the innermost enclosing USER goal. Deliberately not the next display frame: a
+    /// valid mark recorded in an ancestor environment of the frame being re-entered —
+    /// the innermost enclosing user goal. Deliberately not the next display frame: a
     /// meta-called predicate's direct caller is glue (phrase/2 driving a DCG
     /// nonterminal, call/N — the user's DCG report), prelude code with no sites, no
     /// marks, and often no frame at all (tail-call optimised), which also makes the
     /// display pair its position unreliably. Marks tell the truth: they are recorded
     /// only in debuggable code, stack discipline keeps them consistent, and the newest
-    /// one in an ancestor env IS the enclosing user goal whose re-run re-derives the
+    /// one in an ancestor env is the enclosing user goal whose re-run re-derives the
     /// callee's arguments and re-dispatches the call — where the armed clause entry
     /// takes over.</summary>
     private bool TryFindReenterAnchor(
@@ -91,17 +91,17 @@ public sealed partial class DebugService
         return "";
     }
 
-    /// <summary>Builds and arms the clause-entry function for a re-enter (or a RE-ARM: a
+    /// <summary>Builds and arms the clause-entry function for a re-enter (or a re-arm: a
     /// second Set Next Statement onto a different clause head while the first is still
     /// pending — the machine is already parked at the caller's goal, only the choice
-    /// changes). The entry function reproduces STANDARD Prolog clause selection from the
-    /// chosen clause: enter it with a choice point for the ones AFTER it — if the chosen
+    /// changes). The entry function reproduces standard Prolog clause selection from the
+    /// chosen clause: enter it with a choice point for the ones after it — if the chosen
     /// clause fails (and did not cut), the following clauses are tried, and when they run
     /// out the call fails to the caller's older alternatives. Built on the
     /// builtin-choice-point machinery (state save/restore identical to a bytecode CP; the
     /// resume delegate re-arms for the clause after and continues at the clause's code),
     /// so it works for every compiled layout — chain and indexed.</summary>
-    /// <summary>The synthetic top frame a PENDING re-enter presents: the chosen predicate
+    /// <summary>The synthetic top frame a pending re-enter presents: the chosen predicate
     /// at the chosen clause's head line, with no variables (the head has not unified —
     /// showing anything else would be a lie; the machine truthfully sits at the caller's
     /// goal). Read only while <see cref="Activation.DebugClauseEntryArmed"/>.</summary>
@@ -151,7 +151,7 @@ public sealed partial class DebugService
     }
 
     /// <summary>A rewind mark for a site a pure move skipped: the mark's position is the
-    /// site, the state is the CURRENT machine state — restoring it unwinds nothing, which
+    /// site, the state is the current machine state — restoring it unwinds nothing, which
     /// is correct, because nothing ran.</summary>
     private void RecordPureMoveMark(Activation outer, int env, int sitePc)
     {
@@ -161,12 +161,12 @@ public sealed partial class DebugService
             outer.HeapTop, outer.B, outer.B0, outer.HeapGcCount));
     }
 
-    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at the
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would accept at the
     /// current stop for one display frame, published in every stop's snapshot so the
-    /// debugger can validate a Ctrl+Shift+F10 SYNCHRONOUSLY (its CanSetNextStatement) and
+    /// debugger can validate a Ctrl+Shift+F10 synchronously (its CanSetNextStatement) and
     /// move the arrow / show a reason without a func-eval it cannot make. Top frame:
     /// forward and the current statement always, backward with a live recorded mark. A
-    /// LOWER frame: every move rewinds into the frame first, so a target is valid only
+    /// lower frame: every move rewinds into the frame first, so a target is valid only
     /// through a mark — its own (backward/current) or the frame's current goal's
     /// (forward). The head span maps to the first goal. Empty at a redo/fail stop, with
     /// LCO on, or off a frame with no statement context.</summary>
@@ -209,7 +209,7 @@ public sealed partial class DebugService
             bool reachable;
             if (frameIndex == 0)
             {
-                // Forward: always. The CURRENT statement: a no-op move, accepted —
+                // Forward: always. The current statement: a no-op move, accepted —
                 // exactly as C# accepts Set Next Statement to the line the arrow is on.
                 // Backward: only with a live recorded mark.
                 reachable = sitePc >= currentPc
@@ -225,9 +225,9 @@ public sealed partial class DebugService
             lines.Add(line);
             if (sitePc == sites[0].Pc) firstGoalReachable = true;
         }
-        // The clause HEAD span (head line .. first goal line) restarts the body — offer it
+        // The clause head span (head line .. first goal line) restarts the body — offer it
         // whenever the first goal is reachable: rewindable from deeper in, or simply the
-        // CURRENT position (stopped at the top of the body, "back to the head" is a no-op
+        // current position (stopped at the top of the body, "back to the head" is a no-op
         // — refusing it there was just confusing).
         if (firstGoalReachable)
         {
@@ -241,7 +241,7 @@ public sealed partial class DebugService
             }
         }
 
-        // SIBLING clause heads (the re-enter move): every clause of this frame's
+        // Sibling clause heads (the re-enter move): every clause of this frame's
         // predicate is a target when a caller anchor exists — the move rewinds there and
         // re-dispatches the call into the chosen clause. The anchor walk skips meta-call
         // glue (phrase/2 over a DCG, call/N), so DCG nonterminals get their siblings too.
@@ -278,7 +278,7 @@ public sealed partial class DebugService
            && m.HeapTop <= outer.HeapTop
            && outer.IsChoicePointInChain(m.B);
 
-    /// <summary>Diagnostic: every recorded mark of the CURRENT stop's activation with its
+    /// <summary>Diagnostic: every recorded mark of the current stop's activation with its
     /// site/line and, when invalid, which validity leg failed. Test/diag surface only.</summary>
     public string DescribeMarks()
         => Current is { } outer ? DescribeMarks(outer) : "nothing stopped";
@@ -387,7 +387,7 @@ public sealed partial class DebugService
         _evalOuterFrames = Array.Empty<PrologEngine.DebugFrame>();
         _evalGoalText = "";
 
-        // The machine the debugger is watching is the SUSPENDED one again, and the step the
+        // The machine the debugger is watching is the suspended one again, and the step the
         // user takes next is from the stop they were at.
         Current = outer;
         _lastStopDepth = _pendingSavedDepth;
@@ -457,17 +457,17 @@ public sealed partial class DebugService
 
         Current = engine;
 
-        // A breakpoint AT the goal a Set Next Statement just moved to does not re-fire
+        // A breakpoint at the goal a Set Next Statement just moved to does not re-fire
         // before the goal runs: the user deliberately placed the arrow there; the C#
         // debugger behaves the same way. One-shot — the loop coming back around to this
         // site stops normally.
         if (SnsMoveSuppressesStopAt(engine)) return;
 
-        // ADR-035 D5 — a conditional breakpoint: the condition goal decides, HERE, on the
+        // ADR-035 D5 — a conditional breakpoint: the condition goal decides, here, on the
         // engine's own thread, before any debugger hears about the hit. A condition that
         // fails means the program runs on — no notify, no cross-process round trip, which
         // is what makes a hot conditional breakpoint affordable. A condition that cannot
-        // run stops WITH its error: silence would swallow the breakpoint undiagnosably.
+        // run stops with its error: silence would swallow the breakpoint undiagnosably.
         string conditionError = "";
         if (_engine.BreakpointConditionAt(pc) is string condition)
         {
@@ -489,7 +489,7 @@ public sealed partial class DebugService
         // A breakpoint always stops, whatever the step mode: it is the one thing the
         // user asked for by name.
         //
-        // The stop says where the machine IS, as every stop does. It ALSO says which
+        // The stop says where the machine is, as every stop does. It also says which
         // breakpoint fired, as the user set it — a different question with a different
         // answer, since a breakpoint on a rule's head binds at its first goal, and a
         // debugger has to match the hit to the red dot it drew.
@@ -507,14 +507,14 @@ public sealed partial class DebugService
     private string _conditionError = "";
 
     /// <summary>ADR-035 D5 — evaluates a conditional breakpoint's goal in the frame the
-    /// breakpoint fired in. Returns whether the breakpoint STOPS; when it stops because
+    /// breakpoint fired in. Returns whether the breakpoint stops; when it stops because
     /// the condition could not run, <paramref name="error"/> says why (null for a
     /// condition that simply held).
     ///
     /// <para>The recipe is the Immediate window's (<see cref="EvaluateGoal"/>): parse,
     /// substitute the frame's variables by name, resolve module qualification against the
     /// frame's module, run as a real nested query over the live engine. The differences
-    /// are the differences between plumbing and a user at a prompt: only the FIRST
+    /// are the differences between plumbing and a user at a prompt: only the first
     /// solution matters (the enumerator is disposed right after, cutting the rest); no
     /// parking; nothing the condition reaches may stop (breakpoints inside it are skipped
     /// via <see cref="_conditionEval"/>, ports via the saved <see cref="StepMode.Continue"/>);
@@ -549,14 +549,14 @@ public sealed partial class DebugService
         var savedCurrent = Current;
         _mode = StepMode.Continue;
         _conditionEval = true;
-        // SAVE/RESTORE discipline for the transplant source (see ProjectResiduals):
+        // Save/restore discipline for the transplant source (see ProjectResiduals):
         // a condition can evaluate while an Immediate goal's source is live.
         Activation? savedTransplantSource = _engine.DebugTransplantSource;
         var scope = _engine.BeginDebugEvaluation();
         try
         {
-            // EVERYTHING from here runs inside the protection, the frame-variable
-            // substitution included. This method is called from INSIDE the outer query's
+            // Everything from here runs inside the protection, the frame-variable
+            // substitution included. This method is called from inside the outer query's
             // dispatch loop: an exception that escaped it would land in the outer
             // RunCatching, where the PROGRAM's own catch/3 would eat it (the program
             // takes an error path it never takes without a debugger) or, uncaught, kill
@@ -564,7 +564,7 @@ public sealed partial class DebugService
             // Nothing the condition machinery does may ever leak into the program.
 
             // The frame the breakpoint fired in is frame 0 of the stop the user would
-            // see. Substituted BEFORE the nested query's setup swaps the tables — these
+            // see. Substituted before the nested query's setup swaps the tables — these
             // reads walk the outer query's own.
             string? frameModule = null;
             List<int>? attVarRoots = null;
@@ -633,13 +633,13 @@ public sealed partial class DebugService
         // A ,/;/-> control construct (or its $disj_N / $call_* plumbing) is flow, not a
         // goal — never a stop, wherever it is called from.
         if (_engine.IsTransparentCalleeAddress(address)) return;
-        // WHERE THE CALL IS WRITTEN is what decides the stop — the same rule builtins have
+        // Where the CALL is written is what decides the stop — the same rule builtins have
         // always had (see OnCallBuiltin): `member(X, L)` on the user's line is the user's
         // goal, whatever member/2 was compiled from, and a stepper that skipped it executed
         // it fused with the goal before (the prueba.pl F11 report). The callee side still
-        // counts for the OTHER direction: a call into the USER's code from somewhere they
+        // counts for the other direction: a call into the USER's code from somewhere they
         // cannot see (prelude meta-dispatch running a findall goal) stops on entry, which
-        // is the one visible port that call has. Skipped only when BOTH ends are invisible
+        // is the one visible port that call has. Skipped only when both ends are invisible
         // — prelude internals calling prelude internals.
         if (!_engine.IsDebuggableCallee(address)
             && !_engine.IsDebuggableAddress(engine.P)) return;
@@ -670,8 +670,8 @@ public sealed partial class DebugService
         _goalId = builtinId;
         Current = engine;
 
-        // A FOREIGN builtin is the user's own C#, and they may well have a breakpoint in it.
-        // When Visual Studio stops there, the engine thread is frozen INSIDE this call and
+        // A foreign builtin is the user's own C#, and they may well have a breakpoint in it.
+        // When Visual Studio stops there, the engine thread is frozen inside this call and
         // cannot be asked anything — but the Prolog stack under the C# is precisely what the
         // user came for, and it is a fact right now, on the way in. So publish it here, and
         // say we are inside; the debugger shows it only for as long as that holds.
@@ -685,14 +685,14 @@ public sealed partial class DebugService
             PublishInterop(engine, entry.Name + "/" + entry.Arity);
         }
 
-        // A BUILTIN IS A GOAL, and a step stops at the next goal. Half a clause is builtins —
+        // A builtin is A goal, and a step stops at the next goal. Half a clause is builtins —
         // `X is N - 1`, `writeln(X)`, `atom_codes(A, C)` — and a stepper that skipped them
         // stepped over four lines at a time, landing wherever the next user predicate happened
-        // to be. Stopping here is stopping BEFORE it runs, at the goal's own line, which is
-        // what the user asked to see. (Stepping INTO one is still not a thing: there is no
+        // to be. Stopping here is stopping before it runs, at the goal's own line, which is
+        // what the user asked to see. (Stepping into one is still not a thing: there is no
         // Prolog inside it. The next step goes on to the goal after.)
         //
-        // Where the CALLER is is what decides it, not the builtin: a builtin has no source of
+        // Where the caller is is what decides it, not the builtin: a builtin has no source of
         // its own, and its call port fires with the machine standing on the goal's line in the
         // clause that wrote it. So a `succ_or_zero/1` deep in the prelude does not stop
         // anybody, and `X is N - 1` in the user's clause does.
@@ -726,13 +726,13 @@ public sealed partial class DebugService
         // through EntryBreak (a managed Debugger.Break, the debugger_break/0 path) rather
         // than a port stop, because at startup no step and no async break is pending, and a
         // port stop VS was not waiting for is silently dropped by the monitor. Fires once.
-        // Fire only once execution is INSIDE the user's own code — engine.P in a debuggable
-        // predicate that is NOT the synthetic `__query__` wrapper. The first call port is the
+        // Fire only once execution is inside the user's own code — engine.P in a debuggable
+        // predicate that is not the synthetic `__query__` wrapper. The first call port is the
         // wrapper (`?- main`) calling the entry goal; the wrapper is compiled query code, so it
-        // IS a debuggable address, but it has no source line of its own — its port maps to the
+        // is a debuggable address, but it has no source line of its own — its port maps to the
         // end of the file (the caret landed on Blint.pl's last line, not main's). Skipping it
         // lands the entry break at main's first goal — the first thing the program is about to
-        // DO — which is what "stop at the entry" means.
+        // do — which is what "stop at the entry" means.
         if (_breakAtEntry
             && _engine.IsDebuggableAddress(engine.P)
             && !_engine.IsQueryWrapperAddress(engine.P))
@@ -744,7 +744,7 @@ public sealed partial class DebugService
             return;
         }
 
-        // The breakpoint we just reported was ON this call. Do not report it twice.
+        // The breakpoint we just reported was on this call. Do not report it twice.
         // Only worth asking right after a breakpoint stop — the rest of the time there is
         // nothing to be equal to, and this is a binary search over every stop site.
         if (_reportedCallSite >= 0)
@@ -762,7 +762,7 @@ public sealed partial class DebugService
     {
         // Out of the C# again: the stack we published on the way in is history from here, and
         // saying so is what stops the debugger showing it at a stop that has nothing to do
-        // with this call. If an OUTER foreign call is still running (it called back into
+        // with this call. If an outer foreign call is still running (it called back into
         // Prolog, which called this one), the stack it is standing in is not the one we
         // published either — so re-publish rather than leave the deeper one behind.
         if (_interopDepth == 0) return;
@@ -777,7 +777,7 @@ public sealed partial class DebugService
         // A `!`, an `is/2`, an `=/2`, a comparison: a goal the user wrote, about to run,
         // with no call of its own — the debug_port opcode in front of it raises what the
         // dispatch never will. It is a landing like any call port (the same rules, the
-        // same breakpoint dedup: a breakpoint armed ON the goal patches the port's own
+        // same breakpoint dedup: a breakpoint armed on the goal patches the port's own
         // byte, reports first, and this fires right after it at the same site). The goal
         // has no callee to name, so the stop names the frame it is standing in.
         _goalKind = GoalKind.None;
@@ -792,7 +792,7 @@ public sealed partial class DebugService
         Current = engine;
         if (_mode == StepMode.Continue) return;
 
-        // The machine is standing in the computation that just FAILED — P, the
+        // The machine is standing in the computation that just failed — P, the
         // environment chain and Cp all still describe it. None of that is what the
         // user needs to see: the redo port is about the goal being retried, which the
         // choice point describes and the retry address points into.
@@ -801,7 +801,7 @@ public sealed partial class DebugService
         {
             StepMode.Into => true,
 
-            // A REDO AT THE STEP'S OWN DEPTH IS INSIDE THE GOAL YOU STEPPED OVER. Retrying a
+            // A REDO at the STEP'S own depth is inside the goal you stepped over. Retrying a
             // clause of the callee does not deepen the environment chain — the callee's frame
             // is not allocated until the clause runs — so its redo port reads at exactly the
             // depth of the call that started it. Stopping there is stopping in the middle of
@@ -809,7 +809,7 @@ public sealed partial class DebugService
             // on line 842, another clause of blint_pred_name1, which they had asked not to see.
             // ("Se para en la salida de cada subgoal previo.")
             //
-            // So a step over stops at a redo only when it belongs to an ENCLOSING goal —
+            // So a step over stops at a redo only when it belongs to an enclosing goal —
             // strictly shallower — which is the same rule the exit port already follows, and
             // for the same reason: that is the clause you are in, not the one you skipped.
             StepMode.Over => depth < _stepDepth,
@@ -825,7 +825,7 @@ public sealed partial class DebugService
         int pc = retryPc >= 0 ? _engine.RetryClauseSite(retryPc) : engine.P;
 
         // Retrying a clause of the prelude's or a library's — not the user's program — or of a
-        // TRANSPARENT control construct: backtracking into a ;/-> to try its other branch is
+        // transparent control construct: backtracking into a ;/-> to try its other branch is
         // flow, not a goal (the branch goals' own redos are what the user sees). This is the
         // "should a redo OF this predicate stop?" question, so it uses the callee check, which
         // refuses both. (Same spirit as the exit port — see MaybeStopAtPort.)
@@ -865,7 +865,7 @@ public sealed partial class DebugService
         if (_mode == StepMode.Continue) return;
         _mode = StepMode.Continue;
 
-        // Not a stop to LOOK at — the machine is not in the program, and the frames the
+        // Not a stop to look at — the machine is not in the program, and the frames the
         // debugger would draw are the host's C#. It is a message: the step you are waiting
         // on cannot be satisfied, stop waiting.
         _onStop(this, new DebugStopEvent(
@@ -877,19 +877,19 @@ public sealed partial class DebugService
     void IDebugSession.RelocateHeapRoots(
         Activation engine, Func<int, int> relocIndex, Func<int, int> relocBoundary)
     {
-        // ADR-035 D5+ — a compaction moved the heap: RELOCATE the rewind marks through it
+        // ADR-035 D5+ — a compaction moved the heap: Relocate the rewind marks through it
         // rather than dropping them (the original clear made backward Set Next Statement
         // targets vanish after stepping a few goals of any real program — a mid-step GC
         // killed them all). The collection's own guarantees make the remap exact:
-        //   - the slide is ORDER-PRESERVING, so a mark's saved allocation point maps
+        //   - the slide is order-preserving, so a mark's saved allocation point maps
         //     through the forwarding count (relocBoundary) and still separates
         //     before-the-mark cells from after-the-mark cells;
-        //   - trailed cells are ROOTS, so no trail entry ever points at a collected cell,
+        //   - trailed cells are roots, so no trail entry ever points at a collected cell,
         //     and the trails are relocated in place, never compacted — the saved trail
-        //     TOPS stay true exactly as recorded;
+        //     tops stay true exactly as recorded;
         //   - B / B0 / E / P are stack and code positions, untouched by a heap collection.
         // GcCount is refreshed so MarkIsValid keeps accepting the relocated marks. Marks
-        // of OTHER activations index other heaps: left alone.
+        // of other activations index other heaps: left alone.
         for (int i = 0; i < _portMarks.Count; i++)
         {
             var m = _portMarks[i];
@@ -931,7 +931,7 @@ public sealed partial class DebugService
         // later knows which machine to ask. One field store per goal.
         Current = engine;
 
-        // A breakpoint can be set on a program that is already RUNNING — F9 during a long
+        // A breakpoint can be set on a program that is already running — F9 during a long
         // query is the ordinary case, not an exotic one — and the engine only ever looks
         // at the channel when it stops. So it looks here too, between goals, rarely
         // enough to cost nothing and often enough that the user does not notice the wait.
@@ -943,16 +943,16 @@ public sealed partial class DebugService
 
         // Nobody is stepping, so nothing below this line can change what happens next —
         // and this is where a port must cost nothing. The depth in particular: it is
-        // read by WALKING the environment chain, which under a debugger (LCO off, every
+        // read by walking the environment chain, which under a debugger (LCO off, every
         // frame retained) is as long as the recursion is deep. Computing it at every
-        // port of a running program made the cost of running one QUADRATIC in its call
+        // port of a running program made the cost of running one quadratic in its call
         // depth: a 300k-deep tail recursion never came back. Ask only when the answer
         // is used.
         if (_mode == StepMode.Continue) return;
 
-        // The first port after an applied Set Next Statement fires AT the moved-to goal —
+        // The first port after an applied Set Next Statement fires at the moved-to goal —
         // where the arrow already stands. Stopping there would make the user's next step a
-        // no-op; the step must EXECUTE that goal. One-shot, see SnsMoveSuppressesStopAt.
+        // no-op; the step must execute that goal. One-shot, see SnsMoveSuppressesStopAt.
         if (SnsMoveSuppressesStopAt(engine)) return;
 
         // The exit or fail of code the user did not write — the prelude, a library, the top
@@ -961,21 +961,21 @@ public sealed partial class DebugService
         // honoured it left the user standing in `$prelude$$attr_goals_of/2` wondering what
         // they had done.
         //
-        // Exit and fail only. At a CALL port the machine is still in the CALLER, and the
-        // question is about the CALLEE — which OnCallAddress / OnCallFunctor already asked,
+        // Exit and fail only. At a CALL port the machine is still in the caller, and the
+        // question is about the callee — which OnCallAddress / OnCallFunctor already asked,
         // and had to: the user's own predicate, called from inside maplist/3, is theirs to
         // stop in, however unwritable the caller is.
         if (reason != StopReason.Call && !_engine.IsDebuggableAddress(engine.P)) return;
 
-        // A STEP LANDS ON A GOAL — the next thing the user's program is about to DO — and
-        // ONLY on a goal. An EXIT port never stops a step.
+        // A step lands on A goal — the next thing the user's program is about to do — and
+        // only on a goal. An EXIT port never stops a step.
         //
         // Both halves were learned from a user's F10. First "step over stops at the end of
-        // some other clause": the exit of the goal STEPPED OVER fires with the machine at the
+        // some other clause": the exit of the goal stepped over fires with the machine at the
         // callee's proceed, so the caret jumped to the last line of whatever clause succeeded.
-        // Then, with only ENCLOSING exits honoured, "F10 on the last goal stays where it is,
+        // Then, with only enclosing exits honoured, "F10 on the last goal stays where it is,
         // and Step Out stops on the last goal of the clause I am leaving": the enclosing
-        // clause's own exit ALSO shows the callee's last line — the machine is standing there
+        // clause's own exit also shows the callee's last line — the machine is standing there
         // — so the caret did not move. An exit port never points at anything the program is
         // about to do; the call port of the next goal that runs comes right after it and
         // does. However many clause-ends unwind in between, the step lands there.
@@ -986,9 +986,9 @@ public sealed partial class DebugService
         if (reason == StopReason.Exit) return;
         bool landing = reason == StopReason.Call || reason == StopReason.Fail;
 
-        // CAPPED, and that is the whole cost of stepping. Every condition below compares the
+        // Capped, and that is the whole cost of stepping. Every condition below compares the
         // depth against the depth the step was taken from, so a port deeper than that is
-        // uninteresting whatever its exact depth — but ASKING costs a walk of the environment
+        // uninteresting whatever its exact depth — but asking costs a walk of the environment
         // chain, and a step over a goal that runs for a while passes millions of ports at
         // whatever depth that goal reaches. Blint: 140 seconds to step over a goal that runs
         // in 20 without a debugger, all of it counting frames nobody asked about. The exact
@@ -1026,7 +1026,7 @@ public sealed partial class DebugService
     {
         _mode = StepMode.Continue;   // a handler that says nothing lets it run on
         _lastStopDepth = depth;
-        _lastStopWasRedo = false;    // call / breakpoint / fail: depth IS the goal's own
+        _lastStopWasRedo = false;    // call / breakpoint / fail: depth is the goal's own
         _lastStopReason = reason;    // ADR-035 D5+ — SNS is refused at redo/fail stops
         Current = engine;
 
@@ -1045,7 +1045,7 @@ public sealed partial class DebugService
             BreakFile = _breakRequest?.File ?? "",
             BreakLine = _breakRequest?.Line ?? 0,
             ConditionError = _conditionError,
-            // ADR-035 D5+ — the Set Next Statement targets valid HERE, so the debugger's
+            // ADR-035 D5+ — the Set Next Statement targets valid here, so the debugger's
             // synchronous CanSetNextStatement can accept/refuse a Ctrl+Shift+F10 and name
             // the reason without a func-eval.
             SetNextLines = ValidSetNextLines(),
@@ -1076,7 +1076,7 @@ public sealed partial class DebugService
         return list;
     }
 
-    /// <summary>ADR-035 D5+ — decorate each display frame with ITS valid Set Next
+    /// <summary>ADR-035 D5+ — decorate each display frame with its valid Set Next
     /// Statement lines (cross-frame moves). Capped: a pathological stack does not pay a
     /// per-frame mark scan beyond what a user would ever click. The omitted-frames
     /// sentence and frames with no context answer empty naturally.</summary>
@@ -1095,7 +1095,7 @@ public sealed partial class DebugService
     // The breakpoint being reported, for the length of one stop. See OnBreak.
     private (string File, int Line)? _breakRequest;
 
-    /// <summary>ADR-035 — the mixed stack of a stop INSIDE an Immediate-window evaluation:
+    /// <summary>ADR-035 — the mixed stack of a stop inside an Immediate-window evaluation:
     /// the evaluated goal's frames, a boundary saying where they came from, and under it
     /// the suspended query the user was stopped in — captured when the evaluation began,
     /// which is exact: the suspended activation cannot move while its thread runs the

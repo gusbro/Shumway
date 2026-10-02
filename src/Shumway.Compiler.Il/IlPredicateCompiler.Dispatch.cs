@@ -7,7 +7,7 @@ namespace Shumway.Compiler.Il;
 public sealed partial class IlPredicateCompiler
 {
     private static void EmitTryMeElseChainBody(
-        Sigil.Emit<PredicateDelegate> emit,
+        IlEmit emit,
         CompiledPredicate predicate,
         TryMeElseChainInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -30,10 +30,10 @@ public sealed partial class IlPredicateCompiler
         int N = clauses.Count;
 
         // ADR-031/034 pre-scan — recognise each non-last clause's CP-free
-        // guard ONCE (the stats count per invocation, and the ADR-034 fallback
+        // guard once (the stats count per invocation, and the ADR-034 fallback
         // needs the result before the cursor space is sized): a clause whose
-        // guard embeds dynamic SNAPSHOTS re-emits its guard Call sites on the
-        // fallback path as threaded calls, each taking an EXTRA forward-resume
+        // guard embeds dynamic snapshots re-emits its guard Call sites on the
+        // fallback path as threaded calls, each taking an extra forward-resume
         // cursor beyond the one-per-site base count.
         var guardOk = new bool[N];
         var guardInfo = new CpFreeGuardInfo[N];
@@ -59,20 +59,21 @@ public sealed partial class IlPredicateCompiler
                 }
         int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
             + extraDynSites;
-        var resumeLabels = new Sigil.Label[totalCallSites];
+        var resumeLabels = new IlLabel[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             resumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
 
         _emitOwnerFid = predicate.FunctorId;
 
         // CSE (mirrors the region Stage-11 hoist): every clause's
-        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
-        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
-        // the cursor switch (which dominates every clause entry, fresh AND
+        // PushIlChoicePoint reloads the same self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to one local ahead of
+        // the cursor switch (which dominates every clause entry, fresh and
         // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
         // shrinks the per-invocation work. N clauses push N−1 CPs.
         SelfDelegateEmitter effectiveSelf = emitSelf;
-        if (N - 1 >= 2)
+        // Under WAM choice points (ADR-061) a push takes a marker, not the delegate.
+        if (N - 1 >= 2 && !WamCps)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "cselfdel");
             emitSelf(emit);
@@ -86,15 +87,14 @@ public sealed partial class IlPredicateCompiler
         // (resume compares + one compare interleaved per clause) that every
         // invocation used to walk. An out-of-range cursor falls through to
         // fail, exactly as the old chain's final fall-through did.
-        var clauseLabels = new Sigil.Label[N];
+        var clauseLabels = new IlLabel[N];
         for (int i = 0; i < N; i++)
             clauseLabels[i] = emit.DefineLabel($"clause_entry_{i}");
-        var cursorLabels = new Sigil.Label[N + totalCallSites];
+        var cursorLabels = new IlLabel[N + totalCallSites];
         for (int i = 0; i < N; i++) cursorLabels[i] = clauseLabels[i];
         for (int j = 0; j < totalCallSites; j++)
             cursorLabels[N + j] = resumeLabels[j];
-        emit.LoadArgument(1);
-        emit.Switch(cursorLabels);
+        EmitCursorSwitch(emit, cursorLabels);
         // cursor out of [0..N+M-1] (unreachable) → fail.
         emit.Branch(failLabel);
 
@@ -108,6 +108,8 @@ public sealed partial class IlPredicateCompiler
         int siteCounter = 0;
         for (int i = 0; i < clauses.Count; i++)
         {
+            // ADR-061: a clause a continuation method cannot reach.
+            if (CpsPrunedAway(clauses[i].Start, clauses[i].End)) continue;
             emit.MarkLabel(clauseLabels[i]);
 
             // ADR-031 — a non-last clause whose pre-cut prefix is a CP-free
@@ -115,7 +117,7 @@ public sealed partial class IlPredicateCompiler
             // next clause (directly, or via the restore stub), and the commit
             // materialises the CP lazily only in the rare pending-wakeups case
             // (see EmitCpFreeGuardClause). forceLeafRuleInline: a tier-G guard
-            // Call MUST take the inline path (its failure is then a
+            // Call must take the inline path (its failure is then a
             // direct branch to the guard's fail label). Recognition ran once
             // in the pre-scan above (guardOk/guardInfo).
             if (guardOk[i])
@@ -124,10 +126,10 @@ public sealed partial class IlPredicateCompiler
                 // ADR-034 — staleness test + fallback (see the region driver's
                 // twin for the full story): a mutated embedded snapshot sends
                 // the clause down a plain path — entry CP + un-inlined guard
-                // (threaded by-fid calls reach the LIVE dynamic) + jump into
+                // (threaded by-fid calls reach the live dynamic) + jump into
                 // the shared post-commit body.
                 var dynFids = ginfo.EmbeddedDynamicFids;
-                Sigil.Label? dynFb = null, dynBody = null;
+                IlLabel? dynFb = null, dynBody = null;
                 if (dynFids is { Count: > 0 })
                 {
                     dynFb = emit.DefineLabel($"dynfb_c{i}");
@@ -136,7 +138,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -144,7 +146,7 @@ public sealed partial class IlPredicateCompiler
                     (s, e, fl) =>
                     {
                         // Guard slice: e == CutPc; post-commit body: e == end.
-                        // Only the GUARD slice forces leaf inlining — the
+                        // Only the guard slice forces leaf inlining — the
                         // recognizer's snapshot-fid collection stops at the
                         // cut, so a forced inline in the body slice would
                         // bypass the ADR-034 staleness check.
@@ -170,11 +172,8 @@ public sealed partial class IlPredicateCompiler
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
-                    emit.LoadArgument(0);
-                    effectiveSelf(emit);
-                    emit.LoadConstant(i + 1);
-                    emit.LoadConstant(predicate.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    int alt = i + 1;
+                    EmitPushIlChoicePoint(emit, effectiveSelf, e => e.LoadConstant(alt), predicate.Arity, alt);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)predicate.BytecodeUnfused[ginfo.CutPc]).Size;
                     // localSalt: the fallback re-emits the same pcs the
@@ -201,11 +200,8 @@ public sealed partial class IlPredicateCompiler
             // running this clause's body.
             if (i < clauses.Count - 1)
             {
-                emit.LoadArgument(0);                      // engine
-                effectiveSelf(emit);                       // → PredicateDelegate (hoisted local)
-                emit.LoadConstant(i + 1);                  // next cursor
-                emit.LoadConstant(predicate.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int alt = i + 1;
+                EmitPushIlChoicePoint(emit, effectiveSelf, e => e.LoadConstant(alt), predicate.Arity, alt);
             }
 
             // Emit the clause body. The shared siteCounter assigns a
@@ -227,8 +223,7 @@ public sealed partial class IlPredicateCompiler
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(failLabel);
-        emit.LoadConstant(false);
-        emit.Return();
+        EmitFailReturn(emit);
     }
 
     /// <summary>Recognises the shape:
@@ -299,7 +294,7 @@ public sealed partial class IlPredicateCompiler
         // the table only carries atom-headed clauses. A
         // predicate with mixed list-pattern + atom-headed clauses
         // (e.g. main/1 = `main([F|_]) :- ... ; main([]) :- ...`) ends
-        // up with the list-pattern clause UN-INDEXED — it's reachable
+        // up with the list-pattern clause un-indexed — it's reachable
         // only through the var-dispatch try/retry/trust chain, not
         // through switch_on_atom. The IndexedAtom emit only emits the
         // atom-direct dispatch, so a query with a non-empty list
@@ -397,9 +392,8 @@ public sealed partial class IlPredicateCompiler
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
 
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_indexed_{predicate.FunctorId}",
-            doVerify: DoVerify || DebugMode);
+        var emit = NewPredicateEmit($"ShumwayIl_indexed_{predicate.FunctorId}");
+        AttachRegisterFile(emit);   // ADR-060
         EmitIndexedAtomBody(emit, predicate, info, emitSelf,
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             profileKey, groundOrder, calleeMap);
@@ -429,7 +423,7 @@ public sealed partial class IlPredicateCompiler
     /// var-dispatch path is never reordered — its clause order is the
     /// observable solution order.</para></summary>
     private static void EmitIndexedAtomBody(
-        Sigil.Emit<PredicateDelegate> emit,
+        IlEmit emit,
         CompiledPredicate predicate,
         IndexedAtomInfo info,
         SelfDelegateEmitter emitSelf,
@@ -449,7 +443,7 @@ public sealed partial class IlPredicateCompiler
         // body is `get_atom + proceed`; for non-trivial
         // it's whatever IL-supported opcodes the body holds. Both run
         // via EmitClauseBody.
-        var bodyLabels = new Sigil.Label[n];
+        var bodyLabels = new IlLabel[n];
         for (int i = 0; i < n; i++)
             bodyLabels[i] = emit.DefineLabel($"body_{i}");
 
@@ -457,7 +451,7 @@ public sealed partial class IlPredicateCompiler
         // jumps to bodyLabel[i]. Used by the var-dispatch path —
         // cursor i tries clause i, leaving an IL CP for clause i+1
         // on backtrack.
-        var varEnterLabels = new Sigil.Label[n];
+        var varEnterLabels = new IlLabel[n];
         for (int i = 0; i < n; i++)
             varEnterLabels[i] = emit.DefineLabel($"var_enter_{i}");
 
@@ -470,18 +464,19 @@ public sealed partial class IlPredicateCompiler
         foreach (var c in clauses)
             totalCallSites += CountNonTailCallOpcodes(
                 predicate.BytecodeUnfused, c.BodyStart, c.BodyEnd);
-        var callResumeLabels = new Sigil.Label[totalCallSites];
+        var callResumeLabels = new IlLabel[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
 
         // CSE (mirrors the region Stage-11 hoist): every var-path
-        // clause's PushIlChoicePoint reloads the SAME self-delegate — a
+        // clause's PushIlChoicePoint reloads the same self-delegate — a
         // per-push holder dictionary probe on the runtime path. Hoist it to
-        // ONE local ahead of the cursor switch (which dominates every
-        // varEnter label, fresh AND backtrack re-entries); gate on ≥2 pushes
+        // one local ahead of the cursor switch (which dominates every
+        // varEnter label, fresh and backtrack re-entries); gate on ≥2 pushes
         // so the load+store only ever shrinks the per-invocation work.
         SelfDelegateEmitter effectiveSelf = emitSelf;
-        if (n - 1 >= 2)
+        // Under WAM choice points (ADR-061) a push takes a marker, not the delegate.
+        if (n - 1 >= 2 && !WamCps)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "aselfdel");
             emitSelf(emit);
@@ -492,18 +487,17 @@ public sealed partial class IlPredicateCompiler
         // Top-level cursor dispatch. one O(1) jump table (IL
         // `switch`) over the dense cursor space — 0 → tag dispatch; 1..n-1 →
         // varEnter[cursor]; n..n+M-1 → call-site resume — replacing the
-        // linear compare chain that tested cursor==0 LAST, making the
+        // linear compare chain that tested cursor==0 last, making the
         // fresh-call path (by far the most common) pay the whole chain. An
         // out-of-range cursor falls through to fail, exactly as the old
         // chain's explicit default did.
         var cursorZero = emit.DefineLabel("cursor_zero");
-        var cursorLabels = new Sigil.Label[n + totalCallSites];
+        var cursorLabels = new IlLabel[n + totalCallSites];
         cursorLabels[0] = cursorZero;
         for (int i = 1; i < n; i++) cursorLabels[i] = varEnterLabels[i];
         for (int j = 0; j < totalCallSites; j++)
             cursorLabels[n + j] = callResumeLabels[j];
-        emit.LoadArgument(1);
-        emit.Switch(cursorLabels);
+        EmitCursorSwitch(emit, cursorLabels);
         emit.Branch(failLabel);     // cursor out of range (unreachable) → fail
         emit.MarkLabel(cursorZero);
 
@@ -513,7 +507,7 @@ public sealed partial class IlPredicateCompiler
         emit.StoreLocal(a1Local);
 
         emit.LoadLocalAddress(a1Local);
-        emit.Call(CellTagGetter);
+        EmitHelperCall(emit, CellTagGetter);
         var tagLocal = emit.DeclareLocal<byte>("tag");
         emit.StoreLocal(tagLocal);
 
@@ -534,7 +528,7 @@ public sealed partial class IlPredicateCompiler
         // jump to that clause's body on match.
         emit.MarkLabel(groundDispatchLabel);
         emit.LoadLocalAddress(a1Local);
-        emit.Call(CellAsAtomIdGetter);
+        EmitHelperCall(emit, CellAsAtomIdGetter);
         var atomIdLocal = emit.DeclareLocal<int>("atomId");
         emit.StoreLocal(atomIdLocal);
 
@@ -544,7 +538,7 @@ public sealed partial class IlPredicateCompiler
         {
             // PGO: per-clause success label that bumps the
             // hit counter, then jumps to the body.
-            var successLabels = new Sigil.Label[n];
+            var successLabels = new IlLabel[n];
             for (int ci = 0; ci < n; ci++)
                 successLabels[ci] = emit.DefineLabel($"ground_success_{ci}");
             foreach (int ci in order)
@@ -559,7 +553,7 @@ public sealed partial class IlPredicateCompiler
                 emit.MarkLabel(successLabels[ci]);
                 emit.LoadConstant(profileKey);
                 emit.LoadConstant(ci);
-                emit.Call(IlProfileCountersBump);
+                EmitHelperCall(emit, IlProfileCountersBump);
                 emit.Branch(bodyLabels[ci]);
             }
         }
@@ -582,11 +576,8 @@ public sealed partial class IlPredicateCompiler
             emit.MarkLabel(varEnterLabels[i]);
             if (i < n - 1)
             {
-                emit.LoadArgument(0);                  // engine
-                effectiveSelf(emit);                   // → PredicateDelegate (hoisted local)
-                emit.LoadConstant(i + 1);              // next cursor
-                emit.LoadConstant(1);                  // arity
-                emit.Call(EnginePushIlCpMethod);
+                int alt = i + 1;
+                EmitPushIlChoicePoint(emit, effectiveSelf, e => e.LoadConstant(alt), 1, alt);
             }
             emit.Branch(bodyLabels[i]);
         }
@@ -597,6 +588,7 @@ public sealed partial class IlPredicateCompiler
         int siteCounter = 0;
         for (int i = 0; i < n; i++)
         {
+            if (CpsPrunedAway(clauses[i].BodyStart, clauses[i].BodyEnd)) continue;   // ADR-061
             emit.MarkLabel(bodyLabels[i]);
             EmitClauseBody(emit, predicate.BytecodeUnfused,
                 clauses[i].BodyStart, clauses[i].BodyEnd,
@@ -609,14 +601,13 @@ public sealed partial class IlPredicateCompiler
         }
 
         emit.MarkLabel(failLabel);
-        emit.LoadConstant(false);
-        emit.Return();
+        EmitFailReturn(emit);
     }
 
     /// <summary>A counter the IL emission embeds into the bytecode as a
     /// constant to look up the freshly-emitted delegate at runtime. This
-    /// is the Tier-1 equivalent of a self-reference; Sigil doesn't expose
-    /// the dynamic method's delegate during emission, so we route through
+    /// is the Tier-1 equivalent of a self-reference; the dynamic method's
+    /// delegate does not exist during emission, so we route through
     /// a static side table keyed by an integer.</summary>
     private static int _nextHolderKey = 1;
 

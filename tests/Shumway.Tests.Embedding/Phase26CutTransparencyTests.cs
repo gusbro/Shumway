@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Phase 26 — a NECK cut (<c>head :- !, ...</c>) is chunk-transparent, so the
+/// Phase 26 — a neck cut (<c>head :- !, ...</c>) is chunk-transparent, so the
 /// chunk-0 call's head-var arguments stay temporary (no environment frame),
 /// matching GProlog. The Warren argument scheduler is extended to target that
 /// post-neck-cut call, so reordered arguments are read before their home

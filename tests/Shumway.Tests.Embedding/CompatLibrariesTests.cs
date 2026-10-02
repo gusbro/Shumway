@@ -64,7 +64,7 @@ public class CompatLibrariesTests
     public void UseModule_Directive_ExecutesInline_ResolvingLaterClauses()
     {
         // The import directive must run during consult so a clause defined
-        // AFTER it can call the imported predicate.
+        // after it can call the imported predicate.
         var engine = new PrologEngine();
         engine.ConsultString("""
             :- use_module(library(dcgs)).
@@ -105,13 +105,11 @@ public class CompatLibrariesTests
     [Fact]
     public void ModuleDirective_TwoArg_IsExportQualified_NotBareGlobal()
     {
-        // ADR-038: `:- module(Name, [Exports])` is EXPORT-QUALIFIED — every
-        // predicate is mangled Name$x (nothing bare-global). A DIRECTLY
+        // ADR-038: `:- module(Name, [Exports])` is export-qualified — every
+        // predicate is mangled Name$x (nothing bare-global). A directly
         // consulted module auto-imports its exports into `user` (SWI
-        // behaviour), so the export resolves through the import table; the
-        // private predicate resolves too, but through the consult-direct
-        // fallback — the mangling itself is pinned by the manifest flag and
-        // by DirectConsultLocalTests' ambiguity/use_module contrasts.
+        // behaviour), so the export resolves through the import table — but a
+        // private predicate stays invisible, proving nothing went bare-global.
         var engine = new PrologEngine();
         engine.ConsultString("""
             :- module(mymod, [pub/1]).
@@ -121,7 +119,8 @@ public class CompatLibrariesTests
         Assert.True(engine.Modules.ContainsKey("mymod"));
         Assert.True(engine.Modules["mymod"].IsExportQualified);
         Assert.True(engine.Query("pub(hello).").Success);
-        Assert.True(engine.Query("priv(secret).").Success);
+        Assert.False(engine.Query("catch(priv(secret), _, fail).").Success);
+        Assert.True(engine.Query("mymod:priv(secret).").Success);
     }
 
     [Fact]

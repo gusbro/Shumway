@@ -734,19 +734,23 @@ export async function run(session, emit, out, editor, workspace) {
   // attach at threshold 1, run something hot, and the status must show it
   // promoted — and keep answering exactly what Tier-0 answered above.
   {
-    const on = await session.exports().WasmCompileControl('1');
-    const attached = on.includes('attached') || on.includes('threshold=1');
-    check('wasm_compile attaches', attached
+    const on = await session.exports().JitCompileControl('1');
+    // Threshold 1 is the batch mode, which answers "jit_compile: all -- ...".
+    const attached = on.includes('attached') || on.includes('threshold=1')
+                     || on.includes('jit_compile: all');
+    check('jit_compile attaches', attached
           || on.includes('capability is off'), true);
     if (attached) {
       await session.consult(
         'wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+      // Batch mode compiles at the boundary the page ticks after a consult.
+      await session.exports().JitCompileAllTick();
       check('promoted code still answers', await solutions('wloop(50000).'), 'true');
-      const status = await session.exports().WasmCompileControl('status');
-      check('wasm_compile status shows a promotion',
+      const status = await session.exports().JitCompileControl('status');
+      check('jit_compile status shows a promotion',
             /promoted \([1-9]/.test(status), true);
-      check('wasm_compile off answers',
-            (await session.exports().WasmCompileControl('off')).includes('off'), true);
+      check('jit_compile off answers',
+            (await session.exports().JitCompileControl('off')).includes('off'), true);
     }
   }
 

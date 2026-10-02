@@ -84,7 +84,7 @@ internal static class IlIndexGraph
             return null;
 
         // 1. Discover every switch address reachable from the entry, in DFS
-        //    order — that order IS each node's index.
+        //    order — that order is each node's index.
         var addrToIndex = new Dictionary<int, int>();
         var order = new List<int>();
         var stack = new Stack<int>();

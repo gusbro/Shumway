@@ -6,19 +6,19 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 439 (Phase 30) — four Arity-corpus parser/transform fixes:
 /// <list type="number">
-/// <item>A QUOTED <c>'!'</c> after <c>[</c> is an ordinary list element,
+/// <item>A quoted <c>'!'</c> after <c>[</c> is an ordinary list element,
 /// never the chunk-263 snip opener — <c>['!', Token]</c> is a
 /// two-element list. Bare <c>[! G !]</c> snips unchanged.</item>
 /// <item>Backquote char-code literals under arity_compat take the next
-/// character LITERALLY (no 0'-style escape processing — revises chunk
+/// character literally (no 0'-style escape processing — revises chunk
 /// 437): <c>`\</c> is 92, <c>`)</c> is 41, backquote + space is 32.
 /// A backquote at end of input / before a line break is an error
 /// diagnostic.</item>
 /// <item>A trailing comma before <c>)</c> in a compound argument list
-/// is tolerated under arity_compat ONLY (subviews.pl writes
+/// is tolerated under arity_compat only (subviews.pl writes
 /// <c>ifthenelse(..., save_old_mod,  % comment
 /// )</c>). Flag off: still a syntax error.</item>
-/// <item>DCG double-quoted string terminals (standard DCG, NOT
+/// <item>DCG double-quoted string terminals (standard DCG, not
 /// arity-gated): a <c>"ab"</c> body terminal consumes the equivalent
 /// element list per the active double_quotes mode (codes / chars expand
 /// at parse time; the default `string` mode expands in DcgTransform to
@@ -95,7 +95,7 @@ public class Chunk439Tests
     {
         var e = new PrologEngine();
         // Source: c1(`\).  — the char after ` is taken literally, so the
-        // backslash IS the literal (no escape sequence starts).
+        // backslash is the literal (no escape sequence starts).
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).
             c1(`\).
@@ -256,7 +256,7 @@ public class Chunk439Tests
     public void DcgStringTerminal_DefaultMode_MatchesChars()
     {
         var e = new PrologEngine();
-        // A terminal expands to the literal's OWN presentation, which under the
+        // A terminal expands to the literal's own presentation, which under the
         // default is chars (ADR-047). It used to expand to codes whatever the
         // literal was, so a grammar written under `chars` matched nothing.
         e.ConsultString("ab --> \"ab\".");

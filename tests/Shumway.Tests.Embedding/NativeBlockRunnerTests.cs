@@ -12,7 +12,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-022 step 4 — a native <c>{...}</c> block, emitted as a synthesized
-/// foreign by <see cref="NativeBlockRunner"/>, runs END-TO-END: it marshals string
+/// foreign by <see cref="NativeBlockRunner"/>, runs end-to-end: it marshals string
 /// / integer inputs from the goal's registers, calls a C# static method (here a
 /// test stand-in for <c>Shumway.Native.Interop</c>; the linker supplies the real
 /// one in step 5), handles the MakeCString / MakePrologString intrinsics, and

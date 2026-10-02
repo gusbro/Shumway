@@ -91,8 +91,8 @@ internal static class TermConverters
         }
         if (typeof(T) == typeof(string))
         {
-            // A .NET string is text as a VALUE, and text as a value is an atom
-            // (ADR-047 decision 6). A caller who wants text as a SEQUENCE asks
+            // A .NET string is text as a value, and text as a value is an atom
+            // (ADR-047 decision 6). A caller who wants text as a sequence asks
             // for a list; there is no third thing at the boundary.
             result = new AtomTerm((string)(object)value!);
             return true;
@@ -257,8 +257,8 @@ internal static class TermConverters
     {
         FloatTerm f => f.Value,
         IntTerm n => (double)n.Value,
-        BigIntTerm b => (double)b.Value,
-        RationalTerm r => (double)r.Num / (double)r.Den,
+        BigIntTerm b => Shumway.Core.DoubleConversion.FromInteger(b.Value),
+        RationalTerm r => Shumway.Core.DoubleConversion.FromRatio(r.Num, r.Den),
         _ => throw new InvalidCastException(
             $"Expected a numeric term, got {term.GetType().Name}."),
     };

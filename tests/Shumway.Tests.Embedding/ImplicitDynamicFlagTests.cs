@@ -142,7 +142,7 @@ public class ImplicitDynamicFlagTests
         // The consult-time pre-scan auto-declares literal-head
         // assertz targets up front, so runtime toggling
         // implicit_dynamic=false can't retroactively block those.
-        // What it DOES block is a *runtime-computed* head — one the
+        // What it does block is a *runtime-computed* head — one the
         // pre-scan couldn't see because the head's functor is bound
         // dynamically. With the flag off, the runtime EnsureDynamic
         // path raises permission_error.

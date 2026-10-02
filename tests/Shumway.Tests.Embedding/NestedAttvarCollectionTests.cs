@@ -5,11 +5,11 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Attributed variables that live in a compound's OWN argument cell.
+/// Attributed variables that live in a compound's own argument cell.
 ///
 /// <para>An unbound variable inside a list or structure is stored in the
 /// argument cell itself, so once it gains an attribute the attvar's heap
-/// address IS the compound's. Anything that walks a term collecting attributed
+/// address is the compound's. Anything that walks a term collecting attributed
 /// variables has to keep the two apart, or the compound's visited-mark swallows
 /// the variable and the term looks unconstrained — <c>Qs ins 1..N</c> then
 /// projects no domains at all, which is an answer that is silently wrong rather
@@ -17,7 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public sealed class NestedAttvarCollectionTests
 {
-    // Attaches an attribute to each element IN PLACE — the element cell is the
+    // Attaches an attribute to each element in place — the element cell is the
     // variable, which is the shape under test. `X = [A], put_attr(A, ...)` is a
     // different shape: there the attvar is a separate cell the list points at.
     private const string Attach = """

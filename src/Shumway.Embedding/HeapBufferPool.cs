@@ -7,9 +7,9 @@ namespace Shumway.Embedding;
 /// <c>PrologEngine</c>. A big query grows the activation heap by doubling
 /// (alloc + copy per step: a 300M-cell peak from the 64K initial = 13
 /// reallocations copying ~2 GB), and the fully-grown buffer died with the
-/// activation — so REPEATING the query re-paid the whole ladder, and the dead
+/// activation — so repeating the query re-paid the whole ladder, and the dead
 /// 4 GB array lingered as GC-retained LOH. The pool recycles the buffer
-/// across activations: at most ONE pooled buffer (overlapping activations —
+/// across activations: at most one pooled buffer (overlapping activations —
 /// a suspended QueryAll plus a nested query — allocate fresh as before),
 /// handed to the next activation at setup, taken back when an activation's
 /// solution enumeration dies.
@@ -35,7 +35,7 @@ internal sealed class HeapBufferPool
     private const long FloorCells = 1L << 20;   // 8 MB — always OK to keep
 
     // Match ActivationConfig's defaults: the query-setup path constructs its
-    // activations with TINY initial buffers (see PooledActivationConfig) and
+    // activations with tiny initial buffers (see PooledActivationConfig) and
     // relies on Adopt to supply real ones — recycled when available, freshly
     // allocated here otherwise. Allocating in Adopt instead of the activation
     // constructor is the whole point: the constructor's 512 KB heap + 64 KB

@@ -7,12 +7,12 @@ namespace Shumway.Web;
 
 /// <summary>
 /// Putting a program in a link. There is no server to store it on — the whole
-/// app is static files — so the program travels IN the URL, compressed and
+/// app is static files — so the program travels in the URL, compressed and
 /// base64url-encoded in the fragment. The fragment never reaches a server,
 /// which is the property that makes this acceptable: sharing a link does not
 /// hand anyone's code to a third party.
 ///
-/// <para>A link carries EITHER one file or a whole workspace, because a program
+/// <para>A link carries either one file or a whole workspace, because a program
 /// that spans files is not shareable one file at a time. The payload says which,
 /// so the readable label the URL starts with (<c>#boards.pl~…</c>) is decoration
 /// for the person reading the link — a hand-edited label cannot mislead the

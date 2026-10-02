@@ -46,7 +46,7 @@ public sealed class LinkConfig
     /// <see cref="EntryPoints"/>, one of these may resolve to a builtin or a
     /// prelude predicate — the goal is any query the REPL would accept
     /// (<c>time(main)</c>, <c>writeln(hola)</c>). Only a reference that
-    /// resolves NOWHERE (not user, not builtin, not prelude) fails the
+    /// resolves nowhere (not user, not builtin, not prelude) fails the
     /// link.</summary>
     public IReadOnlyList<PredicateRef> GoalCallRefs { get; init; } = Array.Empty<PredicateRef>();
 
@@ -87,7 +87,7 @@ public sealed class LinkConfig
     /// embeds the resulting assembly bytes in each bundle entry's
     /// <see cref="BundleEntry.CompiledIl"/> slot. At load time the
     /// engine binds the persisted IL directly as
-    /// <c>PredicateDelegate</c>s, so no Sigil-emit work happens at
+    /// <c>PredicateDelegate</c>s, so no IL emission happens at
     /// runtime — the IL compile cost is paid once, ahead of time,
     /// and amortised over every query that hits a promoted
     /// predicate.
@@ -110,43 +110,51 @@ public sealed class LinkConfig
     /// and these predicates would be unrunnable.</summary>
     public bool StripWam { get; init; }
 
+    /// <summary>When set, compiles the linked bundle's static predicates to
+    /// a relocatable wasm module stored in the bundle (the <c>--wasm</c>
+    /// option; the baker lives in Shumway.Compiler.Wasm, which this assembly
+    /// does not reference). Returns the module bytes, or null when nothing
+    /// compiled. Refused together with <see cref="StripWam"/>: the module
+    /// runs the bytecode that option drops.</summary>
+    public Func<Bundle, byte[]?>? WasmBaker { get; init; }
+
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable
     /// seeds to functor ids, and runs <see cref="RegionReachability"/> to report how many
-    /// predicate standalone forms WOULD be prunable if the bundle were region-compiled —
+    /// predicate standalone forms would be prunable if the bundle were region-compiled —
     /// an analysis diagnostic (<c>stage9_prunable</c>), not yet an applied prune (which
     /// also needs region-mode bundle compilation). Off by default (the decode + per-pred
     /// region build is not free).</summary>
     public bool RegionPruneReport { get; init; }
 
     /// <summary>When <c>true</c>, the linker emits a
-    /// <c>local_shadows_public</c> WARNING for each linked module whose LOCAL
+    /// <c>local_shadows_public</c> warning for each linked module whose local
     /// predicate shares an indicator with another linked module's public —
     /// the C <c>static</c>-shadows-global shape. Legal either way (the local
     /// wins inside its own module); the <c>--map</c> file always lists these
     /// regardless of the flag. Defaults to <c>false</c>.</summary>
     public bool WarnShadow { get; init; }
 
-    /// <summary>Stage 9b-3 — the APPLIED dead-region prune. When the bundle builds
+    /// <summary>Stage 9b-3 — the applied dead-region prune. When the bundle builds
     /// compiled IL (<see cref="IncludeCompiledIl"/>), it is region-compiled (absorbed
-    /// members live inside region methods) and each ABSORBED-ONLY predicate (reached only
+    /// members live inside region methods) and each absorbed-only predicate (reached only
     /// as a <c>br</c>-member, computed by <see cref="RegionReachability"/> from the
-    /// externally-reachable seeds) gets NO standalone IL method — removing the
+    /// externally-reachable seeds) gets no standalone IL method — removing the
     /// all-as-roots duplication. The predicate keeps its Tier-0 WAM as a safety fallback.
-    /// ON by default (regions validated correct + faster on call-bound
+    /// On by default (regions validated correct + faster on call-bound
     /// code; an unpruned region bundle is 2.3× bigger for nothing); set false
     /// (CLI <c>--no-region-prune</c>) to build one standalone IL method per predicate.
     /// Ignored for WAM-only bundles.</summary>
     public bool RegionPrune { get; init; } = true;
 
     /// <summary>Stage 10 — when non-null, append a human-readable disassembly of the WAM
-    /// each bundle entry SHIPS (its final <c>CompiledBytecode</c>, AFTER any
+    /// each bundle entry ships (its final <c>CompiledBytecode</c>, after any
     /// <see cref="StripWam"/> / region prune) to this path. The ground truth of the Tier-0
     /// code in the linked bundle, post-link — narrower than <c>shumway-compile --dump-wam</c>
     /// (which dumps a single .shmo before linking). Appends; delete between runs.</summary>
     public string? DumpWamPath { get; init; }
 
-    /// <summary>Stage 10 — when non-null, append the Tier-1 IL the bundle SHIPS to this
+    /// <summary>Stage 10 — when non-null, append the Tier-1 IL the bundle ships to this
     /// path. Implies <see cref="IncludeCompiledIl"/> (there is no IL to dump otherwise); the
     /// dump fires from inside the persisted-IL build, so it reflects exactly what runs —
     /// post-prune, region mode + forced roots when <see cref="RegionPrune"/> is set — not the
@@ -193,7 +201,7 @@ public sealed class LinkConfig
     /// <c>.shum</c> librarian archive (built by <c>shumway-lib</c>) broken
     /// out into its member <c>.shmo</c> objects. Unlike
     /// <see cref="Objects"/> — every one of which is always linked — a
-    /// library's members are pulled in ONLY on demand, to satisfy a
+    /// library's members are pulled in only on demand, to satisfy a
     /// reference the explicit objects (plus builtins / prelude) leave
     /// unresolved. Libraries are searched FIFO: when more than one provides
     /// a symbol, the one earlier in this list wins. Pulls are transitive (a
@@ -224,16 +232,23 @@ public sealed class LinkConfig
     public bool BakePrelude { get; init; }
 
     /// <summary>with <see cref="BakePrelude"/>, bake only the
-    /// prelude predicates the linked program can REACH (the indicators the
+    /// prelude predicates the linked program can reach (the indicators the
     /// reachability walk resolved against the prelude, closed over the
     /// prelude's own call graph) instead of the whole ~780-line prelude.
-    /// Off by default and OPT-IN on purpose: a runtime-constructed meta-call
+    /// Off by default and opt-in on purpose: a runtime-constructed meta-call
     /// (<c>call(Atom)</c>, a goal read at runtime) can name a prelude
     /// predicate the static walk never saw — same contract as user-code
     /// pruning, and same escape hatch (<c>:- ensure_linked</c> the predicates
     /// you conjure dynamically). Interactive/REPL-style consumers that accept
     /// arbitrary queries should keep the full prelude.</summary>
     public bool PrunePrelude { get; init; }
+
+    /// <summary>When <c>true</c>, every predicate defined in every object is a
+    /// reachability root: the bundle is a library loaded whole (the
+    /// <c>--library</c> option), not a program pruned from its entry points.
+    /// A library's predicates are reached by runtime-built goals the walk
+    /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
+    public bool Library { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a
@@ -267,10 +282,11 @@ public sealed class LinkResult
     public IReadOnlyList<string> UnreachableModules { get; }
     public IReadOnlyList<PredicateRef> MissingPredicates { get; }
 
-    /// <summary>Stage 9 (dead-region elimination) — the externally-reachable SEED set:
+    /// <summary>Stage 9 (dead-region elimination) — the externally-reachable seed set:
     /// the reached predicates that must keep a standalone (trampoline-callable) form
-    /// because they are callable BY NAME from outside a region's <c>br</c>-absorption
-    /// (entry / ensure_linked roots + every reached public / dynamic predicate). The
+    /// because they are callable by name from outside a region's <c>br</c>-absorption
+    /// (entry / ensure_linked roots, every predicate a written <c>M:Goal</c> reaches, and
+    /// every reached public / dynamic predicate). The
     /// seeds the linker feeds to <c>RegionReachability</c> once the bundle is
     /// region-compiled; see <see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>.</summary>
     public IReadOnlyList<QualifiedPredicateRef> ExternallyReachableSeeds { get; }

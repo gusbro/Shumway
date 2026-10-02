@@ -9,8 +9,8 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Bisecting the --dap-wait corruption: NO DAP anywhere — two engines in one
-/// process, each arming a PENDING breakpoint (file not consulted yet) and then
+/// <summary>Bisecting the --dap-wait corruption: No DAP anywhere — two engines in one
+/// process, each arming a pending breakpoint (file not consulted yet) and then
 /// consulting the same file. If the second engine fails, the bug is in the ADR-035
 /// core (static DebugSiteTable vs per-engine state), not in the DAP frontend.</summary>
 [Collection("debugger")]

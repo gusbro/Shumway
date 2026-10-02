@@ -9,11 +9,11 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 367 (Phase 29, case 2 — emit): inlining a single-clause RULE that makes
+/// Chunk 367 (Phase 29, case 2 — emit): inlining a single-clause rule that makes
 /// user calls and/or cuts into a metaCp caller. The mid-body cut is the
 /// soundness-critical part: the emit sets <c>B0 = engine.B</c> at the inline
 /// entry, so the body's deep cut (allocate_get_level / get_level → cut) captures
-/// THAT barrier and prunes only the inlined body's choice points — not the
+/// that barrier and prunes only the inlined body's choice points — not the
 /// caller's pre-existing ones. The body threads its non-tail calls through the
 /// caller's forward-resume cursor space (the resume-label array is sized to
 /// include them). Gated behind <c>SHUMWAY_INLINE_RULES2</c> while validated.
@@ -51,8 +51,8 @@ public class Chunk367Tests
     public void NotEligible_EvenWithAllowCut(string src)
         => Assert.False(IlPredicateCompiler.IsInlinableRule(CompileOne(src), allowCut: true));
 
-    // NOTE: a backtrackable builtin (between/3, …) in a rule body is rejected via
-    // the CallBuiltin case — but only once it is RESOLVED to a CallBuiltin opcode.
+    // Note: a backtrackable builtin (between/3, …) in a rule body is rejected via
+    // the CallBuiltin case — but only once it is resolved to a CallBuiltin opcode.
     // In an isolated PredicateCompiler compile it may still be an unresolved
     // generic Call (resolved to the builtin only at link/runtime), so its
     // classification is not asserted here. The rule inliner runs on the runtime

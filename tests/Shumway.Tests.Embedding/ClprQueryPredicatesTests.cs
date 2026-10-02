@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// The predicates that ASK the store something instead of adding to it, the
+/// The predicates that ask the store something instead of adding to it, the
 /// surface SWI and SICStus share: <c>entailed/1</c>, <c>inf/2</c>,
 /// <c>sup/2</c>, <c>minimize/1</c>, <c>maximize/1</c> and <c>dump/3</c>.
 ///
@@ -35,7 +35,7 @@ public class ClprQueryPredicatesTests
         var e = Clpr();
         Assert.True(e.Query("{X >= 5}, entailed(X >= 3).").Success);
         Assert.False(e.Query("{X >= 5}, entailed(X >= 7).").Success);
-        // What the store DERIVED counts as entailed, not just what was posted.
+        // What the store derived counts as entailed, not just what was posted.
         Assert.True(e.Query("{A + B =:= 10}, {A =:= 6}, entailed(B =:= 4).").Success);
         // And asking must not narrow anything: X is as free afterwards as before.
         var after = e.Query("{X >= 5}, entailed(X >= 3), {X =:= 100}.");
@@ -88,7 +88,7 @@ public class ClprQueryPredicatesTests
     [Fact]
     public void DumpReportsTheResidualOverNamesYouChoose()
     {
-        // The store is REPORTED, not changed: the constraint comes back
+        // The store is reported, not changed: the constraint comes back
         // written over the names given rather than over the variables.
         var e = Clpr();
         var sol = e.Query("{P + Q =:= 10}, dump([P, Q], ['P', 'Q'], Cs).");

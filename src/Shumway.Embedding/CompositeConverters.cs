@@ -36,7 +36,7 @@ namespace Shumway.Embedding;
 internal static class CompositeConverters
 {
     /// <summary>The one place trimming is genuinely lossy here, recorded rather
-    /// than papered over. A composite's ELEMENT types are discovered at runtime
+    /// than papered over. A composite's element types are discovered at runtime
     /// (<c>GetGenericArguments</c> / <c>GetElementType</c>), which the trimmer
     /// cannot follow, so the annotation chain that keeps a type's generated
     /// <c>ToPrologTerm</c> / <c>FromPrologTerm</c> alive stops at the composite.
@@ -51,7 +51,7 @@ internal static class CompositeConverters
         + "itself. See ElementTypeLimitation.";
 
     // The reflection below never touches a user type's members: it reads Item1 /
-    // Item2 / Key / Value off closed FRAMEWORK generics (Tuple<,>, ValueTuple<,>,
+    // Item2 / Key / Value off closed framework generics (Tuple<,>, ValueTuple<,>,
     // KeyValuePair<,>) and constructs List<>/Dictionary<,>/Nullable<>, all reached
     // only after matching the open type against a typeof(...) literal. Those
     // members belong to types the application itself constructs to make the call,

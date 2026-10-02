@@ -39,7 +39,7 @@ public class IfThenAndNotDispatchTests
     public void StandaloneIfThen_ConditionFails_GoalFails()
     {
         // ISO §7.8.7: `(A -> B)` is `(A -> B ; fail)` — when A fails,
-        // the whole thing fails (does NOT fall through to a sibling
+        // the whole thing fails (does not fall through to a sibling
         // conjunct).
         var e = new PrologEngine();
         e.ConsultString("""

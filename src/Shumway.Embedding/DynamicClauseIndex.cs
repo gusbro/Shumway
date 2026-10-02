@@ -2,18 +2,18 @@ using Shumway.Compiler.Ast;
 
 namespace Shumway.Embedding;
 
-/// <summary>A first-argument index over a dynamic predicate's PHYSICAL clause
+/// <summary>A first-argument index over a dynamic predicate's physical clause
 /// list, so retract/1 can jump to the clauses that could possibly match
 /// instead of trying every one of them.
 ///
-/// <para>It answers a NECESSARY condition, never a verdict: a clause's key is
+/// <para>It answers a necessary condition, never a verdict: a clause's key is
 /// derived from its head's first argument, which never changes once the clause
-/// is asserted, and any shape that cannot PROVE a mismatch keys
+/// is asserted, and any shape that cannot prove a mismatch keys
 /// <see cref="DynFirstArgKey.Anything"/> and therefore stays a candidate for
 /// every call. The caller still runs the real unification, and still decides
 /// visibility. That is what makes this sound under the logical update view:
 /// born/died move over time, the key does not, and a view can only ever make
-/// FEWER clauses visible than the physical list holds.</para>
+/// fewer clauses visible than the physical list holds.</para>
 ///
 /// <para>Positions shift on every insert and removal, so the index is not keyed
 /// by position: each clause gets a sequence number, ascending in clause order
@@ -23,7 +23,7 @@ namespace Shumway.Embedding;
 internal sealed class DynamicClauseIndex
 {
     /// <summary>Sequence numbers, parallel to the clause list and ascending —
-    /// so position order IS sequence order, and a binary search converts
+    /// so position order is sequence order, and a binary search converts
     /// between them.</summary>
     private readonly List<long> _seqs = new();
 
@@ -53,7 +53,7 @@ internal sealed class DynamicClauseIndex
     }
 
     /// <summary>The clause at <paramref name="index"/> has been tombstoned.
-    /// Its sequence number STAYS in <see cref="_seqs"/> because the store
+    /// Its sequence number stays in <see cref="_seqs"/> because the store
     /// keeps the slot and no position moves; only the bucket entry goes,
     /// which is what stops the clause being a candidate.
     ///

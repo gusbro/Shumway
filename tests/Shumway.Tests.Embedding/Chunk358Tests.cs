@@ -11,7 +11,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 358 (Phase 28): first piece of the Tier-1 IL local-predicate inliner
 /// (Phase 1, docs/design/il-local-inlining.md) — the eligibility predicate
-/// <see cref="IlPredicateCompiler.IsFactPredicate"/>. It recognises a pure FACT
+/// <see cref="IlPredicateCompiler.IsFactPredicate"/>. It recognises a pure fact
 /// predicate (every clause is head matching only; the rest of the bytecode is
 /// the clause-dispatch skeleton + proceed), which is what may have its clause
 /// dispatch inlined into a caller. No emit yet — just the detector.

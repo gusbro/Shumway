@@ -5,15 +5,15 @@ namespace Shumway.Web;
 internal static partial class WasmCoupling
 {
     /// <summary>Call sites between modules, heaviest edge first. The group is
-    /// ONE wasm module, so a call inside it is a branch; a call that leaves it
+    /// one wasm module, so a call inside it is a branch; a call that leaves it
     /// closes the chain, goes back through the interpreter and opens another.
     /// Splitting the group along a module boundary therefore turns every edge
     /// crossing that boundary into a host round trip, which is what this
     /// report is for: it names the boundaries and how tightly each is woven,
     /// so the question is settled with evidence rather than intuition.
     ///
-    /// <para>STATIC by construction, and the report says so: it counts call
-    /// SITES in the compiled code, not how often they are taken. A single site
+    /// <para>Static by construction, and the report says so: it counts call
+    /// sites in the compiled code, not how often they are taken. A single site
     /// inside a loop outweighs fifty that run once. Measuring frequency would
     /// cost something on the hot path; this costs nothing.</para></summary>
     public static string Report(PrologEngine engine,

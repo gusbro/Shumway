@@ -36,7 +36,7 @@ public sealed class ChannelDebugSession : IDisposable
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _channel = new DebugChannel();
         _notify = notify ?? Shumway.Core.Debugging.ShumwayDebugHost.Notify;
-        // The real transport stops FOR a native debugger, so "no debugger attached" at a
+        // The real transport stops for a native debugger, so "no debugger attached" at a
         // stop means it detached (see OnStopLocked). A test's session brings its own
         // notify and never has one — for it the check must stay off.
         _detachAware = notify is null;
@@ -46,7 +46,7 @@ public sealed class ChannelDebugSession : IDisposable
 
         // The mixed stack. When the debugger stops in a foreign predicate's C#, the engine
         // thread is frozen inside the call and cannot be asked for anything — so it says
-        // where Prolog is on the way IN, and unsays it on the way out. The buffer stays
+        // where Prolog is on the way in, and unsays it on the way out. The buffer stays
         // marked `running` throughout: the machine is not stopped, our stepper must not claim
         // the step, and only the interop depth licenses reading the stack.
         _service.OnInteropEnter = stop => _channel.WriteSnapshot(stop, running: true, interopDepth: 1);
@@ -79,10 +79,10 @@ public sealed class ChannelDebugSession : IDisposable
         engine.AttachDebugSession(_service);
 
         // ADR-035 diagnostics — under SHUMWAY_DEBUG_DIAG, every first-chance Prolog
-        // exception prints its FULL C# stack to the debuggee's stderr. Visual Studio's
+        // exception prints its full C# stack to the debuggee's stderr. Visual Studio's
         // Output says only "Exception thrown: 'Shumway.Core.PrologRuntimeException'" —
         // which reads as an engine defect when it is really a Prolog throw doing its job
-        // (this engine IMPLEMENTS Prolog exceptions as C# exceptions, so the program's own
+        // (this engine implements Prolog exceptions as C# exceptions, so the program's own
         // catch/throw, a watch expression that errors, an Immediate goal's
         // existence_error — all log first-chance lines while a debugger watches). The
         // stack names the thrower, ending the guesswork. Opt-in: a run's worth of Blint
@@ -91,7 +91,7 @@ public sealed class ChannelDebugSession : IDisposable
         {
             _firstChance = (_, e) =>
             {
-                // The handler runs on the THROWING thread, inside the throw itself: a
+                // The handler runs on the throwing thread, inside the throw itself: a
                 // throw of our own here would recurse. Guard, and never let one out.
                 if (_inFirstChance) return;
                 _inFirstChance = true;
@@ -116,12 +116,12 @@ public sealed class ChannelDebugSession : IDisposable
         _firstChance;
     [ThreadStatic] private static bool _inFirstChance;
 
-    /// <summary>Whether a stop with no native debugger attached means DETACH (the real
+    /// <summary>Whether a stop with no native debugger attached means detach (the real
     /// transport) rather than business as usual (a test's own notify). See
     /// <see cref="OnStopLocked"/>.</summary>
     private readonly bool _detachAware;
 
-    /// <summary>ADR-036 — an EXTERNAL driver (the in-process DAP server, when a VS Code
+    /// <summary>ADR-036 — an external driver (the in-process DAP server, when a VS Code
     /// client is connected) takes the stop instead of the native-debugger notify: it runs
     /// on the engine thread, blocks until the client says how to resume, and returns true.
     /// Returning false means the client is gone — treated exactly like a native detach
@@ -134,16 +134,16 @@ public sealed class ChannelDebugSession : IDisposable
     /// lazy session arms on it just as it arms on <c>Debugger.IsAttached</c>.</summary>
     internal volatile bool ExternalDriverConnected;
 
-    /// <summary>ADR-035 D5+ — LAZY full debug (see
+    /// <summary>ADR-035 D5+ — lazy full debug (see
     /// <see cref="DebugOptions.ActivateOnAttach"/>): the runtime machinery stays off —
     /// near-release speed — until a debugger attaches (the idle watcher notices) or the
     /// host calls <see cref="ActivateFullDebug"/>; a detach turns it back off, and a
     /// re-attach re-arms.</summary>
     public bool ActivateOnAttach { get; init; }
 
-    /// <summary>Turns the full runtime debug machinery ON, now: ports raised, every
+    /// <summary>Turns the full runtime debug machinery on, now: ports raised, every
     /// binding trailed, last-call optimisation as the session resolved it. Future
-    /// queries start armed; a query ALREADY RUNNING arms itself at its next goal
+    /// queries start armed; a query already running arms itself at its next goal
     /// boundary (the activation applies the request on its own thread — a watcher
     /// thread must never mutate a running machine). Idempotent. What arming cannot
     /// recover is the past: frames LCO already reclaimed, bindings made before the
@@ -198,7 +198,7 @@ public sealed class ChannelDebugSession : IDisposable
         ShumwayDebugHelper.DiagLine("full debug disarmed (debugger detached)");
     }
 
-    // ----- the engine when it is NOT running -----
+    // ----- the engine when it is not running -----
 
     private System.Threading.Thread? _idleWatcher;
     private readonly object _gate = new object();
@@ -206,7 +206,7 @@ public sealed class ChannelDebugSession : IDisposable
 
     /// <summary>ADR-035 — how a debugger gets in when the engine is standing still.
     ///
-    /// <para>Everything else here happens BETWEEN GOALS: the engine reads the channel as it
+    /// <para>Everything else here happens between goals: the engine reads the channel as it
     /// runs. An engine that is not running reads nothing — and an engine waiting at the
     /// top-level prompt is the ordinary thing to attach to. That was a genuine deadlock, and
     /// a silent one: the debugger needs a stop in order to build the objects that stand for
@@ -219,7 +219,7 @@ public sealed class ChannelDebugSession : IDisposable
     /// obeys the commands the debugger left, and grants the stop it asked for (an empty one
     /// — there is no Prolog stack when no Prolog is running, and it must not pretend
     /// otherwise). It runs only while a debugger is attached, only while the heartbeat says
-    /// the engine is NOT passing goals — the running engine services itself, and two of us
+    /// the engine is not passing goals — the running engine services itself, and two of us
     /// must never do it at once — and it sleeps the rest of the time.</para></summary>
     private void StartIdleWatcher()
     {
@@ -235,7 +235,7 @@ public sealed class ChannelDebugSession : IDisposable
                 if (!System.Diagnostics.Debugger.IsAttached && !ExternalDriverConnected)
                     continue;
 
-                // ADR-035 D5+ — a LAZY session arms itself the moment a debugger is
+                // ADR-035 D5+ — a lazy session arms itself the moment a debugger is
                 // seen. This tick is the detection; the machinery lands on the engine's
                 // own thread (next query setup, or the live query's next goal boundary).
                 if (ActivateOnAttach && !_engine.DebugFullyArmed)
@@ -265,7 +265,7 @@ public sealed class ChannelDebugSession : IDisposable
 
     private void ServiceChannelWhileIdle()
     {
-        // ADR-036 — the ARM gate first, and only by TRY: applying a breakpoint links
+        // ADR-036 — the arm gate first, and only by try: applying a breakpoint links
         // code, and the engine links code under this same gate (consult, query setup).
         // Taking it here in the engine's own order — arm gate, then stop gate — is what
         // makes the two threads serialize instead of deadlocking by inversion (the
@@ -284,7 +284,7 @@ public sealed class ChannelDebugSession : IDisposable
 
     private void ServiceChannelWhileIdleUnderArmGate()
     {
-        // TRY for the gate; never wait for it. The engine holds it for the WHOLE of a stop —
+        // Try for the gate; never wait for it. The engine holds it for the whole of a stop —
         // it is stopped inside the lock, and does not come back until the user says so — and
         // a thread that blocks on it therefore blocks for as long as the user stares at the
         // screen. That is not a lock, it is a deadlock with good manners: the watcher hangs
@@ -311,7 +311,7 @@ public sealed class ChannelDebugSession : IDisposable
             if (!stopWanted) return;
 
             // A stop with no stack, because there is no stack: nothing is running. It is
-            // still a REAL stop — which is all the debugger needs it to be, since what it
+            // still a real stop — which is all the debugger needs it to be, since what it
             // wants from it is the chance to build its modules and bind its breakpoints.
             _service.NoteStop(0);
             OnStopLocked(new DebugStopEvent(
@@ -326,16 +326,16 @@ public sealed class ChannelDebugSession : IDisposable
     /// <summary>ADR-035 — the channel, worked between goals rather than at a stop. Two jobs.
     ///
     /// <para><b>Commands.</b> Setting a breakpoint on a program that is already running is
-    /// the ordinary case (F9 during a long query), and it is the ONLY thing a debugger says
+    /// the ordinary case (F9 during a long query), and it is the only thing a debugger says
     /// while the engine is moving. So only breakpoints are obeyed here. A step or a continue
     /// read off the channel mid-flight would be one the debugger never issued — nobody asks
     /// a running program to resume — and acting on it would silently change the step mode of
     /// a query nobody is stopped in.</para>
     ///
-    /// <para><b>The pause.</b> When the user hits Break All, the answer is NOT to freeze the
+    /// <para><b>The pause.</b> When the user hits Break All, the answer is not to freeze the
     /// process and describe wherever it landed. A Prolog machine stopped mid-instruction is
     /// halfway through a unification or inside a builtin: it has no call stack to show, and
-    /// the last one it had is not where it is. So a pause is a REQUEST
+    /// the last one it had is not where it is. So a pause is a request
     /// (<see cref="DebugCommandKind.BreakNow"/>): the engine reads it here, between goals,
     /// and stops at the next port — a real stop, microseconds later, with a stack that is
     /// true. That is what every interpreter's debugger does with a pause, and it is why the
@@ -362,7 +362,7 @@ public sealed class ChannelDebugSession : IDisposable
                     Apply(_service, command);
                     break;
 
-                // The user asked to pause. Stop at THIS port: we are standing on one.
+                // The user asked to pause. Stop at this port: we are standing on one.
                 case DebugCommandKind.BreakNow:
                     stopNow = true;
                     reason = StopReason.AsyncBreak;
@@ -384,9 +384,9 @@ public sealed class ChannelDebugSession : IDisposable
 
         DebugStopEvent? here = _service.CaptureNow();
 
-        // THIS STOP IS WHERE THE NEXT STEP IS FROM. A step is measured against the depth of
+        // This stop is where the next step is from. A step is measured against the depth of
         // the stop it was taken at, and this stop does not go through the service's own Stop()
-        // — so without this, an F10 at a Break All was measured against whatever the LAST real
+        // — so without this, an F10 at a Break All was measured against whatever the last real
         // stop left behind (or zero, if there had never been one). Paused 200 frames deep,
         // the step waited for a port at depth ≤ 0: the program ran to completion and never
         // stopped again.
@@ -407,7 +407,7 @@ public sealed class ChannelDebugSession : IDisposable
     public void ArmEntryBreak() => _service.ArmEntryBreak();
 
     /// <summary>
-    /// ADR-035 D4 — hold the door until the debugger has actually SAID something.
+    /// ADR-035 D4 — hold the door until the debugger has actually said something.
     ///
     /// <para>"A debugger is attached" is not the same as "a debugger is ready". Under a
     /// launch, <c>Debugger.IsAttached</c> goes true the instant the process starts, while
@@ -416,7 +416,7 @@ public sealed class ChannelDebugSession : IDisposable
     /// window means running it past every one of them.</para>
     ///
     /// <para>So we wait for the first command batch — the debugger writes its whole desired
-    /// state as soon as it is ready, so ANY command is the signal — and apply it. Then the
+    /// state as soon as it is ready, so any command is the signal — and apply it. Then the
     /// program is consulted, with its breakpoints already armed. Returns false on timeout,
     /// which is not fatal: a debugger that never speaks is one the user attached for a
     /// different reason, and the program should still run.</para>
@@ -430,16 +430,16 @@ public sealed class ChannelDebugSession : IDisposable
 
         while (Environment.TickCount64 < deadline)
         {
-            // The debugger's FIRST word is not its last. It answers the bootstrap stop with
+            // The debugger's first word is not its last. It answers the bootstrap stop with
             // the state it has — which, the first time, is nothing: it has only just learned
             // which file we are about to consult, and Visual Studio has not yet bound the
             // breakpoints the user drew on it. Those arrive milliseconds later, and treating
             // the first batch as "ready" ran the whole program in the gap (measured: 33 ms
-            // early, every breakpoint missed). So we wait for the debugger to go QUIET.
+            // early, every breakpoint missed). So we wait for the debugger to go quiet.
             if (heard && Environment.TickCount64 >= quietUntil)
                 return true;
 
-            // Give the debugger a STOP to work with. Its hidden breakpoint is armed before we
+            // Give the debugger a stop to work with. Its hidden breakpoint is armed before we
             // have run anything (it reads the token out of the DLL on disk — it has to, since
             // this session did not exist when the assembly loaded), but a breakpoint that is
             // never reached tells it nothing: the channel, and the names of the files we are
@@ -483,7 +483,7 @@ public sealed class ChannelDebugSession : IDisposable
     /// program launched under a debugger still starts promptly.</summary>
     public const int QuietMs = 750;
 
-    /// <summary>ADR-035 — writes the CURRENT stack into the channel, at no port at all,
+    /// <summary>ADR-035 — writes the current stack into the channel, at no port at all,
     /// and returns the snapshot's sequence number (0 if nothing is running).
     ///
     /// <para>This is the asynchronous break. The user hits Break All; the process stops
@@ -494,19 +494,19 @@ public sealed class ChannelDebugSession : IDisposable
     /// answers from the machine that was last running.</para></summary>
     public int CaptureNow()
     {
-        // Diag: the OTHER spontaneous func-eval that runs engine code (the async-break
+        // Diag: the other spontaneous func-eval that runs engine code (the async-break
         // stack refresh). Capturing frames renders real terms, and rendering can throw
         // internally — named here so an out-of-nowhere first-chance has an owner.
         ShumwayDebugHelper.DiagLine("CaptureNow asked (func-eval)");
         DebugStopEvent? stop = _service.CaptureNow();
         if (stop is null) return 0;
-        // A step taken from this stop is measured against THIS depth — see PollWhileRunning.
+        // A step taken from this stop is measured against this depth — see PollWhileRunning.
         _service.NoteStop(stop.Depth);
         _channel.WriteSnapshot(stop);
         return _channel.Sequence;
     }
 
-    /// <summary>ADR-035 — <c>debugger_break/0</c>: stop the debugger HERE, at this goal.
+    /// <summary>ADR-035 — <c>debugger_break/0</c>: stop the debugger here, at this goal.
     ///
     /// <para>In a managed process a break is something the program itself can ask the
     /// runtime for, and the debugger honours it — no breakpoint, no channel, no negotiation.
@@ -529,7 +529,7 @@ public sealed class ChannelDebugSession : IDisposable
             DebugStopEvent? here = _service.CaptureNow();
             if (here is null) return;
 
-            // A step taken from here is measured against THIS depth, like a step from any
+            // A step taken from here is measured against this depth, like a step from any
             // other stop.
             _service.NoteStop(here.Depth);
 
@@ -544,13 +544,13 @@ public sealed class ChannelDebugSession : IDisposable
 
     /// <summary>ADR-035 — the Immediate window's goal evaluation, bracketed by the channel:
     /// the eval's own stops overwrite the snapshot buffer, and when it finishes Visual
-    /// Studio returns the user to the ORIGINAL break state — whose Locals must find the
+    /// Studio returns the user to the original break state — whose Locals must find the
     /// frames they were reading, not the evaluated goal's. Runs on the engine's own
     /// stopped thread (a func-eval), which already holds the stop gate — the nested
     /// stops re-enter it reentrantly, same thread.</summary>
     internal string EvaluateGoal(int frameIndex, string goalText)
     {
-        // Diag: WHO is evaluating WHAT. Anything that reaches here came through the EE as
+        // Diag: Who is evaluating what. Anything that reaches here came through the EE as
         // a func-eval — a user's Immediate goal, a watch refresh, or something Visual
         // Studio decided to evaluate on its own (a DataTip, an extension). When
         // first-chance exceptions appear "out of nowhere" at a stop, this line names the
@@ -559,9 +559,9 @@ public sealed class ChannelDebugSession : IDisposable
             ShumwayDebugHelper.DiagLine(
                 "goal evaluation asked (frame " + frameIndex + "): '" + goalText + "'");
 
-        // A breakpoint the user drew WHILE STOPPED is not armed yet. In break state the
+        // A breakpoint the user drew while stopped is not armed yet. In break state the
         // engine thread is parked inside the notify holding the gate, and the channel is
-        // drained only when it RESUMES — so an F9 the user set a moment ago sits unread in
+        // drained only when it resumes — so an F9 the user set a moment ago sits unread in
         // the command region, and the goal we are about to run would sail straight past it.
         // Apply it first, exactly as a step would (a step's own resume drains the channel
         // before it runs). Then a breakpoint set at the stop is honoured by the evaluation,
@@ -575,8 +575,8 @@ public sealed class ChannelDebugSession : IDisposable
         }
         finally
         {
-            // The bracket restores the ORIGINAL stop's snapshot — the eval's own nested
-            // stops must not linger — EXCEPT when the evaluation COMMITTED bindings into
+            // The bracket restores the original stop's snapshot — the eval's own nested
+            // stops must not linger — except when the evaluation committed bindings into
             // the suspended frame (ADR-035 D5+): then the original snapshot is the stale
             // one, and restoring it would show Locals the unbound variables the frame no
             // longer has. Re-capture the stop as it stands instead.
@@ -622,7 +622,7 @@ public sealed class ChannelDebugSession : IDisposable
         return result;
     }
 
-    /// <summary>Drain the command region and apply the breakpoint changes in it NOW, so code
+    /// <summary>Drain the command region and apply the breakpoint changes in it now, so code
     /// that runs from a stop before the normal resume-time drain — an Immediate-window
     /// evaluation — sees the breakpoints the user has set while stopped.
     ///
@@ -680,13 +680,13 @@ public sealed class ChannelDebugSession : IDisposable
     {
         DebugService service = _service;
 
-        // THE DEBUGGER MAY BE GONE. Detach — or closing Visual Studio outright — resumes
+        // The debugger may be gone. Detach — or closing Visual Studio outright — resumes
         // the process and leaves everything the session armed exactly as it was: the Break
         // bytes in the code space, the whole stop pipeline. The program then "runs", but
         // every breakpoint hit still captures a stack, serialises a snapshot and notifies a
         // debugger that no longer exists — an endless train of stops nobody asked for (the
         // user watched "breakpoint hit ... stop" scroll forever, and paid the capture cost
-        // for each). A hit with no debugger attached means the debugger LEFT before it:
+        // for each). A hit with no debugger attached means the debugger left before it:
         // disarm and run free. The breakpoints are not lost — they live in Visual Studio,
         // and a re-attach re-sends the full set (the full-state write every attach begins
         // with).
@@ -715,11 +715,11 @@ public sealed class ChannelDebugSession : IDisposable
         else
         {
             // 2. Notify. A debugger is attached: this is where the process stops, and it
-            //    does not come back until the debugger says so — OR until it DETACHES, which
+            //    does not come back until the debugger says so — or until it detaches, which
             //    also resumes us. Telling the two apart is the check right after.
             _notify((int)stop.Reason);
 
-            // The debugger resumed us BY LEAVING (detach, or Visual Studio closing): clean up
+            // The debugger resumed us by leaving (detach, or Visual Studio closing): clean up
             // now, before the query runs on, so not even one more breakpoint fires the pipeline.
             // (Detach mid-run, without a stop to catch it here, is caught by the entry check
             // above on the next hit — this is the no-extra-hit fast path, not the only one.)
@@ -734,7 +734,7 @@ public sealed class ChannelDebugSession : IDisposable
         foreach (var command in _channel.DrainCommands())
             Apply(service, command);
 
-        // 4. Say that the stack in the buffer is now HISTORY. From here until the next stop
+        // 4. Say that the stack in the buffer is now history. From here until the next stop
         //    there is no Prolog stack to show, and a debugger that freezes the process (a
         //    raw Break All, a breakpoint in C#) must not be handed the last one as if it
         //    were current.
@@ -833,9 +833,9 @@ public sealed class ChannelDebugSession : IDisposable
         _dapServer = server;
     }
 
-    /// <summary>ADR-036 — <c>--dap-wait</c>: blocks until a DAP client has connected AND
+    /// <summary>ADR-036 — <c>--dap-wait</c>: blocks until a DAP client has connected and
     /// sent <c>configurationDone</c> (its breakpoints are armed), or the timeout. The DAP
-    /// twin of <see cref="WaitForDebuggerCommands"/>: a program launched IN ORDER to be
+    /// twin of <see cref="WaitForDebuggerCommands"/>: a program launched in order to be
     /// debugged that shows its prompt first runs goals past every breakpoint drawn on it.
     /// False when the session has no DAP endpoint, or nobody configured in time.</summary>
     public bool WaitForDapConfigured(TimeSpan timeout)

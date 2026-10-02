@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// Phase 33 I11 — <c>StandardOrderComparator</c> (compare/3, @&lt;/@&gt;/…,
 /// sort/2, msort/2, keysort/2, predsort/3) no longer recurses per compound arg
 /// / per list element, so it terminates instead of overflowing the host on a
-/// long acyclic list OR a cyclic (rational) term — both were uncatchable
+/// long acyclic list or a cyclic (rational) term — both were uncatchable
 /// StackOverflow crashes. The iterative walk must keep the ordinary standard
 /// order for finite terms and give the co-inductive answer on cyclic ones.
 ///

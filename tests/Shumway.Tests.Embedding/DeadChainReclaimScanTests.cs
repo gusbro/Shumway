@@ -17,7 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// and go, so a saved BP outside it is rejected with one compare. The envelope
 /// is conservative — another predicate's chunks can lie between ours — so a BP
 /// that falls inside still builds the exact set and the set still decides.
-/// Nothing about WHEN reclamation is allowed changed.</para></summary>
+/// Nothing about when reclamation is allowed changed.</para></summary>
 public sealed class DeadChainReclaimScanTests
 {
     private const string Program = """
@@ -35,7 +35,7 @@ public sealed class DeadChainReclaimScanTests
         return e;
     }
 
-    /// <summary>COUNTED, not timed. A drain reclaims constantly and never
+    /// <summary>Counted, not timed. A drain reclaims constantly and never
     /// needs the exact set, at either size — the envelope answers every
     /// choice point. Before, the set was built once per sweep.</summary>
     [Fact]
@@ -47,7 +47,7 @@ public sealed class DeadChainReclaimScanTests
             Assert.True(e.Query($"mk({n}).").Success);
             Assert.True(e.Query($"drain({n}).").Success);
             Assert.Equal(0L, e.ChainAddressSetsBuilt);
-            // ANTI-VACUITY: reclamation really did run, many times, and the
+            // Anti-vacuity: reclamation really did run, many times, and the
             // predicate really is empty.
             Assert.True(e.ChainReclaims > 10, $"only {e.ChainReclaims} sweeps");
             Assert.False(e.Query("cp(_, _).").Success);

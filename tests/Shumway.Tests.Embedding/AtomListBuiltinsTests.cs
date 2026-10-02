@@ -146,7 +146,7 @@ public class AtomListBuiltinsTests
     [Fact]
     public void Append_ProperList_SplitUnchanged()
     {
-        // Regression guard: a PROPER L3 still splits into N+1 proper solutions
+        // Regression guard: a proper L3 still splits into N+1 proper solutions
         // (the fix must not change the common case).
         var engine = new PrologEngine();
         var sols = engine.QueryAll("append(P, F, [a, b]).").ToList();
@@ -333,7 +333,7 @@ public class AtomListBuiltinsTests
     [Fact]
     public void ASplitReconstructsWhatItCameFrom()
     {
-        // The shared suffix has to BE the suffix: putting the halves back
+        // The shared suffix has to be the suffix: putting the halves back
         // together must give the original list, for every split of it.
         var e = new PrologEngine();
         Assert.True(e.Query(
@@ -345,7 +345,7 @@ public class AtomListBuiltinsTests
     public void AnImproperListSplitsToo()
     {
         // ISO: the suffix simply carries the improper tail. This is the case
-        // the sharing touches most subtly, since the shared cell IS the tail.
+        // the sharing touches most subtly, since the shared cell is the tail.
         var e = new PrologEngine();
         var sol = e.Query(
             "findall(P-S, append(P, S, [a,b|c]), L), "

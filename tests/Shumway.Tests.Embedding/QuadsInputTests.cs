@@ -3,14 +3,14 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>What a transcript can say about INPUT, and how the harness makes
+/// <summary>What a transcript can say about input, and how the harness makes
 /// it observable.
 ///
 /// <para>A description names the text the goal reads (<c>inputs/1</c>), the
 /// text it must leave unread (<c>peeks/1</c>), or that it reaches for input
 /// at all (<c>waits</c>). What ties them together is a sentinel byte written
 /// behind the text — one no character can be read from — so a goal that
-/// reads PAST what the description sanctioned raises
+/// reads past what the description sanctioned raises
 /// <c>representation_error(character)</c> instead of quietly seeing
 /// end_of_file. Without it a claim like <c>inputs("a"), C = a</c> could not
 /// tell a goal that read one character from one that read one and looked at
@@ -53,7 +53,7 @@ public sealed class QuadsInputTests
         // peek_char/1 consumes nothing, so "did it consume the character?"
         // could never see it waiting; reaching for the sentinel can. And a
         // description whose only text is the peek still has to open a
-        // stream — the peek text IS the input there.
+        // stream — the peek text is the input there.
         string report = RunQuads(
             "b\n?- peek_char(C).\n" +
             "   waits.\n" +
@@ -140,8 +140,8 @@ public sealed class QuadsInputTests
     [Fact]
     public void WhatTheGoalLeaves_IsComparedToThePeek()
     {
-        // inputs ++ peeks IS the text on the stream, so the peek is there
-        // unless the goal EATS into it: one that consumes both characters
+        // inputs ++ peeks is the text on the stream, so the peek is there
+        // unless the goal eats into it: one that consumes both characters
         // leaves nothing where the description says a character remains.
         Assert.Contains("quads: 1/1", RunQuads(
             "t\n?- get_char(C).\n   inputs(\"a\"), peeks(\"b\"), C = a.\n"));

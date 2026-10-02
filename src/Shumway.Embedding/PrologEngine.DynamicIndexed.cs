@@ -47,7 +47,7 @@ public sealed partial class PrologEngine
     internal int? PeekDiedAddr(int functorId, int clauseIndex) => ChainPatcher.PeekDiedAddr(functorId, clauseIndex);
     internal int? PeekNextAddr(int functorId, int clauseIndex) => ChainPatcher.PeekNextAddr(functorId, clauseIndex);
 
-    /// <summary>The chain table for the CURRENT persistent buffer (owned by
+    /// <summary>The chain table for the current persistent buffer (owned by
     /// the patcher component).</summary>
     internal DynChainTable DynChains => ChainPatcher.Chains;
     internal void ResetDynChains() => ChainPatcher.ResetChains();

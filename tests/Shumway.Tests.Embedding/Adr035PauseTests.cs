@@ -14,13 +14,13 @@ namespace Shumway.Tests.Embedding;
 ///
 /// <para>The engine used to keep a rendered stack lying around at all times, refreshed on a
 /// 50 ms clock, so that a Break All would find something to display. It was wrong twice
-/// over. It was a LIE — what it displayed was where the program had been up to 50 ms ago,
+/// over. It was a lie — what it displayed was where the program had been up to 50 ms ago,
 /// not where it was. And it was ruinous: a refresh walks the whole environment chain and
 /// renders every variable of every frame, and under a debugger (last-call optimisation off)
 /// that chain is as deep as the recursion. A real program could not finish.</para>
 ///
 /// <para>What replaced it is what an interpreter's debugger is supposed to do: a pause is a
-/// REQUEST — keep running, briefly, and stop at the next port, where the stack means
+/// request — keep running, briefly, and stop at the next port, where the stack means
 /// something. These tests pin all three halves of that: the request lands at a real port;
 /// the engine says so when a stack is history rather than current; and it never renders one
 /// unless somebody stopped.</para>
@@ -73,7 +73,7 @@ go :- loop(20000).
         using (session)
         {
             // The debugger asks to pause — exactly as Concord does, by writing the command
-            // into the pinned region of a program that is RUNNING. (Here we write it before
+            // into the pinned region of a program that is running. (Here we write it before
             // the query starts, which is the same thing from the engine's side: it reads the
             // channel between goals, and takes the first poll that sees it.)
             session.Channel.WriteCommands(new DebugCommand(DebugCommandKind.BreakNow));
@@ -107,7 +107,7 @@ go :- loop(20000).
             engine.QueryAll("go.").ToList();
 
             // The stop happened, and then the program ran on. What is in the buffer is the
-            // record of a stop that is OVER. A debugger that freezes the process now — a raw
+            // record of a stop that is over. A debugger that freezes the process now — a raw
             // Break All, a breakpoint in the user's C# — must be told that, or it will paint
             // these frames on the screen as though the program were standing in them.
             DebugSnapshot? after = ReadFromMemory(session.Channel);
@@ -120,7 +120,7 @@ go :- loop(20000).
     public void ABreakpointSetOnAnIdleEngine_BeforeAnyQueryHasEverRun_StillHits()
     {
         // The ordinary way to debug a program you did not launch from the IDE: the engine
-        // consults it and WAITS at the prompt, you attach, and you set a breakpoint on a
+        // consults it and waits at the prompt, you attach, and you set a breakpoint on a
         // predicate nothing has called yet. Not one goal has run in this engine's life.
         var engine = new PrologEngine();
         engine.ConsultString("""
@@ -151,8 +151,8 @@ go :- loop(20000).
         // `?- writeln(uno), debugger_break, writeln(dos).` calls no predicate of the user's:
         // it is builtins and nothing else, so the only thing on the environment chain is the
         // wrapper the engine puts a query in. That wrapper is hidden from error traces —
-        // rightly, the user did not write it — and hiding it from the DEBUGGER meant stopping
-        // in a query showed an EMPTY STACK. The debugger looked broken; it had simply been
+        // rightly, the user did not write it — and hiding it from the debugger meant stopping
+        // in a query showed an empty stack. The debugger looked broken; it had simply been
         // told there was nothing there.
         var engine = new PrologEngine();
         engine.ConsultString("""
@@ -182,13 +182,13 @@ go :- loop(20000).
         Assert.NotNull(query);
         Assert.Equal(-1, query!.Arity);
 
-        // And it says WHICH query. A bare `?-` told the user only that a query was running,
+        // And it says which query. A bare `?-` told the user only that a query was running,
         // which they could see from being stopped in it; the goal they typed is the frame's
         // identity, the way `loop/1` is a clause's.
         Assert.Contains("loop(2000)", query.Name);
 
         // Its variables are readable too — the wrapper is compiled with a frame map like any
-        // other clause. (It gets no BREAK sites: the user cannot set a breakpoint on a line
+        // other clause. (It gets no break sites: the user cannot set a breakpoint on a line
         // they never wrote.)
         Assert.Contains(query.Variables, v => v.Name == "Answer" && v.Value == "42");
     }
@@ -196,7 +196,7 @@ go :- loop(20000).
     [Fact]
     public void DebuggerBreak_WithNobodyWatching_IsANoOp()
     {
-        // The whole value of debugger_break/0 is that you can LEAVE it in the program. A
+        // The whole value of debugger_break/0 is that you can leave it in the program. A
         // build with no debugger attached must run straight through it — no stop, no stack
         // rendered, no cost. (With a debugger attached it calls Debugger.Break(), which is a
         // thing only a debugger can answer; there is no way to assert that from a test
@@ -247,7 +247,7 @@ go :- loop(20000).
         public static int Scale(int n)
         {
             // Stand exactly where Visual Studio stands when it stops on a breakpoint in here:
-            // the engine thread is INSIDE this call and can be asked nothing. Whatever the
+            // the engine thread is inside this call and can be asked nothing. Whatever the
             // debugger can see, it has to already be in the buffer.
             SnapshotSeenFromInsideTheCall = Read?.Invoke();
             return n * 2;
@@ -257,11 +257,11 @@ go :- loop(20000).
     [Fact]
     public void StoppedInsideAForeignPredicate_ThePrologStackUnderTheCSharpIsReadable()
     {
-        // The point of an interop debugger: ONE stack, the user's C# over the Prolog that
+        // The point of an interop debugger: One stack, the user's C# over the Prolog that
         // called it. Killing the 50 ms sampler took this away without anyone noticing — the
-        // engine only ever published a stack when it STOPPED, and a breakpoint in C# is not a
+        // engine only ever published a stack when it stopped, and a breakpoint in C# is not a
         // stop of the engine's, so the debugger (rightly) refused to show the last one and
-        // the C# stood on nothing. The engine now publishes the stack as it crosses INTO a
+        // the C# stood on nothing. The engine now publishes the stack as it crosses into a
         // foreign call, and says it is inside one.
         var engine = new PrologEngine();
         engine.RegisterPredicates(typeof(Scaling));
@@ -282,8 +282,8 @@ go :- loop(20000).
         Assert.NotNull(seen);
         foreach (var f in seen!.Frames) _log.WriteLine($"  {f.Name}/{f.Arity}");
 
-        // RUNNING — the machine has not stopped, and our stepper must not claim a step in
-        // there: it is C#, and the CLR steps its own code. But it IS inside a foreign call,
+        // Running — the machine has not stopped, and our stepper must not claim a step in
+        // there: it is C#, and the CLR steps its own code. But it is inside a foreign call,
         // and that is what licenses the stack.
         Assert.True(seen.Running);
         Assert.Equal(1, seen.InteropDepth);

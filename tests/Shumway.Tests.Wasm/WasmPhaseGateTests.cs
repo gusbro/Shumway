@@ -3,7 +3,7 @@ using Shumway.Embedding;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>The plan's phase 1 gate: the counter, compiled by the REAL
+/// <summary>The plan's phase 1 gate: the counter, compiled by the real
 /// compiler (choice point per round, restore, trail unwind -- everything the
 /// engine does), still at least twice Tier-0. Measured min-of-five in one
 /// process; the assert leaves margin so a noisy runner does not flake it

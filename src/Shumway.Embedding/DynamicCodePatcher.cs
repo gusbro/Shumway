@@ -22,14 +22,14 @@ internal sealed class DynamicCodePatcher
 {
     private readonly PrologEngine E;
 
-    /// <summary>The table describing the host's CURRENT persistent buffer.</summary>
+    /// <summary>The table describing the host's current persistent buffer.</summary>
     public DynChainTable Chains => _dynChainTable;
 
     /// <summary>Replaces the chain table outright — the persistent buffer was
     /// rebuilt or invalidated, so every recorded position is stale.</summary>
     public void ResetChains() => _dynChainTable = new DynChainTable();
 
-    /// <summary>Associates <paramref name="engine"/> with the CURRENT chain
+    /// <summary>Associates <paramref name="engine"/> with the current chain
     /// table — every in-place mutation that engine performs resolves chain
     /// state through this association.</summary>
     public void AssociateEngineWithCurrentChains(Activation engine)
@@ -53,7 +53,7 @@ internal sealed class DynamicCodePatcher
     /// from the predicate's <c>switch_on_term</c> var label,
     /// descending through any number of <c>switch_on_arg</c> level
     /// switches, until it reaches the final chain head (the chain
-    /// that enumerates EVERY clause regardless of indexable args).
+    /// that enumerates every clause regardless of indexable args).
     /// Returns -1 if the layout doesn't match.</summary>
     internal int FindFinalVarChainHead(Activation engine, int predAddr)
     {
@@ -157,7 +157,7 @@ internal sealed class DynamicCodePatcher
         if (entryAddr + 1 <= prog.Length
             && prog[entryAddr] == (byte)Shumway.Core.Opcode.TryMeElse)
             return 9;
-        // retry_me_else: 5-byte native OR 9-byte demoted-from-head.
+        // retry_me_else: 5-byte native or 9-byte demoted-from-head.
         // Demoted has Nop at offset +5; native has CheckVisible.
         if (entryAddr + 6 <= prog.Length
             && prog[entryAddr + 5] == (byte)Shumway.Core.Opcode.Nop)
@@ -193,7 +193,7 @@ internal sealed class DynamicCodePatcher
         // Walk the const-label cascade for level 0 only. The cascade
         // is atom → integer → structure within one level; on multi-
         // arg the cascade's last default points at the
-        // NEXT LEVEL's switch_on_arg, which marks the level boundary
+        // next LEVEL's switch_on_arg, which marks the level boundary
         // and stops the walk — arg-0's bucket is in level 0 only,
         // higher-level buckets are routed through different chain
         // extensions.
@@ -341,7 +341,7 @@ internal sealed class DynamicCodePatcher
         // lie inside this activation's believed content length. A slot at
         // or beyond ProgramLength means the chain in the shared buffer
         // extends past this activation's append position (a stale
-        // ProgramLength): AppendCode would OVERWRITE those live entries and
+        // ProgramLength): AppendCode would overwrite those live entries and
         // the tail patch would then write the new entry's own address into
         // its own <next> operand — the self-pointing retry_me_else cycle.
         // Rebuild from the store instead of writing the corruption.
@@ -393,7 +393,7 @@ internal sealed class DynamicCodePatcher
         }
 
         // For the new-key concrete case, the new bucket itself is
-        // built (and added to the sub-switch table) BEFORE we walk
+        // built (and added to the sub-switch table) before we walk
         // the chain-tail list — the new bucket isn't in
         // chainTailNexts because it didn't exist when we planned.
         if (!isVarArg && isNewKey)
@@ -793,7 +793,7 @@ internal sealed class DynamicCodePatcher
         }
 
         // For new-key concrete: build a brand-new bucket chain
-        // (NEW BODY FIRST, then var-args), add to switch table.
+        // (new body first, then var-args), add to switch table.
         // No demotion needed for the new bucket.
         if (isNewKey)
         {
@@ -846,7 +846,7 @@ internal sealed class DynamicCodePatcher
 
     /// <summary>like
     /// <see cref="BuildAndAppendNewBucketChain"/> but with the new
-    /// clause's body FIRST (the asserta order) followed by the var-
+    /// clause's body first (the asserta order) followed by the var-
     /// arg bodies in source order. Returns the new bucket chain
     /// head address.</summary>
     private int BuildAndAppendBucketChainAsserta(
@@ -1032,7 +1032,7 @@ internal sealed class DynamicCodePatcher
     /// to some generation by a prior retract) are
     /// skipped, so the index aligns with the post-removal
     /// <c>_dynamicClauses</c> ordering — except that this lookup
-    /// runs BEFORE the current <c>RemoveAt</c>, so
+    /// runs before the current <c>RemoveAt</c>, so
     /// <paramref name="clauseIndex"/> is the position in the
     /// pre-removal list. Returns <c>-1</c> on layout mismatch or
     /// when the index runs off the chain.</summary>
@@ -1244,7 +1244,7 @@ internal sealed class DynamicCodePatcher
     }
 
 
-    /// <summary>The table describing the host's CURRENT persistent buffer
+    /// <summary>The table describing the host's current persistent buffer
     /// (<see cref="E._persistentProgram"/>). Reused across queries while the
     /// buffer is; replaced whenever the buffer is rebuilt or
     /// invalidated.</summary>
@@ -1263,12 +1263,12 @@ internal sealed class DynamicCodePatcher
     /// dynamic chain (the <c>Activation.DynChainSelect</c> hook). Inspects the
     /// call's dereferenced first argument against the chain entries'
     /// first-argument keys. Returns an absolute jump address (exactly one
-    /// candidate — the caller jumps there with NO choice point), -1 (zero
+    /// candidate — the caller jumps there with no choice point), -1 (zero
     /// candidates — fail without walking the chain), or -2 (no selection).
     /// Selection includes logically-dead entries as candidates: their
     /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
     /// candidate correctly fails the call.</summary>
-    /// <summary>Settable so a test can ask what the selector DECIDED. The
+    /// <summary>Settable so a test can ask what the selector decided. The
     /// cost this guards is C# work per call, which no Prolog-level counter
     /// (inferences, heap cells) can see -- measuring it by the clock is
     /// measuring the machine, so the verdict itself is the observable.</summary>
@@ -1326,8 +1326,8 @@ internal sealed class DynamicCodePatcher
             return SelDiag(0, -2, $"unknown-trampoline@{trampolinePc}");
         if (!table.Chains.TryGetValue(fid, out var state) || state.LiveCount == 0)
         {
-            // ISO abolish/1: once abolished the predicate is UNDEFINED — a
-            // NEW call (this dispatch) is an undefined-procedure call, so
+            // ISO abolish/1: once abolished the predicate is undefined — a
+            // new call (this dispatch) is an undefined-procedure call, so
             // it goes through the `unknown` flag exactly like any other
             // (error → existence_error; fail → plain failure, the
             // DEC-10/Arity behaviour abolish-then-call sources rely on).
@@ -1339,9 +1339,9 @@ internal sealed class DynamicCodePatcher
             if (E._dynStore.Abolished.Contains(fid)
                 && Shumway.Core.UnknownProcedure.Fails(engine, fid))
                 return SelDiag(fid, -1, "abolished");
-            // Marked dynamic ONLY by the implicit_dynamic scan: the linker
+            // Marked dynamic only by the implicit_dynamic scan: the linker
             // needed a trampoline, but nothing has declared or asserted this
-            // predicate, so it is still UNDEFINED — the `unknown` flag decides
+            // predicate, so it is still undefined — the `unknown` flag decides
             // (error by default, fail under arity_compat). A really-declared
             // dynamic with an empty chain keeps failing, per ISO.
             if (E._dynStore.IsImplicitOnly(fid)
@@ -1350,17 +1350,17 @@ internal sealed class DynamicCodePatcher
             return SelDiag(fid, -2, state is null ? "no-chain" : "empty-chain");
         }
         var entries = state.Entries;
-        // NOTE: a 1-entry chain is NOT det by itself — its try_me_else points
+        // Note: a 1-entry chain is not det by itself — its try_me_else points
         // at the fail-stub and that choice point survives a successful call
-        // (Logtalk's freshly-asserted send-cache entries made every SECOND
+        // (Logtalk's freshly-asserted send-cache entries made every second
         // send report non-deterministic). A single entry is selected CP-free
         // below regardless of the first argument.
         var prog = engine.CurrentProgram;
         if (prog is null) return -2;
 
-        // FLAT-CHAIN layouts only. An INDEXED promotion's buckets also start
+        // Flat-chain layouts only. An indexed promotion's buckets also start
         // with try_me_else, so the per-entry check below cannot tell them
-        // apart — discriminate at the trampoline's `execute` TARGET instead:
+        // apart — discriminate at the trampoline's `execute` target instead:
         // a flat chain's head is a chain instruction; an indexed layout's is
         // switch_on_term. Anything unexpected bails to the normal dispatch.
         if (trampolinePc + 6 > prog.Length) return SelDiag(fid, -2, "short-prog");
@@ -1417,7 +1417,7 @@ internal sealed class DynamicCodePatcher
         => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
 
     /// <summary>every engine born via SetupQueryFromTerm, weakly
-    /// held (in birth order). Backs the dynamic-mutation BROADCAST: with
+    /// held (in birth order). Backs the dynamic-mutation broadcast: with
     /// nested queries (Logtalk's deferred <c>:- initialization</c> chains)
     /// several engines are suspended mid-execution at once, each on its own
     /// buffer; a mutation applied only to the mutating engine's buffer is
@@ -1432,7 +1432,7 @@ internal sealed class DynamicCodePatcher
     private readonly List<WeakReference<Activation>> _liveEngines = new();
 
     /// <summary>Activations a mutation has been broadcast to. One per
-    /// mutation per SUSPENDED activation; zero when nothing is suspended,
+    /// mutation per suspended activation; zero when nothing is suspended,
     /// which is the ordinary case and used to be one per finished-but-
     /// uncollected query instead.</summary>
     internal long BroadcastTargets;
@@ -1445,7 +1445,7 @@ internal sealed class DynamicCodePatcher
     }
 
     /// <summary>Drops <paramref name="engine"/> when its query ends, so the
-    /// list holds only OPEN activations — and therefore, minus whichever one
+    /// list holds only open activations — and therefore, minus whichever one
     /// is running, exactly the suspended ones the broadcast is for.
     ///
     /// <para>Without this the list kept every finished-but-uncollected
@@ -1463,7 +1463,7 @@ internal sealed class DynamicCodePatcher
         }
     }
 
-    /// <summary>Live engines OTHER than <paramref name="except"/>, at most
+    /// <summary>Live engines other than <paramref name="except"/>, at most
     /// one per distinct chain table (two engines sharing a reused buffer
     /// share its table — the mutation must be applied once). Newest first.
     /// Returns null instead of an empty list on the common single-engine
@@ -1488,9 +1488,9 @@ internal sealed class DynamicCodePatcher
         return result;
     }
 
-    /// <summary>True when <paramref name="engine"/>'s program buffer IS
+    /// <summary>True when <paramref name="engine"/>'s program buffer is
     /// the host's current persistent buffer — i.e. no nested query rebuilt
-    /// it since this engine's setup. Capture BEFORE any
+    /// it since this engine's setup. Capture before any
     /// <c>engine.AppendCode</c> (growth reallocation changes the engine's
     /// reference; for an owner the post-growth sync keeps host and engine
     /// aligned). A mutation by a non-owner engine still patches the
@@ -1528,10 +1528,10 @@ internal sealed class DynamicCodePatcher
     }
 
     /// <summary>Root fix for the suspended-activation stale-append-position
-    /// corruption. An activation suspended mid-enumeration while ANOTHER
+    /// corruption. An activation suspended mid-enumeration while another
     /// activation extended the shared persistent buffer still believes the
     /// content length from its own setup — its next <c>AppendCode</c> would
-    /// land ON the newer live entries and overwrite them; the tail patch
+    /// land on the newer live entries and overwrite them; the tail patch
     /// that follows then writes the new entry's own address into its own
     /// <c>&lt;next&gt;</c> operand (the self-pointing <c>retry_me_else</c>
     /// observed as an unbreakable dispatch/walk cycle). Every in-place
@@ -1572,12 +1572,12 @@ internal sealed class DynamicCodePatcher
 internal sealed class DynChainState
 {
     /// <summary>The chain in order. Read everywhere and indexed positionally
-    /// (a clause index IS a position here), so it stays a plain list; the
+    /// (a clause index is a position here), so it stays a plain list; the
     /// buckets beside it are maintained by the four mutators below and must
     /// be the only way it changes.</summary>
     public readonly List<DynChainEntry> Entries = new();
 
-    // Dispatch-time selection asks "which clauses could match THIS first
+    // Dispatch-time selection asks "which clauses could match this first
     // argument", once per call. Answering it by walking the chain made that
     // O(clauses) per call, so a predicate grown and queried inside one query
     // -- which never gets the indexed recompile, since that happens at query
@@ -1585,13 +1585,13 @@ internal sealed class DynChainState
     private readonly Dictionary<DynFirstArgKey, List<DynChainEntry>> _byKey = new();
     private readonly List<DynChainEntry> _matchAnything = new();
 
-    // Dead-chain reclamation asks "is any choice point sitting INSIDE this
+    // Dead-chain reclamation asks "is any choice point sitting inside this
     // chain". It answered that by building a set of every chunk address in
     // the chain, per fire -- O(clauses) of allocation and hashing to answer a
     // question that is almost always no, which was the single biggest cost of
     // a drain. These bounds, maintained as entries come and go, let the CP
     // scan reject an address without touching the chain at all; only an
-    // address that falls INSIDE the range needs the exact set. They are a
+    // address that falls inside the range needs the exact set. They are a
     // conservative envelope (other predicates' chunks can lie between ours),
     // never a verdict.
     public int MinChunkAddr = int.MaxValue;
@@ -1615,19 +1615,19 @@ internal sealed class DynChainState
     }
 
     // Retracting patches the died slot of every entry holding the retracted
-    // clause, which meant walking the whole chain per retract. Knowing HOW
-    // MANY entries hold a clause is enough to skip that walk: exactly one
+    // clause, which meant walking the whole chain per retract. Knowing how
+    // many entries hold a clause is enough to skip that walk: exactly one
     // means a position hint can be trusted outright, because there is nothing
     // else to find.
     private readonly Dictionary<Clause, int> _entriesPerClause = new();
 
-    // Bypassing a retired entry in the BYTECODE must wait for the sweep (a
+    // Bypassing a retired entry in the bytecode must wait for the sweep (a
     // live choice point may still resume into it), so each retirement records
     // the one link that will need re-making: the address of the nearest live
     // predecessor's <next> operand, captured while the live list still knows
     // it. The sweep replays the records in retirement order, reading each
-    // retired entry's own <next> slot for the continuation -- reading it AT
-    // REPLAY TIME is what keeps a chunk appended after the retirement
+    // retired entry's own <next> slot for the continuation -- reading it at
+    // replay time is what keeps a chunk appended after the retirement
     // connected, because the append patched exactly that slot.
     public DynChainEntry? FirstLive, LastLive;
     public int LiveCount;
@@ -1703,7 +1703,7 @@ internal sealed class DynChainState
 
     // Reclamation validates every entry's cached byte offsets against the live
     // buffer before touching it. An entry's offsets cannot move while the
-    // buffer is the SAME array object -- growing it reallocates, and an
+    // buffer is the same array object -- growing it reallocates, and an
     // in-place patch writes bytes without moving anything -- so entries
     // already validated against this buffer stay valid, and only the ones
     // added since need looking at. Checking all of them per sweep was
@@ -1755,7 +1755,7 @@ internal sealed class DynChainState
         VerifiedCount = 0;
         // The prepend takes over the head's <next> slot: a pending bypass
         // anchored there would clobber it at replay, so those records move
-        // to the slot that NOW feeds what the head used to -- this entry's.
+        // to the slot that now feeds what the head used to -- this entry's.
         if (HeadClauseAddr >= 0 && e.NextOperandAddr > 0)
             for (int i = 0; i < PendingBypass.Count; i++)
                 if (PendingBypass[i].PrevAddr == HeadClauseAddr + 1)
@@ -1839,11 +1839,11 @@ internal sealed class DynChainState
     public readonly List<(int Addr, int Length)> DeadChunks = new();
 }
 /// <summary>dynamic-chain metadata,
-/// one table PER persistent buffer. Chain state records absolute byte
+/// one table per persistent buffer. Chain state records absolute byte
 /// offsets into one specific buffer, but nested queries (a deferred
 /// <c>:- initialization</c> goal running QueryAll from inside a
 /// mid-query consult — Logtalk's loader files nest these many levels
-/// deep) rebuild the persistent buffer while OUTER engines are still
+/// deep) rebuild the persistent buffer while outer engines are still
 /// executing on their older buffers. A single host-level table would
 /// describe only the newest buffer — a resumed outer engine's assertz
 /// would then patch new-buffer offsets into its old buffer (the
@@ -1851,7 +1851,7 @@ internal sealed class DynChainState
 /// staleness guards, skip the patch and lose same-query visibility of
 /// its own assert (the Logtalk conditional-compilation failure). So
 /// each Activation is associated at query setup with the table describing
-/// ITS buffer, and every in-place mutation resolves chain state
+/// its buffer, and every in-place mutation resolves chain state
 /// through the engine performing it. The free-chunk list rides along
 /// because its addresses are equally buffer-relative. SWI / GProlog
 /// sidestep all of this with a single mutable code space; the
@@ -1863,7 +1863,7 @@ internal sealed class DynChainTable
     public readonly Dictionary<int, DynChainState> Chains = new();
 
     /// <summary>Chunk-150 free-list of dead-clause bytecode regions
-    /// in THIS table's buffer. <c>garbage_collect_clauses</c> moves a
+    /// in this table's buffer. <c>garbage_collect_clauses</c> moves a
     /// predicate's <see cref="DynChainState.DeadChunks"/> here; the
     /// next <c>assertz</c> / <c>asserta</c> scans for a fit
     /// (first-fit) and reuses the bytes instead of extending the
@@ -1872,7 +1872,7 @@ internal sealed class DynChainTable
 
     /// <summary>live-linked static
     /// predicates' unresolved call sites (absolute operand position in
-    /// THIS table's buffer, callee fid), accumulated across the consult
+    /// this table's buffer, callee fid), accumulated across the consult
     /// batches linked into it so a forward reference (batch N calls a
     /// predicate a later batch M&gt;N defines) is re-patched once M
     /// links. Per-buffer because the positions are buffer offsets —
@@ -1880,7 +1880,7 @@ internal sealed class DynChainTable
     /// buffers, each with its own positions.</summary>
     public List<(int AbsPos, int FunctorId)>? LiveConsultUnresolved;
 
-    /// <summary>ADR-041 — trampolines materialised MID-QUERY (live consult /
+    /// <summary>ADR-041 — trampolines materialised mid-query (live consult /
     /// runtime auto-promotion): absolute <c>enter_dynamic</c> address → functor
     /// id. Setup-emitted trampolines resolve through the per-query
     /// PredicatesByAddress map; these are appended after setup, so the clause
@@ -1930,7 +1930,7 @@ internal sealed class DynChainEntry
     /// this.</summary>
     public bool Retired;
 
-    /// <summary>The doubly linked list of LIVE entries, in chain order. It is
+    /// <summary>The doubly linked list of live entries, in chain order. It is
     /// what makes retiring O(1): the nearest live predecessor -- whose
     /// <c>next</c> operand is the one link the sweep will have to re-make --
     /// is one hop away at the moment of retirement, instead of a walk away
@@ -1954,7 +1954,7 @@ internal sealed class DynChainEntry
 }
 
 /// <summary>A dynamic clause's first argument, reduced to what dispatch-time
-/// selection needs: enough to PROVE a call cannot match, and
+/// selection needs: enough to prove a call cannot match, and
 /// <see cref="Anything"/> for every shape that cannot prove it. The kinds
 /// mirror ADR-041's cases exactly; adding one that is not provable would make
 /// the selection wrong, not just slower.</summary>
@@ -1967,7 +1967,7 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
     public bool MatchesEverything => Kind == AnythingKind;
 
     /// <summary>The key of a clause's head first argument.</summary>
-    /// <remarks>Every shape that cannot PROVE a mismatch must map to
+    /// <remarks>Every shape that cannot prove a mismatch must map to
     /// <see cref="Anything"/>. Getting that wrong makes the selection wrong,
     /// not merely slower: a clause left out of a call's candidates is a
     /// solution that never runs.</remarks>
@@ -1985,8 +1985,8 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
             case CompoundTerm { Functor: ".", Args.Length: 2 }:
                 return new(ListKind, 0);
             case CompoundTerm cc:
-                // Functor AND arity, not just "some compound": Logtalk's
-                // per-entity `_def` tables are chains keyed by DISTINCT goal
+                // Functor and arity, not just "some compound": Logtalk's
+                // per-entity `_def` tables are chains keyed by distinct goal
                 // templates (precision(_), order(_), ...), and keying them
                 // together would leave the whole chain multi-candidate.
                 return new(StructKind,

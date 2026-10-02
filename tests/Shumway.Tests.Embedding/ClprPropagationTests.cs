@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// A variable the store has DETERMINED comes back as a number, whichever post
+/// A variable the store has determined comes back as a number, whichever post
 /// determined it.
 ///
 /// <para>The solver makes one variable of an equation dependent on the rest,
@@ -37,7 +37,7 @@ public class ClprPropagationTests
     // The shape that was broken: the equation is posted first, the grounding
     // second.
     [InlineData("{A + B =:= 10}, {A =:= 6}")]
-    // Its mirror: grounding the variable the OTHER one was made to depend on.
+    // Its mirror: grounding the variable the other one was made to depend on.
     [InlineData("{A + B =:= 10}, {B =:= 4}")]
     // The shapes that always worked, kept so a fix cannot regress them.
     [InlineData("{A =:= 6}, {A + B =:= 10}")]

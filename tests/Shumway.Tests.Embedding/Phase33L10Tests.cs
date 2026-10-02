@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Phase 33 L10 — the audit finding "multi-arg indexed shapes
-/// (switch_on_*_arg) are not IL-describable" was REFUTED: the corpus census
+/// (switch_on_*_arg) are not IL-describable" was refuted: the corpus census
 /// that produced it was mis-driven by a DescribeRejection classifier bug
 /// (typed switch opcodes always landed in the "unsupported" set, masking the
 /// true cause — 1663 of 1666 were unresolved calls from consult-failure
@@ -90,7 +90,7 @@ public class Phase33L10Tests
         }
     }
 
-    // ---- Bundle-wide calleeMap (the REAL coverage gap the user's correct
+    // ---- Bundle-wide calleeMap (the real coverage gap the user's correct
     // re-test methodology exposed): CompileEntryToIl used to warm a
     // SINGLE-entry engine, so every cross-module Call rejected its caller
     // as call->unresolved — 26% IL coverage on a real multi-module corpus
@@ -118,7 +118,7 @@ public class Phase33L10Tests
             EntryPoints = new[] { new PredicateRef("pa", 2) },
             BakePrelude = true,
             IncludeCompiledIl = true,
-            // Strip the WAM: execution is FORCED through the IL, cross-entry
+            // Strip the WAM: execution is forced through the IL, cross-entry
             // (pa's IL in modA dispatches pb by fid into modB's IL).
             StripWam = true,
         });
@@ -131,7 +131,7 @@ public class Phase33L10Tests
         var bMethods = Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
             bundle.Entries.First(en => en.ModuleName == "l10modb").CompiledIlEntries!)
             .Select(pe => (pe.Name, pe.Arity)).ToHashSet();
-        // The cross-module CALLER got IL (the pre-fix rejection), each
+        // The cross-module caller got IL (the pre-fix rejection), each
         // predicate ships exactly once, in its own entry.
         Assert.Contains(("pa", 2), aMethods);
         Assert.DoesNotContain(("pb", 2), aMethods);
@@ -148,10 +148,10 @@ public class Phase33L10Tests
     public void DescribeRejection_ReportsUnresolvedCall_NotSwitchOpcodes()
     {
         // p/3 keeps the multi-arg indexed shape but every body calls a
-        // predicate that is NOT in the calleeMap. Pre-fix, DescribeRejection
+        // predicate that is not in the calleeMap. Pre-fix, DescribeRejection
         // reported "SwitchOnAtomArg,…" — the typed dispatch skeleton — and
         // hid the real blocker.
-        // helper needs TWO clauses: a single-clause pure rule/fact would be
+        // helper needs two clauses: a single-clause pure rule/fact would be
         // unfolded into the callers at query setup and the Call site under
         // test would vanish (the MetaWrapperUnfold test-design lesson).
         var (pred, map) = CompileP(

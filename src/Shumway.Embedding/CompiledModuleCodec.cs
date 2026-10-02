@@ -156,8 +156,8 @@ public static class CompiledModuleCodec
     }
 
     /// <summary>ADR-035 — the debug side tables, empty for release predicates. A stop's
-    /// <see cref="DebugStop.SiteId"/> is a GLOBAL <see cref="DebugSiteTable"/> id, valid
-    /// only in the process that interned it, so we serialize the RESOLVED
+    /// <see cref="DebugStop.SiteId"/> is a global <see cref="DebugSiteTable"/> id, valid
+    /// only in the process that interned it, so we serialize the resolved
     /// <c>(file, line, column)</c> and re-intern at decode — the same name-relative trick
     /// the atom/functor operands use. A module is one source file, so a single file name
     /// covers all of a predicate's stops.</summary>
@@ -273,7 +273,7 @@ public static class CompiledModuleCodec
     }
 
     /// <summary>ADR-035 — read the debug side tables, re-interning each stop's
-    /// <c>(file, line, column)</c> into THIS process's <see cref="DebugSiteTable"/> so its
+    /// <c>(file, line, column)</c> into this process's <see cref="DebugSiteTable"/> so its
     /// ids are valid here and its lines are registered for breakpoint binding. Returns
     /// empty arrays for a release predicate.</summary>
     private static (IReadOnlyList<DebugStop> Stops, IReadOnlyList<DebugClauseFrame> Frames)

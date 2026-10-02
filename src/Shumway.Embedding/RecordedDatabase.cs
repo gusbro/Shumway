@@ -26,7 +26,7 @@ public sealed class RecordedDatabase
     private readonly Dictionary<Term, LinkedList<RecordEntry>> _byKey = new();
     // Fast path for atom keys (the overwhelmingly common case: the PrologToC
     // self-compile keys almost everything on atoms — source_file, defined,
-    // code, …). Keyed by the atom's INTEGER id read straight off the cell, so a
+    // code, …). Keyed by the atom's integer id read straight off the cell, so a
     // recorded/3 read costs an integer-hash probe with no key-term
     // materialisation and no string hashing — the two costs that dominated the
     // profile. Compound keys still use the structural _byKey dictionary.
@@ -243,7 +243,7 @@ public sealed class RecordedDatabase
         _byKey.Clear();
         _byAtom.Clear();
         _byRef.Clear();
-        // _nextRef is NOT reset — refs stay forever unique even across
+        // _nextRef is not reset — refs stay forever unique even across
         // clears, matching Arity's behaviour.
     }
 }

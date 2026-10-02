@@ -12,12 +12,12 @@ namespace Shumway.Builtins;
 /// IL for a transitive call to a CP-creating sink (<see cref="Activation"/>'s
 /// <c>PushBuiltinChoicePoint</c> / <c>PushIlChoicePoint</c>, or
 /// <see cref="IndexEnumCursor.Start"/>). Derived, not declared: this replaces a
-/// hand-maintained name list whose every omission was a SILENT Tier-1 IL
+/// hand-maintained name list whose every omission was a silent Tier-1 IL
 /// solution-loss bug (the IL emit skips the resume-marker setup for a builtin it
 /// thinks is deterministic, so the cursor resumes at PC 0).
 ///
 /// <para><b>Why reflection is safe here.</b> <c>IsBacktrackable</c> is read
-/// ONLY by the IL compiler, which runs only where runtime codegen exists — the
+/// only by the IL compiler, which runs only where runtime codegen exists — the
 /// linker (a build tool) and runtime promotion (gated on
 /// <see cref="Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen"/>). Under Native
 /// AOT and on browser-wasm the IL compiler never runs, so this is never reached;

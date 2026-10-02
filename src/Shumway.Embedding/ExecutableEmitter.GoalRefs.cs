@@ -4,7 +4,7 @@ using Shumway.Compiler.Parsing;
 
 namespace Shumway.Embedding;
 
-// Goal parsing / reference collection: LINKER logic that happens to live on
+// Goal parsing / reference collection: Linker logic that happens to live on
 // the emitter's type. In its own file because the net48 build of the
 // toolchain excludes ExecutableEmitter.cs (Emit shells out to dotnet publish
 // — a .NET 10 SDK affair) but still links --goal roots through these.
@@ -75,7 +75,7 @@ public static partial class ExecutableEmitter
     /// (user predicate, builtin or prelude) or the link fails — this keeps a
     /// typo in the goal a link-time error.</para>
     ///
-    /// <para><paramref name="termRefs"/> are every OTHER callable subterm, at
+    /// <para><paramref name="termRefs"/> are every other callable subterm, at
     /// any depth — e.g. <c>mi_pred</c> in <c>time(mi_pred)</c> or a closure in
     /// <c>findall/3</c>. They are speculative: one that resolves to a user
     /// predicate becomes a reachability root; anything else (a data atom, a

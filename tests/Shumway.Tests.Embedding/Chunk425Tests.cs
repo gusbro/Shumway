@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 425 (Phase 30) — the <c>arity_compat</c> flag: Arity/Prolog32
 /// <c>$...$</c> quoted atoms (a <c>$</c> doubles; no backslash escapes),
-/// C-preprocessor <c>#line</c> markers (skipped AND honoured for positions),
+/// C-preprocessor <c>#line</c> markers (skipped and honoured for positions),
 /// and annotated directive indicators (<c>foo/8:far</c>,
 /// <c>f/2:system(...)</c> — annotation ignored). Off by default; enabled by
 /// <c>set_prolog_flag(arity_compat, true)</c> (runtime or as an in-file
@@ -25,7 +25,7 @@ public class Chunk425Tests
             "p($JOIN_ALL_CASES$).\n" +
             "q($$).\n" +                  // empty atom, like ''
             "r($ho'l$$a$).\n" +           // ' literal, $$ -> $
-            "s($a\\b$).\n");              // backslash is LITERAL inside $...$
+            "s($a\\b$).\n");              // backslash is literal inside $...$
         Assert.True(e.Query("p(X), X == 'JOIN_ALL_CASES'.").Success);
         Assert.True(e.Query("q(X), X == ''.").Success);
         Assert.True(e.Query("r(X), X == 'ho''l$a'.").Success);
@@ -48,7 +48,7 @@ public class Chunk425Tests
     [Fact]
     public void HashLine_SkippedAndPositionsHonoured()
     {
-        // The marker is consumed; the NEXT physical line reports as line 500.
+        // The marker is consumed; the next physical line reports as line 500.
         var r = ShmoCompiler.TryCompileSource(
             "#line 500 \"orig.pl\"\nfoo(X) :- bar(X.\n",
             arityCompat: true);
@@ -103,7 +103,7 @@ public class Chunk425Tests
         var s = e.Query("current_prolog_flag(arity_compat, V).");
         Assert.Equal("false", s["V"]!.ToString());
         Assert.True(e.Query("set_prolog_flag(arity_compat, true).").Success);
-        // Applies to a SUBSEQUENT consult.
+        // Applies to a subsequent consult.
         e.ConsultString("t($dollar atom$).");
         Assert.True(e.Query("t(X), X == 'dollar atom'.").Success);
     }

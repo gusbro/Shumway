@@ -33,7 +33,7 @@ public static class ShmoLinker
 {
     // the prelude source is a process constant, so its compiled
     // ShmoObject is too (atom interning is process-global and the linker only
-    // READS the object: publics, call graph, bytecode, dynamic seeds). It used
+    // reads the object: publics, call graph, bytecode, dynamic seeds). It used
     // to be compiled twice per link (main walk + the library pull pre-pass),
     // times every link in the process.
     private static readonly Lazy<ShmoObject> _preludeObject = new(
@@ -68,7 +68,7 @@ public static class ShmoLinker
 
         // ----- 0-foreign. Reflect foreign DLLs up front -----
         // Their [PrologPredicate] indicators are "already available" and must
-        // be known BEFORE the library pull pre-pass, so a library member is
+        // be known before the library pull pre-pass, so a library member is
         // never pulled to satisfy a reference a foreign predicate provides.
         // The names + indicators are reused by step 4b (no second reflection).
         var foreignIndicators = ReflectForeignAssemblies(
@@ -77,7 +77,7 @@ public static class ShmoLinker
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
         // in on demand, FIFO, to satisfy otherwise-unresolved references
-        // (transitive, to a fixpoint). Done BEFORE the LTO unfold so the full
+        // (transitive, to a fixpoint). Done before the LTO unfold so the full
         // object set — explicit + pulled — goes through cross-module
         // optimization together (the resolve-then-optimize order real LTO
         // linkers use); a pulled member is optimized exactly like one passed
@@ -96,7 +96,7 @@ public static class ShmoLinker
 
         // ADR-038 — a use_module(library(X)) dependency that is still unresolved
         // (X's module is not among the linked inputs, not a member of a passed
-        // .shum library, and not a baked C# library) is reported HERE, naming the
+        // .shum library, and not a baked C# library) is reported here, naming the
         // library, so the user sees "library 'X' could not be resolved" rather than
         // a downstream missing-predicate error for each imported predicate.
         {
@@ -121,7 +121,7 @@ public static class ShmoLinker
 
         // ADR-038 — resolve one-arg use_module(library(X)) (import-all) imports:
         // the compiler recorded the dependency but left the calls bare (it never
-        // reads the library); the linker HAS the library's export surface now, so
+        // reads the library); the linker has the library's export surface now, so
         // it builds each importer's full import table and recompiles it so the
         // bare calls mangle to Source$pred. Two-arg filtered imports were already
         // resolved from source at compile time and pass through untouched.
@@ -129,7 +129,7 @@ public static class ShmoLinker
 
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
-        // every module's wrapper templates, export the PUBLIC ones globally, and
+        // every module's wrapper templates, export the public ones globally, and
         // rewrite each module's call sites against (own locals ∪ global publics);
         // modules whose rewrite gained a CROSS-module unfold (beyond what their
         // compile-time local pass already did) are recompiled from their clause
@@ -142,7 +142,7 @@ public static class ShmoLinker
         // The intra-module pass (ModuleCompiler.ElideRedundantCuts) cannot see
         // cross-module callees; the linker owns every module's clauses, so the
         // determinism fixpoint here resolves a goal module-locally first, then
-        // to the global PUBLIC definition — unblocking the last-clause cuts the
+        // to the global public definition — unblocking the last-clause cuts the
         // intra pass left as CrossModule-blocked. Modules that gained an elision
         // are recompiled from their clause terms (the LTO channel).
         objects = WholeProgramCutElision(objects, Emit);
@@ -250,7 +250,7 @@ public static class ShmoLinker
 
         // ----- 4b. Fold the foreign-DLL
         //          [PrologPredicate] indicators into the resolved builtin
-        //          set. They are reflected ONCE up front (step 0-foreign)
+        //          set. They are reflected once up front (step 0-foreign)
         //          so the library pull pre-pass already treated them as
         //          available — a library member is never pulled to satisfy
         //          a reference a foreign predicate provides. -----
@@ -264,7 +264,7 @@ public static class ShmoLinker
         // resolution algorithm:
         //   1. Match against globalPublic / globalDynamic first
         //      (cross-module-visible).
-        //   2. Else scan all modules for a LOCAL definition.
+        //   2. Else scan all modules for a local definition.
         //      0 matches → entry_not_found.
         //      1 match  → use it (entry-point local promotion).
         //      2+ matches → ambiguous_entry; lists the colliding
@@ -323,7 +323,7 @@ public static class ShmoLinker
             if (mod is null)
             {
                 // A speculative ref that matches locals in several modules
-                // is kept in ALL of them — the goal may meta-call it, and
+                // is kept in all of them — the goal may meta-call it, and
                 // linking more is the safe side of speculation.
                 if (ambiguityMessage is not null)
                     foreach (var (modName, defs) in moduleDefined)
@@ -378,26 +378,30 @@ public static class ShmoLinker
         // dispatch to them, and the unfold must never shrink the linked set.
         foreach (var (mod, pred) in ltoPublicWrappers)
             roots.Add((mod, pred, $"lto wrapper in '{mod}'"));
+        if (config.Library)
+            foreach (var obj in objects)
+                foreach (var d in obj.Defined)
+                    roots.Add((obj.ModuleName, d.Indicator, "library"));
 
         // ----- 6. Reachability walk -----
         var reached = new HashSet<(string, PredicateRef)>();
         var reachedModules = new HashSet<string>();
         var missing = new HashSet<PredicateRef>();
         // Arity call semantics for arity-compiled modules:
-        // META-CALLING an undeclared predicate is VALID in Arity (it
+        // Meta-calling an undeclared predicate is valid in Arity (it
         // simply fails when nothing was asserted, and works once
         // something is). An unresolved edge whose referencing module was
-        // compiled with arity_compat AND whose ShmoCallEdge.IsMeta
+        // compiled with arity_compat and whose ShmoCallEdge.IsMeta
         // marker is set (every in-module reference sits inside a
-        // meta-call argument) is DEFERRED into pendingArityMeta instead
+        // meta-call argument) is deferred into pendingArityMeta instead
         // of erroring. After the walk, each pending target whose every
-        // unresolved reference was such a meta edge (no DIRECT or
+        // unresolved reference was such a meta edge (no direct or
         // non-arity reference put it in `missing`) is registered as an
-        // implicit EMPTY DYNAMIC predicate — exactly as if the first
+        // implicit empty dynamic predicate — exactly as if the first
         // referencing file had declared `:- dynamic Name/Arity.` with
         // zero clauses — so the bundle gets an empty trampoline: calls
         // fail cleanly at runtime and a later assertz works through the
-        // normal dynamic machinery (implicit_dynamic). A DIRECT body
+        // normal dynamic machinery (implicit_dynamic). A direct body
         // goal to an undefined predicate stays today's
         // missing_predicate error, even in an arity module.
         // implicitDynamics is keyed by the module the implicit
@@ -407,6 +411,9 @@ public static class ShmoLinker
         var pendingArityMeta =
             new Dictionary<PredicateRef, List<(string Module, PredicateRef Caller)>>();
         var qrefHandledModules = new HashSet<string>();
+        // ADR-056: what a written M:Goal reaches, a private included. Called by
+        // name from outside its module, it keeps a standalone form.
+        var qualifiedTargets = new HashSet<(string Module, PredicateRef Pred)>();
         var queue = new Queue<(string Module, PredicateRef Pred)>();
         foreach (var r in roots)
             queue.Enqueue((r.Module, r.Pred));
@@ -434,16 +441,19 @@ public static class ShmoLinker
                         missing.Add(target);
                         continue;
                     }
-                    if (!moduleDefined[qr.Module].TryGetValue(target, out var vis)
-                        || vis != PredicateVisibility.Public)
+                    // ADR-056: qualifying is how a program reaches another
+                    // module's private, so any predicate the module defines
+                    // answers the call, as it does at run time.
+                    if (!moduleDefined[qr.Module].ContainsKey(target))
                     {
                         Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                             "missing_predicate",
                             $"Qualified call {qr} from '{curMod}': '{qr.Module}' does not "
-                            + $"export {target} as :- public.", curMod);
+                            + $"define {target}.", curMod);
                         missing.Add(target);
                         continue;
                     }
+                    qualifiedTargets.Add((qr.Module, target));
                     queue.Enqueue((qr.Module, target));
                 }
             }
@@ -492,7 +502,7 @@ public static class ShmoLinker
                 if (preludePublics.Contains(edge)) { preludeUsed.Add(edge); continue; }
                 // 6) a META-marked edge from an Arity-
                 //    compiled module: defer the decision. If by the end
-                //    of the walk the target collected ONLY such
+                //    of the walk the target collected only such
                 //    references (nothing put it in `missing`), it links
                 //    as an implicit empty dynamic below; otherwise the
                 //    direct/non-arity reference already errored.
@@ -521,9 +531,9 @@ public static class ShmoLinker
         // ----- 6a-arity. implicit empty dynamics -----
         // Decide each deferred meta-only target now that every
         // unresolved reference has been seen. A target also referenced
-        // DIRECTLY (or from a non-arity module) is in `missing` — its
+        // directly (or from a non-arity module) is in `missing` — its
         // error already fired; skip it. Otherwise register the target as
-        // an empty dynamic attributed to the FIRST referencing module
+        // an empty dynamic attributed to the first referencing module
         // (multiple arity modules meta-referencing the same target get
         // exactly one registration). An empty dynamic has no clauses and
         // no call graph, so registering after the walk adds no
@@ -554,29 +564,29 @@ public static class ShmoLinker
         }
 
         // ----- 6b. Stage 9 (dead-region elimination) seed set -----
-        // The predicates that must keep a STANDALONE (trampoline-callable) form because
-        // they are callable BY NAME from outside a region's br-absorption. This is what
+        // The predicates that must keep a standalone (trampoline-callable) form because
+        // they are callable by name from outside a region's br-absorption. This is what
         // the linker will feed to RegionReachability once the bundle is region-compiled
         // (Stage 9b); for now we compute + report + expose it. A soundness
         // over-approximation, never under.
         var stage9Seeds = ComputeExternallyReachableSeeds(
-            roots.Select(r => (r.Module, r.Pred)), reached, moduleDefined);
+            roots.Select(r => (r.Module, r.Pred)).Concat(qualifiedTargets), reached, moduleDefined);
         Emit(LinkSeverity.Info, "prune_seeds",
             $"code pruning: {stage9Seeds.Count} of {reached.Count} reached predicate(s) "
             + "are callable by name from outside and keep a standalone compiled form.");
 
-        // ----- 6c. Stage 9 dead-region analysis (DRY-RUN REPORT only) -----
+        // ----- 6c. Stage 9 dead-region analysis (dry-run report only) -----
         // The fid bridge: decode the reached modules into CompiledPredicates (their
         // functor ids + call graph, interned consistently in the global tables), resolve
         // the (module, PredicateRef) seeds to functor ids, and run the dead-region
-        // reachability. The PRUNE SET is `absorbedOnly` = fullReachable − regionReachable
-        // (live but reached ONLY as a br-member of a live region) — NEVER the unreachable
+        // reachability. The prune set is `absorbedOnly` = fullReachable − regionReachable
+        // (live but reached only as a br-member of a live region) — never the unreachable
         // / dead-code bucket, so a meta-call-only predicate (absorbed by nothing, appears
         // unreachable) is kept (the prune rule that avoids hardening ensure_linked).
         //
-        // §9d: this is an APPROXIMATION (it decodes only each module's own .shmo bytecode).
-        // The APPLIED prune is computed inside BundleWriter.CompileEntryToIl over the warm-up
-        // engine's EXACT calleeMap (user module + prelude + every reached callee), so the
+        // §9d: this is an approximation (it decodes only each module's own .shmo bytecode).
+        // The applied prune is computed inside BundleWriter.CompileEntryToIl over the warm-up
+        // engine's exact calleeMap (user module + prelude + every reached callee), so the
         // absorbed-only set matches the real region membership and a meta-callable absorbed
         // predicate keeps its standalone form. Gated on --prune-report so a plain IL link
         // doesn't print per-module figures that diverge from what actually ships.
@@ -625,7 +635,7 @@ public static class ShmoLinker
 
                 // Region-aware reachability (intra-region calls are br, don't reach the
                 // standalone) vs plain reachability (every call trampolines). The
-                // difference is the predicates that are LIVE but only reached as absorbed
+                // difference is the predicates that are live but only reached as absorbed
                 // members — the genuine region-prune benefit; predicates in neither set
                 // are ordinary dead code (droppable independently of regions). Both honour
                 // the Stage-9c promotions via `extraExcluded`.
@@ -659,7 +669,7 @@ public static class ShmoLinker
         }
 
         // ----- 7b. Opt-in shadow report (--warn-shadow) -----
-        // A linked module's LOCAL predicate sharing an indicator with another
+        // A linked module's local predicate sharing an indicator with another
         // linked module's public — the C `static`-shadows-global shape. Legal
         // (the local wins inside its own module), so a warning only on
         // request; the --map file always lists these (ShmoBundleMap).
@@ -688,7 +698,7 @@ public static class ShmoLinker
         if (success || config.AllowUndefined)
         {
             // gather per-module entry-point promotions. When
-            // an --entry pred/N was satisfied by a LOCAL definition in
+            // an --entry pred/N was satisfied by a local definition in
             // module M (no `:- public pred/N` in the source), prepend
             // `:- public pred/N.` to that module's bundled source so
             // the LoadBundle path's ConsultString sees it as public —
@@ -702,7 +712,7 @@ public static class ShmoLinker
             // in exchange for correctness without an alias mechanism
             // in the engine.
             var promotionsByModule = new Dictionary<string, List<PredicateRef>>();
-            // Entry points AND the startup goal's directly-called predicates
+            // Entry points and the startup goal's directly-called predicates
             // (--goal): a `-g main` whose `main` is a module-local predicate must
             // be promoted to callable-by-name too, or the bare startup goal raises
             // existence_error (the goal runs in the query/user context, where the
@@ -737,7 +747,7 @@ public static class ShmoLinker
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
                 // when StripSource is requested, also strip
-                // the per-clause source positions AND the in-bytecode
+                // the per-clause source positions and the in-bytecode
                 // Meta/DbgInfo opcodes. If obj.Source is still present
                 // (Debug compile), recompile under Release through
                 // ShmoCompiler — that's the canonical strip path and
@@ -773,10 +783,10 @@ public static class ShmoLinker
                 if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
                     && !string.IsNullOrEmpty(entrySource))
                 {
-                    // ADR-035 — APPEND the `:- public` declarations after the source,
+                    // ADR-035 — append the `:- public` declarations after the source,
                     // never prepend. ShmoCompiler collects visibility directives in a
-                    // first pass over ALL clauses regardless of position, so appending
-                    // declares the same visibility WITHOUT shifting any existing line
+                    // first pass over all clauses regardless of position, so appending
+                    // declares the same visibility without shifting any existing line
                     // number — a prepend moves every clause down N lines, which under a
                     // debug build would slide the stop sites off the source the debugger
                     // opens. The appended directive lines carry no stop sites of their own.
@@ -791,7 +801,7 @@ public static class ShmoLinker
                     // LoadBundle's ConsultString would produce on it. Without this the
                     // precompiled-cache substitution at SetupQueryFromTerm would slot in
                     // bytecode that still has the entry mangled. Recompile in the object's
-                    // OWN build mode so a Debuggable object keeps its debug-shape WAM (a
+                    // own build mode so a Debuggable object keeps its debug-shape WAM (a
                     // hardcoded Debug here would silently drop the debug codegen).
                     var recompiled = ShmoCompiler.CompileSource(
                         augmented, obj.ModuleName,
@@ -806,8 +816,8 @@ public static class ShmoLinker
                     // but the ClauseTerms carry the raw static
                     // clauses. Recompile from them with the local entry points
                     // added to the public set, so each promoted predicate gets
-                    // a BARE (un-mangled) head — callable by its plain name (a
-                    // `--goal main` entry, a runtime call/N) — WITHOUT widening
+                    // a bare (un-mangled) head — callable by its plain name (a
+                    // `--goal main` entry, a runtime call/N) — without widening
                     // any other local's visibility. The previous behaviour
                     // skipped promotion entirely here (the guard required a
                     // non-empty source), leaving the entry mangled `module$name`
@@ -915,7 +925,11 @@ public static class ShmoLinker
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
-                    dialect: obj.Dialect));
+                    dialect: obj.Dialect,
+                    // Only a source-less entry needs its raw clauses (a
+                    // source-carrying one is re-consulted); --strip drops them.
+                    clauseTerms: config.StripSource || entrySource.Length > 0
+                        ? null : obj.ClauseTerms));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -937,17 +951,17 @@ public static class ShmoLinker
                     var keep = new HashSet<PredicateRef>(preludeUsed);
                     foreach (var seed in preludeObj.DynamicSeeds)
                         keep.Add(seed.Indicator);
-                    // ENGINE-INFRASTRUCTURE prelude predicates are always kept:
-                    // the engine dispatches them BY NAME at runtime with no
+                    // Engine-infrastructure prelude predicates are always kept:
+                    // the engine dispatches them by name at runtime with no
                     // static reference the walk could see — the
                     // runtime meta-call helpers ('$call_conj'/'$call_disj'/
                     // '$call_arrow'/'$call_neg', conjured by DispatchCall and
                     // the IL meta-call helper for runtime compound goals) and
                     // the variable-goal fallbacks of the control builtins,
-                    // which any QUERY may need regardless of the linked
+                    // which any query may need regardless of the linked
                     // program (catch(G, ...) with G bound at runtime resolves
                     // to the prelude catch/3). '$catch_run'/1 is referenced by
-                    // catch/3 as DATA ONLY (a constructed recovery goal — the
+                    // catch/3 as data only (a constructed recovery goal — the
                     // reason it is :- public), so the call-graph closure cannot
                     // see it: kept explicitly. Statically-referenced
                     // infrastructure (the '$tbl_*' tabling driver a ':- table'
@@ -1023,7 +1037,7 @@ public static class ShmoLinker
                 // longer toggles RegionCompile here.
                 var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
                 // Stage 10: route the persisted-IL emit's per-method dump (FinishPersistedEmit)
-                // to --dump-il, so the dump is EXACTLY the IL this bundle ships — post-prune,
+                // to --dump-il, so the dump is exactly the IL this bundle ships — post-prune,
                 // region mode + forced roots when the prune is on (the default).
                 var savedIlDump = Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath;
                 if (config.DumpIlPath is not null)
@@ -1036,12 +1050,12 @@ public static class ShmoLinker
                 try
                 {
                     // Stage 9d: the prune (absorbed-only set + Stage-9c root selection) is
-                    // computed INSIDE BundleWriter.CompileEntryToIl, over the warm-up
-                    // engine's EXACT calleeMap (user module + prelude + every reached
+                    // computed inside BundleWriter.CompileEntryToIl, over the warm-up
+                    // engine's exact calleeMap (user module + prelude + every reached
                     // callee) — the same set the IL compile uses. We pass it the seeds (the
                     // externally-reachable by-name-callable predicates); it resolves them to
                     // functor ids and installs the forced roots per entry. The step-6c
-                    // computation above is now just the dry-run REPORT (a per-module
+                    // computation above is now just the dry-run report (a per-module
                     // approximation), not the applied prune.
                     bytes = BundleWriter.ToBytes(bundle,
                         includeCompiledBytecode: true,
@@ -1072,8 +1086,35 @@ public static class ShmoLinker
                 bytes = SerialiseBundle(bundle);
             }
 
-            // Stage 10: dump the WAM each entry actually SHIPS — its final
-            // CompiledBytecode, AFTER any --strip-wam / region prune (the IL branch
+            // The bundle's wasm tier (--wasm): baked from the bundle as it
+            // ships, and serialised again with the module in its trailer.
+            if (config.WasmBaker is not null)
+            {
+                if (config.StripWam)
+                {
+                    Emit(LinkSeverity.Error, "wasm_needs_wam",
+                        "--wasm needs the bytecode --strip-wam drops: a bundle's wasm "
+                        + "module resumes into it at every choice point and builtin.");
+                    success = false;
+                }
+                else
+                {
+                    byte[]? module = config.WasmBaker(bundle);
+                    if (module is not null)
+                    {
+                        bundle = bundle.WithWasmModules(new[] { module });
+                        bytes = SerialiseBundle(bundle);
+                        Emit(LinkSeverity.Info, "wasm_module",
+                            $"wasm module: {module.Length} bytes.");
+                    }
+                    else
+                        Emit(LinkSeverity.Warning, "wasm_module",
+                            "--wasm: no predicate compiled; the bundle carries no wasm module.");
+                }
+            }
+
+            // Stage 10: dump the WAM each entry actually ships — its final
+            // CompiledBytecode, after any --strip-wam / region prune (the IL branch
             // re-read `bundle` from the post-strip bytes above).
             if (config.DumpWamPath is not null)
             {
@@ -1100,17 +1141,18 @@ public static class ShmoLinker
             linkedObjects: linkInput);
     }
 
-    /// <summary>Stage 9 (dead-region elimination): the externally-reachable SEED set —
-    /// the reached predicates that must keep a STANDALONE (trampoline-callable) form
-    /// because they are callable BY NAME from outside a region's <c>br</c>-absorption,
-    /// so the dead-region prune must NEVER drop them. The set:
+    /// <summary>Stage 9 (dead-region elimination): the externally-reachable seed set —
+    /// the reached predicates that must keep a standalone (trampoline-callable) form
+    /// because they are callable by name from outside a region's <c>br</c>-absorption,
+    /// so the dead-region prune must never drop them. The set:
     /// <list type="bullet">
-    ///   <item>the entry-point and <c>:- ensure_linked</c> roots
-    ///     (<paramref name="reachedRoots"/>) — invoked by name by the runtime;</item>
-    ///   <item>every reached PUBLIC predicate — the global namespace; another module or
+    ///   <item>the entry-point and <c>:- ensure_linked</c> roots, and every
+    ///     predicate a written <c>M:Goal</c> reaches, a private included
+    ///     (<paramref name="reachedRoots"/>): invoked by name at run time;</item>
+    ///   <item>every reached public predicate — the global namespace; another module or
     ///     the embedding host can call it by name;</item>
-    ///   <item>every reached DYNAMIC predicate — called by name + asserted/retracted, and
-    ///     never region-compiled (<c>enter_dynamic</c>). This INCLUDES <c>:- visible</c>,
+    ///   <item>every reached dynamic predicate — called by name + asserted/retracted, and
+    ///     never region-compiled (<c>enter_dynamic</c>). This includes <c>:- visible</c>,
     ///     which the compiler records as <see cref="PredicateVisibility.Dynamic"/>
     ///     (its Arity-Prolog alias).</item>
     /// </list>
@@ -1136,21 +1178,21 @@ public static class ShmoLinker
     /// <summary>the cross-module meta-wrapper unfold (LTO pass).
     /// Decodes each V4 module's raw clause terms, detects wrapper templates
     /// (<see cref="Shumway.Compiler.Parsing.MetaWrapperUnfold"/>), exports the
-    /// PUBLIC ones into a global registry, and rewrites every module against
+    /// public ones into a global registry, and rewrites every module against
     /// (own locals ∪ global publics) — locals shadow publics, matching call
     /// resolution. A module is recompiled (from its clause terms, via
     /// <see cref="ShmoCompiler.CompileFromParts"/>) only when the cross-module
-    /// part contributed a rewrite its compile-time LOCAL unfold
+    /// part contributed a rewrite its compile-time local unfold
     /// didn't already produce — detected per clause: full-rewrite changed it
-    /// while local-only left it alone. (A clause with BOTH a local and a cross
+    /// while local-only left it alone. (A clause with both a local and a cross
     /// site in it is conservatively skipped — the cross site keeps calling the
     /// public wrapper, which is correct, just un-optimized.) Wrapper modules
     /// themselves are never modified; their standalone predicates remain for
     /// runtime-built goals. Pre-V4 objects (no clause terms) pass through
     /// untouched — they neither export wrappers nor get rewritten.</summary>
-    /// <param name="publicWrappers">OUT — every PUBLIC wrapper detected, as
+    /// <param name="publicWrappers">Out — every public wrapper detected, as
     /// (definingModule, indicator). The caller adds these to the reachability
-    /// ROOTS: unfolding can remove the last static call to a wrapper, but a
+    /// roots: unfolding can remove the last static call to a wrapper, but a
     /// runtime-built goal (<c>call/1</c>, <c>=..</c>) may still dispatch to it
     /// (the lesson) — the unfold must optimize call sites, never
     /// shrink the linked set. Over-keeps (wrappers whose every site stayed
@@ -1173,7 +1215,7 @@ public static class ShmoLinker
         }
         if (decoded.Count == 0) return objects;
 
-        // Per-module wrapper registries + the global PUBLIC registry.
+        // Per-module wrapper registries + the global public registry.
         var localReg = new Dictionary<string, Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry>();
         var publicReg = Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry.Empty;
         foreach (var obj in objects)
@@ -1199,7 +1241,7 @@ public static class ShmoLinker
         var result = new List<ShmoObject>(objects.Count);
         foreach (var obj in objects)
         {
-            // ADR-035 — a Debuggable object's WAM IS the debug-shape code the debugger reads,
+            // ADR-035 — a Debuggable object's WAM is the debug-shape code the debugger reads,
             // and its stop sites are keyed to the source the debugger opens. Rewriting its
             // call sites (meta-wrapper unfold) would reshape that WAM and desync the mapping,
             // so it is passed through untouched. (It still contributed its public wrappers to
@@ -1217,8 +1259,8 @@ public static class ShmoLinker
             var own = localReg.TryGetValue(obj.ModuleName, out var lr)
                 ? lr
                 : Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry.Empty;
-            // Shadowing follows call resolution: ANY predicate this module
-            // DEFINES (template-shaped or not) takes its calls, so the public
+            // Shadowing follows call resolution: Any predicate this module
+            // defines (template-shaped or not) takes its calls, so the public
             // wrapper registry must not apply to those indicators here — only
             // the module's own templates may (via `own`).
             var definedHere = new HashSet<(string, int)>();
@@ -1226,13 +1268,13 @@ public static class ShmoLinker
                 definedHere.Add((d.Indicator.Name, d.Indicator.Arity));
             var visiblePublics = publicReg.Restrict((n, a) => !definedHere.Contains((n, a)));
             var full = own.MergeOver(visiblePublics);
-            // cross-contribution detection in ONE pass. `own` and
-            // `visiblePublics` have DISJOINT domains (the latter excludes every
+            // cross-contribution detection in one pass. `own` and
+            // `visiblePublics` have disjoint domains (the latter excludes every
             // indicator this module defines), so "the cross-module registry
             // contributed" ⟺ the publics-only rewrite changes something. The
-            // previous shape ran TWO full rewrites per module (a local-only
+            // previous shape ran two full rewrites per module (a local-only
             // baseline + the merged pass) plus a per-clause diff — and its
-            // "full changed where local didn't" test MISSED a clause carrying
+            // "full changed where local didn't" test missed a clause carrying
             // both a local and a cross wrapper site (both passes changed it),
             // silently dropping that clause's cross unfold. This detection
             // catches it.
@@ -1242,7 +1284,7 @@ public static class ShmoLinker
                 result.Add(obj);
                 continue;
             }
-            // Recompile input: the MERGED rewrite (local templates unfold too —
+            // Recompile input: the merged rewrite (local templates unfold too —
             // CompileFromParts would re-apply the local unfold anyway; doing it
             // here keeps the cascade behaviour identical to the previous code).
             var fullRewrite = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, full);
@@ -1293,7 +1335,7 @@ public static class ShmoLinker
     /// Decodes every module's raw static clauses (the V4 LTO channel), runs the
     /// <see cref="Shumway.Compiler.Wam.DeterminismAnalysis.WholeProgram"/>
     /// greatest fixpoint (goal resolution: module-local first, then the global
-    /// PUBLIC owner; dynamic predicates ineligible), drops each module's
+    /// public owner; dynamic predicates ineligible), drops each module's
     /// redundant last-clause trailing cuts under that whole-program knowledge,
     /// and recompiles the modules that changed. Purely semantics-preserving —
     /// an elided cut provably pruned nothing.</summary>
@@ -1418,10 +1460,10 @@ public static class ShmoLinker
     /// <summary>Stage 9 fid bridge: resolve the linker's <c>(module, PredicateRef)</c>
     /// seeds to the functor ids the compiled bytecode uses, against
     /// <paramref name="byName"/> (a <c>(functorName, arity) → fid</c> index built from
-    /// the decoded predicates). A predicate's functor name is either MANGLED
+    /// the decoded predicates). A predicate's functor name is either mangled
     /// (<c>module$name</c>, for a local predicate — see <c>ModuleRewrite.MangledName</c>)
-    /// or BARE (<c>name</c>, for a public / dynamic predicate, and for a local entry that
-    /// the linker promoted to public). We add BOTH forms that exist: a seed's true fid is
+    /// or bare (<c>name</c>, for a public / dynamic predicate, and for a local entry that
+    /// the linker promoted to public). We add both forms that exist: a seed's true fid is
     /// always one of them, and including the other (if it happens to name a different
     /// predicate) only over-KEEPS — sound, since the prune must never drop a seed. Pure;
     /// public for direct testing.</summary>
@@ -1612,7 +1654,7 @@ public static class ShmoLinker
     /// indicators it exposes and (via <paramref name="assemblyNames"/>) the
     /// file names of the assemblies that carried at least one, for the bundle
     /// trailer. Pulled out of the main link body so the figures are computed
-    /// ONCE and available to both the library pull pre-pass (which must not
+    /// once and available to both the library pull pre-pass (which must not
     /// pull a member to satisfy a foreign-provided reference) and the
     /// builtin-set snapshot.</summary>
     private static HashSet<PredicateRef> ReflectForeignAssemblies(
@@ -1679,7 +1721,7 @@ public static class ShmoLinker
     /// the pulled members in pull order; the caller runs the normal pipeline
     /// (LTO unfold + reachability + prune) over the whole set.
     ///
-    /// <para>Pulls are at MODULE granularity — like a C linker pulling a whole
+    /// <para>Pulls are at module granularity — like a C linker pulling a whole
     /// <c>.o</c> to get one symbol. This selection deliberately only needs to
     /// avoid UNDER-pulling: it follows the same call-graph / qref / ensure_linked
     /// edges the main reachability walk does, but on the pre-LTO graph. Any
@@ -1859,7 +1901,7 @@ public static class ShmoLinker
             foreach (var d in o.Defined)
             {
                 defs.Add(d.Indicator);
-                // TryAdd keeps the FIRST: explicit objects (indexed up front)
+                // TryAdd keeps the first: explicit objects (indexed up front)
                 // win over libraries, and earlier libraries win over later —
                 // the FIFO / "explicit wins" tie-break, for free.
                 if (d.Visibility == PredicateVisibility.Public)
@@ -1924,7 +1966,7 @@ public static class ShmoLinker
             return false;
         }
 
-        // Pull a member by module NAME (an explicit Module:Pred qualified ref).
+        // Pull a member by module name (an explicit Module:Pred qualified ref).
         bool PullModule(string moduleName)
         {
             if (included.ContainsKey(moduleName)) return true;
@@ -2105,6 +2147,13 @@ public static class ShmoLinker
             bw.Write((uint)member.ShmoBytes.Length);
             bw.Write(member.ShmoBytes);
         }
+        // Wasm-modules trailer (--wasm). Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.WasmModules.Count);
+        foreach (var module in bundle.WasmModules)
+        {
+            bw.Write((uint)module.Length);
+            bw.Write(module);
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());
@@ -2120,7 +2169,7 @@ public static class ShmoLinker
     /// <summary>GetTypes that tolerates partial loader
     /// failures. Defensive: a foreign DLL may reference types we
     /// don't have, so plain Assembly.GetTypes() can throw
-    /// ReflectionTypeLoadException — recover the types that DID
+    /// ReflectionTypeLoadException — recover the types that did
     /// resolve and keep going. The linker only needs to see
     /// [PrologPredicate]-decorated methods on resolved types.</summary>
     private static IEnumerable<Type> SafeGetTypes(System.Reflection.Assembly asm)

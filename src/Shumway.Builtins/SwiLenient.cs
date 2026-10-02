@@ -2,7 +2,7 @@ using Shumway.Core;
 
 namespace Shumway.Builtins;
 
-/// <summary>ADR-040 — helpers for builtins whose STRICT ISO behaviour would
+/// <summary>ADR-040 — helpers for builtins whose strict ISO behaviour would
 /// raise a <c>type_error(atom)</c> for a non-atom argument, but whose SWI
 /// counterpart coerces any atomic to text. Each such builtin, on the path where
 /// it was about to raise, asks <see cref="CallerIsSwi"/> whether its caller lives

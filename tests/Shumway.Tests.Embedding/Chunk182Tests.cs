@@ -25,7 +25,7 @@ public class Chunk182Tests
     {
         // A chain: count(0) :- !. count(N) :- N > 0, N1 is N - 1, count(N1).
         // Each recursive count(N) is a non-tail Call (because the goal
-        // sequence has a tail Execute on count(N1) — wait, it IS tail).
+        // sequence has a tail Execute on count(N1) — wait, it is tail).
         // Actually that compiles to Execute. To force non-tail Call we
         // need work *after* the recursion:
         //   chain(0, Acc, Acc) :- !.

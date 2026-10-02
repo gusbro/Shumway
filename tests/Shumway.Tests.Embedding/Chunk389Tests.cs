@@ -6,12 +6,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 389 (Phase 29, Stage 9b — linker side): the externally-reachable SEED set the
+/// Chunk 389 (Phase 29, Stage 9b — linker side): the externally-reachable seed set the
 /// linker computes for the dead-region prune (<see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>).
 /// The seeds are the reached predicates that must keep a standalone form because they
-/// are callable BY NAME from outside a region's br-absorption: entry / ensure_linked
+/// are callable by name from outside a region's br-absorption: entry / ensure_linked
 /// roots + every reached public + every reached dynamic (which includes <c>:- visible</c>,
-/// recorded as Dynamic). A purely-local, internally-called predicate is NOT a seed.
+/// recorded as Dynamic). A purely-local, internally-called predicate is not a seed.
 /// </summary>
 public class Chunk389Tests
 {
@@ -75,7 +75,7 @@ public class Chunk389Tests
     [Fact]
     public void UnreachablePublic_NotASeed()
     {
-        // A public predicate that was NOT reached is not in `reached`, so not a seed —
+        // A public predicate that was not reached is not in `reached`, so not a seed —
         // it is dropped by the existing module/predicate reachability, not Stage 9.
         var defined = Defined("m",
             (P("used", 0), PredicateVisibility.Public),

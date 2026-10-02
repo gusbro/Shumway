@@ -4,10 +4,10 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>What an answer says about a term it constrains AND binds. Two
+/// <summary>What an answer says about a term it constrains and binds. Two
 /// things went wrong at once here.
 ///
-/// <para>A constraint that an aliasing had DECIDED stayed on as a residual:
+/// <para>A constraint that an aliasing had decided stayed on as a residual:
 /// once P and Q are one variable, <c>dif(P-Q, 1-2)</c> is <c>dif(P-P, 1-2)</c>,
 /// which no binding of P can ever violate, and showing it invites the reader
 /// to look for a case that does not exist.</para>
@@ -184,7 +184,7 @@ public sealed class CyclicResidualDisplayTests
         Assert.True(e.Query(
             "X = [a|X], catch(length(X, _), "
             + "error(resource_error(finite_memory), length/2), true).").Success);
-        // A CONCRETE candidate length still fails -- the classical bound
+        // A concrete candidate length still fails -- the classical bound
         // walk ends after N steps, uniformly across implementations
         // (length#27: length(Cyclic, 0) is false).
         Assert.False(e.Query("X = [a|X], length(X, 0).").Success);
@@ -205,10 +205,10 @@ public sealed class CyclicResidualDisplayTests
     [Fact]
     public void ATailACoroutineMakesCyclicIsRefusedToo()
     {
-        // The same refusal when the cycle appears DURING the enumeration:
+        // The same refusal when the cycle appears during the enumeration:
         // freeze(L, L = [_|L]) makes every candidate list cyclic, so each
         // step of length(L, N) wakes a goal that binds the open tail back
-        // onto itself. Walking that spins in CONSTANT memory -- nothing
+        // onto itself. Walking that spins in constant memory -- nothing
         // allocates, so no limit would ever refuse it -- and the query used
         // to hang where the already-cyclic L = [_|L] raised at once.
         var e = new PrologEngine();
@@ -216,17 +216,17 @@ public sealed class CyclicResidualDisplayTests
         Assert.True(e.Query(
             "freeze(L, L = [_|L]), catch(length(L, _), "
             + "error(resource_error(finite_memory), length/2), true).").Success);
-        // One level deeper: the coroutine on the TAIL closes the cycle.
+        // One level deeper: the coroutine on the tail closes the cycle.
         Assert.True(e.Query(
             "freeze(L, (L = [_|T], freeze(T, T = [_|T]))), catch(length(L, _), "
             + "error(resource_error(finite_memory), length/2), true).").Success);
         // A concrete length still just fails: the bound walk ends.
         Assert.False(e.Query("freeze(L, L = [_|L]), length(L, 3).").Success);
-        // And a coroutine that binds the tail to something FINITE is not
+        // And a coroutine that binds the tail to something finite is not
         // refused -- it is answered, counting what the wake left behind.
         Assert.True(e.Query("freeze(L, L = [x,y]), length(L, N), N == 2.").Success);
         Assert.True(e.Query("freeze(L, L = [a|_]), length(L, N), N == 1.").Success);
-        // The enumeration still walks PAST a woken bind: growing candidates
+        // The enumeration still walks past a woken bind: growing candidates
         // keep coming, with what the coroutine wrote in place.
         Assert.True(e.Query(
             "freeze(L, L = [a|_]), length(L, N), N == 3, L = [a,_,_].").Success);

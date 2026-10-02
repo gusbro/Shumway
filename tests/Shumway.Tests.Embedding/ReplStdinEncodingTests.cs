@@ -43,7 +43,7 @@ public sealed class ReplStdinEncodingTests
         throw new InvalidOperationException("Could not locate repository root.");
     }
 
-    /// <summary>Feeds the top level UTF-8 BYTES and returns what it printed.
+    /// <summary>Feeds the top level UTF-8 bytes and returns what it printed.
     /// Writing a C# string through the default encoder would prove nothing:
     /// the point is what the bytes on the pipe mean.</summary>
     private static string Piped(string queries)

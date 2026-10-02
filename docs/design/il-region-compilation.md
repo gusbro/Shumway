@@ -55,8 +55,7 @@ flat local code space, within an IL method.
   edges from the root. A call to a region member → `br` to its block; a call to a
   non-member → trampoline (cross-region) or `CallBuiltin`.
 - **Budget**: stop adding members when the summed IL size crosses a budget well
-  under the 64 KB method limit (and below Sigil's `ReturnTracer` stack ceiling —
-  see `MaxIlPromotionBytecodeBytes`). Calls past the budget stay trampolines.
+  under the 64 KB method limit (see `MaxIlPromotionBytecodeBytes`). Calls past the budget stay trampolines.
 - **Cycles / recursion**: a call to an already-included member is a `br` to its
   existing block — no re-expansion. So a recursive or mutually-recursive local
   cluster collapses to br edges.
@@ -322,7 +321,7 @@ WAM state.
      excluded, a 24-member clpfd-internal region (root `in/2`) formed and `X in 1..5,
      m(X,R)` FAILED where it should give `R=b`. Root cause, isolated with a
      deterministic BFS-order member cap: two members each with a `put_variable` at
-     pc 0 (here `clpfd_makevar` and `clpfd_dom_of`) both declared the Sigil local
+     pc 0 (here `clpfd_makevar` and `clpfd_dom_of`) both declared the local
      `freshRef_pc0` — a pc-based local name is unique *within a single predicate* (pc
      starts at 0) but **collides across members merged into one IL method**
      (`InvalidOperationException: Local with name 'freshRef_pc0' already exists`),
@@ -587,8 +586,8 @@ WAM state.
           whose head functor appears as a CONSTRUCTED constant anywhere in the bytecode
           (`put_atom` / `put_structure[_r]` / write-mode `unify_atom` / `unify_structure`,
           names DEMANGLED since a constructed goal carries the bare source name) is excluded
-          from the prune and keeps its standalone form — exactly the user's model "(los
-          menos) serán WAM si no se pudo armar región ni IL". Over-approximate (a
+          from the prune and keeps its standalone form — exactly the intended model: the
+          few that remain are WAM, for want of a region or IL. Over-approximate (a
           functor-shaped term used purely as data also keeps its predicate) but sound: it
           only ever keeps MORE standalone forms, never strips a live one.
        `CollectConstructedFunctors` (the guard) + the in-compile prune live in
@@ -674,8 +673,8 @@ WAM state.
 
 ## Risks
 
-- **Cursor accounting** must be exact (Sigil errors loudly on a mismatch — a good
-  property). The crux is the planner ↔ emit agreement.
+- **Cursor accounting** must be exact (the emitter errors loudly on a mismatch, a
+  good property). The crux is the planner ↔ emit agreement.
 - **Soundness of backtrack re-entry** across the merged region — the
   [[extra-backtracking-not-sound]] class; validate with discriminating findall
   cases at every step.

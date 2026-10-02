@@ -10,14 +10,14 @@ public sealed partial class PrologEngine
 {
     // Re-entrant host→Prolog solve. A foreign predicate ([PrologPredicate]) runs
     // mid-execution with the live Activation in hand; SolveOnce lets it call a
-    // Prolog goal back on THAT activation — reusing the already-linked program,
+    // Prolog goal back on that activation — reusing the already-linked program,
     // heap and trail — instead of building a fresh top-level query. This is the
     // cheap path for the C#→main→C#→predX embedding pattern: the outer query's
     // one-time setup is paid once, and each re-entrant crossing is a nested
     // semidet solve (like call/1), not another SetupQueryFromTerm.
     //
     // Bindings the goal makes persist on the shared heap/trail, so the output
-    // variables in `goal` are bound in the returned Solution AND visible to the
+    // variables in `goal` are bound in the returned Solution and visible to the
     // outer computation after the foreign method returns (and correctly undone if
     // the outer computation later backtracks past the foreign call). Once-
     // semantics: any choice points the goal leaves are discarded, so it yields a
@@ -60,7 +60,7 @@ public sealed partial class PrologEngine
 
     /// <summary>Lean single-output re-entrant solve: solves <paramref name="goal"/> once
     /// and, on success, reads the variable named <paramref name="outVar"/> converted to
-    /// <typeparamref name="T"/> — with NO <see cref="Solution"/> and no bindings
+    /// <typeparamref name="T"/> — with no <see cref="Solution"/> and no bindings
     /// dictionaries (the ~800-byte-per-call cost of the <c>out Solution</c> form). The
     /// common foreign-predicate shape: compute one value from a Prolog goal. Put a
     /// <see cref="VarTerm"/> named <paramref name="outVar"/> in <paramref name="goal"/>

@@ -187,9 +187,9 @@ directly — `head :- body.` prints with the names the user wrote.
 A release `.shum` (built with `--strip`) has no source clauses,
 so `listing/1` had nothing to walk. Chunk 255 falls back to
 `PrecompiledStaticPredicates`: prints the head signature plus an
-explanatory comment `% (compiled — source stripped)`. The user's
-guidance was explicit: "si tenés el fuente disponible usalo, pero
-si no tenés el fuente disponible algo tenés que mostrar".
+explanatory comment `% (compiled — source stripped)`. The instruction
+was explicit: use the source when it is there, and when it is not,
+show something rather than nothing.
 
 ## Chunk 256 — listing diagnostics + local-predicate demangle
 

@@ -7,11 +7,11 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-025 stage (b) — the inline if-then-else / disjunction shape compiles to
 /// Tier-1 IL: mid-body <c>try_me_else</c> becomes an arity-0 IL choice point
-/// whose resume re-enters the delegate at the ELSE cursor
+/// whose resume re-enters the delegate at the else cursor
 /// (<c>IlIteHelper.Resume</c> + the chunk-218 marker protocol), <c>jump</c>
 /// becomes an unconditional branch, and the chain describer follows dispatch
 /// operands so a multi-clause host with an inner ITE still describes. Every
-/// test runs PROMOTED (threshold 1) and asserts promotion actually happened —
+/// test runs promoted (threshold 1) and asserts promotion actually happened —
 /// a Tier-0 fallback would hide an emit failure.
 /// </summary>
 public class Adr025StageBTests
@@ -25,6 +25,8 @@ public class Adr025StageBTests
         // Two passes: record + promote.
         Assert.True(e.Query(warmQuery).Success);
         Assert.True(e.Query(warmQuery).Success);
+        // Promotion compiles on a worker: wait for it before asking.
+        e.IlPromotion.WaitForPendingPromotions();
         int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
         Assert.True(e.IlPromotion.IsPromoted(fid),
             $"{name}/{arity} must promote to IL (stage-b emit)");
@@ -51,8 +53,8 @@ public class Adr025StageBTests
     [Fact]
     public void Disjunction_Promoted_BacktracksIntoElse()
     {
-        // THE stage-b-critical path: backtracking pops the inline CP and
-        // re-enters the promoted delegate at the ELSE cursor.
+        // The stage-b-critical path: backtracking pops the inline CP and
+        // re-enters the promoted delegate at the else cursor.
         var (e, _) = Promoted(
             ":- public pick/1.\n" +
             "pick(X) :- (X = a ; X = b).\n",
@@ -85,7 +87,7 @@ public class Adr025StageBTests
             "q(a).\nq(b).\n" +
             "first(R) :- (q(X) -> R = X ; R = none).\n",
             "first", 1, "first(a).");
-        // The inline cut must prune the ITE CP AND the condition's CPs.
+        // The inline cut must prune the ITE CP and the condition's CPs.
         Assert.True(e.Query("findall(R, first(R), L), L == [a].").Success);
     }
 
@@ -139,9 +141,9 @@ public class Adr025StageBTests
     public void PreIteGenerator_ChoicePointsSurviveTheIteCut()
     {
         // get_level captured B0 — which the pre-ITE call to g/1 had reset to
-        // the value BEFORE g's choice point — so the ITE's commit cut pruned
+        // the value before g's choice point — so the ITE's commit cut pruned
         // the generator's CP (lost solutions / crashed). get_level_b captures
-        // CURRENT B at the try point: the cut pops exactly the ITE CP + the
+        // current B at the try point: the cut pops exactly the ITE CP + the
         // condition's CPs.
         const string program =
             ":- public g/1.\ng(1).\ng(2).\ng(3).\n" +
@@ -164,8 +166,8 @@ public class Adr025StageBTests
     [Fact]
     public void PreIteCall_EnvTrim_KeepsTheBarrierSlotAlive()
     {
-        // The ITE barrier Y slot sits ABOVE the named permanents; a call
-        // BEFORE the ITE used to trim the frame below it, letting the
+        // The ITE barrier Y slot sits above the named permanents; a call
+        // before the ITE used to trim the frame below it, letting the
         // condition's callee overwrite the slot — a garbage cut barrier
         // (boyer's Cut→CompactTrails IndexOutOfRange). The liveness analysis
         // now folds the barrier slot in, like the deep-cut slot.
@@ -239,10 +241,10 @@ public class Adr025StageBTests
     }
 
     // ---- ADR-025 (ITE in regions) — a local member containing an inline ITE
-    //      now stays IN the region: the planner gives its try_me_else pc an
-    //      ELSE re-entry cursor, the CP carries the REGION delegate + cursor,
+    //      now stays in the region: the planner gives its try_me_else pc an
+    //      else re-entry cursor, the CP carries the region delegate + cursor,
     //      TrustMe marks the label. These run with regions at their default
-    //      (ON) and a PUBLIC root over LOCAL members so a region forms. ----
+    //      (on) and a public root over local members so a region forms. ----
 
     [Fact]
     public void RegionMember_CallCondIte_AllPaths()
@@ -265,7 +267,7 @@ public class Adr025StageBTests
     [Fact]
     public void RegionMember_Ite_BacktracksAcrossCommit()
     {
-        // A generator BEFORE the ITE member: each solution re-enters pick/2,
+        // A generator before the ITE member: each solution re-enters pick/2,
         // whose ITE commits per-solution without pruning gen/1's CPs.
         var (e, _) = Promoted(
             ":- public multi/1.\n" +

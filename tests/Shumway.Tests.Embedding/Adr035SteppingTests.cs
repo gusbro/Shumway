@@ -46,7 +46,7 @@ public class Adr035SteppingTests
         engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n" + program);
         if (!lco)
         {
-            // Last-call optimisation reclaims a predicate's frame BEFORE its final
+            // Last-call optimisation reclaims a predicate's frame before its final
             // goal runs, so under it the predicate has no exit port and no stack frame
             // left to show. Debuggers turn it off; that is what debug_lco is for.
             engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
@@ -85,7 +85,7 @@ public class Adr035SteppingTests
     public void StepInto_TakesTheNextPort_HoweverDeep()
     {
         var engine = DebugEngine(Nested);
-        // Line 2 is `top(X) :-` — a head, whose "clause entered" point IS its first
+        // Line 2 is `top(X) :-` — a head, whose "clause entered" point is its first
         // goal's. So it snaps forward to line 3, the call to mid/1, and stops there.
         Assert.Equal(3, engine.BoundLine("<string>", 2));
         engine.AddBreakpoint("<string>", 2);
@@ -93,7 +93,7 @@ public class Adr035SteppingTests
         var stops = Walk(engine, "top(A).",
             StepMode.Into, StepMode.Into, StepMode.Into);
 
-        // A step lands on a GOAL — the next thing the program is about to do — and, going
+        // A step lands on a goal — the next thing the program is about to do — and, going
         // down, that is the first goal of the clause we stepped into. leaf/1 is a fact —
         // there is nothing inside it to step into — so the next thing the program does is
         // tail(X), back in top/1, and that is where the step surfaces: no stop on leaf's own
@@ -117,7 +117,7 @@ public class Adr035SteppingTests
 
         var stops = Walk(engine, "top(A).", StepMode.Into);
 
-        // The breakpoint IS the call port of mid/1 — reporting the call again would
+        // The breakpoint is the call port of mid/1 — reporting the call again would
         // stop the user twice on one line, moving nothing. So a step into from here
         // lands inside mid/1, which is what "into" means.
         Assert.Equal(new[] { "Breakpoint top/1", "Call leaf/1" }, Ports(stops));
@@ -136,10 +136,10 @@ public class Adr035SteppingTests
         // stepping through, on the line you are looking at.
         //
         // It used to land on mid/1's EXIT port, which is where a port tracer would put you.
-        // But an exit port fires with the machine standing in the CALLEE, at its `proceed`,
+        // But an exit port fires with the machine standing in the callee, at its `proceed`,
         // so the caret jumped to the last line of whichever clause of mid/1 happened to
         // succeed. "Step over and it stops at the end of some other clause" was the report,
-        // and it was exactly what the model said to do. Step over tail(X) — the LAST goal —
+        // and it was exactly what the model said to do. Step over tail(X) — the last goal —
         // and the clause is done, the query with it: nothing left to land on, and the step
         // says so rather than stopping the caret on a line that already ran.
         Assert.Equal(new[]
@@ -161,8 +161,8 @@ public class Adr035SteppingTests
         var stops = Walk(engine, "top(A).", StepMode.Out);
 
         // Out of the goal we are standing on, and onto the next goal an enclosing clause
-        // runs: tail(X), back in top/1. NOT mid/1's exit — that stop put the caret on the
-        // last line of the clause being LEFT ("step out stops on the last goal of the
+        // runs: tail(X), back in top/1. Not mid/1's exit — that stop put the caret on the
+        // last line of the clause being left ("step out stops on the last goal of the
         // predicate I asked to leave" was the report), because an exit port fires with the
         // machine still standing there. Where the program goes next is a goal, and the step
         // lands on it, however many clause-ends unwind in between.
@@ -213,12 +213,12 @@ public class Adr035SteppingTests
         var stops = Walk(engine, "t.",
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
-        // p/1 succeeds with 1, the guard X > 1 fails, and p/1 is REDONE for 2. There
-        // is no return address to step over here — the machine is going BACKWARDS into
+        // p/1 succeeds with 1, the guard X > 1 fails, and p/1 is redone for 2. There
+        // is no return address to step over here — the machine is going backwards into
         // a goal that had already succeeded. Only a port model can say this.
         Assert.Contains(stops, s => s.Reason == StopReason.Redo);
 
-        // p/1's EXIT is not stopped at — a step lands on the next GOAL: the guard
+        // p/1's EXIT is not stopped at — a step lands on the next goal: the guard
         // `X > 1`, which compiles inline (ADR-018, no call) and stops through its
         // debug_port. It fails with X = 1, and the next thing that happens to this
         // program is the redo.
@@ -283,7 +283,7 @@ public class Adr035SteppingTests
         Assert.Equal(7, frames[0].Line);            // stopped at leaf/1's clause, line 7
         Assert.Equal(6, frames[1].Line);            // mid/1 is waiting on leaf(X), line 6
         Assert.Equal(3, frames[2].Line);            // top/1 is waiting on mid(X), line 3
-        // The PREDICATE frames carry the file. The QUERY frame does not: the
+        // The predicate frames carry the file. The query frame does not: the
         // wrapper has no source of its own, and the old backward site scan
         // "inherited" whatever debuggable code preceded it — right by luck in a
         // one-file test, and confidently wrong in a real program (a query showed
@@ -306,7 +306,7 @@ public class Adr035SteppingTests
         noLco.AddBreakpoint("<string>", 7);
         var withoutLco = Walk(noLco, "top(A).")[0].Frames;
 
-        // mid/1 called leaf/1 as its LAST goal, so LCO reclaimed mid's frame before
+        // mid/1 called leaf/1 as its last goal, so LCO reclaimed mid's frame before
         // leaf ran: by the time we are stopped in leaf, the machine has genuinely
         // forgotten mid — there is nothing left to show. top/1 survives, because it
         // still has tail(X) to run and so kept its frame. The debugger can only show
@@ -323,12 +323,12 @@ public class Adr035SteppingTests
     [Fact]
     public void ARecursivePredicateShowsOneFramePerLevel()
     {
-        // It did not. Every frame of a recursive predicate stores the SAME return address —
+        // It did not. Every frame of a recursive predicate stores the same return address —
         // the instruction after the recursive call — and the env-chain walk was dropping any
-        // frame whose return address matched the one it started from, meaning ALL of them. A
-        // 12-deep recursion showed TWO frames, and the debugger then read the query's
+        // frame whose return address matched the one it started from, meaning all of them. A
+        // 12-deep recursion showed two frames, and the debugger then read the query's
         // variables out of whichever frame it had landed on instead: it reported the answer
-        // as a loop counter, confidently. The duplicate is only ever the FIRST frame (the
+        // as a loop counter, confidently. The duplicate is only ever the first frame (the
         // running clause saved the current cp into its own environment at `allocate`), and
         // that is the only one to skip.
         var engine = DebugEngine("""
@@ -345,7 +345,7 @@ public class Adr035SteppingTests
         Assert.Equal(13, frames.Count(f => f.Name == "down"));
         Assert.StartsWith("?-", frames[^1].Name);
 
-        // And each level holds ITS OWN N — which is the whole point of a stack. (down(0)
+        // And each level holds its own N — which is the whole point of a stack. (down(0)
         // matched the first clause, which has no N: twelve values, innermost first.)
         var ns = frames.Where(f => f.Name == "down")
                        .SelectMany(f => f.Variables.Where(v => v.Name == "N"))
@@ -359,7 +359,7 @@ public class Adr035SteppingTests
     {
         // The user's report, reduced: a query with a choice point in it, stopped in the
         // middle, then F10 F10. The second one steps past the last goal -- the query
-        // SUCCEEDS, hands its answer back, and stands still waiting to be asked for another.
+        // succeeds, hands its answer back, and stands still waiting to be asked for another.
         // No port is ever coming, so the step can never be satisfied.
         //
         // Visual Studio waited for it forever: it believed the program was still running, and
@@ -393,7 +393,7 @@ public class Adr035SteppingTests
     [Fact]
     public void TheQueryIsOnTheStackExactlyOnce()
     {
-        // It was on there TWICE. Past the query's own frame lies the address it RETURNS to --
+        // It was on there twice. Past the query's own frame lies the address it returns to --
         // the top level's code, which no Prolog frame describes -- and the search that names
         // an address takes the last predicate at or before it, so that address came back
         // named `__query__` as well. The user saw their query twice, the second copy with no
@@ -403,7 +403,7 @@ public class Adr035SteppingTests
 
         var frames = Walk(engine, "top(A).")[0].Frames;
         Assert.Single(frames, f => f.Name.StartsWith("?-"));
-        Assert.StartsWith("?-", frames[^1].Name);   // and it is the BOTTOM
+        Assert.StartsWith("?-", frames[^1].Name);   // and it is the bottom
     }
 
     [Fact]
@@ -411,7 +411,7 @@ public class Adr035SteppingTests
     {
         // What the user actually hit. Their query calls member/2 -- the PRELUDE's -- and the
         // top level wraps every query in a copy_term/3 of its own. Both are
-        // `:- disable_debug`, and both are compiled that way; but a PORT is raised by the
+        // `:- disable_debug`, and both are compiled that way; but a port is raised by the
         // interpreter at every call and every proceed regardless of what the code was
         // compiled from, so a step honoured them. Two F10s and the user was standing in
         // `copy_term/3`, then in `$prelude$$attr_goals_of/2`: code they did not write, cannot
@@ -439,7 +439,7 @@ public class Adr035SteppingTests
 
         // Every stop names a predicate of theirs (or their query). member/2 runs -- it just
         // does not stop anyone; control comes back to the user's program at pick/1's caller,
-        // and THAT is where the step lands.
+        // and that is where the step lands.
         foreach (var s in stops)
             Assert.DoesNotContain("$prelude$", s.Goal);
         Assert.DoesNotContain(stops, s => s.Goal.StartsWith("member/"));
@@ -456,16 +456,16 @@ public class Adr035SteppingTests
     [Fact]
     public void AVariableWhoseTurnHasNotComeShowsAsUnbound_NotAsAnError()
     {
-        // NO STOP RENDERS A VARIABLE AS AN ERROR. `allocate` does not touch the Y slots -- a
-        // permanent is written at its FIRST occurrence, and running code never reads one
+        // No stop renders A variable as an error. `allocate` does not touch the Y slots -- a
+        // permanent is written at its first occurrence, and running code never reads one
         // before -- so a slot the machine has not reached yet holds a control word, not a
         // term. Debug codegen initialises the ones it knows the names of, precisely so a
-        // debugger never reads garbage; anything the walk reaches that is NOT a term (a
+        // debugger never reads garbage; anything the walk reaches that is not a term (a
         // control word, an internal cell) is a variable with no value yet, which is what an
-        // unbound variable IS, and it shows as one.
+        // unbound variable is, and it shows as one.
         //
         // It used to let the materializer throw and caught the exception -- which works, and
-        // is LOUD: a caught exception is invisible from outside and a line in the Output
+        // is loud: a caught exception is invisible from outside and a line in the Output
         // window from inside Visual Studio. Every Break All printed "Exception thrown:
         // 'System.NotSupportedException' in Shumway.Embedding.dll", which is not an error and
         // reads exactly like one.
@@ -499,7 +499,7 @@ public class Adr035SteppingTests
     [Fact]
     public void StepOverDoesNotStopInsideTheGoalItIsSkipping_WhenThatGoalBacktracks()
     {
-        // THE REPORT: "F10 y en vez de irme parando en cada subgoal me para en la salida de
+        // The report: "F10 y en vez de irme parando en cada subgoal me para en la salida de
         // cada subgoal previo." Stepping over a goal that tries a second clause stopped at the
         // REDO port of that goal -- on a line in the middle of the predicate the user had just
         // said to skip.
@@ -508,7 +508,7 @@ public class Adr035SteppingTests
         // reads at exactly the depth of the CALL that started it. Depth alone cannot tell "the
         // goal I skipped is trying another clause" from "the clause I am in has moved on" --
         // but the reason can: a redo at the step's own depth is always inside the goal that was
-        // skipped, so a step over honours a redo only from an ENCLOSING goal. Which is the rule
+        // skipped, so a step over honours a redo only from an enclosing goal. Which is the rule
         // the exit port already followed.
         //
         //   2: pick(X) :-
@@ -530,7 +530,7 @@ public class Adr035SteppingTests
 
         var stops = Walk(engine, "pick(A).", StepMode.Over, StepMode.Over, StepMode.Over);
 
-        // choose(1) succeeds, check(1) FAILS, choose/1 is retried with its second clause -- all
+        // choose(1) succeeds, check(1) fails, choose/1 is retried with its second clause -- all
         // of it inside the goal the user stepped over. What they see is the next goal of their
         // clause, and then their clause failing or ending, never the inside of choose/1.
         Assert.DoesNotContain(stops, s => s.Reason == StopReason.Redo);
@@ -542,9 +542,9 @@ public class Adr035SteppingTests
     public void AStepLandsOnInlineGoalsToo_TheCutTheGuardAndTheIs()
     {
         // "Si estoy haciendo STEP te salteas tanto los ! como los fail." A `!`, an
-        // `is/2`, an `=/2` and the comparisons compile INLINE (ADR-018 / the cut
+        // `is/2`, an `=/2` and the comparisons compile inline (ADR-018 / the cut
         // opcode): no call, so no port, so a step walked straight over them -- and the
-        // whole point of stopping at a `!` is to look at the variables BEFORE it
+        // whole point of stopping at a `!` is to look at the variables before it
         // commits. Under debug codegen each inline goal now carries a one-byte
         // debug_port in front of its code, and a step lands on it like on any call.
         //
@@ -580,7 +580,7 @@ public class Adr035SteppingTests
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
         var lines = stops.Take(6).Select(s => s.Line).ToArray();
 
-        // Every line of the clause, in order: the guard, the is, the CUT -- stopped at
+        // Every line of the clause, in order: the guard, the is, the cut -- stopped at
         // with Y already bound and the choice points still alive -- then r(Y), then the
         // fail the caller wrote (a builtin goal, a port of its own).
         Assert.Equal(new[] { 3, 4, 5, 6, 7, 10 }, lines);
@@ -589,8 +589,8 @@ public class Adr035SteppingTests
         Assert.All(stops.Skip(1).Take(3), s => Assert.Equal("p/1", s.Goal));
         Assert.Equal("r/1", stops[4].Goal);
 
-        // Standing AT the `!` (line 6), the clause's variables are inspectable and Y is
-        // already 10 -- which is what stopping before the commit is FOR.
+        // Standing at the `!` (line 6), the clause's variables are inspectable and Y is
+        // already 10 -- which is what stopping before the commit is for.
         var atCut = stops[3];
         Assert.Equal("10", atCut.Variables.First(v => v.Name == "Y").Value);
         Assert.Equal("5", atCut.Variables.First(v => v.Name == "X").Value);
@@ -600,7 +600,7 @@ public class Adr035SteppingTests
     public void AFrameIsTheCallItIs_ArgumentsClauseNumberAndAll()
     {
         // The call stack the user asked for: module:pred(Args)!ClauseNbr. Each frame shows
-        // the head's arguments with their CURRENT values -- and they instantiate as the
+        // the head's arguments with their current values -- and they instantiate as the
         // clause runs, so stepping is visible in the stack itself.
         //
         //   2: total([], Acc, Acc).
@@ -620,13 +620,13 @@ public class Adr035SteppingTests
         engine.AddBreakpoint("<string>", 5);   // the recursive call
 
         var stops = Walk(engine, "main(T).", StepMode.Continue);
-        var frames = stops[1].Frames;   // the SECOND hit: one level of recursion below
+        var frames = stops[1].Frames;   // the second hit: one level of recursion below
         foreach (var f in frames)
             _log.WriteLine($"  {f.Name}{f.HeadArgs}!{f.ClauseNumber}");
 
         // Innermost: the second item's clause -- clause 2 of total/3, arguments as they
         // stand right now (head unification already bound the tail, so the list shows
-        // whole). Below it the first item's frame, same clause, ITS OWN arguments -- a
+        // whole). Below it the first item's frame, same clause, its own arguments -- a
         // different acc, a different list. Then main/1, clause 1. The head skeleton is the
         // head as written: `_` where it wrote `_`, the price where it named Price.
         Assert.Matches(@"^\(\[item\(_, 25\) \| \[\]\], 10, _G\d+\)$", frames[0].HeadArgs);
@@ -637,7 +637,7 @@ public class Adr035SteppingTests
         Assert.Equal(1, frames[2].ClauseNumber);
         Assert.Equal("main", frames[2].Name);
 
-        // Total is ONE variable, threaded through all three calls -- so all three lines end
+        // Total is one variable, threaded through all three calls -- so all three lines end
         // in the same `_G`: the bag gives a shared binding one identity, visibly.
         string totalVar = System.Text.RegularExpressions.Regex
             .Match(frames[0].HeadArgs, @"_G\d+\)$").Value;
@@ -670,7 +670,7 @@ public class Adr035SteppingTests
 
         var stops = Walk(engine, "mid(5, R).", StepMode.Over);
 
-        // Stopped on make/2: Y has no value yet. One F10 and the SAME frame's second
+        // Stopped on make/2: Y has no value yet. One F10 and the same frame's second
         // argument has become out(5) -- the stack reflects what the clause has done so far,
         // which is the point of showing arguments instead of an arity.
         Assert.Equal("Breakpoint", stops[0].Reason.ToString());
@@ -686,8 +686,8 @@ public class Adr035SteppingTests
         // clauses: the caller passed Data down, so every frame of the recursion holds the
         // same heap cell. Rendering it per frame did the expensive part of a stop once per
         // frame instead of once -- and serialized the same characters once per frame too.
-        // One capture, one bag, keyed by the dereferenced cell: same cell, same STRING
-        // INSTANCE, which is what lets the channel write it once and point at it.
+        // One capture, one bag, keyed by the dereferenced cell: same cell, same string
+        // instance, which is what lets the channel write it once and point at it.
         //
         //   2: walk([], _) :-
         //   3:     stop_here.
@@ -712,7 +712,7 @@ public class Adr035SteppingTests
                          .ToArray();
         Assert.Equal(4, data.Length);
         Assert.All(data, v => Assert.Equal("payload(1, 2, 3)", v));
-        Assert.All(data, v => Assert.Same(data[0], v));   // ONE rendering, shared
+        Assert.All(data, v => Assert.Same(data[0], v));   // One rendering, shared
 
         // An unbound variable shares its identity the same way: T in the innermost walk and
         // the [] the outer levels consumed are gone, but the sharing rule is per-cell, so
@@ -725,7 +725,7 @@ public class Adr035SteppingTests
         // Nobody reads three hundred frames of the same clause. What a user reads is the top
         // (where the machine is) and the bottom (how it got in) -- and the middle is a
         // recursion, which they can see is a recursion from the two frames of it either side.
-        // So the stack shows both ends and SAYS how many frames it left out, rather than
+        // So the stack shows both ends and says how many frames it left out, rather than
         // running to a length no window can show and no buffer can carry.
         var engine = DebugEngine("""
             down(0) :-
@@ -799,7 +799,7 @@ public class Adr035SteppingTests
             """);
 
         // None of lines 2, 3, 4 is a place the machine can stop: 3 and 4 have no code,
-        // and 2 is a head, whose entry point IS the first goal's. All three snap to 5.
+        // and 2 is a head, whose entry point is the first goal's. All three snap to 5.
         Assert.Equal(5, engine.BoundLine("<string>", 2));
         Assert.Equal(5, engine.BoundLine("<string>", 3));
         Assert.Equal(5, engine.BoundLine("<string>", 4));
@@ -829,7 +829,7 @@ public class Adr035SteppingTests
     [Fact]
     public void TwoProgramsWithIdenticalCodeOnDifferentLinesDoNotShareEachOthersPositions()
     {
-        // The static link is cached process-wide, keyed by a hash of the BYTECODE — so
+        // The static link is cached process-wide, keyed by a hash of the bytecode — so
         // that a pool loading one bundle N times links it once. These two programs are
         // byte-identical and written on entirely different lines, which is exactly the
         // collision: without the debug metadata in that key, the second engine gets the

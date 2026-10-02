@@ -13,8 +13,8 @@ namespace Shumway.Embedding;
 /// boxing and tree-walk. It runs in engine context, so interop functions are
 /// resolved to concrete <see cref="MethodInfo"/>s and called directly.
 ///
-/// <para>The value model and typing pass are shared with the build-time Sigil
-/// inline emitter via <see cref="NativeBlockTyping"/> — three CLR types
+/// <para>The value model and typing pass are shared with the build-time
+/// inline IL emitter via <see cref="NativeBlockTyping"/> — three CLR types
 /// (<c>long</c>/<c>double</c>/<c>string</c>, the int/float/string tier). Any
 /// construct outside the tier makes the typing or emit <see cref="NativeBlockBailException">bail</see>,
 /// and <see cref="TryCompile"/> returns null so the caller falls back to the

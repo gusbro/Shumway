@@ -186,7 +186,7 @@ public static class IOBuiltins
         return options;
     }
 
-    /// <summary>Applies a write-option LIST (already dereferenced) onto
+    /// <summary>Applies a write-option list (already dereferenced) onto
     /// <paramref name="options"/>. Shared by write_term/2,3 and format's
     /// <c>~W</c>.</summary>
     private static void ApplyWriteOptions(
@@ -197,7 +197,7 @@ public static class IOBuiltins
         // an improper tail is type_error(list, WholeList); an element that
         // is not a recognised Name(Arg) option is domain_error(write_option,
         // Element); a bool option with a non-true/false argument reports the
-        // WHOLE option as the culprit.
+        // whole option as the culprit.
         while (true)
         {
             if (optsCell.Tag is Tag.Ref or Tag.AttVar)
@@ -238,9 +238,9 @@ public static class IOBuiltins
             case "numbervars": options.Numbervars = RequireBool(engine, valCell, optCell); break;
             case "portray_text": options.PortrayText = RequireBool(engine, valCell, optCell); break;
             // Scryer/Trealla spelling of the same rendering choice: a
-            // char/code list prints as "..." — decided by CONTENT
+            // char/code list prints as "..." — decided by content
             // (ADR-047 decision 7), never by representation.
-            // ...and where that list is left OPEN, the same spelling writes
+            // ...and where that list is left open, the same spelling writes
             // it with the double bar, which is what a system offering this
             // option does with it.
             case "double_quotes":
@@ -277,7 +277,7 @@ public static class IOBuiltins
     }
 
     /// <summary>A bool write-option argument: unbound → instantiation_error;
-    /// anything but true/false → domain_error with the WHOLE option
+    /// anything but true/false → domain_error with the whole option
     /// (<c>quoted(fail)</c>) as culprit.</summary>
     private static bool RequireBool(Activation engine, Cell valCell, Cell optCell)
     {
@@ -313,8 +313,8 @@ public static class IOBuiltins
         // instantiation_error is deferred (sawUnbound) and only raised if the
         // whole list is otherwise well-formed.
         bool sawUnbound = false;
-        // First occurrence WITHIN this list wins (built into localNames below);
-        // the merge at the end lets a LATER variable_names OPTION override an
+        // First occurrence within this list wins (built into localNames below);
+        // the merge at the end lets a later variable_names option override an
         // earlier one (Neumerkel vn #71 — write_term(T,[variable_names(['Bad'=T]),
         // variable_names(['Good'=T])]) prints Good).
         var localNames = new System.Collections.Generic.Dictionary<int, string>();
@@ -340,7 +340,7 @@ public static class IOBuiltins
                     int varAddr = ResolveVarAddr(engine, engine.GetHeap(pairIdx + 2));
                     if (varAddr >= 0)
                     {
-                        // First binding for a given variable in THIS list wins.
+                        // First binding for a given variable in this list wins.
                         localNames.TryAdd(
                             varAddr, AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "");
                     }
@@ -353,7 +353,7 @@ public static class IOBuiltins
             throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         if (sawUnbound)
             throw new PrologRuntimeException("instantiation_error");
-        // Merge into the shared option map with OVERWRITE, so a later
+        // Merge into the shared option map with overwrite, so a later
         // variable_names option wins over an earlier one (vn #71). Only reached
         // when this list was well-formed (the throws above bail otherwise).
         if (localNames.Count > 0)
@@ -452,7 +452,7 @@ public static class IOBuiltins
 
     /// <summary><c>format(Stream, FormatString, Args)</c> — stream-aware
     /// variant of <see cref="Format"/>. The stream handle must be a
-    /// FOREIGN cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
+    /// foreign cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
     public static bool Format3(Activation engine)
     {
         // Streams are StreamHandle-wrapped via the per-engine
@@ -471,7 +471,7 @@ public static class IOBuiltins
         var args = ReadProperListAsCells(engine, engine.GetRegister(argsReg), name);
         int argIdx = 0;
 
-        // Column alignment (~t / ~| / ~+) needs the text SINCE the last
+        // Column alignment (~t / ~| / ~+) needs the text since the last
         // column stop in hand to distribute padding, so everything is
         // written into a pending buffer and flushed at each stop, each
         // newline, and at the end.
@@ -646,7 +646,7 @@ public static class IOBuiltins
                     }
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
-                    // ~Ns is a field WIDTH: longer text is cut to N, shorter
+                    // ~Ns is a field width: longer text is cut to N, shorter
                     // text is padded out to N with spaces.
                     string sv = sb.ToString();
                     if (num is int swidth)
@@ -698,7 +698,7 @@ public static class IOBuiltins
                 }
                 case 'W':
                 {
-                    // ~W — write_term/2: TWO arguments, the term and its
+                    // ~W — write_term/2: Two arguments, the term and its
                     // option list.
                     Cell wterm = ConsumeArg(args, ref argIdx, name);
                     Cell wopts = ConsumeArg(args, ref argIdx, name);
@@ -730,7 +730,7 @@ public static class IOBuiltins
                 {
                     // ~D — thousands separators. ~ND additionally puts the
                     // last N digits after a decimal point, and only the part
-                    // to its LEFT is grouped (`~2D` of 123456789 is
+                    // to its left is grouped (`~2D` of 123456789 is
                     // 1,234,567.89).
                     if (num is int Dneg && Dneg < 0)
                         throw new PrologRuntimeException("domain_error", "format_spec");
@@ -834,7 +834,7 @@ public static class IOBuiltins
                 }
                 else
                 {
-                    // Distribute evenly; the remainder goes ONE EACH to the
+                    // Distribute evenly; the remainder goes one each to the
                     // last fill points, so `~|~t~t~tabc~t~10+` pads 1+2+2+2,
                     // not 1+1+1+4.
                     int each = pad / _fills.Count, extra = pad % _fills.Count;
@@ -879,7 +879,7 @@ public static class IOBuiltins
 
     /// <summary>A numeric format argument (<c>~d</c>, <c>~D</c>, <c>~r</c>,
     /// <c>~e/f/g</c>, and the <c>~*n</c> count) is an arithmetic
-    /// EXPRESSION, as in SWI and SICStus — so a non-evaluable argument
+    /// expression, as in SWI and SICStus — so a non-evaluable argument
     /// raises type_error(evaluable, Name/Arity) rather than a bare type
     /// error, and <c>format("~d", [1+1])</c> prints 2.</summary>
     private static Cell FormatIntegerCell(Activation engine, Cell arg)
@@ -942,14 +942,14 @@ public static class IOBuiltins
     {
         Cell d = Resolve(engine, c);
         if (d.Tag == Tag.Atom)
-            // `format("", [])` reaches here as the empty LIST under
+            // `format("", [])` reaches here as the empty list under
             // double_quotes=codes — empty text, not the name "[]".
             return d.AsAtomId == AtomTable.EmptyListId
                 ? ""
                 : AtomTable.GetById(d.AsAtomId)?.Name ?? "";
         if (d.Tag == Tag.Pstr)
             return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
-        // A format string may equally be a list of character CODES or of
+        // A format string may equally be a list of character codes or of
         // one-char atoms — which is what `format("...", …)` becomes under
         // every double_quotes setting other than `atom`.
         if (d.Tag == Tag.Lis)
@@ -1020,7 +1020,7 @@ public static class IOBuiltins
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             // Argument list isn't a proper list — the culprit is the list as
-            // GIVEN, not the offending tail.
+            // given, not the offending tail.
             throw new PrologRuntimeException(
                 "type_error", "list", engine, Resolve(engine, c));
         return result;

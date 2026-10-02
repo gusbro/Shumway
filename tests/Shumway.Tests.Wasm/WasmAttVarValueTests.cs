@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>An attributed variable's cell exists ONLY at its home; Deref does
+/// <summary>An attributed variable's cell exists only at its home; Deref does
 /// not follow it, so a raw copy elsewhere is an orphan the attr table knows
 /// nothing about. get_value's two-cell unify copied exactly that when an
 /// attvar arrived as the bound side of a bind (found as clpfd corruption:
@@ -31,11 +31,7 @@ public class WasmAttVarValueTests
                 members.Add(m);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var addrMap = new Dictionary<int, int>(members.Count);
-                    foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, addrMap, entry.RegisterDemand);
+                    Shumway.Tests.Wasm.TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException)

@@ -29,7 +29,7 @@ public sealed class TermRenderOptions
     /// <summary><c>portray_text(true)</c>: a list of characters or of printable
     /// codes renders as <c>"…"</c> instead of element by element. Off by
     /// default — the ISO form is the list. The decision is made on the list's
-    /// CONTENT, never on how it is stored (ADR-047 decision 7), so a packed
+    /// content, never on how it is stored (ADR-047 decision 7), so a packed
     /// list and the cons list it denotes print identically.</summary>
     public bool PortrayText { get; set; } = false;
 
@@ -50,10 +50,10 @@ public sealed class TermRenderOptions
 
     /// <summary>Cycle safety for the writer (rational trees): the heap
     /// addresses of the compound nodes currently being rendered — the path
-    /// from the root. What a back-edge renders depends on POSITION, the
-    /// policy Trealla's printer follows: a revisited list TAIL elides to
-    /// <c>|...]</c> and a revisited list ELEMENT to <c>...</c>, both
-    /// immediately; a revisited STRUCT ARGUMENT is unrolled once per cell
+    /// from the root. What a back-edge renders depends on position, the
+    /// policy Trealla's printer follows: a revisited list tail elides to
+    /// <c>|...]</c> and a revisited list element to <c>...</c>, both
+    /// immediately; a revisited struct argument is unrolled once per cell
     /// (<see cref="UnrolledOnce"/>) so <c>L=[1|F], F=f(L)</c> shows
     /// <c>[1|f([1|...])]</c>. Reset by the entry wrapper; lazy, so an
     /// acyclic term allocates nothing.</summary>

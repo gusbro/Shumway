@@ -22,8 +22,8 @@ namespace Shumway.Embedding;
 /// vars, DAG / cycle sharing via a struct map, iterative list spine) so the
 /// re-emitted term is structurally identical to the AST path's.</para>
 ///
-/// <para>A solution containing a <em>value leaf</em> — FLOAT / BIGINT / STRING /
-/// PSTR (side-table / buffer payloads) or a FOREIGN cell — falls back to the AST
+/// <para>A solution containing a <em>value leaf</em> — float / bigint / string /
+/// PSTR (side-table / buffer payloads) or a foreign cell — falls back to the AST
 /// path (<see cref="TrySnapshotRegister"/> returns <c>null</c>): those payloads
 /// are not blittable into a flat cell image, and such templates are rare. The
 /// common atom / int / var / compound / list solution takes the fast path.</para>
@@ -104,7 +104,7 @@ internal static class FindallSnapshot
             case Tag.Int:
                 return rc;
             default:
-                // A bare FLOAT/BIGINT/PSTR/FOREIGN/ATTVAR register cell — value
+                // A bare float/bigint/PSTR/foreign/ATTVAR register cell — value
                 // leaf (or, for ATTVAR, a var reached without a heap address to
                 // key off). Stage into one heap slot so CopyAt can deref it; a
                 // real value leaf there throws → fallback.
@@ -148,7 +148,7 @@ internal static class FindallSnapshot
         }
     }
 
-    /// <summary><paramref name="fAddr"/> is the source FUNCTOR cell address.
+    /// <summary><paramref name="fAddr"/> is the source functor cell address.
     /// Mirrors <see cref="HeapTermCopy.CopyStr"/>: image slot layout
     /// [STR(base+1)][Functor][arg0..], value cell REF(base).</summary>
     private static Cell CopyStr(Activation engine, int fAddr,
@@ -158,7 +158,7 @@ internal static class FindallSnapshot
         Cell fcell = engine.GetHeap(fAddr);
         var (_, arity) = FunctorTable.Lookup(fcell.AsFunctorId);
         int baseIdx = Reserve(cells, 2 + arity);
-        structMap[fAddr] = baseIdx;   // register BEFORE recursing — cycle / DAG safety
+        structMap[fAddr] = baseIdx;   // register before recursing — cycle / DAG safety
         cells[baseIdx] = Cell.Str(baseIdx + 1);
         cells[baseIdx + 1] = Cell.Functor(fcell.AsFunctorId);
         for (int i = 0; i < arity; i++)
@@ -177,7 +177,7 @@ internal static class FindallSnapshot
         var srcHeads = new List<int>();
         int cur = firstHead;
         int finalTailAddr;
-        // A cons whose tail re-enters the spine BEING walked: image slots do
+        // A cons whose tail re-enters the spine being walked: image slots do
         // not exist yet, so the walk marks each head provisionally (negative
         // = position on this spine; real slots are never negative — slot 0 is
         // the reserved root). Without the mark, `L = [a|L]` re-walks itself

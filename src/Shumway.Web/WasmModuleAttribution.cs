@@ -15,7 +15,7 @@ internal sealed class WasmModuleAttribution
 
     public WasmModuleAttribution(PrologEngine engine)
     {
-        // A library's EXPORTS carry no module prefix (clpfd's in/2, #=/2,
+        // A library's exports carry no module prefix (clpfd's in/2, #=/2,
         // label/1 look exactly like user predicates), so the qualified-name
         // rule alone leaves dozens of them unattributed. The manifests name
         // them.

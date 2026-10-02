@@ -6,7 +6,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Top-level message accuracy (issue #65): the printed error is the
-/// SAME term catch/3 unifies with, culprits render in Prolog syntax, internal
+/// same term catch/3 unifies with, culprits render in Prolog syntax, internal
 /// $-helpers never surface as the error context, and answers print quoted
 /// with char lists portrayed as "..." — so a raw newline in a value can no
 /// longer break the transcript's own syntax.</summary>
@@ -38,7 +38,7 @@ public class TopLevelMessageTests
     [Fact]
     public void CodesStayNumeric()
     {
-        // [65, 66] is a list of small integers unless the PROGRAM says
+        // [65, 66] is a list of small integers unless the program says
         // text; dressing it up as "AB" would misreport arbitrary data.
         using var run = NewSession().StartQuery("X = [65, 66].");
         Assert.True(run.MoveNext());

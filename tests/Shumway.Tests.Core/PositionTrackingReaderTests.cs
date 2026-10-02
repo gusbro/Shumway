@@ -6,7 +6,7 @@ namespace Shumway.Tests.Core;
 
 /// <summary>ADR-045 — a text stream collapses CR-LF to <c>\n</c>. These pin
 /// the decorator itself with the flag set explicitly, so the rules hold on
-/// every platform; the platform DEFAULT is pinned separately.</summary>
+/// every platform; the platform default is pinned separately.</summary>
 public sealed class PositionTrackingReaderTests
 {
     private static PositionTrackingReader On(string text, bool translate = true) =>
@@ -29,7 +29,7 @@ public sealed class PositionTrackingReaderTests
     [Fact]
     public void LoneCr_IsData_NotALineTerminator()
     {
-        // C stdio's rule, which GNU inherits: only the PAIR is a terminator,
+        // C stdio's rule, which GNU inherits: only the pair is a terminator,
         // so a classic-Mac file reads unchanged.
         Assert.Equal("abc\rdef\r", ReadAll(On("abc\rdef\r")));
     }

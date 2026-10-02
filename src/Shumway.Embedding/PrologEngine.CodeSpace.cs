@@ -18,7 +18,7 @@ public sealed partial class PrologEngine
 
     /// <summary>Every live query's interpreter (weak — a finished query's interp
     /// collects naturally), so mutation-time invalidation can clear a fid's
-    /// <c>IlByFunctorId</c> slot in ALL of them (see InvalidateDynamicCache).</summary>
+    /// <c>IlByFunctorId</c> slot in all of them (see InvalidateDynamicCache).</summary>
     internal readonly List<WeakReference<Shumway.Interpreter.BytecodeInterpreter>>
         _liveInterps = new();
 
@@ -39,8 +39,8 @@ public sealed partial class PrologEngine
     /// interned a literal and then bailed to a fallback path can't leave a
     /// later same-literal compile thinking the interpreter is current.</summary>
     /// <summary>The literal-pool lengths each
-    /// engine's interpreter was built (or last refreshed) with, PER
-    /// ENGINE. Host-level counters broke under the mutation broadcast:
+    /// engine's interpreter was built (or last refreshed) with, per
+    /// engine. Host-level counters broke under the mutation broadcast:
     /// refreshing engine A updated them, so engine B's refresh compared
     /// equal and skipped — leaving B's interpreter on a stale (possibly
     /// empty) pool snapshot ("Float literal id N is out of range").</summary>
@@ -53,7 +53,7 @@ public sealed partial class PrologEngine
     /// bundle load). A query links only its transient region against this.</summary>
     internal Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
-    // Static-region LAYOUT ORDER, so a consult does not move code that did
+    // Static-region layout order, so a consult does not move code that did
     // not change. The linker lays predicates out in list order, and the list
     // was "whatever the module compiler produced, then the precompiled
     // prelude appended" — so consulting one fact pushed the whole prelude
@@ -61,7 +61,7 @@ public sealed partial class PrologEngine
     // (Tier-1 wasm modules bake deopt pcs, resume markers and BP encodings;
     // debug metadata and any host-held address likewise) pointed into
     // different code. The layout is now append-only: a predicate keeps the
-    // ordinal it was first laid out with, and anything new or CHANGED takes
+    // ordinal it was first laid out with, and anything new or changed takes
     // a fresh ordinal at the end. Unchanged predicates therefore keep their
     // addresses across consults, which is what the other backends already
     // assume.
@@ -70,7 +70,7 @@ public sealed partial class PrologEngine
     private int _staticLayoutNext;
 
     // Superseded versions, by the ordinal they still occupy. A reconsult
-    // replaces a predicate: the new version is appended, and the OLD one
+    // replaces a predicate: the new version is appended, and the old one
     // stays exactly where it was — dead, owning nothing — so the code laid
     // out after it keeps its address. Reclaiming the space is future work
     // (see StaticDeadRegions), which is why the inventory is kept.
@@ -81,7 +81,7 @@ public sealed partial class PrologEngine
     /// own nothing — handed to the linker each time the region is built.</summary>
     internal HashSet<int>? StaticDeadIndices { get; private set; }
 
-    /// <summary>Where the dead regions of the CURRENT static program are,
+    /// <summary>Where the dead regions of the current static program are,
     /// and how big: (address, size, the functor whose old version it was).
     /// The bookkeeping a future pass needs to reuse the holes a reconsult
     /// leaves; nothing reuses them yet, so this only ever grows within an
@@ -122,7 +122,7 @@ public sealed partial class PrologEngine
         // The sets, as the layout sees them: A = what is being laid out now,
         // B = what the layout already holds. B minus A keeps its ordinal and
         // therefore its address. A minus B is appended. A intersect B splits:
-        // unchanged keeps its ordinal, CHANGED leaves its old version behind
+        // unchanged keeps its ordinal, changed leaves its old version behind
         // as a dead region and the new one is appended like a fresh
         // predicate.
         var keyed = new List<(int Key, Shumway.Compiler.Wam.CompiledPredicate P,
@@ -361,17 +361,18 @@ public sealed partial class PrologEngine
         // auto-compaction mutation counter ticks.
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
+        _snapshotStaleFids.Add(functorId);
         DropDynamicPredicateCacheEntry(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
-        // is stale: evict it, and clear every LIVE query interpreter's direct
+        // is stale: evict it, and clear every live query interpreter's direct
         // fid-table slot so the very next dispatch re-resolves live (falling
         // back to the Tier-0 enter_dynamic chain — the logical update view).
-        // ALL live interps, not just the current one: a SUSPENDED outer
+        // All live interps, not just the current one: a suspended outer
         // activation resumes with its own table, and a stale slot there
         // dispatched an evicted dynamic snapshot (the Logtalk-under-promotion
         // silent failure).
         InvalidateIlForFunctor(functorId);
-        // ADR-034 — and any CALLER whose IL embeds this predicate's inlined
+        // ADR-034 — and any caller whose IL embeds this predicate's inlined
         // snapshot must stop using it: the emitted clause-entry staleness test
         // reads this host-lifetime set (shared into every per-query engine),
         // so the fallback path takes over from the very next clause entry.
@@ -385,7 +386,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Drops a functor's promoted Tier-1 IL delegate and clears every
-    /// live interpreter's direct-dispatch slot for it. For a STATIC predicate
+    /// live interpreter's direct-dispatch slot for it. For a static predicate
     /// whose clause set changed at consult time — the global expansion hooks
     /// (term_expansion/goal_expansion) are the sanctioned case: each library
     /// consult appends its hook clauses to the same global predicate. A hook
@@ -397,6 +398,8 @@ public sealed partial class PrologEngine
     internal void InvalidateIlForFunctor(int functorId)
     {
         IlPromotion.EvictDelegate(functorId);
+        // ADR-054: a wasm snapshot of it leaves new calls too.
+        IlPromotion.Wasm?.OnMutated(functorId);
         for (int i = _liveInterps.Count - 1; i >= 0; i--)
         {
             if (!_liveInterps[i].TryGetTarget(out var li))
@@ -407,6 +410,7 @@ public sealed partial class PrologEngine
             var ilTable = li.IlByFunctorId;
             if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
                 ilTable[functorId] = null;
+            li.Activation.EvictCps(functorId);   // ADR-061
         }
     }
 
@@ -472,12 +476,12 @@ public sealed partial class PrologEngine
     /// Populated at LoadBundle from each region method's <see cref="Shumway.Compiler.Il.
     /// IlPersistedEntry.RegionMembers"/> table. Injected into the query address map
     /// (lowest priority — only for a member with no WAM address and no standalone IL
-    /// delegate) so a by-fid call to a stripped absorbed member dispatches INTO its
+    /// delegate) so a by-fid call to a stripped absorbed member dispatches into its
     /// region method at the member's entry cursor.</summary>
     internal readonly Dictionary<int, int> _regionMemberAliases = new();
 
     /// <summary>True when a call to <paramref name="fid"/> dispatches through
-    /// Tier-1 IL: it has its own promoted delegate, OR a persisted-IL region
+    /// Tier-1 IL: it has its own promoted delegate, or a persisted-IL region
     /// method covers it as an absorbed member (region alias). Region members
     /// have no standalone delegate by design, so
     /// <see cref="IlPromotionStore.IsPromoted"/> alone understates Tier-1
@@ -485,7 +489,7 @@ public sealed partial class PrologEngine
     internal bool IsTier1Dispatched(int fid) =>
         IlPromotion.IsPromoted(fid) || _regionMemberAliases.ContainsKey(fid);
 
-    /// <summary>Eagerly Sigil-compiles every compilable static predicate to
+    /// <summary>Eagerly compiles every compilable static predicate to
     /// Tier-1 IL now — the opt-in counterpart to the lazy default, for a program
     /// that will do enough queries to want the whole set hot before the first
     /// (a server warming up before it serves). Returns the number newly promoted.
@@ -499,7 +503,7 @@ public sealed partial class PrologEngine
         if (IlPromotion.Threshold <= 0) return 0;
         int before = IlPromotion.PromotedCount;
         // Every predicate the engine has already compiled to WAM: each loaded
-        // bundle module's decoded predicates (source-stripped AND the bytecode
+        // bundle module's decoded predicates (source-stripped and the bytecode
         // blob of a source-carrying entry), plus the consulted-source static
         // cache. A freshly consulted source that has not run a query yet has no
         // compiled predicates to warm — those promote lazily on first use.
@@ -589,7 +593,7 @@ public sealed partial class PrologEngine
     /// gets), cached alongside <see cref="_staticRewriteUserLocals"/>. The
     /// dynamic-clause rewrite consults it so a dynamic clause attributed to
     /// a non-user module (see <see cref="_dynamicSeedModule"/>) mangles its
-    /// body calls against THAT module's locals — matching the entry's
+    /// body calls against that module's locals — matching the entry's
     /// static bytecode, which ShmoCompiler mangled under the per-file
     /// module name.</summary>
     internal Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
@@ -597,12 +601,12 @@ public sealed partial class PrologEngine
     /// <summary>Per-module transform cache underneath the whole-program
     /// <see cref="_staticRewriteClauses"/> snapshot. When a derivation bump
     /// forces the regenerate branch, only the modules whose manifest actually
-    /// CHANGED re-run the transform chain — the rest reuse their previous
+    /// changed re-run the transform chain — the rest reuse their previous
     /// rewritten clause lists verbatim (same Clause objects, same MetaTransform
     /// helper ids), which also keeps their compiled-predicate cache entries
     /// valid. The key fingerprints every transform input that varies per
     /// module: the clause list identity (reference + element-wise reference
-    /// snapshot — append-only growth, reconsult AND in-place hook re-expansion
+    /// snapshot — append-only growth, reconsult and in-place hook re-expansion
     /// all change it), the public/import/export surface sizes, the mode-table
     /// version, opaqueness, and the codegen flags. A module that regenerates
     /// (or vanishes) drops its old head fids from the static compiled cache —
@@ -613,7 +617,7 @@ public sealed partial class PrologEngine
         public required object ClausesRef;
         /// <summary>Element-wise reference snapshot of the manifest's clause
         /// list at build time. Compared by reference per element: an in-place
-        /// INTERIOR replacement (the in-file hook re-expansion pass rewrites
+        /// interior replacement (the in-file hook re-expansion pass rewrites
         /// clauses without changing count or endpoints) must invalidate.</summary>
         public required Clause[] ClauseSnapshot;
         public required int PublicCount;
@@ -630,6 +634,9 @@ public sealed partial class PrologEngine
         /// whose qualified goals now resolve differently.</summary>
         public required Dictionary<(string Mod, string Name, int Arity), string?>?
             QualifiedResolutions;
+        /// <summary>ADR-056: the meta-argument specs the transform looked up,
+        /// revalidated per reuse like the qualified resolutions.</summary>
+        public required Dictionary<(int Fid, string? Local), int[]?>? MetaArgLookups;
         public required List<Clause> Rewritten;
         public required HashSet<int> Locals;
         public required HashSet<int> HeadFids;
@@ -645,9 +652,9 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>ADR-030 staleness guard for the per-module reuse above: the
-    /// head fids whose LAST clause had its redundant trailing cut elided in the
+    /// head fids whose last clause had its redundant trailing cut elided in the
     /// previous product build. Elision is a WHOLE-program analysis, so a
-    /// reused module's compiled predicate can go stale when a DIFFERENT
+    /// reused module's compiled predicate can go stale when a different
     /// module's regeneration flips its callees' det-ness — the build compares
     /// the fresh elided set against this one and drops the flipped fids.</summary>
     internal HashSet<int>? _lastElidedStaticFids;
@@ -671,11 +678,11 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>The compiled PROGRAM product: everything query setup derives
+    /// <summary>The compiled program product: everything query setup derives
     /// from the static + dynamic program alone — compiled predicates
     /// partitioned into the ADR-015 static / dynamic regions, the rerouted
     /// leftovers for the query overlay, and the cacheable-head set. A query
-    /// only ever ADDS the synthetic <c>__query__</c> clause (plus its
+    /// only ever adds the synthetic <c>__query__</c> clause (plus its
     /// <c>$q</c> helpers) on top, so between program changes every query
     /// reuses this instead of re-compiling / re-partitioning / re-probing
     /// the whole program (the per-query cost scaled linearly with program
@@ -706,7 +713,7 @@ public sealed partial class PrologEngine
 
     internal CompiledProgramProduct? _programProduct;
 
-    /// <summary>Bumped by every per-functor invalidation that does NOT move
+    /// <summary>Bumped by every per-functor invalidation that does not move
     /// <see cref="_derivationGen"/> (assertz / asserta / retract on an
     /// existing dynamic functor, JIT hotness flips) — the compiled program
     /// product contains that functor's compile and must rebuild.</summary>
@@ -730,7 +737,7 @@ public sealed partial class PrologEngine
     /// alongside). An entry drops when its functor's clause list mutates
     /// (<see cref="InvalidateDynamicCache"/>) or when the rewrite-context
     /// inputs it was built under changed — recorded per entry as the
-    /// LOCALS SET INSTANCE (the per-module transform cache reuses the same
+    /// locals set instance (the per-module transform cache reuses the same
     /// HashSet while its module is unchanged, so reference equality is an
     /// exact fingerprint) plus the mode-table version. Entries survive
     /// derivation bumps whose regeneration didn't touch their module —
@@ -746,9 +753,9 @@ public sealed partial class PrologEngine
     internal static readonly HashSet<int> EmptyLocalsSentinel = new();
 
     /// <summary>ADR-030 elision-result cache across product builds. The
-    /// elision DECISIONS are a pure function of the eligible (static) clause
+    /// elision decisions are a pure function of the eligible (static) clause
     /// content, the defined-indicator set, and the per-indicator eligibility
-    /// (dynamic-ness) — dynamic clause BODIES are never analyzed (ineligible
+    /// (dynamic-ness) — dynamic clause bodies are never analyzed (ineligible
     /// predicates never enter the det set). So when no module re-transformed
     /// and both fid sets match, the previous build's substitution map
     /// (original clause → elided clause) replays in O(N) reference probes
@@ -769,8 +776,8 @@ public sealed partial class PrologEngine
 
     /// <summary>link metadata derived from
     /// <see cref="_staticLink"/> + <see cref="_dynamicLink"/>:
-    /// <see cref="_persistentAddressesCache"/> is the merged REAL address
-    /// map (fed to the query linker as external symbols — it must NOT
+    /// <see cref="_persistentAddressesCache"/> is the merged real address
+    /// map (fed to the query linker as external symbols — it must not
     /// contain aliases, or a query call site to a module-local predicate's
     /// bare name would link-resolve and break module visibility);
     /// <see cref="_persistentAddressBaseCache"/> additionally carries the

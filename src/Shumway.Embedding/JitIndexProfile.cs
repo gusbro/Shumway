@@ -31,13 +31,13 @@ public sealed class JitIndexProfile
     private readonly Dictionary<int, bool> _compiledHot = new();
 
     /// <summary>Call count at which a dynamic predicate becomes eligible for
-    /// indexed recompilation. This profile is a PERFORMANCE knob only — it
+    /// indexed recompilation. This profile is a performance knob only — it
     /// must never decide observable semantics. Known open defect it currently
     /// masks: an unindexed dynamic chain leaves a choice point on any
     /// non-last clause match (call_det(t(b)) over facts a/b/c reports
     /// non-det cold, det once hot+indexed — GNU/SWI report det always).
     /// Determinism must be tier- and hotness-uniform; the fix belongs at the
-    /// Tier-0 chain DISPATCH (first-arg clause selection in enter_dynamic:
+    /// Tier-0 chain dispatch (first-arg clause selection in enter_dynamic:
     /// one candidate = CP-free jump, last candidate = trust), not here —
     /// raising or lowering this threshold to change det-ness conflates JIT
     /// with semantics.</summary>

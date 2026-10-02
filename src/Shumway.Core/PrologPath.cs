@@ -4,9 +4,9 @@ namespace Shumway.Core;
 /// separator on every platform, so path text is ordinary re-readable term
 /// text and portable code can treat a path as data.
 ///
-/// <para>The native separator is a boundary detail: a path ARGUMENT may
+/// <para>The native separator is a boundary detail: a path argument may
 /// arrive in either form (Win32 accepts both), and every path Shumway
-/// RETURNS is canonical. The translation is Windows-only and one-way —
+/// returns is canonical. The translation is Windows-only and one-way —
 /// on Unix a backslash is a legal character in a file name, so rewriting it
 /// would make that file unreachable.</para></summary>
 public static class PrologPath
@@ -28,7 +28,7 @@ public static class PrologPath
         return path.Replace('\\', '/');
     }
 
-    /// <summary>The canonical form of a DIRECTORY: as <see cref="ToCanonical"/>,
+    /// <summary>The canonical form of a directory: as <see cref="ToCanonical"/>,
     /// and ending in <c>/</c> (ADR-044 §5 — the form a caller can concatenate
     /// a file name onto).</summary>
     public static string ToCanonicalDirectory(string path)

@@ -73,7 +73,7 @@ public class Adr035ModuleResolveTests
     [Fact]
     public void StoppedInAPublicPredicate_StillResolvesTheModulesLocals()
     {
-        // `run/0` (the `:- set_prolog_flag` prepend shifts it to line 4) is PUBLIC — compiled
+        // `run/0` (the `:- set_prolog_flag` prepend shifts it to line 4) is public — compiled
         // global, no module prefix of its own. The single-module program still resolves
         // `show_usage` against blint (the sole user module), as a user stopped anywhere in Blint
         // expects.
@@ -143,7 +143,7 @@ public class Adr035ModuleResolveTests
     public void AtTheEntryBreak_OnTheBundleLoadPath_ResolvesTheModulesLocals()
     {
         // The real --exe path: a Debuggable bundle whose module is "Blint" (the file base name,
-        // no `:- module` directive), a PUBLIC main, and a local show_usage. Stopped at the entry
+        // no `:- module` directive), a public main, and a local show_usage. Stopped at the entry
         // break in main, a bare `show_usage` must resolve.
         var engine = new PrologEngine();
         engine.Flags.EmitDebugInfo = true;
@@ -173,9 +173,9 @@ public class Adr035ModuleResolveTests
     [Fact]
     public void MultiModule_EntryBreakInPublicMain_ResolvesViaTheUniqueDefiningModule()
     {
-        // TWO modules, so neither the frame's own prefix (public main), nor the source file
+        // Two modules, so neither the frame's own prefix (public main), nor the source file
         // (ConsultString is "<string>"), nor the single-module shortcut applies — the module can
-        // NOT be pinned. `show_usage` is defined in exactly ONE module, so it still resolves; a
+        // not be pinned. `show_usage` is defined in exactly one module, so it still resolves; a
         // name defined in neither stays undefined.
         var engine = new PrologEngine();
         engine.ConsultString("""
@@ -214,7 +214,7 @@ public class Adr035ModuleResolveTests
     [Fact]
     public void TwoModulesDefineTheSameName_ResolvesToTheStoppedFramesModule()
     {
-        // `tag/1` is local to BOTH alpha and beta, so the unique-module fallback is ambiguous —
+        // `tag/1` is local to both alpha and beta, so the unique-module fallback is ambiguous —
         // the only thing that can pick one is the FRAME's module, taken from the call-stack line's
         // file (alpha.pl). Stopped in alpha's amain, `tag(R)` must be alpha's.
         var engine = new PrologEngine();

@@ -12,7 +12,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Builtin registration is a one-time, process-wide affair that any
 /// number of threads may ask for. It used to claim its "already done" flag
-/// BEFORE doing the work (<c>Interlocked.Exchange</c> on the way in), so a
+/// before doing the work (<c>Interlocked.Exchange</c> on the way in), so a
 /// second caller arriving mid-registration was told the registry was ready and
 /// went on to look up a builtin that had not been registered yet. The net48
 /// gate caught it as <c>call/1 is not a registered builtin</c> — a test whose
@@ -48,7 +48,7 @@ public sealed class BuiltinRegistrationRaceTests
     {
         // Whoever gets there first does the work; everyone else waits for it.
         // Nobody may be waved through into a half-populated registry.
-        // DEDICATED threads, not Task.Run: on a loaded 2-core CI runner the
+        // Dedicated threads, not Task.Run: on a loaded 2-core CI runner the
         // thread pool injects workers at ~1/s, and 16 queued tasks blew a
         // 30-second timeout without ever testing the invariant. The
         // concurrency this pins must not depend on how busy the machine is.
@@ -73,7 +73,7 @@ public sealed class BuiltinRegistrationRaceTests
     [Fact]
     public void RegistrationIsIdempotentAndKeepsIdsStable()
     {
-        // Ids are handed out by a counter and BAKED INTO PERSISTED IL as patch
+        // Ids are handed out by a counter and baked into persisted IL as patch
         // targets, so a second registration pass that renumbered anything would
         // be far worse than a slow one.
         StandardBuiltins.EnsureRegistered();

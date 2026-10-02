@@ -52,7 +52,7 @@ public sealed class Linker
     /// replaced the predicate, and the live version lives elsewhere.</summary>
     public readonly record struct DeadRegion(int Address, int Size, int FunctorId);
 
-    /// <summary>Indices of <c>predicates</c> that are laid out but do NOT
+    /// <summary>Indices of <c>predicates</c> that are laid out but do not
     /// claim their functor: superseded versions kept in place so the
     /// addresses after them do not move. Their bytes are emitted as they
     /// were; nothing links to them, so their call sites are left
@@ -102,7 +102,7 @@ public sealed class Linker
             int basePos = bytes.Count;
             int absAddr = basePos + loadOffset;
 
-            // A DEAD entry occupies its bytes and nothing else: no address,
+            // A dead entry occupies its bytes and nothing else: no address,
             // no switch tables, no call-site patching. It exists so that the
             // predicates laid out after it keep the addresses they had.
             if (DeadIndices is { } dead && dead.Contains(pi))

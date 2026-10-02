@@ -30,7 +30,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public static bool IsKnownLibraryDialect(string name) =>
         DialectRegistry.IsKnownDialect(name);
 
-    /// <summary>Shumway's version. THE single source: the
+    /// <summary>Shumway's version. The single source: the
     /// <c>version_data</c> Prolog flag (<c>shumway(Major, Minor, Patch,
     /// [])</c>), the top-level banner and the assembly stamp all derive from
     /// these three numbers, so they can never disagree.</summary>
@@ -161,10 +161,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // Built by the same scan, invalidated with it: the head functors a
     // grammar rule defines (predicate_property(H, non_terminal)).
     internal HashSet<int>? _nonTerminalFunctorsCache;
-    // Set for the duration of a RUNTIME consult (consult/1 called from within a
+    // Set for the duration of a runtime consult (consult/1 called from within a
     // live query). When set, source-declared dynamic clauses are also pushed
     // into the live dispatch (AppendDynamicClauseIncremental) so a call later in
-    // the SAME query sees them — exactly as a runtime assertz would. Null during
+    // the same query sees them — exactly as a runtime assertz would. Null during
     // startup/ctor consults, where the next query builds dispatch fresh.
     internal Activation? _liveConsultEngine;
     internal readonly OperatorTable _operators = OperatorTable.Default();
@@ -177,13 +177,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// compilation persists).</summary>
     internal readonly Dictionary<string, OperatorTable> _moduleOpLayers = new();
 
-    /// <summary>ADR-046 — the operators each module EXPORTS (the
+    /// <summary>ADR-046 — the operators each module exports (the
     /// <c>op(P,T,N)</c> terms of its export list). Applied to the
     /// importer's layer by <c>use_module</c>.</summary>
     internal readonly Dictionary<string,
         List<(int Precedence, OperatorType Type, string Name)>> _moduleExportedOps = new();
 
-    /// <summary>The operator layer used to READ module
+    /// <summary>The operator layer used to read module
     /// <paramref name="module"/>'s text: its own layer over the user
     /// table, or the user table itself for bare/user text.</summary>
     internal OperatorTable ModuleOperatorLayer(string module)
@@ -228,7 +228,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// "already loaded" can mean "already loaded, and unchanged".
     ///
     /// <para><c>use_module</c> is idempotent by design — importing a library
-    /// twice must not consult it twice. But someone EDITING the file they just
+    /// twice must not consult it twice. But someone editing the file they just
     /// imported means the opposite by the same act: reloading the importer has
     /// to pick the change up, or the program runs against a version that is no
     /// longer on disk. Both are true, and the file itself says which applies.</para></summary>
@@ -259,7 +259,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>Whether <paramref name="fullPath"/> differs from what was loaded.
     ///
-    /// <para>No stamp means NOT changed — this only ever forces a reload of
+    /// <para>No stamp means not changed — this only ever forces a reload of
     /// something we know has moved. A file loaded by a route that records no
     /// stamp (a <c>.shum</c> bundle, whose load returns before the source path
     /// is noted) would otherwise look changed forever and be re-loaded on every
@@ -267,7 +267,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal bool FileDiffersFromLoad(string fullPath)
         => _loadStamps.TryGetValue(fullPath, out var loaded) && StampOf(fullPath) != loaded;
 
-    /// <summary>Whether a source file is already loaded AND unchanged since —
+    /// <summary>Whether a source file is already loaded and unchanged since —
     /// i.e. whether <c>ensure_loaded/1</c> has nothing left to do. Changed on
     /// disk counts as not-loaded, the same reading <c>use_module</c> takes:
     /// someone is editing it, and a program running against a version that no
@@ -338,6 +338,55 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// wrapped for the calling context.</summary>
     internal readonly Dictionary<int, Term> _metaPredicateTemplates = new();
 
+    /// <summary>ADR-056: the meta-argument positions of the predicate a call
+    /// resolves to, by its bare functor id. <paramref name="localModule"/>
+    /// names the calling module when the call resolves to that module's own
+    /// predicate: then only that module's own <c>meta_predicate</c>
+    /// declaration counts, since a program's <c>partition/4</c> is not the
+    /// prelude's. Otherwise the declared template, else the prelude's
+    /// undeclared higher-order predicates. Null for a predicate with
+    /// none.</summary>
+    internal int[]? MetaArgSpec(int fid, string? localModule)
+    {
+        _metaPredicateTemplates.TryGetValue(fid, out Term? template);
+        var key = (fid, localModule);
+        if (_metaArgSpecCache.TryGetValue(key, out var cached)
+            && ReferenceEquals(cached.Template, template))
+            return cached.Spec;
+        int[]? spec;
+        if (localModule is not null)
+            spec = template is not null
+                   && _metaPredicateDeclarers.TryGetValue(fid, out var declarers)
+                   && declarers.Contains(localModule)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(template)
+                : null;
+        else if (template is not null) spec = ModuleRewrite.MetaArgSpecOfTemplate(template);
+        else
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string? name = AtomTable.GetById(atomId)?.Name;
+            spec = name is null ? null : ModuleRewrite.LibraryMetaArgSpec(name, arity);
+        }
+        _metaArgSpecCache[key] = (template, spec);
+        return spec;
+    }
+
+    /// <summary>The modules whose consult declared a
+    /// <c>meta_predicate</c> template, by functor id.</summary>
+    internal readonly Dictionary<int, HashSet<string>> _metaPredicateDeclarers = new();
+
+    // An entry answers only while the template it was computed from is still
+    // the declared one.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(int, string?), (Term? Template, int[]? Spec)>
+        _metaArgSpecCache = new();
+
+    /// <summary>ADR-055: the clauses a source defined for another module
+    /// (<c>M:Head :- Body</c>), by source (its module for a module file, its
+    /// file or string buffer otherwise) and target module. A reload withdraws
+    /// its source's entries; a module replaced by its own reload keeps the
+    /// entries other sources gave it.</summary>
+    internal readonly List<(string Source, string Target, Clause Clause)> _foreignClauses = new();
+
     /// <summary>The control constructs' meta-templates. They are not
     /// predicates, so no <c>:- meta_predicate</c> directive can name them
     /// (`','(0,0)` in a directive reads as the conjunction-of-specs form),
@@ -353,19 +402,19 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         }
     }
 
-    /// <summary>Records the prelude's <c>:- meta_predicate</c> templates
-    /// WITHOUT consulting it — a BAKED prelude (FromBundle: every --exe,
-    /// WebShumway's stdlib) installs bytecode and executes no directives, so
-    /// the <c>meta_predicate(T)</c> property would silently vanish there
-    /// while the live engine reports it (Logtalk's compiler decides wrapping
-    /// from exactly this property). The directives are one-per-line in
-    /// <see cref="Prelude.Source"/>; scanning them costs nothing next to the
-    /// full parse the bake exists to avoid. Parsed with the DEFAULT operator
-    /// table, like the prelude's own consult.</summary>
-    internal void SeedPreludeMetaTemplates()
+    /// <summary>Records the <c>:- meta_predicate</c> templates of a baked
+    /// source without consulting it — a bundle (the prelude of every --exe
+    /// and of WebShumway's stdlib, the engine's own libraries) installs
+    /// bytecode and executes no directives, so the <c>meta_predicate(T)</c>
+    /// property would silently vanish there while the live engine reports
+    /// it (Logtalk's compiler decides wrapping from exactly this property).
+    /// The directives are one-per-line in the source; scanning them costs
+    /// nothing next to the full parse the bake exists to avoid. Parsed with
+    /// the default operator table, like the source's own consult.</summary>
+    internal void SeedMetaTemplatesFromSource(string source)
     {
         foreach (System.Text.RegularExpressions.Match m in
-            System.Text.RegularExpressions.Regex.Matches(Prelude.Source,
+            System.Text.RegularExpressions.Regex.Matches(source,
                 @"^\s*:-\s*meta_predicate\((.*)\)\s*\.\s*$",
                 System.Text.RegularExpressions.RegexOptions.Multiline))
         {
@@ -417,7 +466,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// currently expanding, or -1 outside that pass. An in-file hook's clause is
     /// committed guarded by <c>'$te_after'(HookIndex)</c>, which succeeds when this
     /// is -1 (any later consult — the hook always applies then) or greater than
-    /// HookIndex (this consult — the hook applies only to clauses AFTER its own
+    /// HookIndex (this consult — the hook applies only to clauses after its own
     /// definition, matching SWI/Scryer order-sensitivity).</summary>
     internal int _consultExpandPos = -1;
 
@@ -425,7 +474,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// via <c>use_module</c> consults at depth &gt; 1 — the in-file term_expansion
     /// re-expansion pass, which runs sub-queries, must not run there: those queries
     /// mid-outer-consult corrupt the outer consult's compile state. Such a library's
-    /// re-expansion is a no-op anyway (its hooks target the OUTER file's clauses,
+    /// re-expansion is a no-op anyway (its hooks target the outer file's clauses,
     /// which the outer file's own consult expands).</summary>
     internal int _consultDepth;
 
@@ -477,7 +526,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal readonly DynamicClauseStore _dynStore = new();
 
     /// <summary>ADR-034 — dynamic functor ids mutated at any point in this
-    /// host's lifetime. Shared BY REFERENCE into every per-query
+    /// host's lifetime. Shared by reference into every per-query
     /// <see cref="Activation"/> (see <see cref="Activation.MutatedDynamicFids"/>) so
     /// baked clause-entry staleness tests see a mid-query mutation
     /// immediately. Grows monotonically; never cleared (a caller whose IL
@@ -497,7 +546,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     // the generation lives in a shared GenerationBox handed to
     // every Activation this host sets up, so enter_dynamic samples it with a
-    // field read instead of a Func<long> invoke per dynamic call. The ONE
+    // field read instead of a Func<long> invoke per dynamic call. The one
     // bump site is InvalidateDynamicCache (every assertz / asserta /
     // retract / abolish funnels through it).
     internal readonly Shumway.Core.GenerationBox _dbGeneration = new();
@@ -525,9 +574,44 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// to a known system predicate rather than an undefined one.</summary>
     internal readonly HashSet<int> _preludeFunctors = new();
 
-    /// <summary>True for a predicate the PRELUDE defines — library code a
-    /// program sees as built_in, so current_predicate/1 skips it.</summary>
-    internal bool IsPreludeFunctor(int functorId) => _preludeFunctors.Contains(functorId);
+    /// <summary>A predicate the prelude or a library provides and the program
+    /// has not redefined (ADR-059): library surface, not the program's.</summary>
+    internal bool IsPreludeFunctor(int functorId)
+        => _preludeFunctors.Contains(functorId) && !_redefinedFunctors.Contains(functorId);
+
+    /// <summary>ADR-059 — library predicates a file in the global module
+    /// redefined. Their clauses are the program's, so the introspection
+    /// reports them as such.</summary>
+    internal readonly HashSet<int> _redefinedFunctors = new();
+
+    /// <summary>ADR-059 — the predicates a library loaded into the global
+    /// module defined; a subset of <see cref="_preludeFunctors"/>.</summary>
+    internal readonly HashSet<int> _libraryFunctors = new();
+
+    /// <summary>ADR-059 — the kind of a system predicate, or null for a
+    /// predicate the system does not provide. The compiler lowers the control
+    /// connectives and \+/1, which have no entry of their own; everything else
+    /// takes the kind its registration or prelude documentation declares. An
+    /// undocumented prelude predicate is engine, one a library brought is
+    /// library.</summary>
+    internal Shumway.Builtins.PredicateKind? SystemKindOf(int functorId)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        if ((name, arity) is (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0))
+            return Shumway.Builtins.PredicateKind.Control;
+        if ((name, arity) is ("\\+", 1))
+            return Shumway.Builtins.PredicateKind.Iso;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int id))
+            return Shumway.Builtins.BuiltinsRegistry.GetById(id).Kind;
+        if (PredicateDoc.KindOf(name, arity) is { } documented)
+            return documented;
+        if (_libraryFunctors.Contains(functorId))
+            return Shumway.Builtins.PredicateKind.Library;
+        if (_preludeFunctors.Contains(functorId))
+            return Shumway.Builtins.PredicateKind.Engine;
+        return null;
+    }
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
@@ -536,7 +620,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public System.IO.TextWriter Out { get; set; } = Console.Out;
 
     /// <summary>The output redirections <c>with_output_to/2</c> has open —
-    /// its goal runs in the LIVE engine with the stream registry's current
+    /// its goal runs in the live engine with the stream registry's current
     /// output pointed at an in-memory stream; <c>'$wot_end'</c> restores the
     /// displaced handle. A stack, because captures nest.</summary>
     internal System.Collections.Generic.Stack<(Shumway.Core.StreamHandle Prev,
@@ -550,7 +634,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// otherwise load a program that quietly did not load part of itself.
     /// Point it at the same writer as <see cref="Out"/> to have them read as
     /// one stream.</summary>
-    /// Resolved late rather than captured at construction: unset, it IS standard
+    /// Resolved late rather than captured at construction: unset, it is standard
     /// error, so redirecting the console after building an engine still works.
     public System.IO.TextWriter Warnings
     {
@@ -561,28 +645,28 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     private System.IO.TextWriter? _warnings;
 
     /// <summary>Whether a solution's values are materialized only as far as
-    /// the answer will be SHOWN. Off by default: an embedder's <c>Query</c>
+    /// the answer will be shown. Off by default: an embedder's <c>Query</c>
     /// hands back the whole term, always.
     ///
     /// <para>A top level turns it on, because its answers exist to be looked at
     /// and it elides them anyway. Eliding afterwards bounds the output and not
     /// the work: measured, an answer of 1.5 million cells spent 1.7s becoming
-    /// AST nodes against 0.04s being rendered -- more than SOLVING the query
+    /// AST nodes against 0.04s being rendered -- more than solving the query
     /// cost. In WebShumway, with no JIT, the same wait is 25 seconds.</para>
     ///
     /// <para>How far is <c>answer_max_depth</c>, so the flag keeps its meaning
     /// and its documented zero ("print everything") still materializes
-    /// everything. The allowance below is in NODES where the flag counts list
+    /// everything. The allowance below is in nodes where the flag counts list
     /// elements, and a cons is two nodes plus what its head costs -- it is
     /// deliberately loose, so that what the answer looks like stays the
     /// elision's decision and never this one's.</para></summary>
     public bool ElideAnswersForDisplay { get; set; }
 
-    /// <summary>Whether a clause that does not parse ABORTS the consult that
+    /// <summary>Whether a clause that does not parse aborts the consult that
     /// met it (raising <c>syntax_error</c>) instead of being reported through
     /// <see cref="Warnings"/> and skipped. Off by default: loading a program
     /// reports the bad clause and carries on, so one broken clause does not
-    /// cost a file. A host that COMPILES rather than loads — the bundle
+    /// cost a file. A host that compiles rather than loads — the bundle
     /// writer validating hand-built sources — turns it on, because a module
     /// baked quietly missing a clause is worse than a failed build.</summary>
     public bool StrictConsultSyntax { get; set; }
@@ -595,10 +679,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             ? Flags.AnswerMaxDepth * 8 + 64
             : 0;
 
-    /// <summary>Non-zero while an INTERNAL query's bindings are being read as
+    /// <summary>Non-zero while an internal query's bindings are being read as
     /// data — the expansion hooks read term_expansion's output through a
     /// solution's bindings, and the display limit truncated a hook's returned
-    /// clause LIST there: atts-style libraries lost their generated
+    /// clause list there: atts-style libraries lost their generated
     /// predicates, and the elision marker spliced in as clauses of './2'.
     /// The limit is for answers a person looks at, never for these.</summary>
     private int _displayElisionSuppress;
@@ -616,7 +700,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// lazily, inside MoveNext.</summary>
     internal ElisionSuppressScope SuppressDisplayElision() => new(this);
 
-    /// <summary>Heap-collector totals for this ENGINE, across every query it
+    /// <summary>Heap-collector totals for this engine, across every query it
     /// has run.
     ///
     /// <para>A query gets a fresh <see cref="Activation"/>, so the collector's
@@ -647,10 +731,40 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         catch { /* a host whose sink is gone must not take the load down */ }
     }
 
+    /// <summary>The <c>library(X)</c> imports that resolved to nothing since
+    /// <see cref="ClearUnresolvedImports"/>, most recent last.
+    ///
+    /// <para>A <c>use_module(library(X))</c> naming a library the search path
+    /// does not hold is a warning: it is reported and the load continues, the
+    /// way a Prolog system does. The cost is that the warning goes to a text
+    /// sink while the caller's result says only whether something threw, so a
+    /// consult whose every import resolved to nothing is indistinguishable
+    /// from one that worked. That cost is real: a browser measurement ran a
+    /// whole clp(Z) benchmark against a page where the library was absent,
+    /// reporting timings for predicates that did not exist, because consult
+    /// had answered "no error".</para>
+    ///
+    /// <para>So the fact is recorded as well as written. The error channel is
+    /// deliberately untouched: callers that treat any diagnostic as a failure
+    /// keep working, and callers that care ask.</para></summary>
+    public System.Collections.Generic.IReadOnlyList<string> UnresolvedImports
+        => _unresolvedImports;
+
+    private readonly System.Collections.Generic.List<string> _unresolvedImports = new();
+
+    /// <summary>Forgets the imports recorded so far, so a caller can scope the
+    /// question to one consult.</summary>
+    public void ClearUnresolvedImports() => _unresolvedImports.Clear();
+
+    internal void NoteUnresolvedImport(string libraryName)
+    {
+        _unresolvedImports.Add(libraryName);
+    }
+
     /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
     /// <c>get_char/1</c> and the rest. Null means the host's standard input
     /// (and end-of-file where the host has none, as a browser does). Set it
-    /// BEFORE the first query: the stream registry is built during query setup
+    /// before the first query: the stream registry is built during query setup
     /// and <c>user_input</c> keeps whatever reader it was handed then.</summary>
     public System.IO.TextReader? In { get; set; }
 
@@ -797,7 +911,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             }
 
         // nearest-predicate-at-or-below resolver for pc-keyed counters
-        // (retry_me_else attribution) — a clause's retry pc sits INSIDE its
+        // (retry_me_else attribution) — a clause's retry pc sits inside its
         // predicate's code range, past the entry address.
         var sortedAddrs = addrToName.Keys.ToArray();
         Array.Sort(sortedAddrs);
@@ -824,7 +938,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             nearestPredicateName: NearestName);
     }
 
-    /// <summary>per-module set of BARE (un-mangled) local
+    /// <summary>per-module set of bare (un-mangled) local
     /// functor ids contributed by a bundle loaded via
     /// <see cref="LoadEntryFromBytecode"/>. A bundle's predicates are
     /// already compiled (and mangled <c>module$name</c>), so
@@ -859,7 +973,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <para><see cref="IsInternal"/> marks a frame the user did not write —
     /// the prelude, a bundled library, an opaque module (the ADR-035
     /// non-debuggable set). Its <see cref="Position"/> indexes source the
-    /// user has no file for, so a diagnostic reports such a frame WITHOUT a
+    /// user has no file for, so a diagnostic reports such a frame without a
     /// line number rather than quoting one that points nowhere.</para></summary>
     public readonly record struct StackFrame(
         string Name, int Arity, Shumway.Compiler.Lexer.SourcePosition Position,
@@ -894,7 +1008,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public PrologEngine() : this(consultPrelude: true) { }
 
     /// <summary>Bare construction: when <paramref name="consultPrelude"/> is
-    /// <c>false</c> the engine starts WITHOUT the internal prelude. Used by
+    /// <c>false</c> the engine starts without the internal prelude. Used by
     /// <see cref="FromBundle(Bundle)"/> so a bundle that bakes a precompiled
     /// prelude (shumway-link <c>--exe</c> / <c>--stdlib</c>) supplies it
     /// instead of the engine paying the parse + compile at startup. A bare
@@ -922,9 +1036,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
+        IlPromotion.PromotabilityChanged = InvalidatePersistent;
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
+        IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
 
         // Consult the internal prelude — Prolog-level definitions of
@@ -938,7 +1054,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         }
     }
 
-    /// <summary>Loads a bundle into a fresh engine, using the bundle's BAKED
+    /// <summary>Loads a bundle into a fresh engine, using the bundle's baked
     /// prelude (produced by <c>shumway-link --exe</c> / <c>--stdlib</c>)
     /// when present so startup skips compiling the prelude. Falls back to
     /// consulting the prelude when the bundle doesn't carry one (older bundles
@@ -952,7 +1068,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     }
 
     /// <summary>ADR-035 — <see cref="FromBundle(Bundle)"/> for a host that wants the engine
-    /// DEBUGGABLE. Passing a non-null <paramref name="debug"/> turns debugging on BEFORE the
+    /// debuggable. Passing a non-null <paramref name="debug"/> turns debugging on before the
     /// bundle's modules are consulted — which is the only moment it can matter, since
     /// debuggability is decided when code is compiled — so the modules load debuggable and a
     /// module that still carries its source is shown from that embedded source. This is what
@@ -986,7 +1102,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null)
     {
         var engine = new PrologEngine(consultPrelude: false);
-        // ADR-035 — a host that asked for a debuggable engine gets the switch thrown BEFORE
+        // ADR-035 — a host that asked for a debuggable engine gets the switch thrown before
         // any module is consulted (debuggability is a compile-time property), exactly as when
         // the host builds the engine by hand. The prelude below is consulted and marked
         // non-debuggable afterward, so it stays opaque either way; the bundle's own modules,
@@ -997,7 +1113,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         {
             // If a wait-for-attach was requested, DON'T let EnableDebugging block here — the
             // bundle's modules have not loaded yet, so the source the debugger needs is not
-            // materialised or announced. Enable debug codegen now; wait AFTER LoadBundleCore.
+            // materialised or announced. Enable debug codegen now; wait after LoadBundleCore.
             var enableNow = waitForAttach
                 ? new Debugging.DebugOptions
                 {
@@ -1009,11 +1125,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
                 : debug;
             debugSession = engine.EnableDebugging(enableNow);
         }
-        // The prelude must be present BEFORE the bundle's entries load — a
+        // The prelude must be present before the bundle's entries load — a
         // persisted-IL entry resolves its call targets / region-member aliases
         // against the prelude's functors at load, and the same prelude-then-
         // program order a normal `new PrologEngine(); LoadBundle()` uses keeps
-        // that sound. When the bundle BAKES the prelude (a Tier-0 --exe), it
+        // that sound. When the bundle bakes the prelude (a Tier-0 --exe), it
         // supplies it as an entry, so we let LoadBundleCore install it; only
         // when no baked prelude is present do we consult it up front.
         bool bundleHasPrelude = false;
@@ -1029,14 +1145,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             // The baked prelude executes no directives — recover its
             // meta_predicate templates from the source constant so
             // predicate_property/2 reports them like a live engine.
-            engine.SeedPreludeMetaTemplates();
+            engine.SeedMetaTemplatesFromSource(Prelude.Source);
         }
         engine.LoadBundleCore(bundle, bundleDir);
-        // ADR-035 — the BAKED prelude is still the prelude: not the user's code,
+        // ADR-035 — the baked prelude is still the prelude: not the user's code,
         // never debuggable. Without this a debug-compiled program on a baked-
         // prelude engine (the browser's stdlib bundle, every --exe) steps into
         // permutation/2, and the prelude's re-compiled clauses take stop sites
-        // attributed to the user's file. Marked AFTER LoadBundleCore so the
+        // attributed to the user's file. Marked after LoadBundleCore so the
         // module's clauses exist to resolve.
         if (bundleHasPrelude)
             engine.MarkModuleNonDebuggable(Prelude.ModuleName);
@@ -1062,6 +1178,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         {
             var copy = new ModuleManifest(name);
             copy.Clauses.AddRange(manifest.Clauses);
+            copy.ShippedClauses.AddRange(manifest.ShippedClauses);
             copy.PublicFunctors.UnionWith(manifest.PublicFunctors);
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;

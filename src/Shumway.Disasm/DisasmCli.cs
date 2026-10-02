@@ -114,7 +114,7 @@ internal static class DisasmCli
         if (audit)
         {
             // Emit one tab-separated verdict line per predicate for corpus-wide
-            // aggregation: AUDIT <cat> <clauses> <worst> <potential> <arg> <name>/<arity>
+            // aggregation: Audit <cat> <clauses> <worst> <potential> <arg> <name>/<arity>
             try
             {
                 foreach (var e in PredicateDisassembler.AuditIndexing(source, arityCompat))
@@ -137,7 +137,7 @@ internal static class DisasmCli
         if (census)
         {
             // One tab-separated tally line for the whole source, for corpus-wide
-            // aggregation across files (sum the columns): CENSUS <preds> <ops>
+            // aggregation across files (sum the columns): Census <preds> <ops>
             // <pairs> <clauses> <tailClauses> <cutTailClauses> <cut>deallocate_proceed
             // <cut>proceed <call><cut> <deallocate><exec> <cut>deallocate <cut><exec>
             try

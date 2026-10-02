@@ -7,12 +7,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-035 D4 surfaced this: `:- initialization(Goal)` where Goal HALTS must end the load,
+/// ADR-035 D4 surfaced this: `:- initialization(Goal)` where Goal halts must end the load,
 /// and say so, rather than reporting the goal as failed and carrying on.
 ///
 /// <para>halt/0-1 does not reach the consult as an exception — <c>QueryAll</c> catches the
 /// <see cref="PrologHaltException"/>, records the code in
-/// <see cref="PrologEngine.LastHaltExitCode"/> and reports the goal as FAILED. So a program
+/// <see cref="PrologEngine.LastHaltExitCode"/> and reports the goal as failed. So a program
 /// that ran, did its work and asked to exit was indistinguishable from one that fell over:
 /// the load continued, the warning said "initialization goal failed", and (in the REPL) the
 /// process that had been told to halt went on to sit at a top-level prompt nobody typed at.
@@ -40,7 +40,7 @@ main :- assertz(ran(yes)), halt.
         {
             PrologHaltException halted = Assert.Throws<PrologHaltException>(() => engine.ConsultFile(path));
             Assert.Equal(0, halted.ExitCode);
-            // The goal RAN — this is a halt, not a failure.
+            // The goal ran — this is a halt, not a failure.
             Assert.Equal(0, engine.LastHaltExitCode);
         }
         finally
@@ -69,7 +69,7 @@ main :- assertz(ran(yes)), halt.
     public void AnInitializationGoalThatMerelyFailsStillOnlyWarns()
     {
         // The other half of the contract, and the reason the halt case had gone unnoticed:
-        // a failing goal must NOT end the load.
+        // a failing goal must not end the load.
         var engine = new PrologEngine();
         string path = WriteTemp(@"
 :- initialization(fail).

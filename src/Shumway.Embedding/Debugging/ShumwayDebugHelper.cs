@@ -11,19 +11,19 @@ namespace Shumway.Embedding.Debugging;
 ///
 /// <para><b>The debugger does not call these methods by these names.</b> It calls
 /// <see cref="Shumway.Core.Debugging.ShumwayDebugHost"/>, which forwards here — because a
-/// debugger evaluates an expression against a FRAME, and a frame can only name types its
+/// debugger evaluates an expression against a frame, and a frame can only name types its
 /// own module can see. The frame it stops on is an engine frame, usually the interpreter,
 /// and <c>Shumway.Interpreter</c> does not reference <c>Shumway.Embedding</c>. Core is the
 /// only assembly all of them share, so that is where the door had to be. The work is
 /// here; the handle is there.</para>
 ///
-/// <para><b>Attach</b> is the handshake, and the ONE func-eval the design allows. It runs
+/// <para><b>Attach</b> is the handshake, and the one func-eval the design allows. It runs
 /// at attach time, in a normal execution context where evaluating a function in the
 /// debuggee is safe and supported — not inside breakpoint notification, where it
 /// deadlocks. It hands back the addresses of the pinned channel buffers, and from then on
 /// the debugger only reads and writes memory.</para>
 ///
-/// <para>The addresses come back as a STRING rather than a struct or a pointer: it is the
+/// <para>The addresses come back as a string rather than a struct or a pointer: it is the
 /// one return type that crosses a func-eval with no marshalling assumptions on either
 /// side, and this is called once per session, so nothing about it needs to be fast.</para>
 /// </summary>
@@ -85,10 +85,10 @@ public static class ShumwayDebugHelper
 
     /// <summary>ADR-035 — a stderr line for the <c>--debug-wait</c> entry path, telling
     /// whether the engine armed the entry stop, fired it, and thought a debugger was attached
-    /// when it did. OPT-IN: only when <c>SHUMWAY_DEBUG_DIAG=1</c> — the same switch the Concord
+    /// when it did. Opt-in: only when <c>SHUMWAY_DEBUG_DIAG=1</c> — the same switch the Concord
     /// components' log uses — so an ordinary debug run's output is not littered with it.</summary>
     /// <summary>Whether the diagnostic channel is on — read once, so a hot call site can
-    /// guard an expensive message BUILD (a rendered term, a concatenation per hit) behind
+    /// guard an expensive message build (a rendered term, a concatenation per hit) behind
     /// it rather than paying for a line nobody will see.</summary>
     public static bool DiagEnabled { get; } =
         Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1";
@@ -135,7 +135,7 @@ public static class ShumwayDebugHelper
     /// truth: the stack as it stands right now. Returns the new sequence number, or 0 if
     /// no query is running.
     ///
-    /// <para>The SECOND (and last) func-eval the design allows, and it is safe for the
+    /// <para>The second (and last) func-eval the design allows, and it is safe for the
     /// same reason Attach is: a Break All is a normal stop, not the
     /// breakpoint-notification context where evaluating a function deadlocks.</para>
     /// </summary>
@@ -146,7 +146,7 @@ public static class ShumwayDebugHelper
         return session is null ? 0 : session.CaptureNow();
     }
 
-    /// <summary>The stop. The debugger's hidden breakpoint does NOT live here — it lives on
+    /// <summary>The stop. The debugger's hidden breakpoint does not live here — it lives on
     /// <see cref="Shumway.Core.Debugging.ShumwayDebugHost.Notify"/>, for the module-visibility
     /// reason above. This forwards, so that a caller with only the Embedding surface in hand
     /// still trips it.</summary>
@@ -178,7 +178,7 @@ public static class ShumwayDebugHelper
     public static int Ping() => DebugChannel.FormatVersion;
 
     /// <summary>The .pl files this process was told to consult, published with the channel.
-    /// A breakpoint binds against a module and a module IS a file — and a LAUNCHED process
+    /// A breakpoint binds against a module and a module is a file — and a launched process
     /// has stopped nowhere yet, so the debugger has no frames to learn the file names from.
     /// It has to be told, before the first goal runs, or the user's breakpoints have nothing
     /// to attach to. Set before the session opens.</summary>
@@ -205,7 +205,7 @@ public static class ShumwayDebugHelper
     /// <para>Which files a program is made of is not settled when it starts: a top level
     /// consults on demand (<c>?- [blint].</c>), and everything the debugger does with a file
     /// — bind a breakpoint, name a frame's language, open it when the user clicks — needs a
-    /// module, and a module needs the NAME. Learning it from a stop that has already happened
+    /// module, and a module needs the name. Learning it from a stop that has already happened
     /// is one stop too late, which is exactly what the user saw: grey frames on the first
     /// break, real ones on the second.</para></summary>
     public static void NoteSourceFile(string path)
@@ -219,7 +219,7 @@ public static class ShumwayDebugHelper
         }
         PublishChannelFile(_channel);
 
-        // Published is not the same as READ. The debugger can only build the module that
+        // Published is not the same as read. The debugger can only build the module that
         // stands for a file from inside a stop, so give it one — a stop that shows nothing,
         // resumes at once, and means the user's first break in this file is a break in a file
         // the debugger already knows.
@@ -232,7 +232,7 @@ public static class ShumwayDebugHelper
         catch (Exception) { return path; }
     }
 
-    /// <summary>Where a debugger can find this process's channel WITHOUT running a single
+    /// <summary>Where a debugger can find this process's channel without running a single
     /// line of its code: <c>%TEMP%\shumway-debug\&lt;pid&gt;.channel</c>.</summary>
     public static string ChannelFilePath(int processId) => System.IO.Path.Combine(
         System.IO.Path.GetTempPath(), "shumway-debug",
@@ -242,9 +242,9 @@ public static class ShumwayDebugHelper
     /// ADR-035 D4 — the handshake, in a file.
     ///
     /// <para>Reading a static field of the debuggee is still running code in it, in the sense
-    /// that matters here: it needs a THREAD, stopped, in a FRAME whose module can name the
+    /// that matters here: it needs a thread, stopped, in a frame whose module can name the
     /// type. A debugger attaching by hand has that (the user pressed Break All). A debugger
-    /// LAUNCHING the process does not: nothing ever stops, so there was no moment at which
+    /// launching the process does not: nothing ever stops, so there was no moment at which
     /// the channel could be found, so the hidden breakpoint was never armed, so nothing ever
     /// stopped. The program ran to the end and no breakpoint in it could fire.</para>
     ///

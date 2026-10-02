@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Everything that states Shumway's version must state the SAME
+/// <summary>Everything that states Shumway's version must state the same
 /// version: the <c>version_data</c> Prolog flag, the top-level banner, and the
 /// assembly stamp (<c>&lt;Version&gt;</c> in Directory.Build.props). The
 /// constants on <see cref="PrologEngine"/> are the single source; this pins

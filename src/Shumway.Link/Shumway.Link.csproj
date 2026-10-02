@@ -4,6 +4,11 @@
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
     <ProjectReference Include="..\Shumway.Compiler\Shumway.Compiler.csproj" />
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.Libraries\Shumway.Libraries.csproj" />
+    <!-- The baker behind the wasm option. net10 only, like the backend itself: the net48
+         toolchain reports the option as unavailable. -->
+    <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj"
+                      Condition="'$(TargetFramework)' != 'net48'" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -48,7 +48,7 @@ public class WasmStructureTests
     [Fact]
     public void AppendChecksToo()
     {
-        // The whole SHARES its tail with ys, the way an append's output
+        // The whole shares its tail with ys, the way an append's output
         // usually does: the base case then compares one cell with itself.
         // (Two structurally equal but distinct lists reach a general
         // compound unify, which this slice deliberately steps aside on --
@@ -66,7 +66,7 @@ public class WasmStructureTests
     [Fact]
     public void AppendEnumeratesItsSplits()
     {
-        // app(X, Y, [1,2]): three answers, each built by WRITE mode into the
+        // app(X, Y, [1,2]): three answers, each built by write mode into the
         // unbound arguments and unbuilt again by the trail on backtracking.
         using var h = Harness();
         h.Fresh();

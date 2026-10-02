@@ -36,7 +36,7 @@ public sealed record DebugStopEvent(
     int Depth,
     IReadOnlyList<PrologEngine.DebugFrame> Frames)
 {
-    /// <summary>ADR-035 — the breakpoint that fired, as the USER set it. Not the same
+    /// <summary>ADR-035 — the breakpoint that fired, as the user set it. Not the same
     /// question as <see cref="File"/>/<see cref="Line"/>, which say where the machine is:
     /// a breakpoint on a rule's head binds at its first goal, so the two differ by design,
     /// and a debugger matching a hit to the red dot it drew needs this one. Empty for
@@ -44,14 +44,14 @@ public sealed record DebugStopEvent(
     public string BreakFile { get; init; } = "";
     public int BreakLine { get; init; }
 
-    /// <summary>ADR-035 D5 — why a CONDITIONAL breakpoint stopped even though its condition
+    /// <summary>ADR-035 D5 — why a conditional breakpoint stopped even though its condition
     /// did not succeed: the condition could not run (a syntax error, an exception, a
     /// timeout). Empty for every ordinary stop — including a conditional breakpoint whose
     /// condition simply held. A debugger shows this to the user; the alternative was a
     /// broken condition silently swallowing its breakpoint, which is undiagnosable.</summary>
     public string ConditionError { get; init; } = "";
 
-    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at this stop
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would accept at this stop
     /// (see <see cref="DebugService.ValidSetNextLines"/>). Carried in the snapshot so the
     /// debugger can validate Ctrl+Shift+F10 synchronously — it cannot func-eval to ask.</summary>
     public IReadOnlyList<int> SetNextLines { get; init; } = Array.Empty<int>();
@@ -79,7 +79,7 @@ public sealed record DebugStopEvent(
 /// moment anything changed the depth without going through a port — last-call
 /// optimisation reusing a frame, a cut discarding choice points, or a
 /// <c>:- disable_debug.</c> predicate running goals that report nothing at all.
-/// Reading the chain cannot drift, because the chain IS the depth.</para>
+/// Reading the chain cannot drift, because the chain is the depth.</para>
 /// </summary>
 public sealed partial class DebugService : IDebugSession
 {
@@ -92,7 +92,7 @@ public sealed partial class DebugService : IDebugSession
     // The callee named by the last call port. Only a call port knows the name of the
     // goal it is about to run; every other stop reads it back off the frame it is in.
     //
-    // Held as the ID the port reported, NOT as a name: naming it means a demangle and a
+    // Held as the id the port reported, not as a name: naming it means a demangle and a
     // "name/arity" — two allocations per goal, for a string almost every port throws away.
     // A stop is rare; a port is not. Resolve at the stop.
     private GoalKind _goalKind;
@@ -122,7 +122,7 @@ public sealed partial class DebugService : IDebugSession
     }
 
     // Whether a functor is one of the engine's own helpers ($-prefixed once demangled),
-    // and what it is called if it is not — decided ONCE per functor. Functor ids are
+    // and what it is called if it is not — decided once per functor. Functor ids are
     // stable for the life of the process, and the answer is a property of the name, so
     // the second call port on the same predicate costs a dictionary probe and nothing
     // else. (Null = internal: raise no port for it.)
@@ -165,15 +165,15 @@ public sealed partial class DebugService : IDebugSession
         _stepFromRedo = _lastStopWasRedo;
     }
 
-    /// <summary>Whether the stop this step is being taken FROM was a redo port. It changes
+    /// <summary>Whether the stop this step is being taken from was a redo port. It changes
     /// Step Out by one: a redo port reports the retried goal's CALL depth (a retried clause
     /// does not deepen the environment chain — see <see cref="IDebugSession.OnRedo"/>), which
     /// is one shallower than the goal's body. So the goal's continuation — the next sibling,
-    /// where "out of this goal" lands — sits at the SAME depth as the redo, not below it. Step
+    /// where "out of this goal" lands — sits at the same depth as the redo, not below it. Step
     /// Out from a redo therefore stops at <c>depth &lt;= _stepDepth</c>, where a call/breakpoint
-    /// stop (whose depth IS the goal's own) uses the strict <c>depth &lt; _stepDepth</c>. Without
+    /// stop (whose depth is the goal's own) uses the strict <c>depth &lt; _stepDepth</c>. Without
     /// this, stepping out of a goal shown at a redo port skips its whole continuation and runs
-    /// on out of the ENCLOSING clause — "runs the whole program" from inside a backtracking
+    /// on out of the enclosing clause — "runs the whole program" from inside a backtracking
     /// predicate.</summary>
     private bool _stepFromRedo;
 
@@ -190,7 +190,7 @@ public sealed partial class DebugService : IDebugSession
 
     /// <summary>What to do at the entry port. Wired by <see cref="ChannelDebugSession"/> to
     /// its <c>BreakHere</c> — the <c>debugger_break/0</c> mechanism (a managed
-    /// <c>Debugger.Break()</c>), which is the one stop VS honours WITHOUT a step or an async
+    /// <c>Debugger.Break()</c>), which is the one stop VS honours without a step or an async
     /// break already pending, and so the only one that can land unbidden at startup. Left as
     /// a callback so a test can observe the entry port without a real debugger to break
     /// into.</summary>
@@ -206,7 +206,7 @@ public sealed partial class DebugService : IDebugSession
     ///
     /// <para>It has to survive between ports for the asynchronous break: when the user
     /// hits Break All, the engine is not at a port and never will be until it reaches
-    /// the next goal, but the debugger wants the stack NOW. It stops the process from
+    /// the next goal, but the debugger wants the stack now. It stops the process from
     /// outside and asks (<see cref="CaptureNow"/>), and the answer can only come from
     /// the machine that was last running.</para></summary>
     public Activation? Current { get; internal set; }
@@ -240,7 +240,7 @@ public sealed partial class DebugService : IDebugSession
         };
     }
 
-    /// <summary>Turns last-call optimisation on or off for the query ALREADY RUNNING —
+    /// <summary>Turns last-call optimisation on or off for the query already running —
     /// which is what a debugger stopped inside one wants, and what
     /// <c>debug_lastcall</c> being an opcode that reads a flag rather than a compiled-in
     /// decision is for. Frames LCO already reclaimed do not come back, but from the next
@@ -254,8 +254,8 @@ public sealed partial class DebugService : IDebugSession
 
     /// <summary>ADR-035 — record a stop that did not come through <see cref="Stop"/>:
     /// <c>debugger_break/0</c>, which stops the debugger by asking the runtime rather than by
-    /// tripping our own breakpoint. The DEPTH is the part that matters. A step over or out is
-    /// measured against the depth of the goal you stepped FROM, and without this it would be
+    /// tripping our own breakpoint. The depth is the part that matters. A step over or out is
+    /// measured against the depth of the goal you stepped from, and without this it would be
     /// measured against whatever the last real stop left behind — so F10 from a
     /// <c>debugger_break</c> would run to somewhere arbitrary.</summary>
     internal void NoteStop(int depth)
@@ -266,11 +266,11 @@ public sealed partial class DebugService : IDebugSession
     }
 
     /// <summary>Break All for a DIRECT-attach frontend: stops at the current port,
-    /// reporting through the constructor's stop handler. Call it FROM the engine
+    /// reporting through the constructor's stop handler. Call it from the engine
     /// thread — the natural place is inside <see cref="Poll"/>, which is how a
     /// frontend turns its own "pause" flag into a stop. Captures the truth on
     /// demand (<see cref="CaptureNow"/>) and notes the depth so the next step is
-    /// measured from HERE, not from whatever the last real stop left behind —
+    /// measured from here, not from whatever the last real stop left behind —
     /// the same discipline the channel session applies to its Break All.</summary>
     public void BreakHereNow()
     {
@@ -299,7 +299,7 @@ public sealed partial class DebugService : IDebugSession
 
     // ----- the Immediate window: evaluate a goal against the live engine -----
 
-    /// <summary>An evaluation is in flight OR parked: the goal typed in the Immediate window
+    /// <summary>An evaluation is in flight or parked: the goal typed in the Immediate window
     /// owns the engine's per-query tables — either running right now, or suspended between
     /// solutions waiting for the user to ask for the next with <c>;</c>.</summary>
     private bool _evalActive;
@@ -314,9 +314,9 @@ public sealed partial class DebugService : IDebugSession
     // ----- a parked, resumable evaluation (member(X,[a,b,c]) ; ; ...) -----
     //
     // The Immediate window is one call per line, so backtracking across lines means keeping the
-    // eval's enumerator ALIVE between calls: the first line runs the goal to its first solution
-    // and PARKS the enumerator; a bare ";" line pumps MoveNext for the next. While parked, the
-    // engine's debug tables are swapped BACK to the suspended query's (double-buffered in
+    // eval's enumerator alive between calls: the first line runs the goal to its first solution
+    // and parks the enumerator; a bare ";" line pumps MoveNext for the next. While parked, the
+    // engine's debug tables are swapped back to the suspended query's (double-buffered in
     // _outerScope / _evalTables) so the Call Stack and Locals still show where the user is
     // stopped, not the eval — the enumerator is invisibly suspended underneath.
     private bool _evalPumping;                                   // inside MoveNext right now
@@ -331,7 +331,7 @@ public sealed partial class DebugService : IDebugSession
     private const string EvalResidualsVar = "_DbgEvalResiduals_8f2c";
     private List<(string Display, string Var)>? _pendingResidVars;
 
-    /// <summary>ADR-035 D5+ — one frame variable a solution may bind INTO the suspended
+    /// <summary>ADR-035 D5+ — one frame variable a solution may bind into the suspended
     /// frame: the name the user wrote, the name its substituted variable carries in the
     /// solution, and the frame cell's heap address on the suspended activation.</summary>
     private readonly record struct CommitVar(string FrameName, string SolutionKey, int FrameAddr);
@@ -341,7 +341,7 @@ public sealed partial class DebugService : IDebugSession
     private bool _commitLocked;                   // a solution committed: ';' is over
 
     /// <summary>ADR-035 D5+ — a commit changed the suspended frame's bindings: the stop
-    /// snapshot is stale and must be RE-CAPTURED, not restored (the channel session's
+    /// snapshot is stale and must be re-captured, not restored (the channel session's
     /// post-eval bracket consumes this via <see cref="TakeFrameStateChanged"/>).</summary>
     internal bool FrameStateChanged { get; private set; }
 
@@ -367,7 +367,7 @@ public sealed partial class DebugService : IDebugSession
     public static bool SuppressStopsDuringEvaluation { get; set; }
         = Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_EVAL_QUIET") == "1";
 
-    /// <summary>How long an evaluated goal may run before it is cancelled — UNTIL its
+    /// <summary>How long an evaluated goal may run before it is cancelled — until its
     /// first stop: a goal standing at a breakpoint is the user's to resume or abort, for
     /// as long as they care to look, and a timer that fired under them would abort the
     /// evaluation they were in the middle of inspecting.</summary>
@@ -375,16 +375,16 @@ public sealed partial class DebugService : IDebugSession
 
     /// <summary>ADR-035 — the Immediate window. Parses <paramref name="goalText"/>,
     /// substitutes each of its variables that names a variable of display frame
-    /// <paramref name="frameIndex"/> with that variable's CURRENT value, and runs the
+    /// <paramref name="frameIndex"/> with that variable's current value, and runs the
     /// result as a real query — a new activation over the live engine, database effects
     /// and all, with the exact semantics of any nested mid-query activation. Returns the
     /// first solution's bindings ("X = 5, Y = out(5)"), "true", "false", or an error
     /// sentence.
     ///
     /// <para>A goal with more than one solution can be walked like the REPL: after the first
-    /// solution the evaluation is PARKED, and a line consisting only of "<c>;</c>" asks for the
+    /// solution the evaluation is parked, and a line consisting only of "<c>;</c>" asks for the
     /// next. Any other line abandons the parked evaluation and starts fresh; so does stepping
-    /// or continuing the program. While parked the debugger shows the SUSPENDED query as
+    /// or continuing the program. While parked the debugger shows the suspended query as
     /// usual — the parked enumerator is invisible until the next <c>;</c>.</para></summary>
     public string EvaluateGoal(int frameIndex, string goalText)
     {
@@ -410,8 +410,8 @@ public sealed partial class DebugService : IDebugSession
         if (outer is null) return "nothing is stopped: no frame to evaluate against";
         if (string.IsNullOrWhiteSpace(trimmed)) return "nothing to evaluate";
 
-        // A leading '!' runs the goal ON the suspended activation itself — frame
-        // variables are the REAL cells, so a posted constraint narrows them and a
+        // A leading '!' runs the goal on the suspended activation itself — frame
+        // variables are the real cells, so a posted constraint narrows them and a
         // binding sticks, with once-semantics and Prolog's own trail as the
         // transaction: failure (append `, fail` for a dry run) or an error
         // unwinds to the entry marks and the frame is untouched. Side effects
@@ -441,11 +441,11 @@ public sealed partial class DebugService : IDebugSession
         // The frame's variables, as terms. The goal's variables that match by name are
         // substituted; the rest stay free and come back as the answer's bindings.
         //
-        // ADR-035 D5+ — BIND-INTO-FRAME. A frame variable that is FREE substitutes as a
+        // ADR-035 D5+ — bind-into-frame. A frame variable that is free substitutes as a
         // bare VarTerm (named _G<addr>, its own heap cell's identity): the goal runs with a
-        // fresh variable exactly as before, but now we REMEMBER the pairing — frame name,
-        // the solution key that variable will carry, and the frame cell's heap ADDRESS —
-        // and when a solution arrives, its value for that key is unified back INTO the
+        // fresh variable exactly as before, but now we remember the pairing — frame name,
+        // the solution key that variable will carry, and the frame cell's heap address —
+        // and when a solution arrives, its value for that key is unified back into the
         // suspended frame (see TryCommitSolutionToFrame). The user's design: run the goal
         // as always, then commit what it bound.
         string? frameModule = null;
@@ -454,7 +454,7 @@ public sealed partial class DebugService : IDebugSession
         string? commitRefusal = null;
         List<int>? attVarRoots = null;
         // Display-name -> goal-variable-name pairs for the residual projection:
-        // every variable the answer could talk about, under the name the USER
+        // every variable the answer could talk about, under the name the user
         // typed (a frame variable substitutes as _G<addr>, but the answer must
         // say `A in 6..9`, not `_G123 in 6..9`).
         var residVars = new List<(string Display, string Var)>();
@@ -483,8 +483,8 @@ public sealed partial class DebugService : IDebugSession
             }
         }
 
-        // An ATTRIBUTED frame variable substitutes as a bare _G<addr> variable — the
-        // goal's materialisation gives it a fresh cell with NO attributes, so
+        // An attributed frame variable substitutes as a bare _G<addr> variable — the
+        // goal's materialisation gives it a fresh cell with no attributes, so
         // get_attr/3, copy_term/3, frozen/1 or posting a new constraint on it silently
         // saw an unconstrained variable. The transplant (see AttachResiduals) fixes
         // that: the suspended variable's attribute graph is rebuilt as ag(M, A, V)
@@ -499,7 +499,7 @@ public sealed partial class DebugService : IDebugSession
                 new CompoundTerm("$dbg_attach", new Term[] { transplant.AttrInfo }),
                 goal,
             });
-            // '$dbg_fix_foreign' reads per-activation FOREIGN payloads off the
+            // '$dbg_fix_foreign' reads per-activation foreign payloads off the
             // suspended activation; cleared with the evaluation's other state in
             // AbandonPendingEvaluation.
             _engine.DebugTransplantSource = outer;
@@ -542,7 +542,7 @@ public sealed partial class DebugService : IDebugSession
         // one (the eval's own setup has not run yet).
         goal = _engine.ResolveGoalModule(goal, frameModule);
 
-        // THE BRACKET. The outer stack is captured NOW — the eval's query setup rebuilds the
+        // The bracket. The outer stack is captured now — the eval's query setup rebuilds the
         // per-query tables, and after that the suspended query's frames cannot be walked
         // correctly until they are put back. _outerScope holds the suspended query's tables for
         // the whole life of the (possibly parked) evaluation; AbandonPendingEvaluation restores
@@ -577,7 +577,7 @@ public sealed partial class DebugService : IDebugSession
         _evalDisarmTimeout = () =>
         {
             // The goal reached a breakpoint: it is the user's now, for as long as they want to
-            // look. Only the RUNNING part of an evaluation is on the clock.
+            // look. Only the running part of an evaluation is on the clock.
             sawStop = true;
             try { _pendingCts?.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan); }
             catch (ObjectDisposedException) { }
@@ -618,7 +618,7 @@ public sealed partial class DebugService : IDebugSession
 
             _pendingSolutionCount++;
             var report = _pendingReport!;
-            // Render BEFORE swapping tables — the value terms live on the eval activation's heap
+            // Render before swapping tables — the value terms live on the eval activation's heap
             // and the render reads the operator table, all of which is still current here.
             string rendered;
             if (report.Count == 0)
@@ -644,7 +644,7 @@ public sealed partial class DebugService : IDebugSession
             {
                 var extraLines = new List<string>();
                 var evalSolution = _pendingEnum!.Current;
-                // A FRAME variable the goal BOUND shows its new (eval-local) value
+                // A frame variable the goal bound shows its new (eval-local) value
                 // under the user's name — `label([A])` answers `A = 5`, and each
                 // `;` shows the next labeling, instead of an unreadable run of
                 // bare `true`s. Frame pairs are the ones whose goal-side name is
@@ -669,12 +669,12 @@ public sealed partial class DebugService : IDebugSession
                 }
             }
 
-            // ADR-035 D5+ — commit this solution's bindings INTO THE SUSPENDED FRAME. Read
+            // ADR-035 D5+ — commit this solution's bindings into the suspended frame. Read
             // here, while the eval's tables and heap are still current (the solution's
             // terms materialize off the eval activation); the unification itself touches
-            // only the OUTER activation's heap and trail, which no table swap affects.
+            // only the outer activation's heap and trail, which no table swap affects.
             // A commit that instantiated at least one frame variable ends the walk: the
-            // frame is bound to THIS solution now, and walking to the next would need it
+            // frame is bound to this solution now, and walking to the next would need it
             // unbound — so the parked choice points die with the enumerator, and ';' says
             // why. A commit that bound nothing (or rolled back) leaves ';' available.
             var (committed, note) = TryCommitSolutionToFrame(_pendingEnum!.Current);
@@ -698,14 +698,14 @@ public sealed partial class DebugService : IDebugSession
         }
     }
 
-    /// <summary>ADR-035 D5+ — unify this solution's bindings into the SUSPENDED frame.
+    /// <summary>ADR-035 D5+ — unify this solution's bindings into the suspended frame.
     ///
     /// <para>The user's design, and the reason it is one mechanism and not a special case:
     /// the goal ran exactly as always (frame variables substituted — the free ones by a
-    /// bare variable), and now whatever the solution SAYS those variables are is unified
+    /// bare variable), and now whatever the solution says those variables are is unified
     /// against the frame's own heap cells, on the suspended activation, with real trailing.
     /// So <c>X = f(1)</c> commits a structure, <c>member(X, Xs)</c> commits the member
-    /// found, <c>X = Y</c> commits an ALIASING (both frame cells end up sharing), and a
+    /// found, <c>X = Y</c> commits an aliasing (both frame cells end up sharing), and a
     /// solution that contradicts the frame's own aliasing rolls back whole: the marks
     /// below make the commit transactional.</para>
     ///
@@ -727,15 +727,15 @@ public sealed partial class DebugService : IDebugSession
             catch (Exception) { values[i] = null; }
         }
 
-        // 2. Seed the sharing map. A value that is a BARE variable is a frame variable
-        //    that stayed free or got ALIASED: its solution-side name must resolve to the
+        // 2. Seed the sharing map. A value that is a bare variable is a frame variable
+        //    that stayed free or got aliased: its solution-side name must resolve to the
         //    frame's own cell, so that the same name embedded inside another value
-        //    (X = f(Y)) builds a reference to the REAL Y, not a copy.
+        //    (X = f(Y)) builds a reference to the real Y, not a copy.
         var shared = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int i = 0; i < commit.Count; i++)
             if (values[i] is VarTerm vt) shared.TryAdd(vt.Name, commit[i].FrameAddr);
 
-        // 3. Build + unify, transactionally, on the OUTER activation only.
+        // 3. Build + unify, transactionally, on the outer activation only.
         int bMark = outer.BindingTrailTop;
         int eMark = outer.ExtraTrailTop;
         int hMark = outer.HeapTop;
@@ -776,7 +776,7 @@ public sealed partial class DebugService : IDebugSession
                 + "nothing was committed]");
         }
 
-        // 4. What actually CHANGED, frame-visibly: a variable whose dereference moved
+        // 4. What actually changed, frame-visibly: a variable whose dereference moved
         //    (bound to a value, or aliased to another cell). A commit that changed
         //    nothing releases its trial cells and leaves the ';' walk available.
         int committed = 0;
@@ -810,9 +810,9 @@ public sealed partial class DebugService : IDebugSession
         return (committed, text.ToString());
     }
 
-    /// <summary>ADR-035 D5+ — the Watch-window EDIT of a frame variable, and it is
-    /// DESTRUCTIVE by design (the user's spec; the Immediate window deliberately keeps
-    /// pure unification): a bound variable's value is REPLACED — the old binding is
+    /// <summary>ADR-035 D5+ — the Watch-window edit of a frame variable, and it is
+    /// destructive by design (the user's spec; the Immediate window deliberately keeps
+    /// pure unification): a bound variable's value is replaced — the old binding is
     /// trailed away (so backtracking and a rewind restore it) and the new term unified
     /// in — and assigning <c>_</c> UN-instantiates it. The new term may reference the
     /// frame's other variables by name (X = f(Y) aliases the real Y). Transactional: a
@@ -845,7 +845,7 @@ public sealed partial class DebugService : IDebugSession
         try
         {
             // The Watch edit box holds a bare term; the parser wants a clause-terminated
-            // one. The SPACE before the period matters: "7." would lex as a float.
+            // one. The space before the period matters: "7." would lex as a float.
             string text = termText.Trim();
             if (!text.EndsWith(".", StringComparison.Ordinal)) text += " .";
             (newTerm, _) = _engine.ParseGoal(text);
@@ -871,7 +871,7 @@ public sealed partial class DebugService : IDebugSession
 
         try
         {
-            // A bound target is CLEARED first — that is what makes the edit an edit and
+            // A bound target is cleared first — that is what makes the edit an edit and
             // not a unification test. The clear is trailed, so the transactional unwind
             // below (and any later backtrack past this point) restores the original.
             if (!IsUnboundAt(outer, addr))
@@ -900,7 +900,7 @@ public sealed partial class DebugService : IDebugSession
 
     /// <summary>One recorded call-port mark: everything a rewind needs to put the machine
     /// back to "about to run this goal". With <see cref="Activation.TrailEverything"/> on,
-    /// unwinding the two trails to the recorded tops restores EVERY binding made since —
+    /// unwinding the two trails to the recorded tops restores every binding made since —
     /// the trail is the note-taking; no goal re-executes, no side effect repeats.</summary>
     private readonly record struct PortMark(
         Activation Engine, int P, int E, int BindingTrailTop, int ExtraTrailTop,
@@ -909,9 +909,9 @@ public sealed partial class DebugService : IDebugSession
     private readonly List<PortMark> _portMarks = new();
     private const int PortMarkCapacity = 8192;
 
-    /// <summary>Record the machine's position at a call port. STACK DISCIPLINE keeps the
+    /// <summary>Record the machine's position at a call port. Stack discipline keeps the
     /// list honest without bookkeeping: control standing at frame E means every mark of a
-    /// DEEPER frame is dead (that frame returned, or backtracking discarded it), and a
+    /// deeper frame is dead (that frame returned, or backtracking discarded it), and a
     /// mark whose trail top exceeds the current one was undone by backtracking — both are
     /// popped here, lazily, before the new mark goes on. A mark of another activation (a
     /// previous query) is likewise dead.</summary>
@@ -928,7 +928,7 @@ public sealed partial class DebugService : IDebugSession
         // Only ports in the USER'S code leave marks: a mark is a Set Next Statement
         // rewind target, and a target is a statement of a debuggable clause. Prelude and
         // library internals fire ports too (every call does under a session), and a deep
-        // library recursion — numlist building a 400k list is ONE goal — recorded
+        // library recursion — numlist building a 400k list is one goal — recorded
         // hundreds of thousands of useless marks, flooding the capacity and evicting the
         // user's few precious ones.
         if (!_engine.IsDebuggableAddress(engine.P)) return;
@@ -953,21 +953,21 @@ public sealed partial class DebugService : IDebugSession
             engine.HeapTop, engine.B, engine.B0, engine.HeapGcCount));
     }
 
-    /// <summary>ADR-035 D5+ — move the next-statement pointer of the TOP frame.
+    /// <summary>ADR-035 D5+ — move the next-statement pointer of the top frame.
     ///
-    /// <para>FORWARD (a later goal of the same clause): the pointer moves, the skipped
+    /// <para>Forward (a later goal of the same clause): the pointer moves, the skipped
     /// goals never run — C# semantics, bindings they would have made do not happen.</para>
     ///
-    /// <para>BACKWARD (an earlier goal): the machine REWINDS to the recorded mark of that
+    /// <para>Backward (an earlier goal): the machine rewinds to the recorded mark of that
     /// goal's call port — B restored (newer choice points discarded), both trails unwound
     /// to the recorded tops (undoing every binding made since; TrailEverything makes that
     /// complete), heap top restored. Nothing re-executes: the user asked to stand there
-    /// again and run forward themselves. Refused — with the list of lines that WOULD be
+    /// again and run forward themselves. Refused — with the list of lines that would be
     /// accepted — when no valid mark exists for the target: the goal never ran in this
     /// frame instance, a cut discarded the choice point the mark saved, or a heap
     /// collection rewrote the world since.</para>
     ///
-    /// <para>THE HEAD LINE (or the blank span between head and first goal) rewinds to the
+    /// <para>The head line (or the blank span between head and first goal) rewinds to the
     /// CALLER's mark for the call that created this frame: the frame is popped, and
     /// continuing re-runs the call — dispatch, head unification and all. Head matching is
     /// pure, so re-running it is safe.</para>
@@ -975,12 +975,12 @@ public sealed partial class DebugService : IDebugSession
     /// <para>Returns "" on success, or a message explaining the refusal.</para></summary>
     private StopReason _lastStopReason = StopReason.AsyncBreak;
 
-    /// <summary>One-shot per stop: a Set Next Statement that has ALREADY been applied at
+    /// <summary>One-shot per stop: a Set Next Statement that has already been applied at
     /// this stop (the eager Locals-refresh func-eval) must not be applied again by the
     /// resume drain's copy of the same command. Idempotence by re-running is not enough
     /// cross-frame: the first apply pops frames, the display indices shift, and the
     /// re-run would resolve "frame N" against a different frame — under recursion, one
-    /// whose clause happily accepts the same line, rewinding TWICE.</summary>
+    /// whose clause happily accepts the same line, rewinding twice.</summary>
     private (int Frame, int Line, bool Set) _snsApplied;
 
     public string SetNextStatement(int frameIndex, int targetLine)
@@ -997,7 +997,7 @@ public sealed partial class DebugService : IDebugSession
                 + "(set_prolog_flag(debug_lco, off))";
 
         // A pending re-enter holds the machine parked at the caller's goal — the entered
-        // predicate is no longer any display frame, but its clause heads REMAIN targets:
+        // predicate is no longer any display frame, but its clause heads remain targets:
         // the user may change which clause to enter any number of times before resuming
         // (the report: SNS onto clause 3's head, then — without continuing — back onto
         // clause 2's, refused). A re-target just replaces the armed choice.
@@ -1030,8 +1030,8 @@ public sealed partial class DebugService : IDebugSession
         var currentInfo = currentSite >= 0
             ? Shumway.Core.DebugSiteTable.Get(currentSite) : default;
 
-        // The head span means "restart the clause body": rewind to the FIRST goal's mark.
-        // Head-unification bindings are BELOW that mark, so they survive — the same
+        // The head span means "restart the clause body": rewind to the first goal's mark.
+        // Head-unification bindings are below that mark, so they survive — the same
         // meaning C#'s Set Next Statement to a method's first line has (parameters keep
         // their values).
         var span = _engine.ClauseLineSpan(currentInfo.FileId, targetLine);
@@ -1039,14 +1039,14 @@ public sealed partial class DebugService : IDebugSession
             && s.FirstLine == sites[0].Line)
             targetLine = sites[0].Line;
 
-        // Resolve the target line to a site of THIS clause.
+        // Resolve the target line to a site of this clause.
         int targetPc = -1;
         foreach (var (sitePc, line) in sites)
             if (line == targetLine) { targetPc = sitePc; break; }
         if (targetPc < 0)
         {
-            // A SIBLING clause's head (ADR-035 D5+, the user's case): standing in clause
-            // N of Pred, Set Next Statement onto the head of ANY clause of Pred re-enters
+            // A sibling clause's head (ADR-035 D5+, the user's case): standing in clause
+            // N of Pred, Set Next Statement onto the head of any clause of Pred re-enters
             // the CALL by that clause — rewind to the caller's goal, re-run its argument
             // setup, and dispatch straight into the chosen clause.
             foreach (var (clauseStart, _, headLine, firstLine) in _engine.ClauseHeadTargets(pc))
@@ -1066,17 +1066,17 @@ public sealed partial class DebugService : IDebugSession
 
         if (frameIndex > 0)
         {
-            // CROSS-FRAME (ADR-035 D5+, the user's generalization): Set Next Statement on
-            // a LOWER frame of the call stack. Every such move first rewinds INTO that
-            // frame — the callee frames above it are popped by restoring one of ITS
+            // Cross-frame (ADR-035 D5+, the user's generalization): Set Next Statement on
+            // a lower frame of the call stack. Every such move first rewinds into that
+            // frame — the callee frames above it are popped by restoring one of its
             // recorded marks (B discards the callees' choice points, the trails undo
             // their bindings, E returns to the frame's own environment) — and from there
             // the move is the ordinary top-frame algorithm. The frame's marks survived
-            // the callees by stack discipline: only DEEPER marks are purged as ports
+            // the callees by stack discipline: only deeper marks are purged as ports
             // fire.
             //
             // Backward or current: the target site's own mark is the rewind. Forward: the
-            // rewind is to the frame's CURRENT goal (the call the frames above came
+            // rewind is to the frame's current goal (the call the frames above came
             // from), then a pure move forward — recording marks for the skipped sites,
             // same as the top frame.
             int anchorPc = targetPc <= currentSiteStart ? targetPc : currentSiteStart;
@@ -1099,7 +1099,7 @@ public sealed partial class DebugService : IDebugSession
                         RecordPureMoveMark(outer, env, sitePc);
             _snsMovedToSite = _engine.SiteAt(targetPc);
             _snsApplied = (frameIndex, targetLine, true);
-            // The move POPPED frames: the depth the next step measures against is the
+            // The move popped frames: the depth the next step measures against is the
             // moved-to frame's, not the stop's (a stale deep reference made the first
             // F10 after a cross-frame move accept every port inside the next callee —
             // Step Over behaved as Step Into, once).
@@ -1111,11 +1111,11 @@ public sealed partial class DebugService : IDebugSession
         if (targetPc == currentPc) return "";
         if (targetPc > currentPc)
         {
-            // FORWARD: just move. The skipped goals do not run — which is exactly why the
-            // move must leave marks behind: it is PURE, so the machine state at every
-            // skipped site (and at the site being left) IS the current state. Recording a
+            // Forward: just move. The skipped goals do not run — which is exactly why the
+            // move must leave marks behind: it is pure, so the machine state at every
+            // skipped site (and at the site being left) is the current state. Recording a
             // mark apiece keeps the valid-target set invariant under pure moves — the user
-            // can change their mind and move BACK to any of them before running anything
+            // can change their mind and move back to any of them before running anything
             // (the reported case: forward to the clause's fail, then back to the first
             // goal — refused, because the skipped goals had never fired their ports).
             foreach (var (sitePc, _) in sites)
@@ -1130,7 +1130,7 @@ public sealed partial class DebugService : IDebugSession
             return "";
         }
 
-        // BACKWARD: find the newest valid mark for that site in this frame.
+        // Backward: find the newest valid mark for that site in this frame.
         var candidate = FindMark(outer, env, targetPc);
         if (candidate is not { } mark)
         {
@@ -1149,20 +1149,20 @@ public sealed partial class DebugService : IDebugSession
     }
 
     /// <summary>ADR-035 D5+ — the site an applied Set Next Statement moved to. Stop
-    /// decisions AT that site are suppressed — the arrow is already there, and the user's
-    /// next step must EXECUTE the goal under it, not "stop" where they already stand
+    /// decisions at that site are suppressed — the arrow is already there, and the user's
+    /// next step must execute the goal under it, not "stop" where they already stand
     /// (their report: after a move, the first F10/F11 did nothing and only the second ran
-    /// the goal). Covers BOTH decisions the site can raise (its Break byte and its call
-    /// port). Disarmed by <see cref="RecordPortMark"/> at the first port of any OTHER
+    /// the goal). Covers both decisions the site can raise (its Break byte and its call
+    /// port). Disarmed by <see cref="RecordPortMark"/> at the first port of any other
     /// site — execution has moved past the goal, normal stopping resumes — which holds
     /// under F5 too (ports record marks whatever the step mode), so a loop coming back
     /// around to a breakpoint on the moved-to line stops normally.</summary>
     private int _snsMovedToSite = -1;
 
-    /// <summary>The Immediate window's <c>!goal</c>: runs the goal ON the suspended
+    /// <summary>The Immediate window's <c>!goal</c>: runs the goal on the suspended
     /// activation via the re-entrant solve (the SolveOnce machinery — a nested
     /// once-semantics Dispatch on the live machine, register-transparent). Frame
-    /// variables resolve to their REAL heap cells through the sharing materializer, so
+    /// variables resolve to their real heap cells through the sharing materializer, so
     /// a posted constraint narrows the frame's own variable and a binding sticks —
     /// trailed, so a later backtrack of the program past this point undoes it exactly
     /// as if the program had posted it here itself. Failure or an error unwinds to the
@@ -1189,7 +1189,7 @@ public sealed partial class DebugService : IDebugSession
             return "the stopped activation cannot run a nested goal here";
 
         // Frame variables: a free (or attributed) one seeds the sharing map by its
-        // heap ADDRESS — real sharing, the whole point of '!'; a bound one whose
+        // heap address — real sharing, the whole point of '!'; a bound one whose
         // address is unavailable substitutes as its value (plain data either way).
         string? frameModule = null;
         var shared = new Dictionary<string, int>();
@@ -1208,7 +1208,7 @@ public sealed partial class DebugService : IDebugSession
         }
         goal = _engine.ResolveGoalModule(goal, frameModule);
 
-        // The transaction marks. Success KEEPS bindings (they are trailed against the
+        // The transaction marks. Success keeps bindings (they are trailed against the
         // program's own older choice points); failure and error restore everything.
         int savedB = outer.B, savedB0 = outer.B0, savedH = outer.HeapTop;
         int savedBindingTop = outer.BindingTrailTop, savedExtraTop = outer.ExtraTrailTop;
@@ -1243,7 +1243,7 @@ public sealed partial class DebugService : IDebugSession
         string result = (parts.Count == 0 ? "true" : string.Join(",\n", parts))
             + " [applied to the frame]";
 
-        // The residual constraints the goal left ON THE FRAME's variables —
+        // The residual constraints the goal left on the FRAME's variables —
         // the same projection the Constraints view runs, rendered under the
         // user's names so `!X in 1..8` answers with the resulting `X in 6..8`.
         if (shared.Count > 0

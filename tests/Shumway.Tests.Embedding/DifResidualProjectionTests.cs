@@ -4,8 +4,8 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>What a residual <c>dif/2</c> is SHOWN as. The store was already
-/// right in every case here — each test therefore checks the answer text AND
+/// <summary>What a residual <c>dif/2</c> is shown as. The store was already
+/// right in every case here — each test therefore checks the answer text and
 /// that the constraint still decides the same goals, because a projection
 /// that quietly weakened one would be far worse than a verbose one.</summary>
 public class DifResidualProjectionTests
@@ -50,7 +50,7 @@ public class DifResidualProjectionTests
     [Fact]
     public void AliasingTwoWatchedVariablesCollapsesTheDisjunction()
     {
-        // dif(p(U,M), p(V,N)) forbids U = V AND M = N together. Once M and N
+        // dif(p(U,M), p(V,N)) forbids U = V and M = N together. Once M and N
         // are the same variable, only U \= V is left to forbid, so that is
         // what the answer says. Nothing invented: both are subterms of what
         // was written.
@@ -80,7 +80,7 @@ public class DifResidualProjectionTests
 
     [Theory]
     // Already true before this change; here so the pass is pinned not to
-    // undo them. A one-pair unifier IS a single disequality, whichever way
+    // undo them. A one-pair unifier is a single disequality, whichever way
     // it was written.
     [InlineData("dif(s(A), s(B)).", "dif(A, B)")]
     [InlineData("dif(A, B), dif(B, A).", "dif(A, B)")]

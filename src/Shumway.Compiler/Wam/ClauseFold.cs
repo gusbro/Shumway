@@ -14,7 +14,7 @@ namespace Shumway.Compiler.Wam;
 /// <para>The fold is sound regardless of the guard's determinism — <c>-&gt;</c>
 /// gives exactly the once-commit the <c>!</c> gave, and on guard failure it
 /// backtracks (undoing the guard's bindings) before <c>Rest</c>, matching
-/// clause-tried-next semantics. The constraint is purely about the HEADS:
+/// clause-tried-next semantics. The constraint is purely about the heads:
 /// clauses separated by first-argument indexing already get deterministic
 /// dispatch (the cut is redundant there — ADR-030 territory), so only
 /// non-discriminating var-argument heads are worth folding.</para>
@@ -26,7 +26,7 @@ public static class ClauseFold
         /// <summary>Not a fold candidate (single clause, no leading guarded cut,
         /// multiple/deep cuts, or a structured head that indexing separates).</summary>
         None,
-        /// <summary>Every clause head is all-distinct variables in the SAME
+        /// <summary>Every clause head is all-distinct variables in the same
         /// positional pattern (`p(X,Y)` throughout) — folds with a plain variable
         /// rename, no head-argument unification threaded into the body.</summary>
         TrivialVarHeads,
@@ -36,7 +36,7 @@ public static class ClauseFold
         ThreadedVarHeads,
     }
 
-    /// <summary>ADR-031 phase-2 sizing — what the FIRST clause's pre-cut guard is
+    /// <summary>ADR-031 phase-2 sizing — what the first clause's pre-cut guard is
     /// made of, deciding which CP-free emission tier can serve it.</summary>
     public enum GuardClass
     {
@@ -52,7 +52,7 @@ public static class ClauseFold
         BindingUnify,
         /// <summary>Only identity/order tests (<c>==</c>, <c>\==</c>, <c>@&lt;</c>…)
         /// and/or type tests (<c>var</c>, <c>atom</c>, <c>number</c>…) plus
-        /// comparisons — non-binding but compiled as framed builtin CALLS with
+        /// comparisons — non-binding but compiled as framed builtin calls with
         /// register staging (deferred case E).</summary>
         TypeTestOrIdent,
         /// <summary>Contains <c>is/2</c> / <c>functor/arg/=..</c>-style det
@@ -69,7 +69,7 @@ public static class ClauseFold
         Other,
     }
 
-    /// <summary>ADR-031 G-tier sizing — how far the STATIC CP-free machinery
+    /// <summary>ADR-031 G-tier sizing — how far the static CP-free machinery
     /// reaches for a guard's user-call callees, and what genuinely needs the
     /// dynamic fail-continuation.</summary>
     public enum CalleeClass
@@ -81,14 +81,14 @@ public static class ClauseFold
         /// at most a SELF-tail recursion — shipped G2 (sequential-chain
         /// inline + in-place loop).</summary>
         FailDirect,
-        /// <summary>Worst callee additionally calls OTHER fail-direct
+        /// <summary>Worst callee additionally calls other fail-direct
         /// predicates (tail or non-tail, DAG call graph, self-recursion only in
-        /// tail position) — reachable by a STATIC transitive inline (a G3
+        /// tail position) — reachable by a static transitive inline (a G3
         /// extension), still no engine changes.</summary>
         FailDirectClosure,
         /// <summary>Worst callee is defined in-file but non-det / contains a cut /
         /// contains control constructs / &gt;4 clauses / mutually recursive / self-recursive
-        /// in non-tail position — needs the TRUE dynamic fail-continuation
+        /// in non-tail position — needs the true dynamic fail-continuation
         /// (engine continuation stack).</summary>
         NeedsDynamic,
         /// <summary>Worst callee is not defined in this file — opaque
@@ -308,7 +308,7 @@ public static class ClauseFold
         for (int i = 1; i < clauses.Count; i++)
             if (HasTopLevelCut(clauses[i])) return FoldKind.None;
 
-        // Head classification across ALL clauses.
+        // Head classification across all clauses.
         bool allTrivial = true;
         string? pattern = null;
         foreach (Clause c in clauses)
@@ -324,7 +324,7 @@ public static class ClauseFold
         return allTrivial ? FoldKind.TrivialVarHeads : FoldKind.ThreadedVarHeads;
     }
 
-    // Clause 1 is a rule whose flattened body has EXACTLY ONE top-level cut, with
+    // Clause 1 is a rule whose flattened body has exactly one top-level cut, with
     // that cut not being the whole body (there is a guard and/or a body around it).
     private static bool FirstClauseGuardedCut(Clause c)
     {

@@ -14,7 +14,7 @@ namespace Shumway.Compiler.Il;
 /// <c>DynamicMethod</c>; this one targets <c>MethodBuilder</c> via
 /// <see cref="PersistedAssemblyBuilder"/> so the IL lives in a .dll
 /// that engines can load with <c>Assembly.Load(bytes)</c>, skipping
-/// the Sigil emission step at load time.
+/// the IL emission step at load time.
 ///
 /// <para>Self-referential IL choice-points (used by multi-clause and
 /// non-leaf single-clause predicates) point at a static
@@ -50,7 +50,7 @@ public static class PersistedIlBuilder
         public required int DelegateSlot { get; init; }
 
         /// <summary>True iff this predicate's WAM body may be dropped
-        /// (--strip-wam): its IL is self-contained, OR it is an indexed
+        /// (--strip-wam): its IL is self-contained, or it is an indexed
         /// predicate whose dispatch graph (<see cref="IndexGraph"/>) is persisted
         /// (so the delegate no longer reads the WAM).</summary>
         public required bool Strippable { get; init; }
@@ -61,7 +61,7 @@ public static class PersistedIlBuilder
         /// indexed predicate dispatches without its WAM body.</summary>
         public byte[]? IndexGraph { get; init; }
 
-        /// <summary>For a REGION method, the non-root members'
+        /// <summary>For a region method, the non-root members'
         /// external-entry cursor table (name, arity, MemberEntry cursor); null
         /// otherwise. Flows into <see cref="IlPersistedEntry.RegionMembers"/> so
         /// LoadBundle can alias a stripped member to its region entry.</summary>
@@ -76,20 +76,20 @@ public static class PersistedIlBuilder
     /// rewrite each baked build-time atom/functor id constant into the
     /// equivalent runtime-process id (functor/atom ids drift
     /// across processes since they're ordinal in the global AtomTable
-    /// /FunctorTable, and the LINK process accumulates interns that
-    /// the RUN process doesn't).</summary>
+    /// /FunctorTable, and the link process accumulates interns that
+    /// the run process doesn't).</summary>
     /// <param name="prunableFids">Stage 9b-3 (dead-region prune): functor ids of
-    /// ABSORBED-ONLY predicates — reached only as <c>br</c>-members of some live region
-    /// method, never standalone. They are SKIPPED here (no standalone IL method emitted),
+    /// absorbed-only predicates — reached only as <c>br</c>-members of some live region
+    /// method, never standalone. They are skipped here (no standalone IL method emitted),
     /// since their code is already baked into the region methods that absorb them. They
-    /// REMAIN in <paramref name="predicates"/> (the callee map) so those region methods
+    /// remain in <paramref name="predicates"/> (the callee map) so those region methods
     /// can still absorb their bodies, and they keep their Tier-0 WAM as a safety fallback
     /// (a later step may strip it). Null = no prune.</param>
     /// <param name="emitOnly">When non-null,
     /// only these functor ids get standalone IL methods; everything else in
-    /// <paramref name="predicates"/> serves purely as the CALLEE MAP for
+    /// <paramref name="predicates"/> serves purely as the callee map for
     /// resolution. This is how a multi-entry bundle compiles each entry's IL
-    /// against the WHOLE program (cross-module calls resolve) while emitting
+    /// against the whole program (cross-module calls resolve) while emitting
     /// each predicate exactly once, in its own entry.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
@@ -102,7 +102,7 @@ public static class PersistedIlBuilder
 #if NETFRAMEWORK
         // Framework's native persisted emit: AssemblyBuilder in Save mode —
         // the API PersistedAssemblyBuilder was designed to mirror. Same
-        // TypeBuilder / Sigil BuildMethod / patch-sentinel machinery below;
+        // TypeBuilder / IlEmit.BuildMethod / patch-sentinel machinery below;
         // only the assembly shell and the save differ (disk-only Save, so a
         // per-call temp dir round-trips the bytes).
         string tempDir = Path.Combine(Path.GetTempPath(),
@@ -208,19 +208,13 @@ public static class PersistedIlBuilder
                     calleeMap: probeCalleeMap);
             }
             catch (Exception ex)
-                when (ex is NotSupportedException
-                      || ex.GetType().Namespace?.StartsWith("Sigil") == true)
+                when (ex is NotSupportedException or IlEmitException)
             {
                 IlPredicateCompiler.EndFloatPool(emitPrevPool);
-                // CanPersist accepted this predicate (CanCompile was happy)
-                // but the emit blew up. Most often this is Sigil's verifier
-                // flagging dead-code or stack-mismatch issues in a generated
-                // sequence the predicate compiler hasn't been hardened
-                // against yet.
-                // The runtime IL promotion store would have caught the same
-                // failure and skipped the predicate; do the same here so a
-                // single bad predicate doesn't abort the entire .shum
-                // build.
+                // CanPersist accepted this predicate but the emit failed (an
+                // emitter check, or a construct the IL compiler does not
+                // handle). The runtime promotion store skips such a predicate;
+                // so does the build, rather than abort the whole .shum.
                 System.Console.Error.WriteLine(
                     $"shumway-persisted-il: skipped {functorName} "
                     + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
@@ -247,7 +241,7 @@ public static class PersistedIlBuilder
                 // A region method reports its members' external-entry
                 // cursors so the load path can alias stripped members into it.
                 RegionMembers = ic.LastRegionMemberCursors,
-                // Strippable when self-contained (not indexed) OR indexed with a
+                // Strippable when self-contained (not indexed) or indexed with a
                 // persisted graph. An indexed predicate whose graph build failed
                 // keeps its WAM (the delegate would still read it).
                 Strippable = !indexed || indexGraph is not null,
@@ -340,7 +334,7 @@ public static class PersistedIlBuilder
             }
             int ilStart = fileOffset + headerSize;
             int ilEnd = ilStart + ilLength;
-            // A PROPER opcode walk, not a sliding byte window.
+            // A proper opcode walk, not a sliding byte window.
             // The old heuristic ("any int preceded by byte 0x20") matched
             // sentinel-shaped bytes inside a `switch` instruction's jump
             // table: two adjacent 4-byte branch targets like 0x320 / 0x17E
@@ -416,8 +410,7 @@ public static class PersistedIlBuilder
                 throw new InvalidOperationException(
                     $"Persisted-IL sentinel 0x{s.Sentinel:X8} for "
                     + $"{s.Kind} {s.Name}/{s.Arity} was not located "
-                    + $"in any method body — Sigil may have compacted the "
-                    + $"ldc.i4 or emitted no IL for this site.");
+                    + $"in any method body: no IL was emitted for this site.");
         }
     }
 
@@ -535,9 +528,8 @@ public static class PersistedIlBuilder
         using var w = System.IO.File.AppendText(skipDumpPath);
         w.WriteLine($"=== {functorName} (fid={functorId}) ===");
         w.WriteLine(ex.ToString());
-        if (ex.GetType().GetProperty("DebugInstructions") is { } pi
-            && pi.GetValue(ex) is string instructions)
-            w.WriteLine("---- IL so far ----\n" + instructions);
+        if (ex is IlEmitException { Instructions.Length: > 0 } emitEx)
+            w.WriteLine("---- IL so far ----\n" + emitEx.Instructions);
         w.WriteLine("---- Bytecode ----");
         int q = 0;
         while (q < pred.Bytecode.Length)

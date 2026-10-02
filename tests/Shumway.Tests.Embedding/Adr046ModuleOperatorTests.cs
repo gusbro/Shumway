@@ -21,11 +21,30 @@ public class Adr046ModuleOperatorTests
             + ":- op(700, xfx, ~~~>).\n"
             + "seen(X) :- X = (a ~~~> b).\n");
         // The module's own clause parsed with the op…
-        Assert.True(e.Query("seen('~~~>'(a, b)).").Success);
+        Assert.True(e.Query("m46a:seen('~~~>'(a, b)).").Success);
         // …but user-level reading does not see it.
         Assert.False(e.Query("current_op(700, xfx, '~~~>').").Success);
         Assert.False(e.Query(
             "catch(atom_to_term('a ~~~> b', _, _), _, fail).").Success);
+    }
+
+    [Fact]
+    public void AnOperatorErrorInsideAModuleNamesTheBuiltinTheProgramCalled()
+    {
+        // op/3 and current_op/3 in module code run as module-aware
+        // rewrites; their errors still name op/3 and current_op/3 (Scryer's
+        // conformity suite catches error(_, op/3)).
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(m46e, []).\n"
+            + "bad_op :- op(1000, xfy, ',').\n"
+            + "bad_current :- current_op(1201, xfx, _).\n");
+        Assert.True(e.Query(
+            "catch((m46e:bad_op, fail), "
+            + "error(permission_error(modify, operator, ','), op/3), true).").Success);
+        Assert.True(e.Query(
+            "catch((m46e:bad_current, fail), "
+            + "error(domain_error(operator_priority, 1201), current_op/3), true).").Success);
     }
 
     [Fact]
@@ -52,7 +71,7 @@ public class Adr046ModuleOperatorTests
                 + "mk(A +-> B, pair(A, B)).\n");
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
-            // Mid-consult import: the op is active for the REST of the file.
+            // Mid-consult import: the op is active for the rest of the file.
             e.ConsultString(
                 ":- use_module(library(oplib46)).\n"
                 + "route(R) :- mk(a +-> b, R).\n");
@@ -72,7 +91,7 @@ public class Adr046ModuleOperatorTests
             + ":- op(0, xfx, ==).\n"
             + "probe(ok) :- \\+ current_op(_, xfx, ==).\n");
         // Inside the module, == is gone (tombstone hides the user def)…
-        Assert.True(e.Query("probe(ok).").Success);
+        Assert.True(e.Query("m46c:probe(ok).").Success);
         // …outside it is untouched.
         Assert.True(e.Query("current_op(700, xfx, ==).").Success);
     }
@@ -130,7 +149,7 @@ public class Adr046ModuleOperatorTests
         // Neither op leaks to user at load…
         Assert.False(e.Query("current_op(700, xfx, '+=>').").Success);
         Assert.False(e.Query("current_op(600, xfx, privz).").Success);
-        // …a use_module of the LOADED module imports the exported one only.
+        // …a use_module of the loaded module imports the exported one only.
         Assert.True(e.Query("use_module(library(oplibz)).").Success);
         Assert.True(e.Query("current_op(700, xfx, '+=>').").Success);
         Assert.False(e.Query("current_op(600, xfx, privz).").Success);

@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 
 // ADR-024 — the P/Invoke side of the materializer tier. These cover the marshalling
 // machinery (signature from prototype + cdecl calli over a real native t_reftype)
-// WITHOUT needing a C compiler: the "native" function is a C# method exposed as a
+// without needing a C compiler: the "native" function is a C# method exposed as a
 // cdecl function pointer, operating on the native struct exactly as real C would.
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
@@ -126,7 +126,7 @@ public class NativePInvokeTests
             () => NativeCall.FromPrototype(proto, new Dictionary<string, CType>()));
     }
 
-    // ---- Full end-to-end through a REAL native DLL (compiled on demand; skips
+    // ---- Full end-to-end through a real native DLL (compiled on demand; skips
     //      cleanly where no C toolchain is present — the calli mechanism above runs
     //      everywhere). ----
 
@@ -160,7 +160,7 @@ public class NativePInvokeTests
         if (dll is null)
         {
             // No toolchain → warn + skip (the calli mechanism is covered above). The
-            // compiler comes from $SHUMWAY_NATIVE_CC or the PATH — no hardcoded paths,
+            // compiler comes from $SHUMWAY_NATIVE_CC or the path — no hardcoded paths,
             // and it builds a .so/.dylib/.dll per platform.
             _output.WriteLine("SKIPPED real-DLL P/Invoke test: " + note
                 + " — set SHUMWAY_NATIVE_CC to a C compiler (gcc/clang/cl) to run it.");
@@ -180,7 +180,7 @@ public class NativePInvokeTests
         Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 2);
     }
 
-    // ---- "C builds a list": the native function ALLOCATES sub-nodes. Materialize
+    // ---- "C builds a list": the native function allocates sub-nodes. Materialize
     //      and free go through the library's own reftype allocator (newreftype /
     //      freepar), so the mixed graph is freed safely. ----
 
@@ -458,7 +458,7 @@ public class NativePInvokeTests
         Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 1);
     }
 
-    // ---- Native-library lifetime: a path is loaded ONCE for the process and shared
+    // ---- Native-library lifetime: a path is loaded once for the process and shared
     //      across engines (no per-engine refcount leak); both engines resolve + call. ----
 
     [Fact]
@@ -476,7 +476,7 @@ public class NativePInvokeTests
         warm.UseNativeLibrary(dll);
         int loadsBefore = Shumway.Embedding.PrologEngine.NativeLibraryLoadCount;
 
-        // Two more engines loading the SAME path must not trigger another real Load —
+        // Two more engines loading the same path must not trigger another real Load —
         // the OS mapping is shared and deduplicated.
         var e1 = new PrologEngine();
         e1.UseNativeLibrary(dll);
@@ -546,15 +546,15 @@ public class NativePInvokeTests
         }).Bytes!;
 
         var e = new PrologEngine();
-        e.LoadBundle(BundleReader.FromBytes(bytes));   // NO UseNativeLibrary — auto-loaded from the bundle
+        e.LoadBundle(BundleReader.FromBytes(bytes));   // No UseNativeLibrary — auto-loaded from the bundle
         Assert.True(e.Query("go(10, Out), Out == 11.").Success);
         Assert.True(e.Query("go(41, Out), Out == 42.").Success);
     }
 }
 
 // Compiles a small C source to a shared library for the integration test. The
-// compiler is taken from $SHUMWAY_NATIVE_CC or found on the PATH (cl / cc / gcc /
-// clang) — NO hardcoded install paths, cross-platform. Returns null (with a note)
+// compiler is taken from $SHUMWAY_NATIVE_CC or found on the path (cl / cc / gcc /
+// clang) — no hardcoded install paths, cross-platform. Returns null (with a note)
 // when no compiler is available or the build fails.
 internal static class NativeTestDll
 {
@@ -597,7 +597,7 @@ internal static class NativeTestDll
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                continue;   // compiler not found on PATH — try the next candidate
+                continue;   // compiler not found on path — try the next candidate
             }
             catch { /* try next */ }
         }

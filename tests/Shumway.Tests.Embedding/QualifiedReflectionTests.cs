@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Stage 2 of the M:P story — the reflection side.
 /// <c>clause(M:H, B)</c> and <c>predicate_property(M:H, P)</c> resolve the
-/// head from M's VIEWPOINT (own definition; else the import's source, with
+/// head from M's viewpoint (own definition; else the import's source, with
 /// <c>imported_from(Source)</c>; else the bare-global/builtin everyone
 /// sees); <c>listing(M:Spec)</c> lists what M defines. And inside a module,
 /// the unqualified forms see the module's own predicates: ModuleRewrite
@@ -48,7 +48,7 @@ public sealed class QualifiedReflectionTests
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(qr_d/1).");
         Assert.True(e.Query("assertz(qr_d(7)).").Success);
-        // ANY module qualifier reaches the shared store — dynamics have no wall.
+        // Any module qualifier reaches the shared store — dynamics have no wall.
         Assert.True(e.Query("clause(qr_s:qr_d(X), true), X == 7.").Success);
         Assert.True(e.Query("clause(user:qr_d(X), true), X == 7.").Success);
     }
@@ -178,10 +178,10 @@ public sealed class QualifiedReflectionTests
             sees_own_clause :- clause(loc(X), true), X == here.
             sees_own_prop  :- predicate_property(loc(_), static).
             """);
-        Assert.True(e.Query("sees_own_cp.").Success);
-        Assert.True(e.Query("sees_global_cp.").Success);
-        Assert.True(e.Query("sees_own_clause.").Success);
-        Assert.True(e.Query("sees_own_prop.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_cp.").Success);
+        Assert.True(e.Query("qr_ctx:sees_global_cp.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_clause.").Success);
+        Assert.True(e.Query("qr_ctx:sees_own_prop.").Success);
     }
 
     [Fact]
@@ -194,8 +194,8 @@ public sealed class QualifiedReflectionTests
             reads_s(X) :- clause(qr_s:loc(X), true).
             counts_s(N) :- findall(T, current_predicate(qr_s:T/1), L), length(L, N).
             """);
-        Assert.True(e.Query("reads_s(1).").Success);
-        var sol = e.Query("counts_s(N).");
+        Assert.True(e.Query("qr_x:reads_s(1).").Success);
+        var sol = e.Query("qr_x:counts_s(N).");
         Assert.True(sol.Success);
         Assert.Equal("1", sol["N"]!.ToString());
     }

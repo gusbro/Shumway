@@ -12,7 +12,7 @@ All four components are implemented and tested:
   `AddDefaultLibraryDirectories`, `SHUMWAY_LIBRARY_PATH`, and the
   `file_search_path(library, Dir)` / `library_directory(Dir)` dynamic facts feed a
   per-engine search path; `use_module(library(X))` resolves `X.pl` / `X.shum`
-  (order: baked C# → search-path file → CompatLibraries → error).
+  (order: engine's own baked bundle → search-path file → CompatLibraries → error).
   `absolute_file_name(library(X), Abs)` resolves the same alias.
 - **Component 2 — export-qualified modules + import tables.** `:- module(Name,
   [Exports])` mangles every predicate `Name$x`, records the export surface, and
@@ -41,7 +41,7 @@ All four components are implemented and tested:
   interactive query resolves the imports.
 
 **Deferred (narrow):** only the **file-at-a-time** compile of a program using a
-baked C# library (`clpfd`/`clpr`/`coroutining`). On that path the library is
+engine library (`clpfd`/`clpr`/`coroutining`). On that path the library is
 recorded as a `ShmoLibraryDep{Baked}` but nothing consumes it: an
 operator-carrying library (clpfd/clpr) fails at parse (its operators are not
 registered), and even an operator-free one (coroutining) compiles but **fails
@@ -86,8 +86,9 @@ A **2-argument** module directive is the sole trigger for the new model. Everyth
 that exists today is untouched:
 
 - **Legacy (unchanged, bare-global).** `:- module(Name)` (1-arg) + `:- public`, the
-  prelude, and the baked C# libraries keep their bare-global names (`member/2`,
-  `#=/2`, …). The baked libraries **stay in C#**.
+  prelude, and the engine's own libraries keep their bare-global names (`member/2`,
+  `#=/2`, …). Those libraries ship as bundles baked at build time
+  (`src/Shumway.Libraries`), never as source consulted at load.
 - **Export-qualified module** = a source with `:- module(Name, [Exports])`. ALL its
   predicates are mangled `Name$x` — it contributes **nothing** to the bare-global
   namespace. `Exports` is its *importable surface*. Two export-qualified modules can
@@ -132,7 +133,7 @@ resolved in order — already-provided inputs first, source compilation last:
    on-demand FIFO library-pull);
 3. otherwise resolve `X.pl` via the library search path (`--library-dir` + env),
    compile it, include it.
-A dependency on a **baked C# library** is not a file — record it so `LoadBundle`
+A dependency on one of the **engine's own libraries** (clpfd, clpr, coroutining: bundles baked at build time, loaded by name) is not a file — record it so `LoadBundle`
 **replays** the `use_module(library(clpfd))` directive (`UseClpfd()`). Each
 export-qualified module's `ExportFunctors` + `Imports` table travel in the `.shmo` /
 `.shum` so a fresh process reconstructs the resolution.

@@ -20,7 +20,7 @@ public class IntrospectionTests
     [Fact]
     public void Clause_StaticFact_RaisesPermissionError()
     {
-        // ISO §8.8.1.3: clause/2 reads PUBLIC (dynamic) procedures only; a
+        // ISO §8.8.1.3: clause/2 reads public (dynamic) procedures only; a
         // static user predicate is private (GNU and Scryer agree). SWI-dialect
         // modules keep SWI's introspection of their own static clauses.
         var engine = new PrologEngine();
@@ -97,7 +97,7 @@ public class IntrospectionTests
         var engine = new PrologEngine();
         // Library (prelude) and builtin predicates are not enumerated by
         // current_predicate/1 — §8.8.2 restricts it to user-defined
-        // procedures, as GNU does. They ARE predicate_property built_in.
+        // procedures, as GNU does. They are predicate_property built_in.
         Assert.True(engine.Query("\\+ current_predicate(append/3).").Success);
         Assert.True(engine.Query("\\+ current_predicate((is)/2).").Success);
         Assert.True(engine.Query("predicate_property(append(_,_,_), built_in).").Success);

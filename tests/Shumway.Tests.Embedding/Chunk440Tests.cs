@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 440 — linking MULTIPLE module-less .shmo files. Chunk 209 forced
+/// Chunk 440 — linking multiple module-less .shmo files. Chunk 209 forced
 /// ShmoCompiler's module name to "user" whenever no <c>:- module/1</c>
 /// directive was present, ignoring the per-file fallback — so two
 /// module-less files could never be linked together (<c>duplicate_module</c>)
@@ -19,8 +19,8 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk440Tests
 {
-    // The acid test: both files define a LOCAL helper/1 with DIFFERENT
-    // clauses. After the fix each file's caller must resolve to ITS OWN
+    // The acid test: both files define a local helper/1 with different
+    // clauses. After the fix each file's caller must resolve to its own
     // helper. a's main/0 also calls b's public other/0 cross-file.
     private const string SourceA =
         ":- public main/0.\n"
@@ -56,7 +56,7 @@ public class Chunk440Tests
         var engine = new PrologEngine();
         engine.LoadBundle(BundleReader.FromBytes(result.Bytes!));
 
-        // main succeeds only if a's main sees helper(1) AND b's other sees
+        // main succeeds only if a's main sees helper(1) and b's other sees
         // helper(2) — aliased locals would make one of the X == N guards fail.
         Assert.True(engine.Query("main.").Success);
         Assert.True(engine.Query("other.").Success);
@@ -101,7 +101,7 @@ public class Chunk440Tests
     public void CompileSource_DefaultFallback_StaysUser()
     {
         // In-memory consult-style compiles (no file) keep "user" — only
-        // the FILE path changed (per-file fallback = base name).
+        // the file path changed (per-file fallback = base name).
         var obj = ShmoCompiler.CompileSource("""
             :- public p/0.
             p.
@@ -144,9 +144,9 @@ public class Chunk440Tests
     // ------------------------------------------------------------------
     // The chunk-209 scenario the "user" forcing was protecting: dynamic
     // predicates with source clauses must dispatch from a bundle — now
-    // under a per-file module name. d/1's second clause calls the LOCAL
+    // under a per-file module name. d/1's second clause calls the local
     // gen/1, so the rehydrated dynamic clause must be rewritten under the
-    // SAME module context the static bytecode was mangled with
+    // same module context the static bytecode was mangled with
     // (dynfile$gen), or dispatch dies with existence_error.
     // ------------------------------------------------------------------
     private const string DynSource =
@@ -182,11 +182,11 @@ public class Chunk440Tests
     [Fact]
     public void TwoModuleLessFiles_WithDynamicSeeds_DoNotAlias()
     {
-        // Each file owns a dynamic d/1 fed by ITS OWN local gen/1 — wait,
+        // Each file owns a dynamic d/1 fed by its own local gen/1 — wait,
         // dynamic predicates live in a flat global namespace, so two files
         // may not both declare d/1 with clauses without sharing it. Use
         // distinct dynamic names; the per-file part is each body's call to
-        // its own LOCAL gen/1.
+        // its own local gen/1.
         const string dynA =
             ":- public boot_a/0.\n:- dynamic da/1.\n"
             + "da(X) :- gen(X).\ngen(1).\nboot_a :- da(1).\n";

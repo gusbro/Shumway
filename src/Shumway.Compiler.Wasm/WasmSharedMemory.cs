@@ -1,6 +1,6 @@
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>Marks a module's imported memory SHARED, after the fact.
+/// <summary>Marks a module's imported memory shared, after the fact.
 ///
 /// <para>The browser's runtime memory is shared once threads are on, and an
 /// import has to say so or instantiation is refused. The emitter this backend

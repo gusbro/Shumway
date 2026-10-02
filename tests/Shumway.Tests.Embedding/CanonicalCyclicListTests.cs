@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>write_canonical/1 and ignore_ops(true) print a list in FUNCTIONAL
+/// <summary>write_canonical/1 and ignore_ops(true) print a list in functional
 /// notation, and that walk owns the spine itself rather than going through the
 /// node gate, so it had neither of the two things that stop a cyclic term:
 /// no cycle check, and max_depth does not bound it either (a plain
@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// something gave out.
 ///
 /// <para>The bracket form was always fine: its cycle check is right there in
-/// the spine loop. So was a cyclic COMPOUND, which the node gate covers. Only
+/// the spine loop. So was a cyclic compound, which the node gate covers. Only
 /// the functional list walk was missing it.</para></summary>
 public sealed class CanonicalCyclicListTests
 {
@@ -40,8 +40,8 @@ public sealed class CanonicalCyclicListTests
         Assert.Equal(shown, Written(goal));
     }
 
-    /// <summary>ANTI-VACUITY: everything acyclic prints exactly as before,
-    /// including the max_depth case that deliberately does NOT elide here and
+    /// <summary>Anti-vacuity: everything acyclic prints exactly as before,
+    /// including the max_depth case that deliberately does not elide here and
     /// a partial list, whose tail is a variable and not a cycle.</summary>
     [Theory]
     [InlineData("X = [a,b,c], write_canonical(X)", "'.'(a,'.'(b,'.'(c,[])))")]

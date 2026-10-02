@@ -37,7 +37,7 @@ public sealed class ExpansionRunawayTests
     [Fact]
     public void TheReportNamesNoBogusCulprit()
     {
-        // Issue #97, the follow-up: the runaway is raised by HOST machinery
+        // Issue #97, the follow-up: the runaway is raised by host machinery
         // between goals, so the engine's captured stack belongs to whatever
         // errored earlier -- the report showed `at bb_delete/2` (or `at ./2`)
         // under an expansion error that had nothing to do with either. The

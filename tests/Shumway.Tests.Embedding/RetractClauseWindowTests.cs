@@ -6,14 +6,14 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>A retract/1 that leaves a choice point owes the rest of its
-/// candidates, and it used to pay that debt by COPYING them out of the live
+/// candidates, and it used to pay that debt by copying them out of the live
 /// clause list at call time. The copy is the enumeration's logical update
 /// view, so it could not simply be dropped -- but almost nothing ever reads
 /// it: the deterministic idiom (<c>retract(X), !</c>, or any retract whose
 /// choice point is cut or abandoned) discards it untouched. Over a 16,000
 /// clause drain that was 128 million clause slots copied to be thrown away.
 ///
-/// <para>The candidates are now a WINDOW into the live list, and the store
+/// <para>The candidates are now a window into the live list, and the store
 /// reports mutations so the window can stay a view: a change below it shifts
 /// it, a change inside it copies it out first (the view must keep a clause
 /// someone else retracts), a change above it is nothing. An enumeration's own
@@ -36,7 +36,7 @@ public sealed class RetractClauseWindowTests
         return e;
     }
 
-    /// <summary>COUNTED, not timed: the copy is the cost, so the number of
+    /// <summary>Counted, not timed: the copy is the cost, so the number of
     /// clauses copied is the measure. Zero, and zero at both sizes -- the
     /// eager copy was quadratic in the predicate's size (n(n-1)/2, which is
     /// 128 million slots at 16,000).</summary>
@@ -50,12 +50,12 @@ public sealed class RetractClauseWindowTests
             e.ClausesCopiedOut = 0;
             Assert.True(e.Query($"drain({n}).").Success);
             Assert.Equal(0L, e.ClausesCopiedOut);
-            // ANTI-VACUITY: it really did retract them all.
+            // Anti-vacuity: it really did retract them all.
             Assert.False(e.Query("cp(_, _).").Success);
         }
     }
 
-    /// <summary>The window is a VIEW, not a shortcut: a foreign retract that
+    /// <summary>The window is a view, not a shortcut: a foreign retract that
     /// lands inside it forces the copy, and the enumeration still delivers
     /// the clause that was removed behind its back. This is the ISO logical
     /// update view, and it is the behaviour the eager copy had -- the

@@ -19,7 +19,7 @@ namespace Shumway.Core;
 /// promotion adds entries, and in-place assertz/asserta/retract
 /// patch bytecode without moving a predicate's trampoline
 /// address — so a cached resolution never goes stale. Failed resolutions
-/// (existence_error) are deliberately NOT cached: the same functor can
+/// (existence_error) are deliberately not cached: the same functor can
 /// become resolvable later in the query via auto-promotion.</para>
 ///
 /// <para>Each dispatcher executes a route kind exactly as its own slow path

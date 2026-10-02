@@ -21,9 +21,9 @@ public static class ControlBuiltins
     public static bool True(Activation engine) => true;
 
     /// <summary><c>'$type_error_callable'(Culprit)</c> — the runtime
-    /// thrower the clause compiler emits for a NON-CALLABLE in goal
+    /// thrower the clause compiler emits for a non-callable in goal
     /// position (<c>foo :- 4</c>, <c>{1^true}</c>): the error must be a
-    /// catchable type_error(callable, Culprit) raised when the goal RUNS,
+    /// catchable type_error(callable, Culprit) raised when the goal runs,
     /// never a compile-time crash.</summary>
     public static bool TypeErrorCallable(Activation engine)
         => throw new PrologRuntimeException("type_error", "callable",
@@ -120,10 +120,17 @@ public static class ControlBuiltins
         // is tracked on the bytes written, so this is correct under redirection.
         if (w is ILineStartAware { AtLineStart: false })
             w.Write('\n');
-        w.WriteLine(string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
-            "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
-            dInf, secs, dCells, lips));
+        // Compiled code counts no inferences: with Tier-1 on, a count would
+        // be the interpreter's share only.
+        if (engine.CompiledCodeActive?.Invoke() == true)
+            w.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "% {0:0.000} seconds, {1:N0} heap cells", secs, dCells));
+        else
+            w.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
+                dInf, secs, dCells, lips));
         marks[idx] = (now, cells, inf);
         return true;
     }
@@ -153,5 +160,68 @@ public static class ControlBuiltins
         if (code < int.MinValue || code > int.MaxValue)
             throw new PrologRuntimeException("domain_error", "int32");
         throw new PrologHaltException((int)code);
+    }
+
+    /// <summary><c>jit_compile(Mode)</c> — sets how Tier-1 promotion behaves
+    /// from here on. <c>off</c> (or <c>none</c>) stops promoting and returns
+    /// what already promoted to Tier-0, <c>all</c> promotes each predicate on
+    /// its first call, <c>on</c> is a moderate threshold, and a positive
+    /// integer is the call threshold to wait for.
+    ///
+    /// <para>Which compiler Tier-1 is depends on the product and there is
+    /// only one per build, so the same goal means the same thing in both:
+    /// "run the following goals with this much of the JIT".</para>
+    ///
+    /// <para>Fails, rather than raising, when the mode cannot be established
+    /// because the build has no Tier-1 -- a failure is an answer a program can
+    /// test, and there is nothing exceptional about an engine that only
+    /// interprets. <c>off</c> always succeeds there: it already holds.</para>
+    /// </summary>
+    public static bool JitCompile(Activation engine)
+    {
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(c.AsHeapIndex);
+            c = engine.GetHeap(addr);
+        }
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+
+        int threshold;
+        if (c.Tag == Tag.Int)
+        {
+            long n = c.AsInt;
+            if (n < 0 || n > int.MaxValue)
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
+            threshold = (int)n;
+        }
+        else if (c.Tag == Tag.Atom)
+        {
+            // none and on are the top level's spellings and mean the same
+            // here: one vocabulary, or a goal that works when typed and
+            // raises when run.
+            string? name = AtomTable.GetById(c.AsAtomId)?.Name;
+            threshold = name switch
+            {
+                "off" or "none" => 0,
+                "all" => 1,
+                "on" => 16,
+                _ => -1,
+            };
+            if (threshold < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "jit_compile_mode", engine, c);
+        }
+        else
+        {
+            throw new PrologRuntimeException(
+                "domain_error", "jit_compile_mode", engine, c);
+        }
+
+        if (engine.JitControl is { } control) return control(threshold);
+        // No Tier-1 in this build: "off" is already the state of the world.
+        return threshold == 0;
     }
 }

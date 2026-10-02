@@ -5,7 +5,7 @@ namespace Shumway.Embedding;
 ///
 /// <para>The point is forward-looking: while the on-disk formats are frozen
 /// (a reader requires exactly its own format version), a file still cannot
-/// say WHICH build wrote it. Stamping the producer means that when the format
+/// say which build wrote it. Stamping the producer means that when the format
 /// does evolve, an old file can be identified — and diagnosed — instead of
 /// only being rejected.</para>
 ///

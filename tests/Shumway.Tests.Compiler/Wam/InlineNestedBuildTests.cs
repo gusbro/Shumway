@@ -7,7 +7,7 @@ namespace Shumway.Tests.Compiler.Wam;
 /// <summary>ADR-019 / ADR-020 — a nested compound is built (write) inline with
 /// <c>unify_structure</c> / <c>unify_list</c>, continuing the same unify stream
 /// instead of deferring to a temporary register + a separate <c>get_structure</c>
-/// / <c>get_list</c> per nesting level. ADR-019 covers the LAST argument position
+/// / <c>get_list</c> per nesting level. ADR-019 covers the last argument position
 /// (linear, no resume); ADR-020 extends it to NON-last positions in body building
 /// via the reserve-upfront roots <c>put_structure_r</c> / <c>put_list_r</c> and a
 /// runtime write-pointer frame stack.</summary>

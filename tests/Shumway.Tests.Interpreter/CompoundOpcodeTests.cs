@@ -40,7 +40,7 @@ public class CompoundOpcodeTests
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
         // ADR-017 phase 2: the STR tag rides inline in the register, pointing
-        // straight at the FUNCTOR cell (a structure is functor + n args, with no
+        // straight at the functor cell (a structure is functor + n args, with no
         // separate on-heap STR header).
         Cell x0 = engine.GetRegister(0);
         Assert.Equal(Tag.Str, x0.Tag);
@@ -70,7 +70,7 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        // ADR-017: x0 is the inline STR pointing at the FUNCTOR cell; the two
+        // ADR-017: x0 is the inline STR pointing at the functor cell; the two
         // args sit immediately after it.
         Cell x0 = engine.GetRegister(0);
         int functorIdx = x0.AsHeapIndex;
@@ -133,7 +133,7 @@ public class CompoundOpcodeTests
 
         Assert.True(engine.WriteMode);              // unbound → write mode
         // ADR-017: the unbound var is bound directly to an inline STR cell that
-        // points at the freshly allocated FUNCTOR cell — no on-heap STR header.
+        // points at the freshly allocated functor cell — no on-heap STR header.
         Cell bound = engine.GetHeap(heapIdx);
         Assert.Equal(Tag.Str, bound.Tag);
         Cell functorCell = engine.GetHeap(bound.AsHeapIndex);
@@ -271,7 +271,7 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        // ADR-017: register holds the inline STR pointing at the FUNCTOR cell;
+        // ADR-017: register holds the inline STR pointing at the functor cell;
         // the single arg sits immediately after it.
         int functorIdx = engine.GetRegister(0).AsHeapIndex;
         Assert.Equal(Cell.Atom(99), engine.GetHeap(functorIdx + 1));
@@ -330,7 +330,7 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        // ADR-017: put_structure allocates 1 cell (FUNCTOR; the STR tag rides
+        // ADR-017: put_structure allocates 1 cell (functor; the STR tag rides
         // inline in the register), unify_void 3 allocates 3 more = 4 total.
         Assert.Equal(heapBefore + 4, engine.HeapTop);
     }
@@ -371,7 +371,7 @@ public class CompoundOpcodeTests
         //   9..13:  unify_constant 100
         //   14..22: try_me_else BP=33, arity=0
         //   23..31: get_structure foo/1, X[0]
-        //   32..36: unify_constant 999          ; FAILS — heap arg is 100
+        //   32..36: unify_constant 999          ; fails — heap arg is 100
         //   37:     halt                         ; success branch (never taken)
         //   38:     halt                         ; backtrack target (BP) — placed at 33
         //

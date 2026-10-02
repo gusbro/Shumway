@@ -57,7 +57,7 @@ public class Adr035TracerTests
     [Fact]
     public void ExitPort_ShowsWhatTheGoalBound()
     {
-        // The whole point of copying argument CELLS at the call port: the exit
+        // The whole point of copying argument cells at the call port: the exit
         // line must show the binding, not the variable it was called with.
         var lines = Trace("p(1).\n", "p(X).", out int solutions);
 
@@ -127,7 +127,7 @@ public class Adr035TracerTests
     [Fact]
     public void BuiltinGoals_AreTraced_WithTheirBindings()
     {
-        // Note is/2 would NOT show up: ADR-018 compiles arithmetic inline, so
+        // Note is/2 would not show up: ADR-018 compiles arithmetic inline, so
         // there is no builtin dispatch to report. atom_length/2 is a real one.
         var lines = Trace("", "atom_length(abc, N).", out int solutions);
 
@@ -165,7 +165,7 @@ public class Adr035TracerTests
         // The tracer's copied argument cells are heap roots (ADR-016). p/1's
         // argument block is allocated at its call port and points into the heap
         // (its argument is a list). A collection then runs, more heap is
-        // allocated on top, and only THEN is p redone — so its redo line can
+        // allocated on top, and only then is p redone — so its redo line can
         // only render [1] if the block was marked (not reclaimed) and relocated
         // (not left dangling).
         var lines = Trace(

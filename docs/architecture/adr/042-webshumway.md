@@ -33,7 +33,7 @@ when runtime codegen is unavailable, so the browser needed no new engine work of
 that kind. It did need the *gate* corrected: `RuntimeFeature.IsDynamicCodeSupported`
 is true under Mono-wasm interpretation, so `Shumway.Core.RuntimeCaps` is the
 capability test, and it is a `[FeatureSwitchDefinition]` the trimmer folds — the
-IL compiler and Sigil leave the payload entirely.
+IL compiler leaves the payload entirely.
 
 ### 2. Tier-0 only, and why that is not a compromise
 

@@ -7,12 +7,12 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-023 build-time persist — a `:- dynamic` / `:- visible` predicate that ships
-/// WITH clauses in a `--with-compiled-il` / `--exe` bundle gets its static-style
-/// SNAPSHOT baked into the persisted IL. At load the snapshot delegate is registered
-/// into IlPromotion._delegates[fid], so the predicate runs as IL from the FIRST call
-/// with NO runtime promotion (Threshold stays 0 — the AOT / --exe win), and the first
+/// with clauses in a `--with-compiled-il` / `--exe` bundle gets its static-style
+/// snapshot baked into the persisted IL. At load the snapshot delegate is registered
+/// into IlPromotion._delegates[fid], so the predicate runs as IL from the first call
+/// with no runtime promotion (Threshold stays 0 — the AOT / --exe win), and the first
 /// assert/retract evicts it (back to the live dynamic chain). A snapshot that would
-/// reference a string/float/bigint literal not in the bundle's pools is NOT baked
+/// reference a string/float/bigint literal not in the bundle's pools is not baked
 /// (those are index-addressed) — it stays Tier-0 but still runs correctly.
 /// </summary>
 public class DynamicPersistedIlTests
@@ -26,7 +26,7 @@ public class DynamicPersistedIlTests
         byte[] bytes = BundleWriter.ToBytes(bundle,
             includeCompiledBytecode: true, includeCompiledIl: true);
         var rt = BundleReader.FromBytes(bytes);
-        var e = new PrologEngine();   // Threshold 0 — NO runtime promotion
+        var e = new PrologEngine();   // Threshold 0 — no runtime promotion
         e.LoadBundle(rt);
         return e;
     }
@@ -37,7 +37,8 @@ public class DynamicPersistedIlTests
         var e = LoadWithPersistedIl(":- dynamic d/1.\nd(1).\nd(2).\nd(3).\n");
         int fid = Fid("d", 1);
 
-        // Installed from the BUNDLE — promoted at load, no warm-up, Threshold 0.
+        // Installed from the bundle — promoted at load, no warm-up, Threshold 0.
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("d(2).").Success);
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2, 3].").Success);
@@ -55,6 +56,7 @@ public class DynamicPersistedIlTests
     {
         // `:- visible` is dynamic; with clauses it bakes the same way.
         var e = LoadWithPersistedIl(":- visible v/2.\nv(a, 1).\nv(b, 2).\n");
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(Fid("v", 2)));
         Assert.True(e.Query("v(b, X), X == 2.").Success);
     }
@@ -66,6 +68,7 @@ public class DynamicPersistedIlTests
         // dynamic snapshot bakes too (the old index-addressed limitation is gone).
         var e = LoadWithPersistedIl(":- dynamic f/1.\nf(1.5).\n");
         int fid = Fid("f", 1);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("f(1.5).").Success);
         Assert.True(e.Query("f(X), X =:= 1.5.").Success);

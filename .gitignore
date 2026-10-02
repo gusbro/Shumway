@@ -496,3 +496,7 @@ buildall.bat
 buildNetFx.bat
 nuget.config
 ShumwayDocs_*.zip
+
+# Scryer's library tree, served beside WebShumway for the #clpz* and #wasmclpz
+# hooks. Third-party source: never vendored, never committed.
+src/Shumway.Web/wwwroot/scryerlib/

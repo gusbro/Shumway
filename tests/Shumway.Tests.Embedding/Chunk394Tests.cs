@@ -24,7 +24,7 @@ public class Chunk394Tests
         [4] = System.Array.Empty<int>(),
     };
 
-    // Region of `root` = BFS over call edges, NOT absorbing anything in `excluded`
+    // Region of `root` = BFS over call edges, not absorbing anything in `excluded`
     // (those stay cross-region roots) — mirrors IlRegionBuilder + the 9c exclusion.
     private static IReadOnlyCollection<int> Region(int root, ISet<int> excluded)
     {
@@ -71,7 +71,7 @@ public class Chunk394Tests
     [Fact]
     public void Star_NoSharing_PromotesNothing()
     {
-        // a → b, a → c with b, c leaves: each leaf is absorbed by exactly ONE region
+        // a → b, a → c with b, c leaves: each leaf is absorbed by exactly one region
         // (a's). No predicate has dup ≥ 2, so nothing promotes even at minSaving 0.
         var star = new Dictionary<int, int[]>
         {
@@ -86,9 +86,9 @@ public class Chunk394Tests
     public void Chain_OneMidPromotion_DedupesTheTail()
     {
         // A chain a→b→c→d duplicates in all-as-roots (region(a) absorbs b,c,d; region(b)
-        // absorbs c,d; region(c) absorbs d). The iterative fixpoint promotes the MIDDLE
+        // absorbs c,d; region(c) absorbs d). The iterative fixpoint promotes the middle
         // node c(3) first (tie-broken; score 200) — and recomputing shows that now leaves
-        // d(4) in only c's region (one copy), so d is no longer shared and is NOT
+        // d(4) in only c's region (one copy), so d is no longer shared and is not
         // promoted. One promotion de-dups the whole tail: result {3}, not {3,4}.
         var chain = new Dictionary<int, int[]>
         {

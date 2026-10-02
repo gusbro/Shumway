@@ -469,8 +469,8 @@ var sol = engine.Query("main(Arg).");
 `LoadBundle` consults every module in the bundle. A **persisted** Tier-1 IL
 assembly (`shumway-link --with-compiled-il`) is bound at load, so those
 predicates run as compiled IL from the first query. Predicates that ship as
-WAM bytecode (a plain bundle) are **not** compiled at load: that would Sigil-
-compile the whole program up front (~1.5 s on a large one) for code that may
+WAM bytecode (a plain bundle) are **not** compiled at load: that would
+compile the whole program to IL up front (~1.5 s on a large one) for code that may
 never run hot. Instead each promotes to Tier-1 IL lazily once its call counter
 crosses the threshold. To front-load the whole set anyway (a server that will
 serve many queries and wants steady-state speed from the first) call
@@ -700,7 +700,7 @@ shumway-link -o app.shum \
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
 | `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here. |
-| `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. (Stripped bundles dispatch correctly via the source-less load path.) Note: a `.shmo` always carries the module's clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). IP stripping is about what ships: the `.shum` / executable, which never carry clause terms. |
+| `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
 | `--no-region-prune` | With `--with-compiled-il`: emit one standalone IL method per predicate instead of the default pruned region layout. Mainly for inspecting the generated code; bundles are larger and typically slower. |
@@ -1195,17 +1195,20 @@ executable (bundles carry every module's import table):
    non-exported locals: `call(mymod:internal(X))` works, SWI-style) →
    **M's import table** → fall through.
 4. The **C# builtin** registry.
-5. The **global namespace**: bare names of `user` and legacy-module
-   predicates, publics, dynamics, the prelude.
+5. The **global namespace**: `user`'s predicates, publics, dynamics, the
+   prelude.
 6. Still nothing → the `unknown` flag, as above.
 
-One asymmetry to be aware of: a *runtime* `M:Goal` reaches `M`'s
-non-exported locals, while a `Module:goal(...)` written *statically* in a
-compiled module is checked by the linker against the target module's
-public surface.
+An `M:Goal`, written in the code or built at run time, reaches `M`'s
+predicates whether `M` exports them or not, in the REPL and in a linked
+program alike: qualifying is how code outside `M` calls one of its private
+predicates.
 
 **Rules of thumb.** Nearest context wins: own module > imports > global.
-Dynamics are always global. Builtins are shadowed only by a module that
+A module's predicate that it does not export or declare public is private:
+from outside the module it is reached only as `m:p(X)`. A goal or closure a
+module passes to a meta-predicate (`maplist(check, L)`, `freeze(X, G)`)
+still runs in that module. Dynamics are always global. Builtins are shadowed only by a module that
 *defines* the name itself. The prelude is always visible without imports.
 Consulting a `:- module/2` file directly auto-imports its exports into
 `user`; loading it as a `use_module` dependency does not.

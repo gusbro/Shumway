@@ -109,7 +109,7 @@ public class Chunk155bTests
     {
         // The ISO logical-update view: assertz then call within the
         // same query must see the asserted clause. With chunk-155b's
-        // in-place extension, the live dispatch DOES contain the new
+        // in-place extension, the live dispatch does contain the new
         // chain entry by the time the next call enters via
         // enter_dynamic.
         var e = new PrologEngine();

@@ -37,7 +37,7 @@ public sealed class SingleSidedUnificationTests
         Assert.True(e.Query("grade(50, f).").Success);   // both guards fail
         // The guard gates selection: 85 is not an 'a'. Every rule refused
         // (guard fail for clause 1, head mismatch for the rest), which under
-        // SWI's => is an ERROR, not failure.
+        // SWI's => is an error, not failure.
         Assert.True(e.Query(
             "catch(grade(85, a), error(existence_error(matching_rule, _), _), true).")
             .Success);
@@ -48,7 +48,7 @@ public sealed class SingleSidedUnificationTests
     {
         var e = new PrologEngine();
         // Two clauses whose heads both unify with p(1, X); the committed choice
-        // means p(1, X) yields exactly ONE solution (the first).
+        // means p(1, X) yields exactly one solution (the first).
         e.ConsultString("""
             p(1, R) => R = first.
             p(_, R) => R = second.
@@ -63,7 +63,7 @@ public sealed class SingleSidedUnificationTests
     {
         var e = new PrologEngine();
         // The library shape SSU is written for: structural head patterns, one
-        // clause per constructor, deterministic. SWI style: OUTPUTS bind in
+        // clause per constructor, deterministic. SWI style: Outputs bind in
         // the body — a head pattern in an output position would not match the
         // caller's unbound variable under single-sided unification.
         e.ConsultString("""

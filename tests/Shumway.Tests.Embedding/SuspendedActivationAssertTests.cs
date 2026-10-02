@@ -10,7 +10,7 @@ namespace Shumway.Tests.Embedding;
 /// suspended mid-enumeration shares the persistent buffer with a nested
 /// query; when the nested query extends a dynamic chain in place and the
 /// suspended activation then resumes and asserts too, its stale append
-/// position landed ON the sibling's entries — the tail patch wrote a
+/// position landed on the sibling's entries — the tail patch wrote a
 /// retry_me_else whose &lt;next&gt; pointed at itself, hanging every later
 /// walk/dispatch of the chain. Root fix: <c>ResyncOwnerAppendPosition</c>
 /// brings an owner's append position forward before any in-place mutation;

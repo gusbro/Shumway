@@ -5,13 +5,13 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>The cross-process bundle flake's root cause, pinned: persisted
-/// IL used to bake builtin REGISTRY IDS as immediates, and registry ids are
+/// IL used to bake builtin registry IDS as immediates, and registry ids are
 /// assigned in registration order — which concurrent engine construction in
 /// the building process can shuffle. A child process then dispatched a
-/// DIFFERENT builtin (the type_error(evaluable) / fd_bound / '$native_run'
+/// different builtin (the type_error(evaluable) / fd_bound / '$native_run'
 /// error zoo). Builtin references now travel as name-relative
 /// <see cref="Shumway.Compiler.Il.IlPatchKind.Builtin"/> patch sites,
-/// resolved against the LOADING process's registry like atoms and functors
+/// resolved against the loading process's registry like atoms and functors
 /// always were.</summary>
 public sealed class PersistedIlBuiltinPatchTests
 {

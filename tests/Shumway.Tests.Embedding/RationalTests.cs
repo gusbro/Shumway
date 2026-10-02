@@ -51,7 +51,7 @@ public class RationalTests
     [Fact]
     public void Rdiv_IntegralResultCollapsesToInteger()
     {
-        // 4 rdiv 2 = 2 — an integer, NOT a rational cell (canonical: den != 1).
+        // 4 rdiv 2 = 2 — an integer, not a rational cell (canonical: den != 1).
         Assert.IsType<IntTerm>(Bind("X is 4 rdiv 2."));
         Assert.True(Holds("X is 4 rdiv 2, integer(X)."));
         Assert.False(Holds("X is 4 rdiv 2, X = 2, fail ; X is 4 rdiv 2, \\+ integer(X)."));

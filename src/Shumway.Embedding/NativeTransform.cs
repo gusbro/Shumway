@@ -25,7 +25,7 @@ internal sealed class NativeBlockCompileException : System.InvalidOperationExcep
 /// using the module's <c>:- c</c> symbol table (the captured
 /// <c>'$native_decls'</c> regions) for prototypes and globals.
 ///
-/// <para>Fails LOUDLY: a block that cannot be parsed (unsupported native syntax —
+/// <para>Fails loudly: a block that cannot be parsed (unsupported native syntax —
 /// the deferred term/reftype tier, C control flow), whose variables' type/mode
 /// cannot be inferred, or that calls a function the configured interop class does
 /// not provide, raises a consult error. It is never silently left inert — a
@@ -51,7 +51,7 @@ internal static class NativeTransform
         foreach (var clause in clauses)
         {
             if (!Mentions(clause.Term, "$native_goal")) { result.Add(clause); continue; }
-            // Pre-pass: collect `Var: type` declarations from EVERY block of the
+            // Pre-pass: collect `Var: type` declarations from every block of the
             // clause, so a variable declared in one block and used in another keeps
             // its type (Arity declares e.g. `Par1: pchar` in the first block, uses
             // Par1 in a later one).
@@ -110,7 +110,7 @@ internal static class NativeTransform
         => clauses.Any(c => Mentions(c.Term, "$native_goal"));
 
     // Rewrite occurrences of $native_goal(StringTerm) in `t`. `clauseTerm` is the
-    // WHOLE clause (kept intact for guard-based inference); `predLabel` / `clausePos`
+    // whole clause (kept intact for guard-based inference); `predLabel` / `clausePos`
     // locate it for error messages.
     private static Term Rewrite(Term t, Term clauseTerm, string predLabel,
         Shumway.Compiler.Lexer.SourcePosition clausePos, List<CDecl> cDecls,
@@ -186,7 +186,7 @@ internal static class NativeTransform
         callArgs[0] = new AtomTerm(name);
         for (int i = 0; i < vars.Length; i++)
             callArgs[i + 1] = new VarTerm(vars[i].Name);
-        // The dispatch goal REPLACES the source `{...}` block: it keeps the block's
+        // The dispatch goal replaces the source `{...}` block: it keeps the block's
         // position, or the debugger loses the line — no stop site, no line in the call
         // stack, no Set Next Statement target (the PhraseTransform lesson, ADR-035 D5+).
         return new CompoundTerm("$native_run", callArgs) { Position = pos };

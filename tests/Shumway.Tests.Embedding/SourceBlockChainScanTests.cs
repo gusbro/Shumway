@@ -14,6 +14,8 @@ namespace Shumway.Tests.Embedding;
 /// <para>It is invisible until the predicate is large: under 32,000 clauses
 /// the other costs hide it, and at 128,000 it was 18 of the 28 seconds of a
 /// drain. It is a count, maintained as entries come and go.</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class SourceBlockChainScanTests
 {
     private const string Program = """
@@ -24,9 +26,9 @@ public sealed class SourceBlockChainScanTests
         drain(N) :- retract(tok(N)), M is N - 1, drain(M).
         """;
 
-    /// <summary>COUNTED, not timed: reclamation sweeps a drain many times, and
+    /// <summary>Counted, not timed: reclamation sweeps a drain many times, and
     /// the entries it re-threads and re-verifies stay linear in the predicate
-    /// -- the scan this replaces was linear per SWEEP.</summary>
+    /// -- the scan this replaces was linear per sweep.</summary>
     [Fact]
     public void ReclamationDoesNoWorkProportionalToTheChainPerSweep()
     {
@@ -46,15 +48,15 @@ public sealed class SourceBlockChainScanTests
         }
     }
 
-    /// <summary>ANTI-VACUITY, and the reason the check exists at all: a
-    /// predicate whose clauses came from a CONSULTED source block must still
+    /// <summary>Anti-vacuity, and the reason the check exists at all: a
+    /// predicate whose clauses came from a consulted source block must still
     /// refuse reclamation, and must answer correctly while it does. Retracting
     /// from it leaves exactly the right clauses.</summary>
     [Fact]
     public void AConsultedPredicateStillRetractsCorrectly()
     {
         var e = new PrologEngine { Out = new StringWriter() };
-        // Declared dynamic WITH source clauses: these enter through the
+        // Declared dynamic with source clauses: these enter through the
         // consult path, not through assertz.
         e.ConsultString("""
             :- dynamic(sb/1).
@@ -93,9 +95,9 @@ public sealed class SourceBlockChainScanTests
                 .Select(s => ((Shumway.Compiler.Ast.AtomTerm)s["X"]!).Name));
         Assert.True(e.Query("retract(mx(s1)).").Success);
         Assert.Single(e.QueryAll("mx(_)."));
-        // The count IS the check now, so it has to still describe the chain
+        // The count is the check now, so it has to still describe the chain
         // after all that churn: what it says, and what a walk finds. Read from
-        // INSIDE a query, which is the only place a live activation exists.
+        // inside a query, which is the only place a live activation exists.
         int counted = -1, actual = -2;
         Shumway.Builtins.BuiltinsRegistry.Register("$sb_check", 0, act =>
         {

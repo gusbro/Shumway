@@ -11,7 +11,7 @@ namespace Shumway.Compiler.Wasm;
 /// <para>It exists to tell two failures apart, which from the outside look
 /// alike. If a call through the table index never comes back, either the CALL
 /// is the problem (the plan's D1: a function pointer whose value is a table
-/// index, invoked from C#) or the CALLEE is (a counter that read its mailbox
+/// index, invoked from C#) or the callee is (a counter that read its mailbox
 /// wrong and is counting down from a number no clock will outlive). This one
 /// cannot loop, so if it does not return, the call is what does not work.
 /// </para></summary>

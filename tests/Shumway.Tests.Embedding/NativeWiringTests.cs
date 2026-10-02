@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-022 — the consult-time wiring: a real Arity source with a
-/// <c>:- c</c> region and an embedded <c>{...}</c> block, CONSULTED into an engine,
+/// <c>:- c</c> region and an embedded <c>{...}</c> block, consulted into an engine,
 /// runs the native block (the transform rewrites <c>$native_goal</c> → a synthesized
 /// foreign at consult). The interop class is supplied via
 /// <see cref="PrologEngine.UseNativeInterop"/>.</summary>
@@ -38,7 +38,7 @@ public sealed class NativeWiringTests
     [Fact]
     public void NativeBlockInDynamicPredicate_Runs()
     {
-        // The native transform runs BEFORE the dynamic-clause routing, so a
+        // The native transform runs before the dynamic-clause routing, so a
         // `:- dynamic` predicate whose source clause uses a native block has the
         // block rewritten too; the rewritten clause (carrying $native_run) goes to
         // the runtime store and runs the block exactly as a static clause would.
@@ -124,7 +124,7 @@ public sealed class NativeWiringTests
     [Fact]
     public void ExternScalarGlobal_SharesStorageAcrossModules()
     {
-        // Module a DEFINES counter; module b references it via `extern`. Native
+        // Module a defines counter; module b references it via `extern`. Native
         // global storage is keyed by the bare C name engine-wide, so b sees a's
         // writes — the cross-module C-linkage model.
         var e = new PrologEngine();

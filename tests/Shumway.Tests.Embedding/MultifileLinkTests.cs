@@ -8,14 +8,14 @@ namespace Shumway.Tests.Embedding;
 /// `:- multifile` through the compile/link/load path: several modules
 /// contribute clauses to one predicate (the CLP(FD)+CLP(R)
 /// verify_attributes/4 shape). Each module's contributions are
-/// module-rewritten at COMPILE time under their origin module and the seed
+/// module-rewritten at compile time under their origin module and the seed
 /// carries a Multifile flag, so the load path never applies a single
 /// per-fid seed-module context to a fid that holds several modules'
 /// clauses.
 /// </summary>
 public sealed class MultifileLinkTests
 {
-    // Both modules define a LOCAL helper/1 with the same bare name — the
+    // Both modules define a local helper/1 with the same bare name — the
     // collision that proves the origin-module pre-mangling: hook(a,_)'s body
     // must reach ma's helper, hook(b,_)'s must reach mb's.
     private const string ModA =
@@ -106,7 +106,7 @@ public sealed class MultifileLinkTests
     [Fact]
     public void LinkedBundle_BacktracksAcrossContributingModules()
     {
-        // A call with an unbound key enumerates BOTH modules' clauses —
+        // A call with an unbound key enumerates both modules' clauses —
         // the two contributions live in one clause chain.
         byte[] bytes = ShmoLinker.Link(new LinkConfig
         {

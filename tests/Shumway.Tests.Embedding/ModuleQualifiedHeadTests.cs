@@ -8,9 +8,10 @@ namespace Shumway.Tests.Embedding;
 /// Module-qualified clause heads for the global expansion hooks: real libraries
 /// (Scryer's atts.pl, dcgs.pl) install `user:term_expansion/2` and
 /// `user:goal_expansion/2` with a `user:` head so the hook applies to every later
-/// consult. These are the ONLY module-qualified clause heads that occur — we strip
-/// the `M:` and keep the clause in its own file's module, so the hook functor stays
-/// global while the clause body still resolves against that module's predicates.
+/// consult. The engine strips the `M:` and keeps the clause in its own file's
+/// module, so the hook functor stays global while the clause body still resolves
+/// against that module's predicates. Every other qualified head defines the
+/// predicate in M (ADR-055, ClausesForAnotherModuleTests).
 /// </summary>
 public class ModuleQualifiedHeadTests
 {
@@ -39,7 +40,7 @@ public class ModuleQualifiedHeadTests
             user:term_expansion(src(X), Out) :- helper(X, Out).
             helper(X, dst(X)).
             """);
-        // A term the hook does NOT match must pass through unchanged (the hook
+        // A term the hook does not match must pass through unchanged (the hook
         // body simply fails, it must not error or drop the clause).
         e.ConsultString("""
             plain_fact(kept).

@@ -30,7 +30,7 @@ public static class Materializer
     public static Cell MaterializeAsCell(Activation engine, Term term)
     {
         // the per-call variable-map Dictionary is pooled on the
-        // engine (clear-on-use). Variable identity must NOT leak across
+        // engine (clear-on-use). Variable identity must not leak across
         // calls — the clear before each use preserves the "share within a
         // single call" contract exactly as a fresh dictionary did. The
         // depth counter guards re-entrancy: only the outermost call uses
@@ -57,10 +57,10 @@ public static class Materializer
     }
 
     /// <summary>ADR-035 — like <see cref="MaterializeAsCell(Activation, Term)"/>, but
-    /// SHARING variables with pre-existing heap cells: <paramref name="sharedVars"/> maps a
+    /// sharing variables with pre-existing heap cells: <paramref name="sharedVars"/> maps a
     /// variable name to the heap address it must resolve to. The debugger's bind-into-frame
     /// commit seeds it with the suspended frame's own variables, so a term built here and
-    /// unified against the frame creates REAL sharing rather than fresh copies. Variables
+    /// unified against the frame creates real sharing rather than fresh copies. Variables
     /// the term introduces beyond the seeded ones allocate fresh cells and are added to the
     /// map — repeated calls against the same map preserve identity across a whole
     /// solution's worth of values.</summary>
@@ -70,7 +70,7 @@ public static class Materializer
 
     /// <summary>Plants a term on the heap.
     ///
-    /// <para>ITERATIVE. An AST is user data of any depth: the list SPINE was
+    /// <para>Iterative. An AST is user data of any depth: the list spine was
     /// already walked in a loop, but every other nesting — the left spine of
     /// <c>1+2+3+…</c>, a canonical <c>'.'(H,T)</c> chain read back from
     /// write_canonical/1 — recursed once per level and overflowed the C#
@@ -102,15 +102,15 @@ public static class Materializer
         return root;
     }
 
-    /// <summary>Materialises ONE node, pushing its children onto
+    /// <summary>Materialises one node, pushing its children onto
     /// <paramref name="work"/> with the heap slots they must fill.</summary>
     private static Cell MaterializeNode(
         Activation engine, Term term, Dictionary<string, int> varMap,
         ref List<(Term Term, int Dest)>? work, ref Dictionary<string, Cell>? knots)
     {
-        // A cycle owner met a SECOND time is the same term, not another copy
+        // A cycle owner met a second time is the same term, not another copy
         // of it. copy_term/3 materialises the term and its attribute values in
-        // ONE call exactly so that what occurs in both lands on one object:
+        // one call exactly so that what occurs in both lands on one object:
         // variables join by the `_G<addr>` name they were read with, and this
         // is that same join for a rational tree, which has no variable to join
         // by. Without it the projection built the constraint over a cyclic
@@ -125,7 +125,7 @@ public static class Materializer
                 // read the node's lazily-cached id (seeded by
                 // TermReader when the AST came off a heap) instead of a
                 // by-name re-intern per visit. The intern, when it does
-                // happen, is TRANSIENT — the old `permanent: true` pinned
+                // happen, is transient — the old `permanent: true` pinned
                 // every atom transiting a meta-builtin to the eternal tier,
                 // defeating the three-tier atom GC (ADR-003). Safety: the
                 // Transient tier holds a strong in-table reference; the only

@@ -50,7 +50,7 @@ public sealed class Parser
     private bool _sawDcgArrow;
 
     // Set by ReadPrefixOrPrimary / ReadTermInternal: true when the term just
-    // read was a BARE operator-atom (unparenthesised, unquoted, no operator
+    // read was a bare operator-atom (unparenthesised, unquoted, no operator
     // applied on top). ISO §6.3.1.3 forbids it as the immediate operand of an
     // operator; the apply sites throw — except for the predicate-indicator
     // `op/N` (see TryApplyInfix), which every Prolog accepts (`dynamic/1`).
@@ -85,7 +85,7 @@ public sealed class Parser
         _lexer = lexer;
         _operators = operators;
         _flags = flags;
-        // Flags that affect LEXING travel to the lexer here, so every parse
+        // Flags that affect lexing travel to the lexer here, so every parse
         // path (consult, runtime queries, read/1, term_from_atom) lexes the
         // same way; ClauseReader can still flip them mid-file on a
         // set_prolog_flag directive.
@@ -227,7 +227,7 @@ public sealed class Parser
                 // unary-prefix suffix (e.g. '+' as binary + '-' as
                 // unary -). Matches SWI's reader.
                 //
-                // BUT only when the whole token is NOT itself a registered
+                // But only when the whole token is not itself a registered
                 // infix/postfix operator: a known operator that failed only
                 // the precedence check is a precedence boundary, not a glued
                 // run. Splitting e.g. ':-' (a real xfx 1200 operator) into
@@ -290,7 +290,7 @@ public sealed class Parser
         int leftMax = opType == OperatorType.Yfx ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
-        // An xfy operator nests to the RIGHT, so a chain of them —
+        // An xfy operator nests to the right, so a chain of them —
         // a clause body's commas, a long disjunction — costs one level of
         // recursion per element in the naive reader. Read it in a loop
         // instead; the fold at the end builds the same tree.
@@ -309,7 +309,7 @@ public sealed class Parser
         bool rightBareOp = _bareOp;
 
         // ISO §6.3.1.3: the operands of an operator may not be a bare
-        // operator-atom (`* = *` must be `(*) = (*)`) — INCLUDING the
+        // operator-atom (`* = *` must be `(*) = (*)`) — including the
         // predicate-indicator shape `op/N`: `--> /2` reads only as
         // `(-->)/2` (conformity s#378), exactly as the strictest engines
         // read it. SWI-style sources that write `dynamic/1` bare load
@@ -333,22 +333,22 @@ public sealed class Parser
         return true;
     }
 
-    /// <summary>The whole right-nested run of one xfy operator, read ITERATIVELY.
+    /// <summary>The whole right-nested run of one xfy operator, read iteratively.
     /// A clause body is such a run — `a, b, c, ...` is `','(a, ','(b, ...))` — and
     /// reading each element by recursing for the right operand spent C# stack per
-    /// GOAL: a body of about a thousand goals overflowed it, which kills the
+    /// goal: a body of about a thousand goals overflowed it, which kills the
     /// process and cannot be caught or reported.
     ///
     /// <para>Elements are read at the operator's own left maximum (an xfy's left
     /// operand is strictly below it) and collected; the run ends at the first
-    /// token that is not this same operator, and whatever follows THERE binds up
+    /// token that is not this same operator, and whatever follows there binds up
     /// to the operator's own priority, which is what the right operand allows —
     /// so the last element finishes through <see cref="ContinueTerm"/> once,
     /// however deep the run was. Folding right at the end builds exactly the tree
     /// the recursion built, node positions included.</para></summary>
     private Term ReadXfyChain(string name, int opPrec, Term first, bool firstBareOp)
     {
-        // elems[0] is the operator's LEFT operand; elems[i] the i-th right one,
+        // elems[0] is the operator's left operand; elems[i] the i-th right one,
         // preceded by the operator token at opPositions[i].
         var elems = new List<Term> { first };
         var bare = new List<bool> { firstBareOp };
@@ -359,9 +359,9 @@ public sealed class Parser
             opPositions.Add(PeekToken().Position);
             NextToken();                       // the operator itself
             // The chain reads its operands at opPrec - 1 because every one
-            // but the last is the LEFT operand of the next nesting, and xfy
-            // takes x there. The LAST is the right operand, where y allows
-            // the operator's own priority — and the only term that can START
+            // but the last is the left operand of the next nesting, and xfy
+            // takes x there. The last is the right operand, where y allows
+            // the operator's own priority — and the only term that can start
             // at exactly that priority is a prefix operator of it. Reading
             // that at opPrec - 1 rejected `1 p p 2` for `op(9, fy, p)` +
             // `op(9, xfy, p)`, which is p(1, p(2)) (Neumerkel syntax #163).
@@ -419,7 +419,7 @@ public sealed class Parser
         return acc;
     }
 
-    /// <summary>Whether the next token continues a run of the SAME xfy operator.
+    /// <summary>Whether the next token continues a run of the same xfy operator.
     /// The comma is its own token kind; `|` is deliberately absent — the
     /// conditions that let a bar act as an operator at all live in
     /// <see cref="ContinueTerm"/>, so a bar run takes the ordinary path.</summary>
@@ -493,7 +493,7 @@ public sealed class Parser
         {
             // Disambiguation: an atom that is both a prefix operator and a valid
             // standalone atom is treated as a prefix op only when followed by a
-            // token that can itself start a term, AND that token is not the
+            // token that can itself start a term, and that token is not the
             // open-paren that would turn the atom into a compound term.
             //
             // ISO §6.4.7 — a '(' immediately after the atom (no
@@ -511,12 +511,12 @@ public sealed class Parser
 
             // ISO disambiguation for `op/N` (predicate-indicator
             // notation). An atom like `not` that is both a prefix
-            // operator (fy 900) AND a valid plain atom collides with
+            // operator (fy 900) and a valid plain atom collides with
             // `not/1` inside a list / argument position: the prefix-
             // form parse would commit to `not('/')` and strand the
             // arity integer behind it.
             //
-            // Narrow rule: when `tok` is a prefix operator AND the
+            // Narrow rule: when `tok` is a prefix operator and the
             // very next tokens form `/ <integer>`, the user clearly
             // means the indicator `tok/<integer>` and we should let
             // the outer infix loop apply `/` to `tok` as its left
@@ -531,7 +531,7 @@ public sealed class Parser
 
             // SWI leniency: when the would-be operand is itself a bare
             // NON-prefix operator atom (`Spec == '-'  ->  …` — after the '-'
-            // comes `->`), SWI reads the current atom as a PLAIN ATOM and
+            // comes `->`), SWI reads the current atom as a plain atom and
             // lets the following operator apply infix, where strict ISO
             // §6.3.1.3 rejects the whole form. Only when the next atom cannot
             // head a compound (no adjacent '(').
@@ -562,20 +562,20 @@ public sealed class Parser
             }
         }
 
-        // ISO §6.3.1.3: a bare operator-atom used as the OPERAND of an operator
+        // ISO §6.3.1.3: a bare operator-atom used as the operand of an operator
         // has the operator's own priority, so it cannot sit where a
         // lower-priority term is required — `- -` (the operand `-` has priority
         // 500, but a prefix `-` admits ≤ 200) is a syntax error, as is `a * *`
         // (the right operand `*` needs ≤ 399). This is checked only in an
         // operator-operand position (maxPrec < 999): a bare operator-atom used
-        // as a delimited ARGUMENT or list element (`f(:-)`, `[:-,-]`, read at
+        // as a delimited argument or list element (`f(:-)`, `[:-,-]`, read at
         // 999) or at the top level is a complete atom term and stays valid. A
         // parenthesised `(*)` / compound `f(*)` reads as a non-atom (exempt).
         //
-        // A QUOTED atom is NOT exempt: quotes change the token, not the atom —
-        // `'\\'` IS the operator `\` (Neumerkel syntax #106), so `X = '\\'` is
+        // A quoted atom is not exempt: quotes change the token, not the atom —
+        // `'\\'` is the operator `\` (Neumerkel syntax #106), so `X = '\\'` is
         // the same error as `X = *`, and the conforming spelling is `X = ('\\')`.
-        // The leniencies that DO accept it: arity_compat (Arity sources use
+        // The leniencies that do accept it: arity_compat (Arity sources use
         // quoted operator atoms as plain operands) and the SWI dialect scope
         // (LenientBareOperatorOperands — SWI accepts them everywhere).
         Token pk = PeekToken();
@@ -587,7 +587,7 @@ public sealed class Parser
         if (pk.Kind == TokenKind.Atom && !quotedExempt
             && prim is AtomTerm bareAt && bareAt.Name == pk.Text)
         {
-            // A bar atom only ever reaches here QUOTED (the bare bar lexes as
+            // A bar atom only ever reaches here quoted (the bare bar lexes as
             // TokenKind.Bar); the table decides whether it is an operator, so
             // `op(0, xfy, '|')` lifts the operand restriction with it.
             int p = BareOperatorAtomPriority(bareAt.Name);
@@ -595,7 +595,7 @@ public sealed class Parser
             {
                 _bareOp = true;
                 // builtPrec stays 0: the bare atom's own token priority for
-                // subsequent operator application is 0, so `/` still BINDS a
+                // subsequent operator application is 0, so `/` still binds a
                 // `dynamic/1`-shaped indicator — the apply site then rejects
                 // it via _bareOp unless a dialect leniency admits it. The ISO
                 // §6.3.1.3 rejection rides on _bareOp (the apply sites) and
@@ -673,14 +673,14 @@ public sealed class Parser
                 // back to before the `[!` rather than re-entering the snip.
                 // Trade-off: a list whose first element is the cut atom now
                 // needs to be written `[(!), ...]` instead of `[!, ...]`.
-                // A QUOTED '!' is never a snip opener: the
+                // A quoted '!' is never a snip opener: the
                 // Arity corpus writes lists like ['!', Token], which must
                 // parse as ordinary two-element lists. Nor is a bare '!'
                 // that immediately closes or continues the list — `[!]`,
                 // `[!, X]`, `[! | T]` are ordinary lists with the cut atom as
                 // an element (ISO-valid, and used by real libraries such as
                 // Scryer's clpz). A real snip `[! Goal !]` always has a goal
-                // after the opening '!' — so an INFIX operator right after the
+                // after the opening '!' — so an infix operator right after the
                 // '!' also means list, with '!' as its left operand
                 // (`[!-1, !-2]`); goals never start with an infix-only token.
                 if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
@@ -726,7 +726,7 @@ public sealed class Parser
                 // native goal: in a NON-DCG clause a body goal can be raw
                 // native code between braces (`p :- g, { C code; }, h.`).
                 // The brace content is not Prolog-lexable, so it is
-                // skipped RAW by the lexer (naive brace counting) and
+                // skipped raw by the lexer (naive brace counting) and
                 // carried as '$native_goal'(RawText); the consult-time
                 // NativeTransform (ADR-022) compiles it for real.
                 //
@@ -770,14 +770,14 @@ public sealed class Parser
 
             case TokenKind.Comma:
             case TokenKind.Bar:
-                // Comma / bar as a FUNCTOR in canonical prefix form —
+                // Comma / bar as a functor in canonical prefix form —
                 // ','(A, B) and '|'(A, B). `write_canonical` emits nested
                 // conjunctions this way (a Logtalk compiler scratch file is
                 // full of `:-(Head, ,(G1, ,(G2, G3)))`), and every ISO Prolog
                 // reads it back. These tokens surface with their own kinds
                 // (they act as infix separators in operator position), so the
                 // functor reading only applies when one lands where an operand
-                // is expected AND a '(' immediately follows; a bare separator
+                // is expected and a '(' immediately follows; a bare separator
                 // here is still the syntax error the default arm reports.
                 if (PeekToken().Kind == TokenKind.LParen
                     && IsAdjacent(tok, PeekToken()))
@@ -790,8 +790,8 @@ public sealed class Parser
                             $"Compound term '{sepName}' requires at least one argument.", pos);
                     return new CompoundTerm(sepName, sepArgs.ToArray()) { Position = pos };
                 }
-                // `|` in primary position is the bar ATOM only under dialect
-                // leniency and only when DELIMITED-AND-CLOSED — the next token
+                // `|` in primary position is the bar atom only under dialect
+                // leniency and only when delimited-and-closed — the next token
                 // is `)` — the `(|)` / `f(|)` shape Scryer's builtins.pl op/3
                 // permission-error term relies on. Strict ISO has no bar atom
                 // token at all (Neumerkel #356 `{|}`, #360/#361 `(|)`); the
@@ -820,7 +820,7 @@ public sealed class Parser
         // Every text mode produces a StringTerm, which the compiler packs
         // (ADR-047 decision 8). Building the cons list here is what made a
         // literal cost 2n+1 cells; the flag now decides only what the list's
-        // ELEMENTS are, and that travels with the datum from here on.
+        // elements are, and that travels with the datum from here on.
         if (text.Length == 0 && _flags.DoubleQuotes != DoubleQuotesMode.Atom)
             return new AtomTerm("[]") { Position = pos };
         return _flags.DoubleQuotes switch
@@ -833,7 +833,7 @@ public sealed class Parser
     }
 
     // SWI argument mode (LenientArgumentPriority): an argument / list element
-    // reads at FULL 1200 priority with the separator tokens suppressed as
+    // reads at full 1200 priority with the separator tokens suppressed as
     // operators — comma always (it separates), bar only where it marks a list
     // tail. ISO mode reads at 999 as before. The suppression flags are
     // cleared by every bracketing context (parens, braces, a nested arg list
@@ -845,14 +845,14 @@ public sealed class Parser
     /// <c>[a,b,c|T]</c>, which is how a long text with an open tail is
     /// written and read without spelling out every character.
     ///
-    /// <para>It attaches to the double-quoted TOKEN and to nothing else, so
+    /// <para>It attaches to the double-quoted token and to nothing else, so
     /// <c>("a")||[]</c> stays a syntax error: what precedes the bars has to be
     /// the literal itself. Chained to the right, <c>"a"||"b"||"c"</c> is
     /// <c>[a,b,c]</c>, since the tail is read the same way. The tail is a term
     /// of priority 0, a primary, so the bars bind tighter than every operator
     /// and <c>X = "ab"||T</c> needs no parentheses.</para>
     ///
-    /// <para>Only where a double-quoted literal IS a list: under
+    /// <para>Only where a double-quoted literal is a list: under
     /// <c>double_quotes(atom)</c> there is no list to leave open, and the bars
     /// are read as they were before.</para></summary>
     private Term ReadDoubleBarTail(Term literal, SourcePosition pos)
@@ -891,7 +891,7 @@ public sealed class Parser
         finally { _suppressComma = savedComma; _suppressBar = savedBar; }
     }
 
-    /// <summary>Continues an ARGUMENT expression whose leading primary is
+    /// <summary>Continues an argument expression whose leading primary is
     /// already read, under the same priority ceiling and separator
     /// suppression <see cref="ReadArgTerm"/> would have used.</summary>
     private Term ContinueArgTerm(Term left, bool barIsSeparator)
@@ -931,7 +931,7 @@ public sealed class Parser
     /// <summary>Reads the argument list of <c>name(</c> — the opening paren
     /// already consumed — and returns the compound.
     ///
-    /// <para>ITERATIVE in the one shape that nests without bound: an argument
+    /// <para>Iterative in the one shape that nests without bound: an argument
     /// that is itself a compound in functional notation. <c>write_canonical/1</c>
     /// renders a list as <c>'.'(H, T)</c>, so a canonical ten-thousand-element
     /// list is a ten-thousand-deep nest — and recursing once per level meant
@@ -1165,10 +1165,10 @@ public sealed class Parser
     };
 
     /// <summary>A float literal past double range lexes as an infinity (the
-    /// lexer keeps both frameworks identical); the SYNTAX is perfect, so it is
+    /// lexer keeps both frameworks identical); the syntax is perfect, so it is
     /// not a syntax error — it names a value outside the float range, which
     /// only a representation_error can report (Neumerkel number_chars #82 /
-    /// stc #74). The SIGN follows the syntax: a UNARY minus makes the literal
+    /// stc #74). The sign follows the syntax: a unary minus makes the literal
     /// itself negative, below min_float; everywhere else the positive literal
     /// is above max_float — so `-9.9e999` is min_float while `0-9.9e999` is
     /// max_float (the minus there is binary and the literal is positive).

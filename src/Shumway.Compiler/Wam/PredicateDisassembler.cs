@@ -153,7 +153,7 @@ public static class PredicateDisassembler
     //      _structure; all lists share one label);
     //    * within a list/struct arg0 bucket, ADR-027 second-level (sub-arg)
     //      indexing can discriminate the list head / a struct sub-arg;
-    //    * BUT no *sibling*-argument indexing is applied inside a multi-clause
+    //    * but no *sibling*-argument indexing is applied inside a multi-clause
     //      ground arg0 value bucket — those stay a linear try/retry/trust scan
     //      (switch_on_arg only serves the var-arg0 fallthrough path and
     //      singleton buckets).
@@ -219,7 +219,7 @@ public static class PredicateDisassembler
     //  Walks the compiled bytecode of every static predicate in a source and
     //  tallies the peephole-fusion candidates plus the `!, tailCall` clause
     //  shape (a cut guarding a final tail call — the base of deterministic
-    //  recursion in the Arity corpus). Counts are over TEXTUAL adjacency in the
+    //  recursion in the Arity corpus). Counts are over textual adjacency in the
     //  emitted byte stream; every candidate pair's first element is a body
     //  opcode (cut / call / deallocate) that is never a clause terminator, so
     //  textual adjacency equals control-flow fall-through for them (no
@@ -347,16 +347,16 @@ public static class PredicateDisassembler
 
     // ---------------------------------------------------------------------
     //  Redundant-cut census (Ask 3): a `..., pred, !.` whose cut runs with no
-    //  live choice point (the clause is the LAST/only one — trust_me already
+    //  live choice point (the clause is the last/only one — trust_me already
     //  popped the clause-selection CP — and every goal before the cut is
-    //  deterministic) is a NO-OP the compiler could elide, dropping the cut,
-    //  the get_level and possibly the frame in BOTH tiers.
+    //  deterministic) is a no-op the compiler could elide, dropping the cut,
+    //  the get_level and possibly the frame in both tiers.
     //
     //  Determinism of the prefix goals comes from a sound, mode-independent,
-    //  cut-aware intra-module DET FIXPOINT: a user predicate is det (leaves no
-    //  CP on success) when its dispatch is deterministic (single clause, OR
-    //  first-arg mutually exclusive, OR every clause commits via a cut) AND, in
-    //  every clause, the goals AFTER the last top-level cut all leave no CP.
+    //  cut-aware intra-module det fixpoint: a user predicate is det (leaves no
+    //  CP on success) when its dispatch is deterministic (single clause, or
+    //  first-arg mutually exclusive, or every clause commits via a cut) and, in
+    //  every clause, the goals after the last top-level cut all leave no CP.
     //  Known-det builtins seed the fixpoint; cross-module callees are unknown
     //  (counted separately — the linker's whole-program call graph would close
     //  over them, so `BlockedCross` is the payoff of moving the fixpoint into
@@ -499,7 +499,7 @@ public static class PredicateDisassembler
         long neck = 0, deep = 0, elB = 0, elI = 0, blkC = 0, blkN = 0;
         foreach (string ind in order)
         {
-            var last = groups[ind][^1];               // the LAST clause
+            var last = groups[ind][^1];               // the last clause
             if (last.Kind != ClauseKind.Rule
                 || last.Term is not CompoundTerm { Args.Length: 2 } r) continue;
             var goals = new List<Term>();
@@ -557,7 +557,7 @@ public static class PredicateDisassembler
     /// <summary>The outcome of splitting a clause set by an indexing key at some
     /// position: <see cref="Res"/> = worst-case residual scan (largest key-group +
     /// wildcards that merge into every group); <see cref="GroupMax"/> = that
-    /// largest key-group WITHOUT the wildcards — the residual once a committed
+    /// largest key-group without the wildcards — the residual once a committed
     /// (cutting) target prunes the trailing wildcard/var clauses; <see cref="Arg"/>
     /// = the 0-based sibling arg chosen (-1 for a sub-arg path). A default with
     /// <c>Res == int.MaxValue</c> means "no partitioning position found".</summary>

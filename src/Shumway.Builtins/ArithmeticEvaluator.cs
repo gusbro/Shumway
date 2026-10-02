@@ -75,7 +75,7 @@ public static class ArithmeticEvaluator
             case "pi": return new Number(Math.PI);
             case "e": return new Number(Math.E);
             // Machine epsilon (2^-52): difference between 1.0 and the
-            // smallest float > 1.0 — NOT .NET's double.Epsilon (the
+            // smallest float > 1.0 — not .NET's double.Epsilon (the
             // smallest positive denormal).
             case "epsilon": return new Number(Math.Pow(2, -52));
             // SWI's random_float: a float in [0.0, 1.0). Host-dependent.
@@ -89,12 +89,12 @@ public static class ArithmeticEvaluator
                 return new Number(rh2.Random.Next());
         }
         // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
-        // type_error(evaluable, Name/0) — the culprit is the INDICATOR
+        // type_error(evaluable, Name/0) — the culprit is the indicator
         // compound, not the bare atom (a catcher for foo/0 must unify).
         throw EvaluableTypeError(engine, name ?? "?", 0);
     }
 
-    // A resolved evaluable, as one int. The walk stores THIS rather than the
+    // A resolved evaluable, as one int. The walk stores this rather than the
     // functor name, so a node's name is switched on once (here) instead of
     // twice (once to validate, once to apply) — which is what lets an
     // explicit stack come out ahead of the C# one it replaced. The high
@@ -110,7 +110,7 @@ public static class ArithmeticEvaluator
     /// <summary>Resolves a compound's functor to an operation code, raising the
     /// ISO error when it is not evaluable.
     ///
-    /// <para>The FUNCTOR is checked before the arguments are evaluated:
+    /// <para>The functor is checked before the arguments are evaluated:
     /// <c>foo(bar)</c> is type_error(evaluable, foo/1), not bar/0 (§7.1.2 —
     /// the outermost non-evaluable is the culprit; GNU and SWI agree).</para></summary>
     private static int ResolveEvaluable(Activation engine, int functorIdx, out int arity)
@@ -181,7 +181,7 @@ public static class ArithmeticEvaluator
     /// the walk therefore moves to an explicit work stack and value stack, the
     /// same shape ADR-018 compiles arithmetic into.</para>
     ///
-    /// <para>It does NOT move there sooner, and that is measured, not
+    /// <para>It does not move there sooner, and that is measured, not
     /// preference: <see cref="Number"/> is a wide struct with managed
     /// references inside it (BigInteger, Rational), so pushing values into an
     /// array costs a wide copy plus a write barrier per reference field, where
@@ -204,11 +204,11 @@ public static class ArithmeticEvaluator
     }
 
     // The two stacks of the walk. [ThreadStatic] for the reason
-    // ArithEvalStack's slots are: arithmetic is LEAF — no Prolog goal runs
+    // ArithEvalStack's slots are: arithmetic is leaf — no Prolog goal runs
     // between entering an evaluation and finishing it — so walks never nest or
     // interleave on one thread, and this is not engine state (the engine stays
     // thread-agile; a plain static would race two engines on two threads).
-    // The tops are LOCALS, so an exception mid-evaluation leaves nothing to
+    // The tops are locals, so an exception mid-evaluation leaves nothing to
     // reset. Reusing the arrays is what keeps an explicit stack from costing
     // more than the C# one it replaced.
     [ThreadStatic] private static EvalStep[]? _steps;
@@ -379,7 +379,7 @@ public static class ArithmeticEvaluator
     //
     // The a_bin / a_un / a_cmp opcodes (ADR-018) carry a small op code — these
     // enums. The compiler maps a functor name to one (Try*); the interpreter
-    // applies it over the eval stack (Apply*). There is ONE operation switch
+    // applies it over the eval stack (Apply*). There is one operation switch
     // per arity, shared by the name-based Evaluate* (the term-evaluation path,
     // for a variable bound to an unevaluated expression) and the opcode path.
 
@@ -389,7 +389,7 @@ public static class ArithmeticEvaluator
         BitAnd, BitOr, Xor, Shl, Shr, Gcd, Atan2,
         // Only append here — the numeric values are baked into bytecode.
         IntDivFloor,   // (div)/2 — integer division rounding toward -inf
-        PowFloat,      // (**)/2 — ISO: result is ALWAYS a float (^ keeps IF)
+        PowFloat,      // (**)/2 — ISO: result is always a float (^ keeps if)
         Rdiv,          // (rdiv)/2 — exact rational division (ADR-039)
         LogBase,       // log(Base, X) — Cor.2 two-argument logarithm
     }
@@ -421,7 +421,7 @@ public static class ArithmeticEvaluator
             case "rem": op = BinOp.Rem; return true;
             case "min": op = BinOp.Min; return true;
             case "max": op = BinOp.Max; return true;
-            // ISO 9.3.1 vs 9.3.10: `**` always yields a FLOAT; `^` yields an
+            // ISO 9.3.1 vs 9.3.10: `**` always yields a float; `^` yields an
             // integer for integer operands (integer power).
             case "**": op = BinOp.PowFloat; return true;
             case "^": op = BinOp.Pow; return true;
@@ -500,7 +500,7 @@ public static class ArithmeticEvaluator
     /// consulted only by <c>/</c> (ADR-039); the default false is the
     /// ISO / GProlog behaviour and the compile-time constant-folding path.</summary>
     // Unbounded integers still live in a finite representation: .NET's
-    // BigInteger caps a magnitude at int.MaxValue BITS (~256 MB, ~646 million
+    // BigInteger caps a magnitude at int.MaxValue bits (~256 MB, ~646 million
     // decimal digits) and throws a raw OverflowException at the cap — which
     // used to escape `is/2` as "% OverflowException: ..." instead of an ISO
     // error. Every arithmetic apply funnels through these two wrappers, so the
@@ -543,7 +543,7 @@ public static class ArithmeticEvaluator
         // Unreachable by construction: `op` was decoded from compiled code, and
         // an unknown user functor already errs with a culprit at lookup. Landing
         // here means a corrupted operand (the cross-process bundle flake once
-        // surfaced as a culpritless type_error(evaluable)) — say WHICH value.
+        // surfaced as a culpritless type_error(evaluable)) — say which value.
         _ => throw new PrologRuntimeException("system_error",
             $"ApplyBin reached with undecodable BinOp {(int)op} - corrupted arithmetic operand"),
     };
@@ -562,7 +562,7 @@ public static class ArithmeticEvaluator
         return d;
     }
 
-    /// <summary>A float result computed from FINITE inputs: infinity means
+    /// <summary>A float result computed from finite inputs: infinity means
     /// the exact value fell outside the float range —
     /// <c>evaluation_error(float_overflow)</c> (§9.1.4.1); NaN means the
     /// function was applied outside its domain.</summary>
@@ -575,7 +575,7 @@ public static class ArithmeticEvaluator
 
     /// <summary>Float→integer conversion (truncate / round / floor /
     /// ceiling / integer): a non-finite argument is undefined, and a value
-    /// beyond the long range converts EXACTLY through BigInteger — the
+    /// beyond the long range converts exactly through BigInteger — the
     /// bare (long) cast silently produced long.MinValue garbage for
     /// <c>truncate(1.0e30)</c>.</summary>
     private static Number FloatToInteger(double d)
@@ -598,9 +598,9 @@ public static class ArithmeticEvaluator
     {
         double x = FloatOperand(a), y = b.AsDouble();
         if (x == 0 && y < 0) throw EvalError("zero_divisor");
-        // A negative base demands an INTEGRAL exponent by VALUE: -2 ** 3.0
+        // A negative base demands an integral exponent by value: -2 ** 3.0
         // is -8.0 (GNU, SWI and Scryer agree), only a fractional exponent
-        // is undefined. Reading §9.3.1.3's "not an integer" as the TYPE
+        // is undefined. Reading §9.3.1.3's "not an integer" as the type
         // would reject 3.0 — that is the ECLiPSe reading, not the field's.
         if (x < 0 && y != Math.Floor(y)) throw EvalError("undefined");
         return FiniteOrOverflow(Math.Pow(x, y));
@@ -672,7 +672,7 @@ public static class ArithmeticEvaluator
         UnOp.Ceiling => FloatToInteger(Math.Ceiling(FloatOperand(a))),
         UnOp.Floor => FloatToInteger(Math.Floor(FloatOperand(a))),
         // ISO 9.1.6.1 defines round(x) as floor(x + 1/2) — halves go toward
-        // +inf (round(-3.5) is -3), NOT away from zero.
+        // +inf (round(-3.5) is -3), not away from zero.
         UnOp.Round => FloatToInteger(Math.Floor(FloatOperand(a) + 0.5)),
         UnOp.Truncate => FloatToInteger(Math.Truncate(FloatOperand(a))),
         UnOp.Float => new Number(FloatOperand(a)),
@@ -844,10 +844,10 @@ public static class ArithmeticEvaluator
     private static Number ShiftLeft(Number a, Number b)
     {
         EnsureBothInt(a, b);
-        // NOT a bare (int) cast: it truncated the count, so `1 << 4294967296`
+        // Not a bare (int) cast: it truncated the count, so `1 << 4294967296`
         // shifted by 0 and answered 1 — a silently wrong answer. A count past
         // int.MaxValue pushes any nonzero value over the representation cap
-        // (the cap IS 2^31 bits); a count below int.MinValue is a right shift
+        // (the cap is 2^31 bits); a count below int.MinValue is a right shift
         // past every bit.
         if (b.IntValue > int.MaxValue)
             return a.AsBigInteger().IsZero ? new Number(0L)
@@ -856,7 +856,7 @@ public static class ArithmeticEvaluator
             return new Number(a.AsBigInteger().Sign < 0 ? -1L : 0L);
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue << shift);
-        // `checked` does NOT cover shifts in C# (they wrap silently, and the
+        // `checked` does not cover shifts in C# (they wrap silently, and the
         // count is masked to 0..63 — `1L << 64` is 1). Unbounded-integer
         // semantics: take the long path only when shifting back round-trips;
         // else promote to BigInteger (ieee_754's `1 << 63` bit patterns).
@@ -918,7 +918,7 @@ public static class ArithmeticEvaluator
             }
             return new Number(System.Numerics.BigInteger.Pow(a.AsBigInteger(), (int)b.IntValue));
         }
-        // ISO 9.3.10 (Cor.2): integer base, NEGATIVE integer exponent —
+        // ISO 9.3.10 (Cor.2): integer base, negative integer exponent —
         // 0 has no inverse (undefined), ±1 stay integer, and anything else
         // has no integer value: type_error(float, Base). Under
         // prefer_rationals (ADR-039) the exact rational 1/Base^|N| exists.
@@ -938,7 +938,7 @@ public static class ArithmeticEvaluator
                 return new Number(Rational.Create(
                     BigInteger.One, BigInteger.Pow(baseInt, (int)(-b.IntValue))));
             }
-            // Without rationals there is no integer value at ANY magnitude of
+            // Without rationals there is no integer value at any magnitude of
             // negative exponent — type_error(float), never a resource error.
             throw new PrologRuntimeException("type_error", "float",
                 a.IsBig ? (object)a.BigValue : (object)a.IntValue);
@@ -947,7 +947,7 @@ public static class ArithmeticEvaluator
     }
 
     /// <summary>ISO <c>type_error(integer, Culprit)</c> for an integer-only
-    /// function fed a float — the culprit is the offending VALUE, boxed
+    /// function fed a float — the culprit is the offending value, boxed
     /// (these helpers run without an Activation, shared with the compiled
     /// tier).</summary>
     private static PrologRuntimeException IntTypeError(Number offender)
@@ -982,7 +982,7 @@ public static class ArithmeticEvaluator
     }
 
     /// <summary>Float result of a binary op: infinity or NaN produced from
-    /// FINITE operands is float_overflow / undefined (§9.1.4.1); an
+    /// finite operands is float_overflow / undefined (§9.1.4.1); an
     /// already-infinite operand propagates untouched.</summary>
     private static Number FloatChecked(double x, double y, double r)
         => double.IsFinite(r) || !double.IsFinite(x) || !double.IsFinite(y)

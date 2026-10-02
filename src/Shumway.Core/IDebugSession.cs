@@ -74,12 +74,12 @@ public interface IDebugSession
     /// <summary>An armed breakpoint was reached at program address
     /// <paramref name="pc"/>: the instruction there â€” a clause entry or the start
     /// of a body goal â€” is about to run, and has not yet. The session armed it, so
-    /// it knows which source site the address belongs to. Only ARMED addresses
+    /// it knows which source site the address belongs to. Only armed addresses
     /// report here; a debug-compiled program with no breakpoints raises this
     /// never, and costs nothing.</summary>
     void OnBreak(Activation engine, int pc);
 
-    /// <summary>ADR-035 - a goal that compiles INLINE (a <c>!</c>, an <c>is/2</c>, an
+    /// <summary>ADR-035 - a goal that compiles inline (a <c>!</c>, an <c>is/2</c>, an
     /// <c>=/2</c>, a comparison) is about to run. Those goals emit no call, so no other
     /// port ever fires for them - and a step walked straight over the <c>!</c> the user
     /// wanted to stand at, variables in hand, before it commits. Raised by the
@@ -98,7 +98,7 @@ public interface IDebugSession
     /// solution â€” the query has produced one, or run out of them. There is no port
     /// here and nothing to show: the machine is not in the program any more.
     ///
-    /// <para>It matters because a STEP is a promise to stop at the next port that
+    /// <para>It matters because a step is a promise to stop at the next port that
     /// satisfies it, and past this line no port is coming. A step nobody can satisfy
     /// has to be abandoned, and said to be abandoned â€” a debugger left waiting for a
     /// stop that will never arrive believes the program is still running, and every
@@ -118,10 +118,10 @@ public interface IDebugSession
     /// <summary>ADR-016 relocate phase: rewrite every heap index the session
     /// holds through <paramref name="relocIndex"/> (old index → new).
     /// <paramref name="engine"/> is the activation whose heap was compacted —
-    /// session state indexed on OTHER activations' heaps must not be touched.
+    /// session state indexed on other activations' heaps must not be touched.
     /// <paramref name="relocBoundary"/> maps a saved heap-TOP (an allocation
     /// point, range [0, oldTop] inclusive) — what a debugger's rewind marks
-    /// record (ADR-035 D5+): the collection RELOCATES them rather than
+    /// record (ADR-035 D5+): the collection relocates them rather than
     /// invalidating them, so Set Next Statement's backward targets survive a
     /// GC mid-step. Sound because the slide is order-preserving, trailed
     /// cells are roots (no trail entry ever points at a collected cell), and

@@ -70,7 +70,7 @@ public sealed class StreamRegistry
     {
         ArgumentNullException.ThrowIfNull(defaultOut);
 
-        // Wrapped in a PositionTrackingReader so user_input HAS a stream
+        // Wrapped in a PositionTrackingReader so user_input has a stream
         // position (the position(N) property; GNU and SWI report one for
         // stdin too). No newline translation: the console reader's chars
         // pass through exactly as before.
@@ -86,7 +86,7 @@ public sealed class StreamRegistry
 
         UserOutput = new StreamHandle(
             id: AllocateId(), writer: defaultOut,
-            // ISO §7.10.2.4: standard output has mode APPEND.
+            // ISO §7.10.2.4: standard output has mode append.
             mode: "append", filename: null, alias: "user_output");
         Register(UserOutput);
 
@@ -101,7 +101,7 @@ public sealed class StreamRegistry
 
     /// <summary>The host's standard input, or an empty reader when it has none.
     /// A browser-wasm host has no stdin at all: <c>Console.In</c> does not return
-    /// an exhausted reader there, it throws — which would take down the FIRST
+    /// an exhausted reader there, it throws — which would take down the first
     /// query of every program, since this registry is built during query setup.
     /// Reading <c>user_input</c> as immediate end-of-file is the honest answer,
     /// and it is what a redirected-from-/dev/null desktop run already does.</summary>
@@ -136,7 +136,7 @@ public sealed class StreamRegistry
     /// Marks the handle <c>Closed</c> rather than disposing — the
     /// caller owns disposal of the underlying reader/writer.
     ///
-    /// <para>Closing the CURRENT input or output moves that cursor back to
+    /// <para>Closing the current input or output moves that cursor back to
     /// <c>user_input</c> / <c>user_output</c> (ISO §8.11.6, and what GNU and
     /// SWI both do). Without it the cursor keeps naming a handle that is no
     /// longer registered, so the very next <c>current_output/1</c> hands the
