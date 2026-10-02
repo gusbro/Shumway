@@ -55,7 +55,7 @@ public sealed partial class Activation
         _config = config;
         _heap = new Cell[config.InitialHeapSize];
         _stack = new Cell[config.InitialStackSize];
-        _registers = new Cell[config.InitialRegisterCount];
+        _registers = new Cell[Math.Max(config.InitialRegisterCount, MinRegisterCount)];
         _bindingTrail = new int[config.InitialBindingTrailSize];
         _extraTrail = new ExtraTrailEntry[config.InitialExtraTrailSize];
         _gcThreshold = config.GcThreshold;
@@ -752,9 +752,9 @@ public sealed partial class Activation
         _stack[_e + EnvY1Offset + slot] = value;
     }
 
+    // Not NoInlining: the JIT marks a call as not returning only when it can
+    // see that the callee always throws, and then keeps no register live across it.
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void ThrowNoEnv()
         => throw new InvalidOperationException("No environment frame is active.");
 
@@ -1026,6 +1026,7 @@ public sealed partial class Activation
             if (onPrune is not null) onPrune();
             _ilCpStack[_ilCpTop - 1].Del = null!;     // release delegate
             _ilCpStack[_ilCpTop - 1].OnPrune = null;  // release callback
+            _ilCpStack[_ilCpTop - 1].CpsAlt = null;
             _ilCpTop--;
         }
 

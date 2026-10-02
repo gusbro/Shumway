@@ -112,6 +112,13 @@ public sealed partial class PrologEngine
         }
     }
 
+    private static bool HoldsCompiledCode(Func<Activation, int, bool>?[]? table)
+    {
+        if (table is null) return false;
+        foreach (var d in table) if (d is not null) return true;
+        return false;
+    }
+
     /// <summary>Runs an interpreter step, intercepting <c>throw/1</c> for
     /// in-engine <c>catch/3</c>. When the thrown ball unifies
     /// with the catcher of an active catch frame, the engine rolls back to
@@ -1782,6 +1789,11 @@ public sealed partial class PrologEngine
         var interp = new BytecodeInterpreter(
             engine, queryModule.StringLiterals, queryModule.FloatLiterals,
             mutableSwitchTables, queryModule.BigIntLiterals);
+        // Compiled code may run: the tier promotes, or this query's table
+        // already holds compiled code (a promoted predicate, a bundle's IL).
+        engine.CompiledCodeActive = () => IlPromotion.Threshold > 0
+            || (IlPromotion.Wasm?.Threshold ?? 0) > 0
+            || HoldsCompiledCode(interp.IlByFunctorId);
 
         // --strip-wam: register each persisted dispatch graph onto this query's
         // fresh engine, so a stripped indexed predicate resolves its entry clause

@@ -6,7 +6,7 @@ namespace Shumway.Compiler.Il;
 
 /// <summary>
 /// Tier-1 IL compiler. Translates supported WAM bytecode shapes into a
-/// <see cref="PredicateDelegate"/> via Sigil's typed IL emission so the
+/// <see cref="PredicateDelegate"/> (emitted by <see cref="IlEmit"/>) so the
 /// promoted predicate runs without going through the bytecode dispatch
 /// loop. The Tier-0/1 promotion infrastructure (counter, store,
 /// dispatcher) lives in <see cref="Shumway.Embedding.IlPromotionStore"/>.
@@ -61,38 +61,11 @@ public sealed partial class IlPredicateCompiler
     // reads it.
     public static bool DebugMode { get; set; }
 
-    /// <summary>When <c>true</c>, every Sigil <c>Emit&lt;T&gt;</c> we
-    /// allocate runs with verification enabled — Sigil's continuous
-    /// stack-state tracking that catches malformed IL at emit time
-    /// rather than at JIT time. Verification is O(N²) in the bytecode
-    /// size (measured: a 13 KB predicate took ~13 s with
-    /// verification on, ~250 ms with verification off), so for any
-    /// large hot predicate we want it off — Sigil's
-    /// <c>doVerify=false</c> mode emits the same IL but skips the
-    /// per-instruction <c>RollingVerifier.Transition</c> /
-    /// <c>VerifiableTracker.CollapseAndVerify</c> work, and the JIT
-    /// catches any genuine corruption when the delegate is invoked.
-    /// Tests / debug paths leave this on. Default <c>false</c> so
-    /// auto-promotion (the hot path) pays the linear cost only.</summary>
-    public bool DoVerify { get; set; } = false;
 
-    /// <summary>Sigil's <c>Seal</c> runs three optional passes —
-    /// <c>ElideCasts</c>, <c>PatchBranches</c>, and an always-on
-    /// <c>InjectTailCall</c> — and <c>PatchBranches</c> in
-    /// particular is O(N²) because every short-form patch calls
-    /// <c>InsertInstruction</c> which O(N)-scans the branches /
-    /// marks / returns tables to shift their indices. On the
-    /// 1280-clause benchmark <c>PatchBranches</c> +
-    /// <c>InsertInstruction</c> was 35% of total compile time.
-    /// Default to <see cref="OptimizationOptions.None"/> so we
-    /// only emit the IL we asked for — the JIT can do its own
-    /// short-branch patching at the same cost we'd avoid.</summary>
-    public Sigil.OptimizationOptions Optimizations { get; set; }
-        = Sigil.OptimizationOptions.None;
 
     /// <summary>When set (the <c>SHUMWAY_IL_DUMP</c> env var by default, or a CLI flag
     /// such as <c>shumway-compile --dump-il</c>), each compiled IL method's textual
-    /// instruction stream (Sigil <c>Instructions()</c>) is appended to this file with a
+    /// instruction stream (<see cref="IlEmit.Instructions"/>) is appended to this file with a
     /// header — for manual analysis of what the compiler emits (region or otherwise).
     /// Off (null) by default; appends, so delete the file between runs.</summary>
     public static string? IlDumpPath { get; set; } =
@@ -120,32 +93,40 @@ public sealed partial class IlPredicateCompiler
     /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
     internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
 
-    // Sigil label names must be unique per method,
-    // but a region method emits several member bodies with body-local pcs, so a
-    // pc-keyed label name can collide across members (seen on the Arity corpus:
-    // two members with a meta-call at the same body pc → "Label with name
-    // 'metaCallThread_pc50' already exists"). A monotonic global sequence
-    // suffixes every such label (uniqueness only needs to hold within one
-    // method; Interlocked because compiles run on the worker + engine threads).
+    // Label names must be unique per method (the IL dump names a branch target
+    // by its label), but a region method emits several member bodies with
+    // body-local pcs, so a pc-keyed name can repeat across members. A monotonic
+    // global sequence suffixes every such label (Interlocked: compiles run on
+    // the worker and engine threads).
     private static int _labelSeq;
     private static int NextLabelSeq() => System.Threading.Interlocked.Increment(ref _labelSeq);
 
     /// <summary>Finalize an emit into a delegate, dumping its IL first when
     /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
     /// every compile site so the dump covers them all.</summary>
-    private PredicateDelegate FinishEmit(Sigil.Emit<PredicateDelegate> emit, string header)
+    private PredicateDelegate FinishEmit(IlEmit emit, string header)
     {
-        if (IlDumpPath is not null)
-        {
-            string text;
-            try { text = emit.Instructions(); }
-            catch (System.Exception ex) { text = $"(Instructions() failed: {ex.Message})"; }
-            lock (IlDumpLock)
-                System.IO.File.AppendAllText(IlDumpPath,
-                    $"\n;;; ===== {header} =====\n{text}\n");
-        }
-        return emit.CreateDelegate(Optimizations);
+        EmitResumeEntries(emit);   // ADR-061
+        if (TryFinishCps(emit, header, out var cpsBase)) return cpsBase;   // ADR-061
+        DumpIl(emit, header);
+        return emit.CreateDelegate(initLocals: ZeroLocals);
     }
+
+    /// <summary>The method's IL to <c>SHUMWAY_IL_DUMP</c>, as finished.</summary>
+    private static void DumpIl(IlEmit emit, string header)
+    {
+        if (IlDumpPath is null) return;
+        string text;
+        try { text = emit.Instructions(); }
+        catch (System.Exception ex) { text = $"(Instructions() failed: {ex.Message})"; }
+        lock (IlDumpLock)
+            System.IO.File.AppendAllText(IlDumpPath,
+                $"\n;;; ===== {header} =====\n{text}\n");
+    }
+
+    /// <summary>Whether the emitted methods zero their locals on entry.</summary>
+    internal static bool ZeroLocals { get; set; }
+        = Environment.GetEnvironmentVariable("SHUMWAY_IL_ZERO_LOCALS") == "1";
 
     /// <summary>Persisted-path counterpart of <see cref="FinishEmit"/>: dumps the IL to
     /// <see cref="IlDumpPath"/> (when set) then finalizes into a <c>MethodBuilder</c>.
@@ -153,7 +134,7 @@ public sealed partial class IlPredicateCompiler
     /// (<c>shumway-link --dump-il</c>) shows the exact IL the bundle ships — post-prune,
     /// region mode, forced roots — rather than the runtime all-as-roots superset.</summary>
     private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
-        Sigil.Emit<PredicateDelegate> emit, string header)
+        IlEmit emit, string header)
     {
         if (IlDumpPath is not null)
         {
@@ -164,15 +145,13 @@ public sealed partial class IlPredicateCompiler
                 System.IO.File.AppendAllText(IlDumpPath,
                     $"\n;;; ===== {header} =====\n{text}\n");
         }
-        return emit.CreateMethod(Optimizations);
+        return emit.CreateMethod();
     }
 
     private static readonly MethodInfo CellAtomMethod =
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
     private static readonly MethodInfo CellIntMethod =
         typeof(Cell).GetMethod(nameof(Cell.Int), new[] { typeof(long) })!;
-    private static readonly FieldInfo EngineInferencesField =
-        typeof(Activation).GetField(nameof(Activation.Inferences))!;
 
     private static readonly MethodInfo EngineRegistersIdenticalMethod =
         typeof(Activation).GetMethod(nameof(Activation.AreRegistersIdentical))!;
@@ -444,6 +423,15 @@ public sealed partial class IlPredicateCompiler
     // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
     private static readonly MethodInfo EngineRegionReturnCursorMethod =
         typeof(Activation).GetMethod(nameof(Activation.RegionReturnCursor))!;
+    private static readonly MethodInfo EngineContinuationMethod =
+        typeof(Activation).GetMethod(nameof(Activation.Continuation))!;
+    private static readonly MethodInfo ContinuationInvokeMethod =
+        typeof(Func<Activation, int, bool>).GetMethod("Invoke")!;
+
+    /// <summary>A region returning to another region's continuation runs it
+    /// with a tail call instead of returning to the dispatch loop.</summary>
+    internal static bool CrossRegionTailReturn { get; set; }
+        = Environment.GetEnvironmentVariable("SHUMWAY_IL_TAIL_RETURN") != "0";
     // meta-call dispatch helper.
     private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
@@ -739,7 +727,7 @@ public sealed partial class IlPredicateCompiler
         DiagnoseRegion(predicate, calleeMap);
         // Region compilation (Stage 3, gated): emit the root + its local
         // closure as one IL method when the region is in the minimal subset.
-        if (EffectiveRegionCompile && calleeMap is not null)
+        if (EffectiveRegionCompile && !CpsMode && calleeMap is not null)   // ADR-061: no regions
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));
@@ -924,9 +912,7 @@ public sealed partial class IlPredicateCompiler
         if (callSiteCount == 0)
         {
             // No meta-CP needed: pure head match + tail call (or no body).
-            var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-                $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}",
-                doVerify: DoVerify || DebugMode);
+            var emit = NewPredicateEmit($"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
             AttachRegisterFile(emit);   // ADR-060
             EmitSingleClauseLeafBody(emit, predicate, calleeMap);
             return FinishEmit(emit,
@@ -945,7 +931,7 @@ public sealed partial class IlPredicateCompiler
     /// match + optional tail call, no IL choice points, no
     /// self-reference into <see cref="IndexedDelegateHolder"/>.</summary>
     private static void EmitSingleClauseLeafBody(
-        Sigil.Emit<PredicateDelegate> emit,
+        IlEmit emit,
         CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
@@ -956,6 +942,7 @@ public sealed partial class IlPredicateCompiler
         // dispatch-loop round trip. For a leaf the body start is the cursor-0
         // entry (no cursor switch).
         var selfEntry = emit.DefineLabel("self_entry");
+        CpsColdDispatchCheck(emit);   // ADR-061: a leaf has no cursor switch
         emit.MarkLabel(selfEntry);
         EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             failLabel, predicate.CallSites,
@@ -963,8 +950,7 @@ public sealed partial class IlPredicateCompiler
             calleeMap: calleeMap,
             selfFunctorId: predicate.FunctorId, selfTailLabel: selfEntry);
         emit.MarkLabel(failLabel);
-        emit.LoadConstant(false);
-        EmitReturn(emit);
+        EmitFailReturn(emit);
     }
 
     /// <summary>defines a static method named
@@ -997,12 +983,12 @@ public sealed partial class IlPredicateCompiler
         ArgumentNullException.ThrowIfNull(methodName);
         ArgumentNullException.ThrowIfNull(predicate);
 
-        var emit = Sigil.Emit<PredicateDelegate>.BuildMethod(
+        var emit = IlEmit.BuildMethod(
             typeBuilder,
             methodName,
             System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
             System.Reflection.CallingConventions.Standard,
-            doVerify: DoVerify || DebugMode);
+            record: IlDumpPath is not null);
         AttachRegisterFile(emit);   // ADR-060
 
         SelfDelegateEmitter? emitSelf = delegatesField is null
@@ -1133,9 +1119,7 @@ public sealed partial class IlPredicateCompiler
     {
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
-            doVerify: DoVerify || DebugMode);
+        var emit = NewPredicateEmit($"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}");
         AttachRegisterFile(emit);   // ADR-060
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func

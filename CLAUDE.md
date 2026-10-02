@@ -333,6 +333,7 @@ When proposing changes:
 | A region's choice points are WAM choice points | ADR-058 |
 | What a program may redefine | ADR-059 |
 | A region holds the machine registers in locals (proposed) | ADR-060 |
+| Tier-1 as continuation methods per predicate (proposed) | ADR-061 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

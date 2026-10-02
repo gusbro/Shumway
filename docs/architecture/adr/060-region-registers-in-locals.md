@@ -413,7 +413,8 @@ frame, reached by a branch instead of repeated.
   cut, soft-cut and guard suites, the persisted-IL bundles, the .NET Framework
   lane, and the full Embedding gate with regions compiled in checked mode.
 - The table test: each row against the code of its method.
-- Heap cells and inferences of `time/1` identical to Tier-0 at every stage.
+- Heap cells of `time/1` identical to Tier-0 at every stage (compiled code
+  counts no inferences: ADR-061).
 - A run with a minimal initial stack, so that growth falls at every point
   where the region can meet it, compared against Tier-0. It counts the
   growths: a run without any does not pass.

@@ -27,8 +27,8 @@ public sealed partial class IlPredicateCompiler
         public required CompiledPredicate Fact { get; init; }
         public required IReadOnlyList<(int Start, int End)> ClauseRanges { get; init; }
         public required int BaseCursor { get; init; }
-        public required Sigil.Label[] AltLabels { get; init; }      // length K-1, clauses 2..K
-        public required Sigil.Label Continuation { get; init; }
+        public required IlLabel[] AltLabels { get; init; }      // length K-1, clauses 2..K
+        public required IlLabel Continuation { get; init; }
     }
 
     /// <summary>Pre-scan a caller's body for inlinable multi-clause-fact Call
@@ -38,7 +38,7 @@ public sealed partial class IlPredicateCompiler
     /// <paramref name="cursorsUsed"/>, how many cursors were taken. Empty when
     /// inlining is off / the budget would overflow.</summary>
     private static Dictionary<int, InlineSite> ComputeInlineSites(
-        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate predicate,
+        IlEmit emit, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         int firstCursor, out int cursorsUsed)
     {
@@ -75,9 +75,13 @@ public sealed partial class IlPredicateCompiler
                     int k = ranges.Count;
                     if (cursor + (k - 1) >= Activation.ResumeMarkerCursorStride) break; // budget
                     int seq = NextLabelSeq();
-                    var alt = new Sigil.Label[k - 1];
+                    var alt = new IlLabel[k - 1];
+                    // A one-argument fact becomes an enumerator (EmitFactEnumerator),
+                    // whose alternatives share one entry.
+                    var shared = callee.Arity == 1 && _persistPatches is null
+                        ? emit.DefineLabel($"inl_{pc}_{seq}_alt") : null;
                     for (int j = 0; j < k - 1; j++)
-                        alt[j] = emit.DefineLabel($"inl_{pc}_{seq}_alt{j}");
+                        alt[j] = shared ?? emit.DefineLabel($"inl_{pc}_{seq}_alt{j}");
                     sites[pc] = new InlineSite
                     {
                         Fact = callee, ClauseRanges = ranges, BaseCursor = cursor,
@@ -196,12 +200,23 @@ public sealed partial class IlPredicateCompiler
     /// popping the CP and restoring the saved argument registers, and re-enters
     /// at the next clause's alternative cursor.</summary>
     private static void EmitInlinedFact(
-        Sigil.Emit<PredicateDelegate> emit, InlineSite site, Sigil.Label failLabel,
+        IlEmit emit, InlineSite site, IlLabel failLabel,
         SelfDelegateEmitter emitSelf, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
+        using var cpsOpaque = CpsOpaque();   // ADR-061: state in IL locals
         int factArity = site.Fact.Arity;
         byte[] fcode = site.Fact.BytecodeUnfused;
         int k = site.ClauseRanges.Count;
+        if (factArity == 1 && k >= 2 && _persistPatches is null
+            && TryGetFactFirstArgKeys(fcode, site.ClauseRanges, out bool enumAtom, out int[] enumKeys))
+        {
+            EmitFactEnumerator(emit, site, failLabel, emitSelf, enumAtom, enumKeys);
+            return;
+        }
+        // Each clause's head match, emitted once: the bound-argument path
+        // enters it past the chain's choice point push.
+        var bodyLabels = new IlLabel[k];
+        for (int c = 0; c < k; c++) bodyLabels[c] = emit.DefineLabel($"inl{site.BaseCursor}_body{c}");
 
         // Phase 1b: when every clause has a distinct constant first
         // argument (all integer or all atom — crypt's odd/even/lefteven), emit a
@@ -218,7 +233,7 @@ public sealed partial class IlPredicateCompiler
             // facts); the site's BaseCursor is unique.
             int u = site.BaseCursor;
             var chainLabel = emit.DefineLabel($"inl{u}_chain");
-            var detLabels = new Sigil.Label[k];
+            var detLabels = new IlLabel[k];
             for (int c = 0; c < k; c++) detLabels[c] = emit.DefineLabel($"inl{u}_det{c}");
             var cellLoc = emit.DeclareLocal<Cell>($"inl{u}_cell");
             var tagLoc = emit.DeclareLocal<int>($"inl{u}_tag");
@@ -291,13 +306,11 @@ public sealed partial class IlPredicateCompiler
             // re-checks the (already-matched) indexed arg and unifies the rest;
             // a failure on a non-indexed arg falls through to the caller's fail
             // since the unique key leaves no other clause to try.
+            // A one-argument fact's head is its key: the match is the switch.
             for (int c = 0; c < k; c++)
             {
                 emit.MarkLabel(detLabels[c]);
-                EmitClauseBody(emit, fcode, site.ClauseRanges[c].Start, site.ClauseRanges[c].End,
-                    failLabel, Array.Empty<CallSite>(),
-                    calleeMap: calleeMap, suppressProceedReturn: true);
-                emit.Branch(site.Continuation);
+                emit.Branch(factArity == 1 ? site.Continuation : bodyLabels[c]);
             }
             emit.MarkLabel(chainLabel);
         }
@@ -309,18 +322,178 @@ public sealed partial class IlPredicateCompiler
             if (c > 0) emit.MarkLabel(site.AltLabels[c - 1]);   // backtrack re-entry for clause c+1
             if (c < k - 1)
             {
-                emit.LoadArgument(0);                      // engine
-                emitSelf(emit);                            // → this PredicateDelegate
-                emit.LoadConstant(site.BaseCursor + c);    // alternative cursor (next clause)
-                emit.LoadConstant(factArity);              // save the fact's argument registers
-                EmitHelperCall(emit, EnginePushIlCpMethod);
+                int alt = site.BaseCursor + c;             // alternative cursor (next clause)
+                EmitPushIlChoicePoint(emit, emitSelf, e => e.LoadConstant(alt), factArity, alt);
             }
+            emit.MarkLabel(bodyLabels[c]);
             EmitClauseBody(emit, fcode, site.ClauseRanges[c].Start, site.ClauseRanges[c].End,
                 failLabel, Array.Empty<CallSite>(),
                 calleeMap: calleeMap, suppressProceedReturn: true);
-            if (c < k - 1) emit.Branch(site.Continuation);
+            // The last body is entered from the bound-argument path too.
+            emit.Branch(site.Continuation);
         }
         emit.MarkLabel(site.Continuation);
+    }
+
+    /// <summary>A table of one-argument constant facts at a call site. A bound
+    /// argument is a membership test (a range test for consecutive integers);
+    /// an unbound one is enumerated: the choice point of key i resumes at the
+    /// site's alternative cursor for i, one entry for all of them, which binds
+    /// key i + 1 and pushes the next. One push site and one bind, whatever the
+    /// table's size; the cursor arrives in argument 1 (the cursor switch, a
+    /// local resumption and the Fail stub all leave it there).</summary>
+    private static void EmitFactEnumerator(IlEmit emit, InlineSite site,
+        IlLabel failLabel, SelfDelegateEmitter emitSelf, bool isAtom, int[] keys)
+    {
+        int k = keys.Length;
+        int u = site.BaseCursor;
+        var cont = site.Continuation;
+        var chain = emit.DefineLabel($"inl{u}_enum_chain");
+        var enumerate = emit.DefineLabel($"inl{u}_enum");
+        var noPush = emit.DefineLabel($"inl{u}_enum_last");
+        var idx = emit.DeclareLocal<int>($"inl{u}_idx");
+        var cellLoc = emit.DeclareLocal<Cell>($"inl{u}_cell");
+        var tagLoc = emit.DeclareLocal<int>($"inl{u}_tag");
+        bool consecutive = !isAtom;
+        for (int c = 1; c < k && consecutive; c++) consecutive = keys[c] == keys[0] + c;
+
+        // cell = deref(X0), one level.
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        EmitHelperCall(emit, EngineGetRegisterMethod);
+        emit.StoreLocal(cellLoc);
+        emit.LoadLocalAddress(cellLoc);
+        EmitHelperCall(emit, CellTagIdGetter);
+        emit.LoadConstant((int)Tag.Ref);
+        var notRef = emit.DefineLabel($"inl{u}_enum_notref");
+        emit.UnsignedBranchIfNotEqual(notRef);
+        emit.LoadArgument(0);
+        emit.LoadArgument(0);
+        emit.LoadLocalAddress(cellLoc);
+        EmitHelperCall(emit, CellAsHeapIndexGetter);
+        EmitHelperCall(emit, EngineDerefMethod);
+        EmitHelperCall(emit, EngineGetHeapMethod);
+        emit.StoreLocal(cellLoc);
+        emit.MarkLabel(notRef);
+        emit.LoadLocalAddress(cellLoc);
+        EmitHelperCall(emit, CellTagIdGetter);
+        emit.StoreLocal(tagLoc);
+        var notWant = emit.DefineLabel($"inl{u}_enum_notwant");
+        emit.LoadLocal(tagLoc);
+        emit.LoadConstant((int)(isAtom ? Tag.Atom : Tag.Int));
+        emit.UnsignedBranchIfNotEqual(notWant);
+        // Bound: the key is the whole head.
+        if (consecutive)
+        {
+            emit.LoadLocalAddress(cellLoc);
+            EmitHelperCall(emit, CellAsIntGetter);
+            emit.LoadConstant((long)keys[0]);
+            emit.Subtract();
+            emit.LoadConstant((long)k);
+            emit.UnsignedBranchIfLess(cont);
+        }
+        else if (isAtom)
+        {
+            var keyLoc = emit.DeclareLocal<int>($"inl{u}_key");
+            emit.LoadLocalAddress(cellLoc);
+            EmitHelperCall(emit, CellAsAtomIdGetter);
+            emit.StoreLocal(keyLoc);
+            for (int c = 0; c < k; c++)
+            {
+                emit.LoadLocal(keyLoc);
+                EmitAtomId(emit, keys[c]);
+                emit.BranchIfEqual(cont);
+            }
+        }
+        else
+        {
+            var vLoc = emit.DeclareLocal<long>($"inl{u}_v");
+            emit.LoadLocalAddress(cellLoc);
+            EmitHelperCall(emit, CellAsIntGetter);
+            emit.StoreLocal(vLoc);
+            for (int c = 0; c < k; c++)
+            {
+                emit.LoadLocal(vLoc);
+                emit.LoadConstant((long)keys[c]);
+                emit.BranchIfEqual(cont);
+            }
+        }
+        emit.Branch(failLabel);
+        emit.MarkLabel(notWant);
+        emit.LoadLocal(tagLoc);
+        emit.LoadConstant((int)Tag.Ref);
+        emit.BranchIfEqual(chain);
+        emit.Branch(failLabel);
+
+        // Unbound: key 0 first.
+        emit.MarkLabel(chain);
+        emit.LoadConstant(0);
+        emit.StoreLocal(idx);
+        emit.Branch(enumerate);
+        // Resumed at the alternative for key i (cursor u + i - 1).
+        foreach (var l in new HashSet<IlLabel>(site.AltLabels)) emit.MarkLabel(l);
+        emit.LoadArgument(1);
+        emit.LoadConstant(u - 1);
+        emit.Subtract();
+        emit.StoreLocal(idx);
+        emit.MarkLabel(enumerate);
+        for (int c = 0; c < k - 1; c++) CpsRecordAlternative(u + c);
+        emit.LoadLocal(idx);
+        emit.LoadConstant(k - 1);
+        emit.BranchIfGreaterOrEqual(noPush);
+        // The resume markers of the site's cursors, consecutive when interned
+        // together: then the marker is computed, not looked up.
+        int m0 = Activation.EncodeResumeMarker(_emitOwnerFid, u);
+        bool markersConsecutive = true;
+        for (int c = 1; c < k - 1; c++)
+            markersConsecutive &= Activation.EncodeResumeMarker(_emitOwnerFid, u + c) == m0 + c;
+        EmitPushIlChoicePoint(emit, emitSelf,
+            e => { e.LoadConstant(u); e.LoadLocal(idx); e.Add(); }, 1,
+            marker: markersConsecutive ? e => { e.LoadConstant(m0); e.LoadLocal(idx); e.Add(); } : null);
+        emit.MarkLabel(noPush);
+        // A0 = key[idx].
+        var kv = emit.DeclareLocal<Cell>($"inl{u}_kv");
+        if (consecutive)
+        {
+            emit.LoadLocal(idx);
+            emit.Convert<long>();
+            emit.LoadConstant((long)keys[0]);
+            emit.Add();
+            EmitHelperCall(emit, CellIntMethod);
+            emit.StoreLocal(kv);
+        }
+        else
+        {
+            var join = emit.DefineLabel($"inl{u}_kv_join");
+            var cases = new IlLabel[k];
+            for (int c = 0; c < k; c++) cases[c] = emit.DefineLabel($"inl{u}_kv{c}");
+            emit.LoadLocal(idx);
+            emit.Switch(cases);
+            emit.Branch(failLabel);   // out of range: no cursor names one
+            for (int c = 0; c < k; c++)
+            {
+                emit.MarkLabel(cases[c]);
+                if (isAtom)
+                {
+                    EmitAtomId(emit, keys[c]);
+                    EmitHelperCall(emit, CellAtomMethod);
+                }
+                else
+                {
+                    emit.LoadConstant((long)keys[c]);
+                    EmitHelperCall(emit, CellIntMethod);
+                }
+                emit.StoreLocal(kv);
+                emit.Branch(join);
+            }
+            emit.MarkLabel(join);
+        }
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        emit.LoadLocal(kv);
+        EmitHelperCall(emit, EngineUnifyMethod);
+        emit.BranchIfFalse(failLabel);
+        emit.MarkLabel(cont);
     }
 
     /// <summary>For an all-constant-first-arg fact (every clause's first head
@@ -379,7 +552,7 @@ public sealed partial class IlPredicateCompiler
     /// self-reference for re-pushing the meta-CP on each retry routes
     /// through <paramref name="emitSelf"/>.</summary>
     private static void EmitSingleClauseMetaCpBody(
-        Sigil.Emit<PredicateDelegate> emit,
+        IlEmit emit,
         CompiledPredicate predicate,
         int callSiteCount,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -396,7 +569,7 @@ public sealed partial class IlPredicateCompiler
         // CPs is handled naturally by the engine's CP cascade, with
         // each callee-clause's saved Cp pointing back at our resume
         // marker.
-        var resumeLabels = new Sigil.Label[callSiteCount];
+        var resumeLabels = new IlLabel[callSiteCount];
         for (int i = 0; i < callSiteCount; i++)
             resumeLabels[i] = emit.DefineLabel($"resume_{i + 1}");
 
@@ -429,7 +602,7 @@ public sealed partial class IlPredicateCompiler
             int last = site.BaseCursor + site.AltLabels.Length - 1;
             if (last > maxCursor) maxCursor = last;
         }
-        var cursorLabels = new Sigil.Label[maxCursor + 1];
+        var cursorLabels = new IlLabel[maxCursor + 1];
         for (int i = 0; i <= maxCursor; i++) cursorLabels[i] = startLabel; // 0 + any gap
         for (int i = 0; i < callSiteCount; i++) cursorLabels[i + 1] = resumeLabels[i];
         foreach (var site in inlineSites.Values)
@@ -447,7 +620,8 @@ public sealed partial class IlPredicateCompiler
         int pushSites = 0;
         foreach (var site in inlineSites.Values)
             pushSites += site.AltLabels.Length;
-        if (pushSites >= 2)
+        // Under WAM choice points (ADR-061) a push takes a marker, not the delegate.
+        if (pushSites >= 2 && !WamCps)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "mselfdel");
             emitSelf(emit);
@@ -455,8 +629,7 @@ public sealed partial class IlPredicateCompiler
             effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
 
-        emit.LoadArgument(1);
-        emit.Switch(cursorLabels);
+        EmitCursorSwitch(emit, cursorLabels);
         emit.Branch(startLabel);    // cursor out of range (unreachable) → start
 
         emit.MarkLabel(startLabel);
@@ -474,8 +647,7 @@ public sealed partial class IlPredicateCompiler
             inlineSites: inlineSites, ruleInlineSites: ruleInlineSites);
 
         emit.MarkLabel(failLabel);
-        emit.LoadConstant(false);
-        EmitReturn(emit);
+        EmitFailReturn(emit);
     }
 
     // Builtins that push a CP and call

@@ -13,8 +13,15 @@ namespace Shumway.Tests.Embedding;
 /// calls the methods, which carry it.</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
-public sealed class IlInlineFrameTests
+public sealed class IlInlineFrameTests : IDisposable
 {
+    // These measure regions, which continuation methods turn off (ADR-061).
+    private readonly bool _savedCpsMode = IlPredicateCompiler.CpsMode;
+
+    public IlInlineFrameTests() => IlPredicateCompiler.CpsMode = false;
+
+    public void Dispose() => IlPredicateCompiler.CpsMode = _savedCpsMode;
+
     // Three alternatives: the push, a retry (the middle one) and a trust (the
     // last). The probe runs after each answer, with the choice point on top.
     private const string Program = """

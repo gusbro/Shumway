@@ -318,6 +318,30 @@ public static class ArithEvalStack
         return Deliver(engine, tKind, tVal, result);
     }
 
+    /// <summary>ADR-061: the integer result of <see cref="FusedBin"/> alone, for
+    /// compiled code that delivers it itself. False when an operand is not an
+    /// integer or the result leaves the 60-bit range: the caller runs FusedBin.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TryFusedBinInt(Activation engine, int op,
+        int aKind, int aVal, int bKind, int bVal, out long result)
+    {
+        result = 0;
+        return TryReadInt(engine, aKind, aVal, out long ai)
+            && TryReadInt(engine, bKind, bVal, out long bi)
+            && TryFastBin(op, ai, bi, out result);
+    }
+
+    /// <summary>ADR-061: <see cref="FusedCmp"/> over integers only: 1 true, 0
+    /// false, -1 when an operand is not an integer (the caller runs FusedCmp).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int TryFusedCmpInt(Activation engine, int rel,
+        int aKind, int aVal, int bKind, int bVal)
+    {
+        if (TryReadInt(engine, aKind, aVal, out long ai) && TryReadInt(engine, bKind, bVal, out long bi))
+            return FastCmp(rel, ai, bi) ? 1 : 0;
+        return -1;
+    }
+
     /// <summary><c>A cmp B</c> over two simple leaf operands.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool FusedCmp(Activation engine, int rel,

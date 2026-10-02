@@ -36,6 +36,11 @@ public sealed partial class IlPredicateCompiler
     internal static bool InlineUnify { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_UNIFY") != "0";
 
+    /// <summary>Whether UnifyRegisterWithCell's fast path is emitted inline. An
+    /// off switch for measuring it.</summary>
+    internal static bool InlineUnifyRegisterWithCell { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_URC") != "0";
+
     private const int KU = 60;
 
     private static long TagBits(Tag t) => (long)t << Cell.TagShift;
@@ -46,8 +51,8 @@ public sealed partial class IlPredicateCompiler
     /// whether the two unify instructions after it are part of it (the fused
     /// forms) and <paramref name="s1"/>, <paramref name="s2"/> are their
     /// registers. False when the region does not take this form.</summary>
-    private static bool TryEmitGetList(Sigil.Emit<PredicateDelegate> emit, ListWindow window,
-        int arg, int s1, int s2, Sigil.Label failLabel)
+    private static bool TryEmitGetList(IlEmit emit, ListWindow window,
+        int arg, int s1, int s2, IlLabel failLabel)
     {
         var rf = RegisterFileOf(emit);
         if (!InlineUnify || rf is null) return false;
@@ -141,6 +146,14 @@ public sealed partial class IlPredicateCompiler
 
         // Write: bind the variable at home to a list at the heap top.
         emit.MarkLabel(write);
+        bool hotWrite = CpsHotExit;
+        if (hotWrite)
+        {
+            // A trailed binding is the cold method's, decided before any write.
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfLess(slow);
+        }
         if (window == ListWindow.ValXVarX)
         {
             // The occurs check tests the head value against the variable.
@@ -191,12 +204,15 @@ public sealed partial class IlPredicateCompiler
             EmitRefBitsOf(emit, p, 0);
             emit.Or();
         });
-        emit.LoadLocal(home);
-        EmitLoadEngineField(emit, EngHb);
-        emit.BranchIfGreaterOrEqual(trailed);
-        emit.LoadArgument(0);
-        emit.LoadLocal(home);
-        EmitHelperCall(emit, EngineTrailBindMethod);
+        if (!hotWrite)
+        {
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfGreaterOrEqual(trailed);
+            emit.LoadArgument(0);
+            emit.LoadLocal(home);
+            EmitHelperCall(emit, EngineTrailBindMethod);
+        }
         emit.MarkLabel(trailed);
         switch (window)
         {
@@ -214,28 +230,177 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(done);
 
         emit.MarkLabel(slow);
-        emit.LoadArgument(0);
-        emit.LoadConstant(arg);
-        if (window == ListWindow.Plain)
+        if (!EmitColdExit(emit))   // ADR-061: a hot method leaves for the cold one
         {
-            EmitHelperCall(emit, EngineGetListMethod);
+            emit.LoadArgument(0);
+            emit.LoadConstant(arg);
+            if (window == ListWindow.Plain)
+            {
+                EmitHelperCall(emit, EngineGetListMethod);
+            }
+            else
+            {
+                emit.LoadConstant(s1);
+                emit.LoadConstant(s2);
+                EmitHelperCall(emit, window == ListWindow.VarXVarX
+                    ? EngineGetListVarXVarXMethod : EngineGetListValXVarXMethod);
+            }
+            emit.BranchIfFalse(failLabel);
         }
-        else
-        {
-            emit.LoadConstant(s1);
-            emit.LoadConstant(s2);
-            EmitHelperCall(emit, window == ListWindow.VarXVarX
-                ? EngineGetListVarXVarXMethod : EngineGetListValXVarXMethod);
-        }
-        emit.BranchIfFalse(failLabel);
         emit.MarkLabel(done);
         return true;
+    }
+
+    /// <summary>X[index] := the cell <paramref name="pushValue"/> leaves, for a
+    /// constant index: below the bank's floor (<see
+    /// cref="Activation.MinRegisterCount"/>) a plain store, with no capacity
+    /// check and no slow path. The value must not grow the register bank.</summary>
+    private static void EmitSetRegisterConst(IlEmit emit, int index, Action pushValue)
+    {
+        if (index >= 0 && index < Activation.MinRegisterCount && RegisterFileOf(emit) is not null)
+        {
+            EmitLoadEngineField(emit, EngRegisters);
+            emit.LoadConstant(index);
+            pushValue();
+            emit.StoreElement<Cell>();
+            return;
+        }
+        emit.LoadArgument(0);
+        emit.LoadConstant(index);
+        pushValue();
+        EmitHelperCall(emit, EngineSetRegisterMethod);
+    }
+
+    /// <summary>Y[slot] pushed. With the frame in the method's locals, an
+    /// element load at a constant offset from E.</summary>
+    private static void EmitLoadY(IlEmit emit, int slot)
+    {
+        if (RegisterFileOf(emit) is { } rf && rf.Holds(MachineRegs.E | MachineRegs.StackArray))
+        {
+            EmitYAddress(emit, rf, slot);
+            emit.LoadElement<Cell>();
+            return;
+        }
+        emit.LoadArgument(0);
+        emit.LoadConstant(slot);
+        EmitHelperCall(emit, EngineGetYMethod);
+    }
+
+    /// <summary>Y[slot] := the cell <paramref name="pushValue"/> pushes, which
+    /// must not move the frame stack: the array is loaded before it.</summary>
+    private static void EmitStoreY(IlEmit emit, int slot, Action pushValue)
+    {
+        if (RegisterFileOf(emit) is { } rf && rf.Holds(MachineRegs.E | MachineRegs.StackArray))
+        {
+            EmitYAddress(emit, rf, slot);
+            pushValue();
+            emit.StoreElement<Cell>();
+            return;
+        }
+        emit.LoadArgument(0);
+        emit.LoadConstant(slot);
+        pushValue();
+        EmitHelperCall(emit, EngineSetYMethod);
+    }
+
+    private static void EmitYAddress(IlEmit emit, RegisterFile rf, int slot)
+    {
+        emit.LoadLocal(rf.Local(MachineRegs.StackArray));
+        emit.LoadLocal(rf.Local(MachineRegs.E));
+        emit.LoadConstant(Activation.EnvY1Offset + slot);
+        emit.Add();
+    }
+
+    private static readonly MethodInfo EngineCellsIdenticalMethod =
+        typeof(Activation).GetMethod(nameof(Activation.AreCellsIdentical))!;
+
+    /// <summary><c>put_value Ya, A0; put_value Yb, A1; call_builtin ==/2</c> (or
+    /// <c>\==/2</c>): the two slots compared as they are. The argument registers
+    /// are written only when the code after the call may read them.</summary>
+    private static bool TryEmitSlotIdentity(IlEmit emit, byte[] code, int pc,
+        int end, IReadOnlyList<CallSite> callSites, IlLabel failLabel, out int next)
+    {
+        next = pc;
+        if (RegisterFileOf(emit) is null) return false;
+        int size = OpcodeTable.Get(Opcode.PutValueY).Size;
+        int pc2 = pc + size, pc3 = pc2 + size;
+        if (pc3 >= end || (Opcode)code[pc2] != Opcode.PutValueY || (Opcode)code[pc3] != Opcode.CallBuiltin)
+            return false;
+        if (BytecodeIO.ReadInt32(code, pc + 5) != 0 || BytecodeIO.ReadInt32(code, pc2 + 5) != 1) return false;
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(BytecodeIO.ReadInt32(code, pc3 + 1));
+        if (entry.Arity != 2 || entry.Name is not ("==" or "\\==")) return false;
+        int slotA = BytecodeIO.ReadInt32(code, pc + 1), slotB = BytecodeIO.ReadInt32(code, pc2 + 1);
+        int after = pc3 + OpcodeTable.Get(Opcode.CallBuiltin).Size;
+
+        var a = emit.DeclareLocal<Cell>($"ident_a_{NextLabelSeq()}");
+        var b = emit.DeclareLocal<Cell>($"ident_b_{NextLabelSeq()}");
+        EmitLoadY(emit, slotA);
+        emit.StoreLocal(a);
+        EmitLoadY(emit, slotB);
+        emit.StoreLocal(b);
+        if (!RegisterDeadAfter(code, after, end, 0, callSites))
+            EmitSetRegisterConst(emit, 0, () => emit.LoadLocal(a));
+        if (!RegisterDeadAfter(code, after, end, 1, callSites))
+            EmitSetRegisterConst(emit, 1, () => emit.LoadLocal(b));
+        emit.LoadArgument(0);
+        emit.LoadLocal(a);
+        emit.LoadLocal(b);
+        EmitHelperCall(emit, EngineCellsIdenticalMethod);
+        if (entry.Name == "==") emit.BranchIfFalse(failLabel);
+        else emit.BranchIfTrue(failLabel);
+        next = after;
+        return true;
+    }
+
+    /// <summary>Whether no instruction from <paramref name="pc"/> on reads
+    /// argument register <paramref name="reg"/> before writing it: a put into
+    /// it, or a call or execute of lower arity (a call clobbers the registers
+    /// above its arguments), or the end of the clause. Any other instruction
+    /// counts as a read.</summary>
+    private static bool RegisterDeadAfter(byte[] code, int pc, int end, int reg,
+        IReadOnlyList<CallSite> callSites)
+    {
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            switch (op)
+            {
+                case Opcode.PutValueY or Opcode.PutVariableY or Opcode.PutAtom or Opcode.PutInteger
+                    or Opcode.PutFloat:
+                    if (BytecodeIO.ReadInt32(code, pc + 5) == reg) return true;
+                    break;
+                case Opcode.PutNil:
+                    if (BytecodeIO.ReadInt32(code, pc + 1) == reg) return true;
+                    break;
+                case Opcode.PutValueX:
+                    if (BytecodeIO.ReadInt32(code, pc + 1) == reg) return false;
+                    if (BytecodeIO.ReadInt32(code, pc + 5) == reg) return true;
+                    break;
+                case Opcode.PutVariableX:
+                    if (BytecodeIO.ReadInt32(code, pc + 1) == reg || BytecodeIO.ReadInt32(code, pc + 5) == reg)
+                        return true;
+                    break;
+                case Opcode.Call or Opcode.Execute:
+                {
+                    int fid = FindCallSiteFunctorId(callSites, pc);
+                    return fid >= 0 && reg >= FunctorTable.Lookup(fid).Arity;
+                }
+                case Opcode.Proceed or Opcode.DeallocateProceed:
+                    return true;
+                case Opcode.Deallocate or Opcode.Allocate:
+                    break;
+                default:
+                    return false;
+            }
+            pc += OpcodeTable.Get(op).Size;
+        }
+        return false;
     }
 
     /// <summary>SetRegister over the register array's field (or the region's
     /// local, when it holds it): the store when the index is in the bank, the
     /// method when the bank must grow. The stack holds [activation, index, cell].</summary>
-    private static bool TryEmitSetRegister(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf)
+    private static bool TryEmitSetRegister(IlEmit emit, RegisterFile rf)
     {
         if (!InlineUnify) return false;
         var value = rf.Temp(typeof(Cell), KU);
@@ -260,16 +425,166 @@ public sealed partial class IlPredicateCompiler
         emit.StoreElement<Cell>();
         emit.Branch(done);
         emit.MarkLabel(slow);
-        emit.LoadLocal(act);
-        emit.LoadLocal(idx);
-        emit.LoadLocal(value);
-        EmitRowCall(emit, rf, EngineSetRegisterMethod);
+        if (!EmitColdExit(emit))
+        {
+            emit.LoadLocal(act);
+            emit.LoadLocal(idx);
+            emit.LoadLocal(value);
+            EmitRowCall(emit, rf, EngineSetRegisterMethod);
+        }
         emit.MarkLabel(done);
         return true;
     }
 
+    /// <summary>UnifyRegisterWithCell(reg, value), with the activation, the
+    /// register and the cell on the stack: a register holding the value, or a
+    /// reference to a plain unbound variable (bound here, with the trail when
+    /// it is older than HB) or to the value. Anything else takes the helper.
+    /// Leaves the result.</summary>
+    private static bool TryEmitUnifyRegisterWithCell(IlEmit emit, RegisterFile rf)
+    {
+        if (!InlineUnify || !InlineUnifyRegisterWithCell) return false;
+        // ADR-061: where a slow path calls anyway (no cold exit: an inlined
+        // fact), one copy per method, entered by a branch and left by a switch.
+        if (_cps is { } shared && !CpsHotExit)
+        {
+            shared.UrcValue ??= emit.DeclareLocal<Cell>("urc_shared_value");
+            shared.UrcReg ??= emit.DeclareLocal<int>("urc_shared_reg");
+            shared.UrcRet ??= emit.DeclareLocal<int>("urc_shared_ret");
+            shared.UrcResult ??= emit.DeclareLocal<bool>("urc_shared_result");
+            shared.UrcEntry ??= emit.DefineLabel("urc_shared");
+            var back = emit.DefineLabel($"urc_back_{NextLabelSeq()}");
+            emit.StoreLocal(shared.UrcValue);
+            emit.StoreLocal(shared.UrcReg);
+            emit.Pop();
+            emit.LoadConstant(shared.UrcReturns.Count);
+            emit.StoreLocal(shared.UrcRet);
+            shared.UrcReturns.Add(back);
+            emit.Branch(shared.UrcEntry);
+            emit.MarkLabel(back);
+            emit.LoadLocal(shared.UrcResult);
+            return true;
+        }
+        EmitUnifyRegisterWithCellBody(emit, rf, sharedIn: null);
+        return true;
+    }
+
+    /// <summary>The shared copy, after the method's code (see above).</summary>
+    private static void EmitSharedUnifyRegisterWithCell(IlEmit emit, CpsEmitContext c)
+    {
+        if (c.UrcEntry is not { } entry || c.UrcReturns.Count == 0) return;
+        var rf = RegisterFileOf(emit)!;
+        emit.MarkLabel(entry);
+        emit.LoadArgument(0);
+        emit.LoadLocal(c.UrcReg!);
+        emit.LoadLocal(c.UrcValue!);
+        EmitUnifyRegisterWithCellBody(emit, rf, sharedIn: c);
+        emit.StoreLocal(c.UrcResult!);
+        emit.LoadLocal(c.UrcRet!);
+        emit.Switch(c.UrcReturns.ToArray());
+        emit.Branch(c.UrcReturns[0]);   // out of range: no site stores one
+    }
+
+    private static void EmitUnifyRegisterWithCellBody(IlEmit emit, RegisterFile rf,
+        CpsEmitContext? sharedIn)
+    {
+        var value = rf.Temp(typeof(Cell), KU);
+        var reg = rf.Temp(typeof(int), KU);
+        var home = rf.Temp(typeof(int), KU + 1);
+        var bits = rf.Temp(typeof(long), KU);
+        var c = rf.Temp(typeof(long), KU + 1);
+        var regs = rf.Temp(typeof(Cell[]), KU);
+        var heap = rf.Temp(typeof(Cell[]), KU + 1);
+        var bind = emit.DefineLabel($"urc_bind_{NextLabelSeq()}");
+        var yes = emit.DefineLabel($"urc_yes_{NextLabelSeq()}");
+        var slow = emit.DefineLabel($"urc_slow_{NextLabelSeq()}");
+        var done = emit.DefineLabel($"urc_done_{NextLabelSeq()}");
+        var trailed = emit.DefineLabel($"urc_trailed_{NextLabelSeq()}");
+
+        emit.StoreLocal(value);
+        emit.StoreLocal(reg);
+        emit.Pop();
+        emit.LoadLocal(value);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
+        EmitLoadEngineField(emit, EngRegisters);
+        emit.StoreLocal(regs);
+        emit.LoadLocal(reg);
+        emit.LoadLocal(regs);
+        emit.LoadLength<Cell>();
+        emit.Convert<int>();
+        emit.BranchIfGreaterOrEqual(slow);
+        // c := X[reg]; the value itself, or a reference followed one step.
+        emit.LoadLocal(regs);
+        emit.LoadLocal(reg);
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(c);
+        emit.LoadLocal(c);
+        emit.LoadLocal(bits);
+        emit.BranchIfEqual(yes);
+        EmitTagIs(emit, c, Tag.Ref);
+        emit.BranchIfFalse(slow);
+        emit.LoadLocal(c);
+        emit.Convert<int>();
+        emit.StoreLocal(home);
+        EmitLoadEngineField(emit, EngHeap);
+        emit.StoreLocal(heap);
+        emit.LoadLocal(heap);
+        emit.LoadLocal(home);
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(c);
+        emit.LoadLocal(c);
+        emit.LoadLocal(bits);
+        emit.BranchIfEqual(yes);
+        // A plain unbound variable is a Ref to itself.
+        EmitTagIs(emit, c, Tag.Ref);
+        emit.BranchIfFalse(slow);
+        emit.LoadLocal(c);
+        emit.Convert<int>();
+        emit.LoadLocal(home);
+        emit.BranchIfEqual(bind);
+        emit.Branch(slow);
+
+        // Bind(home, value): the store, and the trail when home is older than HB.
+        emit.MarkLabel(bind);
+        bool hot = sharedIn is null && CpsHotExit;
+        if (hot)
+        {
+            // A trailed binding is the cold method's, decided before the store.
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfLess(slow);
+        }
+        EmitHeapCell(emit, heap, home, 0, () => emit.LoadLocal(bits));
+        if (!hot)
+        {
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfGreaterOrEqual(trailed);
+            emit.LoadArgument(0);
+            emit.LoadLocal(home);
+            EmitHelperCall(emit, EngineTrailBindMethod);
+        }
+        emit.MarkLabel(trailed);
+        emit.MarkLabel(yes);
+        emit.LoadConstant(true);
+        emit.Branch(done);
+
+        emit.MarkLabel(slow);
+        if (sharedIn is not null || !EmitColdExit(emit))
+        {
+            emit.LoadArgument(0);
+            emit.LoadLocal(reg);
+            emit.LoadLocal(value);
+            EmitRowCall(emit, rf, EngineUnifyMethod);
+        }
+        emit.MarkLabel(done);
+    }
+
     /// <summary>Pushes whether the tag of the raw bits in <paramref name="bits"/> is <paramref name="tag"/>.</summary>
-    private static void EmitTagIs(Sigil.Emit<PredicateDelegate> emit, Sigil.Local bits, Tag tag)
+    private static void EmitTagIs(IlEmit emit, IlLocal bits, Tag tag)
     {
         emit.LoadLocal(bits);
         emit.LoadConstant(Cell.TagShift);
@@ -279,7 +594,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Ref(base + offset) as raw bits: the Ref tag is 0.</summary>
-    private static void EmitRefBitsOf(Sigil.Emit<PredicateDelegate> emit, Sigil.Local @base, int offset)
+    private static void EmitRefBitsOf(IlEmit emit, IlLocal @base, int offset)
     {
         emit.LoadLocal(@base);
         if (offset != 0)
@@ -292,8 +607,8 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>heap[base + offset] := a cell of the raw bits <paramref name="pushBits"/> leaves.</summary>
-    private static void EmitHeapCell(Sigil.Emit<PredicateDelegate> emit, Sigil.Local heap,
-        Sigil.Local @base, int offset, Action pushBits)
+    private static void EmitHeapCell(IlEmit emit, IlLocal heap,
+        IlLocal @base, int offset, Action pushBits)
     {
         var cell = RegisterFileOf(emit)!.Temp(typeof(Cell), KU + 1);
         emit.LoadLocalAddress(cell);
@@ -311,7 +626,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>X[slot] := a cell of the raw bits <paramref name="pushBits"/> leaves.</summary>
-    private static void EmitRegisterBits(Sigil.Emit<PredicateDelegate> emit, Sigil.Local regs,
+    private static void EmitRegisterBits(IlEmit emit, IlLocal regs,
         int slot, Action pushBits)
     {
         var cell = RegisterFileOf(emit)!.Temp(typeof(Cell), KU + 1);
@@ -326,8 +641,8 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>X[slot] := heap[p + offset], a bare ATTVAR taken as a Ref to
     /// its home, as unify_variable_x reads it.</summary>
-    private static void EmitRegisterFromHeap(Sigil.Emit<PredicateDelegate> emit, Sigil.Local regs,
-        Sigil.Local heap, int slot, Sigil.Local p, int offset, RegisterFile rf)
+    private static void EmitRegisterFromHeap(IlEmit emit, IlLocal regs,
+        IlLocal heap, int slot, IlLocal p, int offset, RegisterFile rf)
     {
         var bits = rf.Temp(typeof(long), KU + 2);
         var plain = emit.DefineLabel($"glv_plain_{NextLabelSeq()}");
@@ -351,7 +666,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The unify mode get_list leaves: reserved write off, write mode
     /// as given, the unify pointer at the value <paramref name="pushPointer"/> pushes.</summary>
-    private static void EmitSetUnifyMode(Sigil.Emit<PredicateDelegate> emit, bool writeMode, Action pushPointer)
+    private static void EmitSetUnifyMode(IlEmit emit, bool writeMode, Action pushPointer)
     {
         emit.LoadArgument(0);
         emit.LoadConstant(false);

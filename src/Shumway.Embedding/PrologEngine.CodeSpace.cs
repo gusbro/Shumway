@@ -410,6 +410,7 @@ public sealed partial class PrologEngine
             var ilTable = li.IlByFunctorId;
             if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
                 ilTable[functorId] = null;
+            li.Activation.EvictCps(functorId);   // ADR-061
         }
     }
 
@@ -488,7 +489,7 @@ public sealed partial class PrologEngine
     internal bool IsTier1Dispatched(int fid) =>
         IlPromotion.IsPromoted(fid) || _regionMemberAliases.ContainsKey(fid);
 
-    /// <summary>Eagerly Sigil-compiles every compilable static predicate to
+    /// <summary>Eagerly compiles every compilable static predicate to
     /// Tier-1 IL now — the opt-in counterpart to the lazy default, for a program
     /// that will do enough queries to want the whole set hot before the first
     /// (a server warming up before it serves). Returns the number newly promoted.

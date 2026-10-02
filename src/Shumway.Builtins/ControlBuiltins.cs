@@ -120,10 +120,17 @@ public static class ControlBuiltins
         // is tracked on the bytes written, so this is correct under redirection.
         if (w is ILineStartAware { AtLineStart: false })
             w.Write('\n');
-        w.WriteLine(string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
-            "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
-            dInf, secs, dCells, lips));
+        // Compiled code counts no inferences: with Tier-1 on, a count would
+        // be the interpreter's share only.
+        if (engine.CompiledCodeActive?.Invoke() == true)
+            w.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "% {0:0.000} seconds, {1:N0} heap cells", secs, dCells));
+        else
+            w.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
+                dInf, secs, dCells, lips));
         marks[idx] = (now, cells, inf);
         return true;
     }

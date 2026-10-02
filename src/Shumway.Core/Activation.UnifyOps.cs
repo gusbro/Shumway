@@ -6,6 +6,10 @@ public sealed partial class Activation
 {
     // ----- Registers -----
 
+    /// <summary>The register bank never holds fewer registers: compiled code
+    /// stores to a register below this without a capacity check.</summary>
+    public const int MinRegisterCount = 64;
+
     public Cell GetRegister(int idx) => _registers[idx];
     public void SetRegister(int idx, Cell value)
     {

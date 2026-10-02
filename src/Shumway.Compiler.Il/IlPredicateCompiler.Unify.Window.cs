@@ -57,8 +57,8 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The window at a get_list; returns the pc after it, or -1 when
     /// it does not apply.</summary>
-    private static int TryEmitGetListWindow(Sigil.Emit<PredicateDelegate> emit, byte[] code,
-        int pc, int end, int arg, Func<int, bool> labelAt, Sigil.Label failLabel)
+    private static int TryEmitGetListWindow(IlEmit emit, byte[] code,
+        int pc, int end, int arg, Func<int, bool> labelAt, IlLabel failLabel)
     {
         var rf = RegisterFileOf(emit);
         if (!InlineUnify || rf is null) return -1;
@@ -163,6 +163,14 @@ public sealed partial class IlPredicateCompiler
 
         // Write: the pair at the heap top, its two cells, then the binding.
         emit.MarkLabel(write);
+        bool hotWrite = CpsHotExit;
+        if (hotWrite)
+        {
+            // A trailed binding is the cold method's, decided before any write.
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfLess(slow);
+        }
         bool storesValue = false;
         foreach (var a in args)
             if (a.Op is Opcode.UnifyValueX or Opcode.UnifyValueY) storesValue = true;
@@ -227,53 +235,59 @@ public sealed partial class IlPredicateCompiler
             EmitRefBitsOf(emit, p, 0);
             emit.Or();
         });
-        emit.LoadLocal(home);
-        EmitLoadEngineField(emit, EngHb);
-        emit.BranchIfGreaterOrEqual(trailed);
-        emit.LoadArgument(0);
-        emit.LoadLocal(home);
-        EmitHelperCall(emit, EngineTrailBindMethod);
+        if (!hotWrite)
+        {
+            emit.LoadLocal(home);
+            EmitLoadEngineField(emit, EngHb);
+            emit.BranchIfGreaterOrEqual(trailed);
+            emit.LoadArgument(0);
+            emit.LoadLocal(home);
+            EmitHelperCall(emit, EngineTrailBindMethod);
+        }
         emit.MarkLabel(trailed);
         emit.Branch(done);
 
         // The helpers, as the instructions compile alone.
         emit.MarkLabel(slow);
-        emit.LoadArgument(0);
-        emit.LoadConstant(arg);
-        EmitHelperCall(emit, EngineGetListMethod);
-        emit.BranchIfFalse(failLabel);
-        foreach (var a in args)
+        if (!EmitColdExit(emit))   // ADR-061: a hot method leaves for the cold one
         {
             emit.LoadArgument(0);
-            switch (a.Op)
+            emit.LoadConstant(arg);
+            EmitHelperCall(emit, EngineGetListMethod);
+            emit.BranchIfFalse(failLabel);
+            foreach (var a in args)
             {
-                case Opcode.UnifyVariableX:
-                    emit.LoadConstant(a.Operand);
-                    EmitHelperCall(emit, EngineUnifyVariableXMethod);
-                    break;
-                case Opcode.UnifyVariableY:
-                    emit.LoadConstant(a.Operand);
-                    EmitHelperCall(emit, EngineUnifyVariableYMethod);
-                    break;
-                case Opcode.UnifyValueX:
-                    emit.LoadConstant(a.Operand);
-                    EmitHelperCall(emit, EngineUnifyValueXMethod);
-                    emit.BranchIfFalse(failLabel);
-                    break;
-                case Opcode.UnifyValueY:
-                    emit.LoadConstant(a.Operand);
-                    EmitHelperCall(emit, EngineUnifyValueYMethod);
-                    emit.BranchIfFalse(failLabel);
-                    break;
-                case Opcode.UnifyVoid:
-                    emit.LoadConstant(1);
-                    EmitHelperCall(emit, EngineUnifyVoidMethod);
-                    break;
-                default:
-                    EmitConstantCell(emit, a);
-                    EmitHelperCall(emit, EngineUnifyArgCellMethod);
-                    emit.BranchIfFalse(failLabel);
-                    break;
+                emit.LoadArgument(0);
+                switch (a.Op)
+                {
+                    case Opcode.UnifyVariableX:
+                        emit.LoadConstant(a.Operand);
+                        EmitHelperCall(emit, EngineUnifyVariableXMethod);
+                        break;
+                    case Opcode.UnifyVariableY:
+                        emit.LoadConstant(a.Operand);
+                        EmitHelperCall(emit, EngineUnifyVariableYMethod);
+                        break;
+                    case Opcode.UnifyValueX:
+                        emit.LoadConstant(a.Operand);
+                        EmitHelperCall(emit, EngineUnifyValueXMethod);
+                        emit.BranchIfFalse(failLabel);
+                        break;
+                    case Opcode.UnifyValueY:
+                        emit.LoadConstant(a.Operand);
+                        EmitHelperCall(emit, EngineUnifyValueYMethod);
+                        emit.BranchIfFalse(failLabel);
+                        break;
+                    case Opcode.UnifyVoid:
+                        emit.LoadConstant(1);
+                        EmitHelperCall(emit, EngineUnifyVoidMethod);
+                        break;
+                    default:
+                        EmitConstantCell(emit, a);
+                        EmitHelperCall(emit, EngineUnifyArgCellMethod);
+                        emit.BranchIfFalse(failLabel);
+                        break;
+                }
             }
         }
         emit.MarkLabel(done);
@@ -282,7 +296,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The cell of a value instruction on the stack: a register, a Y
     /// slot or a constant.</summary>
-    private static void EmitWindowValue(Sigil.Emit<PredicateDelegate> emit, WindowArg a, Sigil.Local regs)
+    private static void EmitWindowValue(IlEmit emit, WindowArg a, IlLocal regs)
     {
         switch (a.Op)
         {
@@ -301,7 +315,7 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
-    private static void EmitConstantCell(Sigil.Emit<PredicateDelegate> emit, WindowArg a)
+    private static void EmitConstantCell(IlEmit emit, WindowArg a)
     {
         switch (a.Op)
         {
@@ -322,7 +336,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The stack array and the index of Y[slot], from the region's
     /// locals or the fields.</summary>
-    private static void EmitYAddress(Sigil.Emit<PredicateDelegate> emit, int slot, RegisterFile rf)
+    private static void EmitYAddress(IlEmit emit, int slot, RegisterFile rf)
     {
         EmitLoadEngineField(emit, EngStack);
         EmitLoadEngineField(emit, EngE);
@@ -331,7 +345,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Y[slot] := a cell of the raw bits <paramref name="pushBits"/> leaves.</summary>
-    private static void EmitYBits(Sigil.Emit<PredicateDelegate> emit, int slot, Action pushBits, RegisterFile rf)
+    private static void EmitYBits(IlEmit emit, int slot, Action pushBits, RegisterFile rf)
     {
         var cell = rf.Temp(typeof(Cell), KU + 1);
         emit.LoadLocalAddress(cell);
@@ -343,8 +357,8 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Y[slot] := heap[p + offset], a bare ATTVAR taken as a Ref to its home.</summary>
-    private static void EmitYFromHeap(Sigil.Emit<PredicateDelegate> emit, Sigil.Local heap,
-        int slot, Sigil.Local p, int offset, RegisterFile rf)
+    private static void EmitYFromHeap(IlEmit emit, IlLocal heap,
+        int slot, IlLocal p, int offset, RegisterFile rf)
     {
         var bits = rf.Temp(typeof(long), KU + 2);
         var plain = emit.DefineLabel($"glwy_plain_{NextLabelSeq()}");
@@ -368,7 +382,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The raw bits on the stack, a bare ATTVAR turned into a Ref to
     /// its home, as the write mode of UnifyArgCell stores it.</summary>
-    private static void EmitAttVarBitsAsRef(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf)
+    private static void EmitAttVarBitsAsRef(IlEmit emit, RegisterFile rf)
     {
         var bits = rf.Temp(typeof(long), KU + 3);
         var plain = emit.DefineLabel($"glwa_plain_{NextLabelSeq()}");

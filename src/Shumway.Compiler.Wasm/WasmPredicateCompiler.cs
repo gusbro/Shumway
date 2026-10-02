@@ -164,9 +164,9 @@ public static class WasmPredicateCompiler
     private const uint LC2 = 20;
     private const uint LMode = 21;    // i32: unify write mode
     private const uint LS = 22;       // i32: the unify pointer
-    // i64 tallies, after the AEval bank (see EngineLocals): goals dispatched
-    // and heap cells claimed, spilled to the mailbox with the scalars.
-    private const uint LGoals = 31;
+    // i64 tallies, after the AEval bank (see EngineLocals): local 31 unused
+    // (compiled code counts no inferences) and heap cells claimed, spilled
+    // to the mailbox with the scalars.
     private const uint LCells = 32;
 
     private const long RawIntTag = (long)Tag.RawInt << Cell.TagShift;
@@ -1356,7 +1356,6 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.ContinuationPc); Op(new LocalSet(LCP));
             LoadSlot32(WasmAbi.WriteMode); Op(new LocalSet(LMode));
             LoadSlot32(WasmAbi.UnifyPointer); Op(new LocalSet(LS));
-            LoadSlot64(WasmAbi.GoalsRun); Op(new LocalSet(LGoals));
             // Cells claimed = (H at exit - H at entry) + every span a
             // backtrack discarded. Seeding with -H here and adding H back in
             // the epilogue gives the first term with no extra local and no
@@ -1369,7 +1368,6 @@ public static class WasmPredicateCompiler
 
         private void StoreScalars()
         {
-            StoreSlot64(WasmAbi.GoalsRun, () => Op(new LocalGet(LGoals)));
             StoreSlot64(WasmAbi.CellsClaimed, () =>
             {
                 Op(new LocalGet(LCells));
@@ -2410,25 +2408,14 @@ public static class WasmPredicateCompiler
                 case Opcode.AEvalUn: EmitAEvalUn(ins); return false;
                 case Opcode.AEvalIs: EmitAEvalIs(ins); return false;
                 case Opcode.AEvalCmp: EmitAEvalCmp(ins); return false;
-                case Opcode.Call: BumpGoals(); return EmitCall(ins);
-                case Opcode.Execute: BumpGoals(); EmitExecute(ins); return true;
+                case Opcode.Call: return EmitCall(ins);
+                case Opcode.Execute: EmitExecute(ins); return true;
                 default:
                     throw new WasmCompileException($"emit: {ins.Op} at {ins.Pc}");
             }
         }
 
         // ---- control ----
-
-        /// <summary>One goal dispatched, the event time/1 counts. An i64 add
-        /// on a local: the tally reaches memory once per chain, in the
-        /// epilogue, not once per goal.</summary>
-        private void BumpGoals()
-        {
-            Op(new LocalGet(LGoals));
-            Op(new Int64Constant(1));
-            Op(new Int64Add());
-            Op(new LocalSet(LGoals));
-        }
 
         private void EmitFlagsCheck(int pc)
         {
@@ -9399,8 +9386,10 @@ public static class WasmPredicateCompiler
 
         /// <summary>LC2 op LC1 -&gt; LC0, plain i64s, mirroring TryFastBin:
         /// anything outside the 60-bit int lane (overflow, zero divisor, a
-        /// non-fast op) deopts and the engine escalates.</summary>
-        private void EmitIntBinCore(int op, int pcDeopt)
+        /// non-fast op) deopts and the engine escalates. <paramref name="bounded"/>:
+        /// the sequence's operand width keeps +, - and * within 64 bits, so
+        /// they are not checked.</summary>
+        private void EmitIntBinCore(int op, int pcDeopt, bool bounded = false)
         {
             void FitsCheckC0(int pc)
             {
@@ -9419,16 +9408,17 @@ public static class WasmPredicateCompiler
                 case 0:     // Add
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Add());
                     Op(new LocalSet(LC0));
-                    FitsCheckC0(pcDeopt);
+                    if (!bounded) FitsCheckC0(pcDeopt);
                     break;
                 case 1:     // Sub
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Subtract());
                     Op(new LocalSet(LC0));
-                    FitsCheckC0(pcDeopt);
+                    if (!bounded) FitsCheckC0(pcDeopt);
                     break;
                 case 2:     // Mul -- the 64-bit overflow probe, then the 60-bit fit
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Multiply());
                     Op(new LocalSet(LC0));
+                    if (bounded) break;
                     Op(new LocalGet(LC2)); Op(new Int64Constant(0)); Op(new Int64NotEqual());
                     Op(new LocalGet(LC2)); Op(new Int64Constant(-1)); Op(new Int64NotEqual());
                     Op(new Int32And());
@@ -10223,11 +10213,16 @@ public static class WasmPredicateCompiler
         private const int AEvalMaxDepth = 8;
         private int _aevalDepth;
         private int _aevalStart;
+        // ArithBounds' operand width for the open sequence (0: a check per
+        // operation), and whether its is/2 result is then a 60-bit int.
+        private int _aevalWidth;
+        private bool _aevalResultFits;
 
         private static uint LA(int k) => (uint)(23 + k);
 
-        /// <summary>The slot's kind: 0 = the value is a 60-bit int, 1 = it is
-        /// the IEEE bits of a double. One local rather than a parallel f64
+        /// <summary>The slot's kind: 0 = the value is an int (60-bit, or up to
+        /// 63 bits inside a sequence with an operand width), 1 = it is the IEEE
+        /// bits of a double. One local rather than a parallel f64
         /// bank, so a slot costs one extra i32 and the reinterprets are
         /// free.</summary>
         private static uint LAK(int k) => (uint)(33 + k);
@@ -10373,7 +10368,11 @@ public static class WasmPredicateCompiler
 
         private void EmitAEvalPush(Instr ins)
         {
-            if (_aevalDepth == 0) _aevalStart = ins.Pc;
+            if (_aevalDepth == 0)
+            {
+                _aevalStart = ins.Pc;
+                _aevalWidth = AEvalSequenceWidth(ins.Pc, out _aevalResultFits);
+            }
             if (_aevalDepth >= AEvalMaxDepth)
                 throw new WasmCompileException($"a_eval deeper than {AEvalMaxDepth} at {ins.Pc}");
             switch (ins.I0)
@@ -10400,7 +10399,7 @@ public static class WasmPredicateCompiler
                 }
                 case 3:
                 case 4:
-                    EmitReadNumericOperand(ins.I0, ins.I1, _aevalStart, _aevalDepth);
+                    EmitReadNumericOperand(ins.I0, ins.I1, _aevalStart, _aevalDepth, _aevalWidth);
                     break;
                 default:
                     // bigint / rational literal: the sequence still escalates.
@@ -10414,12 +10413,41 @@ public static class WasmPredicateCompiler
             _aevalDepth++;
         }
 
+        /// <summary>ArithBounds over the sequence that starts at <paramref name="pc"/>.</summary>
+        private int AEvalSequenceWidth(int pc, out bool resultFits)
+        {
+            var seq = new List<ArithBounds.Step>();
+            for (int i = _byPc[pc]; i < _instrs.Count; i++)
+            {
+                var x = _instrs[i];
+                if (x.Op is not (Opcode.AEvalPush or Opcode.AEvalBin or Opcode.AEvalUn
+                                 or Opcode.AEvalIs or Opcode.AEvalCmp)) break;
+                seq.Add(new ArithBounds.Step(x.Op, x.I0, x.I1));
+                if (x.Op is Opcode.AEvalIs or Opcode.AEvalCmp) break;
+            }
+            return ArithBounds.OperandWidth(seq, out resultFits);
+        }
+
+        /// <summary>Deopts to <paramref name="pc"/> unless the int in slot
+        /// <paramref name="k"/> fits <paramref name="bits"/> signed bits.</summary>
+        private void AEvalWidthCheck(int k, int bits, int pc)
+        {
+            Op(new LocalGet(LA(k)));
+            Op(new Int64Constant(64 - bits)); Op(new Int64ShiftLeft());
+            Op(new Int64Constant(64 - bits)); Op(new Int64ShiftRightSigned());
+            Op(new LocalGet(LA(k)));
+            Op(new Int64NotEqual());
+            OpenIf();
+            EmitDeopt(pc, 26);
+            CloseNested();
+        }
+
         /// <summary>Reads an a_eval operand into slot <paramref name="slot"/>
         /// with its kind: an INT cell takes the 60-bit lane, a float cell
         /// decodes to IEEE bits, anything else deopts. The int path is byte
         /// for byte what EmitReadIntOperand emits, so integer arithmetic is
         /// untouched.</summary>
-        private void EmitReadNumericOperand(int kind, int val, int pc, int slot)
+        private void EmitReadNumericOperand(int kind, int val, int pc, int slot, int width = 0)
         {
             if (kind == 0)
             {
@@ -10451,6 +10479,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalSet(LA(slot)));
                 Op(new Int32Constant(0));
                 Op(new LocalSet(LAK(slot)));
+                if (width is > 0 and < Cell.TagShift) AEvalWidthCheck(slot, width, pc);
             }
             OpenElse();
             {
@@ -10494,6 +10523,14 @@ public static class WasmPredicateCompiler
                         Op(new LocalSet(LA(slot)));
                         LoadSlot32(WasmAbi.ArithKind);
                         Op(new LocalSet(LAK(slot)));
+                        if (width is > 0 and < Cell.TagShift)
+                        {
+                            Op(new LocalGet(LAK(slot)));
+                            Op(new Int32EqualZero());
+                            OpenIf();
+                            AEvalWidthCheck(slot, width, pc);
+                            CloseNested();
+                        }
                     }
                     OpenElse();
                     {
@@ -10560,7 +10597,7 @@ public static class WasmPredicateCompiler
             {
                 Op(new LocalGet(LA(lo))); Op(new LocalSet(LC2));
                 Op(new LocalGet(LA(hi))); Op(new LocalSet(LC1));
-                EmitIntBinCore(ins.I0, _aevalStart);
+                EmitIntBinCore(ins.I0, _aevalStart, bounded: _aevalWidth > 0);
                 Op(new LocalGet(LC0));
                 Op(new LocalSet(LA(lo)));
                 Op(new Int32Constant(0));
@@ -10637,7 +10674,7 @@ public static class WasmPredicateCompiler
                 case 0:     // Neg
                     Op(new Int64Constant(0)); Op(new LocalGet(a)); Op(new Int64Subtract());
                     Op(new LocalSet(a));
-                    FitsCheck();
+                    if (_aevalWidth == 0) FitsCheck();
                     break;
                 case 1:     // Pos -- identity
                     break;
@@ -10683,12 +10720,14 @@ public static class WasmPredicateCompiler
             }
             OpenElse();
             {
+                if (_aevalWidth > 0 && !_aevalResultFits) AEvalWidthCheck(0, Cell.TagShift, _aevalStart);
                 Op(new LocalGet(LA(0))); Op(new LocalSet(LC0));
                 EmitBoxC0IntoC2();
                 EmitDeliverInt(ins.I0, ins.I1, _aevalStart);
             }
             CloseNested();
             _aevalDepth = 0;
+            _aevalWidth = 0;
         }
 
         private void EmitAEvalCmp(Instr ins)
@@ -10736,6 +10775,7 @@ public static class WasmPredicateCompiler
             }
             CloseNested();
             _aevalDepth = 0;
+            _aevalWidth = 0;
         }
 
         // ---- ADR-020 reserved builds, simulated at compile time ----

@@ -193,7 +193,11 @@ public sealed partial class BytecodeInterpreter
     ///
     /// <para>Null when no IL is wired (Tier-0-only mode); the linker
     /// must not emit <see cref="Opcode.CallIl"/> in that case.</para></summary>
-    public Func<Activation, int, bool>?[]? IlByFunctorId { get; set; }
+    public Func<Activation, int, bool>?[]? IlByFunctorId
+    {
+        get => _engine.IlByFunctorId;
+        set => _engine.IlByFunctorId = value;
+    }
 
     public BytecodeInterpreter(Activation engine)
         : this(engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), Array.Empty<SwitchTable>())

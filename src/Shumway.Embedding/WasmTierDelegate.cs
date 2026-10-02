@@ -740,7 +740,6 @@ public sealed class WasmTierDelegate
                 // even replace an area array by growing it.
                 cx.SyncEngine();
                 var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-                engine.Inferences++;
                 // Mirrors the interpreter's CallBuiltin: trim before the impl
                 // so any choice point it pushes lands at the trimmed top
                 // (execute_builtin, ret -1, never trims).

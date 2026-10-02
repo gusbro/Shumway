@@ -23,8 +23,8 @@ internal static class NativeBlockInliner
 {
     private static int _localSeq;
 
-    public static bool TryEmit(Sigil.Emit<PredicateDelegate> emit, NativeInlineContext ctx,
-        int regZeroAtom, Sigil.Label failLabel)
+    public static bool TryEmit(IlEmit emit, NativeInlineContext ctx,
+        int regZeroAtom, IlLabel failLabel)
     {
         if (regZeroAtom < 0) return false;
         string? name = AtomTable.GetById(regZeroAtom)?.Name;
@@ -53,7 +53,7 @@ internal static class NativeBlockInliner
     /// in register 1 (a Foreign cell), the term in register 0. Emits
     /// <c>ReadReftypeSlot(engine, 1).SetValue(ReadRegisterAsTerm(engine, 0))</c>.
     /// Returns false (decline) when the reftype handles aren't present.</summary>
-    public static bool TryEmitFillPar(Sigil.Emit<PredicateDelegate> emit, NativeInlineContext ctx)
+    public static bool TryEmitFillPar(IlEmit emit, NativeInlineContext ctx)
     {
         if (!ctx.HasReftype) return false;
         emit.LoadArgument(0);
@@ -69,8 +69,8 @@ internal static class NativeBlockInliner
     /// <summary>ADR-024 fusion — <c>reftype_term(Term, RefType)</c> inline: emits
     /// <c>UnifyRegisterWithTerm(engine, 0, ReadReftypeSlot(engine, 1).Materialize())</c>,
     /// branching to <paramref name="failLabel"/> on a failed unify.</summary>
-    public static bool TryEmitReftypeTerm(Sigil.Emit<PredicateDelegate> emit,
-        NativeInlineContext ctx, Sigil.Label failLabel)
+    public static bool TryEmitReftypeTerm(IlEmit emit,
+        NativeInlineContext ctx, IlLabel failLabel)
     {
         if (!ctx.HasReftype) return false;
         emit.LoadArgument(0);                       // engine (for Unify)
@@ -86,18 +86,18 @@ internal static class NativeBlockInliner
 
     private sealed class Emitter
     {
-        private readonly Sigil.Emit<PredicateDelegate>? _emit;   // null = validate-only
+        private readonly IlEmit? _emit;   // null = validate-only
         private readonly NativeInlineContext _ctx;
         private readonly NativeBlockTyping _typing;
         private readonly NativeBlockBody _block;
-        private readonly Sigil.Label _fail;
+        private readonly IlLabel _fail;
         private readonly int _salt;
         private readonly Dictionary<string, int> _varIndex = new();
-        private readonly Dictionary<string, Sigil.Local> _locals = new();
+        private readonly Dictionary<string, IlLocal> _locals = new();
         private readonly Dictionary<string, bool> _scalarFloat = new();   // ADR-022 scalar globals
 
-        public Emitter(Sigil.Emit<PredicateDelegate>? emit, NativeInlineContext ctx,
-            NativeBlockTyping typing, NativeBlockBody block, Sigil.Label fail, int salt)
+        public Emitter(IlEmit? emit, NativeInlineContext ctx,
+            NativeBlockTyping typing, NativeBlockBody block, IlLabel fail, int salt)
         {
             _emit = emit; _ctx = ctx; _typing = typing; _block = block; _fail = fail; _salt = salt;
             for (int i = 0; i < block.Vars.Length; i++) _varIndex[block.Vars[i].Name] = i;

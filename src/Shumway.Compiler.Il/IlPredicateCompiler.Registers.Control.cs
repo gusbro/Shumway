@@ -19,10 +19,12 @@ public sealed partial class IlPredicateCompiler
     /// inline when the region holds what it touches. The stack holds the
     /// call's arguments; false leaves them for the call.</summary>
     private static bool TryEmitIntrinsic(
-        Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MethodInfo method)
+        IlEmit emit, RegisterFile rf, MethodInfo method)
     {
         if (method == EngineSetRegisterMethod && !rf.Holds(MachineRegs.RegisterArray))
             return TryEmitSetRegister(emit, rf);
+        if (method == EngineUnifyMethod && TryEmitUnifyRegisterWithCell(emit, rf)) return true;
+        if (method == EngineAllocateHeapUnboundMethod && TryEmitHotAllocateHeapUnbound(emit, rf)) return true;
         if (method == EngineEGetter) return EmitRegisterRead(emit, rf, MachineRegs.E);
         if (method == EngineBGetter) return EmitRegisterRead(emit, rf, MachineRegs.B);
         if (method == EngineCpGetter) return EmitRegisterRead(emit, rf, MachineRegs.Cp);
@@ -83,8 +85,16 @@ public sealed partial class IlPredicateCompiler
             emit.LoadLocal(rf.Local(MachineRegs.B0));
             emit.LoadLocal(rf.Local(MachineRegs.B));
             emit.BranchIfGreaterOrEqual(skip);
-            emit.Duplicate();
-            EmitRowCall(emit, rf, method);
+            if (CpsHotExit)
+            {
+                emit.Pop();
+                EmitColdExit(emit);
+            }
+            else
+            {
+                emit.Duplicate();
+                EmitRowCall(emit, rf, method);
+            }
             emit.MarkLabel(skip);
             emit.Pop();
             return true;
@@ -103,9 +113,12 @@ public sealed partial class IlPredicateCompiler
             emit.Convert<int>();
             emit.LoadLocal(rf.Local(MachineRegs.B));
             emit.BranchIfGreaterOrEqual(skip);
-            emit.LoadLocal(act);
-            emit.LoadLocal(slot);
-            EmitRowCall(emit, rf, method);
+            if (!EmitColdExit(emit))
+            {
+                emit.LoadLocal(act);
+                emit.LoadLocal(slot);
+                EmitRowCall(emit, rf, method);
+            }
             emit.MarkLabel(skip);
             return true;
         }
@@ -126,7 +139,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static bool EmitRegisterRead(
-        Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MachineRegs reg)
+        IlEmit emit, RegisterFile rf, MachineRegs reg)
     {
         if (!rf.Holds(reg)) return false;
         emit.Pop();
@@ -136,7 +149,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The stack holds [activation, value].</summary>
     private static bool EmitRegisterWrite(
-        Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MachineRegs reg)
+        IlEmit emit, RegisterFile rf, MachineRegs reg)
     {
         if (!rf.Holds(reg)) return false;
         emit.Duplicate();
@@ -146,7 +159,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>reg := value, both the local and the field.</summary>
-    private static void EmitStoreRegister(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf,
+    private static void EmitStoreRegister(IlEmit emit, RegisterFile rf,
         MachineRegs reg, Action pushValue)
     {
         emit.LoadArgument(0);
@@ -158,7 +171,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The stack array and the index of Y[slot] of the current
     /// environment.</summary>
-    private static void EmitYIndex(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, Sigil.Local slot)
+    private static void EmitYIndex(IlEmit emit, RegisterFile rf, IlLocal slot)
     {
         emit.LoadLocal(rf.Local(MachineRegs.StackArray));
         emit.LoadLocal(rf.Local(MachineRegs.E));
@@ -169,7 +182,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>(int)stack[index].Data, the index pushed by <paramref name="pushIndex"/>.</summary>
-    private static void EmitStackInt(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, Action pushIndex)
+    private static void EmitStackInt(IlEmit emit, RegisterFile rf, Action pushIndex)
     {
         emit.LoadLocal(rf.Local(MachineRegs.StackArray));
         pushIndex();
@@ -180,7 +193,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The Cell scratch local := Cell.RawInt(value), the int value
     /// pushed by <paramref name="pushValue"/>.</summary>
-    private static void EmitBuildRawInt(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, Action pushValue)
+    private static void EmitBuildRawInt(IlEmit emit, RegisterFile rf, Action pushValue)
     {
         emit.LoadLocalAddress(rf.Temp(typeof(Cell), 0));
         pushValue();
@@ -192,11 +205,27 @@ public sealed partial class IlPredicateCompiler
         emit.StoreField(CellDataField);
     }
 
+    /// <summary>The Cell scratch local := the cell of <paramref name="bits"/>,
+    /// known at compile time.</summary>
+    private static void EmitBuildCellConst(IlEmit emit, RegisterFile rf, long bits)
+    {
+        emit.LoadLocalAddress(rf.Temp(typeof(Cell), 0));
+        emit.LoadConstant(bits);
+        emit.StoreField(CellDataField);
+    }
+
     /// <summary>stack[base + offset] := Cell.RawInt(value).</summary>
-    private static void EmitStoreStackRawInt(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf,
-        Sigil.Local @base, int offset, Action pushValue)
+    private static void EmitStoreStackRawInt(IlEmit emit, RegisterFile rf,
+        IlLocal @base, int offset, Action pushValue)
     {
         EmitBuildRawInt(emit, rf, pushValue);
+        EmitStoreStackTempCell(emit, rf, @base, offset);
+    }
+
+    /// <summary>stack[base + offset] := the Cell scratch local.</summary>
+    private static void EmitStoreStackTempCell(IlEmit emit, RegisterFile rf,
+        IlLocal @base, int offset)
+    {
         emit.LoadLocal(rf.Local(MachineRegs.StackArray));
         emit.LoadLocal(@base);
         if (offset != 0)
@@ -210,7 +239,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>allocate n: Activation.Allocate over the locals. The method
     /// runs when a hook is on or the frame does not fit.</summary>
-    private static void EmitAllocateOp(Sigil.Emit<PredicateDelegate> emit, int n)
+    private static void EmitAllocateOp(IlEmit emit, int n)
     {
         var rf = RegisterFileOf(emit);
         if (rf is null || !rf.Holds(MachineRegs.E | MachineRegs.Cp | MachineRegs.StackTop | MachineRegs.StackArray))
@@ -239,10 +268,13 @@ public sealed partial class IlPredicateCompiler
 
         EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCeOffset, () => emit.LoadLocal(rf.Local(MachineRegs.E)));
         EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCpOffset, () => emit.LoadLocal(rf.Local(MachineRegs.Cp)));
-        EmitStoreStackRawInt(emit, rf, newE, Activation.EnvNOffset, () => emit.LoadConstant(n));
-        // The Y slots are RawInt(0), which the heap collector's scan skips.
+        EmitBuildCellConst(emit, rf, RawIntTag | (uint)n);
+        EmitStoreStackTempCell(emit, rf, newE, Activation.EnvNOffset);
+        // The Y slots are RawInt(0), which the heap collector's scan skips: one
+        // cell, stored n times.
+        if (n > 0) EmitBuildCellConst(emit, rf, RawIntTag);
         for (int i = 0; i < n; i++)
-            EmitStoreStackRawInt(emit, rf, newE, Activation.EnvY1Offset + i, () => emit.LoadConstant(0));
+            EmitStoreStackTempCell(emit, rf, newE, Activation.EnvY1Offset + i);
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () =>
         {
             emit.LoadLocal(newE);
@@ -253,15 +285,18 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(done);
 
         emit.MarkLabel(slow);
-        emit.LoadArgument(0);
-        emit.LoadConstant(n);
-        EmitRowCall(emit, rf, EngineAllocateMethod);
+        if (!EmitColdExit(emit))
+        {
+            emit.LoadArgument(0);
+            emit.LoadConstant(n);
+            EmitRowCall(emit, rf, EngineAllocateMethod);
+        }
         emit.MarkLabel(done);
     }
 
     /// <summary>deallocate: Activation.Deallocate over the locals, the
     /// reclaim of the popped frame's space included.</summary>
-    private static void EmitDeallocate(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf)
+    private static void EmitDeallocate(IlEmit emit, RegisterFile rf)
     {
         var oldE = rf.Temp(typeof(int), KOldE);
         var eTop = rf.Temp(typeof(int), KTopA);
@@ -368,11 +403,11 @@ public sealed partial class IlPredicateCompiler
     /// register) says so: the test inline, the call and its reload behind
     /// it. <paramref name="skipped"/> is the method's result when the guard
     /// is false (null for a void method).</summary>
-    private static bool EmitGuardedCall(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf,
+    private static bool EmitGuardedCall(IlEmit emit, RegisterFile rf,
         MethodInfo method, MethodInfo guard, object? skipped)
     {
         var ps = method.GetParameters();
-        var args = new Sigil.Local[ps.Length];
+        var args = new IlLocal[ps.Length];
         for (int i = ps.Length - 1; i >= 0; i--)
         {
             args[i] = rf.Temp(ps[i].ParameterType, KArg + i);
@@ -385,10 +420,13 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(act);
         emit.Call(guard);
         emit.BranchIfFalse(skip);
-        emit.LoadLocal(act);
-        foreach (var a in args) emit.LoadLocal(a);
-        EmitRowCall(emit, rf, method);
-        emit.Branch(done);
+        if (!EmitColdExit(emit))
+        {
+            emit.LoadLocal(act);
+            foreach (var a in args) emit.LoadLocal(a);
+            EmitRowCall(emit, rf, method);
+            emit.Branch(done);
+        }
         emit.MarkLabel(skip);
         switch (skipped)
         {

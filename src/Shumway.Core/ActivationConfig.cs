@@ -20,6 +20,8 @@ public sealed class ActivationConfig
     public int InitialExtraTrailSize { get; init; } = 64;
     public int MaxExtraTrailSize { get; init; }
 
+    /// <summary>The register bank's initial size; never below
+    /// <see cref="Activation.MinRegisterCount"/>.</summary>
     public int InitialRegisterCount { get; init; } = 64;
     public int MaxRegisterCount { get; init; }
 

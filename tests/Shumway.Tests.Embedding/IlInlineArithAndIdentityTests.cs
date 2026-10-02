@@ -19,6 +19,11 @@ public sealed class IlInlineArithAndIdentityTests
         e(X, Y) :- X * 2 =:= Y + 0.
         id(A, B, R) :- ( A == B -> R = same ; R = diff ).
         nid(A, B, R) :- ( A \== B -> R = diff ; R = same ).
+        k(X, R) :- R is X * 1000 + 7.
+        g(X, Y) :- X + Y > 0.
+        m(X, Y, R) :- R is X * Y.
+        s(A, B, C) :- 1000*A + 100*B + 10*C =:= 10000*A - 8990.
+        c(X, Y) :- X * 1000 < Y.
         """;
 
     // Called from the query, not from a Prolog wrapper: a wrapper would itself
@@ -39,6 +44,23 @@ public sealed class IlInlineArithAndIdentityTests
         "B is 2^40, " + Try("w(B, B, R0)") + ", X = R0.",
         "M is 2^59 - 1, " + Try("w(M, 3, R0)") + ", X = R0.",
         Try("w(3, 4, R0)") + ", X = R0.",
+        // A check per operand, of the width the whole sequence allows: a
+        // constant factor narrows it, a product of two operands takes it to 32
+        // bits, and a comparison is exact past 60 bits.
+        Try("k(5, R0)") + ", X = R0.",
+        "B is 2^50, " + Try("k(B, R0)") + ", X = R0.",
+        "B is -(2^53), " + Try("k(B, R0)") + ", X = R0.",
+        "B is 2^58, " + Try("k(B, R0)") + ", X = R0.",
+        "M is 2^59 - 1, " + Try("g(M, M)") + ".",
+        "N is -(2^59), " + Try("g(N, N)") + ".",
+        "B is 2^31, " + Try("m(B, B, R0)") + ", X = R0.",
+        "B is -(2^31), " + Try("m(B, B, R0)") + ", X = R0.",
+        "B is 2^31 - 1, C is -B, " + Try("m(B, C, R0)") + ", X = R0.",
+        Try("s(1, 0, 1)") + ".", Try("s(1, 1, 0)") + ".",
+        "A is 2^50, " + Try("s(A, 1, 2)") + ".",
+        // Unchecked, 2^58 * 1000 wraps 64 bits to a negative number, and a
+        // comparison has no result check to catch it.
+        "B is 2^58, " + Try("c(B, 0)") + ".",
         // The general path: a float, an unbound operand, a non-number.
         Try("p(1.5, 2, R0)") + ", X = R0.",
         Try("p(_, 1, _)") + ".",
@@ -80,7 +102,8 @@ public sealed class IlInlineArithAndIdentityTests
         tiered.ConsultString(Corpus);
         // Promotion is asynchronous: run and drain until every predicate the
         // goals exercise has promoted (ANTI-VACUITY), within a few rounds.
-        string[] expected = { "p/3", "q/3", "n/2", "w/3", "v/3", "l/2", "e/2", "id/3", "nid/3" };
+        string[] expected = { "p/3", "q/3", "n/2", "w/3", "v/3", "l/2", "e/2", "id/3", "nid/3",
+            "k/2", "g/2", "m/3", "s/3", "c/2" };
         var promoted = new HashSet<string>();
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
@@ -108,7 +131,12 @@ public sealed class IlInlineArithAndIdentityTests
             "catch(p(_, 1, _), error(instantiation_error, _), true).",
             "q(1, 5, 1).", "\\+ q(6, 5, 1).", "v(1, 5, _).", "\\+ v(1, 4, _).",
             "id(1, 1.0, diff).", "C = f(C), D = f(D), id(C, D, same).",
-            "put_attr(V, m, 1), id(V, _, diff).", "id([], [], same)." })
+            "put_attr(V, m, 1), id(V, _, diff).", "id([], [], same).",
+            "B is 2^50, k(B, X), X =:= 2^50 * 1000 + 7.",
+            "B is 2^58, k(B, X), X =:= 2^58 * 1000 + 7.",
+            "M is 2^59 - 1, g(M, M).", "N is -(2^59), \\+ g(N, N).",
+            "B is 2^31, m(B, B, X), X =:= 2^62.", "B is -(2^31), m(B, B, X), X =:= 2^62.",
+            "s(1, 0, 1).", "\\+ s(1, 1, 0).", "B is 2^58, \\+ c(B, 0)." })
             Assert.True(tiered.Query(check).Success, check);
     }
 }

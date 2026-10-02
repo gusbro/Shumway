@@ -33,6 +33,47 @@ public sealed class IlPromotionStore
     private static readonly bool PromotionDiag =
         Environment.GetEnvironmentVariable("SHUMWAY_TIER1_DIAG") == "1";
 
+    // ADR-061: continuation methods, beside the delegate they resume through.
+    private readonly Dictionary<int, IlPredicateCompiler.CpsCode> _cpsCode = new();
+
+    /// <summary>ADR-061: the functor's continuation methods, or null.</summary>
+    internal IlPredicateCompiler.CpsCode? TryGetCps(int functorId)
+        => _cpsCode.TryGetValue(functorId, out var c) ? c : null;
+
+    internal IEnumerable<KeyValuePair<int, IlPredicateCompiler.CpsCode>> CpsEntries() => _cpsCode;
+
+    /// <summary>What the interpreter's tables invoke for <paramref name="functorId"/>:
+    /// an entry (cursor 0) goes to the continuation methods when there are any,
+    /// every other cursor to the delegate.</summary>
+    internal Func<Activation, int, bool> TableEntry(int functorId, PredicateDelegate del)
+    {
+        if (!_cpsCode.TryGetValue(functorId, out var cps)) return del.Invoke;
+        var entry = cps.EntryDelegate;
+        return (engine, cursor) => cursor == 0 ? entry(engine, 0) : del(engine, cursor);
+    }
+
+    // A failure here leaves the predicate on its delegate: continuation
+    // methods are an addition, never a condition of promotion.
+    private IlPredicateCompiler.CpsCode? TryCompileCps(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate del)
+    {
+        if (!IlPredicateCompiler.CpsMode) return null;
+        try
+        {
+            using var wam = IlPredicateCompiler.WamChoicePoints(true);
+            var code = Compiler.CompileCps(predicate, calleeMap, del);
+            if (PromotionDiag)
+                Console.Error.WriteLine($"[tier1] cps fid={predicate.FunctorId} "
+                    + (code is null ? "none" : $"entry=0x{code.Entry:X} continuations={code.Resumes.Length}"));
+            return code;
+        }
+        catch (Exception ex)
+        {
+            if (PromotionDiag) Console.Error.WriteLine($"[tier1] cps failed: {ex.Message}");
+            return null;
+        }
+    }
+
     private void InstallDelegate(int functorId, PredicateDelegate del)
     {
         _delegates[functorId] = del;
@@ -52,7 +93,8 @@ public sealed class IlPromotionStore
     {
         if (_dispatchWrappers.TryGetValue(functorId, out var w)) return w;
         if (!_delegates.TryGetValue(functorId, out var del)) return null;
-        Func<Activation, bool> wrapper = engine => del(engine, 0);
+        var entry = _cpsCode.TryGetValue(functorId, out var cps) ? cps.EntryDelegate : del;
+        Func<Activation, bool> wrapper = engine => entry(engine, 0);
         _dispatchWrappers[functorId] = wrapper;
         return wrapper;
     }
@@ -63,7 +105,7 @@ public sealed class IlPromotionStore
     {
         if (_resumeWrappers.TryGetValue(functorId, out var w)) return w;
         if (!_delegates.TryGetValue(functorId, out var del)) return null;
-        Func<Activation, int, bool> wrapper = (engine, cursor) => del(engine, cursor);
+        var wrapper = TableEntry(functorId, del);
         _resumeWrappers[functorId] = wrapper;
         return wrapper;
     }
@@ -85,7 +127,7 @@ public sealed class IlPromotionStore
     // Forwards to the property on every read rather than caching it in a static
     // field: RuntimeCaps.SupportsRuntimeCodegen is a trimmer feature switch, and a
     // cached field is opaque to the trimmer — the guarded branches would survive
-    // and drag the IL compiler (and Sigil) into a build that can never run them.
+    // and drag the IL compiler into a build that can never run them.
     private static bool DynamicCodeSupported => Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen;
 
     private IlPredicateCompiler? _compilerInstance;
@@ -166,6 +208,7 @@ public sealed class IlPromotionStore
         // finishes on the delegate it began with (ADR-054).
         if (_delegates.TryGetValue(functorId, out var retiring))
             _retiredResume[functorId] = (engine, cursor) => retiring(engine, cursor);
+        _cpsCode.Remove(functorId);
         if (!_delegates.Remove(functorId)) return;
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
@@ -222,14 +265,13 @@ public sealed class IlPromotionStore
     /// <see cref="EffectiveMaxBytecodeBytes"/>.</summary>
     public int MaxIlPromotionBytecodeBytes { get; set; } = 16384;
 
-    /// <summary>Runs a compile on the shared large-stack worker: Sigil's recursive
-    /// ReturnTracer can overflow the default 1 MB stack on large predicates, and
-    /// StackOverflowException is uncatchable — prevention is the only option.</summary>
+    /// <summary>Runs a compile on the shared large-stack worker (see
+    /// <see cref="IlCompileWorker"/>).</summary>
     private static T RunOnLargeStack<T>(Func<T> work) => IlCompileWorker.RunSync(work);
 
     /// <summary>When true (default), a threshold-crossing compile is queued to the
     /// worker and the predicate stays on Tier-0 until the delegate drains in — the
-    /// query thread never stalls on a Sigil emit. <see cref="IsPromoted"/> and
+    /// query thread never stalls on an IL emit. <see cref="IsPromoted"/> and
     /// <see cref="WaitForPendingPromotions"/> give tests deterministic settling.</summary>
     public bool BackgroundCompilation { get; set; } = true;
 
@@ -241,10 +283,12 @@ public sealed class IlPromotionStore
     // In-flight background compiles (engine thread only) and their results
     // (worker → engine thread hand-off).
     private readonly HashSet<int> _pendingCompiles = new();
+    // ADR-061: continuation methods compiled after their delegate is installed.
+    private readonly HashSet<int> _pendingCps = new();
     private readonly ConcurrentQueue<CompletedCompile> _completedCompiles = new();
     private sealed record CompletedCompile(
         int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error,
-        bool IsDynamicSnapshot);
+        bool IsDynamicSnapshot, bool CpsOnly = false);
 
     // Per-fid mutation stamp, bumped by EvictDelegate on every mutation: a background
     // compile whose snapshot was mutated while in flight must be discarded at drain
@@ -255,6 +299,22 @@ public sealed class IlPromotionStore
     {
         while (_completedCompiles.TryDequeue(out var c))
         {
+            if (c.CpsOnly)
+            {
+                _pendingCps.Remove(c.Fid);
+                _mutationStamp.TryGetValue(c.Fid, out int stampNow);
+                // Only for the delegate it was compiled against, still in place.
+                if (stampNow == c.Stamp && c.Result is { Cps: { } lateCps } late
+                    && _delegates.TryGetValue(c.Fid, out var current)
+                    && ReferenceEquals(current, late.Delegate))
+                {
+                    _cpsCode[c.Fid] = lateCps;
+                    _dispatchWrappers.Remove(c.Fid);
+                    _resumeWrappers.Remove(c.Fid);
+                    OnPromotionInstalled?.Invoke(c.Fid, current);
+                }
+                continue;
+            }
             _pendingCompiles.Remove(c.Fid);
             if (c.Error is not null)
             {
@@ -267,13 +327,14 @@ public sealed class IlPromotionStore
                 ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
                 : c.Result!.Value.Delegate;
             InstallDelegate(c.Fid, drainDel);
+            if (c.Result.Value.Cps is { } drainCps) _cpsCode[c.Fid] = drainCps;
             if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
             OnPromotionInstalled?.Invoke(c.Fid, drainDel);
         }
     }
 
     /// <summary>True while any background compile is in flight.</summary>
-    public bool HasPendingPromotions => _pendingCompiles.Count > 0;
+    public bool HasPendingPromotions => _pendingCompiles.Count > 0 || _pendingCps.Count > 0;
 
     /// <summary>Waits until every in-flight background compile has completed and been
     /// installed. False on timeout. Engine-thread only.</summary>
@@ -283,7 +344,7 @@ public sealed class IlPromotionStore
         while (true)
         {
             DrainCompletedCompiles();
-            if (_pendingCompiles.Count == 0) return true;
+            if (_pendingCompiles.Count == 0 && _pendingCps.Count == 0) return true;
             if (deadline.ElapsedMilliseconds > timeoutMs) return false;
             System.Threading.Thread.Sleep(1);
         }
@@ -490,34 +551,71 @@ public sealed class IlPromotionStore
             var capturedTarget = target;
             var capturedCallees = calleeMap;
             _pendingCompiles.Add(functorId);
-            IlCompileWorker.RunAsync(
-                () =>
+            // An instrumented (PGO) delegate has its own cursor layout:
+            // continuation methods compiled from the plain form would push
+            // choice points it cannot resume.
+            bool wantCps = !isDynamic && IlPredicateCompiler.CpsMode;
+            if (wantCps) _pendingCps.Add(functorId);
+            T WithContexts<T>(Func<T> body)
+            {
+                var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
+                var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
+                try { return body(); }
+                finally
                 {
-                    var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
-                    var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
-                    try { return Compiler.CompileInstrumented(capturedTarget, capturedCallees); }
-                    finally
+                    IlPredicateCompiler.EndNativeInline(prevN);
+                    IlPredicateCompiler.EndFloatPool(prevF);
+                }
+            }
+            IlCompileWorker.RunAsync(
+                () => WithContexts(() =>
+                {
+                    // ADR-061: the delegate and its continuation methods push
+                    // the same choice points (WAM, with resume markers).
+                    using var wam = IlPredicateCompiler.WamChoicePoints(wantCps);
+                    return Compiler.CompileInstrumented(capturedTarget, capturedCallees);
+                }),
+                (result, error) =>
+                {
+                    var r = (IlPredicateCompiler.PgoCompileResult?)result;
+                    _completedCompiles.Enqueue(new CompletedCompile(
+                        functorId, r, stamp, error?.Message, isDynamic));
+                    // ADR-061: the delegate is in use while its continuation
+                    // methods compile, which takes several emissions.
+                    if (!wantCps) return;
+                    if (r is not { ProfileKey: < 0 } plain)
                     {
-                        IlPredicateCompiler.EndNativeInline(prevN);
-                        IlPredicateCompiler.EndFloatPool(prevF);
+                        _completedCompiles.Enqueue(new CompletedCompile(
+                            functorId, null, stamp, null, false, CpsOnly: true));
+                        return;
                     }
-                },
-                (result, error) => _completedCompiles.Enqueue(new CompletedCompile(
-                    functorId,
-                    (IlPredicateCompiler.PgoCompileResult?)result,
-                    stamp,
-                    error?.Message,
-                    isDynamic)));
+                    IlCompileWorker.RunAsync(
+                        () => WithContexts(() => (object?)(plain with
+                        {
+                            Cps = TryCompileCps(capturedTarget, capturedCallees, plain.Delegate),
+                        })),
+                        (cpsResult, _) => _completedCompiles.Enqueue(new CompletedCompile(
+                            functorId, (IlPredicateCompiler.PgoCompileResult?)cpsResult, stamp,
+                            null, false, CpsOnly: true)),
+                        lowPriority: true);
+                });
             return null;
         }
 
         var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
-                WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap))));
+                WithNativeInline(() =>
+                {
+                    using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
+                    return Compiler.CompileInstrumented(target, calleeMap);
+                })));
         var installedDel = isDynamic
             ? GuardDynamicSnapshot(functorId, syncResult.Delegate)
             : syncResult.Delegate;
         InstallDelegate(functorId, installedDel);
+        if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithFloatPool(functorId, () =>
+                WithNativeInline(() => TryCompileCps(target, calleeMap, syncResult.Delegate)))) is { } syncCps)
+            _cpsCode[functorId] = syncCps;
         if (syncResult.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = syncResult.ProfileKey;
         OnPromotionInstalled?.Invoke(functorId, installedDel);
@@ -685,8 +783,15 @@ public sealed class IlPromotionStore
             return null;
         }
         var del = RunOnLargeStack(() =>
-            WithFloatPool(functorId, () => WithNativeInline(() => Compiler.Compile(predicate, calleeMap))));
+            WithFloatPool(functorId, () => WithNativeInline(() =>
+            {
+                using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
+                return Compiler.Compile(predicate, calleeMap);
+            })));
         InstallDelegate(functorId, del);
+        if (RunOnLargeStack(() => WithFloatPool(functorId, () =>
+                WithNativeInline(() => TryCompileCps(predicate, calleeMap, del)))) is { } warmCps)
+            _cpsCode[functorId] = warmCps;
         return del;
     }
 

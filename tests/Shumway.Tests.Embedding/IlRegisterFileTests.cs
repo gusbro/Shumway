@@ -12,8 +12,15 @@ namespace Shumway.Tests.Embedding;
 /// and reload around the helpers alone.</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
-public sealed class IlRegisterFileTests
+public sealed class IlRegisterFileTests : IDisposable
 {
+    // These measure regions, which continuation methods turn off (ADR-061).
+    private readonly bool _savedCpsMode = IlPredicateCompiler.CpsMode;
+
+    public IlRegisterFileTests() => IlPredicateCompiler.CpsMode = false;
+
+    public void Dispose() => IlPredicateCompiler.CpsMode = _savedCpsMode;
+
     private const MachineRegs Exposed =
         MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.B0 | MachineRegs.StackTop
         | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop

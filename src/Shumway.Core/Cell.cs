@@ -99,9 +99,10 @@ public readonly struct Cell : IEquatable<Cell>
         return new Cell(((long)Tag.Int << TagShift) | (value & PayloadMask));
     }
 
-    // Out-of-line so the JIT inlines Cell.Int's fast path; the throw
-    // call site is small and stays after the inline.
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    // Out-of-line so the JIT inlines Cell.Int's fast path. Not NoInlining: the
+    // JIT sees that it always throws, keeps it out of line and treats the call
+    // as not returning.
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void ThrowIntOutOfRange(long value) =>
         throw new ArgumentOutOfRangeException(nameof(value),
             $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");

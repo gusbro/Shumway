@@ -20,7 +20,7 @@ public sealed partial class IlPredicateCompiler
     /// <item>Persisted assembly: a static array field on the emitted type,
     /// resolved at load time.</item>
     /// </list></summary>
-    internal delegate void SelfDelegateEmitter(Sigil.Emit<PredicateDelegate> emit);
+    internal delegate void SelfDelegateEmitter(IlEmit emit);
 
     internal static SelfDelegateEmitter SelfFromHolder(int holderKey) =>
         e =>
@@ -307,11 +307,9 @@ public sealed partial class IlPredicateCompiler
                     case MetaRouteKind.BarrierHelperJump:
                         engine.SetRegister(2, Cell.Int(cutBarrier));
                         engine.SetB0(cutBarrier);
-                        engine.Inferences++;   // the goal, as JumpToUserGoal counts it
                         return route.Arg;
                     case MetaRouteKind.Jump:
                         engine.SetB0(cutBarrier);
-                        engine.Inferences++;
                         return route.Arg;
                 }
             }
@@ -386,7 +384,6 @@ public sealed partial class IlPredicateCompiler
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 {
                     engine.SetB0(cutBarrier);
-                    engine.Inferences++;
                     return mangledAddr;
                 }
                 // ADR-038 — the module's import table (Source$name) before bare.
@@ -397,7 +394,6 @@ public sealed partial class IlPredicateCompiler
                     && addresses.TryGetValue(importedFid, out int importedAddr))
                 {
                     engine.SetB0(cutBarrier);
-                    engine.Inferences++;
                     return importedAddr;
                 }
             }
@@ -452,9 +448,6 @@ public sealed partial class IlPredicateCompiler
             }
             if (routeCacheable)
                 cache[routeKey] = new MetaRoute(userKind, address);
-            // The goal is one inference, as the interpreter's JumpToUserGoal
-            // counts it; the dispatch that follows does not count it again.
-            engine.Inferences++;
             return address;
         }
 
@@ -589,7 +582,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Emits IL that loads <c>engine.GetRegister(0)</c>, derefs
     /// it if it's a REF, and leaves the resulting <see cref="Cell"/> on
     /// the evaluation stack.</summary>
-    private static void EmitDerefA0(Sigil.Emit<PredicateDelegate> emit)
+    private static void EmitDerefA0(IlEmit emit)
     {
         var a1Tmp = emit.DeclareLocal<Cell>("a1Tmp");
         var notRef = emit.DefineLabel("a1_not_ref");

@@ -46,7 +46,8 @@ public class EngineStateTests
         var engine = new Activation(config);
         Assert.Equal(7, engine.HeapCapacity);
         Assert.Equal(9, engine.StackCapacity);
-        Assert.Equal(3, engine.RegisterCount);
+        // The register bank has a floor compiled code relies on.
+        Assert.Equal(Activation.MinRegisterCount, engine.RegisterCount);
         Assert.Equal(5, engine.BindingTrailCapacity);
         Assert.Equal(2, engine.ExtraTrailCapacity);
     }

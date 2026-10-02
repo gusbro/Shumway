@@ -3,12 +3,11 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>time/1 reports the inferences of Tier-0 whatever runs promoted.
-/// Tier-1 counted only the calls that crossed the interpreter, so a fully
-/// promoted program reported 1 where Tier-0 reported millions, and a partly
-/// promoted one any number in between: the count said how much had promoted,
-/// not how much work was done.</summary>
-public sealed class IlInferenceParityTests
+/// <summary>Only the interpreter counts inferences (ADR-061). With Tier-1 off,
+/// time/1 reports them and Lips; with compiled code it reports seconds and heap
+/// cells, the cells those of Tier-0, and statistics(inferences, _) counts each
+/// reading, so it is never 0 and two readings differ.</summary>
+public sealed class IlInferenceReportTests
 {
     private const string Corpus = """
         queens(N, Qs) :- numlist(1, N, Ns), permutation(Ns, Qs), safe(Qs).
@@ -35,14 +34,21 @@ public sealed class IlInferenceParityTests
         "forall(member(X, [a,b,c]), atom(X))",
     };
 
-    private static long Inferences(PrologEngine e, System.IO.StringWriter sw, string goal)
+    private static string Report(PrologEngine e, System.IO.StringWriter sw, string goal)
     {
         sw.GetStringBuilder().Clear();
         Assert.True(e.Query($"time(({goal})).").Success, goal);
-        var m = System.Text.RegularExpressions.Regex.Match(sw.ToString(), @"% ([0-9,]+) inferences");
-        Assert.True(m.Success, sw.ToString());
+        return sw.ToString();
+    }
+
+    private static long HeapCells(string report)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(report, @"([0-9,]+) heap cells");
+        Assert.True(m.Success, report);
         return long.Parse(m.Groups[1].Value.Replace(",", ""));
     }
+
+    private static long Int(Solution s, string name) => long.Parse(s[name]!.ToString()!);
 
     private static string Name(int fid)
     {
@@ -52,7 +58,24 @@ public sealed class IlInferenceParityTests
     }
 
     [Fact]
-    public void APromotedProgramReportsTheInferencesOfTierZero()
+    public void WithTierOneOffTimeReportsInferencesAndLips()
+    {
+        var sw = new System.IO.StringWriter();
+        var e = new PrologEngine { Out = sw };
+        e.IlPromotion.Threshold = 0;
+        e.ConsultString(Corpus);
+        foreach (string g in Goals)
+            Assert.Matches(@"% [0-9,]+ inferences, [0-9.]+ seconds, [0-9,]+ heap cells \([0-9,]+ Lips\)",
+                Report(e, sw, g));
+
+        var s = e.Query("statistics(inferences, A), count(10), statistics(inferences, B), D is B - A.");
+        Assert.True(s.Success);
+        // count(10) is 11 calls of count/1, and the second reading is one more.
+        Assert.Equal(12, Int(s, "D"));
+    }
+
+    [Fact]
+    public void WithTierOneOnTimeReportsTheHeapCellsOfTierZero()
     {
         var sw0 = new System.IO.StringWriter();
         var plain = new PrologEngine { Out = sw0 };
@@ -67,19 +90,25 @@ public sealed class IlInferenceParityTests
         var promoted = new HashSet<string>();
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
-            foreach (string g in Goals) Inferences(tiered, sw1, g);
+            foreach (string g in Goals) Report(tiered, sw1, g);
             tiered.IlPromotion.WaitForPendingPromotions();
             promoted = tiered.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
-        // ANTI-VACUITY: the program runs promoted, so the calls are IL's own.
+        // ANTI-VACUITY: the program runs promoted.
         foreach (string pi in expected)
             Assert.True(promoted.Contains(pi), $"{pi} did not promote");
 
         foreach (string g in Goals)
         {
-            long t0 = Inferences(plain, sw0, g);
-            long t1 = Inferences(tiered, sw1, g);
-            Assert.True(t0 == t1, $"{g}: Tier-0 {t0} inferences, Tier-1 {t1}");
+            string r0 = Report(plain, sw0, g), r1 = Report(tiered, sw1, g);
+            Assert.DoesNotContain("inferences", r1);
+            Assert.DoesNotContain("Lips", r1);
+            Assert.True(HeapCells(r0) == HeapCells(r1), $"{g}: Tier-0 {r0} Tier-1 {r1}");
         }
+
+        var s = tiered.Query("statistics(inferences, A), count(10), statistics(inferences, B).");
+        Assert.True(s.Success);
+        Assert.True(Int(s, "A") > 0, $"A = {Int(s, "A")}");
+        Assert.True(Int(s, "B") > Int(s, "A"), $"A = {Int(s, "A")}, B = {Int(s, "B")}");
     }
 }

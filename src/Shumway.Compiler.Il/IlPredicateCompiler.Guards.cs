@@ -249,12 +249,12 @@ public sealed partial class IlPredicateCompiler
     /// entry labels, and the lazily-created pop/dispatch epilogues.</summary>
     internal sealed class GuardContEmitContext
     {
-        public readonly List<Sigil.Label> ContLabels = new();
-        public readonly Dictionary<int, Sigil.Label> CalleeEntry = new();
+        public readonly List<IlLabel> ContLabels = new();
+        public readonly Dictionary<int, IlLabel> CalleeEntry = new();
         public readonly List<CompiledPredicate> PendingCallees = new();
-        public Sigil.Label? FailEpilogue;
-        public Sigil.Label? OkEpilogue;
-        public int AllocCursor(Sigil.Label label)
+        public IlLabel? FailEpilogue;
+        public IlLabel? OkEpilogue;
+        public int AllocCursor(IlLabel label)
         {
             ContLabels.Add(label);
             return ContLabels.Count - 1;
@@ -267,8 +267,8 @@ public sealed partial class IlPredicateCompiler
     /// table. No-op when no site used the mechanism.</summary>
     /// <summary>ADR-033 — the shared-copy entry label for <paramref name="fid"/>,
     /// registering the callee for method-end emission on first request.</summary>
-    private static Sigil.Label GetOrAddGuardContCopy(
-        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+    private static IlLabel GetOrAddGuardContCopy(
+        IlEmit emit, GuardContEmitContext ctx,
         int fid, CompiledPredicate callee)
     {
         if (!ctx.CalleeEntry.TryGetValue(fid, out var entryLbl))
@@ -281,9 +281,9 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static void EmitGuardContEpilogues(
-        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+        IlEmit emit, GuardContEmitContext ctx,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        Sigil.Label methodFail)
+        IlLabel methodFail)
     {
         if (ctx.PendingCallees.Count == 0) return;
         ctx.FailEpilogue ??= emit.DefineLabel("gc_fail_epi");
@@ -1430,15 +1430,16 @@ public sealed partial class IlPredicateCompiler
     /// snapshot locals, so allocation during the walk grows the heap until the
     /// guard exits (same acceptance as tier B).</summary>
     private static void EmitFailDirectCalleeInline(
-        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate callee,
-        List<FailDirectClause> fdClauses, Sigil.Label outerFail,
+        IlEmit emit, CompiledPredicate callee,
+        List<FailDirectClause> fdClauses, IlLabel outerFail,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt,
         GuardContEmitContext? gcCtx = null)
     {
+        using var cpsOpaque = CpsOpaque();   // ADR-061: state in IL locals
         int arity = callee.Arity;
         var join = emit.DefineLabel($"fd_join{salt}");
         var entry = emit.DefineLabel($"fd_entry{salt}");
-        var argSaves = new Sigil.Local[arity];
+        var argSaves = new IlLocal[arity];
         for (int r = 0; r < arity; r++)
             argSaves[r] = emit.DeclareLocal<Cell>($"fd_a{r}{salt}");
         // Callee-entry trail/heap marks: a partially-matched clause may have
@@ -1452,7 +1453,7 @@ public sealed partial class IlPredicateCompiler
         var mH = emit.DeclareLocal<int>($"fd_h{salt}");
         var mHb = emit.DeclareLocal<int>($"fd_hb{salt}");
         int k = fdClauses.Count;
-        var altLabels = new Sigil.Label[k + 1];
+        var altLabels = new IlLabel[k + 1];
         for (int i = 0; i < k; i++)
             altLabels[i] = emit.DefineLabel($"fd_alt{i}{salt}");
         altLabels[k] = outerFail;
@@ -1510,8 +1511,8 @@ public sealed partial class IlPredicateCompiler
             // Fail routing. Pre-cut: the next alternative (via a deallocating
             // stub when framed). Post-cut: clause selection is committed — the
             // callee fails outright (via its own deallocating stub when framed).
-            Sigil.Label preCutFail = altLabels[i + 1];
-            Sigil.Label? deallocFail = null;
+            IlLabel preCutFail = altLabels[i + 1];
+            IlLabel? deallocFail = null;
             if (c.Framed)
             {
                 deallocFail = emit.DefineLabel($"fd_df{i}{salt}");
@@ -1531,7 +1532,7 @@ public sealed partial class IlPredicateCompiler
                 EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(preCutFail);
                 // Slice 2 — post-commit: failures exit the callee.
-                Sigil.Label committedFail = outerFail;
+                IlLabel committedFail = outerFail;
                 if (c.Framed)
                 {
                     var df2 = emit.DefineLabel($"fd_dfc{i}{salt}");
@@ -1583,8 +1584,8 @@ public sealed partial class IlPredicateCompiler
     /// or — ADR-033 — branch to a cross-tail target's shared copy, inheriting
     /// the continuations on the stack (tail-call composition).</summary>
     private static void EmitFailDirectTerminator(
-        Sigil.Emit<PredicateDelegate> emit, FailDirectClause c,
-        Sigil.Label entry, Sigil.Label join,
+        IlEmit emit, FailDirectClause c,
+        IlLabel entry, IlLabel join,
         GuardContEmitContext? gcCtx = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
@@ -1596,8 +1597,6 @@ public sealed partial class IlPredicateCompiler
         }
         else if (c.SelfTail)
         {
-            // The slice stops before the Execute, so it is counted here.
-            EmitCountInference(emit);
             emit.Branch(entry);          // staging + deallocate already in the slice
         }
         else if (c.CrossTailFid >= 0)
@@ -1608,7 +1607,6 @@ public sealed partial class IlPredicateCompiler
                 || !calleeMap.TryGetValue(c.CrossTailFid, out var tailTgt))
                 throw new InvalidOperationException(
                     "cross-tail clause emitted without a continuation context");
-            EmitCountInference(emit);
             emit.Branch(GetOrAddGuardContCopy(emit, gcCtx, c.CrossTailFid, tailTgt));
         }
         else
@@ -1642,28 +1640,34 @@ public sealed partial class IlPredicateCompiler
     /// marks, so backtracking into it undoes the guard's bindings), then flush
     /// + cut run exactly as the standard emit.</para></summary>
     private static void EmitCpFreeGuardClause(
-        Sigil.Emit<PredicateDelegate> emit,
-        Action<int, int, Sigil.Label> emitSlice,
+        IlEmit emit,
+        Action<int, int, IlLabel> emitSlice,
         byte[] code, int clauseStart, int clauseEnd, CpFreeGuardInfo g,
-        Sigil.Label nextClauseLabel, Sigil.Label failLabel,
+        IlLabel nextClauseLabel, IlLabel failLabel,
         SelfDelegateEmitter self, int lazyCpCursor, int arity, string salt,
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
-        Action<Sigil.Emit<PredicateDelegate>>? dynamicCursor = null)
+        Action<IlEmit>? dynamicCursor = null)
     {
+        // ADR-061: in a continuation method the guard's marks live in the
+        // activation (the indexed buckets' next node too), so the cold method
+        // can resume inside it; a guard that saves argument registers keeps
+        // them in IL locals and stays opaque.
+        bool cpsFields = CpsEmitting && !g.NeedsRegSave;
+        using var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
         // guard-fail branch (the stub ends with a switch over the per-member
         // next-node local instead of `br nextClauseLabel`), and dynamicCursor
         // replaces the constant lazy-CP cursor with a load of that local
         // (value -1 = chain tail → the rare paths skip the CP push).
-        Sigil.Local? bt = null, xt = null, h = null, hb = null, ee = null;
-        Sigil.Local[]? regs = null;
-        Sigil.Label guardFail = nextClauseLabel;
+        IlLocal? bt = null, xt = null, h = null, hb = null, ee = null;
+        IlLocal[]? regs = null;
+        IlLabel guardFail = nextClauseLabel;
         bool needsStub = g.NeedsSnapshot || g.NeedsRegSave || g.Framed
             || dynamicFailDispatch is not null;
         if (g.NeedsRegSave && arity > 0)
         {
-            regs = new Sigil.Local[arity];
+            regs = new IlLocal[arity];
             for (int r = 0; r < arity; r++)
             {
                 regs[r] = emit.DeclareLocal<Cell>($"cf_r{r}{salt}");
@@ -1673,7 +1677,22 @@ public sealed partial class IlPredicateCompiler
                 emit.StoreLocal(regs[r]);
             }
         }
-        if (g.NeedsSnapshot)
+        if (g.NeedsSnapshot && cpsFields)
+        {
+            void Mark(MethodInfo getter, FieldInfo field)
+            {
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, getter);
+                emit.StoreField(field);
+            }
+            Mark(EngineBindingTrailTopGetter, CpsGuardBtField);
+            Mark(EngineExtraTrailTopGetter, CpsGuardXtField);
+            Mark(EngineHeapTopGetter, CpsGuardHField);
+            Mark(EngineEGetter, CpsGuardEField);
+            Mark(EngineBeginIlGuardMethod, CpsGuardHbField);
+        }
+        else if (g.NeedsSnapshot)
         {
             bt = emit.DeclareLocal<int>($"cf_bt{salt}");
             xt = emit.DeclareLocal<int>($"cf_xt{salt}");
@@ -1685,6 +1704,16 @@ public sealed partial class IlPredicateCompiler
             emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(h);
             emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(ee);
             emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(hb);
+        }
+        // A mark: the IL local, or the activation's field under ADR-061.
+        void LoadMark(IlLocal? local, FieldInfo field)
+        {
+            if (cpsFields)
+            {
+                emit.LoadArgument(0);
+                emit.LoadField(field);
+            }
+            else emit.LoadLocal(local!);
         }
         if (needsStub)
             guardFail = emit.DefineLabel($"cf_restore{salt}");
@@ -1709,6 +1738,8 @@ public sealed partial class IlPredicateCompiler
         }
 
         // ---- Commit (replaces the cut opcode). ----
+        // ADR-061: a point to resume at; its slow paths leave from here.
+        if (cpsFields) CpsInstructionBoundary(emit, false);
         var rare = emit.DefineLabel($"cf_rare{salt}");
         var after = emit.DefineLabel($"cf_after{salt}");
         emit.LoadArgument(0);
@@ -1716,10 +1747,13 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
+        { emit.LoadArgument(0); LoadMark(hb, CpsGuardHbField); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
         emit.Branch(after);
         emit.MarkLabel(rare);
-        Sigil.Label? rareNoCp = null;
+        bool rareLeft = cpsFields && EmitColdExit(emit);
+        if (!rareLeft)
+        {
+        IlLabel? rareNoCp = null;
         if (dynamicCursor is not null)
         {
             // Chain-tail sentinel (-1): no CP existed to materialize — the
@@ -1729,6 +1763,29 @@ public sealed partial class IlPredicateCompiler
             emit.LoadConstant(-1);
             emit.BranchIfEqual(rareNoCp);
         }
+        if (WamCps)
+        {
+            // ADR-061: a WAM choice point, its BP the next alternative's marker.
+            emit.LoadArgument(0);
+            emit.LoadConstant(arity);
+            if (dynamicCursor is not null)
+            {
+                EmitFunctorId(emit, _emitOwnerFid);
+                dynamicCursor(emit);
+                EmitHelperCall(emit, EngineResumeMarkerOfMethod);
+            }
+            else EmitResumeMarker(emit, _emitOwnerFid, lazyCpCursor);
+            if (g.NeedsSnapshot)
+            {
+                LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                EmitHelperCall(emit, EnginePushCpWithMarksMethod);
+            }
+            else EmitHelperCall(emit, EnginePushChoicePointMethod);
+            if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+        }
+        else
+        {
         emit.LoadArgument(0);
         self(emit);
         if (dynamicCursor is not null) dynamicCursor(emit);
@@ -1736,13 +1793,16 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(arity);
         if (g.NeedsSnapshot)
         {
-            emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!);
-            emit.LoadLocal(hb!); emit.LoadLocal(ee!);
+            LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+            LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
             EmitHelperCall(emit, EnginePushIlCpWithMarksMethod);
         }
         else
         {
             EmitHelperCall(emit, EnginePushIlCpMethod);
+        }
+        if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+        EmitCpsTagChoicePoint(emit);
         }
         // The push saved the current registers — but the guard may have
         // clobbered argument registers with call staging (regSave). Patch the
@@ -1764,12 +1824,26 @@ public sealed partial class IlPredicateCompiler
             }
         }
         if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
+        // The flush runs Prolog code, which may run other guards: HB is kept
+        // across it in a local.
+        IlLocal? rareHb = null;
+        if (g.NeedsSnapshot && cpsFields)
+        {
+            rareHb = emit.DeclareLocal<int>($"cf_rarehb{salt}");
+            LoadMark(hb, CpsGuardHbField);
+            emit.StoreLocal(rareHb);
+        }
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
+        {
+            emit.LoadArgument(0);
+            if (rareHb is not null) emit.LoadLocal(rareHb); else emit.LoadLocal(hb!);
+            EmitHelperCall(emit, EngineCommitIlGuardMethod);
+        }
+        }
         emit.MarkLabel(after);
 
         emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
@@ -1785,15 +1859,28 @@ public sealed partial class IlPredicateCompiler
             // Guard-fail restore stub: undo the guard, then fall to the next
             // clause. Reached only by the guard prefix's fail branches.
             emit.MarkLabel(guardFail);
+            // ADR-061: a point to resume at; the undo leaves from here.
+            if (cpsFields) CpsInstructionBoundary(emit, false);
             if (g.Framed)
             {
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineDeallocateMethod);
             }
-            if (g.NeedsSnapshot)
+            if (g.NeedsSnapshot && cpsFields && CpsHotExit)
+            {
+                // Nothing bound: the undo is three stores. Else the cold method's.
+                var undone = emit.DefineLabel($"cf_undone{salt}");
+                emit.LoadArgument(0);
+                emit.Call(EngineTryFailIlGuardQuickMethod);
+                emit.BranchIfTrue(undone);
+                EmitColdExit(emit);
+                emit.MarkLabel(undone);
+            }
+            else if (g.NeedsSnapshot)
             {
                 emit.LoadArgument(0);
-                emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!); emit.LoadLocal(hb!);
+                LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField);
+                LoadMark(h, CpsGuardHField); LoadMark(hb, CpsGuardHbField);
                 EmitHelperCall(emit, EngineFailIlGuardMethod);
             }
             if (regs is not null)

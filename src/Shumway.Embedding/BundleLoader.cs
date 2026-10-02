@@ -361,7 +361,7 @@ internal sealed class BundleLoader
         }
 
         // Bind persisted Tier-1 IL. RegisterBoundDelegate is first-wins, so this
-        // must precede any Sigil warm — else warm compiles a region root
+        // must precede any IL warm — else warm compiles a region root
         // standalone and blocks the persisted delegate. A source-STRIPPED entry
         // warms inside LoadEntryFromBytecode (the entry loop above), which is why
         // that path binds its own persisted IL first (BindPersistedIlForEntry at
@@ -437,6 +437,14 @@ internal sealed class BundleLoader
     /// (skips sites whose opcode is no longer <c>Call</c>, e.g. when
     /// a re-link revisits a previously-rewritten persistent buffer).</summary>
     private int _diagCallIlCount;
+
+    /// <summary>ADR-061: every promoted predicate's continuation methods, into
+    /// this query's activation.</summary>
+    private void InstallCpsTables(Shumway.Interpreter.BytecodeInterpreter interp)
+    {
+        foreach (var (fid, cps) in E.IlPromotion.CpsEntries())
+            interp.Activation.InstallCps(fid, cps.Entry, cps.Resumes, cps.AltEntry);
+    }
     // Per-program-state cache for InstallCallIlRewrites. The persistent
     // buffer's call-site rewrites are in-place and idempotent — once walked,
     // re-walking every predicate's sites per query is a pure no-op that
@@ -495,6 +503,7 @@ internal sealed class BundleLoader
             predicateByFid = cache.PredicateByFid;
             _promotableCallSites = cache.PromotableCallSites;
             interp.IlByFunctorId = ilTable;
+            InstallCpsTables(interp);
             DiagIlTable(ilTable);
             // Only the query overlay's predicates need their sites classified —
             // the persistent buffer's were rewritten in place on the cold walk.
@@ -521,12 +530,13 @@ internal sealed class BundleLoader
                 if (del is null) continue;
                 // Method-group conversion: del.Invoke creates a
                 // Func<Activation,int,bool> that calls through to del.
-                ilTable[fid] = del.Invoke;
+                ilTable[fid] = E.IlPromotion.TableEntry(fid, del);
             }
         }
         // The interp gets its own copy; the pristine array is the template.
         interp.IlByFunctorId = ilTable is null
             ? null : (Func<Shumway.Core.Activation, int, bool>?[])ilTable.Clone();
+        InstallCpsTables(interp);
         DiagIlTable(interp.IlByFunctorId);
 
         // Stage B.2 — build a fid-keyed view of
@@ -698,7 +708,9 @@ internal sealed class BundleLoader
             table?.CopyTo(grown, 0);
             interp.IlByFunctorId = table = grown;
         }
-        table[calleeFid] = del.Invoke;
+        table[calleeFid] = E.IlPromotion.TableEntry(calleeFid, del);
+        if (E.IlPromotion.TryGetCps(calleeFid) is { } cps)   // ADR-061
+            interp.Activation.InstallCps(calleeFid, cps.Entry, cps.Resumes, cps.AltEntry);
         // 2. Patch the recorded persistent-buffer sites.
         if (_promotableCallSites is null
             || !_promotableCallSites.TryGetValue(calleeFid, out var sites)) return;
@@ -1317,9 +1329,9 @@ internal sealed class BundleLoader
         // so IL float value-baking reads E._literalPools.Floats directly.
         E.RemapPrecompiledLiterals(module);
         E._precompiledModules[entry.ModuleName] = module;
-        // Register the predicates but do not eagerly Sigil-compile them here.
+        // Register the predicates but do not eagerly IL-compile them here.
         // A t0 bundle (no persisted IL) has nothing bound, so a load-time
-        // warm-all would Sigil-compile every static predicate — ~900 on a clpz
+        // warm-all would IL-compile every static predicate — ~900 on a clpz
         // bundle, ~1.5 s of load — most of which never run hot. Lazy is the
         // default: a predicate promotes at runtime once its invocation counter
         // crosses the threshold (background compile). A program that wants the
@@ -1515,7 +1527,7 @@ internal sealed class BundleLoader
 
         // Bind this entry's persisted Tier-1 IL before the warm below. A
         // source-stripped IL bundle warms here, and RegisterBoundDelegate is
-        // first-wins: if warm ran first it would Sigil-compile the region roots
+        // first-wins: if warm ran first it would IL-compile the region roots
         // standalone and block the persisted delegates (measured: 692 of 1644
         // persisted delegates lost on a clpz bundle at threshold 32). Binding
         // here also publishes _regionMemberAliases so the warm skips region

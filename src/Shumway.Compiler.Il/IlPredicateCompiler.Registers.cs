@@ -110,27 +110,31 @@ public sealed partial class IlPredicateCompiler
     private sealed class RegisterFile
     {
         public MachineRegs Held;
-        private readonly Sigil.Local?[] _locals = new Sigil.Local?[12];
-        private readonly Sigil.Emit<PredicateDelegate> _emit;
-        private readonly Dictionary<(Type, int), Sigil.Local> _temps = new();
+        // ADR-061: the method's one exit to its cold method, and the boundary
+        // its sites leave on the stack.
+        public IlLocal? ColdBoundary;
+        public IlLabel? SharedColdExit;
+        private readonly IlLocal?[] _locals = new IlLocal?[12];
+        private readonly IlEmit _emit;
+        private readonly Dictionary<(Type, int), IlLocal> _temps = new();
 
         public bool Holds(MachineRegs regs) => (Held & regs) == regs;
 
-        public Sigil.Local? LocalOf(int index) => _locals[index];
+        public IlLocal? LocalOf(int index) => _locals[index];
 
-        public Sigil.Local Local(MachineRegs one) => _locals[Index(one)]!;
+        public IlLocal Local(MachineRegs one) => _locals[Index(one)]!;
 
         /// <summary>A scratch local of <paramref name="type"/>, the
         /// <paramref name="k"/>-th of its type. Shared by every sequence of the
         /// method, none of which is live across another.</summary>
-        public Sigil.Local Temp(Type type, int k = 0)
+        public IlLocal Temp(Type type, int k = 0)
         {
             if (!_temps.TryGetValue((type, k), out var l))
                 _temps[(type, k)] = l = _emit.DeclareLocal(type, $"regtmp_{type.Name}_{k}");
             return l;
         }
 
-        public RegisterFile(Sigil.Emit<PredicateDelegate> emit, MachineRegs held)
+        public RegisterFile(IlEmit emit, MachineRegs held)
         {
             _emit = emit;
             Held = held;
@@ -145,7 +149,7 @@ public sealed partial class IlPredicateCompiler
         }
 
         /// <summary>field to local, for every register in <paramref name="regs"/> that is held.</summary>
-        public void EmitLoad(Sigil.Emit<PredicateDelegate> emit, MachineRegs regs)
+        public void EmitLoad(IlEmit emit, MachineRegs regs)
         {
             regs &= Held;
             for (int i = 0; i < 12; i++)
@@ -160,7 +164,7 @@ public sealed partial class IlPredicateCompiler
         /// <summary>Under <see cref="CheckedRegisters"/>: fail unless each held
         /// register in <paramref name="regs"/> has the same value in its local
         /// and its field.</summary>
-        public void EmitCheck(Sigil.Emit<PredicateDelegate> emit, MachineRegs regs, string where)
+        public void EmitCheck(IlEmit emit, MachineRegs regs, string where)
         {
             regs &= Held;
             for (int i = 0; i < 12; i++)
@@ -185,15 +189,15 @@ public sealed partial class IlPredicateCompiler
     // Keyed by the emit, so that the emitters (static methods that receive
     // only the emit) find the region's register file without a parameter
     // threaded through every one of them.
-    private static readonly ConditionalWeakTable<Sigil.Emit<PredicateDelegate>, RegisterFile>
+    private static readonly ConditionalWeakTable<IlEmit, RegisterFile>
         RegisterFiles = new();
 
-    private static RegisterFile? RegisterFileOf(Sigil.Emit<PredicateDelegate> emit)
+    private static RegisterFile? RegisterFileOf(IlEmit emit)
         => RegisterFiles.TryGetValue(emit, out var rf) ? rf : null;
 
     /// <summary>The local that holds the register stored in <paramref
     /// name="field"/>, when the region holds it.</summary>
-    private static Sigil.Local? HeldLocalOf(Sigil.Emit<PredicateDelegate> emit, FieldInfo field)
+    private static IlLocal? HeldLocalOf(IlEmit emit, FieldInfo field)
     {
         var rf = RegisterFileOf(emit);
         if (rf is null) return null;
@@ -204,7 +208,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>field := value, the stack holding [activation, value]; the
     /// register's local too when the region holds it.</summary>
-    private static void EmitStoreEngineField(Sigil.Emit<PredicateDelegate> emit, FieldInfo field)
+    private static void EmitStoreEngineField(IlEmit emit, FieldInfo field)
     {
         if (HeldLocalOf(emit, field) is { } local)
         {
@@ -217,7 +221,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Gives a region method its register file, holding <see
     /// cref="HeldByDefault"/>, and loads the held registers: the region's
     /// entry (ADR-060 item 2).</summary>
-    private static void EmitRegionRegistersEntry(Sigil.Emit<PredicateDelegate> emit, bool hold)
+    private static void EmitRegionRegistersEntry(IlEmit emit, bool hold)
     {
         var rf = new RegisterFile(emit, hold ? HeldByDefault : MachineRegs.None);
         RegisterFiles.Remove(emit);
@@ -229,18 +233,39 @@ public sealed partial class IlPredicateCompiler
     /// nothing, for the operations emitted over fields (get_list,
     /// SetRegister). Not under verification or the debugger, which want the
     /// calls.</summary>
-    private void AttachRegisterFile(Sigil.Emit<PredicateDelegate> emit)
+    private void AttachRegisterFile(IlEmit emit)
     {
-        if (DoVerify || DebugMode) return;
-        RegisterFiles.Remove(emit);
-        RegisterFiles.Add(emit, new RegisterFile(emit, MachineRegs.None));
+        if (DebugMode) return;
+        // ADR-061: a continuation method holds the registers a region holds.
+        if (CpsEmitting)
+        {
+            EmitRegionRegistersEntry(emit, hold: true);
+            EmitCpsFrameEntry(emit);
+        }
+        else
+        {
+            RegisterFiles.Remove(emit);
+            RegisterFiles.Add(emit, new RegisterFile(emit, MachineRegs.None));
+        }
+    }
+
+    /// <summary>The method's shared exit to its cold method, after its code.</summary>
+    private static void EmitSharedColdExit(IlEmit emit, IlEmit? cold)
+    {
+        if (RegisterFileOf(emit) is not { SharedColdExit: { } coldExit } rf) return;
+        emit.MarkLabel(coldExit);
+        emit.StoreLocal(rf.ColdBoundary!);
+        emit.LoadArgument(0);
+        emit.LoadLocal(rf.ColdBoundary!);
+        emit.Call(cold!);
+        emit.Return();
     }
 
     /// <summary>ADR-060 item 3: a call to a helper, with the held registers it
     /// reads spilled before and the ones it writes reloaded after. A method
     /// without a row reads and writes all of them. Outside a region, or when
     /// nothing is held, the plain call.</summary>
-    internal static void EmitHelperCall(Sigil.Emit<PredicateDelegate> emit, MethodInfo method)
+    internal static void EmitHelperCall(IlEmit emit, MethodInfo method)
     {
         var rf = RegisterFileOf(emit);
         if (rf is null)
@@ -259,7 +284,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>The call itself, with the reload of what its row writes.</summary>
-    private static void EmitRowCall(Sigil.Emit<PredicateDelegate> emit, RegisterFile rf, MethodInfo method)
+    private static void EmitRowCall(IlEmit emit, RegisterFile rf, MethodInfo method)
     {
         var fx = HelperTable.TryGetValue(method, out var row) ? row : HelperEffects.Everything;
         emit.Call(method);
@@ -269,7 +294,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>A return from a region or a standalone method. The fields are
     /// current: stores are written through.</summary>
-    private static void EmitReturn(Sigil.Emit<PredicateDelegate> emit) => emit.Return();
+    private static void EmitReturn(IlEmit emit) => emit.Return();
 
     /// <summary>ADR-060 item 3: one row per helper the emitter calls. Verified
     /// against the methods' own code by a test; a row that is wider than the
@@ -386,7 +411,19 @@ public sealed partial class IlPredicateCompiler
         Row(EnginePutStructureMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
         Row(EnginePutStructureReservedMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
         Row(EngineRegionReturnCursorMethod, MachineRegs.Cp, MachineRegs.None);
+        Row(EngineContinuationMethod, MachineRegs.HeapTop, MachineRegs.None);
+        Row(ContinuationInvokeMethod, MachineRegs.All, MachineRegs.All);
+        Row(ArithTryFusedBinIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
+        Row(ArithTryFusedCmpIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
+        Row(EngineTryFailIlGuardQuickMethod, MachineRegs.TrailTop, MachineRegs.HeapTop | MachineRegs.Hb);
+        Row(EngineCpsCallTargetMethod, MachineRegs.HeapTop, MachineRegs.None);
+        Row(EngineCpsProceedTargetMethod, MachineRegs.Cp | MachineRegs.HeapTop, MachineRegs.None);
+        Row(EngineTagIlCpCpsMethod, MachineRegs.None, MachineRegs.None);
+        Row(EnginePushIlCpEntryCpsMethod, MachineRegs.B, MachineRegs.None);
+        Row(EngineResumeMarkerOfMethod, MachineRegs.None, MachineRegs.None);
+        Row(EnginePushCpWithMarksMethod, MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.B0 | MachineRegs.StackTop | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.RegisterArray, MachineRegs.B | MachineRegs.StackTop | MachineRegs.Hb | MachineRegs.StackArray | MachineRegs.RegisterArray);
         Row(EngineRegistersIdenticalMethod, MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
+        Row(EngineCellsIdenticalMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(EngineRetryMeElseMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineSetB0Method, MachineRegs.None, MachineRegs.B0);
         Row(EngineSetCpMethod, MachineRegs.None, MachineRegs.Cp);

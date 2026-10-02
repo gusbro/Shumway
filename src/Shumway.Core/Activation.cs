@@ -185,6 +185,11 @@ public sealed partial class Activation
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
 
+    /// <summary>Set by the host: whether compiled code (Tier-1) may run for this
+    /// activation. Compiled code counts no inferences, so <c>time/1</c> then
+    /// reports none and <c>statistics(inferences, _)</c> counts its own call.</summary>
+    public Func<bool>? CompiledCodeActive { get; set; }
+
     /// <summary>Operator-lookup view used by the renderer to decide whether
     /// a compound should print in operator form (<c>a + b</c>) or
     /// canonical form (<c>+(a, b)</c>). Set by the embedding layer; left
@@ -395,6 +400,46 @@ public sealed partial class Activation
             throw new ArgumentOutOfRangeException(nameof(newTop),
                 $"newTop {newTop} must be in [0, {_heapTop}].");
         _heapTop = newTop;
+    }
+
+    /// <summary><c>==/2</c> on two cells, for compiled code that has them
+    /// already (two Y slots): a variable, an atom or a small integer, one
+    /// dereference away, is decided here; anything else by
+    /// <see cref="AreRegistersIdentical"/>'s rule, out of line.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool AreCellsIdentical(Cell a, Cell b)
+    {
+        Cell x = a, y = b;
+        if (x.Tag == Tag.Ref)
+        {
+            Cell h = _heap[x.AsHeapIndex];
+            if (h.Tag == Tag.Ref) { if (h != x) return AreCellsIdenticalSlow(a, b); }
+            else if (h.Tag is Tag.Atom or Tag.Int) x = h;
+            else return AreCellsIdenticalSlow(a, b);
+        }
+        else if (x.Tag is not (Tag.Atom or Tag.Int)) return AreCellsIdenticalSlow(a, b);
+        if (y.Tag == Tag.Ref)
+        {
+            Cell h = _heap[y.AsHeapIndex];
+            if (h.Tag == Tag.Ref) { if (h != y) return AreCellsIdenticalSlow(a, b); }
+            else if (h.Tag is Tag.Atom or Tag.Int) y = h;
+            else return AreCellsIdenticalSlow(a, b);
+        }
+        else if (y.Tag is not (Tag.Atom or Tag.Int)) return AreCellsIdenticalSlow(a, b);
+        return x == y;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool AreCellsIdenticalSlow(Cell a0, Cell b0)
+    {
+        Cell a = ResolveForStructuralCompare(a0);
+        Cell b = ResolveForStructuralCompare(b0);
+        if (a == b) return true;
+        if (a.Tag is Tag.Ref or Tag.Atom or Tag.Int
+            || b.Tag is Tag.Ref or Tag.Atom or Tag.Int) return false;
+        return AreStructurallyEqual(a, b);
     }
 
     /// <summary><c>==/2</c> on two argument registers, for compiled code that

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
+using Shumway.Compiler.Wam;
 using Shumway.Core;
 using BinOp = Shumway.Builtins.ArithmeticEvaluator.BinOp;
 using RelOp = Shumway.Builtins.ArithmeticEvaluator.RelOp;
@@ -30,8 +31,8 @@ public sealed partial class IlPredicateCompiler
     /// Declines (returns false, emits nothing) unless the sequence is well
     /// formed from here and every op has an integer form; a push in the middle
     /// of a sequence never is, since the operands before it are missing.</summary>
-    private static bool TryEmitIntArithSequence(Sigil.Emit<PredicateDelegate> emit,
-        byte[] code, int start, Sigil.Label failLabel, out int end)
+    private static bool TryEmitIntArithSequence(IlEmit emit,
+        byte[] code, int start, IlLabel failLabel, out int end)
     {
         end = start;
         int pc = start, depth = 0, maxDepth = 0;
@@ -75,14 +76,28 @@ public sealed partial class IlPredicateCompiler
         int last = pc;
         end = last + OpcodeTable.Get((Opcode)code[last]).Size;
 
+        // With every operand within `width` bits no value the sequence computes
+        // leaves 64 bits: one check per operand replaces one per operation, and
+        // a comparison compares exact values. 0: a check per operation.
+        int width = OperandWidth(code, start, last, out bool resultFits);
         var slow = emit.DefineLabel($"iar_slow_{NextLabelSeq()}");
         var done = emit.DefineLabel($"iar_done_{NextLabelSeq()}");
         EmitArithWakeFlush(emit, failLabel);
-        var slots = new List<Sigil.Local>(maxDepth);
-        for (int i = 0; i < maxDepth; i++) slots.Add(emit.DeclareLocal<long>());
         var data = emit.DeclareLocal<long>();
+        // The RPN stack, resolved at compile time: a constant, an operand's
+        // local (read once per sequence: nothing in a sequence binds), or a
+        // temporary holding an intermediate result.
+        var stack = new List<ArithValue>(maxDepth);
+        var operands = new Dictionary<(int, int), IlLocal>();
+        var freeTemps = new Stack<IlLocal>();
+        IlLocal Temp() => freeTemps.Count > 0 ? freeTemps.Pop() : emit.DeclareLocal<long>();
+        void Release(ArithValue v) { if (v.IsTemp) freeTemps.Push(v.Local!); }
+        void Load(ArithValue v)
+        {
+            if (v.Local is { } l) emit.LoadLocal(l);
+            else emit.LoadConstant(v.Constant);
+        }
 
-        depth = 0;
         for (pc = start; pc <= last; pc += OpcodeTable.Get((Opcode)code[pc]).Size)
         {
             var op = (Opcode)code[pc];
@@ -90,44 +105,83 @@ public sealed partial class IlPredicateCompiler
             switch (op)
             {
                 case Opcode.AEvalPush:
-                    EmitReadIntOperand(emit, a1, BytecodeIO.ReadInt32(code, pc + 5),
-                        slots[depth], data, slow);
-                    depth++;
+                {
+                    int val = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (a1 == 0)
+                    {
+                        stack.Add(ArithValue.Of(val));
+                        break;
+                    }
+                    if (!operands.TryGetValue((a1, val), out var loc))
+                    {
+                        loc = emit.DeclareLocal<long>();
+                        EmitReadIntOperand(emit, a1, val, loc, data, slow);
+                        if (width is > 0 and < Cell.TagShift) EmitBranchUnlessFitsBits(emit, loc, width, slow);
+                        operands[(a1, val)] = loc;
+                    }
+                    stack.Add(new ArithValue(loc, 0, IsTemp: false));
                     break;
+                }
                 case Opcode.AEvalBin:
                 {
-                    var a = slots[depth - 2];
-                    var b = slots[depth - 1];
-                    if ((BinOp)a1 == BinOp.Mul)
+                    var b = stack[^1];
+                    var a = stack[^2];
+                    stack.RemoveRange(stack.Count - 2, 2);
+                    var bin = (BinOp)a1;
+                    if (a.Local is null && b.Local is null && FoldInt(bin, a.Constant, b.Constant) is { } folded)
                     {
-                        // Factors within 31 bits keep the product within 62,
-                        // so the 64-bit multiply cannot wrap.
-                        EmitBranchUnlessFitsBits(emit, a, 31, slow);
-                        EmitBranchUnlessFitsBits(emit, b, 31, slow);
+                        stack.Add(ArithValue.Of(folded));
+                        break;
                     }
-                    emit.LoadLocal(a);
-                    emit.LoadLocal(b);
-                    if ((BinOp)a1 == BinOp.Add) emit.Add();
-                    else if ((BinOp)a1 == BinOp.Sub) emit.Subtract();
+                    if (bin == BinOp.Mul && width == 0)
+                    {
+                        // The product must not wrap 64 bits. Factors within 31
+                        // bits keep it within 62; a constant factor c bounds the
+                        // other to 64 - bitlen(|c|) bits (none for |c| < 16, as
+                        // operands are 60-bit).
+                        if (a.Local is null) EmitFitsForConstantFactor(emit, b.Local!, a.Constant, slow);
+                        else if (b.Local is null) EmitFitsForConstantFactor(emit, a.Local!, b.Constant, slow);
+                        else
+                        {
+                            EmitBranchUnlessFitsBits(emit, a.Local!, 31, slow);
+                            EmitBranchUnlessFitsBits(emit, b.Local!, 31, slow);
+                        }
+                    }
+                    Load(a);
+                    Load(b);
+                    if (bin == BinOp.Add) emit.Add();
+                    else if (bin == BinOp.Sub) emit.Subtract();
                     else emit.Multiply();
-                    emit.StoreLocal(a);
-                    EmitBranchUnlessFitsBits(emit, a, 60, slow);
-                    depth--;
+                    Release(a);
+                    Release(b);
+                    var r = Temp();
+                    emit.StoreLocal(r);
+                    if (width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
+                    stack.Add(new ArithValue(r, 0, IsTemp: true));
                     break;
                 }
                 case Opcode.AEvalUn:
                     if ((UnOp)a1 == UnOp.Neg)
                     {
-                        var a = slots[depth - 1];
-                        emit.LoadLocal(a);
+                        var a = stack[^1];
+                        stack.RemoveAt(stack.Count - 1);
+                        if (a.Local is null && FoldInt(BinOp.Sub, 0, a.Constant) is { } negated)
+                        {
+                            stack.Add(ArithValue.Of(negated));
+                            break;
+                        }
+                        Load(a);
                         emit.Negate();
-                        emit.StoreLocal(a);
-                        EmitBranchUnlessFitsBits(emit, a, 60, slow);
+                        Release(a);
+                        var r = Temp();
+                        emit.StoreLocal(r);
+                        if (width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
+                        stack.Add(new ArithValue(r, 0, IsTemp: true));
                     }
                     break;
                 case Opcode.AEvalCmp:
-                    emit.LoadLocal(slots[0]);
-                    emit.LoadLocal(slots[1]);
+                    Load(stack[0]);
+                    Load(stack[1]);
                     switch ((RelOp)a1)
                     {
                         case RelOp.Eq: emit.UnsignedBranchIfNotEqual(failLabel); break;
@@ -141,26 +195,27 @@ public sealed partial class IlPredicateCompiler
                 case Opcode.AEvalIs:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 5);
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(target);
-                    emit.LoadConstant((long)Tag.Int << Cell.TagShift);
-                    emit.LoadLocal(slots[0]);
-                    emit.LoadConstant(Cell.PayloadMask);
-                    emit.And();
-                    emit.Or();
-                    emit.NewObject(CellCtor);
-                    switch (a1)
+                    var value = stack[0];
+                    if (width > 0 && !resultFits && value.Local is { } result)
+                        EmitBranchUnlessFitsBits(emit, result, Cell.TagShift, slow);
+                    void PushResult()
                     {
-                        case 5: EmitHelperCall(emit, EngineSetRegisterMethod); break;
-                        case 6: EmitHelperCall(emit, EngineSetYMethod); break;
-                        case 4:
-                            EmitHelperCall(emit, EngineUnifyPermanentMethod);
-                            emit.BranchIfFalse(failLabel);
-                            break;
-                        default:
-                            EmitHelperCall(emit, EngineUnifyMethod);
-                            emit.BranchIfFalse(failLabel);
-                            break;
+                        emit.LoadConstant((long)Tag.Int << Cell.TagShift);
+                        Load(value);
+                        emit.LoadConstant(Cell.PayloadMask);
+                        emit.And();
+                        emit.Or();
+                        emit.NewObject(CellCtor);
+                    }
+                    if (a1 == 5) EmitSetRegisterConst(emit, target, PushResult);
+                    else if (a1 == 6) EmitStoreY(emit, target, PushResult);
+                    else
+                    {
+                        emit.LoadArgument(0);
+                        emit.LoadConstant(target);
+                        PushResult();
+                        EmitHelperCall(emit, a1 == 4 ? EngineUnifyPermanentMethod : EngineUnifyMethod);
+                        emit.BranchIfFalse(failLabel);
                     }
                     break;
                 }
@@ -169,17 +224,77 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(done);
 
         emit.MarkLabel(slow);
+        // ADR-061: in a hot method the slow lane is the cold method's, from
+        // the boundary before the sequence: nothing in it has an effect yet.
+        if (EmitColdExit(emit))
+        {
+            emit.MarkLabel(done);
+            return true;
+        }
+        // The fast lane fired the pending wakes before its first read, and
+        // reading operands binds nothing: no wake check here.
         for (pc = start; pc <= last; pc += OpcodeTable.Get((Opcode)code[pc]).Size)
-            EmitStackArithOp(emit, code, pc, failLabel);
+            EmitStackArithOp(emit, code, pc, failLabel, wakesFlushed: true);
         emit.MarkLabel(done);
         return true;
+    }
+
+    /// <summary>An entry of the compile-time RPN stack: a constant, or a local
+    /// (an operand's, or a temporary's that the stack owns).</summary>
+    private readonly record struct ArithValue(IlLocal? Local, long Constant, bool IsTemp)
+    {
+        public static ArithValue Of(long constant) => new(null, constant, false);
+    }
+
+    /// <summary>ArithBounds over the sequence's bytecode.</summary>
+    private static int OperandWidth(byte[] code, int start, int last, out bool resultFits)
+    {
+        var seq = new List<ArithBounds.Step>();
+        for (int pc = start; pc <= last; pc += OpcodeTable.Get((Opcode)code[pc]).Size)
+        {
+            var op = (Opcode)code[pc];
+            int a2 = op is Opcode.AEvalPush or Opcode.AEvalIs ? BytecodeIO.ReadInt32(code, pc + 5) : 0;
+            seq.Add(new ArithBounds.Step(op, BytecodeIO.ReadInt32(code, pc + 1), a2));
+        }
+        return ArithBounds.OperandWidth(seq, out resultFits);
+    }
+
+    /// <summary>a op b on two constants when the result is a 60-bit integer.</summary>
+    private static long? FoldInt(BinOp op, long a, long b)
+    {
+        long r;
+        try
+        {
+            r = op switch
+            {
+                BinOp.Add => checked(a + b),
+                BinOp.Sub => checked(a - b),
+                _ => checked(a * b),
+            };
+        }
+        catch (System.OverflowException) { return null; }
+        long lim = 1L << (Cell.TagShift - 1);
+        return r >= -lim && r < lim ? r : null;
+    }
+
+    /// <summary>Branches to <paramref name="slow"/> unless <paramref name="v"/>
+    /// times the constant <paramref name="c"/> stays within 64 bits.</summary>
+    private static void EmitFitsForConstantFactor(IlEmit emit,
+        IlLocal v, long c, IlLabel slow)
+    {
+        ulong m = c == long.MinValue ? 1UL << 63 : (ulong)System.Math.Abs(c);
+        int bitlen = 0;
+        while (m != 0) { bitlen++; m >>= 1; }
+        int bits = 64 - bitlen;
+        if (bits >= Cell.TagShift) return;   // a 60-bit operand cannot wrap
+        EmitBranchUnlessFitsBits(emit, v, bits, slow);
     }
 
     /// <summary>Reads an operand (kind 0 int literal, 3 X register, 4 Y slot)
     /// into <paramref name="dest"/> as a 60-bit integer, or branches to
     /// <paramref name="slow"/> when it is not an Int cell after deref.</summary>
-    private static void EmitReadIntOperand(Sigil.Emit<PredicateDelegate> emit,
-        int kind, int val, Sigil.Local dest, Sigil.Local data, Sigil.Label slow)
+    private static void EmitReadIntOperand(IlEmit emit,
+        int kind, int val, IlLocal dest, IlLocal data, IlLabel slow)
     {
         if (kind == 0)
         {
@@ -188,9 +303,13 @@ public sealed partial class IlPredicateCompiler
             return;
         }
         var notRef = emit.DefineLabel($"iar_notref_{NextLabelSeq()}");
-        emit.LoadArgument(0);
-        emit.LoadConstant(val);
-        EmitHelperCall(emit, kind == 4 ? EngineGetYMethod : EngineGetRegisterMethod);
+        if (kind == 4) EmitLoadY(emit, val);
+        else
+        {
+            emit.LoadArgument(0);
+            emit.LoadConstant(val);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
+        }
         emit.LoadField(CellDataField);
         emit.StoreLocal(data);
         // Tag.Ref is 0: any other tag needs no deref.
@@ -199,12 +318,13 @@ public sealed partial class IlPredicateCompiler
         emit.UnsignedShiftRight();
         emit.LoadConstant(0L);
         emit.UnsignedBranchIfNotEqual(notRef);
-        emit.LoadArgument(0);
-        emit.LoadArgument(0);
+        // One step: the cell the reference names. An Int there is the value;
+        // anything else (an unbound variable, a further reference) is the
+        // slow lane's, which dereferences fully.
+        EmitLoadEngineField(emit, EngHeap);
         emit.LoadLocal(data);
         emit.Convert<int>();
-        EmitHelperCall(emit, EngineDerefMethod);
-        EmitHelperCall(emit, EngineGetHeapMethod);
+        emit.LoadElement<Cell>();
         emit.LoadField(CellDataField);
         emit.StoreLocal(data);
         emit.MarkLabel(notRef);
@@ -225,8 +345,8 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Branches to <paramref name="slow"/> unless the long in
     /// <paramref name="v"/> is representable in <paramref name="bits"/> signed
     /// bits.</summary>
-    private static void EmitBranchUnlessFitsBits(Sigil.Emit<PredicateDelegate> emit,
-        Sigil.Local v, int bits, Sigil.Label slow)
+    private static void EmitBranchUnlessFitsBits(IlEmit emit,
+        IlLocal v, int bits, IlLabel slow)
     {
         emit.LoadLocal(v);
         emit.LoadConstant(64 - bits);
@@ -239,8 +359,8 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>One a_eval op through ArithEvalStack: the form every sequence
     /// had before, and the slow path of the integer lane.</summary>
-    private static void EmitStackArithOp(Sigil.Emit<PredicateDelegate> emit,
-        byte[] code, int pc, Sigil.Label failLabel)
+    private static void EmitStackArithOp(IlEmit emit,
+        byte[] code, int pc, IlLabel failLabel, bool wakesFlushed = false)
     {
         var op = (Opcode)code[pc];
         switch (op)
@@ -251,7 +371,7 @@ public sealed partial class IlPredicateCompiler
                 // read, but only at the start of the expression (empty eval
                 // stack), since the drain runs nested arithmetic on this same
                 // static stack.
-                EmitArithWakeFlush(emit, failLabel);
+                if (!wakesFlushed) EmitArithWakeFlush(emit, failLabel);
                 int kind = BytecodeIO.ReadInt32(code, pc + 1);
                 int operand = BytecodeIO.ReadInt32(code, pc + 5);
                 if (kind == 0)

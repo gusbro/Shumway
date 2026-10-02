@@ -738,6 +738,12 @@ public static partial class MetaBuiltins
                 return UnifyMsPair(engine, (long)engine.ExtraTrailTop * 8,
                                    (long)(engine.ExtraTrailCapacity
                                           - engine.ExtraTrailTop) * 8);
+            case "inferences":
+                // The interpreter's count. With compiled code running it is the
+                // interpreter's share only, and a call counts itself, so the
+                // value is never 0 and two readings always differ.
+                if (engine.CompiledCodeActive?.Invoke() == true) engine.Inferences++;
+                return engine.UnifyRegisterWithCell(1, Cell.Int(engine.Inferences));
             case "atoms":
                 return UnifyMsPair(engine,
                                    AtomTable.TransientCount + AtomTable.PermanentCount,

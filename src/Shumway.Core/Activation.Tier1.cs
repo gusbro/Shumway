@@ -70,14 +70,11 @@ public sealed partial class Activation
     public bool IsDynMutated(int functorId)
         => MutatedDynamicFids is { Count: > 0 } s && s.Contains(functorId);
 
-    /// <summary>Goal-dispatch counter for <c>time/1</c> — incremented once
-    /// per Tier-0 interpreter dispatch (Call / Execute / CallBuiltin and
-    /// their Il/Bytecode/Builtin variants): the Shumway analogue of SWI's
-    /// "inferences". A plain field increment, cheap enough to stay always-on
-    /// (A/B-verified). Under Tier-1 promotion the count undercounts —
-    /// intra-region calls are raw branches that never pass the interpreter —
-    /// so it is honest for the (Tier-0 by default) REPL prototyping loop
-    /// time/1 exists for.</summary>
+    /// <summary>Goals the interpreter dispatched (Call / Execute / CallBuiltin
+    /// and their variants): the inferences of <c>time/1</c> and
+    /// <c>statistics(inferences, _)</c>. Compiled code (Tier-1) counts none,
+    /// as Prolog systems that compile to native code do not count; the count
+    /// is exact with Tier-1 off.</summary>
     public long Inferences;
 
     /// <summary><c>time/1</c> marks — (wall ms, heap cells, inferences) at
@@ -968,7 +965,250 @@ public sealed partial class Activation
         return fid == regionRootFunctorId ? cursor : -1;
     }
 
-    private struct IlChoicePointEntry
+    /// <summary>The IL delegates by functor id the dispatch loop resolves
+    /// resume markers with; the interpreter owns it, a region reads it.</summary>
+    public Func<Activation, int, bool>?[]? IlByFunctorId { get; set; }
+
+    // Hops since the last one that went through the dispatch loop. Bounds
+    // the .NET stack where the JIT does not honour the tail call.
+    private int _returnHops;
+    private const int ReturnHopBound = 64;
+
+    /// <summary>The delegate that runs <paramref name="marker"/> (a callee's
+    /// entry, or a continuation), with Pc set to it as the dispatch loop sets
+    /// it, when compiled code may run it itself with a tail call; null when the
+    /// loop must (not a marker, a safe point is due, a wake is pending, a debug
+    /// session is attached, no delegate, or the hop bound is reached).</summary>
+    public Func<Activation, int, bool>? Continuation(int marker, out int cursor)
+    {
+        cursor = 0;
+        if (!IsResumeMarker(marker) || CallSafePointDue || HasPendingWakeups || _debug is not null)
+            return null;
+        var table = IlByFunctorId;
+        var (fid, c) = DecodeResumeMarker(marker);
+        if (table is null || (uint)fid >= (uint)table.Length || table[fid] is not { } del)
+            return null;
+        if (++_returnHops >= ReturnHopBound)
+        {
+            _returnHops = 0;
+            return null;
+        }
+        cursor = c;
+        SetPc(marker);
+        return del;
+    }
+
+    // ----- ADR-061: continuation methods -----
+
+    /// <summary>ADR-061: native code of each predicate's continuation-method
+    /// entry, by functor id; 0 where it has none. Per activation, like the
+    /// interpreter's delegate table: two engines may give one functor different
+    /// code.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public nint[]? _cpsEntry;
+
+    /// <summary>ADR-061: native code of each continuation method, by resume
+    /// marker (minus <see cref="ResumeMarkerBase"/>); 0 where it has none.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public nint[]? _cpsResume;
+
+    /// <summary>ADR-061: native code of each predicate's alternatives method,
+    /// by functor id; 0 where it has none. A WAM choice point whose BP is a
+    /// resume marker of the functor resumes there.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public nint[]? _cpsAltEntry;
+
+    /// <summary>ADR-061: the code a call to <paramref name="functorId"/> may enter
+    /// by a tail call, with Pc set to <paramref name="entryMarker"/> as the
+    /// dispatch loop sets it; 0 when the call must go through the loop (a safe
+    /// point is due, a wake is pending, a debug session is attached, or the
+    /// callee has no continuation methods).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public nint CpsCallTarget(int functorId, int entryMarker)
+    {
+        var t = _cpsEntry;
+        if (t is null || (uint)functorId >= (uint)t.Length) return 0;
+        nint code = t[functorId];
+        if (code == 0 || CallSafePointDue || _pendingWakeups.Count > 0 || _debug is not null)
+            return 0;
+        _p = entryMarker;
+        return code;
+    }
+
+    /// <summary>ADR-061: the code a proceed may enter by a tail call (the
+    /// continuation <see cref="Cp"/> names), with Pc set to Cp; 0 when the
+    /// proceed must return to the dispatch loop.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public nint CpsProceedTarget()
+    {
+        var t = _cpsResume;
+        int cp = _cp;
+        if (t is null || (uint)(cp - ResumeMarkerBase) >= (uint)t.Length) return 0;
+        nint code = t[cp - ResumeMarkerBase];
+        if (code == 0 || CallSafePointDue || _pendingWakeups.Count > 0 || _debug is not null)
+            return 0;
+        _p = cp;
+        return code;
+    }
+
+    /// <summary>ADR-061: the entry marks of a CP-free guard (ADR-031) in a
+    /// continuation method, kept here rather than in IL locals so that the
+    /// cold method can resume inside the guard. A guard's prefix makes no
+    /// call, so no other guard writes them before its commit or failure.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public int _cpsGuardBt, _cpsGuardXt, _cpsGuardH, _cpsGuardHb, _cpsGuardE;
+
+    /// <summary>ADR-061: an indexed chain's next node for its guard clause
+    /// (ADR-031 buckets), in a continuation method.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public int _cpsGuardNext;
+
+    /// <summary>ADR-061: fails the guard whose marks are in the fields when it
+    /// bound nothing; false, doing nothing, when bindings must be undone.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool TryFailIlGuardQuick()
+    {
+        if (_bindingTrailTop != _cpsGuardBt || _extraTrailTop != _cpsGuardXt) return false;
+        _heapTop = _cpsGuardH;
+        AssignHb(_cpsGuardHb);
+        return true;
+    }
+
+    /// <summary>ADR-061: <see cref="PushIlChoicePointWithMarks"/> for a WAM
+    /// choice point whose BP is <paramref name="bp"/> (a resume marker).</summary>
+    public void PushChoicePointWithMarks(int arity, int bp,
+        int bindingTop, int extraTop, int heapTop, int savedHb, int entryE)
+    {
+        PushChoicePoint(arity, bp);
+        int b = _b;
+        _stack[b + CpBindingTrailOffset(arity)] = Cell.RawInt(bindingTop);
+        _stack[b + CpExtraTrailOffset(arity)] = Cell.RawInt(extraTop);
+        _stack[b + CpHeapTopOffset(arity)] = Cell.RawInt(heapTop);
+        _stack[b + CpHbOffset(arity)] = Cell.RawInt(savedHb);
+        _stack[b + CpCeOffset(arity)] = Cell.RawInt(entryE);
+    }
+
+    /// <summary>ADR-061: the resume marker of a cursor known only at run time
+    /// (a rare path's choice point push).</summary>
+    public static int ResumeMarkerOf(int functorId, int cursor) => EncodeResumeMarker(functorId, cursor);
+
+    /// <summary>ADR-061: marks the choice point just pushed as one a failure
+    /// in a continuation method may resume by a tail call into <paramref
+    /// name="alt"/>, the pushing generation's code by cursor.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void TagIlChoicePointCps(nint[] alt) => _ilCpStack[_ilCpTop - 1].CpsAlt = alt;
+
+    /// <summary>ADR-061 item 8: on a failure in a continuation method, the code
+    /// of the method that runs the top choice point's alternatives, with the
+    /// choice point's side-stack entry popped and its cursor in <see
+    /// cref="_cpsFailCursor"/>; the frame is restored and popped by that
+    /// method's entry (a trust). 0,
+    /// touching nothing, when the dispatch loop must backtrack (no such
+    /// method, at the floor, or a debug session needs the redo port).</summary>
+    public nint CpsFailTarget()
+    {
+        if (_b <= _backtrackFloor || _debug is not null) return 0;
+        if (_ilCpTop == 0 || _ilCpStack[_ilCpTop - 1].Key != _b)
+        {
+            // A WAM choice point whose BP is a resume marker (ADR-058): the
+            // alternatives method of its functor, at the marker's cursor.
+            int arity = (int)_stack[_b + CpArityOffset].Data;
+            int bp = (int)_stack[_b + CpBpOffset(arity)].Data;
+            var alts = _cpsAltEntry;
+            if (!IsResumeMarker(bp) || alts is null) return 0;
+            var (fid, cursor) = DecodeResumeMarker(bp);
+            nint altCode;
+            if ((uint)fid >= (uint)alts.Length || (altCode = alts[fid]) == 0) return 0;
+            Profiler.Backtrack();
+            BacktrackSafePoint();
+            _cpsFailCursor = cursor;
+            return altCode;
+        }
+        ref var top = ref _ilCpStack[_ilCpTop - 1];
+        if (top.CpsAlt is not { } alt || (uint)top.Cursor >= (uint)alt.Length)
+            return 0;
+        nint code = alt[top.Cursor];
+        if (code == 0) return 0;
+        Profiler.Backtrack();
+        BacktrackSafePoint();
+        _cpsFailCursor = top.Cursor;
+        top.Del = null!;
+        top.OnPrune = null;
+        top.CpsAlt = null;
+        _ilCpTop--;
+        return code;
+    }
+
+    /// <summary>ADR-061: the cursor <see cref="CpsFailTarget"/> resumes, which
+    /// the Fail stub passes to the alternatives method.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public int _cpsFailCursor;
+
+    /// <summary>ADR-061: the side-stack entry of an IL choice point whose frame
+    /// compiled code has just written inline (ADR-058's push over the IL
+    /// sentinel BP).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void PushIlChoicePointEntryCps(Func<Activation, int, bool> del, int nextCursor, nint[] alt)
+    {
+        if (_ilCpTop == _ilCpStack.Length)
+            System.Array.Resize(ref _ilCpStack, _ilCpStack.Length * 2);
+        _ilCpStack[_ilCpTop++] = new IlChoicePointEntry
+        {
+            Del = del, Cursor = nextCursor, Key = _b, CpsAlt = alt,
+        };
+    }
+
+    /// <summary>ADR-061: publishes a predicate's continuation methods.</summary>
+    public void InstallCps(int functorId, nint entry, (int Marker, nint Code)[] resumes, nint altEntry)
+    {
+        var t = _cpsEntry;
+        if (t is null || functorId >= t.Length)
+        {
+            var grown = new nint[Math.Max(functorId + 1, (t?.Length ?? 0) * 2)];
+            t?.CopyTo(grown, 0);
+            _cpsEntry = t = grown;
+        }
+        t[functorId] = entry;
+        var a = _cpsAltEntry;
+        if (a is null || functorId >= a.Length)
+        {
+            var grown = new nint[Math.Max(functorId + 1, (a?.Length ?? 0) * 2)];
+            a?.CopyTo(grown, 0);
+            _cpsAltEntry = a = grown;
+        }
+        a[functorId] = altEntry;
+        foreach (var (marker, code) in resumes)
+        {
+            int id = marker - ResumeMarkerBase;
+            var r = _cpsResume;
+            if (r is null || id >= r.Length)
+            {
+                var grown = new nint[Math.Max(id + 1, (r?.Length ?? 0) * 2)];
+                r?.CopyTo(grown, 0);
+                _cpsResume = r = grown;
+            }
+            r[id] = code;
+        }
+    }
+
+    /// <summary>ADR-061: withdraws a predicate's continuation methods; its calls
+    /// and continuations go through the dispatch loop again.</summary>
+    public void EvictCps(int functorId)
+    {
+        var t = _cpsEntry;
+        if (t is not null && (uint)functorId < (uint)t.Length) t[functorId] = 0;
+        var a = _cpsAltEntry;
+        if (a is not null && (uint)functorId < (uint)a.Length) a[functorId] = 0;
+        var r = _cpsResume;
+        if (r is null) return;
+        var pairs = System.Threading.Volatile.Read(ref _resumeMarkerPairs);
+        int n = Math.Min(r.Length, pairs.Length);
+        for (int i = 0; i < n; i++)
+            if (r[i] != 0 && pairs[i].Fid == functorId) r[i] = 0;
+    }
+
+    // Internal: ADR-061's continuation methods read it from emitted IL.
+    internal struct IlChoicePointEntry
     {
         public Func<Activation, int, bool> Del;
         public int Cursor;
@@ -989,6 +1229,11 @@ public sealed partial class Activation
         // choice point. Null for the (vast majority of) IL CPs
         // that have no extra-engine state to release.
         public Action? OnPrune;
+        // ADR-061: the native code of the continuation methods of the
+        // generation that pushed this choice point, by cursor; null when it
+        // resumes through Del only. Per generation, not per functor: a
+        // recompiled predicate may number its cursors differently.
+        public nint[]? CpsAlt;
     }
 
     // stack-array replacement for the previous
@@ -1051,7 +1296,12 @@ public sealed partial class Activation
         for (int i = _ilCpTop - 1; i >= 0; i--)
         {
             int key = _ilCpStack[i].Key;
-            if (key == barrier) { _ilCpStack[i].Del = SoftCutFailResume; return; }
+            if (key == barrier)
+            {
+                _ilCpStack[i].Del = SoftCutFailResume;
+                _ilCpStack[i].CpsAlt = null;
+                return;
+            }
             if (key < barrier) return;
         }
     }
@@ -1157,9 +1407,12 @@ public sealed partial class Activation
     /// the exact restore the skipped choice point's pop would have performed.
     /// Registers / E / CP / B0 need no restore: the guard op whitelist writes
     /// no argument register and makes no calls.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void FailIlGuard(int bindingTop, int extraTop, int heapTop, int savedHb)
     {
-        UnwindTrails(bindingTop, extraTop);
+        // A guard that bound nothing has nothing to undo: the common case.
+        if (_bindingTrailTop != bindingTop || _extraTrailTop != extraTop)
+            UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
         AssignHb(savedHb);
         // Not cleared: only the wakes this guard queued are dead, and the
@@ -1314,6 +1567,7 @@ public sealed partial class Activation
             if (onPrune is not null) onPrune();
             _ilCpStack[_ilCpTop - 1].Del = null!;
             _ilCpStack[_ilCpTop - 1].OnPrune = null;
+            _ilCpStack[_ilCpTop - 1].CpsAlt = null;
             _ilCpTop--;
         }
     }
@@ -1368,6 +1622,7 @@ public sealed partial class Activation
         // iterator). OnPrune is only for cut-pruned discards.
         _ilCpStack[_ilCpTop - 1].Del = null!;
         _ilCpStack[_ilCpTop - 1].OnPrune = null;
+        _ilCpStack[_ilCpTop - 1].CpsAlt = null;
         _ilCpTop--;
         return (info.Del, info.Cursor);
     }

@@ -4,12 +4,10 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>time/1's tallies must survive promotion. A module dispatches its
-/// goals and claims its heap cells without touching a managed counter, so a
-/// run that stays inside wasm used to report a handful of inferences for
-/// millions of goals -- and heap cells are the deterministic metric the
-/// performance tests compare, which makes a blind counter worse than a
-/// cosmetic bug.</summary>
+/// <summary>time/1's heap cells must survive promotion: a module claims its
+/// cells without touching a managed counter, and heap cells are the
+/// deterministic metric the performance tests compare. Compiled code counts no
+/// inferences (ADR-061), so the tiered report has none.</summary>
 public sealed class TierCountersTests(ITestOutputHelper o)
 {
     private const string Corpus = """
@@ -35,12 +33,22 @@ public sealed class TierCountersTests(ITestOutputHelper o)
     // this the cell half of the assertion holds even with the tally gone.
     private const string CellGoal = "chew(200, _)";
 
+    private static PrologEngine TierZero()
+    {
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 0;
+        e.ConsultString(Corpus);
+        return e;
+    }
+
+    /// <summary>The inferences (-1 when the report has none) and heap cells.</summary>
     private static (long Inferences, long Cells) Measure(PrologEngine e, string goal)
     {
         var w = new System.IO.StringWriter();
         e.Out = w;
         Assert.True(e.Query($"time(({goal})).").Success);
-        // "% N inferences, S seconds, M heap cells (L Lips)"
+        // "% N inferences, S seconds, M heap cells (L Lips)", or with compiled
+        // code "% S seconds, M heap cells"
         string s = w.ToString();
         long Field(string after)
         {
@@ -51,15 +59,13 @@ public sealed class TierCountersTests(ITestOutputHelper o)
             return long.Parse(s[start..(end - 1)].Replace(",", ""),
                 System.Globalization.CultureInfo.InvariantCulture);
         }
-        return (Field("inferences"), Field("heap cells"));
+        return (s.Contains(" inferences,") ? Field("inferences") : -1, Field("heap cells"));
     }
 
     [Fact]
     public void PromotionDoesNotBlindTimeSlash1()
     {
-        var plain = new PrologEngine();
-        plain.ConsultString(Corpus);
-        var (i0, c0) = Measure(plain, Goal);
+        var (i0, c0) = Measure(TierZero(), Goal);
 
         var (tiered, members) = TieredEngine.Build(Corpus);
         var (i1, c1) = Measure(tiered, Goal);
@@ -70,19 +76,16 @@ public sealed class TierCountersTests(ITestOutputHelper o)
         Assert.NotEmpty(members);
         Assert.True(i0 > 1000 && c0 > 1000, $"the oracle counted too little: {i0}/{c0}");
 
-        // The two paths dispatch slightly different goal sequences (what runs
-        // promoted and what does not differ), so this bounds the counts rather
-        // than equating them. The bug it guards against reported 3 for 4,989.
-        Assert.InRange(i1, i0 * 0.8, i0 * 1.2);
+        // What runs promoted and what does not differ, so this bounds the
+        // cells rather than equating them.
+        Assert.Equal(-1, i1);
         Assert.InRange(c1, c0 * 0.8, c0 * 1.2);
     }
 
     [Fact]
     public void CellsClaimedInsideTheModuleAreCounted()
     {
-        var plain = new PrologEngine();
-        plain.ConsultString(Corpus);
-        var (_, c0) = Measure(plain, CellGoal);
+        var (_, c0) = Measure(TierZero(), CellGoal);
 
         var (tiered, members) = TieredEngine.Build(Corpus);
         var (_, c1) = Measure(tiered, CellGoal);

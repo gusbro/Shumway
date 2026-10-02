@@ -21,7 +21,7 @@ public sealed partial class IlPredicateCompiler
     /// <c>-1</c> means the predicate's shape isn't PGO-eligible — it
     /// was compiled normally and no phase-2 recompile should fire.</summary>
     public readonly record struct PgoCompileResult(
-        PredicateDelegate Delegate, int ProfileKey);
+        PredicateDelegate Delegate, int ProfileKey, CpsCode? Cps = null);
 
     /// <summary>Phase-1 PGO compile. For the indexed-atom shape this
     /// emits the <em>instrumented</em> form whose ground dispatch

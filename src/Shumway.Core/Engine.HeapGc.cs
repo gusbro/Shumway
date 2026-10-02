@@ -292,13 +292,17 @@ public sealed partial class Activation
 
     /// <summary>Whether <see cref="MaybeCollectHeapAtCall"/> has anything to
     /// do. Compiled code tests this and makes the call only then (ADR-060).</summary>
-    public bool CallSafePointDue =>
+    public bool CallSafePointDue
+    {
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        get =>
 #if SHUMWAY_DIAG
         true;
 #else
         _cancelRequested || _deadlineAt != 0 || _debugArmPending
         || _gcDiagActive || _heapTop >= _gcThreshold;
 #endif
+    }
 
     /// <summary>Safe point at a call boundary where the callee's functor is
     /// in hand: only its arguments are live registers. Same steady-state cost
@@ -409,9 +413,8 @@ public sealed partial class Activation
         arm?.Invoke(this);
     }
 
+    // Not NoInlining: see ThrowNoEnv.
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void ThrowQueryCancelled()
         => throw new OperationCanceledException("Prolog query cancelled at a safe point.");
 
