@@ -62,8 +62,7 @@ internal static class IlRegionBuilder
 {
     /// <summary>Fallback budget in bytecode bytes when nothing else is set.
     /// Conservative: WAM bytecode lowers to several times its size in IL, so this
-    /// stays well under the 64 KB method / Sigil ReturnTracer ceilings once
-    /// expanded.</summary>
+    /// stays well under the 64 KB method ceiling once expanded.</summary>
     public const int FallbackBudgetBytes = 3072;
 
     /// <summary>The active budget — the "aggressiveness" knob. Configurable via the

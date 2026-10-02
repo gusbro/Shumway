@@ -530,8 +530,8 @@ internal static class ReplTopLevel
         {
             // .shum bundle (binary) → LoadBundle; everything else →
             // ConsultString on the file's text. Useful for measuring
-            // persisted-IL load + run times without going through
-            // Sigil at runtime.
+            // persisted-IL load + run times without emitting IL at
+            // runtime.
             if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
             {
                 engine.LoadBundle(path);

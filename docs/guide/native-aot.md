@@ -8,7 +8,7 @@ a single native binary with no .NET runtime dependency and no JIT.
 - **Tier-0 (the bytecode interpreter) is AOT-compatible** and runs the
   full engine: the compiler, builtins, the prelude, CLP(FD) and CLP(R).
 - **Tier-1 (IL promotion) is not**: it is runtime code generation
-  (`System.Reflection.Emit` / Sigil), which Native AOT does not support
+  (`System.Reflection.Emit`), which Native AOT does not support
   by design. Under AOT the engine cleanly stays on Tier-0:
   - `IlPromotionStore` checks `RuntimeFeature.IsDynamicCodeSupported`
     and, when false, never compiles and never even constructs the IL

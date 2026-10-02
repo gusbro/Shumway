@@ -26,7 +26,7 @@ Shumway implements a **Prolog compiler and interpreter that runs on .NET**, inte
 |-----------|--------|
 | Runtime target | .NET 10+ (minimum .NET 9) |
 | Language | C# 12+ |
-| IL emission (runtime) | `System.Reflection.Emit.DynamicMethod` + Sigil (MS-PL license) |
+| IL emission (runtime) | `System.Reflection.Emit.DynamicMethod` through Shumway's own emitter (ADR-062) |
 | IL emission (build-time bundles) | `PersistedAssemblyBuilder` (official .NET API, no external deps) |
 | Testing | xUnit |
 | Benchmarking | BenchmarkDotNet |
@@ -334,6 +334,7 @@ When proposing changes:
 | What a program may redefine | ADR-059 |
 | A region holds the machine registers in locals (proposed) | ADR-060 |
 | Tier-1 as continuation methods per predicate (proposed) | ADR-061 |
+| Shumway's own IL emitter | ADR-062 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

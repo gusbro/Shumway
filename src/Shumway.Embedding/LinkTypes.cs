@@ -87,7 +87,7 @@ public sealed class LinkConfig
     /// embeds the resulting assembly bytes in each bundle entry's
     /// <see cref="BundleEntry.CompiledIl"/> slot. At load time the
     /// engine binds the persisted IL directly as
-    /// <c>PredicateDelegate</c>s, so no Sigil-emit work happens at
+    /// <c>PredicateDelegate</c>s, so no IL emission happens at
     /// runtime — the IL compile cost is paid once, ahead of time,
     /// and amortised over every query that hits a promoted
     /// predicate.

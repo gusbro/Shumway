@@ -50,14 +50,6 @@
          it, a machine missing the wasm-tools workload fails the build
          instead of shipping that. -->
     <WasmBuildNative Condition="'$(ShumwayWasmTier)' == 'true'">true</WasmBuildNative>
-
-    <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
-         so the trimmer reports IL2104 for it. Narrow and local, per the repo's
-         zero-warning rule: it is scoped to THIS project, names the one code, and
-         is understood — the browser never emits IL (RuntimeCaps folds Tier-1 off),
-         so Sigil's code is unreachable here. Every warning from OUR code was fixed
-         at the source instead; nothing else is silenced. -->
-    <NoWarn>$(NoWarn);IL2104</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -98,8 +90,8 @@
 
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
        constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
-       deletes every Tier-1 branch behind it, and the IL compiler and its Sigil
-       dependency fall out of the payload as unreferenced. Nothing is suppressed
+       deletes every Tier-1 branch behind it, and the IL compiler falls out of
+       the payload as unreferenced. Nothing is suppressed
        and no source is conditionally compiled — the desktop build is untouched. -->
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"

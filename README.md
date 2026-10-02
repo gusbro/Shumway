@@ -249,6 +249,5 @@ licensed.
 ## License
 
 [MIT](LICENSE). Third-party components are listed in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), currently the Sigil IL
-library (MS-PL) and the Visual Studio SDK components the opt-in `vs/`
-debugger build references.
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), currently the Visual
+Studio SDK components the opt-in `vs/` debugger build references.

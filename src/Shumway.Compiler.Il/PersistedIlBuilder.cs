@@ -14,7 +14,7 @@ namespace Shumway.Compiler.Il;
 /// <c>DynamicMethod</c>; this one targets <c>MethodBuilder</c> via
 /// <see cref="PersistedAssemblyBuilder"/> so the IL lives in a .dll
 /// that engines can load with <c>Assembly.Load(bytes)</c>, skipping
-/// the Sigil emission step at load time.
+/// the IL emission step at load time.
 ///
 /// <para>Self-referential IL choice-points (used by multi-clause and
 /// non-leaf single-clause predicates) point at a static
@@ -102,7 +102,7 @@ public static class PersistedIlBuilder
 #if NETFRAMEWORK
         // Framework's native persisted emit: AssemblyBuilder in Save mode —
         // the API PersistedAssemblyBuilder was designed to mirror. Same
-        // TypeBuilder / Sigil BuildMethod / patch-sentinel machinery below;
+        // TypeBuilder / IlEmit.BuildMethod / patch-sentinel machinery below;
         // only the assembly shell and the save differ (disk-only Save, so a
         // per-call temp dir round-trips the bytes).
         string tempDir = Path.Combine(Path.GetTempPath(),
@@ -208,19 +208,13 @@ public static class PersistedIlBuilder
                     calleeMap: probeCalleeMap);
             }
             catch (Exception ex)
-                when (ex is NotSupportedException
-                      || ex.GetType().Namespace?.StartsWith("Sigil") == true)
+                when (ex is NotSupportedException or IlEmitException)
             {
                 IlPredicateCompiler.EndFloatPool(emitPrevPool);
-                // CanPersist accepted this predicate (CanCompile was happy)
-                // but the emit blew up. Most often this is Sigil's verifier
-                // flagging dead-code or stack-mismatch issues in a generated
-                // sequence the predicate compiler hasn't been hardened
-                // against yet.
-                // The runtime IL promotion store would have caught the same
-                // failure and skipped the predicate; do the same here so a
-                // single bad predicate doesn't abort the entire .shum
-                // build.
+                // CanPersist accepted this predicate but the emit failed (an
+                // emitter check, or a construct the IL compiler does not
+                // handle). The runtime promotion store skips such a predicate;
+                // so does the build, rather than abort the whole .shum.
                 System.Console.Error.WriteLine(
                     $"shumway-persisted-il: skipped {functorName} "
                     + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
@@ -416,8 +410,7 @@ public static class PersistedIlBuilder
                 throw new InvalidOperationException(
                     $"Persisted-IL sentinel 0x{s.Sentinel:X8} for "
                     + $"{s.Kind} {s.Name}/{s.Arity} was not located "
-                    + $"in any method body — Sigil may have compacted the "
-                    + $"ldc.i4 or emitted no IL for this site.");
+                    + $"in any method body: no IL was emitted for this site.");
         }
     }
 
@@ -527,16 +520,6 @@ public static class PersistedIlBuilder
     /// <summary>SHUMWAY_PERSIST_SKIP_DUMP=&lt;file&gt; — appends the emit
     /// exception + bytecode of a predicate the persisted-IL build skipped.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
-    // The reflection below reads an optional property off whatever exception
-    // the emitter threw (Sigil carries the IL so far in DebugInstructions).
-    // The trimmer cannot see that type, and it does not need to: the dump is
-    // a developer diagnostic that writes what it finds and skips what it does
-    // not. Without the suppression a browser publish built with SHUMWAY_DIAG
-    // fails trim analysis outright -- and that build is the only place the
-    // tier's counters can be read where performance actually matters.
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming",
-        "IL2075:UnrecognizedReflectionPattern",
-        Justification = "Optional diagnostic property; absence is handled.")]
     private static void DiagDumpSkippedPredicate(
         string functorName, int functorId, CompiledPredicate pred, Exception ex)
     {
@@ -545,9 +528,8 @@ public static class PersistedIlBuilder
         using var w = System.IO.File.AppendText(skipDumpPath);
         w.WriteLine($"=== {functorName} (fid={functorId}) ===");
         w.WriteLine(ex.ToString());
-        if (ex.GetType().GetProperty("DebugInstructions") is { } pi
-            && pi.GetValue(ex) is string instructions)
-            w.WriteLine("---- IL so far ----\n" + instructions);
+        if (ex is IlEmitException { Instructions.Length: > 0 } emitEx)
+            w.WriteLine("---- IL so far ----\n" + emitEx.Instructions);
         w.WriteLine("---- Bytecode ----");
         int q = 0;
         while (q < pred.Bytecode.Length)

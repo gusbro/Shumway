@@ -223,7 +223,7 @@ public static class IlPatchSiteCodec
     /// <summary>Sentinel range used by the emit pipeline. Sentinels are
     /// assigned sequentially starting at <see cref="SentinelBase"/>; any
     /// value &gt;= base and &lt; base+0x10_0000 may be a patch sentinel.
-    /// The range is chosen to be a large positive int (so Sigil emits the
+    /// The range is chosen to be a large positive int (so the emitter uses the
     /// 5-byte long form of <c>ldc.i4</c>) and well outside the typical
     /// atom-id / functor-id range an unpatched bundle would naturally use.</summary>
     public const int SentinelBase = 0x7E000000;

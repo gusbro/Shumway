@@ -10,26 +10,21 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Compiler.Il;
 
 /// <summary>
-/// Diagnostic-only benchmark for the Sigil IL-emit slowdown on
-/// large predicates. Linting Blint.pl with itself surfaces a
-/// 200+ clause <c>parse_args/2</c> whose Sigil emit takes minutes;
-/// the current workaround is the
-/// <see cref="IlPromotionStore.MaxIlPromotionBytecodeBytes"/>
-/// size cap. This test sweeps clause counts and prints the
-/// compile time so we can confirm the scaling shape (super-
-/// linear in clause count) and watch it improve as we replace
-/// the validator.
+/// Diagnostic-only: the IL compile time of a predicate as its clause count
+/// or body length grows, printed per size, to see the scaling shape. The
+/// <see cref="IlPromotionStore.MaxIlPromotionBytecodeBytes"/> cap bounds
+/// what promotion attempts.
 /// </summary>
-public class SigilPerfDiagnostic
+public class IlEmitScalingDiagnostic
 {
     private readonly ITestOutputHelper _output;
-    public SigilPerfDiagnostic(ITestOutputHelper output) { _output = output; }
+    public IlEmitScalingDiagnostic(ITestOutputHelper output) { _output = output; }
 
     // Skip by default — purely diagnostic, runs slow on the
     // bigger sizes. Run via:
-    //   dotnet test ... --filter "FullyQualifiedName~SigilPerfDiagnostic"
+    //   dotnet test ... --filter "FullyQualifiedName~IlEmitScalingDiagnostic"
     //   in a build that comments out the Skip attribute.
-    [Fact(Skip = "diagnostic — bring up locally to measure Sigil compile scaling")]
+    [Fact(Skip = "diagnostic — bring up locally to measure IL compile scaling")]
     public void Compile_TimePerClauseCount_PrintsToOutput()
     {
         // Predicate shape: N facts of arity 1, like `p(0). p(1). ... p(N-1).`
@@ -71,7 +66,7 @@ public class SigilPerfDiagnostic
     // Body-heavy shape: one clause whose body has many call/proceed
     // patterns. Mirrors what Blint's long bodies look like more closely
     // than the indexed-facts variant.
-    [Fact(Skip = "diagnostic — bring up locally to measure Sigil compile scaling")]
+    [Fact(Skip = "diagnostic — bring up locally to measure IL compile scaling")]
     public void Compile_TimePerBodyLength_PrintsToOutput()
     {
         foreach (int n in new[] { 5, 10, 20, 40, 80, 160 })
@@ -79,8 +74,7 @@ public class SigilPerfDiagnostic
             // Single clause p/0 whose body calls q0, q1, ... qN.
             // q* don't need to exist for the predicate-compiler — they
             // resolve to unresolved CallTargets and the IL emitter
-            // still emits real branch / call IL for each, which is
-            // what stresses Sigil's ReturnTracer.
+            // still emits real branch / call IL for each.
             var sb = new StringBuilder();
             sb.Append("p :- ");
             for (int i = 0; i < n; i++)

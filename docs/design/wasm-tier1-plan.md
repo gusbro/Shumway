@@ -27,7 +27,7 @@ What the exploration established (verified in the tree):
   and the ADR-014 IL choice points (`PushIlChoicePoint`, BP=-1, `_ilCpStack`)
   work identically for any producer of delegates. **Zero interpreter
   changes.**
-- **The producer is not abstracted**: `Sigil.Emit<PredicateDelegate>` runs
+- **The producer is not abstracted**: the IL emitter runs
   through ~7k lines. The wasm backend is a fork of the emitter, not a
   retro-abstraction.
 - **The real ABI is ~93 helper calls** (68 `Activation`, 14 `ArithEvalStack`,

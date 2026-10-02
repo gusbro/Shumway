@@ -290,7 +290,7 @@ public static class BundleWriter
     /// .NET assembly containing one static method per IL-eligible
     /// predicate. The resulting .dll bytes embed into the bundle and the
     /// load path uses them to bind <c>PredicateDelegate</c>s without
-    /// re-running the Sigil pipeline at consult time.</summary>
+    /// re-running the IL pipeline at consult time.</summary>
     /// <summary>Builds the shared warm
     /// engine every entry's IL compile resolves against: all bytecode-backed
     /// entries load exactly as the runtime <c>LoadBundle</c> would; legacy

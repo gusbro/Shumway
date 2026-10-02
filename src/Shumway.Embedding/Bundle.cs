@@ -146,7 +146,7 @@ public sealed class BundleArchiveMember
 /// .NET assembly (.dll bytes) emitted by
 /// <c>Shumway.Compiler.Il.PersistedIlBuilder</c>. When present, the load
 /// path resolves each emitted predicate's <c>MethodInfo</c> and binds it
-/// directly as a <c>PredicateDelegate</c>, skipping the Sigil emission
+/// directly as a <c>PredicateDelegate</c>, skipping the IL emission
 /// pass that warms <see cref="PrologEngine.IlPromotion"/> from the
 /// bytecode blob alone.</para></summary>
 public sealed class BundleEntry

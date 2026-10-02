@@ -15,12 +15,12 @@ namespace Shumway.Tests.Embedding;
 /// bundler can emit a .NET assembly (.dll bytes) holding pre-compiled
 /// IL for every IL-eligible predicate; <c>LoadBundle</c> loads the
 /// assembly and binds each method as a <c>PredicateDelegate</c>, so
-/// the engine skips the runtime Sigil emit step entirely.
+/// the engine skips the runtime IL emit step entirely.
 ///
 /// <para>The chunk-71 MVP covers the single-clause-leaf shape (the
 /// same shape <see cref="PersistedIlBuilder.CanPersist"/> filters
 /// on). Multi-clause / meta-CP shapes still fall back to chunk 45's
-/// load-time Sigil path; they're a follow-up extension.</para>
+/// load-time IL emit path; they're a follow-up extension.</para>
 /// </summary>
 public class Chunk71Tests
 {

@@ -28,7 +28,7 @@ interpret bytecode with the interpreter that is itself interpreted.
 The consuming side is already backend-agnostic: `ITier1Dispatcher`, the
 `PredicateDelegate` contract, the phase-16 resume markers, and the ADR-014 IL
 choice points work for any producer of delegates. What was not abstracted is
-the producer (`Sigil.Emit<PredicateDelegate>`), so the wasm backend is a fork
+the producer (the IL emitter), so the wasm backend is a fork
 of the emitter, not a retrofit of the IL one. The heap is a managed `Cell[]`,
 which ADR-042 §2 named as the obstacle to a second module touching engine
 memory; the resolution is that a cell holds only indices, never addresses, so

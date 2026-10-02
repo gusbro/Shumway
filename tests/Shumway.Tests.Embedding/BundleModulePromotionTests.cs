@@ -88,7 +88,7 @@ public sealed class BundleModulePromotionTests
     [Fact]
     public void BundleLoad_IsLazy_AndCompileAllWarmsTheSet()
     {
-        // A t0 bundle (no persisted IL) must not eagerly Sigil-compile its
+        // A t0 bundle (no persisted IL) must not eagerly IL-compile its
         // predicates at load; compile_all front-loads them on demand.
         using var t = new TempDir();
         string root = t.Add("arith.pl",

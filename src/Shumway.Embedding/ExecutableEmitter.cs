@@ -507,7 +507,7 @@ internal static class Program
 
     internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
     {
-        // Every Shumway.*.dll and Sigil.dll alongside the linker is a
+        // Every Shumway.*.dll alongside the linker is a
         // candidate engine dependency. The publish step's reference
         // resolution prunes anything actually unused. On net48 the linker's
         // own directory holds the net48 flavors plus the compatibility
@@ -515,8 +515,6 @@ internal static class Program
         // Framework stub has no NuGet restore to bring them in.
         foreach (string file in Directory.GetFiles(dir, "Shumway.*.dll"))
             yield return file;
-        string sigil = Path.Combine(dir, "Sigil.dll");
-        if (File.Exists(sigil)) yield return sigil;
 #if NETFRAMEWORK
         foreach (string file in Directory.GetFiles(dir, "System.*.dll"))
             yield return file;

@@ -88,7 +88,7 @@ internal static class SmokeNet48Cli
                 == "bcd";
         });
 
-        Check("tier-1 IL promotion (Sigil DynamicMethod on Framework's JIT)", () =>
+        Check("tier-1 IL promotion (DynamicMethod on Framework's JIT)", () =>
         {
             var e = new PrologEngine();
             e.IlPromotion.Threshold = 1;

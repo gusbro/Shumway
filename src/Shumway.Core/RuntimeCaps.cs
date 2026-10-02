@@ -23,7 +23,7 @@ public static class RuntimeCaps
     ///
     /// <para>A <b>feature switch</b>, so a host that will never emit IL can have the
     /// trimmer fold this to a constant and delete the whole Tier-1 subtree — the IL
-    /// compiler and its Sigil dependency included. Set it in the consuming project:
+    /// compiler included. Set it in the consuming project:
     /// <code>&lt;RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
     ///     Value="false" Trim="true" /&gt;</code>
     /// Nothing changes for a normal build: the getter stays an ordinary check, and

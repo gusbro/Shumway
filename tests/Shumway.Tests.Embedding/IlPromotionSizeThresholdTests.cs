@@ -6,13 +6,9 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Coverage for the
 /// <see cref="IlPromotionStore.MaxIlPromotionBytecodeBytes"/>
-/// guard. Sigil's <c>ReturnTracer</c> overflows the default
-/// thread stack and runs super-linearly on predicates with many
-/// branches (Blint.pl's 200-clause <c>parse_args/2</c> is the
-/// canonical case). The threshold parks oversized predicates on
-/// Tier 0 — the interpreter dispatches them linearly. The
-/// long-term plan is to replace Sigil with a linear-validation
-/// emitter and drop the threshold.
+/// guard. The threshold parks oversized predicates on Tier 0, which
+/// bounds what one promotion costs: emission and JIT time grow with
+/// the predicate.
 /// </summary>
 public class IlPromotionSizeThresholdTests
 {

@@ -19,7 +19,7 @@ namespace Shumway.Tests.Embedding;
 /// <para>These tests pin that invariant: a multi-clause predicate
 /// with a non-tail Call to another predicate runs identically
 /// regardless of whether its IL comes from the persisted-assembly
-/// load path or from the runtime Sigil emitter. The chunk-71
+/// load path or from the runtime IL emitter. The chunk-71
 /// existing tests only covered simple facts and head-match shapes
 /// — these add the call-and-return shape that chunk-182 threading
 /// is responsible for.</para>
