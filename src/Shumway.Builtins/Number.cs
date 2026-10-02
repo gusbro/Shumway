@@ -18,7 +18,10 @@ public readonly struct Number : IEquatable<Number>
     public Kind ValueKind { get; }
     public long IntValue { get; }
     public BigInteger BigValue { get; }
-    public double FloatValue { get; }
+    private readonly double _float;   // the Float kind's value
+    /// <summary>The float itself, or the nearest double to an exact value
+    /// (<see cref="AsDouble"/>), computed when asked.</summary>
+    public double FloatValue => ValueKind == Kind.Float ? _float : AsDouble();
     public Rational RatValue { get; }
 
     public bool IsFloat => ValueKind == Kind.Float;
@@ -48,7 +51,7 @@ public readonly struct Number : IEquatable<Number>
             ValueKind = asBig.ValueKind;
             IntValue = asBig.IntValue;
             BigValue = asBig.BigValue;
-            FloatValue = asBig.FloatValue;
+            _float = 0;
             RatValue = default;
         }
         else
@@ -56,7 +59,7 @@ public readonly struct Number : IEquatable<Number>
             ValueKind = Kind.Rat;
             IntValue = 0;
             BigValue = default;
-            FloatValue = rat.ToDouble();
+            _float = 0;
             RatValue = rat;
         }
     }
@@ -71,14 +74,14 @@ public readonly struct Number : IEquatable<Number>
             ValueKind = Kind.Big;
             IntValue = 0;
             BigValue = new BigInteger(intValue);
-            FloatValue = intValue;
+            _float = 0;
         }
         else
         {
             ValueKind = Kind.Int;
             IntValue = intValue;
             BigValue = default;
-            FloatValue = intValue;
+            _float = 0;
         }
         RatValue = default;
     }
@@ -93,14 +96,14 @@ public readonly struct Number : IEquatable<Number>
             ValueKind = Kind.Int;
             IntValue = (long)bigValue;
             BigValue = default;
-            FloatValue = IntValue;
+            _float = 0;
         }
         else
         {
             ValueKind = Kind.Big;
             IntValue = 0;
             BigValue = bigValue;
-            FloatValue = (double)bigValue;
+            _float = 0;
         }
         RatValue = default;
     }
@@ -110,17 +113,16 @@ public readonly struct Number : IEquatable<Number>
         ValueKind = Kind.Float;
         IntValue = 0;
         BigValue = default;
-        FloatValue = floatValue;
+        _float = floatValue;
         RatValue = default;
     }
 
-    /// <summary>The value as a double — exact for integers within
-    /// <see cref="long"/> precision; lossy for BigInteger results that
-    /// don't round-trip through double.</summary>
+    /// <summary>The value as a double: an exact value rounds to the nearest
+    /// double, ties to even, whatever its representation.</summary>
     public double AsDouble() => ValueKind switch
     {
-        Kind.Float => FloatValue,
-        Kind.Big => (double)BigValue,
+        Kind.Float => _float,
+        Kind.Big => DoubleConversion.FromInteger(BigValue),
         Kind.Rat => RatValue.ToDouble(),
         _ => IntValue,
     };
