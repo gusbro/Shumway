@@ -67,10 +67,13 @@ internal static class Coroutining
         '$co_goal'(G) :- call(G).
 
         %! frozen(?Var, -Goal) | Coroutining | Unifies Goal with the conjunction of goals delayed on Var (true when none).
+        % G is bound last, after every cut: binding it wakes the goals frozen
+        % on it, and a cut after that would prune their alternatives (#133).
         frozen(X, G) :-
-            ( var(X), get_attr(X, coroutining, frozen(G0)) -> '$co_unwrap'(G0, G)
-            ; G = true
-            ).
+            ( var(X), get_attr(X, coroutining, frozen(G0)) -> '$co_unwrap'(G0, G1)
+            ; G1 = true
+            ),
+            G = G1.
 
         % The goals as they were written, without the wrapper the store adds.
         '$co_unwrap'(G, Out) :- var(G), !, Out = G.

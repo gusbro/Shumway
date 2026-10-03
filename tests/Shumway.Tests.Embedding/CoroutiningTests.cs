@@ -752,4 +752,44 @@ public class CoroutiningTests
         Assert.False(e.Query("dif(f(X,Y), f(Y,X)), X = Y.").Success);
         Assert.True(e.Query("dif(X, Y), dif(-X, -Y), X = 1, Y = 2.").Success);
     }
+
+    // ===== a binding by a library predicate or builtin (#133) =====
+
+    [Fact]
+    public void Frozen_KeepsTheAlternativesOfTheGoalItsBindingWakes()
+    {
+        // frozen/2 binds Z, which wakes (X=1 ; X=2). X = 2 must backtrack into
+        // the second branch: X = 2, Y = 3, as SWI answers.
+        var e = Co();
+        var sol = e.Query("freeze(X, Y is X+1), freeze(Z, (X=1;X=2)), frozen(X, Z), X = 2.");
+        Assert.True(sol.Success);
+        Assert.Equal("3", sol["Y"]!.ToString());
+        sol = e.Query("freeze(X, Y is X+1), freeze(Z, (X=1;X=2)), frozen(X, Z), X = 1.");
+        Assert.True(sol.Success);
+        Assert.Equal("2", sol["Y"]!.ToString());
+        Assert.True(e.Query("freeze(X, true), freeze(Z, (W=1;W=2)), frozen(X, Z), W = 2.").Success);
+    }
+
+    [Fact]
+    public void TermConstruction_IntoAFrozenVariable_BindsAndWakes()
+    {
+        var e = Co();
+        Assert.True(e.Query("freeze(Z, true), functor(Z, f, 0), Z == f.").Success);
+        Assert.True(e.Query("freeze(Z, W = woke), functor(Z, f, 2), Z = f(_, _), W == woke.").Success);
+        Assert.True(e.Query("freeze(Z, true), Z =.. [f, a], Z == f(a).").Success);
+        Assert.True(e.Query("freeze(Z, true), compound_name_arity(Z, f, 2), Z = f(_, _).").Success);
+        Assert.True(e.Query("freeze(Z, (W = 1 ; W = 2)), functor(Z, f, 0), W = 2.").Success);
+    }
+
+    [Fact]
+    public void TermConstruction_FromFrozenVariables_IsAnInstantiationError()
+    {
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(Z, true), catch((functor(Z, _, _), fail), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "freeze(N, true), catch((functor(_, f, N), fail), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "freeze(Z, true), catch((compound_name_arity(Z, _, 2), fail), error(instantiation_error, _), true).").Success);
+    }
 }
