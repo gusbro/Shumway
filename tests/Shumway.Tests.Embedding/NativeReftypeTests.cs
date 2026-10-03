@@ -211,6 +211,9 @@ public sealed class NativeReftypeTests
         // in-flight compile before reading its side-effect counter.
         Assert.True(e.IlPromotion.WaitForPendingPromotions(),
             "background promotion of go/2 timed out");
+        // Promoted: the compiled code answers (under ADR-061 its continuation
+        // methods reach the embedding layer the blocks call into).
+        Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
         // both reftype blocks inlined into the predicate's IL.
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }

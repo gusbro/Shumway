@@ -845,6 +845,7 @@ public sealed partial class IlPredicateCompiler
                 if (_nativeInline is not null && builtinEntry.Name == "$native_run"
                     && NativeBlockInliner.TryEmit(emit, _nativeInline, regZeroAtom, failLabel))
                 {
+                    if (_cps is { } nc) nc.NativeCode = true;   // ADR-061: see CompileCps
                     System.Threading.Interlocked.Increment(ref NativeBlocksInlined);
                     regZeroAtom = -1;
                     pc += OpcodeTable.Get(op).Size;
@@ -858,6 +859,7 @@ public sealed partial class IlPredicateCompiler
                     && builtinEntry.Name == "fill_par"
                     && NativeBlockInliner.TryEmitFillPar(emit, _nativeInline))
                 {
+                    if (_cps is { } nc) nc.NativeCode = true;
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
@@ -865,6 +867,7 @@ public sealed partial class IlPredicateCompiler
                     && builtinEntry.Name == "reftype_term"
                     && NativeBlockInliner.TryEmitReftypeTerm(emit, _nativeInline, failLabel))
                 {
+                    if (_cps is { } nc) nc.NativeCode = true;
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }

@@ -86,6 +86,8 @@ public sealed partial class IlPredicateCompiler
         // entered from Fail only, with the frame to restore.
         public bool IsAlt;
         public int ColdIlSize;
+        // ADR-024: a native block was inlined.
+        public bool NativeCode;
         // The method's shared register = constant unification.
         public IlLocal? UrcValue, UrcReg, UrcRet, UrcResult;
         public IlLabel? UrcEntry;
@@ -178,6 +180,10 @@ public sealed partial class IlPredicateCompiler
             // Past the JIT's size limits a method compiles without
             // optimization (MinOpts): the predicate stays on its delegate.
             if (ctx.ColdIlSize > CpsMaxIlBytes) return null;
+            // ADR-024: an inlined native block calls into the embedding layer
+            // and the program's interop types, which a collectible assembly
+            // cannot reach; the delegate (a DynamicMethod) can.
+            if (ctx.NativeCode) return null;
             // A method per continuation, the cursor a callee's proceed or a
             // builtin's return enters; the alternatives of the choice points
             // share one, whose cursor is its argument: a method per alternative
