@@ -450,8 +450,8 @@ internal sealed class BundleLoader
     // re-walking every predicate's sites per query is a pure no-op that
     // dominated warm query setup (~2.7 ms per QueryAll on a clpz-sized
     // program). Valid while the persistent buffer, the promotion set (installs
-    // via PromotedCount, evicts via EvictionStamp) and the program stamp are
-    // unchanged; a warm hit reuses the pending-site map, the fid-keyed
+    // via PromotedCount, evicts via EvictionStamp), the continuation methods
+    // (CpsCodeCount) and the program stamp are unchanged; a warm hit reuses the pending-site map, the fid-keyed
     // predicate view and the IL dispatch-table template, and walks only the
     // query overlay's few predicates.
     private sealed class CallSiteRewriteCache
@@ -459,6 +459,7 @@ internal sealed class BundleLoader
         public required byte[]? PersistentRef;
         public required int EvictionStamp;
         public required int PromotedCount;
+        public required int CpsCodeCount;
         public required int ProgramStamp;
         public required Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? PromotableCallSites;
         public required Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PredicateByFid;
@@ -489,6 +490,7 @@ internal sealed class BundleLoader
             && ReferenceEquals(cache.PersistentRef, E._persistentProgram)
             && cache.EvictionStamp == E.IlPromotion.EvictionStamp
             && cache.PromotedCount == E.IlPromotion.PromotedCount
+            && cache.CpsCodeCount == E.IlPromotion.CpsCodeCount
             && cache.ProgramStamp == E._programStamp;
 
         Func<Shumway.Core.Activation, int, bool>?[]? ilTable;
@@ -557,6 +559,7 @@ internal sealed class BundleLoader
             PersistentRef = E._persistentProgram,
             EvictionStamp = E.IlPromotion.EvictionStamp,
             PromotedCount = E.IlPromotion.PromotedCount,
+            CpsCodeCount = E.IlPromotion.CpsCodeCount,
             ProgramStamp = E._programStamp,
             PromotableCallSites = _promotableCallSites,
             PredicateByFid = predicateByFid,

@@ -42,6 +42,11 @@ public sealed class IlPromotionStore
 
     internal IEnumerable<KeyValuePair<int, IlPredicateCompiler.CpsCode>> CpsEntries() => _cpsCode;
 
+    /// <summary>ADR-061: predicates with continuation methods. A table built
+    /// before one arrived routes none of its cold cursors (TableEntry), so a
+    /// table template is valid only while this holds.</summary>
+    internal int CpsCodeCount => _cpsCode.Count;
+
     /// <summary>What the interpreter's tables invoke for <paramref name="functorId"/>:
     /// an entry (cursor 0) goes to the continuation methods when there are any,
     /// an instruction boundary to their cold method (where its wake points
