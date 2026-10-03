@@ -1574,7 +1574,7 @@ public sealed partial class IlPredicateCompiler
         // (The failure exits skip this — the outer restore stub reinstates the
         // clause-entry HB itself.)
         emit.LoadArgument(0);
-        emit.LoadLocal(mHb);
+        emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mHb);
         emit.Call(EngineCommitIlGuardMethod);
     }
 
@@ -1713,7 +1713,7 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        { emit.LoadArgument(0); emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
         emit.Branch(after);
         emit.MarkLabel(rare);
         Sigil.Label? rareNoCp = null;
@@ -1766,7 +1766,7 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfFalse(failLabel);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        { emit.LoadArgument(0); emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
         emit.MarkLabel(after);
 
         emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,

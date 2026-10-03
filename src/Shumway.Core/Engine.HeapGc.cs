@@ -544,8 +544,9 @@ public sealed partial class Activation
             if ((uint)home < (uint)oldTop) GcMarkCell(home);
             if ((uint)oldValue < (uint)oldTop) GcMarkCell(oldValue);
         }
-        foreach (var (_, attrValueIdx, otherIdx, attvarHome) in _pendingWakeups)
+        for (int wi = 0; wi < _pendingWakeups.Count; wi++)
         {
+            var (_, attrValueIdx, otherIdx, attvarHome) = _pendingWakeups[wi];
             if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
             if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
             if ((uint)attvarHome < (uint)oldTop) GcMarkCell(attvarHome);
@@ -697,8 +698,9 @@ public sealed partial class Activation
         }
         Drain();
         int hLog = _gcMarkCount - h0; h0 = _gcMarkCount;
-        foreach (var (_, attrValueIdx, otherIdx, attvarHome) in _pendingWakeups)
+        for (int wi = 0; wi < _pendingWakeups.Count; wi++)
         {
+            var (_, attrValueIdx, otherIdx, attvarHome) = _pendingWakeups[wi];
             if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
             if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
             if ((uint)attvarHome < (uint)oldTop) GcMarkCell(attvarHome);

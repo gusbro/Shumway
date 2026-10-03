@@ -781,6 +781,84 @@ public class CoroutiningTests
         Assert.True(e.Query("freeze(Z, (W = 1 ; W = 2)), functor(Z, f, 0), W = 2.").Success);
     }
 
+    // ===== bounded memory: an attributed variable per step =====
+
+    private const string StepLoop = """
+        step_loop(0, _) :- !.
+        step_loop(N, [_|T]) :- freeze(T, true), N1 is N-1, step_loop(N1, T).
+        step_round(G, B, X) :-
+            freeze(L, true), step_loop(2000, L), garbage_collect,
+            statistics(global_stack, [G, _]),
+            statistics(trail_stack, [B, _]),
+            statistics(cstr_stack, [X, _]).
+        """;
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AttributingAndBindingAVariablePerStep_KeepsTheHeapAndTrailsFlat(int threshold)
+    {
+        // Each round attributes and binds 2000 variables, deterministically.
+        // Nothing of a finished round may survive its garbage_collect: not on
+        // the trails (bindings of variables younger than every choice point,
+        // and what a Tier-1 guard trailed before its commit), and not in the
+        // attribute table (the record of a variable bound untrailed).
+        var e = Co();
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString(StepLoop);
+        for (int i = 0; i < 3; i++) Assert.True(e.Query("step_round(_, _, _).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
+        var sol = e.Query(
+            "step_round(G1, B1, X1), step_round(G2, B2, X2), step_round(G3, B3, X3).");
+        Assert.True(sol.Success);
+        long L(string v) => long.Parse(sol[v]!.ToString()!);
+        // A round allocates about 600 KB; what stays may grow by a few cells.
+        Assert.True(L("G3") - L("G1") < 1024, $"global {L("G1")} -> {L("G3")}");
+        Assert.Equal(L("B1"), L("B3"));
+        Assert.Equal(L("X1"), L("X3"));
+    }
+
+    // ===== a wake whose binding backtracking undid =====
+
+    // Each head binds Z, queueing its wake, and then fails before the queue
+    // drains: the wake must go with the binding.
+    private const string BindThenFailHeads = """
+        stale_v(b(2), 3).
+        stale_x(b(X), X).
+        stale_x(b(2), 3).
+        stale_t(b(X), X).
+        stale_t(d, e).
+        stale_t(b(2), 3).
+        stale_r(Y) :- freeze(Z, true), stale_s(Z, b), Y = one.
+        stale_r(f(A, B, C, D)) :- A = 1, B = 2, C = 3, D = 4.
+        stale_s(3, a).
+        """;
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AHeadThatBindsAFrozenVariableAndFails_LeavesNoWakeBehind(int threshold)
+    {
+        var e = Co();
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString(BindThenFailHeads);
+        string[] queries =
+        {
+            // Z becomes a plain variable again: its promotion is undone too
+            "(freeze(Z, true), stale_v(b(k), Z) ; W = alt), W == alt.",
+            "X = f(Z), (freeze(Z, true), stale_v(b(k), Z) ; W = alt), W == alt.",
+            "(freeze(Z, true), stale_x(b(k), Z), fail ; W = end), W == end.",
+            "findall(Z, (freeze(Z, true), stale_t(b(k), Z)), L), L == [k].",
+            // the next clause builds f/4 over the discarded home of Z
+            "stale_r(Y), Y == f(1, 2, 3, 4).",
+        };
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (string q in queries) Assert.True(e.Query(q).Success, q);
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
+        }
+    }
+
     [Fact]
     public void TermConstruction_FromFrozenVariables_IsAnInstantiationError()
     {

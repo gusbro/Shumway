@@ -522,9 +522,7 @@ public sealed partial class Activation
         if (AttrSweepEnabled) DebugSweepAttrTable("catch_unwind");
         // Wakeups queued by the guarded goal reference heap cells the
         // truncation above just discarded — drop them with it.
-        if (_pendingWakeups.Count > f.SnapPendingWakeups)
-            _pendingWakeups.RemoveRange(
-                f.SnapPendingWakeups, _pendingWakeups.Count - f.SnapPendingWakeups);
+        _pendingWakeups.Truncate(f.SnapPendingWakeups);
         _b = f.SnapB;
         // ADR-033 — drop guard-continuation entries the guarded goal pushed.
         _guardContTop = f.SnapGuardContTop;
@@ -907,6 +905,7 @@ public sealed partial class Activation
         UnwindTrails(bindingTarget, extraTarget);
 
         _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
         if (AttrSweepEnabled) DebugSweepAttrTable("cp_restore");
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
         CurrentViewGen = ctl[8].Payload;           // CpViewGenOffset
