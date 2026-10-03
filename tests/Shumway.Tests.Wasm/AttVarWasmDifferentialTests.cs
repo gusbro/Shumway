@@ -50,6 +50,21 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         stale_b(Y) :- X = h(1, 2, 3, 4), Y = done(X).
         stale_c(N) :- freeze(Z, true), functor(Z, f, 0), N > 1.
         stale_c(N) :- X = h(1, 2, 3, N), X = h(_, _, _, 0).
+        :- public wake_bl/3.
+        :- public wake_pg/2.
+        :- public wake_pq/2.
+        :- public wake_pm/2.
+        wake_bl(X, Z, L) :- X = a, atom_length(Z, L).
+        wake_pg(a, W) :- atom(W), !.
+        wake_pg(_, no).
+        wake_q(a, W) :- atom(W).
+        wake_q(_, 1).
+        wake_pq(X, W) :- wake_q(X, W), !.
+        wake_pq(_, 2).
+        wake_mem(X, [X|_]).
+        wake_mem(X, [_|T]) :- wake_mem(X, T).
+        wake_pm(X, L) :- wake_mem(X, L), !.
+        wake_pm(_, none).
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -90,6 +105,16 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a builtin's wake, then a failure inside the tier: the retry builds over the home" },
         { "stale_c(0).",
           "a builtin's wake, then an inline comparison fails before any wake check" },
+        { "findall(L, (freeze(X, (Z = hello ; Z = hi)), wake_bl(X, Z, L)), Ls).",
+          "a binding, then a builtin: the woken goal runs before it" },
+        { "findall(W, (freeze(X, W = yes), wake_pg(X, W)), Ws).",
+          "a guard's head binds, then a builtin in the guard" },
+        { "findall(W, (freeze(X, wake_mem(W, [1, yes])), wake_pq(X, W)), Ws).",
+          "a guard's callee binds, then a builtin in the callee; the woken goal has alternatives" },
+        { "findall(W, (freeze(X, W = 1), wake_pq(X, W)), Ws).",
+          "a guard's callee binds, the woken goal fails the builtin: the callee's next clause" },
+        { "findall(X, (freeze(X, X \\== a), wake_pm(X, [a, b, c])), Xs).",
+          "memberchk: the woken goal fails at the callee's proceed" },
     };
 
     private static PrologEngine Tier0()
@@ -181,7 +206,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             // the tier, or this compares Tier-0 with Tier-0.
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
-                || goal.Contains("twice(") || goal.Contains("stale_");
+                || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }
