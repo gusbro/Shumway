@@ -1526,6 +1526,7 @@ public sealed partial class IlPredicateCompiler
                         var okLbl = emit.DefineLabel($"gc_ok{lt}_{pc}");
                         int okCur = guardContCtx.AllocCursor(okLbl);
                         int failCur = guardContCtx.AllocCursor(failLabel);
+                        RegisterContSite(guardContCtx, okCur, pc + OpcodeTable.Get(op).Size);   // ADR-049
                         emit.LoadArgument(0);
                         emit.LoadConstant((okCur << 16) | failCur);
                         EmitHelperCall(emit, EnginePushGuardContMethod);
@@ -1579,8 +1580,7 @@ public sealed partial class IlPredicateCompiler
                     // caller's (both pc spaces start at 0) — salt per site.
                     var leafScope = PushScope(new LeafScope
                     {
-                        Code = calleePred.BytecodeUnfused, End = calleePred.BytecodeUnfused.Length,
-                        CalleeMap = calleeMap, CallerPcAfter = pc + OpcodeTable.Get(op).Size,
+                        Callee = calleePred, CallerPcAfter = pc + OpcodeTable.Get(op).Size,
                     });
                     EmitClauseBody(emit, calleePred.BytecodeUnfused, 0, calleePred.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
@@ -2548,11 +2548,7 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(failLabel);
                     },
                     dynamicCursor: LoadNext,
-                    emitCopySlice: (s, e, fl, salt) => EmitClauseBody(
-                        emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
-                        emitSelfDelegate: effectiveSelf, calleeMap: calleeMap, cursorBase: callBase,
-                        selfFunctorId: predicate.FunctorId, forceLeafRuleInline: true,
-                        localSalt: salt, guardContCtx: gcCtx));
+                    wakeDeopt: !predicate.IsDynamicSnapshot);
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

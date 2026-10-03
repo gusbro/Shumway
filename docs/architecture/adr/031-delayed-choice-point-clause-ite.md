@@ -80,8 +80,8 @@ ISO 277.
   nothing. This is the "delayed choice point" in its purest form.
   With continuation methods a wake point inside the prefix, or at the
   proceed of a fail-direct callee with clauses left, pushes it the same way,
-  with the callee's own choice point over it, and continues in a copy of the
-  rest compiled as an ordinary clause (ADR-049 point 10).
+  with the callee's own choice point over it, and the interpreter runs the
+  rest of the activation from there (ADR-049 point 10).
 - **Gate lever:** `IlPredicateCompiler.CpFreeGuardCommit`
   (`SHUMWAY_CPFREE_GUARD=0` disables) — the A/B was run with the same binary.
 - **Tier-0 unchanged** (measured flat, as expected — the CP cost being

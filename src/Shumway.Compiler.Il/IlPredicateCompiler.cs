@@ -106,7 +106,7 @@ public sealed partial class IlPredicateCompiler
     /// every compile site so the dump covers them all.</summary>
     private PredicateDelegate FinishEmit(IlEmit emit, string header)
     {
-        EmitWakeCopies(emit);      // ADR-049
+        EmitWakeAlternatives(emit); // ADR-049
         EmitWakeDispatch(emit);
         EmitResumeEntries(emit);   // ADR-061
         if (TryFinishCps(emit, header, out var cpsBase)) return cpsBase;   // ADR-061

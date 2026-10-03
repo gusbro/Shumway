@@ -774,20 +774,29 @@ public class Adr031BindingGuardTests
         // the visiting set rejects the cycle (describe-level check; running
         // it would loop). Under continuations the same tail cycle is accepted
         // (see Adr033_TailCycle_AcceptedByDescribe_UnderContinuations).
-        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
-        var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
-            "ma(X):-mb(X).").ReadAll().ToList());
-        var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
-            "mb(X):-ma(X).").ReadAll().ToList());
-        var map = new System.Collections.Generic.Dictionary<
-            int, Shumway.Compiler.Wam.CompiledPredicate>
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = false;
+        try
         {
-            [ma.FunctorId] = ma,
-            [mb.FunctorId] = mb,
-        };
-        Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
-            ma, map, out _, out var rej));
-        Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+            var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+            var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+                "ma(X):-mb(X).").ReadAll().ToList());
+            var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+                "mb(X):-ma(X).").ReadAll().ToList());
+            var map = new System.Collections.Generic.Dictionary<
+                int, Shumway.Compiler.Wam.CompiledPredicate>
+            {
+                [ma.FunctorId] = ma,
+                [mb.FunctorId] = mb,
+            };
+            Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                ma, map, out _, out var rej));
+            Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
     }
 
     [Fact]

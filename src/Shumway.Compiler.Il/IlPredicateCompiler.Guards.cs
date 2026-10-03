@@ -254,6 +254,14 @@ public sealed partial class IlPredicateCompiler
         public readonly List<CompiledPredicate> PendingCallees = new();
         public IlLabel? FailEpilogue;
         public IlLabel? OkEpilogue;
+        /// <summary>ADR-049: the sites that push a pair, by OK cursor; the
+        /// routine a wake inside a copy branches to, with what it returns by;
+        /// and why a site makes such a wake uncompilable, if one does.</summary>
+        public readonly Dictionary<int, ContSite> Sites = new();
+        public IlLabel? WakeLevels;
+        public IlLocal? WakeFrame, WakeReturn;
+        public readonly List<IlLabel> WakeReturns = new();
+        public string? Unusable;
         public int AllocCursor(IlLabel label)
         {
             ContLabels.Add(label);
@@ -297,9 +305,10 @@ public sealed partial class IlPredicateCompiler
             // Deterministic re-describe (the call site already validated it).
             TryDescribeFailDirectCallee(callee, calleeMap, out var cls, out _);
             EmitFailDirectCalleeInline(emit, callee, cls!, ctx.FailEpilogue,
-                calleeMap, $"_gcc{callee.FunctorId}", ctx);
+                calleeMap, $"_gcc{callee.FunctorId}", ctx, sharedCopy: true);
             emit.Branch(ctx.OkEpilogue);
         }
+        EmitWakeLevels(emit, ctx);   // ADR-049
         var targets = ctx.ContLabels.ToArray();
         emit.MarkLabel(ctx.OkEpilogue);
         emit.LoadArgument(0);
@@ -439,8 +448,8 @@ public sealed partial class IlPredicateCompiler
         // point so both orders (mutate-then-call, call-then-mutate) reject.
         bool AcceptEmbeddedDynamics()
         {
-            // ADR-049: a woken goal can mutate what the guard inlines, and the
-            // copy a wake continues in has no staleness test.
+            // ADR-049: a woken goal can mutate what the guard inlines, and a
+            // wake hands the rest to bytecode that a snapshot does not have.
             if (WakePoints && extras.DynFids is { Count: > 0 })
             {
                 CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
@@ -1440,7 +1449,7 @@ public sealed partial class IlPredicateCompiler
         IlEmit emit, CompiledPredicate callee,
         List<FailDirectClause> fdClauses, IlLabel outerFail,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt,
-        GuardContEmitContext? gcCtx = null, int callerPcAfter = -1)
+        GuardContEmitContext? gcCtx = null, int callerPcAfter = -1, bool sharedCopy = false)
     {
         using var cpsOpaque = CpsOpaque();   // ADR-061: state in IL locals
         int arity = callee.Arity;
@@ -1491,15 +1500,15 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
         // ADR-049: a wake inside pushes the choice point this chain skips.
         ChainScope? chainScope = null;
-        if (WakePoints && callerPcAfter >= 0)
+        if (WakePoints && (callerPcAfter >= 0 || sharedCopy))
         {
             var mE = emit.DeclareLocal<int>($"fd_e{salt}");
             emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(mE);
             chainScope = PushScope(new ChainScope
             {
-                Callee = callee, Clauses = fdClauses, CalleeMap = calleeMap,
+                Callee = callee, Clauses = fdClauses,
                 ArgSaves = argSaves, Bt = mBt, Xt = mXt, H = mH, E = mE,
-                CallerPcAfter = callerPcAfter,
+                CallerPcAfter = callerPcAfter, Shared = sharedCopy ? gcCtx : null,
             });
         }
 
@@ -1678,7 +1687,7 @@ public sealed partial class IlPredicateCompiler
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
         Action<IlEmit>? dynamicCursor = null,
-        Action<int, int, IlLabel, string>? emitCopySlice = null)
+        bool? wakeDeopt = null)
     {
         // ADR-061: in a continuation method the guard's marks live in the
         // activation (the indexed buckets' next node too), so the cold method
@@ -1823,17 +1832,15 @@ public sealed partial class IlPredicateCompiler
             if (noCp is not null) emit.MarkLabel(noCp);
         }
 
-        // ADR-049: a wake point in the prefix continues, materialized, in a copy
-        // of the rest of the prefix (EmitScopedWakePoint).
-        GuardScope? guardScope = WakePoints && emitCopySlice is not null
+        // ADR-049: a wake point in the prefix pushes the skipped choice point
+        // and hands the activation to the interpreter (EmitScopedWakePoint).
+        // wakeDeopt: whether the predicate runs from its bytecode's address.
+        GuardScope? guardScope = WakePoints && wakeDeopt is { } hasBytecode
             ? PushScope(new GuardScope
             {
                 MaterializeCp = EmitMaterializeCp,
                 Opaque = !cpsFields,
-                EmitCopySlice = emitCopySlice,
-                CutEnd = g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
-                AfterCommit = after,
-                FailLabel = failLabel,
+                HasBytecode = hasBytecode,
             })
             : null;
         emitSlice(clauseStart, g.CutPc, guardFail);         // head/guard prefix

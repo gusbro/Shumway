@@ -22,13 +22,13 @@ public sealed partial class IlPredicateCompiler
     private static bool WakePoints => CpsMode && !DebugMode && _persistPatches is null;
 
     // A delegate's wake points, in cursor order, and the dispatch its cursor
-    // switch falls through to; the copies of the CP-free constructs a wake
-    // left, emitted after the method's code.
+    // switch falls through to; the alternatives of the choice points a wake
+    // pushed, emitted after the method's code.
     private sealed class WakeState
     {
         public readonly List<IlLabel> Labels = new();
         public IlLabel? Dispatch;
-        public readonly List<Action> Copies = new();
+        public readonly List<Action> Alternatives = new();
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IlEmit, WakeState> WakeStates = new();
@@ -48,64 +48,100 @@ public sealed partial class IlPredicateCompiler
     // valid inside one.
     [ThreadStatic] private static int _opaqueDepth;
 
-    /// <summary>A construct compiled inline whose rest a wake inside it
-    /// continues in a copy, compiled as ordinary code: a CP-free guard
-    /// (ADR-031), a fail-direct chain in it, a callee inlined in either.</summary>
-    private abstract class InlineScope
+    /// <summary>A construct compiled inline that a wake inside it leaves for
+    /// the interpreter: a CP-free guard (ADR-031), a fail-direct chain in it,
+    /// a callee inlined in either.</summary>
+    internal abstract class InlineScope
     {
         public InlineScope? Outer;
-        /// <summary>Where the outer construct continues once this one is done.</summary>
+        /// <summary>For an inlined callee, the pc after its call site in the
+        /// outer construct's code: where the callee returns.</summary>
         public int CallerPcAfter;
     }
 
-    /// <summary>A CP-free guard's prefix. In a copy, the guard whose choice
-    /// point is already pushed (<see cref="MaterializeCp"/> null).</summary>
-    private sealed class GuardScope : InlineScope
+    /// <summary>A CP-free guard's prefix, and the push of the choice point it
+    /// skipped.</summary>
+    internal sealed class GuardScope : InlineScope
     {
-        public Action? MaterializeCp;
+        public required Action MaterializeCp;
         /// <summary>Its state is in IL locals (CpsOpaque); a guard whose marks
         /// are in the activation's fields is not (ADR-061).</summary>
         public bool Opaque;
-        public required Action<int, int, IlLabel, string> EmitCopySlice;
-        public required int CutEnd;
-        public required IlLabel AfterCommit;
-        public required IlLabel FailLabel;
+        /// <summary>The predicate runs from its bytecode's address; a dynamic
+        /// predicate's snapshot does not.</summary>
+        public bool HasBytecode;
     }
 
-    /// <summary>A callee inlined at a call site: its code and where its body ends.</summary>
-    private sealed class LeafScope : InlineScope
+    /// <summary>A callee inlined at a call site.</summary>
+    internal sealed class LeafScope : InlineScope
     {
-        public required byte[] Code;
-        public required int End;
-        public required IReadOnlyDictionary<int, CompiledPredicate>? CalleeMap;
+        public required CompiledPredicate Callee;
     }
 
     /// <summary>A fail-direct callee inlined as a chain of alternatives
     /// without a choice point, and the clause being emitted.</summary>
-    private sealed class ChainScope : InlineScope
+    internal sealed class ChainScope : InlineScope
     {
         public required CompiledPredicate Callee;
         public required List<FailDirectClause> Clauses;
-        public required IReadOnlyDictionary<int, CompiledPredicate>? CalleeMap;
         public required IlLocal[] ArgSaves;
         public required IlLocal Bt, Xt, H, E;
         public int Clause;
         public bool PreCut;
+        /// <summary>ADR-033: the method's one copy of the callee, entered from
+        /// call sites that pushed a continuation pair; what is outside it is
+        /// known only from that stack.</summary>
+        public GuardContEmitContext? Shared;
     }
 
-    /// <summary>In a copy, a fail-direct callee's clause compiled as ordinary
-    /// code, its choice point already pushed: a wake in a chain nested in it
-    /// continues with the rest of this clause and then joins the copy that
-    /// holds the callee's remaining clauses.</summary>
-    private sealed class ChainRestScope : InlineScope
+    /// <summary>ADR-049: a call site that pushes a continuation pair for a
+    /// shared copy, and what a wake inside the copy needs of it: where the
+    /// callee returns, and the guard or the copy the site is in, at the site.</summary>
+    internal sealed class ContSite
     {
-        public required CompiledPredicate Callee;
-        public required List<FailDirectClause> Clauses;
-        public required FailDirectClause Clause;
-        public required IReadOnlyDictionary<int, CompiledPredicate>? CalleeMap;
-        public required IlLabel Join;
-        public required IlLabel Entry;
-        public required IlLabel FailLabel;
+        public required int ContainerFid;
+        public required int CallerPcAfter;
+        public GuardScope? Guard;
+        public ChainScope? Chain;
+        public int Clause;
+        public bool PreCut;
+        public bool Allocated;
+        public int Slot;
+    }
+
+    /// <summary>ADR-049: records a site that pushes a continuation pair. A site
+    /// whose construct a wake could not leave makes the method's wakes in
+    /// shared copies uncompilable.</summary>
+    private static void RegisterContSite(GuardContEmitContext ctx, int okCursor, int pcAfter)
+    {
+        if (!WakePoints) return;
+        switch (_scope)
+        {
+            case GuardScope { HasBytecode: true } g:
+                ctx.Sites[okCursor] = new ContSite
+                {
+                    ContainerFid = _emitOwnerFid, CallerPcAfter = pcAfter, Guard = g,
+                };
+                return;
+            case ChainScope { Shared: not null } c when !c.Callee.IsDynamicSnapshot:
+                try
+                {
+                    var (allocated, slot) = FrameState(c.Callee.BytecodeUnfused, c.Clauses[c.Clause].Start, pcAfter);
+                    ctx.Sites[okCursor] = new ContSite
+                    {
+                        ContainerFid = c.Callee.FunctorId, CallerPcAfter = pcAfter, Chain = c,
+                        Clause = c.Clause, PreCut = c.PreCut, Allocated = allocated, Slot = slot,
+                    };
+                }
+                catch (NotSupportedException ex)
+                {
+                    ctx.Unusable ??= ex.Message;
+                }
+                return;
+            default:
+                ctx.Unusable ??= "ADR-049: a shared copy called from outside a guard or a shared copy.";
+                return;
+        }
     }
 
     [ThreadStatic] private static InlineScope? _scope;
@@ -132,25 +168,21 @@ public sealed partial class IlPredicateCompiler
     [ThreadStatic] private static int _arithDepth;
 
     /// <summary>Inside a CP-free construct whose choice point a wake has to
-    /// push (a guard not yet materialized, a fail-direct chain).</summary>
+    /// push.</summary>
     private static bool InsideCpFreeConstruct()
     {
         for (var f = _scope; f is not null; f = f.Outer)
-        {
-            if (f is ChainScope) return true;
-            if (f is GuardScope g) return g.MaterializeCp is not null;
-            if (f is ChainRestScope) return false;
-        }
+            if (f is ChainScope or GuardScope) return true;
         return false;
     }
 
-    /// <summary>After a method's code: the copies its wakes asked for, each of
-    /// which may ask for more.</summary>
-    private static void EmitWakeCopies(IlEmit emit)
+    /// <summary>After a method's code: the alternatives its wakes pushed, each
+    /// of which may push the next.</summary>
+    private static void EmitWakeAlternatives(IlEmit emit)
     {
         if (!WakeStates.TryGetValue(emit, out var s)) return;
-        for (int i = 0; i < s.Copies.Count; i++) s.Copies[i]();
-        s.Copies.Clear();
+        for (int i = 0; i < s.Alternatives.Count; i++) s.Alternatives[i]();
+        s.Alternatives.Clear();
     }
 
     /// <summary>Where a delegate's cursor switch falls through, and at a leaf's
@@ -220,10 +252,8 @@ public sealed partial class IlPredicateCompiler
             return;
         }
         // In a hot method, a guard whose marks are in the fields leaves for the
-        // cold method at this boundary, which pushes the guard's choice point:
-        // the hot method stays free of calls that return (ADR-061 item 6). It
-        // reserves the boundary the cold method's copy takes.
-        bool coldCopies = InsideCpFreeConstruct();
+        // cold method at this boundary, where the point is scoped: the hot
+        // method stays free of calls that return (ADR-061 item 6).
         int cursor;
         if (_cps is { } c)
         {
@@ -257,7 +287,6 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(true);   // armed: the dispatch loop runs the driver from P
         EmitReturn(emit);
         emit.MarkLabel(goOn);
-        if (coldCopies) ReserveReentry(emit, out _);
     }
 
     /// <summary>The operands an arithmetic goal starting at <paramref name="pc"/>
@@ -339,256 +368,473 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>A wake point inside a CP-free guard's prefix: at the guard's
     /// level, in fail-direct chains inlined there (one in another), or in a
-    /// callee inlined in any of them. Something pending: the choice points
-    /// the constructs skipped are pushed now, outermost first (sound anywhere
-    /// in them: each raised HB at its entry, so every binding it made is
-    /// trailed), and execution continues in a copy of their rests compiled as
-    /// ordinary code, innermost first, where this point is an ordinary wake
-    /// point. A hot method reaches the cold method's copy through a boundary
-    /// reserved here, at the same number in every method. A nesting with no
-    /// copy is not compiled: the predicate stays on Tier-0.</summary>
+    /// callee inlined in any of them. Something pending: the machine is made
+    /// Tier-0's at this point and the interpreter runs the rest of the
+    /// activation from it, waking there. The choice points the constructs
+    /// skipped are pushed, outermost first (sound anywhere in them: each
+    /// raised HB at its entry, so every binding it made is trailed); each
+    /// inlined callee returns after its call site, and the cut level its
+    /// clause took is the choice point below its own. A chain's later clauses
+    /// are alternatives that run in the callee's bytecode. A nesting that
+    /// does not end in a guard, or one with no bytecode to run, is not
+    /// compiled: the predicate stays on Tier-0.</summary>
     private static void EmitScopedWakePoint(IlEmit emit, int pc)
     {
-        // Innermost first, up to the construct whose rest ends the copy.
-        var frames = new List<InlineScope>();
+        // The inlined callees, outermost first, and the guard around them, or
+        // the shared copy whose callers the continuation stack names.
+        var levels = new List<InlineScope>();
+        GuardScope? guard = null;
+        GuardContEmitContext? shared = null;
         int opaque = 0;
-        for (var f = _scope; ; f = f.Outer)
+        for (var f = _scope; f is not null; f = f.Outer)
         {
-            if (f is null)
-                throw new NotSupportedException("ADR-049: a wake point inside a construct with no copy.");
-            frames.Add(f);
-            if (f is ChainScope)
+            if (f is GuardScope g)
+            {
+                guard = g;
+                if (g.Opaque) opaque++;
+                break;
+            }
+            if (f is ChainScope c)
             {
                 opaque++;
                 if (!WamCps)
                     throw new NotSupportedException("ADR-049: a chain's late choice point needs WAM choice points.");
             }
-            if (f is GuardScope { MaterializeCp: not null, Opaque: true }) opaque++;
-            if (f is GuardScope or ChainRestScope) break;
+            levels.Insert(0, f);
+            if (f is ChainScope { Shared: { } ctx })
+            {
+                shared = ctx;
+                break;
+            }
         }
-        if (opaque != _opaqueDepth)
-            throw new NotSupportedException("ADR-049: a wake point inside a construct with no copy.");
-        var fail = frames[^1] switch
+        if ((guard is null && shared is null) || opaque != _opaqueDepth)
+            throw new NotSupportedException("ADR-049: a wake point inside a construct with no guard.");
+        if (guard is { HasBytecode: false })
+            throw new NotSupportedException("ADR-049: a wake point in a snapshot's guard.");
+        int n = levels.Count;
+        var fids = new int[n];
+        var allocated = new bool[n];
+        var slots = new int[n];
+        for (int i = 0; i < n; i++)
         {
-            GuardScope g => g.FailLabel,
-            ChainRestScope r => r.FailLabel,
-            _ => throw new InvalidOperationException(),
-        };
+            var (callee, start) = levels[i] switch
+            {
+                ChainScope c => (c.Callee, c.Clauses[c.Clause].Start),
+                LeafScope l => (l.Callee, 0),
+                _ => throw new InvalidOperationException(),
+            };
+            if (callee.IsDynamicSnapshot)
+                throw new NotSupportedException("ADR-049: a wake point in an inlined snapshot.");
+            fids[i] = callee.FunctorId;
+            int at = i + 1 < n ? levels[i + 1].CallerPcAfter : pc;
+            (allocated[i], slots[i]) = FrameState(callee.BytecodeUnfused, start, at);
+        }
 
         var skip = emit.DefineLabel($"swake_skip_{NextLabelSeq()}");
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
         emit.BranchIfFalse(skip);
-        // Outermost first: each choice point goes over the ones outside it.
-        var chains = new Dictionary<ChainScope, (int Clause, bool CpPushed, IlLabel? FirstAlt, int FirstAltCursor)>();
-        for (int i = frames.Count - 1; i >= 0; i--)
+        // The frames the callees allocated, innermost first from E.
+        var env = new IlLocal?[n];
+        IlLocal? inner = null;
+        for (int i = n - 1; i >= 0; i--)
         {
-            if (frames[i] is GuardScope { MaterializeCp: { } materialize }) materialize();
-            if (frames[i] is not ChainScope chain) continue;
-            bool cpPushed = false;
-            IlLabel? firstAlt = null;
-            int altCursor = -1;
-            if (chain.PreCut)
+            if (!allocated[i]) continue;
+            emit.LoadArgument(0);
+            if (inner is null)
+            {
+                EmitHelperCall(emit, EngineEGetter);
+            }
+            else
+            {
+                emit.LoadLocal(inner);
+                EmitHelperCall(emit, EngineEnvPrevMethod);
+            }
+            env[i] = inner = emit.DeclareLocal<int>($"swake_e{i}_{NextLabelSeq()}");
+            emit.StoreLocal(inner);
+        }
+        if (shared is not null)
+        {
+            // The levels outside the copy, from the continuation stack; the
+            // copy returns where the CP register then says.
+            shared.WakeFrame ??= emit.DeclareLocal<int>("wake_frame");
+            shared.WakeReturn ??= emit.DeclareLocal<int>("wake_return");
+            shared.WakeLevels ??= emit.DefineLabel("wake_levels");
+            emit.LoadArgument(0);
+            if (inner is null)
+            {
+                EmitHelperCall(emit, EngineEGetter);
+            }
+            else
+            {
+                emit.LoadLocal(inner);
+                EmitHelperCall(emit, EngineEnvPrevMethod);
+            }
+            emit.StoreLocal(shared.WakeFrame);
+            var back = emit.DefineLabel($"swake_back_{NextLabelSeq()}");
+            emit.LoadConstant(shared.WakeReturns.Count);
+            shared.WakeReturns.Add(back);
+            emit.StoreLocal(shared.WakeReturn);
+            emit.Branch(shared.WakeLevels);
+            emit.MarkLabel(back);
+        }
+        else
+        {
+            // Outermost first: each choice point goes over the ones outside it.
+            guard!.MaterializeCp();
+        }
+        for (int i = 0; i < n; i++)
+        {
+            var cont = emit.DeclareLocal<int>($"swake_cp{i}_{NextLabelSeq()}");
+            emit.LoadArgument(0);
+            if (i == 0 && shared is not null)
+            {
+                EmitHelperCall(emit, EngineCpGetter);
+            }
+            else
+            {
+                EmitFunctorId(emit, i == 0 ? _emitOwnerFid : fids[i - 1]);
+                emit.LoadConstant(levels[i].CallerPcAfter);
+                EmitHelperCall(emit, EngineCodeAddressOfMethod);
+            }
+            emit.StoreLocal(cont);
+            emit.LoadArgument(0);
+            emit.LoadLocal(cont);
+            EmitHelperCall(emit, EngineSetCpMethod);
+            var chain = levels[i] as ChainScope;
+            if (chain is { PreCut: true })
             {
                 // The callee's neck cut prunes to here: what is on top now.
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineBGetter);
                 EmitHelperCall(emit, EngineSetB0Method);
-                if (chain.Clause < chain.Clauses.Count - 1)
-                {
-                    cpPushed = true;
-                    altCursor = ReserveReentry(emit, out firstAlt);
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(chain.Callee.Arity);
-                    EmitResumeMarker(emit, _emitOwnerFid, altCursor);
-                    emit.LoadLocal(chain.Bt);
-                    emit.LoadLocal(chain.Xt);
-                    emit.LoadLocal(chain.H);
-                    emit.LoadLocal(chain.E);
-                    EmitHelperCall(emit, EnginePushLateChoicePointMethod);
-                    for (int r = 0; r < chain.Callee.Arity; r++)
-                    {
-                        emit.LoadArgument(0);
-                        emit.LoadConstant(r);
-                        emit.LoadLocal(chain.ArgSaves[r]);
-                        EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
-                    }
-                }
             }
-            chains[chain] = (chain.Clause, cpPushed, firstAlt, altCursor);
+            if (env[i] is { } e)
+            {
+                emit.LoadArgument(0);
+                emit.LoadLocal(e);
+                emit.LoadLocal(cont);
+                emit.LoadConstant(slots[i]);
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineRetargetFrameMethod);
+            }
+            if (chain is { PreCut: true } && chain.Clause < chain.Clauses.Count - 1)
+                EmitLateChoicePoint(emit, chain, chain.Clause);
         }
-
-        IlLabel? copy;
-        if (_cps is { Cold: false })
-        {
-            ReserveReentry(emit, out _);
-            EmitColdExitTo(emit, _cps.Boundary - 1);
-            copy = null;
-        }
-        else if (_cps is not null)
-        {
-            ReserveReentry(emit, out copy);
-            emit.Branch(copy!);
-        }
-        else
-        {
-            copy = emit.DefineLabel($"swake_copy_{NextLabelSeq()}");
-            emit.Branch(copy);
-        }
+        emit.LoadArgument(0);
+        EmitFunctorId(emit, n == 0 ? _emitOwnerFid : fids[n - 1]);
+        emit.LoadConstant(pc);
+        EmitHelperCall(emit, EngineDeoptToMethod);
+        EmitReturn(emit);
         emit.MarkLabel(skip);
-        if (copy is not { } copyLabel) return;
+    }
 
-        WakeStateOf(emit).Copies.Add(() =>
+    /// <summary>Whether a clause's code from <paramref name="start"/> up to
+    /// <paramref name="at"/> leaves a frame allocated, and the Y slot of the
+    /// cut level it took (-1 for none).</summary>
+    private static (bool Allocated, int LevelSlot) FrameState(byte[] code, int start, int at)
+    {
+        bool allocated = false;
+        int slot = -1;
+        for (int p = start; p < at;)
         {
-            emit.MarkLabel(copyLabel);
-            string salt = $"_wc{NextLabelSeq()}";
-            int at = pc;
-            foreach (var f in frames)
+            var op = (Opcode)code[p];
+            if (op == Opcode.Meta) { p += 6; continue; }
+            switch (op)
             {
-                switch (f)
-                {
-                    case LeafScope leaf:
-                        EmitClauseBody(emit, leaf.Code, at, leaf.End, fail, Array.Empty<CallSite>(),
-                            calleeMap: leaf.CalleeMap, suppressProceedReturn: true, localSalt: salt + "l");
-                        break;
-                    case ChainScope chain:
-                        var (clause, cpPushed, firstAlt, altCursor) = chains[chain];
-                        EmitChainRest(emit, chain, clause, at, cpPushed, firstAlt, altCursor, fail, salt);
-                        break;
-                    case ChainRestScope rest:
-                        EmitChainClause(emit, rest.Callee, rest.Clauses, rest.Clause, rest.CalleeMap,
-                            at, rest.Join, rest.Entry, fail, salt + "r");
-                        return;
-                    case GuardScope guard:
-                        EmitGuardRest(emit, guard, at, salt);
-                        return;
-                }
-                at = f.CallerPcAfter;
-                salt += "o";
+                case Opcode.Allocate:
+                    allocated = true;
+                    break;
+                case Opcode.AllocateGetLevel:
+                    allocated = true;
+                    slot = BytecodeIO.ReadInt32(code, p + 5);
+                    break;
+                case Opcode.GetLevel:
+                    slot = BytecodeIO.ReadInt32(code, p + 1);
+                    break;
+                case Opcode.GetLevelB:
+                    // An if-then-else barrier taken without the choice points
+                    // pushed now would sit below them.
+                    throw new NotSupportedException("ADR-049: a wake point after an if-then-else barrier in an inlined callee.");
+                case Opcode.Deallocate:
+                    allocated = false;
+                    slot = -1;
+                    break;
             }
-        });
-    }
-
-    /// <summary>A guard's prefix from <paramref name="pc"/> to its cut, its
-    /// choice point pushed: an ordinary clause, whose cut is a real cut; then
-    /// the code after the commit.</summary>
-    private static void EmitGuardRest(IlEmit emit, GuardScope guard, int pc, string salt)
-    {
-        var pushed = PushScope(new GuardScope
-        {
-            EmitCopySlice = guard.EmitCopySlice, CutEnd = guard.CutEnd,
-            AfterCommit = guard.AfterCommit, FailLabel = guard.FailLabel,
-        });
-        guard.EmitCopySlice(pc, guard.CutEnd, guard.FailLabel, salt);
-        PopScope(pushed);
-        emit.Branch(guard.AfterCommit);
-    }
-
-    /// <summary>A fail-direct callee's clause from <paramref name="pc"/> as
-    /// ordinary code, then a branch to <paramref name="join"/>; its tail call
-    /// to itself branches to <paramref name="entry"/>, the callee compiled as
-    /// an ordinary predicate (EmitChainRest).</summary>
-    private static void EmitChainClause(IlEmit emit, CompiledPredicate callee,
-        List<FailDirectClause> clauses, FailDirectClause cl,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, int pc,
-        IlLabel join, IlLabel entry, IlLabel fail, string salt)
-    {
-        if (cl.CrossTailFid >= 0)
-            throw new NotSupportedException("ADR-049: a wake point inside a fail-direct chain with a cross tail call.");
-        var context = PushScope(new ChainRestScope
-        {
-            Callee = callee, Clauses = clauses, Clause = cl, CalleeMap = calleeMap,
-            Join = join, Entry = entry, FailLabel = fail,
-        });
-        EmitClauseBody(emit, callee.BytecodeUnfused, pc, cl.TermPc, fail, callee.CallSites,
-            calleeMap: calleeMap, suppressProceedReturn: true,
-            forceLeafRuleInline: true, localSalt: salt);
-        PopScope(context);
-        if (cl.SelfTail)
-        {
-            // The staging and the deallocate ran in the slice.
-            emit.Branch(entry);
-            return;
+            int size = OpcodeTable.Get(op).Size;
+            if (size <= 0) throw new InvalidOperationException($"ADR-049: no size for {op} at {p}.");
+            p += size;
         }
-        if (cl.DeallocProceed)
+        return (allocated, slot);
+    }
+
+    /// <summary>ADR-049: after a method's shared copies, the levels a wake
+    /// inside one has outside it. The continuation stack holds a pair per
+    /// active copy, down to the one the guard's call site pushed; its OK
+    /// cursor names the site. The guard's choice point is pushed, then each
+    /// copy's, outermost first (a copy's level is the clause that holds the
+    /// next site up), each copy returning after the site that called it; the
+    /// guard's pairs are dropped, and the wake goes on with the copy it is in.</summary>
+    private static void EmitWakeLevels(IlEmit emit, GuardContEmitContext ctx)
+    {
+        if (ctx.WakeLevels is not { } start) return;
+        if (ctx.Unusable is { } why) throw new NotSupportedException(why);
+        System.Threading.Interlocked.Increment(ref WakeLevelRoutines);
+        string salt = $"_wl{NextLabelSeq()}";
+        var top = emit.DeclareLocal<int>($"wl_top{salt}");
+        var g = emit.DeclareLocal<int>($"wl_g{salt}");
+        var j = emit.DeclareLocal<int>($"wl_j{salt}");
+        var frames = emit.DeclareLocal<int[]>($"wl_frames{salt}");
+        var cont = emit.DeclareLocal<int>($"wl_cont{salt}");
+        int cursors = ctx.ContLabels.Count;
+        // A switch over the OK cursors: the sites mapped by pick, the rest to
+        // the next instruction.
+        IlLabel[] Table(Func<ContSite, IlLabel?> pick, IlLabel other)
+        {
+            var t = new IlLabel[cursors];
+            for (int c = 0; c < cursors; c++)
+                t[c] = ctx.Sites.TryGetValue(c, out var s) && pick(s) is { } l ? l : other;
+            return t;
+        }
+        void OkAt(Action index)
         {
             emit.LoadArgument(0);
-            EmitHelperCall(emit, EngineDeallocateMethod);
+            index();
+            EmitHelperCall(emit, EngineGuardContOkAtMethod);
         }
-        emit.Branch(join);
+        // Where the callee of a site returns, into cont.
+        void EmitConts(Action index, IlLabel next)
+        {
+            var labels = new Dictionary<ContSite, IlLabel>();
+            foreach (var s in ctx.Sites.Values) labels[s] = emit.DefineLabel($"wl_cont_{NextLabelSeq()}");
+            OkAt(index);
+            emit.Switch(Table(s => labels[s], next));
+            emit.Branch(next);
+            foreach (var (s, l) in labels)
+            {
+                emit.MarkLabel(l);
+                emit.LoadArgument(0);
+                EmitFunctorId(emit, s.ContainerFid);
+                emit.LoadConstant(s.CallerPcAfter);
+                EmitHelperCall(emit, EngineCodeAddressOfMethod);
+                emit.StoreLocal(cont);
+                emit.Branch(next);
+            }
+        }
+
+        emit.MarkLabel(start);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineGuardContTopGetter);
+        emit.StoreLocal(top);
+        emit.LoadArgument(0);
+        emit.LoadLocal(top);
+        EmitHelperCall(emit, EngineWakeScratchMethod);
+        emit.StoreLocal(frames);
+
+        // The guard's pair: the first one down from the top a guard's site pushed.
+        var find = emit.DefineLabel($"wl_find{salt}");
+        var found = emit.DefineLabel($"wl_found{salt}");
+        var down = emit.DefineLabel($"wl_down{salt}");
+        emit.LoadLocal(top);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(g);
+        emit.MarkLabel(find);
+        OkAt(() => emit.LoadLocal(g));
+        emit.Switch(Table(s => s.Guard is not null ? found : null, down));
+        emit.MarkLabel(down);
+        emit.LoadLocal(g);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(g);
+        emit.Branch(find);
+        emit.MarkLabel(found);
+
+        // Frames, innermost first: level j is the copy holding the site of pair j + 1.
+        var p1 = emit.DefineLabel($"wl_p1{salt}");
+        var p1Next = emit.DefineLabel($"wl_p1n{salt}");
+        var p1Done = emit.DefineLabel($"wl_p1d{salt}");
+        var keep = emit.DefineLabel($"wl_keep{salt}");
+        emit.LoadLocal(top);
+        emit.LoadConstant(2);
+        emit.Subtract();
+        emit.StoreLocal(j);
+        emit.MarkLabel(p1);
+        emit.LoadLocal(j);
+        emit.LoadLocal(g);
+        emit.BranchIfLess(p1Done);
+        OkAt(() => { emit.LoadLocal(j); emit.LoadConstant(1); emit.Add(); });
+        emit.Switch(Table(s => s.Allocated ? keep : null, p1Next));
+        emit.Branch(p1Next);
+        emit.MarkLabel(keep);
+        emit.LoadLocal(frames);
+        emit.LoadLocal(j);
+        emit.LoadLocal(ctx.WakeFrame!);
+        emit.StoreElement<int>();
+        emit.LoadArgument(0);
+        emit.LoadLocal(ctx.WakeFrame!);
+        EmitHelperCall(emit, EngineEnvPrevMethod);
+        emit.StoreLocal(ctx.WakeFrame!);
+        emit.MarkLabel(p1Next);
+        emit.LoadLocal(j);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(j);
+        emit.Branch(p1);
+        emit.MarkLabel(p1Done);
+
+        // The guard's choice point.
+        var p2Start = emit.DefineLabel($"wl_p2s{salt}");
+        var guards = new Dictionary<GuardScope, IlLabel>();
+        foreach (var s in ctx.Sites.Values)
+            if (s.Guard is { } gs && !guards.ContainsKey(gs))
+                guards[gs] = emit.DefineLabel($"wl_guard_{NextLabelSeq()}");
+        OkAt(() => emit.LoadLocal(g));
+        emit.Switch(Table(s => s.Guard is { } gs ? guards[gs] : null, p2Start));
+        emit.Branch(p2Start);
+        foreach (var (gs, l) in guards)
+        {
+            emit.MarkLabel(l);
+            gs.MaterializeCp();
+            emit.Branch(p2Start);
+        }
+        emit.MarkLabel(p2Start);
+
+        // Outermost first: each copy returns after the site of its pair, and
+        // its clause is the one holding the site of the next pair up.
+        var p2 = emit.DefineLabel($"wl_p2{salt}");
+        var p2Level = emit.DefineLabel($"wl_p2l{salt}");
+        var p2Next = emit.DefineLabel($"wl_p2n{salt}");
+        var p2Done = emit.DefineLabel($"wl_p2d{salt}");
+        emit.LoadLocal(g);
+        emit.StoreLocal(j);
+        emit.MarkLabel(p2);
+        emit.LoadLocal(j);
+        emit.LoadLocal(top);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.BranchIfGreaterOrEqual(p2Done);
+        EmitConts(() => emit.LoadLocal(j), p2Level);
+        emit.MarkLabel(p2Level);
+        emit.LoadArgument(0);
+        emit.LoadLocal(cont);
+        EmitHelperCall(emit, EngineSetCpMethod);
+        var levelLabels = new Dictionary<ContSite, IlLabel>();
+        foreach (var s in ctx.Sites.Values)
+            if (s.Chain is not null) levelLabels[s] = emit.DefineLabel($"wl_level_{NextLabelSeq()}");
+        OkAt(() => { emit.LoadLocal(j); emit.LoadConstant(1); emit.Add(); });
+        emit.Switch(Table(s => levelLabels.TryGetValue(s, out var l) ? l : null, p2Next));
+        emit.Branch(p2Next);
+        foreach (var (s, l) in levelLabels)
+        {
+            emit.MarkLabel(l);
+            var chain = s.Chain!;
+            if (s.PreCut)
+            {
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
+            }
+            if (s.Allocated)
+            {
+                emit.LoadArgument(0);
+                emit.LoadLocal(frames);
+                emit.LoadLocal(j);
+                emit.LoadElement<int>();
+                emit.LoadLocal(cont);
+                emit.LoadConstant(s.Slot);
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineRetargetFrameMethod);
+            }
+            if (s.PreCut && s.Clause < chain.Clauses.Count - 1)
+                EmitLateChoicePoint(emit, chain, s.Clause);
+            emit.Branch(p2Next);
+        }
+        emit.MarkLabel(p2Next);
+        emit.LoadLocal(j);
+        emit.LoadConstant(1);
+        emit.Add();
+        emit.StoreLocal(j);
+        emit.Branch(p2);
+        emit.MarkLabel(p2Done);
+
+        // The copy the wake is in returns after the site of the top pair.
+        var p3 = emit.DefineLabel($"wl_p3{salt}");
+        EmitConts(() => { emit.LoadLocal(top); emit.LoadConstant(1); emit.Subtract(); }, p3);
+        emit.MarkLabel(p3);
+        emit.LoadArgument(0);
+        emit.LoadLocal(cont);
+        EmitHelperCall(emit, EngineSetCpMethod);
+        emit.LoadArgument(0);
+        emit.LoadLocal(g);
+        EmitHelperCall(emit, EngineResetGuardContTopMethod);
+        emit.LoadLocal(ctx.WakeReturn!);
+        emit.Switch(ctx.WakeReturns.ToArray());
+        emit.LoadConstant(false);
+        EmitReturn(emit);
     }
 
-    /// <summary>A fail-direct callee from <paramref name="pc"/> in clause
-    /// <paramref name="clause"/>, then as an ordinary predicate: its later
-    /// clauses are alternatives of the choice point pushed at the wake (when
-    /// <paramref name="cpPushed"/>), each entered by backtracking, restoring it
-    /// and pushing the next; a tail call to itself enters it again from its
-    /// first clause, its arguments staged. Emitted once per copy, so a copy
-    /// holds no CP-free chain of the same callee. Then the caller continues.</summary>
-    private static void EmitChainRest(IlEmit emit, ChainScope chain, int clause, int pc,
-        bool cpPushed, IlLabel? firstAlt, int firstAltCursor, IlLabel fail, string salt)
+    /// <summary>The choice point a chain skipped, its later clauses the
+    /// alternatives, pushed with the marks and arguments of its entry.</summary>
+    private static void EmitLateChoicePoint(IlEmit emit, ChainScope chain, int clause)
     {
-        var clauses = chain.Clauses;
-        int last = clauses.Count - 1;
-        bool loops = false;
-        foreach (var c in clauses) loops |= c.SelfTail;
-        var join = emit.DefineLabel($"chain_join{salt}");
-        var entry = emit.DefineLabel($"chain_entry{salt}");
-        // The alternatives the copy enters by backtracking: those after the
-        // wake's clause, and all of them when the callee calls itself again.
-        int firstReachable = loops ? 1 : cpPushed ? clause + 1 : last + 1;
-        var alts = new IlLabel?[clauses.Count];
-        var cursors = new int[clauses.Count];
-        for (int j = firstReachable; j <= last; j++)
-        {
-            if (cpPushed && j == clause + 1)
-            {
-                (alts[j], cursors[j]) = (firstAlt, firstAltCursor);
-                continue;
-            }
-            cursors[j] = ReserveReentry(emit, out alts[j]);
-        }
-        void PushNext(int j)
+        int cursor = ReserveReentry(emit, out var alt);
+        emit.LoadArgument(0);
+        emit.LoadConstant(chain.Callee.Arity);
+        EmitResumeMarker(emit, _emitOwnerFid, cursor);
+        emit.LoadLocal(chain.Bt);
+        emit.LoadLocal(chain.Xt);
+        emit.LoadLocal(chain.H);
+        emit.LoadLocal(chain.E);
+        EmitHelperCall(emit, EnginePushLateChoicePointMethod);
+        for (int r = 0; r < chain.Callee.Arity; r++)
         {
             emit.LoadArgument(0);
-            emit.LoadConstant(chain.Callee.Arity);
-            EmitResumeMarker(emit, _emitOwnerFid, cursors[j]);
+            emit.LoadConstant(r);
+            emit.LoadLocal(chain.ArgSaves[r]);
+            EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
+        }
+        if (alt is not null) EnqueueAlternative(emit, chain.Callee, chain.Clauses, clause + 1, alt);
+    }
+
+    /// <summary>For tests: the methods compiled with the routine above.</summary>
+    internal static int WakeLevelRoutines;
+
+    private static void EnqueueAlternative(IlEmit emit, CompiledPredicate callee,
+        List<FailDirectClause> clauses, int j, IlLabel label)
+        => WakeStateOf(emit).Alternatives.Add(() => EmitAlternative(emit, callee, clauses, j, label));
+
+    /// <summary>Clause <paramref name="j"/> of a chain as the alternative of
+    /// the choice point a wake pushed for it: the next clause's choice point
+    /// pushed, the clause runs in the callee's bytecode.</summary>
+    private static void EmitAlternative(IlEmit emit, CompiledPredicate callee,
+        List<FailDirectClause> clauses, int j, IlLabel label)
+    {
+        emit.MarkLabel(label);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineTrustMeMethod);
+        emit.LoadArgument(0);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineBGetter);
+        EmitHelperCall(emit, EngineSetB0Method);
+        if (j < clauses.Count - 1)
+        {
+            int cursor = ReserveReentry(emit, out var next);
+            emit.LoadArgument(0);
+            emit.LoadConstant(callee.Arity);
+            EmitResumeMarker(emit, _emitOwnerFid, cursor);
             EmitHelperCall(emit, EnginePushChoicePointMethod);
+            EnqueueAlternative(emit, callee, clauses, j + 1, next!);
         }
-        void SetBarrier()
-        {
-            emit.LoadArgument(0);
-            emit.LoadArgument(0);
-            EmitHelperCall(emit, EngineBGetter);
-            EmitHelperCall(emit, EngineSetB0Method);
-        }
-
-        EmitChainClause(emit, chain.Callee, clauses, clauses[clause], chain.CalleeMap,
-            pc, join, entry, fail, salt + "c");
-        if (loops)
-        {
-            // The callee entered afresh by its tail call to itself.
-            emit.MarkLabel(entry);
-            emit.LoadArgument(0);
-            EmitHelperCall(emit, EngineBacktrackSafePointMethod);
-            SetBarrier();
-            if (last > 0) PushNext(1);
-            EmitChainClause(emit, chain.Callee, clauses, clauses[0], chain.CalleeMap,
-                clauses[0].Start, join, entry, fail, salt + "e");
-        }
-        for (int j = Math.Max(1, firstReachable); j <= last; j++)
-        {
-            emit.MarkLabel(alts[j]!);
-            emit.LoadArgument(0);
-            EmitHelperCall(emit, EngineTrustMeMethod);
-            SetBarrier();
-            if (j < last) PushNext(j + 1);
-            EmitChainClause(emit, chain.Callee, clauses, clauses[j], chain.CalleeMap,
-                clauses[j].Start, join, entry, fail, salt + $"a{j}");
-        }
-        if (!loops) emit.MarkLabel(entry);   // no tail call reaches it
-        emit.MarkLabel(join);
+        emit.LoadArgument(0);
+        EmitFunctorId(emit, callee.FunctorId);
+        emit.LoadConstant(clauses[j].Start);
+        EmitHelperCall(emit, EngineDeoptToMethod);
+        EmitReturn(emit);
     }
 
     /// <summary>A hot method's exit to its cold method at <paramref name="boundary"/>,
@@ -613,6 +859,22 @@ public sealed partial class IlPredicateCompiler
 
     private static readonly System.Reflection.MethodInfo EnginePushLateChoicePointMethod =
         typeof(Activation).GetMethod(nameof(Activation.PushLateChoicePoint))!;
+    private static readonly System.Reflection.MethodInfo EngineCodeAddressOfMethod =
+        typeof(Activation).GetMethod(nameof(Activation.CodeAddressOf))!;
+    private static readonly System.Reflection.MethodInfo EngineDeoptToMethod =
+        typeof(Activation).GetMethod(nameof(Activation.DeoptTo))!;
+    private static readonly System.Reflection.MethodInfo EngineEnvPrevMethod =
+        typeof(Activation).GetMethod(nameof(Activation.EnvPrev))!;
+    private static readonly System.Reflection.MethodInfo EngineRetargetFrameMethod =
+        typeof(Activation).GetMethod(nameof(Activation.RetargetFrame))!;
+    private static readonly System.Reflection.MethodInfo EngineGuardContOkAtMethod =
+        typeof(Activation).GetMethod(nameof(Activation.GuardContOkAt))!;
+    private static readonly System.Reflection.MethodInfo EngineWakeScratchMethod =
+        typeof(Activation).GetMethod(nameof(Activation.WakeScratch))!;
+    private static readonly System.Reflection.MethodInfo EngineGuardContTopGetter =
+        typeof(Activation).GetProperty(nameof(Activation.GuardContTop))!.GetGetMethod()!;
+    private static readonly System.Reflection.MethodInfo EngineResetGuardContTopMethod =
+        typeof(Activation).GetMethod(nameof(Activation.ResetGuardContTop))!;
 
     /// <summary>The builtins in front of which Tier-0 wakes and compiled code
     /// does not: <c>=/2</c>, a unification.</summary>

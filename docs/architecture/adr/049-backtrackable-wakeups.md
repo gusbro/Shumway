@@ -161,22 +161,31 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    other register is live, since every goal ends a chunk. Regions and the
    wasm tier do not have these points yet.
 
-10. **A wake inside a construct that skipped a choice point pushes it.** A
-    CP-free guard (ADR-031), and a fail-direct callee inlined in one as a
-    chain of clauses, keep in IL locals what their choice point would hold
-    (the argument registers, the trail and heap marks) and raise HB at
-    their entry, so every binding they make is trailed. A wake point inside
-    one pushes those choice points then, outermost first, and continues in
-    a copy of the rest of the constructs compiled as ordinary code, its cut
-    a real cut. A failure then backtracks into the alternatives the woken
-    goal left, then into the callee's next clause, then into the guard's
-    next clause, as in Tier-0. The callee's proceed is such a point when the
-    callee has clauses left (`p(X, L) :- member(X, L), !.`). In the copy a
-    callee that calls itself last is an ordinary predicate entered again.
-    A shape with no copy (a callee whose clause ends in another predicate's
-    tail call, ADR-033) is not compiled, and a guard that inlines a dynamic
-    snapshot (ADR-034) is not CP-free: the woken goal could change what it
-    inlined.
+10. **A wake inside a construct that skipped a choice point hands the
+    activation to the interpreter.** A CP-free guard (ADR-031), and a
+    fail-direct callee inlined in one as a chain of clauses, keep in IL
+    locals what their choice point would hold (the argument registers, the
+    trail and heap marks) and raise HB at their entry, so every binding they
+    make is trailed. A wake point inside one makes the machine Tier-0's
+    there: it pushes the skipped choice points, outermost first; each
+    inlined callee's frame returns after its call site, and the cut level
+    its clause took becomes the choice point below its own. Then the
+    interpreter runs the rest of the activation from that point of the
+    bytecode and wakes there, as the wasm tier does when it steps aside; its
+    next call enters compiled code again. A failure backtracks into the
+    alternatives the woken goal left, then into the callee's next clause,
+    then into the guard's next clause, as in Tier-0. A chain's later clauses
+    are alternatives that enter the callee's bytecode. The callee's proceed
+    is such a point when the callee has clauses left
+    (`p(X, L) :- member(X, L), !.`). With ADR-033's shared copies the levels
+    outside a copy are known at run time only: the continuation stack names
+    the call site of each active copy, down to the guard's. The handover
+    needs the predicate's bytecode: a dynamic predicate's snapshot (ADR-023)
+    with such a point stays on Tier-0, and a guard that inlines a dynamic
+    snapshot (ADR-034) is not CP-free, since the woken goal could change
+    what it inlined. Compiled code has these points only when it is compiled
+    at run time; a bundle that has them will have to keep the bytecode of
+    those predicates when its WAM is stripped.
 
 11. **A stretch of unifications is atomic with respect to woken goals**, as
     SICStus documents. The stretch is a clause's head unification and the
@@ -257,8 +266,9 @@ canaries (`PreludeIlBakeTests`).
 - Points 9 and 10 cost one predicted branch per builtin and per inlined
   call: under continuation methods the Van Roy set and Blint measured 0.99
   to 1.00 against the code without them (one process, ABBA, minimum over
-  eight rounds). The copies are cold code: only the cold method and the
-  delegates hold them.
+  eight rounds). The handover is a rare path behind that branch, and the
+  alternatives it pushes are stubs after the code of the cold method and of
+  the delegates.
 
 ## Future (explicitly out of scope here)
 

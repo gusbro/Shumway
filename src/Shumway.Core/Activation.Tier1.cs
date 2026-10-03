@@ -836,6 +836,48 @@ public sealed partial class Activation
         return d;
     }
 
+    /// <summary>Where the predicate with a functor id starts in the running
+    /// program, or -1. Set by the bytecode interpreter from its dispatcher.</summary>
+    internal Func<int, int>? PredicateAddressResolver { get; set; }
+
+    /// <summary>The live address of <paramref name="pc"/> in the bytecode of
+    /// the predicate <paramref name="functorId"/>: compiled code names a
+    /// point of a predicate's bytecode by its offset, the same in the fused
+    /// and the unfused form.</summary>
+    public int CodeAddressOf(int functorId, int pc)
+    {
+        int start = PredicateAddressResolver?.Invoke(functorId) ?? -1;
+        if (start < 0)
+            throw new InvalidOperationException(
+                $"ADR-049: no bytecode for functor {functorId} to continue in.");
+        return start + pc;
+    }
+
+    /// <summary>ADR-049: compiled code hands the rest of an activation to the
+    /// interpreter at <paramref name="pc"/> of the predicate's bytecode, the
+    /// machine's state being Tier-0's there. True, for the delegate to return.</summary>
+    public bool DeoptTo(int functorId, int pc)
+    {
+        SetPc(CodeAddressOf(functorId, pc));
+        IlTailCallPending = true;
+        _ilDeoptPending = true;
+        return true;
+    }
+
+    /// <summary>The environment frame <paramref name="e"/> was allocated on.</summary>
+    public int EnvPrev(int e) => (int)_stack[e + EnvCeOffset].Data;
+
+    /// <summary>ADR-049: the frame of a callee compiled inline makes Tier-0's
+    /// frame for its call: it returns to <paramref name="cp"/>, and the cut
+    /// level its clause took (in Y slot <paramref name="levelSlot"/>, or
+    /// none at -1) is <paramref name="level"/>, the choice point below the
+    /// callee's own.</summary>
+    public void RetargetFrame(int e, int cp, int levelSlot, int level)
+    {
+        _stack[e + EnvCpOffset] = Cell.RawInt(cp);
+        if (levelSlot >= 0) _stack[e + EnvY1Offset + levelSlot] = Cell.RawInt(level);
+    }
+
     // ----- IL choice points (Tier-1) -----
     //
     // A side table mapping a choice-point frame's stack index to the IL
@@ -1414,6 +1456,20 @@ public sealed partial class Activation
     /// <summary>ADR-033 — pop the top continuation pair and return the FAIL
     /// cursor (the shared copy exhausted its alternatives).</summary>
     public int PopGuardContFail() => _guardContStack[--_guardContTop] & 0xFFFF;
+
+    /// <summary>ADR-049 — the OK cursor of the continuation pair at
+    /// <paramref name="i"/>: it names the call site that pushed it.</summary>
+    public int GuardContOkAt(int i) => _guardContStack[i] >> 16;
+
+    private int[] _wakeScratch = System.Array.Empty<int>();
+
+    /// <summary>ADR-049 — an array of at least <paramref name="size"/> ints for
+    /// a wake inside a shared copy to keep a frame per level in.</summary>
+    public int[] WakeScratch(int size)
+    {
+        if (_wakeScratch.Length < size) _wakeScratch = new int[Math.Max(size, 16)];
+        return _wakeScratch;
+    }
 
     // ----- ADR-031 case B: CP-free binding-guard support -----
 

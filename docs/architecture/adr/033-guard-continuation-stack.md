@@ -145,6 +145,20 @@ CAPABILITY — mutual tail recursion and caps-free deep chains compose
 correctly through the copies (proven by the unit suite) — not corpus counts
 on these two apps.
 
+### Wakes (ADR-049)
+
+A wake inside a shared copy hands the activation to the interpreter, as one
+in a duplicated callee does (ADR-049 point 10), but the copy does not know
+statically which guard or which copy called it. Each site that pushes a
+pair records the construct it is in: the guard, or the copy with its clause
+at the site and the frame that clause holds. After the copies, a routine per
+method walks the stack down to the pair a guard's site pushed, pushes the
+guard's choice point and then each active copy's, outermost first (the
+clause of a copy is the one holding the site of the next pair up), makes
+each copy's frame return after the site that called it, and drops the
+guard's pairs. A cross tail needs nothing: the copy it leaves has no
+alternatives, and its target returns where it would have.
+
 ## Deferred: cross-method continuations
 
 A callee in a DIFFERENT region needs continuation entries that survive the

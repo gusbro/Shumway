@@ -428,6 +428,14 @@ public sealed partial class IlPredicateCompiler
         Row(EngineRetryMeElseMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineSetB0Method, MachineRegs.None, MachineRegs.B0);
         Row(EngineSetCpMethod, MachineRegs.None, MachineRegs.Cp);
+        Row(EngineCodeAddressOfMethod, MachineRegs.All, MachineRegs.All);
+        Row(EngineDeoptToMethod, MachineRegs.All, MachineRegs.All);
+        Row(EngineEnvPrevMethod, MachineRegs.StackArray, MachineRegs.None);
+        Row(EngineRetargetFrameMethod, MachineRegs.StackArray, MachineRegs.None);
+        Row(EngineGuardContOkAtMethod, MachineRegs.None, MachineRegs.None);
+        Row(EngineWakeScratchMethod, MachineRegs.None, MachineRegs.None);
+        Row(EngineGuardContTopGetter, MachineRegs.None, MachineRegs.None);
+        Row(EngineResetGuardContTopMethod, MachineRegs.None, MachineRegs.None);
         Row(EngineSetPcMethod, MachineRegs.None, MachineRegs.None);
         Row(EngineSetRegisterMethod, MachineRegs.RegisterArray, MachineRegs.RegisterArray);
         Row(EngineSetTopCpArgRegisterMethod, MachineRegs.B | MachineRegs.StackArray, MachineRegs.None);

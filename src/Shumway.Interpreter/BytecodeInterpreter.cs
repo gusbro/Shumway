@@ -257,6 +257,9 @@ public sealed partial class BytecodeInterpreter
         // the interpreter's goal machinery; `code` is fetched live so the
         // wakeup goals see the current linked program.
         _engine.Tier1WakeupFlusher = () => FlushPendingWakeups(_engine.GetProgramView());
+        // ADR-049: compiled code that hands an activation to the interpreter
+        // names the point by predicate and offset.
+        _engine.PredicateAddressResolver = fid => Tier1Dispatcher?.AddressOfFunctor(fid) ?? -1;
     }
 
     public Activation Activation => _engine;
