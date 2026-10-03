@@ -334,7 +334,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | --- | --- | --- |
 | `dif(?X, ?Y)` | library | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
 | `freeze(?Var, :Goal)` | library | Delays Goal until Var is bound; runs it at once when Var is already bound. |
-| `frozen(?Var, -Goal)` | library | Unifies Goal with the conjunction of goals delayed on Var (true when none). |
+| `frozen(@Term, -Goal)` | library | Unifies Goal with the conjunction of the freeze/2, dif/2 and when/2 goals that re-create the constraints on the variables of Term (true when none). |
 | `when(+Condition, :Goal)` | library | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
 
 ## Input / output

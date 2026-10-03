@@ -31,16 +31,12 @@ public class DeterminismAnalysisTests
     }
 
     [Fact]
-    public void LastClause_DetCallPrefix_CutIsElided()
+    public void LastClause_DetCallPrefix_CutIsKept()
     {
-        // `q/1` is a single det clause; the trailing cut in `p`'s last clause
-        // therefore prunes nothing → dropped, leaving a clean tail call.
+        // `q/1` is det, but binding X can wake a goal with alternatives, and
+        // the cut prunes them (ADR-049 §5), as SICStus does.
         var outp = Elide("q(1). p(X):-q(X),!.");
-        Clause p = outp.Single(c => c.Term is CompoundTerm ct
-            && (ct.Functor == ":-" ? ((CompoundTerm)ct.Args[0]).Functor : ct.Functor) == "p");
-        Assert.False(EndsInCut(p));
-        Assert.IsType<CompoundTerm>(BodyTerm(p));
-        Assert.Equal("q", ((CompoundTerm)BodyTerm(p)).Functor);   // single tail call, cut gone
+        Assert.True(EndsInCut(outp[^1]));
     }
 
     [Fact]
@@ -59,6 +55,26 @@ public class DeterminismAnalysisTests
         var outp = Elide("p:-a. p:-!.");
         Assert.Equal(ClauseKind.Fact, outp[^1].Kind);
         Assert.Equal("p", outp[^1].Term.ToString());
+    }
+
+    [Theory]
+    [InlineData("p(a):-!.")]
+    [InlineData("p(f(X)):-!.")]
+    [InlineData("p(X,X):-!.")]
+    [InlineData("p(X):-X=1,!.")]
+    [InlineData("p(X,Y):-Y is X+1,!.")]
+    public void NeckCut_AfterABinding_IsKept(string src)
+    {
+        // A binding can wake a goal that leaves choice points; the neck cut
+        // prunes them, as in SICStus, SWI and Scryer (ADR-049 §5).
+        Assert.True(EndsInCut(Elide(src)[^1]));
+    }
+
+    [Fact]
+    public void NeckCut_AfterAHeadOfDistinctVariables_IsElided()
+    {
+        Assert.False(EndsInCut(Elide("p(_,_):-!.")[^1]));
+        Assert.False(EndsInCut(Elide("p(X,Y):-X>Y,!.")[^1]));
     }
 
     [Fact]
@@ -125,11 +141,10 @@ public class DeterminismAnalysisTests
     [Fact]
     public void Fixpoint_ChainsDeterminism()
     {
-        // a/1 det (single clause) → b/1 det (calls only a, det dispatch) → the cut
-        // in c/1's last clause (prefix b/1) is elided.
-        var outp = Elide("a(1). b(X):-a(X). c(X):-b(X),!.");
-        Clause c = outp[^1];
-        Assert.False(EndsInCut(c));
+        // a/1 det (single clause) → b/1 det (calls only a, det dispatch) → c/1 det.
+        var analysis = DeterminismAnalysis.Build(Parse("a(1). b(X):-a(X). c(X):-b(X),!."));
+        Assert.True(analysis.IsDet("b/1"));
+        Assert.True(analysis.IsDet("c/1"));
     }
 
     [Fact]
@@ -137,16 +152,10 @@ public class DeterminismAnalysisTests
     {
         // `p(a):-q(b),!. p(b):-q(a),!. p(_).` — every clause but the last commits
         // via a cut; the last (a catch-all fact) needs none (reached via trust).
-        // p/1 is deterministic. The pass proves it, enabling a caller's cut to be
-        // elided.
+        // p/1 is deterministic, and the pass proves it.
         var analysis = DeterminismAnalysis.Build(
             Parse("q(_). p(a):-q(b),!. p(b):-q(a),!. p(_)."));
         Assert.True(analysis.IsDet("p/1"));
-
-        // A caller of the det p/1 gets its own redundant cut dropped.
-        var outp = Elide("q(_). p(a):-q(b),!. p(b):-q(a),!. p(_). foo(X):-p(X),!.");
-        Clause foo = outp[^1];
-        Assert.False(EndsInCut(foo));
     }
 
     [Fact]

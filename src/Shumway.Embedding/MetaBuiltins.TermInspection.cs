@@ -90,7 +90,7 @@ public static partial class MetaBuiltins
             if (!engine.UnifyRegisterWithCell(1, Cell.Atom(dotId))) return false;
             return engine.UnifyRegisterWithCell(2, Cell.Int(2));
         }
-        if (t.Tag == Tag.Ref)
+        if (t.Tag is Tag.Ref or Tag.AttVar)
         {
             // Construct mode (§8.5.1.3): Name and Arity must be ground,
             // Arity a non-negative integer the address space can hold, Name an
@@ -183,11 +183,11 @@ public static partial class MetaBuiltins
             if (!engine.UnifyRegisterWithCell(1, Cell.Atom(dotId))) return false;
             return engine.UnifyRegisterWithCell(2, Cell.Int(2));
         }
-        if (t.Tag == Tag.Ref)
+        if (t.Tag is Tag.Ref or Tag.AttVar)
         {
             Cell n = ResolveLocal(engine, engine.GetRegister(1));
             Cell a = ResolveLocal(engine, engine.GetRegister(2));
-            if (n.Tag == Tag.Ref || a.Tag == Tag.Ref)
+            if (n.Tag is Tag.Ref or Tag.AttVar || a.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
@@ -460,7 +460,7 @@ public static partial class MetaBuiltins
             engine.SetHeap(idx + 6, Cell.Atom(AtomTable.EmptyListId));
             return engine.UnifyRegisterWithHeapAt(1, idx);
         }
-        if (t.Tag == Tag.Ref)
+        if (t.Tag is Tag.Ref or Tag.AttVar)
         {
             // Compose: walk the list twice — once to count, once to
             // build the STR. The list is on the heap so the walk is a

@@ -478,17 +478,24 @@ public sealed partial class PrologEngine
     }
 
     // The trealla-dialect frozen/2 wrapper (see LoadNativeOverride "freeze").
-    // The goals come from the native frozen/2, which hands them back as they
-    // were written: the attribute stores each one wrapped. The freeze:
-    // module prefix in the answer is data (their format), never called here.
+    // The goals come from the native frozen/2, which gives each one as a
+    // coroutining:freeze(X, M:G) goal; Trealla's answer holds them as they
+    // were written, under one freeze. The freeze: module prefix in the
+    // answer is data (their format), never called here.
     private const string TreallaFreezeShim = """
         :- module(trealla_freeze, [frozen/2]).
         frozen(X, G) :-
             (   var(X), get_attr(X, coroutining, frozen(_)) ->
                 coroutining:frozen(X, G0),
-                G = freeze:freeze(X, G0)
+                '$trl_frozen_goals'(G0, G1),
+                G = freeze:freeze(X, G1)
             ;   G = true
             ).
+        '$trl_frozen_goals'((A, B), (A1, B1)) :-
+            !, '$trl_frozen_goals'(A, A1), '$trl_frozen_goals'(B, B1).
+        '$trl_frozen_goals'(coroutining:freeze(_, user:G), G) :- !.
+        '$trl_frozen_goals'(coroutining:freeze(_, G), G) :- !.
+        '$trl_frozen_goals'(G, G).
         """;
 
     internal bool UseCompatLibrary(string name)

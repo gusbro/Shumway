@@ -77,9 +77,9 @@ public class FrozenVariableGoalTests
     [Fact]
     public void AVariableInsideAConjunctionOfGoals()
     {
-        string s = AnswerOf("freeze(X, (Y, true)).");
-        Assert.Contains("freeze(X, Y)", s);
-        Assert.Contains("freeze(X, true)", s);
+        // One frozen goal, shown as written: the walker must neither bind Y
+        // nor split the goal into two freezes.
+        Assert.Equal("freeze(X, (Y, true))", AnswerOf("freeze(X, (Y, true))."));
     }
 
     [Fact]

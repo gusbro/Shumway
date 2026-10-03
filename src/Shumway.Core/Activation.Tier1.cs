@@ -1072,8 +1072,16 @@ public sealed partial class Activation
         if (_bindingTrailTop != _cpsGuardBt || _extraTrailTop != _cpsGuardXt) return false;
         _heapTop = _cpsGuardH;
         AssignHb(_cpsGuardHb);
+        // An attributed variable younger than HB binds untrailed, so a guard
+        // that trailed nothing may still have queued a wake.
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
         return true;
     }
+
+    /// <summary>ADR-049 §8 for a choice point's restore compiled inline
+    /// (ADR-058): called after the heap top is reset, when a wake is pending.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public void DropUndoneWakes() => DropDeadWakeups();
 
     /// <summary>ADR-061: <see cref="PushIlChoicePointWithMarks"/> for a WAM
     /// choice point whose BP is <paramref name="bp"/> (a resume marker).</summary>
@@ -1400,9 +1408,17 @@ public sealed partial class Activation
 
     /// <summary>Commits a CP-free binding guard (ADR-031): restores
     /// <see cref="Hb"/> to the heap boundary of the (unchanged) current top
-    /// choice point. The guard's bindings stay; nothing was pushed, so the
-    /// cut itself has nothing to tear down.</summary>
-    public void CommitIlGuard(int savedHb) => AssignHb(savedHb);
+    /// choice point. The guard's bindings stay, and what it trailed for cells
+    /// past that boundary goes, as the cut of the skipped choice point drops
+    /// it: the cut finds no choice point to pop, so it compacts nothing, and
+    /// those entries would otherwise stay for good.</summary>
+    public void CommitIlGuard(int bindingTop, int extraTop, int savedHb)
+    {
+        AssignHb(savedHb);
+        // Below the guard's tops: a cut already compacted from an older choice point.
+        if (_bindingTrailTop >= bindingTop && _extraTrailTop >= extraTop)
+            CompactTrails(_b, bindingTop, extraTop, savedHb);
+    }
 
     /// <summary>Fails a CP-free binding guard (ADR-031): undoes every binding
     /// the guard trailed, discards its heap allocations, restores
@@ -1418,12 +1434,11 @@ public sealed partial class Activation
             UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
         AssignHb(savedHb);
-        // Not cleared: only the wakes this guard queued are dead, and the
-        // unwind above just reverted their attvar homes — TakePendingWakeups
-        // drops them by that mark. A wake belonging to an older surviving
-        // binding must outlive the guard's failure (blanket-clearing here
-        // silently unhooked freeze/2 across a promoted predicate's clause
-        // retries, the same defect TryBacktrack's clear had).
+        // Not cleared: a wake belonging to an older surviving binding must
+        // outlive the guard's failure (blanket-clearing here silently unhooked
+        // freeze/2 across a promoted predicate's clause retries). Only the
+        // wakes whose binding the unwind undid go.
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
     }
 
     /// <summary>ADR-031 rare path (cases B and G) — pushes the

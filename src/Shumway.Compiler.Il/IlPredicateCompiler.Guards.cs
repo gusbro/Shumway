@@ -1575,7 +1575,7 @@ public sealed partial class IlPredicateCompiler
         // (The failure exits skip this — the outer restore stub reinstates the
         // clause-entry HB itself.)
         emit.LoadArgument(0);
-        emit.LoadLocal(mHb);
+        emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mHb);
         EmitHelperCall(emit, EngineCommitIlGuardMethod);
     }
 
@@ -1747,7 +1747,11 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); LoadMark(hb, CpsGuardHbField); EmitHelperCall(emit, EngineCommitIlGuardMethod); }
+        {
+            emit.LoadArgument(0);
+            LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(hb, CpsGuardHbField);
+            EmitHelperCall(emit, EngineCommitIlGuardMethod);
+        }
         emit.Branch(after);
         emit.MarkLabel(rare);
         bool rareLeft = cpsFields && EmitColdExit(emit);
@@ -1824,11 +1828,17 @@ public sealed partial class IlPredicateCompiler
             }
         }
         if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
-        // The flush runs Prolog code, which may run other guards: HB is kept
-        // across it in a local.
-        IlLocal? rareHb = null;
+        // The flush runs Prolog code, which may run other guards: the marks the
+        // commit needs are kept across it in locals.
+        IlLocal? rareBt = null, rareXt = null, rareHb = null;
         if (g.NeedsSnapshot && cpsFields)
         {
+            rareBt = emit.DeclareLocal<int>($"cf_rarebt{salt}");
+            LoadMark(bt, CpsGuardBtField);
+            emit.StoreLocal(rareBt);
+            rareXt = emit.DeclareLocal<int>($"cf_rarext{salt}");
+            LoadMark(xt, CpsGuardXtField);
+            emit.StoreLocal(rareXt);
             rareHb = emit.DeclareLocal<int>($"cf_rarehb{salt}");
             LoadMark(hb, CpsGuardHbField);
             emit.StoreLocal(rareHb);
@@ -1840,7 +1850,10 @@ public sealed partial class IlPredicateCompiler
         if (g.NeedsSnapshot)
         {
             emit.LoadArgument(0);
-            if (rareHb is not null) emit.LoadLocal(rareHb); else emit.LoadLocal(hb!);
+            if (rareHb is not null)
+            { emit.LoadLocal(rareBt!); emit.LoadLocal(rareXt!); emit.LoadLocal(rareHb); }
+            else
+            { emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); }
             EmitHelperCall(emit, EngineCommitIlGuardMethod);
         }
         }

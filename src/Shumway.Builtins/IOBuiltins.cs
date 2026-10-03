@@ -11,13 +11,13 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class IOBuiltins
 {
-    /// <summary><c>write(X)</c> — writes X to the engine's output sink
-    /// using operator-form rendering for known operators (no trailing
-    /// newline). Atom quoting is off; pass <c>quoted(true)</c> through
+    /// <summary><c>write(X)</c> — ISO §8.14.2: <c>write_term(X,
+    /// [numbervars(true)])</c> to the current output (no trailing newline).
+    /// Atom quoting is off; pass <c>quoted(true)</c> through
     /// <c>write_term/2</c> if you need the parseable form.</summary>
     public static bool Write(Activation engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), DefaultOptions(engine));
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), WriteOptions(engine));
         return true;
     }
 
@@ -60,7 +60,7 @@ public static class IOBuiltins
     public static bool Writeln(Activation engine)
     {
         var w = CurrentWriter(engine);
-        TermRenderer.Render(engine, engine.GetRegister(0), w, DefaultOptions(engine));
+        TermRenderer.Render(engine, engine.GetRegister(0), w, WriteOptions(engine));
         w.Write('\n');
         return true;
     }
@@ -102,6 +102,12 @@ public static class IOBuiltins
 
     private static TermRenderOptions DefaultOptions(Activation engine) =>
         new TermRenderOptions { Operators = engine.Operators };
+
+    /// <summary>The options of <c>write/1,2</c> (ISO §8.14.2), which the
+    /// writeln and print families share: <c>'$VAR'(N)</c> prints as a
+    /// variable name.</summary>
+    internal static TermRenderOptions WriteOptions(Activation engine) =>
+        new TermRenderOptions { Operators = engine.Operators, Numbervars = true };
 
     /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c>
     /// to the engine's output sink, honouring the boolean options
@@ -415,7 +421,7 @@ public static class IOBuiltins
     /// consulted for every subterm first (the de-facto standard).</summary>
     public static bool Print(Activation engine)
     {
-        var opts = DefaultOptions(engine);
+        var opts = WriteOptions(engine);
         opts.Portray = engine.PortrayHook;
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), opts);
         return true;
@@ -431,7 +437,7 @@ public static class IOBuiltins
         if (h.Writer is null)
             throw new PrologRuntimeException("permission_error", "output,stream",
                 engine, engine.GetRegister(0));
-        var opts = DefaultOptions(engine);
+        var opts = WriteOptions(engine);
         opts.Portray = engine.PortrayHook;
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, opts);
         return true;

@@ -53,17 +53,67 @@ freeze(X, Goal) :-
 
 '$co_goal'(G) :- call(G).
 
-%! frozen(?Var, -Goal) | Coroutining | Unifies Goal with the conjunction of goals delayed on Var (true when none).
-frozen(X, G) :-
-    ( var(X), get_attr(X, coroutining, frozen(G0)) -> '$co_unwrap'(G0, G)
-    ; G = true
-    ).
+%! frozen(@Term, -Goal) | Coroutining | Unifies Goal with the conjunction of the freeze/2, dif/2 and when/2 goals that re-create the constraints on the variables of Term (true when none).
+% As in SICStus: each goal is module-qualified, and so is a frozen
+% goal, so calling Goal re-creates the constraints from any module.
+% A dif or when watching several variables is shown once.
+% G is bound last, after every cut: binding it wakes the goals frozen
+% on it, and a cut after that would prune their alternatives (#133).
+frozen(Term, G) :-
+    term_attvars(Term, Vs),
+    '$co_frozen'(Vs, [], Gs),
+    '$co_conj'(Gs, G1),
+    G = G1.
 
-% The goals as they were written, without the wrapper the store adds.
-'$co_unwrap'(G, Out) :- var(G), !, Out = G.
-'$co_unwrap'((A, B), (A1, B1)) :- !, '$co_unwrap'(A, A1), '$co_unwrap'(B, B1).
-'$co_unwrap'('$co_goal'(G0), G) :- !, '$co_shown'(G0, G).
-'$co_unwrap'(G, G).
+% Seen: the dif and when records already shown.
+'$co_frozen'([], _, []).
+'$co_frozen'([V|Vs], Seen, Gs) :-
+    (   get_attr(V, coroutining, frozen(G)) ->
+        '$co_frozen_goal'(G, V, Seen, Seen1, Gs, Rest)
+    ;   Seen1 = Seen, Gs = Rest
+    ),
+    '$co_frozen'(Vs, Seen1, Rest).
+
+% Only the store's conjunction is split: what '$co_goal'/1 wraps is one
+% goal, whatever its shape, or a dif or when record.
+'$co_frozen_goal'(G, V, S0, S, Gs, T) :-
+    var(G), !, '$co_frozen_one'(G, V, S0, S, Gs, T).
+'$co_frozen_goal'((A, B), V, S0, S, Gs, T) :-
+    !,
+    '$co_frozen_goal'(A, V, S0, S1, Gs, Mid),
+    '$co_frozen_goal'(B, V, S1, S, Mid, T).
+'$co_frozen_goal'('$co_goal'(G), V, S0, S, Gs, T) :-
+    !, '$co_frozen_one'(G, V, S0, S, Gs, T).
+'$co_frozen_goal'(G, V, S0, S, Gs, T) :- '$co_frozen_one'(G, V, S0, S, Gs, T).
+
+'$co_frozen_one'(G, V, S, S, [coroutining:freeze(V, user:G)|T], T) :- var(G), !.
+'$co_frozen_one'('$dif_wake'(C), _, S0, S, Gs, T) :-
+    !, C = dif_c(X, Y, Alive),
+    (   ( Alive == dead ; '$co_has_record'(S0, C) ) -> S = S0, Gs = T
+    ;   S = [C|S0],
+        '$dif_shown_as'(X, Y, DX, DY),
+        Gs = [coroutining:dif(DX, DY)|T]
+    ).
+'$co_frozen_one'('$when_fire'(Tr), _, S0, S, Gs, T) :-
+    !, Tr = trigger(Cond, Goal, Fired, Alive),
+    (   ( Fired == fired ; Alive == dead ; '$co_has_record'(S0, Tr) )
+    ->  S = S0, Gs = T
+    ;   S = [Tr|S0],
+        '$co_qualified'(Goal, QG),
+        Gs = [coroutining:when(Cond, QG)|T]
+    ).
+'$co_frozen_one'(G, V, S, S, [coroutining:freeze(V, QG)|T], T) :-
+    '$co_qualified'(G, QG).
+
+% A goal frozen from a module arrives qualified (ADR-056); one that is
+% not was frozen from user.
+'$co_qualified'(G, Q) :- ( nonvar(G), G = _:_ -> Q = G ; Q = user:G ).
+
+'$co_has_record'([R|Rs], C) :- ( R == C -> true ; '$co_has_record'(Rs, C) ).
+
+'$co_conj'([], true).
+'$co_conj'([G], G) :- !.
+'$co_conj'([G|Gs], (G, C)) :- '$co_conj'(Gs, C).
 
 % A goal frozen in user is stored user:G, since it runs there; the top
 % level shows it without the module it was typed in.
@@ -394,20 +444,26 @@ co_project((A, B), V, Goals, Tail) :-
     co_project(A, V, Goals, Mid),
     co_project(B, V, Mid, Tail).
 co_project('$co_goal'(G0), V, Goals, Tail) :- !,
-    '$co_shown'(G0, G), co_project(G, V, Goals, Tail).
-co_project('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
+    '$co_shown'(G0, G), co_project_one(G, V, Goals, Tail).
+co_project(G, V, Goals, Tail) :- co_project_one(G, V, Goals, Tail).
+
+% What '$co_goal'/1 wraps is one goal, whatever its shape: freeze(X,
+% (p, q)) shows as itself, not as two freezes.
+co_project_one(G, V, Goals, Tail) :-
+    var(G), !, Goals = [freeze(V, G)|Tail].
+co_project_one('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
     !,
     ( Alive \== dead, '$co_owner'((X, Y), V)
       -> '$dif_shown_as'(X, Y, DX, DY), Goals = [dif(DX, DY)|Tail]
     ; Goals = Tail
     ).
-co_project('$when_fire'(trigger(Cond, Goal, Fired, Alive)), V, Goals, Tail) :-
+co_project_one('$when_fire'(trigger(Cond, Goal, Fired, Alive)), V, Goals, Tail) :-
     !,
     ( Fired \== fired, Alive \== dead, '$co_owner'(Cond, V)
       -> Goals = [when(Cond, Goal)|Tail]
     ; Goals = Tail
     ).
-co_project(G, V, [freeze(V, G)|Tail], Tail).
+co_project_one(G, V, [freeze(V, G)|Tail], Tail).
 
 % The pair the constraint has become, or the terms as written when it
 % is still a real disjunction. '$dif_check' recomputes the unifier and

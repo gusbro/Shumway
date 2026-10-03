@@ -155,7 +155,7 @@ public sealed partial class Activation
     /// the record still never escapes the funnel. Nothing here can mutate
     /// the store, so iterating it live is safe.</para></summary>
     private void AttrQueueWakeups(int home, int otherIdx,
-        List<(int Module, int AttrValueIdx, int OtherIdx, int AttvarHome)> into)
+        ref WakeQueue into)
     {
         if (!_attrStore.TryGetValue(home, out var record)) return;
         foreach (var (moduleId, attrValueIdx) in record)

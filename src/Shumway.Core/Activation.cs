@@ -107,7 +107,7 @@ public sealed partial class Activation
     // failure fails the triggering unification. The queue is transient
     // — not trailed — because it is consumed before the next goal and
     // cleared outright on backtracking.
-    private readonly List<(int Module, int AttrValueIdx, int OtherIdx, int AttvarHome)> _pendingWakeups = new();
+    private WakeQueue _pendingWakeups;
 
     // catch/3 scopes, innermost last. Pushed by '$catch_begin', deactivated
     // by '$catch_end'; both operations are recorded on the extra trail
@@ -399,6 +399,8 @@ public sealed partial class Activation
             throw new ArgumentOutOfRangeException(nameof(newTop),
                 $"newTop {newTop} must be in [0, {_heapTop}].");
         _heapTop = newTop;
+        // A trial unification that queued wakes and was rolled back.
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
     }
 
     /// <summary><c>==/2</c> on two cells, for compiled code that has them

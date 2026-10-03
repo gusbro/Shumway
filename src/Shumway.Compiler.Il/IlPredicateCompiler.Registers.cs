@@ -367,7 +367,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineBindingTrailTopGetter, MachineRegs.TrailTop, MachineRegs.None);
         Row(EngineBuiltinReturnPcSetter, MachineRegs.None, MachineRegs.None);
         Row(EngineCallSafePointDueGetter, MachineRegs.HeapTop, MachineRegs.None);
-        Row(EngineCommitIlGuardMethod, MachineRegs.None, MachineRegs.Hb);
+        Row(EngineCommitIlGuardMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.Hb | MachineRegs.TrailTop);
         Row(EngineCpGetter, MachineRegs.Cp, MachineRegs.None);
         Row(EngineCurrentFunctorAddressesGetter, MachineRegs.None, MachineRegs.None);
         Row(EngineCutToLevelMethod, MachineRegs.All, MachineRegs.All);
@@ -415,7 +415,7 @@ public sealed partial class IlPredicateCompiler
         Row(ContinuationInvokeMethod, MachineRegs.All, MachineRegs.All);
         Row(ArithTryFusedBinIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
         Row(ArithTryFusedCmpIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
-        Row(EngineTryFailIlGuardQuickMethod, MachineRegs.TrailTop, MachineRegs.HeapTop | MachineRegs.Hb);
+        Row(EngineTryFailIlGuardQuickMethod, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray, MachineRegs.HeapTop | MachineRegs.Hb);
         Row(EngineCpsCallTargetMethod, MachineRegs.HeapTop, MachineRegs.None);
         Row(EngineCpsProceedTargetMethod, MachineRegs.Cp | MachineRegs.HeapTop, MachineRegs.None);
         Row(EngineTagIlCpCpsMethod, MachineRegs.None, MachineRegs.None);
@@ -447,6 +447,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineUnifyVariableYMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray, MachineRegs.HeapTop | MachineRegs.HeapArray);
         Row(EngineUnifyVoidMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray, MachineRegs.HeapTop | MachineRegs.HeapArray);
         Row(EngineUnwindTrailsMethod, MachineRegs.All, MachineRegs.All);
+        Row(EngineDropUndoneWakesMethod, MachineRegs.HeapTop | MachineRegs.HeapArray, MachineRegs.None);
         Row(EngineWakeBoundaryCallMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineWakeBoundaryProceedMethod, MachineRegs.All, MachineRegs.All);
         Row(IlExecuteHelperResolveMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop, MachineRegs.None);

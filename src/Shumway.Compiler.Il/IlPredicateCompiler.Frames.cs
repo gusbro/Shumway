@@ -37,6 +37,8 @@ public sealed partial class IlPredicateCompiler
     private static readonly FieldInfo EngBindingTrailTop = EngineField(nameof(Activation._bindingTrailTop));
     private static readonly FieldInfo EngExtraTrailTop = EngineField(nameof(Activation._extraTrailTop));
     private static readonly FieldInfo EngViewGen = EngineField(nameof(Activation._currentViewGen));
+    private static readonly MethodInfo EngineDropUndoneWakesMethod =
+        typeof(Activation).GetMethod(nameof(Activation.DropUndoneWakes))!;
     private static readonly MethodInfo EngineUnwindTrailsMethod =
         typeof(Activation).GetMethod(nameof(Activation.UnwindTrails),
             new[] { typeof(int), typeof(int) })!;
@@ -377,6 +379,15 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         EmitLoadCellInt(emit, l.Ctl, CtlHeapTop);
         EmitStoreEngineField(emit, EngHeapTop);
+        // A wake whose binding the unwind undid goes before anything is
+        // allocated over its home (ADR-049 §8): a call, only when one pends.
+        var noWakes = emit.DefineLabel($"crest_nowakes_{NextLabelSeq()}");
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        emit.BranchIfFalse(noWakes);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineDropUndoneWakesMethod);
+        emit.MarkLabel(noWakes);
         emit.LoadArgument(0);
         EmitLoadCellBits(emit, l.Ctl, CtlViewGen);
         emit.LoadConstant(Cell.PayloadMask);

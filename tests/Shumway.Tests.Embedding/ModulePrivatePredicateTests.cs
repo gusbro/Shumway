@@ -254,7 +254,7 @@ public sealed class ModulePrivatePredicateTests
             fz_goal(G) :- freeze(Y, loc(Y)), frozen(Y, G).
             """);
         Succeeds(e, "fz_go(X), X == 1.");
-        Succeeds(e, "fz_goal(G), G = mpp_fz:loc(_).");
+        Succeeds(e, "fz_goal(G), G = coroutining:freeze(V, mpp_fz:loc(V)).");
     }
 
     [Fact]

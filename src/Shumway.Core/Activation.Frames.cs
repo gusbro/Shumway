@@ -530,9 +530,7 @@ public sealed partial class Activation
         if (AttrSweepEnabled) DebugSweepAttrTable("catch_unwind");
         // Wakeups queued by the guarded goal reference heap cells the
         // truncation above just discarded — drop them with it.
-        if (_pendingWakeups.Count > f.SnapPendingWakeups)
-            _pendingWakeups.RemoveRange(
-                f.SnapPendingWakeups, _pendingWakeups.Count - f.SnapPendingWakeups);
+        _pendingWakeups.Truncate(f.SnapPendingWakeups);
         _b = f.SnapB;
         // ADR-033 — drop guard-continuation entries the guarded goal pushed.
         _guardContTop = f.SnapGuardContTop;
@@ -957,6 +955,7 @@ public sealed partial class Activation
         UnwindTrails(bindingTarget, extraTarget);
 
         _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
         if (AttrSweepEnabled) DebugSweepAttrTable("cp_restore");
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
         CurrentViewGen = ctl[8].Payload;           // CpViewGenOffset
@@ -1092,7 +1091,13 @@ public sealed partial class Activation
     /// instruction. The interpreter's <c>call</c> and <c>execute</c> opcodes maintain
     /// <c>B0</c> by writing <c>_b</c> into it before transferring control to the callee.
     /// </summary>
-    public void NeckCut() => Cut(_b0);
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
+    public void NeckCut()
+    {
+        // Usually nothing sits above the entry barrier: the test inlines into
+        // the caller, and only a cut that prunes pays the call.
+        if (_b > _b0) Cut(_b0);
+    }
 
     /// <summary>Cut to the barrier captured earlier by <see cref="GetLevel"/>
     /// in <c>Y[slot]</c> — the WAM <c>cut</c> (deep cut) instruction. The

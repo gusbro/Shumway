@@ -6,12 +6,11 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-030 linker closure — the whole-program determinism fixpoint at link
-/// time. The elidable shape is a last clause ending in a trailing top-level
-/// <c>!</c> whose prefix calls a cross-module callee: intra-module the callee
-/// is opaque (CrossModule blocker), but the linker owns every module's clauses,
-/// so the fixpoint resolves it and elides the cut when the callee is det.
-/// Purely semantics-preserving — every test checks the observable behaviour is
-/// identical to the cut-bearing original.
+/// time, over a last clause ending in a trailing top-level <c>!</c> whose
+/// prefix calls a cross-module callee. A call can bind an attributed variable
+/// passed to it, so the cut stays even when the callee is det (ADR-030,
+/// Attributed variables); every test checks the observable behaviour of the
+/// linked program.
 /// </summary>
 public class Adr030LinkerClosureTests
 {
@@ -34,19 +33,17 @@ public class Adr030LinkerClosureTests
         r.Diagnostics.Any(d => d.Message.Contains("redundant trailing cut"));
 
     [Fact]
-    public void CrossModuleDetCallee_TrailingCutElided_SemanticsIntact()
+    public void CrossModuleDetCallee_TrailingCutKept_SemanticsIntact()
     {
         // a:main/2's last clause ends `check(X), R = pos, !.` — check/1 is
-        // module b's public single-clause det predicate. Intra-module the cut
-        // was CrossModule-blocked; the linker closure proves check/1 det and
-        // drops the trailing cut.
+        // module b's public single-clause det predicate, and the cut stays.
         var r = Link(
             ("a", ":- public main/2.\n"
                 + "main(X, R) :- X < 0, !, R = neg.\n"
                 + "main(X, R) :- check(X), R = pos, !.\n"),
             ("b", ":- public check/1.\n"
                 + "check(X) :- X > 0.\n"));
-        Assert.True(Elided(r));
+        Assert.False(Elided(r));
         var e = Load(r);
         Assert.True(e.Query("main(5, R), R == pos.").Success);
         Assert.Single(e.QueryAll("main(5, R)."));
@@ -75,10 +72,10 @@ public class Adr030LinkerClosureTests
     }
 
     [Fact]
-    public void CrossModuleChain_FixpointResolvesTransitively()
+    public void CrossModuleChain_CutKept_SemanticsIntact()
     {
-        // a → b:outer → b:inner (both det) — determinism chains across the
-        // module boundary through the whole-program fixpoint.
+        // a → b:outer → b:inner (both det): the trailing cut after the call
+        // stays all the same.
         var r = Link(
             ("a", ":- public main/2.\n"
                 + "main(X, R) :- X < 0, !, R = neg.\n"
@@ -86,7 +83,7 @@ public class Adr030LinkerClosureTests
             ("b", ":- public outer/1.\n"
                 + "outer(X) :- inner(X).\n"
                 + "inner(X) :- X > 10.\n"));
-        Assert.True(Elided(r));
+        Assert.False(Elided(r));
         var e = Load(r);
         Assert.True(e.Query("main(50, R), R == big.").Success);
         Assert.Single(e.QueryAll("main(50, R)."));

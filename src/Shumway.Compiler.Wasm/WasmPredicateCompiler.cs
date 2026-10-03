@@ -8749,6 +8749,10 @@ public static class WasmPredicateCompiler
         /// cell for cell. Leaves arity in LT0 and the ctl base in LT1.</summary>
         private void EmitRestoreCommon(int pcForDeopt)
         {
+            // A pending wake may belong to a binding this backtrack undoes:
+            // the interpreter's restore drops it before the heap grows over
+            // its home.
+            EmitFlagsCheck(pcForDeopt);
             CellLoadDyn(LStackB, LB);
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT0));                          // arity
