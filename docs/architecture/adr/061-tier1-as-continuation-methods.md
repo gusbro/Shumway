@@ -682,6 +682,26 @@ the runtime may not.
    increment per goal in every method (5% of `sendmore`'s IL) and an
    unwind-safe flush before every call that can raise; kept on the IL stack
    instead of the field it lost (`xr2` 32% slower, `sendmore` 8%).
+
+   Wakes (ADR-049 points 9 and 10). A hot method checks the queue in front
+   of each builtin but `=/2` and of each inlined call, and leaves for its
+   cold method at the instruction's boundary when something is pending; the
+   cold method arms the interrupt with a marker whose cursor is that
+   boundary, and the interpreter's table enters the cold method at a cursor
+   from `CpsBoundaryBase`. A delegate arms it at its own wake cursors, from
+   2^18, so the code a resume through the dispatch loop runs, and a
+   predicate with no continuation methods, wake too. A choice point pushed
+   for a wake's copy names one of those cursors; `CpsFailTarget` leaves it
+   to the dispatch loop, since the alternatives method knows none of them.
+   A CP-free guard that saves its argument registers is opaque up to its
+   commit only: the code after it has boundaries. Against the code without
+   them, the Van Roy set and Blint measured 0.99 to 1.00 (one process, ABBA,
+   minimum over eight rounds).
+
+   A predicate with an inlined native block (ADR-024) gets no continuation
+   methods: the block calls into the embedding layer and the program's
+   interop types, which a collectible assembly cannot reach. Its delegate,
+   a `DynamicMethod`, can.
 4. Persisted bundles on the same emitter (see Bundles and link-time
    optimization): direct calls across the whole bundle, slots for what can
    change, the lazy upgrade of slots at load, `--strip-wam` over every

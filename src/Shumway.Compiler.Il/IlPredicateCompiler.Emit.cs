@@ -833,6 +833,8 @@ public sealed partial class IlPredicateCompiler
                 // instead of per-walk name compares.
                 var builtinEntry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                 int builtinArity = builtinEntry.Arity;
+                if (IsWakeBuiltin(builtinEntry))
+                    EmitWakePoint(emit, builtinArity, failLabel, pc);   // ADR-049
 
                 // ADR-022 item 2 — inline an embedded native block directly into
                 // this method's IL instead of dispatching `$native_run`. Declines
@@ -1131,6 +1133,8 @@ public sealed partial class IlPredicateCompiler
                         "ExecuteBuiltin at a proceed-suppressed IL emit site.");
                 int tailBuiltinId = BytecodeIO.ReadInt32(code, pc + 1);
                 var tailEntry = Shumway.Builtins.BuiltinsRegistry.GetById(tailBuiltinId);
+                if (IsWakeBuiltin(tailEntry))
+                    EmitWakePoint(emit, tailEntry.Arity, failLabel, pc);   // ADR-049
                 if (tailEntry.IsBacktrackable)
                 {
                     // Tail-return contract (mirrors the interpreter): a
@@ -1446,6 +1450,7 @@ public sealed partial class IlPredicateCompiler
                 // delegate at the alternative cursor → next clause.
                 if (inlineSites is not null && inlineSites.TryGetValue(pc, out var inl))
                 {
+                    EmitWakePoint(emit, FunctorTable.Lookup(siteFunctorId).Arity, failLabel, pc);   // ADR-049
                     EmitInlinedFact(emit, inl, failLabel, emitSelfDelegate!, calleeMap);
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
@@ -1472,6 +1477,7 @@ public sealed partial class IlPredicateCompiler
                     && ruleInlineSites.TryGetValue(pc, out var ruleCallee)
                     && callSiteIndexCounter is not null && resumeLabels is not null)
                 {
+                    EmitWakePoint(emit, ruleCallee.Arity, failLabel, pc);   // ADR-049
                     emit.LoadArgument(0);                    // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
                     EmitHelperCall(emit, EngineBGetter);
@@ -1511,6 +1517,7 @@ public sealed partial class IlPredicateCompiler
                     && !(IsLeafPredicate(fdCallee) || IsInlinableLeafRule(fdCallee))
                     && TryDescribeFailDirectCallee(fdCallee, calleeMap, out var fdClauses, out _))
                 {
+                    EmitWakePoint(emit, fdCallee.Arity, failLabel, pc);   // ADR-049
                     if (CpFreeGuardContinuations && guardContCtx is not null)
                     {
                         var okLbl = emit.DefineLabel($"gc_ok{lt}_{pc}");
@@ -1532,7 +1539,8 @@ public sealed partial class IlPredicateCompiler
                     else
                     {
                         EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
-                            failLabel, calleeMap, $"{lt}_fd{pc}", guardContCtx);
+                            failLabel, calleeMap, $"{lt}_fd{pc}", guardContCtx,
+                            callerPcAfter: pc + OpcodeTable.Get(op).Size);
                     }
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
@@ -1563,12 +1571,19 @@ public sealed partial class IlPredicateCompiler
                         || ((InlineLeafRules || forceLeafRuleInline)
                             && IsInlinableLeafRule(calleePred))))
                 {
+                    EmitWakePoint(emit, calleePred.Arity, failLabel, pc);   // ADR-049
                     // The callee's pc-named locals must not collide with the
                     // caller's (both pc spaces start at 0) — salt per site.
+                    var leafScope = PushScope(new LeafScope
+                    {
+                        Code = calleePred.BytecodeUnfused, End = calleePred.BytecodeUnfused.Length,
+                        CalleeMap = calleeMap, CallerPcAfter = pc + OpcodeTable.Get(op).Size,
+                    });
                     EmitClauseBody(emit, calleePred.BytecodeUnfused, 0, calleePred.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
                         calleeMap: calleeMap, suppressProceedReturn: true,
                         localSalt: $"{lt}_inl{pc}");
+                    PopScope(leafScope);
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
                         int leafSiteIdx = callSiteIndexCounter();
@@ -1748,6 +1763,7 @@ public sealed partial class IlPredicateCompiler
                     && (IsLeafPredicate(calleePredX)
                         || (InlineLeafRules && IsInlinableLeafRule(calleePredX))))
                 {
+                    EmitWakePoint(emit, calleePredX.Arity, failLabel, pc);   // ADR-049
                     EmitClauseBody(emit, calleePredX.BytecodeUnfused, 0, calleePredX.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
                         calleeMap: calleeMap, suppressProceedReturn: false);
@@ -2516,7 +2532,12 @@ public sealed partial class IlPredicateCompiler
                         emit.Switch(cursorLabels);
                         emit.Branch(failLabel);
                     },
-                    dynamicCursor: LoadNext);
+                    dynamicCursor: LoadNext,
+                    emitCopySlice: (s, e, fl, salt) => EmitClauseBody(
+                        emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
+                        emitSelfDelegate: effectiveSelf, calleeMap: calleeMap, cursorBase: callBase,
+                        selfFunctorId: predicate.FunctorId, forceLeafRuleInline: true,
+                        localSalt: salt, guardContCtx: gcCtx));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

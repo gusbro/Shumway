@@ -43,6 +43,9 @@ public sealed partial class IlPredicateCompiler
         /// <summary>The alternatives method, where a choice point of the
         /// predicate resumes; 0 when it pushes none.</summary>
         public nint AltEntry { get; init; }
+        /// <summary>The cold method, which the dispatch loop enters at a cursor
+        /// from <see cref="ColdCursorBase"/> (a wake's resume, ADR-049).</summary>
+        public required PredicateDelegate ColdDelegate { get; init; }
         // Raw code pointers do not keep a collectible assembly alive.
         public required Type KeepAlive { get; init; }
     }
@@ -200,7 +203,7 @@ public sealed partial class IlPredicateCompiler
 
         var created = type.CreateType()!;
         nint entry = 0, altEntry = 0;
-        PredicateDelegate? entryDelegate = null;
+        PredicateDelegate? entryDelegate = null, coldDelegate = null;
         var resumes = new List<(int, nint)>();
         int maxCursor = 0;
         foreach (int c in ctx.Alternatives) maxCursor = Math.Max(maxCursor, c);
@@ -208,8 +211,10 @@ public sealed partial class IlPredicateCompiler
         foreach (var (cursor, name) in ctx.Methods)
         {
             var handle = created.GetMethod(name)!.MethodHandle;
-            if (cursor == CpsColdCursor)   // reached by its hot methods only
+            if (cursor == CpsColdCursor)   // its hot methods, and a wake's resume
             {
+                coldDelegate = (PredicateDelegate)created.GetMethod(name)!
+                    .CreateDelegate(typeof(PredicateDelegate));
                 if (CpsCompileEveryMethod)
                 {
                     System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
@@ -246,7 +251,7 @@ public sealed partial class IlPredicateCompiler
         return new CpsCode
         {
             Entry = entry, EntryDelegate = entryDelegate!, Resumes = resumes.ToArray(), KeepAlive = created,
-            AltEntry = altEntry,
+            AltEntry = altEntry, ColdDelegate = coldDelegate!,
         };
     }
 
@@ -274,6 +279,7 @@ public sealed partial class IlPredicateCompiler
         _methodAlternatives = new HashSet<int>();
         _methodContinuations = new HashSet<int>();
         _resumeEntries = new List<(IlLabel[], IlLabel[])>();
+        ResetWakeEmission();
         if (cps is null)
             return IlEmit.NewDynamicMethod(name, record: IlDumpPath is not null);
         cps.Boundary = 0;
@@ -470,7 +476,7 @@ public sealed partial class IlPredicateCompiler
             emit.MarkLabel(l);
             c.ColdLabels.Add(l);
         }
-        else c.Current = id;
+        c.Current = id;
     }
 
     /// <summary>In a hot method, a slow path that would call: the cold method
@@ -669,6 +675,7 @@ public sealed partial class IlPredicateCompiler
         }
         emit.LoadArgument(1);
         emit.Switch(labels);
+        EmitWakeCursorCheck(emit);   // ADR-049: out of range, a wake cursor
     }
 
     private static void CpsColdDispatchCheck(IlEmit emit)
@@ -683,23 +690,33 @@ public sealed partial class IlPredicateCompiler
     /// instructions (a guard, an inlined fact): no boundary inside is valid.</summary>
     private static CpsOpaqueScope CpsOpaque()
     {
-        if (_cps is not { } c) return default;
-        c.Opaque++;
-        // Inside, the cold method cannot resume: a slow path must not leave
-        // for it at the boundary before the construct, which would run the
-        // construct again.
-        c.Current = -1;
-        return new CpsOpaqueScope(c);
+        _opaqueDepth++;
+        if (_cps is { } c)
+        {
+            c.Opaque++;
+            // Inside, the cold method cannot resume: a slow path must not leave
+            // for it at the boundary before the construct, which would run the
+            // construct again.
+            c.Current = -1;
+        }
+        return new CpsOpaqueScope(_cps);
     }
 
     private readonly struct CpsOpaqueScope : IDisposable
     {
         private readonly CpsEmitContext? _ctx;
+        private readonly bool _open;
 
-        public CpsOpaqueScope(CpsEmitContext ctx) => _ctx = ctx;
+        public CpsOpaqueScope(CpsEmitContext? ctx)
+        {
+            _ctx = ctx;
+            _open = true;
+        }
 
         public void Dispose()
         {
+            if (!_open) return;
+            _opaqueDepth--;
             if (_ctx is { } c) c.Opaque--;
         }
     }

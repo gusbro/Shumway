@@ -44,12 +44,16 @@ public sealed class IlPromotionStore
 
     /// <summary>What the interpreter's tables invoke for <paramref name="functorId"/>:
     /// an entry (cursor 0) goes to the continuation methods when there are any,
-    /// every other cursor to the delegate.</summary>
+    /// an instruction boundary to their cold method (where its wake points
+    /// resume, ADR-049), every other cursor to the delegate.</summary>
     internal Func<Activation, int, bool> TableEntry(int functorId, PredicateDelegate del)
     {
         if (!_cpsCode.TryGetValue(functorId, out var cps)) return del.Invoke;
         var entry = cps.EntryDelegate;
-        return (engine, cursor) => cursor == 0 ? entry(engine, 0) : del(engine, cursor);
+        var cold = cps.ColdDelegate;
+        return (engine, cursor) => cursor == 0 ? entry(engine, 0)
+            : cursor >= IlPredicateCompiler.ColdCursorBase ? cold(engine, cursor)
+            : del(engine, cursor);
     }
 
     // A failure here leaves the predicate on its delegate: continuation

@@ -422,6 +422,7 @@ public sealed partial class IlPredicateCompiler
         Row(EnginePushIlCpEntryCpsMethod, MachineRegs.B, MachineRegs.None);
         Row(EngineResumeMarkerOfMethod, MachineRegs.None, MachineRegs.None);
         Row(EnginePushCpWithMarksMethod, MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.B0 | MachineRegs.StackTop | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.RegisterArray, MachineRegs.B | MachineRegs.StackTop | MachineRegs.Hb | MachineRegs.StackArray | MachineRegs.RegisterArray);
+        Row(EnginePushLateChoicePointMethod, MachineRegs.E | MachineRegs.Cp | MachineRegs.B | MachineRegs.B0 | MachineRegs.StackTop | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.RegisterArray, MachineRegs.B | MachineRegs.StackTop | MachineRegs.Hb | MachineRegs.StackArray | MachineRegs.RegisterArray);
         Row(EngineRegistersIdenticalMethod, MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
         Row(EngineCellsIdenticalMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(EngineRetryMeElseMethod, MachineRegs.All, MachineRegs.All);
@@ -450,6 +451,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineDropUndoneWakesMethod, MachineRegs.HeapTop | MachineRegs.HeapArray, MachineRegs.None);
         Row(EngineWakeBoundaryCallMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineWakeBoundaryProceedMethod, MachineRegs.All, MachineRegs.All);
+        Row(EngineWakeBoundaryAtMethod, MachineRegs.All, MachineRegs.All);
         Row(IlExecuteHelperResolveMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop, MachineRegs.None);
         Row(IlGetPstrHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(IlIndexedDispatchResolveByFidMethod, MachineRegs.All, MachineRegs.All);

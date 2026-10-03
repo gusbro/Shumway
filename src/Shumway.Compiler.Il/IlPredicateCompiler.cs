@@ -106,6 +106,8 @@ public sealed partial class IlPredicateCompiler
     /// every compile site so the dump covers them all.</summary>
     private PredicateDelegate FinishEmit(IlEmit emit, string header)
     {
+        EmitWakeCopies(emit);      // ADR-049
+        EmitWakeDispatch(emit);
         EmitResumeEntries(emit);   // ADR-061
         if (TryFinishCps(emit, header, out var cpsBase)) return cpsBase;   // ADR-061
         DumpIl(emit, header);
@@ -314,6 +316,8 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryCall))!;
     private static readonly MethodInfo EngineWakeBoundaryProceedMethod =
         typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryProceed))!;
+    private static readonly MethodInfo EngineWakeBoundaryAtMethod =
+        typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryAt))!;
     // ADR-031 case B — the binding-guard snapshot/restore surface.
     private static readonly MethodInfo EngineBindingTrailTopGetter =
         typeof(Activation).GetProperty(nameof(Activation.BindingTrailTop))!.GetGetMethod()!;
@@ -943,6 +947,7 @@ public sealed partial class IlPredicateCompiler
         // entry (no cursor switch).
         var selfEntry = emit.DefineLabel("self_entry");
         CpsColdDispatchCheck(emit);   // ADR-061: a leaf has no cursor switch
+        EmitWakeCursorCheck(emit);    // ADR-049
         emit.MarkLabel(selfEntry);
         EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             failLabel, predicate.CallSites,

@@ -9,6 +9,8 @@ flushes became suspend/resume points over the phase-16 resume markers.
 Refines the deferred-wakeup design that has carried attributed variables
 since phase 4. Supersedes the once-semantics drain for the non-cut goal
 boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
+Amended 2026-10-03: compiled code under ADR-061 wakes in front of builtins
+and inlined calls, and inside CP-free guards (points 9 and 10).
 
 ## Context
 
@@ -145,6 +147,36 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    only at the next goal boundary. The wasm tier hands that restore to the
    interpreter while a wake is pending.
 
+9. **Compiled code wakes where Tier-0 does.** Tier-0 wakes in front of
+   every builtin and every call. Compiled code that runs a builtin, or
+   inlines a callee, checks the queue at the same point: one predicted
+   branch when it is empty. `=/2` is a unification and does not wake. With
+   continuation methods (ADR-061), a delegate arms the interrupt with a
+   marker that re-enters it at a wake cursor (from 2^18) placed before the
+   point; a continuation method leaves for its cold method at the
+   instruction's boundary, and the cold method arms it with a marker that
+   re-enters the cold method there (from 2^20). The interrupt saves the
+   builtin's or the callee's argument registers: at a `call_builtin` no
+   other register is live, since every goal ends a chunk. Regions and the
+   wasm tier do not have these points yet.
+
+10. **A wake inside a construct that skipped a choice point pushes it.** A
+    CP-free guard (ADR-031), and a fail-direct callee inlined in one as a
+    chain of clauses, keep in IL locals what their choice point would hold
+    (the argument registers, the trail and heap marks) and raise HB at
+    their entry, so every binding they make is trailed. A wake point inside
+    one pushes those choice points then, outermost first, and continues in
+    a copy of the rest of the constructs compiled as ordinary code, its cut
+    a real cut. A failure then backtracks into the alternatives the woken
+    goal left, then into the callee's next clause, then into the guard's
+    next clause, as in Tier-0. The callee's proceed is such a point when the
+    callee has clauses left (`p(X, L) :- member(X, L), !.`). In the copy a
+    callee that calls itself last is an ordinary predicate entered again.
+    A shape with no copy (a callee whose clause ends in another predicate's
+    tail call, ADR-033) is not compiled, and a guard that inlines a dynamic
+    snapshot (ADR-034) is not CP-free: the woken goal could change what it
+    inlined.
+
 ### Staging
 
 Tier-1's flush sites are goal boundaries too (region `Call`/`Execute`/
@@ -169,6 +201,10 @@ canaries (`PreludeIlBakeTests`).
   once-drain per Decision §5, as do non-region IL bodies, which have never
   flushed at their call sites — their wakes surface at the surrounding
   region or interpreter boundaries, unchanged.
+- **Stage 2b: continuation methods.** Points 9 and 10, for the delegates
+  and the methods of ADR-061 (2026-10-03). A predicate with continuation
+  methods is entered at a wake's re-entry by its cold method; the
+  interpreter's table routes cursors from 2^20 there.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).
@@ -194,6 +230,11 @@ canaries (`PreludeIlBakeTests`).
   (`ResolveNestedCatch`) stops being involved on this path.
 - The debugger gains frames it never showed; the VSIX/DAP snapshot tests
   that count frames may need their expectations refreshed.
+- Points 9 and 10 cost one predicted branch per builtin and per inlined
+  call: under continuation methods the Van Roy set and Blint measured 0.99
+  to 1.00 against the code without them (one process, ABBA, minimum over
+  eight rounds). The copies are cold code: only the cold method and the
+  delegates hold them.
 
 ## Future (explicitly out of scope here)
 

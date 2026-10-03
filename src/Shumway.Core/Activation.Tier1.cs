@@ -1097,6 +1097,28 @@ public sealed partial class Activation
         _stack[b + CpCeOffset(arity)] = Cell.RawInt(entryE);
     }
 
+    /// <summary>ADR-049 under ADR-061: cursors from here re-enter compiled
+    /// code at a point a wake left (a delegate's wake point, a cold method's
+    /// instruction boundary). The interpreter's table resolves them; the
+    /// alternatives method knows none of them.</summary>
+    public const int CompiledReentryCursorBase = 1 << 18;
+
+    /// <summary>ADR-049: a choice point that compiled code skipped (a CP-free
+    /// guard's fail-direct callee, ADR-031), pushed late over whatever is on
+    /// top, with the marks of the callee's entry. Popping it leaves HB at the
+    /// boundary of the choice point under it.</summary>
+    public void PushLateChoicePoint(int arity, int bp,
+        int bindingTop, int extraTop, int heapTop, int entryE)
+    {
+        int hb = 0;
+        if (_b >= 0)
+        {
+            int topArity = (int)_stack[_b + CpArityOffset].Data;
+            hb = (int)_stack[_b + CpHeapTopOffset(topArity)].Data;
+        }
+        PushChoicePointWithMarks(arity, bp, bindingTop, extraTop, heapTop, hb, entryE);
+    }
+
     /// <summary>ADR-061: the resume marker of a cursor known only at run time
     /// (a rare path's choice point push).</summary>
     public static int ResumeMarkerOf(int functorId, int cursor) => EncodeResumeMarker(functorId, cursor);
@@ -1127,7 +1149,8 @@ public sealed partial class Activation
             if (!IsResumeMarker(bp) || alts is null) return 0;
             var (fid, cursor) = DecodeResumeMarker(bp);
             nint altCode;
-            if ((uint)fid >= (uint)alts.Length || (altCode = alts[fid]) == 0) return 0;
+            if ((uint)fid >= (uint)alts.Length || (altCode = alts[fid]) == 0
+                || cursor >= CompiledReentryCursorBase) return 0;
             Profiler.Backtrack();
             BacktrackSafePoint();
             _cpsFailCursor = cursor;

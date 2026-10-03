@@ -168,7 +168,12 @@ public sealed partial class IlPredicateCompiler
                     },
                     predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
                     clauseLabels[i + 1], failLabel,
-                    effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}");
+                    effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}",
+                    emitCopySlice: (s, e, fl, salt) => EmitClauseBody(
+                        emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
+                        emitSelfDelegate: effectiveSelf, calleeMap: calleeMap, cursorBase: N,
+                        selfFunctorId: predicate.FunctorId, forceLeafRuleInline: true,
+                        localSalt: salt, guardContCtx: gcCtx));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

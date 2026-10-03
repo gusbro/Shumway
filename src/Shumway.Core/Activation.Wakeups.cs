@@ -154,6 +154,17 @@ public sealed partial class Activation
         return WakeInterruptOrDrain(0, Cp);
     }
 
+    /// <summary>The wake boundary in front of a builtin or an inlined call in
+    /// compiled code: its <paramref name="arity"/> argument registers are the
+    /// live ones, and the resume re-enters the compiled code at
+    /// <paramref name="resumeMarker"/>, before the same boundary.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    public int Tier1WakeBoundaryAt(int arity, int resumeMarker)
+    {
+        if (_pendingWakeups.Count == 0) return 0;
+        return WakeInterruptOrDrain(arity, resumeMarker);
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private int WakeInterruptOrDrain(int arity, int resumePc)
     {

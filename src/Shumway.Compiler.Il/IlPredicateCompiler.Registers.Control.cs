@@ -131,7 +131,8 @@ public sealed partial class IlPredicateCompiler
         }
         if (method == EngineFlushWakeupsForIlCutMethod)
             return EmitGuardedCall(emit, rf, method, EngineHasPendingWakeupsGetter, true);
-        if (method == EngineWakeBoundaryCallMethod || method == EngineWakeBoundaryProceedMethod)
+        if (method == EngineWakeBoundaryCallMethod || method == EngineWakeBoundaryProceedMethod
+            || method == EngineWakeBoundaryAtMethod)
             return EmitGuardedCall(emit, rf, method, EngineHasPendingWakeupsGetter, 0);
         if (method == EngineMaybeCollectHeapAtCallMethod)
             return EmitGuardedCall(emit, rf, method, EngineCallSafePointDueGetter, null);

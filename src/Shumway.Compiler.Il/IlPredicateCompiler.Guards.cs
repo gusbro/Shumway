@@ -439,6 +439,13 @@ public sealed partial class IlPredicateCompiler
         // point so both orders (mutate-then-call, call-then-mutate) reject.
         bool AcceptEmbeddedDynamics()
         {
+            // ADR-049: a woken goal can mutate what the guard inlines, and the
+            // copy a wake continues in has no staleness test.
+            if (WakePoints && extras.DynFids is { Count: > 0 })
+            {
+                CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
+                return false;
+            }
             if (extras.DynFids is not { Count: > 0 } || !extras.DbMutation) return true;
             if (!suppressStats) CpFreeGuardStats.BumpShapeDetail("dyn+mutation");
             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
@@ -1433,7 +1440,7 @@ public sealed partial class IlPredicateCompiler
         IlEmit emit, CompiledPredicate callee,
         List<FailDirectClause> fdClauses, IlLabel outerFail,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt,
-        GuardContEmitContext? gcCtx = null)
+        GuardContEmitContext? gcCtx = null, int callerPcAfter = -1)
     {
         using var cpsOpaque = CpsOpaque();   // ADR-061: state in IL locals
         int arity = callee.Arity;
@@ -1482,11 +1489,29 @@ public sealed partial class IlPredicateCompiler
         // per-alternative untrail. Raising HB again to the CALLEE-entry heap
         // top makes every pre-callee term old; restored at the join.
         emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
+        // ADR-049: a wake inside pushes the choice point this chain skips.
+        ChainScope? chainScope = null;
+        if (WakePoints && callerPcAfter >= 0)
+        {
+            var mE = emit.DeclareLocal<int>($"fd_e{salt}");
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(mE);
+            chainScope = PushScope(new ChainScope
+            {
+                Callee = callee, Clauses = fdClauses, CalleeMap = calleeMap,
+                ArgSaves = argSaves, Bt = mBt, Xt = mXt, H = mH, E = mE,
+                CallerPcAfter = callerPcAfter,
+            });
+        }
 
         byte[] code = callee.BytecodeUnfused;
         for (int i = 0; i < k; i++)
         {
             var c = fdClauses[i];
+            if (chainScope is not null)
+            {
+                chainScope.Clause = i;
+                chainScope.PreCut = true;
+            }
             emit.MarkLabel(altLabels[i]);
             if (i > 0)
             {
@@ -1531,6 +1556,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(preCutFail);
+                if (chainScope is not null) chainScope.PreCut = false;
                 // Slice 2 — post-commit: failures exit the callee.
                 IlLabel committedFail = outerFail;
                 if (c.Framed)
@@ -1559,6 +1585,9 @@ public sealed partial class IlPredicateCompiler
                 EmitClauseBody(emit, code, c.Start, c.TermPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
                     suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}", guardContCtx: gcCtx);
+                // ADR-049: the callee's proceed, with alternatives left: a wake
+                // failing after it backtracks into them, as in Tier-0.
+                if (chainScope is not null && i < k - 1) EmitScopedWakePoint(emit, c.TermPc);
                 EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
             }
 
@@ -1570,6 +1599,7 @@ public sealed partial class IlPredicateCompiler
                 emit.Branch(altLabels[i + 1]);
             }
         }
+        if (chainScope is not null) PopScope(chainScope);
         emit.MarkLabel(join);
         // Success: drop the nested HB raise back to the guard-level boundary.
         // (The failure exits skip this — the outer restore stub reinstates the
@@ -1647,14 +1677,15 @@ public sealed partial class IlPredicateCompiler
         SelfDelegateEmitter self, int lazyCpCursor, int arity, string salt,
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
-        Action<IlEmit>? dynamicCursor = null)
+        Action<IlEmit>? dynamicCursor = null,
+        Action<int, int, IlLabel, string>? emitCopySlice = null)
     {
         // ADR-061: in a continuation method the guard's marks live in the
         // activation (the indexed buckets' next node too), so the cold method
         // can resume inside it; a guard that saves argument registers keeps
-        // them in IL locals and stays opaque.
+        // them in IL locals and stays opaque up to its commit.
         bool cpsFields = CpsEmitting && !g.NeedsRegSave;
-        using var cpsOpaque = cpsFields ? default : CpsOpaque();
+        var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
         // guard-fail branch (the stub ends with a switch over the per-member
         // next-node local instead of `br nextClauseLabel`), and dynamicCursor
@@ -1717,8 +1748,95 @@ public sealed partial class IlPredicateCompiler
         }
         if (needsStub)
             guardFail = emit.DefineLabel($"cf_restore{salt}");
+        var after = emit.DefineLabel($"cf_after{salt}");
 
+        // The clause choice point the guard skipped, pushed late: at the commit
+        // when a wake is pending, or at a wake point inside the prefix.
+        void EmitMaterializeCp()
+        {
+            IlLabel? noCp = null;
+            if (dynamicCursor is not null)
+            {
+                // Chain-tail sentinel (-1): no CP existed to materialize — the
+                // wakeup flush + cut still run (a goal boundary), CP-less.
+                noCp = emit.DefineLabel($"cf_rarenocp{salt}_{NextLabelSeq()}");
+                dynamicCursor(emit);
+                emit.LoadConstant(-1);
+                emit.BranchIfEqual(noCp);
+            }
+            if (WamCps)
+            {
+                // ADR-061: a WAM choice point, its BP the next alternative's marker.
+                emit.LoadArgument(0);
+                emit.LoadConstant(arity);
+                if (dynamicCursor is not null)
+                {
+                    EmitFunctorId(emit, _emitOwnerFid);
+                    dynamicCursor(emit);
+                    EmitHelperCall(emit, EngineResumeMarkerOfMethod);
+                }
+                else EmitResumeMarker(emit, _emitOwnerFid, lazyCpCursor);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushCpWithMarksMethod);
+                }
+                else EmitHelperCall(emit, EnginePushChoicePointMethod);
+                if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+            }
+            else
+            {
+                emit.LoadArgument(0);
+                self(emit);
+                if (dynamicCursor is not null) dynamicCursor(emit);
+                else emit.LoadConstant(lazyCpCursor);
+                emit.LoadConstant(arity);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushIlCpWithMarksMethod);
+                }
+                else
+                {
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
+                }
+                if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+                EmitCpsTagChoicePoint(emit);
+            }
+            // The push saved the current registers — but the guard may have
+            // clobbered argument registers with call staging (regSave). Patch the
+            // CP's saved args back to the clause-entry values so a failing wakeup
+            // hook backtracks the next clause/bucket-node into entry state, not
+            // the guard's staging.
+            if (regs is not null)
+            {
+                for (int r = 0; r < arity; r++)
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(r);
+                    emit.LoadLocal(regs[r]);
+                    EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
+                }
+            }
+            if (noCp is not null) emit.MarkLabel(noCp);
+        }
+
+        // ADR-049: a wake point in the prefix continues, materialized, in a copy
+        // of the rest of the prefix (EmitScopedWakePoint).
+        GuardScope? guardScope = WakePoints && !cpsFields && emitCopySlice is not null
+            ? PushScope(new GuardScope
+            {
+                MaterializeCp = EmitMaterializeCp,
+                EmitCopySlice = emitCopySlice,
+                CutEnd = g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
+                AfterCommit = after,
+                FailLabel = failLabel,
+            })
+            : null;
         emitSlice(clauseStart, g.CutPc, guardFail);         // head/guard prefix
+        if (guardScope is not null) PopScope(guardScope);
 
         // The commit's cut: neck_cut, or the framed deep cut to Y[slot].
         void EmitTheCut()
@@ -1741,7 +1859,6 @@ public sealed partial class IlPredicateCompiler
         // ADR-061: a point to resume at; its slow paths leave from here.
         if (cpsFields) CpsInstructionBoundary(emit, false);
         var rare = emit.DefineLabel($"cf_rare{salt}");
-        var after = emit.DefineLabel($"cf_after{salt}");
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
         emit.BranchIfTrue(rare);
@@ -1757,77 +1874,7 @@ public sealed partial class IlPredicateCompiler
         bool rareLeft = cpsFields && EmitColdExit(emit);
         if (!rareLeft)
         {
-        IlLabel? rareNoCp = null;
-        if (dynamicCursor is not null)
-        {
-            // Chain-tail sentinel (-1): no CP existed to materialize — the
-            // wakeup flush + cut still run (a goal boundary), CP-less.
-            rareNoCp = emit.DefineLabel($"cf_rarenocp{salt}");
-            dynamicCursor(emit);
-            emit.LoadConstant(-1);
-            emit.BranchIfEqual(rareNoCp);
-        }
-        if (WamCps)
-        {
-            // ADR-061: a WAM choice point, its BP the next alternative's marker.
-            emit.LoadArgument(0);
-            emit.LoadConstant(arity);
-            if (dynamicCursor is not null)
-            {
-                EmitFunctorId(emit, _emitOwnerFid);
-                dynamicCursor(emit);
-                EmitHelperCall(emit, EngineResumeMarkerOfMethod);
-            }
-            else EmitResumeMarker(emit, _emitOwnerFid, lazyCpCursor);
-            if (g.NeedsSnapshot)
-            {
-                LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
-                LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
-                EmitHelperCall(emit, EnginePushCpWithMarksMethod);
-            }
-            else EmitHelperCall(emit, EnginePushChoicePointMethod);
-            if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
-        }
-        else
-        {
-        emit.LoadArgument(0);
-        self(emit);
-        if (dynamicCursor is not null) dynamicCursor(emit);
-        else emit.LoadConstant(lazyCpCursor);
-        emit.LoadConstant(arity);
-        if (g.NeedsSnapshot)
-        {
-            LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
-            LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
-            EmitHelperCall(emit, EnginePushIlCpWithMarksMethod);
-        }
-        else
-        {
-            EmitHelperCall(emit, EnginePushIlCpMethod);
-        }
-        if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
-        EmitCpsTagChoicePoint(emit);
-        }
-        // The push saved the current registers — but the guard may have
-        // clobbered argument registers with call staging (regSave). Patch the
-        // CP's saved args back to the clause-ENTRY values so a failing wakeup
-        // hook backtracks the next clause/bucket-node into entry state, not
-        // the guard's staging. (Latent since case B shipped; exposed by the
-        // indexed-bucket extension on `choose(X,[V|_]) :- X = V, !.` — the
-        // guard's unify_variable_x clobbers A1 with the list head, and the
-        // clpfd wakeup's failure then re-entered the sibling node with
-        // A1 = 9 instead of the list.)
-        if (regs is not null)
-        {
-            for (int r = 0; r < arity; r++)
-            {
-                emit.LoadArgument(0);
-                emit.LoadConstant(r);
-                emit.LoadLocal(regs[r]);
-                EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
-            }
-        }
-        if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
+        EmitMaterializeCp();
         // The flush runs Prolog code, which may run other guards: the marks the
         // commit needs are kept across it in locals.
         IlLocal? rareBt = null, rareXt = null, rareHb = null;
@@ -1858,6 +1905,8 @@ public sealed partial class IlPredicateCompiler
         }
         }
         emit.MarkLabel(after);
+        // Committed: the guard's locals are dead, its body has boundaries.
+        cpsOpaque.Dispose();
 
         emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
             clauseEnd, failLabel);                          // post-commit body
@@ -1867,6 +1916,7 @@ public sealed partial class IlPredicateCompiler
         // resume marker is ever set for an inlined call).
         markDeadCursors?.Invoke();
 
+        using var stubOpaque = cpsFields ? default : CpsOpaque();
         if (needsStub)
         {
             // Guard-fail restore stub: undo the guard, then fall to the next
