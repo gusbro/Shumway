@@ -42,6 +42,14 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         unwrap(w(X), X).
         through(X, Y, p(X, Y)).
         twice(X, pair(X, X)).
+        stale_v(b(2), 3).
+        stale_t(b(X), X).
+        stale_t(d, e).
+        stale_t(b(2), 3).
+        stale_b(Y) :- freeze(Z, true), functor(Z, f, 0), Y = a.
+        stale_b(Y) :- X = h(1, 2, 3, 4), Y = done(X).
+        stale_c(N) :- freeze(Z, true), functor(Z, f, 0), N > 1.
+        stale_c(N) :- X = h(1, 2, 3, N), X = h(_, _, _, 0).
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -74,6 +82,14 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "attvar through findall's copy" },
         { "put_attr(X, m2, a), samep(X, Y), '$orphan_attvar'(O), O == -1.",
           "no orphan after aliasing" },
+        { "(freeze(Z, true), stale_v(b(k), Z) ; W = alt), W == alt.",
+          "a head binds a frozen variable and fails: its wake goes with it" },
+        { "findall(Z, (freeze(Z, true), stale_t(b(k), Z)), L), L == [k].",
+          "the last clause binds a frozen variable and fails" },
+        { "stale_b(done(X)), X == h(1, 2, 3, 4).",
+          "a builtin's wake, then a failure inside the tier: the retry builds over the home" },
+        { "stale_c(0).",
+          "a builtin's wake, then an inline comparison fails before any wake check" },
     };
 
     private static PrologEngine Tier0()
@@ -169,7 +185,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             // the tier, or this compares Tier-0 with Tier-0.
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
-                || goal.Contains("twice(");
+                || goal.Contains("twice(") || goal.Contains("stale_");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }

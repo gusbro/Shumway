@@ -7,8 +7,7 @@ namespace Shumway.Compiler.Wam;
 /// ADR-030 — the intra-module determinism model and the redundant-trailing-cut
 /// clause rewrite it drives. This is the single source of truth for "what leaves
 /// no choice point"; <see cref="PredicateDisassembler"/>'s <c>--detcensus</c>
-/// classification delegates to it so the census and the shipped elision can
-/// never diverge.
+/// classification delegates to it, so both use one determinism model.
 ///
 /// <para><b>Determinism fixpoint.</b> A user predicate is <em>det</em> (leaves no
 /// CP on success) when its dispatch is deterministic — single clause, OR every
@@ -29,10 +28,10 @@ namespace Shumway.Compiler.Wam;
 /// dispatch chain's <c>trust</c>/<c>trust_me</c> pops it, and earlier clauses'
 /// body CPs were unwound on backtrack into it). So a trailing top-level <c>!</c>
 /// in the last clause can only prune choice points created by that clause's own
-/// prefix goals. When every prefix goal is det, the cut prunes nothing and is
-/// removed — semantically identical (same solutions, same side effects), and it
-/// turns <c>Head :- …, call, !.</c> into a clean tail call eligible for LCO /
-/// Tier-1 self-tail loops. Running extra clauses would be unsound
+/// prefix goals, and the goals woken by the bindings before it (ADR-049 §5). A
+/// det prefix is therefore not enough: the cut is removed only when the clause
+/// binds nothing before it (a head of distinct variables, comparisons only), so
+/// a cut after a call always stays. Running extra clauses would be unsound
 /// (<c>extra-backtracking-not-sound</c>); requiring prefix-det is exactly what
 /// prevents it.</para>
 /// </summary>
@@ -237,6 +236,12 @@ public sealed class DeterminismAnalysis
         FlattenConj(rule.Args[1], goals);
         if (goals.Count == 0 || goals[^1] is not AtomTerm { Name: "!" }) return false;
 
+        // A binding before the cut can wake a goal that leaves choice points,
+        // and the cut prunes them (ADR-049 §5): a det prefix is not enough. A
+        // head of distinct variables with only comparisons after it binds
+        // nothing. A call can bind what it is passed, so no deep cut goes.
+        if (!HeadBindsNothing(head) || !ComparisonsOnly(goals)) return false;
+
         // Every goal before the trailing cut must leave no choice point.
         for (int j = 0; j < goals.Count - 1; j++)
             if (!LeavesNoCp(classify(goals[j]))) return false;
@@ -253,6 +258,27 @@ public sealed class DeterminismAnalysis
             newBody = new CompoundTerm(",", new[] { kept[j], newBody });
         rewritten = new Clause(ClauseKind.Rule,
             new CompoundTerm(":-", new[] { head, newBody }), c.Position);
+        return true;
+    }
+
+    private static bool HeadBindsNothing(Term head)
+    {
+        if (head is not CompoundTerm c) return true;
+        var seen = new HashSet<string>();
+        foreach (Term a in c.Args)
+            if (a is not VarTerm v || (v.Name != "_" && !seen.Add(v.Name)))
+                return false;
+        return true;
+    }
+
+    // The goals before the trailing cut are cuts and arithmetic comparisons.
+    private static bool ComparisonsOnly(List<Term> goals)
+    {
+        for (int j = 0; j < goals.Count - 1; j++)
+            if (goals[j] is not AtomTerm { Name: "!" }
+                && !(goals[j] is CompoundTerm { Args.Length: 2 } c
+                     && Shumway.Builtins.ArithmeticEvaluator.TryRelOp(c.Functor, out _)))
+                return false;
         return true;
     }
 

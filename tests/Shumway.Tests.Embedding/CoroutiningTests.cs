@@ -138,9 +138,43 @@ public class CoroutiningTests
     [Fact]
     public void Frozen_ReadsBackTheDelayedGoal()
     {
-        var sol = Co().Query("freeze(X, foo(1)), frozen(X, G).");
-        Assert.True(sol.Success);
-        Assert.Equal("foo(1)", sol["G"]!.ToString());
+        Assert.True(Co().Query(
+            "freeze(X, foo(1)), frozen(X, G), G == coroutining:freeze(X, user:foo(1)).").Success);
+    }
+
+    [Fact]
+    public void Frozen_GivesTheGoalsThatRecreateTheConstraints()
+    {
+        // SICStus's form: module-qualified freeze/2, dif/2 and when/2 goals.
+        var e = Co();
+        Assert.True(e.Query(
+            "dif(X, a), frozen(X, G), G == coroutining:dif(X, a).").Success);
+        Assert.True(e.Query(
+            "when(nonvar(Y), w(Y)), frozen(Y, G), G == coroutining:when(nonvar(Y), user:w(Y)).").Success);
+        Assert.True(e.Query(
+            "freeze(Z, q(Z)), dif(Z, b), frozen(Z, G), "
+            + "G == (coroutining:freeze(Z, user:q(Z)), coroutining:dif(Z, b)).").Success);
+        // Every variable of the term, and a constraint over two of them once.
+        Assert.True(e.Query(
+            "freeze(Y, c(Y)), frozen(f(Y), G), G == coroutining:freeze(Y, user:c(Y)).").Success);
+        Assert.True(e.Query(
+            "dif(A, B), frozen(A-B, G), G == coroutining:dif(A, B).").Success);
+        // Calling the goals re-creates the constraints, here on a plain copy.
+        Assert.True(e.Query(
+            "freeze(X, Y = a), frozen(X, G), copy_term(X-Y-G, X2-Y2-G2), "
+            + "call(G2), X2 = 1, Y2 == a.").Success);
+    }
+
+    [Fact]
+    public void Frozen_TheSecondExampleOfIssue133()
+    {
+        // The goal frozen on Z inspects what frozen/2 binds it to: a freeze/2
+        // goal, not the bare goal, so neither branch matches. SICStus and SWI
+        // fail both queries.
+        var e = Co();
+        const string Prefix = "freeze(X, Y is X+1), freeze(Z, (Z = (_ is A+_) ; Z = (_ is B+_))), frozen(X, Z), ";
+        Assert.False(e.Query(Prefix + "A = 1.").Success);
+        Assert.False(e.Query(Prefix + "B = 2.").Success);
     }
 
     [Fact]
@@ -561,8 +595,7 @@ public class CoroutiningTests
         var e = Co();
         e.ConsultString("""
             tally((A, B), N0, N) :- !, tally(A, N0, N1), tally(B, N1, N).
-            tally('$dif_wake'(dif_c(_, _, Alive)), N0, N) :-
-                !, ( Alive == dead -> N = N0 ; N is N0 + 1 ).
+            tally(coroutining:dif(_, _), N0, N) :- !, N is N0 + 1.
             tally(_, N, N).
             live(V, N) :- frozen(V, G), tally(G, 0, N).
             """);
@@ -678,7 +711,7 @@ public class CoroutiningTests
         var e = Co();
         Assert.True(e.Query(
             "freeze(X, foo), copy_term(X, Y, Goals), maplist(call, Goals), "
-            + "frozen(Y, G), G == foo.").Success);
+            + "frozen(Y, G), G == coroutining:freeze(Y, user:foo).").Success);
         // ...and the constraint on the copy is a real one, not a display.
         Assert.True(e.Query(
             "dif(A, B), copy_term(A-B, C-D, Goals), maplist(call, Goals), "
@@ -732,10 +765,17 @@ public class CoroutiningTests
         // The store keeps each frozen goal apart from the next. Nothing that
         // reads the goals back may show how.
         var e = Co();
-        Assert.True(e.Query("freeze(X, a), freeze(X, b), frozen(X, G), G == (a, b).").Success);
-        Assert.True(e.Query("freeze(Y, (p, q)), frozen(Y, G), G == (p, q).").Success);
-        Assert.True(e.Query("freeze(X, G0), frozen(X, G), G == G0, var(G).").Success);
-        // Two frozen goals project as two freeze/2 constraints, as before.
+        Assert.True(e.Query(
+            "freeze(X, a), freeze(X, b), frozen(X, G), "
+            + "G == (coroutining:freeze(X, user:a), coroutining:freeze(X, user:b)).").Success);
+        Assert.True(e.Query(
+            "freeze(Y, (p, q)), frozen(Y, G), G == coroutining:freeze(Y, user:(p, q)).").Success);
+        Assert.True(e.Query(
+            "freeze(X, G0), frozen(X, G), G == coroutining:freeze(X, user:G0), var(G0).").Success);
+        // One frozen conjunction projects as one freeze/2 constraint...
+        Assert.True(e.Query(
+            "freeze(Y, (p, q)), copy_term(Y, _, As), As = [freeze(_, (p, q))].").Success);
+        // ...and two frozen goals as two, as before.
         Assert.True(e.Query(
             "freeze(X, a), freeze(X, b), copy_term(X, _, As), "
             + "As = [freeze(_, a), freeze(_, b)].").Success);
@@ -751,5 +791,123 @@ public class CoroutiningTests
         Assert.False(e.Query("dif(X, Y), dif(-X, -Y), X = Y.").Success);
         Assert.False(e.Query("dif(f(X,Y), f(Y,X)), X = Y.").Success);
         Assert.True(e.Query("dif(X, Y), dif(-X, -Y), X = 1, Y = 2.").Success);
+    }
+
+    // ===== a binding by a library predicate or builtin (#133) =====
+
+    [Fact]
+    public void Frozen_KeepsTheAlternativesOfTheGoalItsBindingWakes()
+    {
+        // frozen/2 binds Z, which wakes (X=1 ; X=2). X = 2 must backtrack into
+        // the second branch: X = 2, Y = 3, as SWI answers.
+        var e = Co();
+        var sol = e.Query("freeze(X, Y is X+1), freeze(Z, (X=1;X=2)), frozen(X, Z), X = 2.");
+        Assert.True(sol.Success);
+        Assert.Equal("3", sol["Y"]!.ToString());
+        sol = e.Query("freeze(X, Y is X+1), freeze(Z, (X=1;X=2)), frozen(X, Z), X = 1.");
+        Assert.True(sol.Success);
+        Assert.Equal("2", sol["Y"]!.ToString());
+        Assert.True(e.Query("freeze(X, true), freeze(Z, (W=1;W=2)), frozen(X, Z), W = 2.").Success);
+    }
+
+    [Fact]
+    public void TermConstruction_IntoAFrozenVariable_BindsAndWakes()
+    {
+        var e = Co();
+        Assert.True(e.Query("freeze(Z, true), functor(Z, f, 0), Z == f.").Success);
+        Assert.True(e.Query("freeze(Z, W = woke), functor(Z, f, 2), Z = f(_, _), W == woke.").Success);
+        Assert.True(e.Query("freeze(Z, true), Z =.. [f, a], Z == f(a).").Success);
+        Assert.True(e.Query("freeze(Z, true), compound_name_arity(Z, f, 2), Z = f(_, _).").Success);
+        Assert.True(e.Query("freeze(Z, (W = 1 ; W = 2)), functor(Z, f, 0), W = 2.").Success);
+    }
+
+    // ===== bounded memory: an attributed variable per step =====
+
+    private const string StepLoop = """
+        step_loop(0, _) :- !.
+        step_loop(N, [_|T]) :- freeze(T, true), N1 is N-1, step_loop(N1, T).
+        step_round(G, B, X) :-
+            freeze(L, true), step_loop(2000, L), garbage_collect,
+            statistics(global_stack, [G, _]),
+            statistics(trail_stack, [B, _]),
+            statistics(cstr_stack, [X, _]).
+        """;
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AttributingAndBindingAVariablePerStep_KeepsTheHeapAndTrailsFlat(int threshold)
+    {
+        // Each round attributes and binds 2000 variables, deterministically.
+        // Nothing of a finished round may survive its garbage_collect: not on
+        // the trails (bindings of variables younger than every choice point,
+        // and what a Tier-1 guard trailed before its commit), and not in the
+        // attribute table (the record of a variable bound untrailed).
+        var e = Co();
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString(StepLoop);
+        for (int i = 0; i < 3; i++) Assert.True(e.Query("step_round(_, _, _).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
+        var sol = e.Query(
+            "step_round(G1, B1, X1), step_round(G2, B2, X2), step_round(G3, B3, X3).");
+        Assert.True(sol.Success);
+        long L(string v) => long.Parse(sol[v]!.ToString()!);
+        // A round allocates about 600 KB; what stays may grow by a few cells.
+        Assert.True(L("G3") - L("G1") < 1024, $"global {L("G1")} -> {L("G3")}");
+        Assert.Equal(L("B1"), L("B3"));
+        Assert.Equal(L("X1"), L("X3"));
+    }
+
+    // ===== a wake whose binding backtracking undid =====
+
+    // Each head binds Z, queueing its wake, and then fails before the queue
+    // drains: the wake must go with the binding.
+    private const string BindThenFailHeads = """
+        stale_v(b(2), 3).
+        stale_x(b(X), X).
+        stale_x(b(2), 3).
+        stale_t(b(X), X).
+        stale_t(d, e).
+        stale_t(b(2), 3).
+        stale_r(Y) :- freeze(Z, true), stale_s(Z, b), Y = one.
+        stale_r(f(A, B, C, D)) :- A = 1, B = 2, C = 3, D = 4.
+        stale_s(3, a).
+        """;
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AHeadThatBindsAFrozenVariableAndFails_LeavesNoWakeBehind(int threshold)
+    {
+        var e = Co();
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString(BindThenFailHeads);
+        string[] queries =
+        {
+            // Z becomes a plain variable again: its promotion is undone too
+            "(freeze(Z, true), stale_v(b(k), Z) ; W = alt), W == alt.",
+            "X = f(Z), (freeze(Z, true), stale_v(b(k), Z) ; W = alt), W == alt.",
+            "(freeze(Z, true), stale_x(b(k), Z), fail ; W = end), W == end.",
+            "findall(Z, (freeze(Z, true), stale_t(b(k), Z)), L), L == [k].",
+            // the next clause builds f/4 over the discarded home of Z
+            "stale_r(Y), Y == f(1, 2, 3, 4).",
+        };
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (string q in queries) Assert.True(e.Query(q).Success, q);
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
+        }
+    }
+
+    [Fact]
+    public void TermConstruction_FromFrozenVariables_IsAnInstantiationError()
+    {
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(Z, true), catch((functor(Z, _, _), fail), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "freeze(N, true), catch((functor(_, f, N), fail), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "freeze(Z, true), catch((compound_name_arity(Z, _, 2), fail), error(instantiation_error, _), true).").Success);
     }
 }

@@ -676,7 +676,7 @@ public sealed partial class Activation
             // backtracking restores the plain REF. A fresh record is
             // installed under the home index, overwriting any orphan
             // left by a backtracked-then-reused heap slot.
-            TrailValueChange(addr, cell);
+            if (addr < _hb) TrailValueChange(addr, cell);
             _heap[addr] = Cell.AttVar(addr);
             _attrTable[addr] = new Dictionary<int, int>();
         }
@@ -734,7 +734,8 @@ public sealed partial class Activation
             // (SWI semantics: attvar/1 is false again). Trailed like PutAttr's
             // promotion, so backtracking restores the AttVar cell — and with
             // it the record the trailed AttrChange entries repopulate.
-            TrailValueChange(addr, _heap[addr]);
+            if (addr < _hb) TrailValueChange(addr, _heap[addr]);
+            else _attrTable.Remove(addr);
             _heap[addr] = Cell.UnboundVar(addr);
         }
     }
@@ -775,8 +776,13 @@ public sealed partial class Activation
         return sb.ToString();
     }
 
+    // ADR-004: past HB, like a plain binding. An attributed variable younger
+    // than the newest choice point (or catch frame) is discarded by whatever
+    // would restore it; trailing it anyway grows the trails without bound in
+    // deterministic code.
     private void TrailAttrChange(int homeAddr, int moduleId, int oldValue)
     {
+        if (homeAddr >= _hb) return;
         int logIndex = _attrTrailLog.Count;
         _attrTrailLog.Add((homeAddr, moduleId, oldValue));
         EnsureExtraTrailCapacity(1);
@@ -2011,8 +2017,7 @@ public sealed partial class Activation
     /// <c>verify_attributes/4</c> for bindings that no longer exist.</summary>
     public void TruncatePendingWakeups(int count)
     {
-        if (_pendingWakeups.Count > count)
-            _pendingWakeups.RemoveRange(count, _pendingWakeups.Count - count);
+        _pendingWakeups.Truncate(count);
     }
 
     /// <summary>The saved machine state a trial unification must restore.
@@ -2212,24 +2217,44 @@ public sealed partial class Activation
     /// this (live) engine so the hooks see the real attributed
     /// variables.</summary>
     /// <summary>Every entry whose attributed variable is STILL BOUND — the
-    /// wake's reason survived. An entry whose home cell is an attvar again
-    /// (its binding was unwound by backtracking) or lies above the heap top
-    /// (its heap segment was discarded) is dead and silently dropped: its
-    /// hook must not run against an unbound variable. This filter is what
-    /// lets backtracking leave the queue ALONE — an interposed failure of a
-    /// younger computation must not eat the wake of a binding that
-    /// survives it (the promoted-length freeze loss).</summary>
+    /// wake's reason survived. Backtracking does not clear the queue: an
+    /// interposed failure of a younger computation must not eat the wake of a
+    /// binding that survives it (the promoted-length freeze loss). It drops
+    /// the entries whose binding it undid instead (<see cref="DropDeadWakeups"/>),
+    /// and this filter repeats the check for the paths that unwind without it.</summary>
     public IReadOnlyList<(int Module, int AttrValueIdx, int OtherIdx)> TakePendingWakeups()
     {
         var taken = new List<(int, int, int)>(_pendingWakeups.Count);
         for (int i = 0; i < _pendingWakeups.Count; i++)
         {
             var (m, v, o, home) = _pendingWakeups[i];
-            if (home < _heapTop && _heap[home].Tag != Tag.AttVar)
+            if (WakeHomeStillBound(home))
                 taken.Add((m, v, o));
         }
         _pendingWakeups.Clear();
         return taken;
+    }
+
+    /// <summary>Drops the queued wakes whose binding a backtrack just undid.
+    /// Runs right after the heap top is restored, before anything is allocated
+    /// over a discarded home: a home the heap grows over again can hold a
+    /// bound cell that has nothing to do with the wake.</summary>
+    private void DropDeadWakeups()
+    {
+        int kept = 0;
+        for (int i = 0; i < _pendingWakeups.Count; i++)
+            if (WakeHomeStillBound(_pendingWakeups[i].AttvarHome))
+                _pendingWakeups[kept++] = _pendingWakeups[i];
+        _pendingWakeups.Truncate(kept);
+    }
+
+    // An undone binding leaves its home past the heap top, attributed again,
+    // or a plain unbound variable when the promotion was undone as well.
+    private bool WakeHomeStillBound(int home)
+    {
+        if (home >= _heapTop) return false;
+        Cell c = _heap[home];
+        return c.Tag != Tag.AttVar && c.Data != Cell.UnboundVar(home).Data;
     }
 
     /// <summary>Binds the attributed variable at <paramref name="attAddr"/>
@@ -2242,7 +2267,10 @@ public sealed partial class Activation
         Cell newCell = valueCell.Tag is Tag.Str or Tag.Lis or Tag.Pstr
             ? Cell.Ref(valueAddr)
             : valueCell;
-        TrailValueChange(attAddr, _heap[attAddr]);
+        // Untrailed, nothing restores the attributed variable: its record is
+        // dead now (the queued wakeups already hold its values).
+        if (attAddr < _hb) TrailValueChange(attAddr, _heap[attAddr]);
+        else _attrTable.Remove(attAddr);
         _heap[attAddr] = newCell;
     }
 

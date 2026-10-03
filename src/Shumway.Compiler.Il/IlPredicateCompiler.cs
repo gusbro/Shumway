@@ -328,7 +328,7 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo EngineBeginIlGuardMethod =
         typeof(Activation).GetMethod(nameof(Activation.BeginIlGuard), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineCommitIlGuardMethod =
-        typeof(Activation).GetMethod(nameof(Activation.CommitIlGuard), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.CommitIlGuard), new[] { typeof(int), typeof(int), typeof(int) })!;
     private static readonly MethodInfo EngineFailIlGuardMethod =
         typeof(Activation).GetMethod(nameof(Activation.FailIlGuard),
             new[] { typeof(int), typeof(int), typeof(int), typeof(int) })!;

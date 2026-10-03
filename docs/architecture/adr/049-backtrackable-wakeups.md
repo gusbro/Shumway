@@ -133,6 +133,18 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    running here?" — it is parented at the boundary that fired it — which
    the invisible nested drain never could.
 
+8. **A queued wake lives as long as its binding.** Backtracking does not
+   clear the queue: a failure inside a younger computation must not eat the
+   wake of a binding older than the choice point it returns to. Each
+   restore drops the wakes whose binding it undid, right after it resets
+   the heap top: the variable's home lies past the new top, is attributed
+   again, or is a plain unbound variable when its promotion was undone
+   too. Checking later is not enough: the heap grows over a discarded home,
+   and a cell there can look bound. A head that binds an attributed
+   variable and then fails leaves such a wake, because the queue drains
+   only at the next goal boundary. The wasm tier hands that restore to the
+   interpreter while a wake is pending.
+
 ### Staging
 
 Tier-1's flush sites are goal boundaries too (region `Call`/`Execute`/

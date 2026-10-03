@@ -3,6 +3,9 @@
 ## Status
 
 Shipped (default on) ([Phase 33](../../history/phase-33-closure.md)).
+Amended for attributed variables: a cut is elided only when nothing before it
+binds (see Soundness, Attributed variables), so the deep-cut elision described
+below no longer applies.
 
 Intra-module elision plus the linker whole-program closure. A sound,
 mode-independent, cut-aware **determinism fixpoint** used to elide a cut that
@@ -208,6 +211,30 @@ backtracking: the cut pruned nothing (`B == B0`), and re-entry on backtrack was
 already blocked by the proven determinism. A wrong elision would leave a CP the
 cut removed → extra solutions → unsound, which is precisely why the analysis must
 be conservative and cross-module unknowns must not be trusted.
+
+### Attributed variables
+
+A det prefix is not enough once goals can be woken: a binding in the head or
+the prefix can wake a goal that leaves choice points, and the cut prunes them
+(ADR-049 §5). SICStus, SWI and Scryer agree: with `freeze(Z, (W=1;W=2))`,
+`p(w(G), G) :- !.` called as `p(w(foo), Z)` gives one solution.
+
+A cut is therefore elided only when the clause binds nothing before it: a head
+of distinct variables, with only arithmetic comparisons between the head and
+the cut. A call can bind an attributed variable passed to it, so a cut after a
+call always stays, det prefix or not.
+
+- Measured on Blint with Tier-1: keeping the neck cuts that bind costs nothing
+  against eliding every neck cut (minimum ratio 0.991 over three copies), and
+  eliding the deep cuts gained nothing measurable.
+- What is lost: a recursion of the shape `p :- ..., p, !.` no longer runs in
+  constant stack, as in SICStus, SWI and Scryer, which keep that cut too.
+
+A sound way to win it back, left for later: decide at the last call. Just
+before `execute`, the clause still has its entry barrier; if no wake is
+pending, no attributed variable is live, the callee provably creates none, and
+(with a frame) no choice point sits above the saved level, the call runs as a
+tail call; otherwise the clause builds its frame there and runs the real cut.
 
 ## Implementation plan
 

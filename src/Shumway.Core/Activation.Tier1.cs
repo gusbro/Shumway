@@ -1071,9 +1071,17 @@ public sealed partial class Activation
 
     /// <summary>Commits a CP-free binding guard (ADR-031): restores
     /// <see cref="Hb"/> to the heap boundary of the (unchanged) current top
-    /// choice point. The guard's bindings stay; nothing was pushed, so the
-    /// cut itself has nothing to tear down.</summary>
-    public void CommitIlGuard(int savedHb) => AssignHb(savedHb);
+    /// choice point. The guard's bindings stay, and what it trailed for cells
+    /// past that boundary goes, as the cut of the skipped choice point drops
+    /// it: the cut finds no choice point to pop, so it compacts nothing, and
+    /// those entries would otherwise stay for good.</summary>
+    public void CommitIlGuard(int bindingTop, int extraTop, int savedHb)
+    {
+        AssignHb(savedHb);
+        // Below the guard's tops: a cut already compacted from an older choice point.
+        if (_bindingTrailTop >= bindingTop && _extraTrailTop >= extraTop)
+            CompactTrails(bindingTop, extraTop, savedHb);
+    }
 
     /// <summary>Fails a CP-free binding guard (ADR-031): undoes every binding
     /// the guard trailed, discards its heap allocations, restores
@@ -1086,12 +1094,11 @@ public sealed partial class Activation
         UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
         AssignHb(savedHb);
-        // NOT cleared: only the wakes THIS guard queued are dead, and the
-        // unwind above just reverted their attvar homes — TakePendingWakeups
-        // drops them by that mark. A wake belonging to an OLDER surviving
-        // binding must outlive the guard's failure (blanket-clearing here
-        // silently unhooked freeze/2 across a promoted predicate's clause
-        // retries, the same defect TryBacktrack's clear had).
+        // Not cleared: a wake belonging to an older surviving binding must
+        // outlive the guard's failure (blanket-clearing here silently unhooked
+        // freeze/2 across a promoted predicate's clause retries). Only the
+        // wakes whose binding the unwind undid go.
+        if (_pendingWakeups.Count != 0) DropDeadWakeups();
     }
 
     /// <summary>ADR-031 rare path (cases B and G) — pushes the

@@ -156,6 +156,13 @@ public void Bind(int heapIdx, Cell value)
 }
 ```
 
+The same check applies to the attributed-variable entries of the extra trail
+(the promotion of a variable to an attributed one, its binding, its
+demotion, and the changes to its attribute record): a young attributed
+variable is discarded by whatever would restore it. Its record goes from the
+attribute table when it is bound untrailed, since nothing will restore the
+variable it describes.
+
 ### Young-to-old binding rule
 
 When unifying two unbound variables, always bind the younger (higher heap index) to the older (lower heap index). This ensures that the bound variable doesn't reference a region of heap that will be truncated by backtracking.

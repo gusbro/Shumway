@@ -409,6 +409,23 @@ public class TermIoConformance : IDisposable
         Assert.Equal("A", File.ReadAllText(_tempPath));
     }
 
+    [Fact]
+    public void Write_IsWriteTermWithNumbervars()
+    {
+        // §8.14.2: write/1,2 are write_term/2,3 with [numbervars(true)];
+        // write_term itself defaults to numbervars(false).
+        var e = new PrologEngine();
+        Assert.Equal("B", Captured(e, "write('$VAR'(1))"));
+        Assert.Equal("f(A,Z1)", Captured(e, "write(f('$VAR'(0), '$VAR'(51)))"));
+        Assert.Equal("B", Captured(e, "(current_output(S), write(S, '$VAR'(1)))"));
+        Assert.Equal("B\n", Captured(e, "writeln('$VAR'(1))"));
+        Assert.Equal("A", Captured(e, "print('$VAR'(0))"));
+        Assert.Equal("$VAR(1)", Captured(e, "write_term('$VAR'(1), [])"));
+        // Only a non-negative integer argument names a variable.
+        Assert.Equal("$VAR(-1)", Captured(e, "write('$VAR'(-1))"));
+        Assert.Equal("$VAR(x)", Captured(e, "write('$VAR'(x))"));
+    }
+
     // ---------- write/2 on binary stream — permission error ----------
 
     [Fact]

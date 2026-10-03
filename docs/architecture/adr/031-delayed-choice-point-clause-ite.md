@@ -94,7 +94,12 @@ ISO 277.
   binding hole) plus the two trail tops and the heap top into IL locals; guard
   failure lands on a restore stub — `Engine.FailIlGuard` (untrail to the marks,
   heap reset, HB restore, pending-wakeup clear) — before branching to the next
-  clause; the commit restores HB via `Engine.CommitIlGuard`. The rare
+  clause; the commit restores HB via `Engine.CommitIlGuard` and compacts
+  what the guard trailed for cells past that HB, from the guard's two trail
+  marks, as the cut of the skipped choice point does (a cut with no choice
+  point to pop compacts nothing; without this, deterministic code that keeps
+  committing guards grew both trails, and the heap they reference, without
+  bound). The rare
   pending-wakeups path materialises the lazy CP via
   `Engine.PushIlChoicePointWithMarks`, which overwrites the four restore slots
   with the CLAUSE-ENTRY marks — so a failing attribute hook backtracks into a

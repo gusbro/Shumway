@@ -2974,7 +2974,12 @@ public sealed partial class BytecodeInterpreter
                 // The IL set Pc to its tail-call target. Try IL on
                 // *that* target too.
                 _engine.IlTailCallPending = false;
-                target = _engine.P;
+                int next = _engine.P;
+                // A delegate that hands back the address it was dispatched to
+                // asks for that bytecode (a wasm deopt at the entry, or an
+                // entry it declined): dispatching it again hands it back.
+                if (next == target) return;
+                target = next;
                 continue;
             }
             _engine.SetPc(_engine.Cp);
