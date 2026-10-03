@@ -156,7 +156,12 @@ public class AttrMirrorTests
         e.PushChoicePoint(0, 999);
         int outerB = e.B;
 
+        // Younger than the outer choice point, older than the inner one: the
+        // attributes are trailed (ADR-004's HB check skips a variable younger
+        // than every choice point), and the cut back to the outer one drops
+        // the entries.
         int x = e.AllocateHeapUnbound();
+        e.PushChoicePoint(0, 998);
         e.PutAttr(x, ModA, Value(e, 50));
         e.PutAttr(x, ModB, Value(e, 51));
         Agrees(e, "posted");
@@ -169,7 +174,6 @@ public class AttrMirrorTests
         // and it is the memory-hygiene path a long cut-only run depends on.
         e.SetHeap(x, Cell.Atom(60));
 
-        e.PushChoicePoint(0, 998);
         e.Cut(outerB);
 
         Assert.False(e.AttrHasRecordForTesting(x));
@@ -184,18 +188,18 @@ public class AttrMirrorTests
         var e = new Activation();
         e.AttrMirrorEnable();
 
+        // The variable is older than the choice point and becomes attributed
+        // above it, so undoing the promotion drops a record that still holds
+        // its attributes -- AttrDropRecord's own path, which the del tests
+        // never reach because there the record is already empty by the time
+        // it is dropped. (A variable younger than the choice point is not
+        // trailed at all: AnOrphanRecord_LosesItsRowsWhenItsIndexIsReused.)
+        int x = e.AllocateHeapUnbound();
         e.SetHbForTesting(e.HeapTop);
         e.PushChoicePoint(0, 999);
         int binding = e.BindingTrailTop;
         int extra = e.ExtraTrailTop;
 
-        // The variable becomes attributed above the choice point, so undoing
-        // the promotion drops a record that still holds its attributes --
-        // AttrDropRecord's own path, which the del tests never reach because
-        // there the record is already empty by the time it is dropped. This is
-        // what a solver posting on a fresh variable and then failing does, so
-        // it is the common case, not a corner.
-        int x = e.AllocateHeapUnbound();
         e.PutAttr(x, ModA, Value(e, 50));
         e.PutAttr(x, ModB, Value(e, 51));
         Agrees(e, "posted");
@@ -205,6 +209,36 @@ public class AttrMirrorTests
         Assert.Equal(-1, e.AttrMirrorLookup(x, ModA));
         Assert.Equal(-1, e.AttrMirrorLookup(x, ModB));
         Agrees(e, "after undoing the promotion");
+    }
+
+    /// <summary>A variable younger than every choice point is promoted with
+    /// no trail entry (ADR-004's HB check), so backtracking past it leaves its
+    /// record behind. The next promotion at the same index replaces the
+    /// record, and its rows: a leftover row would answer for the new
+    /// variable.</summary>
+    [Fact]
+    public void AnOrphanRecord_LosesItsRowsWhenItsIndexIsReused()
+    {
+        var e = new Activation();
+        e.AttrMirrorEnable();
+
+        e.SetHbForTesting(e.HeapTop);
+        e.PushChoicePoint(0, 999);
+        int top = e.HeapTop;
+        int x = e.AllocateHeapUnbound();
+        e.PutAttr(x, ModA, Value(e, 50));
+        e.PutAttr(x, ModB, Value(e, 51));
+        Agrees(e, "posted");
+
+        e.SetHeapTop(top);   // the backtrack's heap reset; nothing to untrail
+        int y = e.AllocateHeapUnbound();
+        Assert.Equal(x, y);
+        int v = Value(e, 52);
+        e.PutAttr(y, ModA, v);
+
+        Assert.Equal(v, e.AttrMirrorLookup(y, ModA));
+        Assert.Equal(-1, e.AttrMirrorLookup(y, ModB));
+        Agrees(e, "after the index was reused");
     }
 
     /// <summary>A row the table keeps for a variable the heap no longer
@@ -238,6 +272,10 @@ public class AttrMirrorTests
         for (int i = 0; i < 64; i++) Value(e, 900 + i);
         int x = e.AllocateHeapUnbound();
         e.PutAttr(x, ModA, Value(e, 50));
+        // Reachable from a root: the table does not keep it alive (ADR-052),
+        // and a variable younger than every choice point leaves no trail entry
+        // that would.
+        e.SetRegister(0, Cell.Ref(x));
 
         e.CollectHeap();
 
