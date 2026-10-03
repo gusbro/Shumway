@@ -1024,7 +1024,14 @@ public sealed partial class Activation
     /// instruction. The interpreter's <c>call</c> and <c>execute</c> opcodes maintain
     /// <c>B0</c> by writing <c>_b</c> into it before transferring control to the callee.
     /// </summary>
-    public void NeckCut() => Cut(_b0);
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void NeckCut()
+    {
+        // Usually nothing sits above the entry barrier: the test inlines into
+        // the caller, and only a cut that prunes pays the call.
+        if (_b > _b0) Cut(_b0);
+    }
 
     /// <summary>Cut to the barrier captured earlier by <see cref="GetLevel"/>
     /// in <c>Y[slot]</c> — the WAM <c>cut</c> (deep cut) instruction. The
