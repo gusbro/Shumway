@@ -1825,10 +1825,11 @@ public sealed partial class IlPredicateCompiler
 
         // ADR-049: a wake point in the prefix continues, materialized, in a copy
         // of the rest of the prefix (EmitScopedWakePoint).
-        GuardScope? guardScope = WakePoints && !cpsFields && emitCopySlice is not null
+        GuardScope? guardScope = WakePoints && emitCopySlice is not null
             ? PushScope(new GuardScope
             {
                 MaterializeCp = EmitMaterializeCp,
+                Opaque = !cpsFields,
                 EmitCopySlice = emitCopySlice,
                 CutEnd = g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
                 AfterCommit = after,

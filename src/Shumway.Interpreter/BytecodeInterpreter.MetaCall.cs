@@ -128,6 +128,48 @@ public sealed partial class BytecodeInterpreter
         => returnPc < 0
            || (Activation.IsResumeMarker(returnPc) && Tier1Dispatcher is not { CompiledCodeWakes: true });
 
+    /// <summary>ADR-049: whether the arithmetic goal that starts at
+    /// <paramref name="pc"/> (its a_eval_push run up to the a_eval_is or
+    /// a_eval_cmp) reads an unbound operand. <paramref name="liveRegs"/> covers
+    /// the argument registers live across it: its X operands and an is/2
+    /// target in an X register.</summary>
+    private bool ArithGoalWaits(in ProgramView code, byte[] codeArr, int pc, out int liveRegs)
+    {
+        liveRegs = 0;
+        bool waits = false;
+        for (int p = pc; ;)
+        {
+            var op = (Opcode)(code.Overflow is null ? codeArr[p] : code[p]);
+            if (op == Opcode.AEvalPush)
+            {
+                int kind = ReadI32(code, codeArr, p + 1), val = ReadI32(code, codeArr, p + 5);
+                if (kind == 3) liveRegs = Math.Max(liveRegs, val + 1);
+                waits |= Shumway.Builtins.ArithEvalStack.OperandUnbound(_engine, kind, val);
+                p += 9;
+            }
+            else if (op is Opcode.AEvalBin or Opcode.AEvalUn) p += 5;
+            else
+            {
+                if (op == Opcode.AEvalIs && ReadI32(code, codeArr, p + 1) == 3)
+                    liveRegs = Math.Max(liveRegs, ReadI32(code, codeArr, p + 5) + 1);
+                return waits;
+            }
+        }
+    }
+
+    /// <summary>The argument registers live across a fused arithmetic op
+    /// (a_int_bin, a_int_cmp): its X operands, and its target when it unifies
+    /// with an X register. <paramref name="packed"/> = aKind | bKind &lt;&lt; 8 |
+    /// tKind &lt;&lt; 16.</summary>
+    private static int FusedLiveRegs(int packed, int aVal, int bVal, int tVal)
+    {
+        int live = 0;
+        if ((packed & 0xFF) == 3) live = Math.Max(live, aVal + 1);
+        if (((packed >> 8) & 0xFF) == 3) live = Math.Max(live, bVal + 1);
+        if (((packed >> 16) & 0xFF) == 3) live = Math.Max(live, tVal + 1);
+        return live;
+    }
+
     private int WakeBoundary(ProgramView code, int arity, int resumePc)
     {
         Shumway.Core.Profiler.Note("wakeup_flush");

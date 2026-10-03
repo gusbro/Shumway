@@ -1894,9 +1894,15 @@ public sealed partial class IlPredicateCompiler
                 // internally and touches no eval stack, so flush unconditionally.
                 {
                 int packedW = BytecodeIO.ReadInt32(code, pc + 1);
-                EmitArithWakeFlush(emit, failLabel,
-                    (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
-                    ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
+                if (WakePoints)
+                    EmitArithWakePoint(emit, failLabel, pc,
+                        FusedOperands(packedW, BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9)),
+                        FusedLiveRegs(packedW, BytecodeIO.ReadInt32(code, pc + 5),
+                            BytecodeIO.ReadInt32(code, pc + 9), BytecodeIO.ReadInt32(code, pc + 13)));
+                else
+                    EmitArithWakeFlush(emit, failLabel,
+                        (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
+                        ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
                 }
                 // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);
@@ -1924,9 +1930,15 @@ public sealed partial class IlPredicateCompiler
             {
                 {
                 int packedW = BytecodeIO.ReadInt32(code, pc + 1);
-                EmitArithWakeFlush(emit, failLabel,   // ADR-049
-                    (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
-                    ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
+                if (WakePoints)   // ADR-049
+                    EmitArithWakePoint(emit, failLabel, pc,
+                        FusedOperands(packedW, BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9)),
+                        FusedLiveRegs(packedW & 0xFFFF, BytecodeIO.ReadInt32(code, pc + 5),
+                            BytecodeIO.ReadInt32(code, pc + 9), 0));
+                else
+                    EmitArithWakeFlush(emit, failLabel,
+                        (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
+                        ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
                 }
                 // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);

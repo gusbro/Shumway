@@ -187,12 +187,15 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     return) or enters compiled code that wakes at its own returns rather
     than in front of every goal (regions; the wasm tier hands such points to
     the interpreter). A return into a continuation method (ADR-061) or into
-    bytecode continues the stretch. Two differences from SICStus 4.8 stay.
-    It also wakes where a clause with a frame exits inside the stretch, which
-    it does not document and which would tie the rule to our frames (lazy
-    Y-slots, regions, CP-free guards): here the stretch continues into the
-    caller. And an inline arithmetic comparison does not end the stretch
-    here: waking there would need its operand registers saved.
+    bytecode continues the stretch. An arithmetic goal whose operands are
+    bound is part of the stretch, as in SICStus; one that reads an unbound
+    operand ends it, by an interrupt that saves its operand registers and
+    re-runs it from its first operand, so a woken goal that binds the operand
+    is backtracked into when the goal fails. One difference from SICStus 4.8
+    stays: it also wakes where a clause with a frame exits inside the
+    stretch, which it does not document and which would tie the rule to our
+    frames (lazy Y-slots, regions, CP-free guards). Here the stretch
+    continues into the caller.
 
 ### Staging
 
@@ -224,7 +227,8 @@ canaries (`PreludeIlBakeTests`).
   interpreter's table routes cursors from 2^20 there.
 - **Stage 2c: the stretch of unifications.** Point 11, in the interpreter
   and the continuation methods (2026-10-03). Regions keep waking at their
-  returns.
+  returns, and drain once in front of arithmetic that reads an unbound
+  operand.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).

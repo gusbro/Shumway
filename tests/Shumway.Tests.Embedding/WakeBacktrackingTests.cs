@@ -288,6 +288,40 @@ public sealed class WakeBacktrackingTests
     }
 
     [Fact]
+    public void ACaughtArithmeticErrorLeavesNoOperandBehind()
+    {
+        // bad/1 raises after pushing two operands. An operand left on the
+        // shared eval stack made every later expression start look
+        // mid-expression, so the wake check before sq/3's arithmetic was
+        // skipped and Y read as unbound.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        e.IlPromotion.Threshold = 3;
+        e.ConsultString("""
+            :- public bad/1.
+            :- public sq/3.
+            bad(A) :- _ is 1 + 2 * A.
+            sq(X, Y, Z) :- X = 1, Z is Y * Y + 1.
+            """);
+        const string goal = "catch(bad(foo), _, true), freeze(X, Y = 2), sq(X, Y, Z).";
+        void Holds()
+        {
+            var s = e.Query(goal);
+            Assert.True(s.Success);
+            Assert.Equal("5", s["Z"]!.ToString());
+        }
+        Holds();   // Tier-0
+        for (int i = 0; i < 8; i++)
+            Assert.True(e.Query("catch(bad(foo), _, true), sq(1, 2, 5).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        // ANTI-VACUITY: both run compiled from here on.
+        foreach (var (n, a) in new[] { ("bad", 1), ("sq", 3) })
+            Assert.True(e.IlPromotion.IsPromoted(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(n, permanent: true).Id, a)), $"{n}/{a} was not promoted");
+        for (int i = 0; i < 3; i++) Holds();
+    }
+
+    [Fact]
     public void WhenAndFrozenReporting_Unmoved()
     {
         Assert.True(Co().Query(

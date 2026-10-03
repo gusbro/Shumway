@@ -2830,22 +2830,20 @@ public sealed partial class BytecodeInterpreter
                 {
                     int kind = BytecodeIO.ReadInt32(code, pc + 1);
                     int operand = BytecodeIO.ReadInt32(code, pc + 5);
-                    // ADR-049: inline arithmetic is a goal boundary. A wake
-                    // queued by an earlier goal must fire before an operand
-                    // variable is read, or it reads as unbound — but only when
-                    // this operand actually is unbound (a bound operand, the
-                    // norm, skips the drain). The drain (not the interrupt) —
-                    // arithmetic is deterministic and cannot suspend
-                    // mid-opcode, exactly the cut-boundary case. Firing all
-                    // pending wakes at the first unbound operand binds the
-                    // rest, so the empty-stack safety point is reached before
-                    // any later push.
-                    if (_engine.HasPendingWakeups
-                        && Shumway.Builtins.ArithEvalStack.OperandUnbound(_engine, kind, operand)
-                        && !FlushPendingWakeups(code))
+                    // ADR-049: a pending wake fires in front of an arithmetic
+                    // goal one of whose operands it may bind, as an interrupt
+                    // that re-runs the goal from its first push: a bound
+                    // operand continues the stretch of unifications.
+                    if (_engine.HasPendingWakeups && Shumway.Builtins.ArithEvalStack.IsEmpty
+                        && ArithGoalWaits(code, codeArr, pc, out int arithLive))
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, arithLive, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     switch (kind)
                     {
@@ -2905,16 +2903,22 @@ public sealed partial class BytecodeInterpreter
                 {
                     // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
                     int packed = BytecodeIO.ReadInt32(code, pc + 1);
-                    // ADR-049 goal boundary — flush a pending wake before the
-                    // fused op reads an unbound operand (bound operands skip it).
+                    // ADR-049: a pending wake fires in front of the fused op
+                    // when an operand is unbound (see AEvalPush).
                     if (_engine.HasPendingWakeups
                         && Shumway.Builtins.ArithEvalStack.AnyOperandUnbound(_engine,
                             packed & 0xFF, BytecodeIO.ReadInt32(code, pc + 5),
-                            (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9))
-                        && !FlushPendingWakeups(code))
+                            (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)))
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, FusedLiveRegs(packed,
+                            BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9),
+                            BytecodeIO.ReadInt32(code, pc + 13)), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     bool ok = Shumway.Builtins.ArithEvalStack.FusedBin(_engine,
                         (packed >> 24) & 0xFF,                  // op
@@ -2933,15 +2937,20 @@ public sealed partial class BytecodeInterpreter
                 {
                     // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
                     int packed = BytecodeIO.ReadInt32(code, pc + 1);
-                    // ADR-049 goal boundary (fused; see AIntBin).
+                    // ADR-049 (see AIntBin).
                     if (_engine.HasPendingWakeups
                         && Shumway.Builtins.ArithEvalStack.AnyOperandUnbound(_engine,
                             packed & 0xFF, BytecodeIO.ReadInt32(code, pc + 5),
-                            (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9))
-                        && !FlushPendingWakeups(code))
+                            (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)))
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, FusedLiveRegs(packed & 0xFFFF,
+                            BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9), 0), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     if (!Shumway.Builtins.ArithEvalStack.FusedCmp(_engine,
                         (packed >> 16) & 0xFF,                  // rel

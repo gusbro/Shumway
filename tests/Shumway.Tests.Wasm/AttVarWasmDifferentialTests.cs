@@ -54,6 +54,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         :- public wake_pg/2.
         :- public wake_pq/2.
         :- public wake_pm/2.
+        :- public wake_gt/2.
+        :- public wake_gtx/2.
         wake_bl(X, Z, L) :- X = a, atom_length(Z, L).
         wake_pg(a, W) :- atom(W), !.
         wake_pg(_, no).
@@ -65,6 +67,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         wake_mem(X, [_|T]) :- wake_mem(X, T).
         wake_pm(X, L) :- wake_mem(X, L), !.
         wake_pm(_, none).
+        wake_gt(a, Y) :- Y > 2.
+        wake_gtx(a, Y) :- Y * 2 + 1 > 5.
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -115,6 +119,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a guard's callee binds, the woken goal fails the builtin: the callee's next clause" },
         { "findall(X, (freeze(X, X \\== a), wake_pm(X, [a, b, c])), Xs).",
           "memberchk: the woken goal fails at the callee's proceed" },
+        { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gt(X, Y)), Ys).",
+          "a comparison waits for the woken goal, and fails back into its alternatives" },
+        { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gtx(X, Y)), Ys).",
+          "the same with an expression" },
     };
 
     private static PrologEngine Tier0()

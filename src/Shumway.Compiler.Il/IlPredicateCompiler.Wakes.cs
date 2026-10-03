@@ -63,6 +63,9 @@ public sealed partial class IlPredicateCompiler
     private sealed class GuardScope : InlineScope
     {
         public Action? MaterializeCp;
+        /// <summary>Its state is in IL locals (CpsOpaque); a guard whose marks
+        /// are in the activation's fields is not (ADR-061).</summary>
+        public bool Opaque;
         public required Action<int, int, IlLabel, string> EmitCopySlice;
         public required int CutEnd;
         public required IlLabel AfterCommit;
@@ -121,6 +124,24 @@ public sealed partial class IlPredicateCompiler
     {
         _opaqueDepth = 0;
         _scope = null;
+        _arithDepth = 0;
+    }
+
+    // The depth of the RPN stack where an a_eval sequence emitted op by op
+    // is: an arithmetic goal starts at a push from depth 0.
+    [ThreadStatic] private static int _arithDepth;
+
+    /// <summary>Inside a CP-free construct whose choice point a wake has to
+    /// push (a guard not yet materialized, a fail-direct chain).</summary>
+    private static bool InsideCpFreeConstruct()
+    {
+        for (var f = _scope; f is not null; f = f.Outer)
+        {
+            if (f is ChainScope) return true;
+            if (f is GuardScope g) return g.MaterializeCp is not null;
+            if (f is ChainRestScope) return false;
+        }
+        return false;
     }
 
     /// <summary>After a method's code: the copies its wakes asked for, each of
@@ -193,11 +214,16 @@ public sealed partial class IlPredicateCompiler
     private static void EmitWakePoint(IlEmit emit, int arity, IlLabel failLabel, int pc)
     {
         if (!WakePoints) return;
-        if (_opaqueDepth > 0)
+        if (_opaqueDepth > 0 || (InsideCpFreeConstruct() && _cps is not { Cold: false }))
         {
             EmitScopedWakePoint(emit, pc);
             return;
         }
+        // In a hot method, a guard whose marks are in the fields leaves for the
+        // cold method at this boundary, which pushes the guard's choice point:
+        // the hot method stays free of calls that return (ADR-061 item 6). It
+        // reserves the boundary the cold method's copy takes.
+        bool coldCopies = InsideCpFreeConstruct();
         int cursor;
         if (_cps is { } c)
         {
@@ -231,6 +257,84 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(true);   // armed: the dispatch loop runs the driver from P
         EmitReturn(emit);
         emit.MarkLabel(goOn);
+        if (coldCopies) ReserveReentry(emit, out _);
+    }
+
+    /// <summary>The operands an arithmetic goal starting at <paramref name="pc"/>
+    /// reads (its a_eval_push run up to the a_eval_is or a_eval_cmp), and the
+    /// argument registers live across it: its X operands and an is/2 target in
+    /// an X register.</summary>
+    private static (int Kind, int Val)[] ArithGoalOperands(byte[] code, int pc, out int liveRegs)
+    {
+        var ops = new List<(int, int)>();
+        liveRegs = 0;
+        for (int p = pc; ;)
+        {
+            var op = (Opcode)code[p];
+            if (op == Opcode.AEvalPush)
+            {
+                int kind = BytecodeIO.ReadInt32(code, p + 1), val = BytecodeIO.ReadInt32(code, p + 5);
+                if (kind is 3 or 4) ops.Add((kind, val));
+                if (kind == 3) liveRegs = Math.Max(liveRegs, val + 1);
+                p += 9;
+            }
+            else if (op is Opcode.AEvalBin or Opcode.AEvalUn) p += 5;
+            else
+            {
+                if (op == Opcode.AEvalIs && BytecodeIO.ReadInt32(code, p + 1) == 3)
+                    liveRegs = Math.Max(liveRegs, BytecodeIO.ReadInt32(code, p + 5) + 1);
+                return ops.ToArray();
+            }
+        }
+    }
+
+    /// <summary>The argument registers live across a fused arithmetic op: its X
+    /// operands, and its target when it unifies with an X register.
+    /// <paramref name="packed"/> = aKind | bKind &lt;&lt; 8 | tKind &lt;&lt; 16.</summary>
+    private static int FusedLiveRegs(int packed, int aVal, int bVal, int tVal)
+    {
+        int live = 0;
+        if ((packed & 0xFF) == 3) live = Math.Max(live, aVal + 1);
+        if (((packed >> 8) & 0xFF) == 3) live = Math.Max(live, bVal + 1);
+        if (((packed >> 16) & 0xFF) == 3) live = Math.Max(live, tVal + 1);
+        return live;
+    }
+
+    /// <summary>A fused op's operands that a wake could bind: its registers and
+    /// Y slots, not its literals.</summary>
+    private static (int Kind, int Val)[] FusedOperands(int packed, int aVal, int bVal)
+    {
+        var ops = new List<(int, int)>(2);
+        if ((packed & 0xFF) is 3 or 4) ops.Add((packed & 0xFF, aVal));
+        if (((packed >> 8) & 0xFF) is 3 or 4) ops.Add(((packed >> 8) & 0xFF, bVal));
+        return ops.ToArray();
+    }
+
+    /// <summary>ADR-049: a wake pending in front of an arithmetic goal that
+    /// reads an unbound operand fires as an interrupt that re-runs the goal
+    /// from its start; a goal whose operands are bound continues the stretch
+    /// of unifications.</summary>
+    private static void EmitArithWakePoint(IlEmit emit, IlLabel failLabel, int pc,
+        (int Kind, int Val)[] operands, int liveRegs)
+    {
+        if (operands.Length == 0) return;   // literals: nothing a wake binds
+        var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
+        var wake = emit.DefineLabel($"arith_wake_{NextLabelSeq()}");
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        emit.BranchIfFalse(skip);
+        foreach (var (kind, val) in operands)
+        {
+            emit.LoadArgument(0);
+            emit.LoadConstant(kind);
+            emit.LoadConstant(val);
+            EmitHelperCall(emit, ArithOperandUnboundMethod);
+            emit.BranchIfTrue(wake);
+        }
+        emit.Branch(skip);
+        emit.MarkLabel(wake);
+        EmitWakePoint(emit, liveRegs, failLabel, pc);
+        emit.MarkLabel(skip);
     }
 
     /// <summary>A wake point inside a CP-free guard's prefix: at the guard's
@@ -259,7 +363,7 @@ public sealed partial class IlPredicateCompiler
                 if (!WamCps)
                     throw new NotSupportedException("ADR-049: a chain's late choice point needs WAM choice points.");
             }
-            if (f is GuardScope { MaterializeCp: not null }) opaque++;
+            if (f is GuardScope { MaterializeCp: not null, Opaque: true }) opaque++;
             if (f is GuardScope or ChainRestScope) break;
         }
         if (opaque != _opaqueDepth)

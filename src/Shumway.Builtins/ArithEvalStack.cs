@@ -54,7 +54,7 @@ public static class ArithEvalStack
     [MethodImpl(HelperImpl.FixedInline)]
     public static bool OperandUnbound(Activation engine, int kind, int val)
     {
-        if (kind == 0) return false;   // int literal
+        if (kind is not (3 or 4)) return false;   // a literal
         Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
         if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
         return c.Tag is Tag.Ref or Tag.AttVar;
@@ -65,6 +65,17 @@ public static class ArithEvalStack
     public static bool AnyOperandUnbound(Activation engine,
         int aKind, int aVal, int bKind, int bVal)
         => OperandUnbound(engine, aKind, aVal) || OperandUnbound(engine, bKind, bVal);
+
+    /// <summary>An evaluation that raises drops its operands. No Prolog goal
+    /// runs inside an evaluation, so every one starts on an empty stack; an
+    /// operand left behind would make each later start look mid-expression
+    /// (<see cref="IsEmpty"/> false, the wake check skipped) and grow the
+    /// stack once per caught error.</summary>
+    private static void Abandon(PrologRuntimeException re)
+    {
+        _top = 0;
+        re.StampBuiltin("is", 2);
+    }
 
     private static void EnsureInit()
     {
@@ -162,7 +173,7 @@ public static class ArithEvalStack
     private static void PushEvalSlow(Activation engine, Cell cell)
     {
         try { Push(ArithmeticEvaluator.Evaluate(engine, cell)); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
     }
 
     /// <summary>Applies a binary operator to the top two stack entries
@@ -188,7 +199,7 @@ public static class ArithEvalStack
         Escalate(ai);
         Escalate(bi);
         try { _n![ai] = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op, _n[ai], _n[bi], preferRationals); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
         _b![ai] = true;
         _top--;
     }
@@ -211,7 +222,7 @@ public static class ArithEvalStack
     {
         Escalate(ai);
         try { _n![ai] = ArithmeticEvaluator.ApplyUn((ArithmeticEvaluator.UnOp)op, _n[ai]); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
     }
 
     /// <summary>Pops the result and unifies it with the X-register
@@ -251,7 +262,7 @@ public static class ArithEvalStack
     private static Cell PopCellBoxed(Activation engine, int ai)
     {
         try { return _n![ai].ToCell(engine); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
     }
 
     /// <summary>Pops the top two entries and applies an arithmetic comparison
@@ -314,7 +325,7 @@ public static class ArithEvalStack
                     aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn,
                     engine.PreferRationals).ToCell(engine);
         }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
         return Deliver(engine, tKind, tVal, result);
     }
 
@@ -365,7 +376,7 @@ public static class ArithEvalStack
             return ArithmeticEvaluator.ApplyRel((ArithmeticEvaluator.RelOp)rel,
                 aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn);
         }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        catch (PrologRuntimeException re) { Abandon(re); throw; }
     }
 
     // Non-throwing inline-int read for the fast lane: returns true + the long

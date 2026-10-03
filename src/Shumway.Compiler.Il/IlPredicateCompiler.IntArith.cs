@@ -82,7 +82,10 @@ public sealed partial class IlPredicateCompiler
         int width = OperandWidth(code, start, last, out bool resultFits);
         var slow = emit.DefineLabel($"iar_slow_{NextLabelSeq()}");
         var done = emit.DefineLabel($"iar_done_{NextLabelSeq()}");
-        EmitArithWakeFlush(emit, failLabel);
+        if (WakePoints)
+            EmitArithWakePoint(emit, failLabel, start, ArithGoalOperands(code, start, out int live), live);
+        else
+            EmitArithWakeFlush(emit, failLabel);
         var data = emit.DeclareLocal<long>();
         // The RPN stack, resolved at compile time: a constant, an operand's
         // local (read once per sequence: nothing in a sequence binds), or a
@@ -370,8 +373,15 @@ public sealed partial class IlPredicateCompiler
                 // ADR-049: fire a pending wake before an operand variable is
                 // read, but only at the start of the expression (empty eval
                 // stack), since the drain runs nested arithmetic on this same
-                // static stack.
-                if (!wakesFlushed) EmitArithWakeFlush(emit, failLabel);
+                // static stack; with continuation methods, an interrupt that
+                // re-runs the goal from that start.
+                if (!wakesFlushed && WakePoints)
+                {
+                    if (_arithDepth == 0)
+                        EmitArithWakePoint(emit, failLabel, pc, ArithGoalOperands(code, pc, out int live), live);
+                }
+                else if (!wakesFlushed) EmitArithWakeFlush(emit, failLabel);
+                _arithDepth++;
                 int kind = BytecodeIO.ReadInt32(code, pc + 1);
                 int operand = BytecodeIO.ReadInt32(code, pc + 5);
                 if (kind == 0)
@@ -392,6 +402,7 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, PreferRationalsGetter);
                 EmitHelperCall(emit, ArithBinMethod);
+                _arithDepth--;
                 break;
             case Opcode.AEvalUn:
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
@@ -399,6 +410,7 @@ public sealed partial class IlPredicateCompiler
                 break;
             case Opcode.AEvalIs:
             {
+                _arithDepth = 0;
                 int kind = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));
@@ -418,6 +430,7 @@ public sealed partial class IlPredicateCompiler
                 break;
             }
             case Opcode.AEvalCmp:
+                _arithDepth = 0;
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
                 EmitHelperCall(emit, ArithCmpMethod);
                 emit.BranchIfFalse(failLabel);

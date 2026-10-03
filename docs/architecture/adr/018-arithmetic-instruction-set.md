@@ -128,6 +128,11 @@ the small wart the goal-rewriting left (chunk 296: a compound operand of a
 comparison reported `is/2` instead of the comparison) — with dedicated
 instructions the interpreter knows which construct it is executing.
 
+An error empties the stack. No goal runs inside an evaluation, so every
+evaluation starts on an empty stack, and one that raises drops the operands
+it pushed. A wake (ADR-049) relies on this: an empty stack is how a push
+knows it starts an arithmetic goal.
+
 ## Blast radius
 
 | Area | Change |

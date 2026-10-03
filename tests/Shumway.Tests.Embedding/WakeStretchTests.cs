@@ -58,7 +58,29 @@ public sealed class WakeStretchTests : IDisposable
         c(frame_callee, S) :- freeze(Z, st(R, R2, R3, S)), e_frame_callee(Z, R), R2 = x, nop, R3 = y.
         c(outer, S) :- freeze(Z, st(R, R2, R3, S)), e_outer(Z, R), R2 = x, nop, R3 = y.
         c(fail_after_stretch, S) :- ( freeze(Z, S = ran), Z = k, fail ; S = never_ran ).
+        gt(a, Y) :- Y > 2.
+        gt_expr(a, Y) :- Y * 2 + 1 > 5.
+        succ1(a, Y, Z) :- Z is Y + 1.
+        gt_guard(a, Y) :- Y > 2, !.
+        gt_guard(_, none).
+        twice_guard(a, Y, Z) :- Z is Y * 2, Z > 4, !.
+        twice_guard(_, _, none).
         """;
+
+    // An arithmetic goal that reads an operand the woken goal binds runs after
+    // it, and fails back into its alternatives (SICStus 4.8). A goal whose
+    // operands are bound continues the stretch: the woken goal never runs when
+    // the comparison fails.
+    private static readonly (string Goal, string Expected)[] ArithCases =
+    {
+        ("findall(Y, (freeze(X, member(Y, [1, 3])), gt(X, Y)), L)", "[3]"),
+        ("findall(Z, (freeze(X, member(Y, [1, 3])), succ1(X, Y, Z), Z > 3), L)", "[4]"),
+        ("findall(Y, (freeze(X, member(Y, [1, 3])), gt_expr(X, Y)), L)", "[3]"),
+        ("findall(X-Y, (freeze(X, member(Y, [1, 3])), gt_guard(X, Y)), L)", "[a-3]"),
+        ("findall(Y-Z, (freeze(X, member(Y, [1, 3])), twice_guard(X, Y, Z)), L)", "[3-6]"),
+        ("findall(Y, (freeze(X, member(Y, [1, 2])), gt_guard(X, Y)), L)", "[none]"),
+        ("nb_setval(woke, no), freeze(X, nb_setval(woke, yes)), \\+ gt(X, 1), nb_getval(woke, L)", "no"),
+    };
 
     // SICStus 4.8 gives [b,f,f] for the four rows marked: a clause with a
     // frame exits inside the stretch.
@@ -89,6 +111,10 @@ public sealed class WakeStretchTests : IDisposable
         return e;
     }
 
+    private static void AgreesArith(PrologEngine e, string goal, string expected)
+        => Assert.True(e.Query($"{goal}, L = {expected}.").Success,
+            $"{goal}: not {expected}");
+
     private static void Agrees(PrologEngine e, string name, string expected)
         => Assert.True(e.Query($"c({name}, S), S == {expected}.").Success,
             $"{name}: the woken goal did not see {expected}");
@@ -98,6 +124,7 @@ public sealed class WakeStretchTests : IDisposable
     {
         var e = Engine(0);
         foreach (var (name, expected) in Cases) Agrees(e, name, expected);
+        foreach (var (goal, expected) in ArithCases) AgreesArith(e, goal, expected);
     }
 
     [Fact]
@@ -108,8 +135,17 @@ public sealed class WakeStretchTests : IDisposable
         for (int round = 0; round < 3; round++)
         {
             foreach (var (name, _) in Cases) e.Query($"c({name}, _).");
+            foreach (var (goal, _) in ArithCases) e.Query(goal + ".");
             Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
+        // ANTI-VACUITY: the arithmetic runs in continuation methods.
+        foreach (var (n, a) in new[] { ("gt", 2), ("gt_expr", 2), ("succ1", 3), ("gt_guard", 2), ("twice_guard", 3) })
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern("user$" + n, permanent: true).Id, a);
+            Assert.True(e.IlPromotion.TryGetCps(fid) is not null, $"{n}/{a} has no continuation methods");
+        }
         foreach (var (name, expected) in Cases) Agrees(e, name, expected);
+        foreach (var (goal, expected) in ArithCases) AgreesArith(e, goal, expected);
     }
 }
