@@ -695,8 +695,7 @@ public static class StreamBuiltins
     // ---------- write/2, nl/1, get_char/2, peek_char/2 ----------
 
     /// <summary><c>write(Stream, Term)</c> — renders Term to the
-    /// stream's writer in canonical form (matches write/1 over
-    /// <see cref="Activation.Out"/>).</summary>
+    /// stream's writer as write/1 does to the current output (ISO §8.14.2).</summary>
     public static bool WriteToStream(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
@@ -705,7 +704,7 @@ public static class StreamBuiltins
             // permission_error(output, binary_stream, _) (ISO §8.14.2.3.g).
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer!,
-            new TermRenderOptions { Operators = engine.Operators });
+            IOBuiltins.WriteOptions(engine));
         return true;
     }
 
