@@ -1046,7 +1046,9 @@ public sealed partial class Activation
         int cp = _cp;
         if (t is null || (uint)(cp - ResumeMarkerBase) >= (uint)t.Length) return 0;
         nint code = t[cp - ResumeMarkerBase];
-        if (code == 0 || CallSafePointDue || _pendingWakeups.Count > 0 || _debug is not null)
+        // A pending wake does not stop it: a return continues the stretch of
+        // unifications, and the continuation wakes at its next goal (ADR-049).
+        if (code == 0 || CallSafePointDue || _debug is not null)
             return 0;
         _p = cp;
         return code;

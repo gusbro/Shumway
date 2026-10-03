@@ -268,5 +268,6 @@ public class Chunk41Tests
         public bool IsPredicateEntry(int address) => false;
         public void CreditCaller(int sitePc) { }
         public Func<Activation, int, bool>? ResolveRetiredResume(int functorId) => null;
+        public bool CompiledCodeWakes => false;
     }
 }

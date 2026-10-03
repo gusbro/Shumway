@@ -310,6 +310,14 @@ identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
 
+A goal woken by a binding runs at the end of the stretch of unifications
+that made the binding: a clause's head unification and the `=/2` goals
+after it, also past the end of the clause, up to the next goal that is not
+a unification (a call, a builtin, a cut). The woken goal sees every binding
+of the stretch, and when the stretch fails it does not run at all.
+Compiled code in the default region mode wakes at a predicate's return
+instead, which can be earlier.
+
 A copy does not carry constraints. `copy_term/2` copies an attributed
 variable as a plain one, so the copy of a constrained term is an
 unconstrained term. What carries them is `copy_term/3`, which hands back

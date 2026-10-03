@@ -583,8 +583,10 @@ public sealed partial class BytecodeInterpreter
                 // $length_enum promoted mid-enumeration. Cursor 0 is a
                 // forward call (the callee's arity bounds the live
                 // registers); a mid-body cursor has unknowable liveness and
-                // takes WakeBoundary's drain fallback.
-                if (_engine.HasPendingWakeups)
+                // takes WakeBoundary's drain fallback. A return into code that
+                // wakes at its own goals continues the stretch (ADR-049 point 11).
+                if (_engine.HasPendingWakeups
+                    && (cursor == 0 || Tier1Dispatcher is not { CompiledCodeWakes: true }))
                 {
                     int wakeAr = cursor == 0
                         ? FunctorTable.Lookup(functorId).Arity : -1;
@@ -761,10 +763,11 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Proceed:
                 {
-                    // ADR-049: queued wakeups interrupt here — no argument
-                    // registers are live across a proceed, so the frame saves
-                    // none; resuming re-runs this instruction, queue empty.
-                    if (_engine.HasPendingWakeups)
+                    // ADR-049: queued wakeups interrupt here when the return
+                    // ends the stretch of unifications (ReturnWakes) — no
+                    // argument registers are live across a proceed, so the
+                    // frame saves none; resuming re-runs this instruction.
+                    if (_engine.HasPendingWakeups && ReturnWakes(_engine.Cp))
                     {
                         int w = WakeBoundary(code, 0, pc);
                         if (w == WakeEntered) { inClause = false; break; }
@@ -1164,11 +1167,12 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.ExecuteBuiltin:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (_engine.HasPendingWakeups)   // ADR-049
+                    // ADR-049: =/2 continues the stretch of unifications.
+                    if (_engine.HasPendingWakeups
+                        && Shumway.Builtins.BuiltinsRegistry
+                            .GetById(ReadI32(code, codeArr, pc + 1)) is { IsUnification: false } wakeEntry)
                     {
-                        int w = WakeBoundary(code,
-                            Shumway.Builtins.BuiltinsRegistry
-                                .GetById(ReadI32(code, codeArr, pc + 1)).Arity, pc);
+                        int w = WakeBoundary(code, wakeEntry.Arity, pc);
                         if (w == WakeEntered) { inClause = false; break; }
                         if (w == WakeFailed)
                         {
@@ -1275,8 +1279,9 @@ public sealed partial class BytecodeInterpreter
                     // Mirrors Deallocate + Proceed back-to-back. The wake
                     // check runs before the deallocate (ADR-049): resuming
                     // re-executes the whole instruction, and a deallocate
-                    // must not run twice.
-                    if (_engine.HasPendingWakeups)
+                    // must not run twice. The return is to the frame's Cp.
+                    if (_engine.HasPendingWakeups
+                        && ReturnWakes(_engine.EnvSavedCp(_engine.E)))
                     {
                         int w = WakeBoundary(code, 0, pc);
                         if (w == WakeEntered) { inClause = false; break; }
@@ -2478,11 +2483,12 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.CallBuiltin:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (_engine.HasPendingWakeups)   // ADR-049
+                    // ADR-049: =/2 continues the stretch of unifications.
+                    if (_engine.HasPendingWakeups
+                        && Shumway.Builtins.BuiltinsRegistry
+                            .GetById(ReadI32(code, codeArr, pc + 1)) is { IsUnification: false } wakeEntry)
                     {
-                        int w = WakeBoundary(code,
-                            Shumway.Builtins.BuiltinsRegistry
-                                .GetById(ReadI32(code, codeArr, pc + 1)).Arity, pc);
+                        int w = WakeBoundary(code, wakeEntry.Arity, pc);
                         if (w == WakeEntered) { inClause = false; break; }
                         if (w == WakeFailed)
                         {

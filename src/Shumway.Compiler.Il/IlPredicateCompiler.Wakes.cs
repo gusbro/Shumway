@@ -512,6 +512,5 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The builtins in front of which Tier-0 wakes and compiled code
     /// does not: <c>=/2</c>, a unification.</summary>
-    private static bool IsWakeBuiltin(Shumway.Builtins.BuiltinEntry e)
-        => !(e.Arity == 2 && e.Name == "=");
+    private static bool IsWakeBuiltin(Shumway.Builtins.BuiltinEntry e) => !e.IsUnification;
 }

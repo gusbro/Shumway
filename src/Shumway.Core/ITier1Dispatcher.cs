@@ -56,4 +56,10 @@ public interface ITier1Dispatcher
     /// call, which must reach the predicate as it is now. Null when the
     /// functor never had one.</summary>
     Func<Activation, int, bool>? ResolveRetiredResume(int functorId);
+
+    /// <summary>ADR-049 point 11: compiled code wakes in front of every goal
+    /// that is not a unification (continuation methods, ADR-061), so a return
+    /// into it continues the stretch of unifications. False where compiled
+    /// code wakes at its own returns instead (regions, the wasm tier).</summary>
+    bool CompiledCodeWakes { get; }
 }

@@ -119,6 +119,15 @@ public sealed partial class BytecodeInterpreter
     /// pre-ADR-049 nested drain with its once-semantics.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    /// <summary>ADR-049 point 11: a return ends the stretch of unifications
+    /// when it leaves a scope (the answer, a sub-run, the wake driver) or
+    /// enters compiled code that wakes at its own returns rather than at
+    /// every goal. Otherwise the stretch continues in the caller, whose next
+    /// goal wakes.</summary>
+    private bool ReturnWakes(int returnPc)
+        => returnPc < 0
+           || (Activation.IsResumeMarker(returnPc) && Tier1Dispatcher is not { CompiledCodeWakes: true });
+
     private int WakeBoundary(ProgramView code, int arity, int resumePc)
     {
         Shumway.Core.Profiler.Note("wakeup_flush");

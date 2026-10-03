@@ -10,7 +10,8 @@ Refines the deferred-wakeup design that has carried attributed variables
 since phase 4. Supersedes the once-semantics drain for the non-cut goal
 boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
 Amended 2026-10-03: compiled code under ADR-061 wakes in front of builtins
-and inlined calls, and inside CP-free guards (points 9 and 10).
+and inlined calls, and inside CP-free guards (points 9 and 10); a stretch of
+unifications is atomic, as SICStus documents (point 11).
 
 ## Context
 
@@ -177,6 +178,22 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     snapshot (ADR-034) is not CP-free: the woken goal could change what it
     inlined.
 
+11. **A stretch of unifications is atomic with respect to woken goals**, as
+    SICStus documents. The stretch is a clause's head unification and the
+    `=/2` goals of its body, and it continues across the clause's exit; any
+    other goal (a call, a builtin, a cut) ends it, and the woken goals run
+    in front of that goal. So `=/2` does not wake, and a return does not
+    wake unless it leaves a scope (the answer, a sub-run, the wake driver's
+    return) or enters compiled code that wakes at its own returns rather
+    than in front of every goal (regions; the wasm tier hands such points to
+    the interpreter). A return into a continuation method (ADR-061) or into
+    bytecode continues the stretch. Two differences from SICStus 4.8 stay.
+    It also wakes where a clause with a frame exits inside the stretch, which
+    it does not document and which would tie the rule to our frames (lazy
+    Y-slots, regions, CP-free guards): here the stretch continues into the
+    caller. And an inline arithmetic comparison does not end the stretch
+    here: waking there would need its operand registers saved.
+
 ### Staging
 
 Tier-1's flush sites are goal boundaries too (region `Call`/`Execute`/
@@ -205,6 +222,9 @@ canaries (`PreludeIlBakeTests`).
   and the methods of ADR-061 (2026-10-03). A predicate with continuation
   methods is entered at a wake's re-entry by its cold method; the
   interpreter's table routes cursors from 2^20 there.
+- **Stage 2c: the stretch of unifications.** Point 11, in the interpreter
+  and the continuation methods (2026-10-03). Regions keep waking at their
+  returns.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).

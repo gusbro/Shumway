@@ -43,6 +43,10 @@ public sealed class BuiltinEntry
     /// meta-call. Precomputed like <see cref="IsCall"/>.</summary>
     public bool IsDollarCall { get; }
 
+    /// <summary>True for <c>=/2</c>: a unification, which continues a stretch
+    /// of unifications (ADR-049 point 11), so no wake runs in front of it.</summary>
+    public bool IsUnification { get; }
+
     /// <summary>True for builtins that push a choice point and resume via
     /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
@@ -69,6 +73,7 @@ public sealed class BuiltinEntry
         Summary = summary;
         IsCall = name == "call";
         IsDollarCall = name == "$call";
+        IsUnification = name == "=" && arity == 2;
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";
