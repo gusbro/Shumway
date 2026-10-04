@@ -9,8 +9,8 @@ namespace Shumway.Tests.Embedding;
 /// which of R, R2, R3 were bound when it ran. The answers are SICStus 4.8's
 /// except where a clause with a frame exits inside the stretch: SICStus wakes
 /// there too, which it does not document, and these continue the stretch into
-/// the caller. With continuation methods (ADR-061) compiled code answers the
-/// same.</summary>
+/// the caller. Compiled code answers the same, in regions and with
+/// continuation methods (ADR-061).</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
 public sealed class WakeStretchTests : IDisposable
@@ -123,6 +123,29 @@ public sealed class WakeStretchTests : IDisposable
     public void TheInterpreter_WakesAtTheEndOfTheStretch()
     {
         var e = Engine(0);
+        foreach (var (name, expected) in Cases) Agrees(e, name, expected);
+        foreach (var (goal, expected) in ArithCases) AgreesArith(e, goal, expected);
+    }
+
+    [Fact]
+    public void Regions_WakeWhereTheInterpreterDoes()
+    {
+        IlPredicateCompiler.CpsMode = false;
+        var e = Engine(1);
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (var (name, _) in Cases) e.Query($"c({name}, _).");
+            foreach (var (goal, _) in ArithCases) e.Query(goal + ".");
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        }
+        // ANTI-VACUITY: the callees and the arithmetic run compiled.
+        foreach (var (n, a) in new[] { ("e_exit", 2), ("e_frame", 2), ("e_neck_call", 3), ("e_builtin", 3),
+                     ("gt", 2), ("gt_expr", 2), ("succ1", 3), ("gt_guard", 2), ("twice_guard", 3) })
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern("user$" + n, permanent: true).Id, a);
+            Assert.True(e.IlPromotion.IsPromoted(fid), $"{n}/{a} not promoted");
+        }
         foreach (var (name, expected) in Cases) Agrees(e, name, expected);
         foreach (var (goal, expected) in ArithCases) AgreesArith(e, goal, expected);
     }

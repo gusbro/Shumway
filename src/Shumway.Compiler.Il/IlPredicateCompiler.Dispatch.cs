@@ -514,9 +514,13 @@ public sealed partial class IlPredicateCompiler
 
         var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
 
-        // if (tag == Tag.Ref) goto varEnter[0]
+        // if (tag == Tag.Ref) goto varEnter[0]; an attributed variable too,
+        // whose binding the head unification wakes.
         emit.LoadLocal(tagLocal);
         emit.LoadConstant((int)Tag.Ref);
+        emit.BranchIfEqual(varEnterLabels[0]);
+        emit.LoadLocal(tagLocal);
+        emit.LoadConstant((int)Tag.AttVar);
         emit.BranchIfEqual(varEnterLabels[0]);
         // if (tag == Tag.Atom) goto ground_dispatch
         emit.LoadLocal(tagLocal);

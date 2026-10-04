@@ -826,6 +826,7 @@ public sealed class IlPromotionStore
     public void RegisterBoundDelegate(int functorId, PredicateDelegate del)
     {
         if (_delegates.ContainsKey(functorId)) return;
+        _bound.Add(functorId);
         if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
         // With no tier on, the linker made every site bytecode-only; a
         // delegate bound by hand still has to be reached from them.
@@ -837,6 +838,13 @@ public sealed class IlPromotionStore
     /// <summary>True when the functor was examined and rejected — no further compile
     /// attempts will fire.</summary>
     public bool IsUnpromotable(int functorId) => _unpromotable.Contains(functorId);
+
+    // Delegates bound from a bundle's persisted IL: compiled with no wake points.
+    private readonly HashSet<int> _bound = new();
+
+    /// <summary>ADR-049: whether the functor's delegate came bound from a
+    /// bundle rather than compiled here.</summary>
+    public bool IsBound(int functorId) => _bound.Contains(functorId);
 
     /// <summary>True when this predicate can never have an IL delegate, decidable
     /// without a RecordInvocation. Lets the linker rewrite its call sites to

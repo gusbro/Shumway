@@ -17,9 +17,52 @@ public sealed partial class IlPredicateCompiler
     /// continuation methods is entered at an instruction boundary.</summary>
     public const int ColdCursorBase = CpsBoundaryBase;
 
-    /// <summary>Wake points are compiled with continuation methods on: the
-    /// delegates and the methods of that mode wake, regions do not.</summary>
-    private static bool WakePoints => CpsMode && !DebugMode && _persistPatches is null;
+    /// <summary>Compiled code wakes where Tier-0 does: in code compiled at run
+    /// time, not under the debugger.</summary>
+    private static bool WakePoints => !DebugMode && _persistPatches is null;
+
+    /// <summary>Without continuation methods (regions, and the delegates of
+    /// that mode), a wake point hands the activation to the interpreter: a
+    /// region keeps state across a point that a re-entry would not find.</summary>
+    private static bool DeoptWakes => !CpsMode;
+
+    // The region member whose code is being emitted, or 0 outside a region.
+    [ThreadStatic] private static int _emitMemberFid;
+
+    // A call's continuation and the argument staging after it: a wake point
+    // there resumes at the continuation, where no argument register is live
+    // and the staging runs again, binding nothing (DeoptWakes). The window as
+    // it stands before the instruction being emitted is _wakeResume.
+    [ThreadStatic] private static (int Fid, int Cursor)? _resumeWindow, _wakeResume;
+
+    /// <summary>A call's continuation, at <paramref name="cursor"/> of the
+    /// method the marker of <paramref name="fid"/> enters.</summary>
+    private static void OpenResumeWindow(int fid, int cursor) => _resumeWindow = (fid, cursor);
+
+    /// <summary>Before each instruction: the window it may wake in, and whether
+    /// the window stays open past it (argument staging only).</summary>
+    private static void AdvanceResumeWindow(Opcode op)
+    {
+        _wakeResume = _resumeWindow;
+        if (!IsStaging(op)) _resumeWindow = null;
+    }
+
+    private static void CloseResumeWindow() => _resumeWindow = _wakeResume = null;
+
+    // After a call nothing unifies before the next goal but =/2 and builtins,
+    // which end the window: a unify_* here builds the term a put_* opened.
+    private static bool IsStaging(Opcode op) => op is
+        Opcode.PutVariableX or Opcode.PutVariableY or Opcode.PutValueX or Opcode.PutValueY
+        or Opcode.PutConstant or Opcode.PutInteger or Opcode.PutAtom or Opcode.PutNil
+        or Opcode.PutStructure or Opcode.PutList or Opcode.PutFloat or Opcode.PutBigInt
+        or Opcode.PutStructureR or Opcode.PutListR or Opcode.PutPstr or Opcode.PutRational
+        or Opcode.UnifyVariableX or Opcode.UnifyVariableY or Opcode.UnifyValueX or Opcode.UnifyValueY
+        or Opcode.UnifyConstant or Opcode.UnifyInteger or Opcode.UnifyAtom or Opcode.UnifyNil
+        or Opcode.UnifyVoid or Opcode.UnifyFloat or Opcode.UnifyBigInt or Opcode.UnifyStructure
+        or Opcode.UnifyList or Opcode.UnifyRational or Opcode.Meta;
+
+    /// <summary>The predicate whose bytecode the code being emitted is.</summary>
+    private static int CodeFid => _emitMemberFid != 0 ? _emitMemberFid : _emitOwnerFid;
 
     // A delegate's wake points, in cursor order, and the dispatch its cursor
     // switch falls through to; the alternatives of the choice points a wake
@@ -72,10 +115,12 @@ public sealed partial class IlPredicateCompiler
         public bool HasBytecode;
     }
 
-    /// <summary>A callee inlined at a call site.</summary>
+    /// <summary>A callee inlined at a call site, or at a tail call
+    /// (<see cref="Tail"/>), where it returns where the caller does.</summary>
     internal sealed class LeafScope : InlineScope
     {
         public required CompiledPredicate Callee;
+        public bool Tail;
     }
 
     /// <summary>A fail-direct callee inlined as a chain of alternatives
@@ -120,7 +165,7 @@ public sealed partial class IlPredicateCompiler
             case GuardScope { HasBytecode: true } g:
                 ctx.Sites[okCursor] = new ContSite
                 {
-                    ContainerFid = _emitOwnerFid, CallerPcAfter = pcAfter, Guard = g,
+                    ContainerFid = CodeFid, CallerPcAfter = pcAfter, Guard = g,
                 };
                 return;
             case ChainScope { Shared: not null } c when !c.Callee.IsDynamicSnapshot:
@@ -187,12 +232,14 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>Where a delegate's cursor switch falls through, and at a leaf's
     /// entry: a wake cursor goes to the method's wake dispatch.</summary>
-    private static void EmitWakeCursorCheck(IlEmit emit)
+    private static void EmitWakeCursorCheck(IlEmit emit) => EmitWakeCursorCheck(emit, () => emit.LoadArgument(1));
+
+    private static void EmitWakeCursorCheck(IlEmit emit, Action loadCursor)
     {
         if (!WakePoints || _cps is not null) return;
         var s = WakeStateOf(emit);
         s.Dispatch ??= emit.DefineLabel("wake_dispatch");
-        emit.LoadArgument(1);
+        loadCursor();
         emit.LoadConstant(WakeCursorBase);
         emit.BranchIfGreaterOrEqual(s.Dispatch);
     }
@@ -246,7 +293,7 @@ public sealed partial class IlPredicateCompiler
     private static void EmitWakePoint(IlEmit emit, int arity, IlLabel failLabel, int pc)
     {
         if (!WakePoints) return;
-        if (_opaqueDepth > 0 || (InsideCpFreeConstruct() && _cps is not { Cold: false }))
+        if (DeoptWakes || _opaqueDepth > 0 || (InsideCpFreeConstruct() && _cps is not { Cold: false }))
         {
             EmitScopedWakePoint(emit, pc);
             return;
@@ -368,9 +415,10 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>A wake point inside a CP-free guard's prefix: at the guard's
     /// level, in fail-direct chains inlined there (one in another), or in a
-    /// callee inlined in any of them. Something pending: the machine is made
-    /// Tier-0's at this point and the interpreter runs the rest of the
-    /// activation from it, waking there. The choice points the constructs
+    /// callee inlined in any of them; without continuation methods, any wake
+    /// point. Something pending: the machine is made Tier-0's at this point
+    /// and the interpreter runs the rest of the activation from it, waking
+    /// there. The choice points the constructs
     /// skipped are pushed, outermost first (sound anywhere in them: each
     /// raised HB at its entry, so every binding it made is trailed); each
     /// inlined callee returns after its call site, and the cut level its
@@ -394,12 +442,7 @@ public sealed partial class IlPredicateCompiler
                 if (g.Opaque) opaque++;
                 break;
             }
-            if (f is ChainScope c)
-            {
-                opaque++;
-                if (!WamCps)
-                    throw new NotSupportedException("ADR-049: a chain's late choice point needs WAM choice points.");
-            }
+            if (f is ChainScope) opaque++;
             levels.Insert(0, f);
             if (f is ChainScope { Shared: { } ctx })
             {
@@ -407,7 +450,7 @@ public sealed partial class IlPredicateCompiler
                 break;
             }
         }
-        if ((guard is null && shared is null) || opaque != _opaqueDepth)
+        if ((guard is null && shared is null && !DeoptWakes) || opaque != _opaqueDepth)
             throw new NotSupportedException("ADR-049: a wake point inside a construct with no guard.");
         if (guard is { HasBytecode: false })
             throw new NotSupportedException("ADR-049: a wake point in a snapshot's guard.");
@@ -430,6 +473,12 @@ public sealed partial class IlPredicateCompiler
             (allocated[i], slots[i]) = FrameState(callee.BytecodeUnfused, start, at);
         }
 
+        if (n == 0 && guard is null && shared is null && _wakeResume is { } window)
+        {
+            EmitWindowWakePoint(emit, window);
+            return;
+        }
+        System.Threading.Interlocked.Increment(ref HandoverPoints);
         var skip = emit.DefineLabel($"swake_skip_{NextLabelSeq()}");
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
@@ -481,23 +530,39 @@ public sealed partial class IlPredicateCompiler
         else
         {
             // Outermost first: each choice point goes over the ones outside it.
-            guard!.MaterializeCp();
+            guard?.MaterializeCp();
         }
+        IlLocal? prev = null;
         for (int i = 0; i < n; i++)
         {
             var cont = emit.DeclareLocal<int>($"swake_cp{i}_{NextLabelSeq()}");
-            emit.LoadArgument(0);
-            if (i == 0 && shared is not null)
+            if (levels[i] is LeafScope { Tail: true })
             {
+                // Returns where its caller does.
+                if (prev is not null)
+                {
+                    emit.LoadLocal(prev);
+                }
+                else
+                {
+                    emit.LoadArgument(0);
+                    EmitHelperCall(emit, EngineCpGetter);
+                }
+            }
+            else if (i == 0 && shared is not null)
+            {
+                emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineCpGetter);
             }
             else
             {
-                EmitFunctorId(emit, i == 0 ? _emitOwnerFid : fids[i - 1]);
+                emit.LoadArgument(0);
+                EmitFunctorId(emit, i == 0 ? CodeFid : fids[i - 1]);
                 emit.LoadConstant(levels[i].CallerPcAfter);
                 EmitHelperCall(emit, EngineCodeAddressOfMethod);
             }
             emit.StoreLocal(cont);
+            prev = cont;
             emit.LoadArgument(0);
             emit.LoadLocal(cont);
             EmitHelperCall(emit, EngineSetCpMethod);
@@ -524,9 +589,37 @@ public sealed partial class IlPredicateCompiler
                 EmitLateChoicePoint(emit, chain, chain.Clause);
         }
         emit.LoadArgument(0);
-        EmitFunctorId(emit, n == 0 ? _emitOwnerFid : fids[n - 1]);
+        EmitFunctorId(emit, n == 0 ? CodeFid : fids[n - 1]);
         emit.LoadConstant(pc);
         EmitHelperCall(emit, EngineDeoptToMethod);
+        // Not the call's result: a call the return follows takes the tail.
+        // prefix, which costs the whole method.
+        emit.LoadConstant(true);
+        EmitReturn(emit);
+        emit.MarkLabel(skip);
+    }
+
+    /// <summary>A wake point in a call's continuation window: the interrupt
+    /// re-enters at the continuation, where the staging runs again.</summary>
+    private static void EmitWindowWakePoint(IlEmit emit, (int Fid, int Cursor) window)
+    {
+        System.Threading.Interlocked.Increment(ref WindowPoints);
+        var skip = emit.DefineLabel($"wwake_skip_{NextLabelSeq()}");
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        emit.BranchIfFalse(skip);
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        EmitResumeMarker(emit, window.Fid, window.Cursor);
+        EmitHelperCall(emit, EngineWakeBoundaryAtMethod);
+        var verdict = emit.DeclareLocal<int>($"wwake_v_{NextLabelSeq()}");
+        emit.StoreLocal(verdict);
+        emit.LoadLocal(verdict);
+        emit.BranchIfFalse(skip);
+        // 2: the drain failed; else armed, and the dispatch loop runs the driver.
+        emit.LoadLocal(verdict);
+        emit.LoadConstant(1);
+        emit.CompareEqual();
         EmitReturn(emit);
         emit.MarkLabel(skip);
     }
@@ -801,8 +894,9 @@ public sealed partial class IlPredicateCompiler
         if (alt is not null) EnqueueAlternative(emit, chain.Callee, chain.Clauses, clause + 1, alt);
     }
 
-    /// <summary>For tests: the methods compiled with the routine above.</summary>
-    internal static int WakeLevelRoutines;
+    /// <summary>For tests: the methods compiled with the routine above, and
+    /// the wake points compiled to hand an activation to the interpreter.</summary>
+    internal static int WakeLevelRoutines, HandoverPoints, WindowPoints;
 
     private static void EnqueueAlternative(IlEmit emit, CompiledPredicate callee,
         List<FailDirectClause> clauses, int j, IlLabel label)
@@ -834,6 +928,9 @@ public sealed partial class IlPredicateCompiler
         EmitFunctorId(emit, callee.FunctorId);
         emit.LoadConstant(clauses[j].Start);
         EmitHelperCall(emit, EngineDeoptToMethod);
+        // Not the call's result: a call the return follows takes the tail.
+        // prefix, which costs the whole method.
+        emit.LoadConstant(true);
         EmitReturn(emit);
     }
 

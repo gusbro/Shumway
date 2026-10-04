@@ -947,7 +947,7 @@ public sealed partial class IlPredicateCompiler
         // entry (no cursor switch).
         var selfEntry = emit.DefineLabel("self_entry");
         CpsColdDispatchCheck(emit);   // ADR-061: a leaf has no cursor switch
-        EmitWakeCursorCheck(emit);    // ADR-049
+        if (!DeoptWakes) EmitWakeCursorCheck(emit);   // ADR-049: a leaf pushes no wake alternative
         emit.MarkLabel(selfEntry);
         EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             failLabel, predicate.CallSites,

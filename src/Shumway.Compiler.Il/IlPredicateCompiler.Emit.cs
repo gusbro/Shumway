@@ -249,6 +249,7 @@ public sealed partial class IlPredicateCompiler
         // ADR-060: a window of instructions cannot span a pc a branch lands on.
         bool LabelAt(int p) => (jumpLabels?.ContainsKey(p) ?? false)
             || (iteElseLabels?.ContainsKey(p) ?? false);
+        CloseResumeWindow();   // ADR-049: a body starts with no call behind it
         while (pc < end)
         {
             var op = (Opcode)code[pc];
@@ -259,7 +260,9 @@ public sealed partial class IlPredicateCompiler
                 // across the join is branch-dependent → reset.
                 emit.MarkLabel(joinLabel);
                 regZeroAtom = -1;
+                CloseResumeWindow();
             }
+            AdvanceResumeWindow(op);   // ADR-049
             // Compiled code counts no inferences: only the interpreter does
             // (time/1, statistics(inferences, _)).
             CpsInstructionBoundary(emit, regionCtx is not null);   // ADR-061
@@ -1485,6 +1488,10 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadArgument(0);
                     EmitHelperCall(emit, EngineBGetter);
                     EmitHelperCall(emit, EngineSetB0Method);
+                    var ruleScope = PushScope(new LeafScope
+                    {
+                        Callee = ruleCallee, CallerPcAfter = pc + OpcodeTable.Get(op).Size,
+                    });
                     EmitClauseBody(emit, ruleCallee.BytecodeUnfused, 0, ruleCallee.BytecodeUnfused.Length,
                         failLabel, ruleCallee.CallSites,
                         callSiteIndexCounter: callSiteIndexCounter,
@@ -1493,6 +1500,7 @@ public sealed partial class IlPredicateCompiler
                         calleeMap: calleeMap,
                         suppressProceedReturn: true,
                         cursorBase: cursorBase);
+                    PopScope(ruleScope);
                     // Consume + mark the dead resume cursor reserved for this
                     // Call site (no marker is ever set for it — the rule is
                     // inlined — but the cursor switch has a slot, so the label
@@ -1679,6 +1687,7 @@ public sealed partial class IlPredicateCompiler
                 // come after any clause-entry cursors the outer body
                 // emitter reserved.
                 emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                OpenResumeWindow(_emitOwnerFid, resumeCursor);   // ADR-049
                 CpsRecordResumePoint(resumeCursor, code, pc + OpcodeTable.Get(op).Size, end, siteIdx,
                     regionCtx is null, callSites, selfFunctorId, selfTailLabel is not null);
 
@@ -1767,9 +1776,11 @@ public sealed partial class IlPredicateCompiler
                         || (InlineLeafRules && IsInlinableLeafRule(calleePredX))))
                 {
                     EmitWakePoint(emit, calleePredX.Arity, failLabel, pc);   // ADR-049
+                    var tailScope = PushScope(new LeafScope { Callee = calleePredX, Tail = true });
                     EmitClauseBody(emit, calleePredX.BytecodeUnfused, 0, calleePredX.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
                         calleeMap: calleeMap, suppressProceedReturn: false);
+                    PopScope(tailScope);
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }

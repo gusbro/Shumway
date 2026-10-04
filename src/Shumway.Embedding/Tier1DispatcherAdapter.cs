@@ -25,8 +25,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // linked into its code space when it promotes (ADR-054).
     private readonly Activation? _engine;
 
-    public bool CompiledCodeWakes
-        => Shumway.Compiler.Il.IlPredicateCompiler.CpsMode && _store.Wasm is not { Enabled: true };
+    public bool CompiledCodeWakesAt(int functorId)
+        => !Shumway.Compiler.Il.IlPredicateCompiler.DebugMode
+           && _store.Wasm is not { Enabled: true } && !_store.IsBound(functorId);
 
     public Tier1DispatcherAdapter(
         IlPromotionStore store,

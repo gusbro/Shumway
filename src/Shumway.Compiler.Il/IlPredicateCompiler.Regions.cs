@@ -411,6 +411,7 @@ public sealed partial class IlPredicateCompiler
     {
         int regionFid = region.Root.FunctorId;
         _emitOwnerFid = regionFid;
+        _emitMemberFid = 0;
 
         // Stage 11 (IL-size / CSE): every multi-clause / indexed member's
         // PushIlChoicePoint reloads the same region self-delegate. Hoist that load to one
@@ -512,31 +513,45 @@ public sealed partial class IlPredicateCompiler
         // on top unrestored: the common restore runs first.
         var resumeCheck = emit.DefineLabel("rresume_check");
         emit.MarkLabel(resumeCheck);
+        // ADR-049: a cursor above the region's is a wake alternative's, met
+        // on the paths a high cursor already takes (the frame resume's check
+        // is placed with the restore, at the end).
+        IlLabel? frameResume = null;
         if (frames is not null)
         {
+            frameResume = emit.DefineLabel("rframe_resume");
             emit.LoadLocal(curLoc);
             emit.LoadConstant(plan.TotalCursors);
-            emit.BranchIfGreaterOrEqual(frames.Restore);
+            emit.BranchIfGreaterOrEqual(frameResume);
         }
         emit.MarkLabel(dispatchLabel);
         emit.LoadLocal(curLoc);
         emit.Switch(cursorLabels);
+        EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
         emit.Branch(failLabel);                              // out of range (unreachable)
 
         var gcCtx = new GuardContEmitContext();              // ADR-033 (no-op if unused)
-        for (int mi = 0; mi < region.Members.Count; mi++)
+        try
         {
-            var member = region.Members[mi];
-            ctx.CurrentMemberIndex = mi;
-            emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
-            if (member.ClauseCount == 1)
-                EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
-                    failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
-                    calleeMap: calleeMap, regionCtx: ctx);
-            else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
-                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
-            else
-                EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+            for (int mi = 0; mi < region.Members.Count; mi++)
+            {
+                var member = region.Members[mi];
+                ctx.CurrentMemberIndex = mi;
+                _emitMemberFid = member.FunctorId;               // ADR-049
+                emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
+                if (member.ClauseCount == 1)
+                    EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
+                        failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
+                        calleeMap: calleeMap, regionCtx: ctx);
+                else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
+                    EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
+                else
+                    EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+            }
+        }
+        finally
+        {
+            _emitMemberFid = 0;
         }
 
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
@@ -612,6 +627,11 @@ public sealed partial class IlPredicateCompiler
 
         if (frames is not null)
         {
+            // Falls into the restore; checks for a wake cursor only in a
+            // region that pushes wake alternatives.
+            emit.MarkLabel(frameResume!);
+            if (WakeStates.TryGetValue(emit, out var ws) && ws.Alternatives.Count > 0)
+                EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
             EmitFrameRestoreCommon(emit, frames, dispatchLabel);
             EmitFramePushLadder(emit, frames);
         }
@@ -739,7 +759,8 @@ public sealed partial class IlPredicateCompiler
                             pc2 += (Opcode)code2[pc2] == Opcode.Meta
                                 ? 6 : OpcodeTable.Get(code2[pc2]).Size;
                         }
-                    });
+                    },
+                    wakeDeopt: !member.IsDynamicSnapshot);
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -934,7 +955,8 @@ public sealed partial class IlPredicateCompiler
                         emit.Switch(ctx.CursorLabels);
                         emit.Branch(ctx.FailLabel);
                     },
-                    dynamicCursor: e2 => e2.LoadLocal(idxNext!));
+                    dynamicCursor: e2 => e2.LoadLocal(idxNext!),
+                    wakeDeopt: !member.IsDynamicSnapshot);
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -1086,10 +1108,10 @@ public sealed partial class IlPredicateCompiler
         switch (op)
         {
             case Opcode.Proceed:
-                // ADR-049 stage 2: pending wakeups interrupt here instead of
-                // draining — CP already holds the continuation the resume
-                // will jump to.
-                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
+                // ADR-049: a return continues the stretch of unifications
+                // where the code wakes in front of its goals; persisted code
+                // wakes here, CP holding the continuation the resume jumps to.
+                if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + 1;
                 return true;
@@ -1098,7 +1120,7 @@ public sealed partial class IlPredicateCompiler
                 EmitHelperCall(emit, EngineDeallocateMethod);
                 // After the deallocate, so CP is the caller continuation the
                 // proceed-shape resume captures.
-                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
+                if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
@@ -1155,6 +1177,7 @@ public sealed partial class IlPredicateCompiler
                         EmitReturn(emit);
                     }
                     emit.MarkLabel(ctx.CursorLabels[cursor]);   // the continuation
+                    OpenResumeWindow(ctx.RegionFid, cursor);    // ADR-049
                 }
                 else if (intra)
                 {

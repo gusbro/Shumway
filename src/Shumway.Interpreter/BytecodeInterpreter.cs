@@ -589,7 +589,7 @@ public sealed partial class BytecodeInterpreter
                 // takes WakeBoundary's drain fallback. A return into code that
                 // wakes at its own goals continues the stretch (ADR-049 point 11).
                 if (_engine.HasPendingWakeups
-                    && (cursor == 0 || Tier1Dispatcher is not { CompiledCodeWakes: true }))
+                    && (cursor == 0 || Tier1Dispatcher?.CompiledCodeWakesAt(functorId) is not true))
                 {
                     int wakeAr = cursor == 0
                         ? FunctorTable.Lookup(functorId).Arity : -1;

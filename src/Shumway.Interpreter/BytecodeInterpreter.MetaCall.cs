@@ -126,7 +126,10 @@ public sealed partial class BytecodeInterpreter
     /// goal wakes.</summary>
     private bool ReturnWakes(int returnPc)
         => returnPc < 0
-           || (Activation.IsResumeMarker(returnPc) && Tier1Dispatcher is not { CompiledCodeWakes: true });
+           || (Activation.IsResumeMarker(returnPc) && !CompiledCodeWakesAt(returnPc));
+
+    private bool CompiledCodeWakesAt(int marker)
+        => Tier1Dispatcher is { } t && t.CompiledCodeWakesAt(Activation.DecodeResumeMarker(marker).FunctorId);
 
     /// <summary>ADR-049: whether the arithmetic goal that starts at
     /// <paramref name="pc"/> (its a_eval_push run up to the a_eval_is or

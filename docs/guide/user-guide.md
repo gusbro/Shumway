@@ -316,7 +316,7 @@ it and arithmetic on bound values, also past the end of the clause, up to
 the next other goal (a call, a builtin, a cut, or arithmetic that reads an
 unbound variable). The woken goal sees every binding of the stretch, and
 when the stretch fails it does not run at all.
-Compiled code in the default region mode wakes at a predicate's return
+Code a bundle carries already compiled wakes at a predicate's return
 instead, which can be earlier.
 
 A copy does not carry constraints. `copy_term/2` copies an attributed

@@ -300,6 +300,9 @@ public sealed partial class IlPredicateCompiler
             emit.LoadLocal(tagLoc);
             emit.LoadConstant((int)Tag.Ref);
             emit.BranchIfEqual(chainLabel);     // unbound → generate via the chain
+            emit.LoadLocal(tagLoc);
+            emit.LoadConstant((int)Tag.AttVar);
+            emit.BranchIfEqual(chainLabel);     // attributed: generate, binding wakes
             emit.Branch(failLabel);             // bound non-indexed type → fail
 
             // Deterministic single-clause entries (no CP): the head match
@@ -423,6 +426,9 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(tagLoc);
         emit.LoadConstant((int)Tag.Ref);
         emit.BranchIfEqual(chain);
+        emit.LoadLocal(tagLoc);
+        emit.LoadConstant((int)Tag.AttVar);
+        emit.BranchIfEqual(chain);          // attributed: as unbound
         emit.Branch(failLabel);
 
         // Unbound: key 0 first.

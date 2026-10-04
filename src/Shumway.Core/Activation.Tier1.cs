@@ -855,13 +855,12 @@ public sealed partial class Activation
 
     /// <summary>ADR-049: compiled code hands the rest of an activation to the
     /// interpreter at <paramref name="pc"/> of the predicate's bytecode, the
-    /// machine's state being Tier-0's there. True, for the delegate to return.</summary>
-    public bool DeoptTo(int functorId, int pc)
+    /// machine's state being Tier-0's there; the delegate then returns true.</summary>
+    public void DeoptTo(int functorId, int pc)
     {
         SetPc(CodeAddressOf(functorId, pc));
         IlTailCallPending = true;
         _ilDeoptPending = true;
-        return true;
     }
 
     /// <summary>The environment frame <paramref name="e"/> was allocated on.</summary>

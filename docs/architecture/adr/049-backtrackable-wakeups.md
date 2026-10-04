@@ -9,9 +9,10 @@ flushes became suspend/resume points over the phase-16 resume markers.
 Refines the deferred-wakeup design that has carried attributed variables
 since phase 4. Supersedes the once-semantics drain for the non-cut goal
 boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
-Amended 2026-10-03: compiled code under ADR-061 wakes in front of builtins
-and inlined calls, and inside CP-free guards (points 9 and 10); a stretch of
-unifications is atomic, as SICStus documents (point 11).
+Amended 2026-10-03: compiled code wakes in front of builtins and inlined
+calls, and inside CP-free guards (points 9 and 10), with continuation methods
+(ADR-061) and in regions; a stretch of unifications is atomic, as SICStus
+documents (point 11).
 
 ## Context
 
@@ -158,8 +159,13 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    instruction's boundary, and the cold method arms it with a marker that
    re-enters the cold method there (from 2^20). The interrupt saves the
    builtin's or the callee's argument registers: at a `call_builtin` no
-   other register is live, since every goal ends a chunk. Regions and the
-   wasm tier do not have these points yet.
+   other register is live, since every goal ends a chunk. Without
+   continuation methods (regions, and the delegates of that mode) a point
+   resumes at the continuation of the call before it when only argument
+   staging lies between them (no argument register is live there, and the
+   staging binds nothing); any other point hands the activation to the
+   interpreter (point 10). The wasm tier hands its points to the
+   interpreter too.
 
 10. **A wake inside a construct that skipped a choice point hands the
     activation to the interpreter.** A CP-free guard (ADR-031), and a
@@ -194,9 +200,10 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     in front of that goal. So `=/2` does not wake, and a return does not
     wake unless it leaves a scope (the answer, a sub-run, the wake driver's
     return) or enters compiled code that wakes at its own returns rather
-    than in front of every goal (regions; the wasm tier hands such points to
-    the interpreter). A return into a continuation method (ADR-061) or into
-    bytecode continues the stretch. An arithmetic goal whose operands are
+    than in front of every goal (a bundle's persisted IL, which has no wake
+    points; the wasm tier hands such points to the interpreter). A return
+    into code compiled at run time, regions included, or into bytecode
+    continues the stretch. An arithmetic goal whose operands are
     bound is part of the stretch, as in SICStus; one that reads an unbound
     operand ends it, by an interrupt that saves its operand registers and
     re-runs it from its first operand, so a woken goal that binds the operand
@@ -235,9 +242,12 @@ canaries (`PreludeIlBakeTests`).
   methods is entered at a wake's re-entry by its cold method; the
   interpreter's table routes cursors from 2^20 there.
 - **Stage 2c: the stretch of unifications.** Point 11, in the interpreter
-  and the continuation methods (2026-10-03). Regions keep waking at their
-  returns, and drain once in front of arithmetic that reads an unbound
-  operand.
+  and the continuation methods (2026-10-03).
+- **Stage 2d: regions.** Points 9 to 11 in regions and the delegates
+  without continuation methods (2026-10-03): their points hand the
+  activation to the interpreter or resume at a call's continuation, and a
+  region's return no longer wakes. A bundle's persisted IL keeps the stage 2
+  points.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).
