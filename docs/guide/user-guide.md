@@ -316,8 +316,6 @@ it and arithmetic on bound values, also past the end of the clause, up to
 the next other goal (a call, a builtin, a cut, or arithmetic that reads an
 unbound variable). The woken goal sees every binding of the stretch, and
 when the stretch fails it does not run at all.
-Code a bundle carries already compiled wakes at a predicate's return
-instead, which can be earlier.
 
 A copy does not carry constraints. `copy_term/2` copies an attributed
 variable as a plain one, so the copy of a constrained term is an
@@ -713,7 +711,7 @@ shumway-link -o app.shum \
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
 | `--no-region-prune` | With `--with-compiled-il`: emit one standalone IL method per predicate instead of the default pruned region layout. Mainly for inspecting the generated code; bundles are larger and typically slower. |
-| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL: standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM. JIT-only (the IL must load, not for Native AOT). |
+| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL: standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM, except for those whose bytecode the IL continues in when a delayed goal wakes (`freeze/2`, `when/2`, `dif/2`, constraints). JIT-only (the IL must load, not for Native AOT). |
 | `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |
 | `--dump-wam <path>` | Append a disassembly of the WAM the bundle **ships** (each entry's final bytecode, after `--strip-wam` / region prune) to `<path>`. See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |

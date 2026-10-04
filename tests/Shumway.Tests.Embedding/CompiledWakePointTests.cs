@@ -1,3 +1,7 @@
+using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 using Shumway.Compiler.Il;
 using Shumway.Core;
 using Shumway.Embedding;
@@ -12,7 +16,8 @@ namespace Shumway.Tests.Embedding;
 /// continuation methods (regions) every wake point does. With ADR-033's
 /// shared copies, the levels outside the copy come from the continuation
 /// stack. The answers are the interpreter's, in regions, with the
-/// continuation methods (ADR-061) and with the delegates alone.</summary>
+/// continuation methods (ADR-061) and with the delegates alone, compiled at
+/// run time or carried by a bundle.</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
 public sealed class CompiledWakePointTests : IDisposable
@@ -228,5 +233,104 @@ public sealed class CompiledWakePointTests : IDisposable
 
         foreach (string g in Goals)
             Assert.Equal(Answer(plain, g), Answer(tiered, g));
+    }
+
+    private static readonly PredicateRef[] EntryPoints =
+    {
+        new("bl", 3), new("pg", 2), new("pl", 2), new("pa", 3), new("pq", 2), new("pr", 3),
+        new("pr2", 2), new("pm", 2), new("pf", 2), new("pn", 2), new("ps", 2), new("pd", 2),
+        new("tok", 2), new("pp", 3), new("top", 2), new("pw", 3), new("bx", 1), new("pcol", 2),
+        new("pnum", 2), new("v", 2),
+    };
+
+    // As shumway-link builds an --exe or a --dll.
+    private static byte[] BundleBytes(bool stripWam, bool bakePrelude = false) =>
+        ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(Corpus, "m", ShmoBuildMode.Release) },
+            EntryPoints = EntryPoints,
+            StripSource = true,
+            BakePrelude = bakePrelude,
+            IncludeCompiledIl = true,
+            StripWam = stripWam,
+        }).Bytes!;
+
+    // A bundle's code wakes where Tier-0 does, with its continuation methods
+    // when linked with them; under --strip-wam the predicates a wake hands
+    // the activation to keep their WAM.
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public void ABundleWakesAsTheInterpreterDoes(bool continuationMethods, bool stripWam)
+    {
+        IlPredicateCompiler.CpsMode = continuationMethods;
+        var plain = Engine(0);
+        int handovers0 = IlPredicateCompiler.HandoverPoints;
+        byte[] bytes = BundleBytes(stripWam);
+        Assert.True(IlPredicateCompiler.HandoverPoints > handovers0, "no wake point hands over");
+        // The bundle carries its own code, whatever the loading process's mode.
+        IlPredicateCompiler.CpsMode = false;
+        var bundled = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
+        bundled.UseCoroutining();
+        // ANTI-VACUITY: the predicates run the bundle's code, which wakes, with
+        // continuation methods when linked with them.
+        foreach (var (n, a) in new[] { ("bl", 3), ("pg", 2), ("pl", 2), ("pq", 2), ("pr", 3), ("pr2", 2),
+                     ("pm", 2), ("pf", 2), ("pn", 2), ("ps", 2), ("pd", 2), ("tok", 2), ("pp", 3), ("top", 2) })
+        {
+            int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+            Assert.True(bundled.IlPromotion.IsPromoted(fid), $"{n}/{a} not bound");
+            Assert.False(bundled.IlPromotion.IsBound(fid), $"{n}/{a} bound without wake points");
+            Assert.Equal(continuationMethods, bundled.IlPromotion.TryGetCps(fid) is not null);
+        }
+
+        foreach (string g in Goals)
+            Assert.Equal(Answer(plain, g), Answer(bundled, g));
+    }
+
+    // Persisted IL runs in an assembly of its own, without the access checks
+    // waived (a collectible one has them waived): every member it references
+    // outside it is public.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ABundleReferencesOnlyPublicMembers(bool continuationMethods)
+    {
+        IlPredicateCompiler.CpsMode = continuationMethods;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        var hidden = new List<string>();
+        int references = 0;
+        foreach (var entry in BundleReader.FromBytes(BundleBytes(stripWam: false, bakePrelude: true)).Entries)
+            if (entry.CompiledIl is { Length: > 0 } il) references += HiddenReferences(il, hidden);
+        Assert.True(references > 0, "no member referenced");
+        Assert.Empty(hidden.Distinct().OrderBy(s => s));
+    }
+
+    private static int HiddenReferences(byte[] il, List<string> hidden)
+    {
+        var module = Assembly.Load(il).ManifestModule;
+        using var pe = new PEReader(new MemoryStream(il));
+        var md = pe.GetMetadataReader();
+        static bool Visible(Type? t) => t is null || t.IsVisible;
+        foreach (var h in md.TypeReferences)
+            if (module.ResolveType(MetadataTokens.GetToken(h)) is { IsVisible: false } t)
+                hidden.Add(t.FullName!);
+        foreach (var h in md.MemberReferences)
+        {
+            var m = module.ResolveMember(MetadataTokens.GetToken(h))!;
+            bool open = m switch
+            {
+                MethodBase mb => mb.IsPublic,
+                FieldInfo f => f.IsPublic,
+                _ => true,
+            } && Visible(m.DeclaringType);
+            if (!open) hidden.Add($"{m.DeclaringType?.FullName}.{m.Name}");
+        }
+        for (int row = 1; row <= md.GetTableRowCount(TableIndex.MethodSpec); row++)
+            if (module.ResolveMethod(MetadataTokens.GetToken(MetadataTokens.MethodSpecificationHandle(row))) is { } ms
+                && !(ms.IsPublic && Visible(ms.DeclaringType)))
+                hidden.Add($"{ms.DeclaringType?.FullName}.{ms.Name}");
+        return md.MemberReferences.Count;
     }
 }

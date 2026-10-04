@@ -58,9 +58,9 @@ public interface ITier1Dispatcher
     Func<Activation, int, bool>? ResolveRetiredResume(int functorId);
 
     /// <summary>ADR-049 point 11: the predicate's compiled code wakes in front
-    /// of every goal that is not a unification (code compiled at run time),
-    /// so a return into it continues the stretch of unifications. False where
-    /// compiled code wakes at its own returns instead (a bundle's persisted
-    /// IL, the wasm tier).</summary>
+    /// of every goal that is not a unification, so a return into it continues
+    /// the stretch of unifications. False where compiled code wakes at its own
+    /// returns instead (persisted IL compiled for the debugger, the wasm
+    /// tier).</summary>
     bool CompiledCodeWakesAt(int functorId);
 }

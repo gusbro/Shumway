@@ -106,6 +106,14 @@ public sealed class IlPersistedEntry
     /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches into the region at
     /// that member. Null/empty for a non-region method.</summary>
     public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
+
+    /// <summary>ADR-061: the predicate's continuation methods in the assembly,
+    /// which the loader binds under the runtime functor id; null for none.</summary>
+    public IlPredicateCompiler.CpsLayout? Cps { get; init; }
+
+    /// <summary>ADR-049: the method wakes where Tier-0 does; else the engine
+    /// wakes at its returns.</summary>
+    public bool Wakes { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -143,6 +151,20 @@ public static class IlPersistedEntryCodec
                     bw.Write(mArity);
                     bw.Write(mCursor);
                 }
+            bw.Write(e.Wakes);
+            var cps = e.Cps;
+            bw.Write((uint)(cps?.Methods.Length ?? 0));
+            if (cps is not null)
+            {
+                bw.Write(cps.AltField);
+                foreach (var (cursor, method) in cps.Methods)
+                {
+                    bw.Write(cursor);
+                    bw.Write(method);
+                }
+                bw.Write((uint)cps.Alternatives.Length);
+                foreach (int c in cps.Alternatives) bw.Write(c);
+            }
         }
         bw.Flush();
         return ms.ToArray();
@@ -184,6 +206,22 @@ public static class IlPersistedEntryCodec
                     members.Add((mName, mArity, mCursor));
                 }
             }
+            bool wakes = br.ReadBoolean();
+            IlPredicateCompiler.CpsLayout? cps = null;
+            uint cpsMethods = br.ReadUInt32();
+            if (cpsMethods > 0)
+            {
+                string altField = br.ReadString();
+                var methods = new (int, string)[cpsMethods];
+                for (int m = 0; m < methods.Length; m++)
+                    methods[m] = (br.ReadInt32(), br.ReadString());
+                var alternatives = new int[br.ReadUInt32()];
+                for (int a = 0; a < alternatives.Length; a++) alternatives[a] = br.ReadInt32();
+                cps = new IlPredicateCompiler.CpsLayout
+                {
+                    Methods = methods, Alternatives = alternatives, AltField = altField,
+                };
+            }
             result.Add(new IlPersistedEntry
             {
                 Slot = slot,
@@ -192,6 +230,8 @@ public static class IlPersistedEntryCodec
                 MethodName = methodName,
                 IndexGraph = graph,
                 RegionMembers = members,
+                Wakes = wakes,
+                Cps = cps,
             });
         }
         return result;

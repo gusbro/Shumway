@@ -245,6 +245,12 @@ public sealed class BundleEntry
         ClauseTerms = clauseTerms ?? Array.Empty<byte[]>();
     }
 
+    /// <summary>The same entry with another compiled payload.</summary>
+    internal BundleEntry WithCompiledBytecode(byte[]? compiledBytecode) => new(
+        ModuleName, Source, compiledBytecode, CompiledIl, Defined, CompiledIlPatches,
+        CompiledIlEntries, DynamicSeeds, NativeBlocks, NativeFunctions, NativeDecls, Operators,
+        IsExportQualified, Exports, Imports, Dialect, ClauseTerms);
+
     /// <summary>The module's raw static clauses (<see cref="TermCodec"/>
     /// blobs, the <see cref="ShmoObject.ClauseTerms"/> of its object), so a
     /// source-less load answers <c>clause/2</c> and <c>listing/1</c> exactly

@@ -709,6 +709,14 @@ the runtime may not.
    predicate with a method, the linker's `--map` and `shumway-disasm`.
    Measured against region bundles on the real-program corpus: throughput,
    bundle size, load time and time to first answer (`--exe`).
+   Done in part: a bundle linked with `SHUMWAY_IL_CPS=1` carries each
+   predicate's continuation methods beside its method, in the same
+   assembly with its own copy of the tail-call stubs, and no regions (so no
+   dead-region prune). The loader binds them under the runtime functor ids,
+   each method compiled at its first call; transfers go through the same
+   tables as at run time, not yet direct calls. Their emission runs first
+   into a scratch type, since a method left half emitted would fail the
+   whole assembly.
 5. Regions removed. The wasm tier mirrored with `return_call` and
    `return_call_indirect` over its function tables.
 

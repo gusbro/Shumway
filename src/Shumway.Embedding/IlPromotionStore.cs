@@ -822,11 +822,12 @@ public sealed class IlPromotionStore
     }
 
     /// <summary>Binds a pre-built delegate (persisted-IL bundles). Idempotent — the
-    /// first delegate wins.</summary>
-    public void RegisterBoundDelegate(int functorId, PredicateDelegate del)
+    /// first delegate wins. <paramref name="wakes"/>: it was compiled with wake
+    /// points (ADR-049); else the engine wakes at its returns.</summary>
+    public void RegisterBoundDelegate(int functorId, PredicateDelegate del, bool wakes = false)
     {
         if (_delegates.ContainsKey(functorId)) return;
-        _bound.Add(functorId);
+        if (!wakes) _bound.Add(functorId);
         if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
         // With no tier on, the linker made every site bytecode-only; a
         // delegate bound by hand still has to be reached from them.
@@ -839,11 +840,25 @@ public sealed class IlPromotionStore
     /// attempts will fire.</summary>
     public bool IsUnpromotable(int functorId) => _unpromotable.Contains(functorId);
 
-    // Delegates bound from a bundle's persisted IL: compiled with no wake points.
+    /// <summary>ADR-061: binds the continuation methods of a delegate bound from
+    /// the same bundle, while that delegate is the functor's: they resume
+    /// through it.</summary>
+    internal void RegisterBoundCps(int functorId, PredicateDelegate del, IlPredicateCompiler.CpsCode code)
+    {
+        if (!_delegates.TryGetValue(functorId, out var current) || !ReferenceEquals(current, del)
+            || _cpsCode.ContainsKey(functorId))
+            return;
+        _cpsCode[functorId] = code;
+        _dispatchWrappers.Remove(functorId);
+        _resumeWrappers.Remove(functorId);
+    }
+
+    // Delegates bound from a bundle's persisted IL compiled with no wake points.
     private readonly HashSet<int> _bound = new();
 
     /// <summary>ADR-049: whether the functor's delegate came bound from a
-    /// bundle rather than compiled here.</summary>
+    /// bundle compiled without wake points, so that the engine wakes at its
+    /// returns.</summary>
     public bool IsBound(int functorId) => _bound.Contains(functorId);
 
     /// <summary>True when this predicate can never have an IL delegate, decidable

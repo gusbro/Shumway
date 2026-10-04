@@ -85,6 +85,11 @@ public static class BundleWriter
                     }
                 }
             }
+            // ADR-049: a wake hands the activation to the bytecode of the
+            // predicates in bytecodeEntered, which may be another entry's; the
+            // strip waits until every entry has compiled.
+            var stripSets = new HashSet<int>?[effective.Length];
+            var bytecodeEntered = new HashSet<int>();
             for (int i = 0; i < effective.Length; i++)
             {
                 byte[]? compiledBytecode = effective[i].CompiledBytecode;
@@ -107,13 +112,18 @@ public static class BundleWriter
                     _lastEntriesTableBytes = null;
                     _lastIlFunctorIds = null;
                     _lastPrunableFids = null;
+                    _lastBytecodeEntered = null;
                     // Each entry emits only its own predicates (T7 dedup: the
                     // prelude ships once, in the $prelude entry; user modules
                     // once each, in theirs) while resolving calls against the
-                    // shared warm engine's whole-bundle map.
-                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds, warmEngine!);
+                    // shared warm engine's whole-bundle map. ADR-061: with
+                    // continuation methods there are no regions, so no prune.
+                    compiledIl = CompileEntryToIl(effective[i],
+                        Shumway.Compiler.Il.IlPredicateCompiler.CpsMode ? null : regionPruneSeeds,
+                        warmEngine!);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
+                    if (_lastBytecodeEntered is not null) bytecodeEntered.UnionWith(_lastBytecodeEntered);
                     // --strip-wam: drop the redundant WAM bodies. Two sets, both now safe
                     //:
                     //  • STANDALONE-IL predicates (_lastIlFunctorIds) — each has its own IL
@@ -134,8 +144,7 @@ public static class BundleWriter
                         var stripSet = new HashSet<int>();
                         if (_lastIlFunctorIds is not null) stripSet.UnionWith(_lastIlFunctorIds);
                         if (_lastPrunableFids is not null) stripSet.UnionWith(_lastPrunableFids);
-                        if (stripSet.Count > 0)
-                            compiledBytecode = StripIlBodies(compiledBytecode, stripSet);
+                        if (stripSet.Count > 0) stripSets[i] = stripSet;
                     }
                 }
                 effective[i] = new BundleEntry(
@@ -160,6 +169,14 @@ public static class BundleWriter
                     imports: effective[i].Imports,
                     dialect: effective[i].Dialect,
                     clauseTerms: effective[i].ClauseTerms);
+            }
+            for (int i = 0; i < effective.Length; i++)
+            {
+                if (stripSets[i] is not { } stripSet) continue;
+                stripSet.ExceptWith(bytecodeEntered);
+                if (stripSet.Count > 0)
+                    effective[i] = effective[i].WithCompiledBytecode(
+                        StripIlBodies(effective[i].CompiledBytecode!, stripSet));
             }
         }
 
@@ -615,9 +632,14 @@ public static class BundleWriter
                 MethodName = pe.MethodName,
                 IndexGraph = pe.IndexGraph,
                 RegionMembers = pe.RegionMembers,
+                Cps = pe.Cps,
+                Wakes = pe.Wakes,
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
+        var entered = new HashSet<int>();
+        foreach (var pe in persistedEntries) entered.UnionWith(pe.BytecodeEntered);
+        _lastBytecodeEntered = entered;
 
         // --strip-wam: record the functor ids whose WAM body may be dropped —
         // those that received a self-contained IL delegate. A WAM-backed
@@ -665,6 +687,11 @@ public static class BundleWriter
 
     [System.ThreadStaticAttribute]
     private static HashSet<int>? _lastIlFunctorIds;
+
+    /// <summary>Side-channel staging slot: the predicates whose bytecode the
+    /// entry's persisted IL enters at a wake (ADR-049), kept under --strip-wam.</summary>
+    [System.ThreadStaticAttribute]
+    private static HashSet<int>? _lastBytecodeEntered;
 
     /// <summary>Side-channel staging slot (mirrors <see cref="_lastIlFunctorIds"/>): the
     /// absorbed-only predicate fids computed by <see cref="CompileEntryToIl"/> over the

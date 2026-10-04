@@ -787,8 +787,8 @@ internal sealed class BundleLoader
     // AssemblyLoadContext here by design: the delegates are cached globally).
     private sealed class PersistedIlModule
     {
-        public required List<(int Slot, int FunctorId,
-            Shumway.Compiler.Il.PredicateDelegate Delegate)> Bound;
+        public required List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
+            bool Wakes, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? Cps)> Bound;
         public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
         public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
     }
@@ -907,6 +907,8 @@ internal sealed class BundleLoader
         Dictionary<string, byte[]>? graphByMethod = null;
         Dictionary<string, IReadOnlyList<(string Name, int Arity, int Cursor)>>?
             regionMembersByMethod = null;
+        Dictionary<string, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? cpsByMethod = null;
+        HashSet<string>? wakingMethods = null;
         if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
         {
             methodInfo = new Dictionary<string, (string, int, int)>();
@@ -918,10 +920,13 @@ internal sealed class BundleLoader
                     (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
                 if (pe.RegionMembers is { Count: > 0 } rm)
                     (regionMembersByMethod ??= new())[pe.MethodName] = rm;
+                if (pe.Cps is { } layout) (cpsByMethod ??= new())[pe.MethodName] = layout;
+                if (pe.Wakes) (wakingMethods ??= new()).Add(pe.MethodName);
             }
         }
-        var bound = new List<(int Slot, int FunctorId,
-            Shumway.Compiler.Il.PredicateDelegate Delegate)>();
+        var bound = new List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
+            bool Wakes, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? Cps)>();
+        var cpsLayouts = new List<(int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout)>();
         Dictionary<int, byte[]>? indexGraphs = null;
         Dictionary<int, int>? regionAliases = null;
         foreach (var method in type.GetMethods(
@@ -950,7 +955,9 @@ internal sealed class BundleLoader
             // blocks extension-method fallback for the generic call shape.
             var del = (Shumway.Compiler.Il.PredicateDelegate)method.CreateDelegate(
                 typeof(Shumway.Compiler.Il.PredicateDelegate));
-            bound.Add((slot, functorId, del));
+            if (cpsByMethod is not null && cpsByMethod.TryGetValue(method.Name, out var cpsLayout))
+                cpsLayouts.Add((bound.Count, cpsLayout));
+            bound.Add((slot, functorId, del, wakingMethods?.Contains(method.Name) == true, null));
             if (graphByMethod is not null
                 && graphByMethod.TryGetValue(method.Name, out var graphBytes))
                 (indexGraphs ??= new())[functorId] = graphBytes;
@@ -979,8 +986,18 @@ internal sealed class BundleLoader
         {
             int size = bound.Max(b => b.Slot) + 1;
             var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
-            foreach (var (slot, _, del) in bound) arr[slot] = del;
+            foreach (var (slot, _, del, _, _) in bound) arr[slot] = del;
             dF.SetValue(null, arr);
+        }
+        // ADR-061: each method compiles at its first call, not here: a bundle
+        // binds every predicate at load, not only the hot ones.
+        foreach (var (i, layout) in cpsLayouts)
+        {
+            var b = bound[i];
+            bound[i] = b with
+            {
+                Cps = Shumway.Compiler.Il.IlPredicateCompiler.BindCps(type, layout, b.FunctorId, prepare: false),
+            };
         }
         return new PersistedIlModule
         {
@@ -1304,8 +1321,11 @@ internal sealed class BundleLoader
                 );
             return;
         }
-        foreach (var (_, functorId, del) in module.Bound)
-            E.IlPromotion.RegisterBoundDelegate(functorId, del);
+        foreach (var (_, functorId, del, wakes, cps) in module.Bound)
+        {
+            E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes);
+            if (cps is not null) E.IlPromotion.RegisterBoundCps(functorId, del, cps);
+        }
         // A stripped indexed predicate carries its dispatch graph in the bundle.
         // Stash it by runtime functor id; each query's fresh engine gets it
         // registered at setup. Without a WAM body the delegate would otherwise

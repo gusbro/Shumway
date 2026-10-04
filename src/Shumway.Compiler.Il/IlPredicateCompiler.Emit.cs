@@ -70,6 +70,7 @@ public sealed partial class IlPredicateCompiler
         var list = new List<IlPatchSite>();
         _persistPatches = list;
         _persistNextSentinel = IlPatchSiteCodec.SentinelBase;
+        _bytecodeEntered = new HashSet<int>();
         return list;
     }
 
@@ -78,6 +79,8 @@ public sealed partial class IlPredicateCompiler
     public void EndPersistEmit()
     {
         _persistPatches = null;
+        _bytecodeEntered = null;
+        _persistedStubs = null;
     }
 
     private static void EmitAtomId(IlEmit emit, int atomId)

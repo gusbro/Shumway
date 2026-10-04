@@ -138,6 +138,9 @@ public sealed partial class IlPredicateCompiler
     private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
         IlEmit emit, string header)
     {
+        EmitWakeAlternatives(emit); // ADR-049
+        EmitWakeDispatch(emit);
+        EmitResumeEntries(emit);   // ADR-061
         if (IlDumpPath is not null)
         {
             string text;
@@ -995,6 +998,7 @@ public sealed partial class IlPredicateCompiler
             System.Reflection.CallingConventions.Standard,
             record: IlDumpPath is not null);
         AttachRegisterFile(emit);   // ADR-060
+        BeginMethodEmission();
 
         SelfDelegateEmitter? emitSelf = delegatesField is null
             ? null
@@ -1011,7 +1015,7 @@ public sealed partial class IlPredicateCompiler
         // every other persisted method. (Region compilation is off unless RegionCompile
         // is set; with it on, every predicate compiles as a region root — correct but
         // duplicative until the prune skips absorbed-only members.)
-        if (EffectiveRegionCompile && calleeMap is not null)
+        if (EffectiveRegionCompile && !CpsMode && calleeMap is not null)   // ADR-061: no regions
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));

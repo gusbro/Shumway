@@ -189,9 +189,9 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     needs the predicate's bytecode: a dynamic predicate's snapshot (ADR-023)
     with such a point stays on Tier-0, and a guard that inlines a dynamic
     snapshot (ADR-034) is not CP-free, since the woken goal could change
-    what it inlined. Compiled code has these points only when it is compiled
-    at run time; a bundle that has them will have to keep the bytecode of
-    those predicates when its WAM is stripped.
+    what it inlined. A bundle's persisted IL has these points too: under
+    `--strip-wam` the bundle keeps the bytecode of every predicate a
+    handover enters, its own or an inlined callee's.
 
 11. **A stretch of unifications is atomic with respect to woken goals**, as
     SICStus documents. The stretch is a clause's head unification and the
@@ -200,10 +200,10 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     in front of that goal. So `=/2` does not wake, and a return does not
     wake unless it leaves a scope (the answer, a sub-run, the wake driver's
     return) or enters compiled code that wakes at its own returns rather
-    than in front of every goal (a bundle's persisted IL, which has no wake
-    points; the wasm tier hands such points to the interpreter). A return
-    into code compiled at run time, regions included, or into bytecode
-    continues the stretch. An arithmetic goal whose operands are
+    than in front of every goal (code compiled for the debugger, which has
+    no wake points; the wasm tier hands such points to the interpreter). A
+    return into other compiled code, regions and bundles included, or into
+    bytecode continues the stretch. An arithmetic goal whose operands are
     bound is part of the stretch, as in SICStus; one that reads an unbound
     operand ends it, by an interrupt that saves its operand registers and
     re-runs it from its first operand, so a woken goal that binds the operand

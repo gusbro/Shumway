@@ -66,6 +66,18 @@ public static class PersistedIlBuilder
         /// otherwise. Flows into <see cref="IlPersistedEntry.RegionMembers"/> so
         /// LoadBundle can alias a stripped member to its region entry.</summary>
         public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
+
+        /// <summary>ADR-061: the predicate's continuation methods in the
+        /// assembly, or null.</summary>
+        public IlPredicateCompiler.CpsLayout? Cps { get; init; }
+
+        /// <summary>ADR-049: the method wakes where Tier-0 does; else the
+        /// engine wakes at its returns.</summary>
+        public bool Wakes { get; init; }
+
+        /// <summary>ADR-049: the predicates whose bytecode the method enters
+        /// at a wake, whose WAM a bundle keeps.</summary>
+        public int[] BytecodeEntered { get; init; } = Array.Empty<int>();
     }
 
     /// <summary>Builds an in-memory .dll holding IL for every
@@ -199,13 +211,21 @@ public static class PersistedIlBuilder
             // values from its own float pool. Set on this (emit) thread for the
             // whole per-predicate emit; restored in the finally below.
             var emitPrevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
+            IlPredicateCompiler.TakeBytecodeEntered();
+            IlPredicateCompiler.CpsLayout? cps = null;
             try
             {
+                // ADR-061: the method and its continuation methods push the same
+                // choice points, as at run time; a dynamic snapshot keeps its own.
+                using var wam = IlPredicateCompiler.WamChoicePoints(
+                    IlPredicateCompiler.CpsMode && !pred.IsDynamicSnapshot);
                 ic.EmitPersistedMethod(
                     typeBuilder, methodName, pred,
                     delegatesField: delegatesField,
                     slot: slot,
                     calleeMap: probeCalleeMap);
+                if (!pred.IsDynamicSnapshot)
+                    cps = ic.EmitPersistedCps(typeBuilder, pred, probeCalleeMap, slot);
             }
             catch (Exception ex)
                 when (ex is NotSupportedException or IlEmitException)
@@ -245,6 +265,9 @@ public static class PersistedIlBuilder
                 // persisted graph. An indexed predicate whose graph build failed
                 // keeps its WAM (the delegate would still read it).
                 Strippable = !indexed || indexGraph is not null,
+                Cps = cps,
+                Wakes = IlPredicateCompiler.WakePoints,
+                BytecodeEntered = IlPredicateCompiler.TakeBytecodeEntered(),
             });
             IlPredicateCompiler.EndFloatPool(emitPrevPool);
         }

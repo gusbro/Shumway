@@ -54,6 +54,8 @@ public sealed partial class IlPredicateCompiler
     {
         public required TypeBuilder Type;
         public required PredicateDelegate Base;
+        // The stubs that make the indirect tail calls (CpsStubs).
+        public required MethodInfo Jump, Fail;
         // The generation's code by cursor, which its choice points carry.
         public required FieldBuilder Alt;
         public int Cursor;
@@ -124,7 +126,7 @@ public sealed partial class IlPredicateCompiler
         public void Dispose() => _wamCps = _prev;
     }
 
-    private static bool WamCps => _wamCps && _persistPatches is null && !DebugMode;
+    private static bool WamCps => _wamCps && !DebugMode;
 
     // Cursors at and above this enter the cold method at an instruction boundary.
     private const int CpsBoundaryBase = 1 << 20;
@@ -162,12 +164,77 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate baseDelegate)
     {
         if (!CpsMode || DebugMode) return null;
+        var type = CpsTypeBuilder(predicate.FunctorId);
+        var layout = EmitCps(type, predicate, calleeMap, baseDelegate, "Alt", (CpsStubs.Jump, CpsStubs.Fail));
+        if (layout is null) return null;
+        var created = type.CreateType()!;
+        var code = BindCps(created, layout, predicate.FunctorId);
+        lock (CpsGenerations) CpsGenerations.Add(created);
+        return code;
+    }
+
+    /// <summary>Emits a predicate's continuation methods into a persisted
+    /// assembly's type, beside its method there, which they resume through.
+    /// Null when the predicate cannot have them; the loader binds the layout
+    /// (<see cref="BindCps"/>).</summary>
+    public CpsLayout? EmitPersistedCps(TypeBuilder type, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, int slot)
+    {
+        if (!CpsMode || DebugMode || _persistPatches is not { } patches) return null;
+        // A method left half emitted in the persisted type would fail the whole
+        // assembly: a first pass into a scratch type proves the emission, and
+        // its patch sites are dropped.
+        int sites = patches.Count, sentinel = _persistNextSentinel;
+        CpsLayout? trial;
+        try
+        {
+            trial = EmitCps(CpsTypeBuilder(predicate.FunctorId), predicate, calleeMap,
+                static (_, _) => false, "Alt", (CpsStubs.Jump, CpsStubs.Fail));
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        {
+            trial = null;
+        }
+        finally
+        {
+            patches.RemoveRange(sites, patches.Count - sites);
+            _persistNextSentinel = sentinel;
+        }
+        if (trial is null) return null;
+        // The assembly carries its own stubs, the process's being dynamic.
+        if (_persistedStubs is not { } stubs || stubs.Type != type)
+        {
+            var (jump, fail) = CpsStubs.Define(type, "Cps");
+            _persistedStubs = stubs = (type, jump, fail);
+        }
+        return EmitCps(type, predicate, calleeMap, static (_, _) => false, $"Alt_{slot}",
+            (stubs.Jump, stubs.Fail));
+    }
+
+    /// <summary>Where a predicate's continuation methods are in their type: a
+    /// method name per cursor (the cold method and the alternatives method at
+    /// their own), and the cursors the alternatives method enters.</summary>
+    public sealed class CpsLayout
+    {
+        public required (int Cursor, string Method)[] Methods { get; init; }
+        public required int[] Alternatives { get; init; }
+        public required string AltField { get; init; }
+    }
+
+    [ThreadStatic] private static (TypeBuilder Type, MethodInfo Jump, MethodInfo Fail)? _persistedStubs;
+
+    private CpsLayout? EmitCps(TypeBuilder type, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate baseDelegate,
+        string altField, (MethodInfo Jump, MethodInfo Fail) stubs)
+    {
         // Each predicate is emitted two or more extra times, the cold method
         // with a label per instruction: a large one stays on its delegate.
         if (predicate.BytecodeUnfused.Length > CpsMaxBytecodeBytes) return null;
-        var type = CpsTypeBuilder(predicate.FunctorId);
-        var alt = type.DefineField("Alt", typeof(nint[]), FieldAttributes.Public | FieldAttributes.Static);
-        var ctx = new CpsEmitContext { Type = type, Base = baseDelegate, Alt = alt };
+        var alt = type.DefineField(altField, typeof(nint[]), FieldAttributes.Public | FieldAttributes.Static);
+        var ctx = new CpsEmitContext
+        {
+            Type = type, Base = baseDelegate, Alt = alt, Jump = stubs.Jump, Fail = stubs.Fail,
+        };
         var prev = _cps;
         _cps = ctx;
         try
@@ -206,21 +273,35 @@ public sealed partial class IlPredicateCompiler
             }
         }
         finally { _cps = prev; }
+        CpsPrunedMethods[predicate.FunctorId] = ctx.Pruned;
+        return new CpsLayout
+        {
+            Methods = ctx.Methods.ToArray(),
+            Alternatives = ctx.Alternatives.OrderBy(c => c).ToArray(),
+            AltField = altField,
+        };
+    }
 
-        var created = type.CreateType()!;
+    /// <summary>The continuation methods of <paramref name="functorId"/> in a
+    /// created type, as the dispatch reaches them: code by cursor, the entry and
+    /// the cold method as delegates; the alternatives' table filled. Without
+    /// <paramref name="prepare"/> each method compiles at its first call.</summary>
+    public static CpsCode BindCps(Type created, CpsLayout layout, int functorId, bool prepare = true)
+    {
         nint entry = 0, altEntry = 0;
         PredicateDelegate? entryDelegate = null, coldDelegate = null;
         var resumes = new List<(int, nint)>();
         int maxCursor = 0;
-        foreach (int c in ctx.Alternatives) maxCursor = Math.Max(maxCursor, c);
+        foreach (int c in layout.Alternatives) maxCursor = Math.Max(maxCursor, c);
         var byCursor = new nint[maxCursor + 1];
-        foreach (var (cursor, name) in ctx.Methods)
+        foreach (var (cursor, name) in layout.Methods)
         {
-            var handle = created.GetMethod(name)!.MethodHandle;
+            var method = created.GetMethod(name)
+                ?? throw new InvalidOperationException($"ADR-061: no continuation method {name}.");
+            var handle = method.MethodHandle;
             if (cursor == CpsColdCursor)   // its hot methods, and a wake's resume
             {
-                coldDelegate = (PredicateDelegate)created.GetMethod(name)!
-                    .CreateDelegate(typeof(PredicateDelegate));
+                coldDelegate = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
                 if (CpsCompileEveryMethod)
                 {
                     System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
@@ -230,7 +311,7 @@ public sealed partial class IlPredicateCompiler
             }
             // The native code, not the precode stub (one jump less per transfer).
             // A lazy method's pointer is its stub, which compiles it at first use.
-            if (cursor != CpsAltCursor || !CpsLazyAlternatives || CpsCompileEveryMethod)
+            if (CpsCompileEveryMethod || prepare && (cursor != CpsAltCursor || !CpsLazyAlternatives))
             {
                 System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
                 if (cursor == CpsAltCursor && CpsCompileEveryMethod)
@@ -240,20 +321,17 @@ public sealed partial class IlPredicateCompiler
             if (cursor == CpsAltCursor)
             {
                 altEntry = code;
-                foreach (int c in ctx.Alternatives) byCursor[c] = code;
+                foreach (int c in layout.Alternatives) byCursor[c] = code;
                 continue;
             }
             if (cursor == 0)
             {
                 entry = code;
-                entryDelegate = (PredicateDelegate)created.GetMethod(name)!
-                    .CreateDelegate(typeof(PredicateDelegate));
+                entryDelegate = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
             }
-            else resumes.Add((Activation.EncodeResumeMarker(predicate.FunctorId, cursor), code));
+            else resumes.Add((Activation.EncodeResumeMarker(functorId, cursor), code));
         }
-        created.GetField("Alt")!.SetValue(null, byCursor);
-        CpsPrunedMethods[predicate.FunctorId] = ctx.Pruned;
-        lock (CpsGenerations) CpsGenerations.Add(created);
+        created.GetField(layout.AltField)!.SetValue(null, byCursor);
         return new CpsCode
         {
             Entry = entry, EntryDelegate = entryDelegate!, Resumes = resumes.ToArray(), KeepAlive = created,
@@ -276,16 +354,22 @@ public sealed partial class IlPredicateCompiler
         return module.DefineType("Cps", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
     }
 
+    /// <summary>Resets what one method's emission gathers for its finish.</summary>
+    private static void BeginMethodEmission()
+    {
+        _methodAlternatives = new HashSet<int>();
+        _methodContinuations = new HashSet<int>();
+        _resumeEntries = new List<(IlLabel[], IlLabel[])>();
+        ResetWakeEmission();
+    }
+
     /// <summary>A new method for a predicate's code: a <c>DynamicMethod</c>, or,
     /// while continuation methods are emitted, a method of the batch's type
     /// whose cursor argument is fixed to the continuation it enters.</summary>
     private IlEmit NewPredicateEmit(string name)
     {
         var cps = _cps;
-        _methodAlternatives = new HashSet<int>();
-        _methodContinuations = new HashSet<int>();
-        _resumeEntries = new List<(IlLabel[], IlLabel[])>();
-        ResetWakeEmission();
+        BeginMethodEmission();
         if (cps is null)
             return IlEmit.NewDynamicMethod(name, record: IlDumpPath is not null);
         cps.Boundary = 0;
@@ -929,7 +1013,7 @@ public sealed partial class IlPredicateCompiler
             emit.LoadArgument(0);
             emit.LoadConstant(0);
             // IlEmit gives a call before a ret the tail. prefix.
-            emit.Call(CpsStubs.Fail);
+            emit.Call(_cps!.Fail);
             emit.Return();
             return;
         }
@@ -1076,7 +1160,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(code);
         // IlEmit gives a call before a ret the tail. prefix; the stub's own
         // tail. calli is emitted by hand.
-        emit.Call(CpsStubs.Jump);
+        emit.Call(_cps!.Jump);
         emit.Return();
         emit.MarkLabel(none);
     }
@@ -1095,7 +1179,16 @@ public sealed partial class IlPredicateCompiler
                 new AssemblyName("ShumwayCpsStubs"), AssemblyBuilderAccess.Run);
             var type = ab.DefineDynamicModule("ShumwayCpsStubs").DefineType("CpsStubs",
                 TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
-            var m = type.DefineMethod("Jump", MethodAttributes.Public | MethodAttributes.Static,
+            Define(type, "");
+            var stubs = type.CreateType()!;
+            return (stubs.GetMethod("Jump")!, stubs.GetMethod("Fail")!);
+        }
+
+        /// <summary>Defines the stubs on <paramref name="type"/>, their names
+        /// prefixed.</summary>
+        internal static (MethodInfo Jump, MethodInfo Fail) Define(TypeBuilder type, string prefix)
+        {
+            var m = type.DefineMethod(prefix + "Jump", MethodAttributes.Public | MethodAttributes.Static,
                 typeof(bool), new[] { typeof(Activation), typeof(int), typeof(nint) });
             m.SetImplementationFlags(CpsAggressiveOptimization);
             var il = m.GetILGenerator();
@@ -1110,7 +1203,7 @@ public sealed partial class IlPredicateCompiler
             // Fail(a, _): the alternatives method of the top choice point by
             // a tail call, with its cursor (its entry restores the frame);
             // false when the dispatch loop must backtrack.
-            var f = type.DefineMethod("Fail", MethodAttributes.Public | MethodAttributes.Static,
+            var f = type.DefineMethod(prefix + "Fail", MethodAttributes.Public | MethodAttributes.Static,
                 typeof(bool), new[] { typeof(Activation), typeof(int) });
             f.SetImplementationFlags(CpsAggressiveOptimization);
             il = f.GetILGenerator();
@@ -1132,8 +1225,7 @@ public sealed partial class IlPredicateCompiler
             il.MarkLabel(none);
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Ret);
-            var stubs = type.CreateType()!;
-            return (stubs.GetMethod("Jump")!, stubs.GetMethod("Fail")!);
+            return (m, f);
         }
     }
 }

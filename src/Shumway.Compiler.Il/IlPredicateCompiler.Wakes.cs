@@ -17,9 +17,30 @@ public sealed partial class IlPredicateCompiler
     /// continuation methods is entered at an instruction boundary.</summary>
     public const int ColdCursorBase = CpsBoundaryBase;
 
-    /// <summary>Compiled code wakes where Tier-0 does: in code compiled at run
-    /// time, not under the debugger.</summary>
-    private static bool WakePoints => !DebugMode && _persistPatches is null;
+    /// <summary>Compiled code wakes where Tier-0 does, except under the
+    /// debugger.</summary>
+    internal static bool WakePoints => !DebugMode;
+
+    // The predicates whose bytecode the code emitted in a persist batch enters
+    // at a wake: a bundle keeps their WAM under --strip-wam.
+    [ThreadStatic] private static HashSet<int>? _bytecodeEntered;
+
+    /// <summary>ADR-049: the predicates whose bytecode the persisted code
+    /// emitted since the last call hands the activation to at a wake.</summary>
+    public static int[] TakeBytecodeEntered()
+    {
+        if (_bytecodeEntered is not { Count: > 0 } set) return Array.Empty<int>();
+        var fids = set.ToArray();
+        set.Clear();
+        return fids;
+    }
+
+    /// <summary>The functor id of a predicate whose bytecode the code enters.</summary>
+    private static void EmitBytecodeFid(IlEmit emit, int fid)
+    {
+        _bytecodeEntered?.Add(fid);
+        EmitFunctorId(emit, fid);
+    }
 
     /// <summary>Without continuation methods (regions, and the delegates of
     /// that mode), a wake point hands the activation to the interpreter: a
@@ -557,7 +578,7 @@ public sealed partial class IlPredicateCompiler
             else
             {
                 emit.LoadArgument(0);
-                EmitFunctorId(emit, i == 0 ? CodeFid : fids[i - 1]);
+                EmitBytecodeFid(emit, i == 0 ? CodeFid : fids[i - 1]);
                 emit.LoadConstant(levels[i].CallerPcAfter);
                 EmitHelperCall(emit, EngineCodeAddressOfMethod);
             }
@@ -589,7 +610,7 @@ public sealed partial class IlPredicateCompiler
                 EmitLateChoicePoint(emit, chain, chain.Clause);
         }
         emit.LoadArgument(0);
-        EmitFunctorId(emit, n == 0 ? CodeFid : fids[n - 1]);
+        EmitBytecodeFid(emit, n == 0 ? CodeFid : fids[n - 1]);
         emit.LoadConstant(pc);
         EmitHelperCall(emit, EngineDeoptToMethod);
         // Not the call's result: a call the return follows takes the tail.
@@ -709,7 +730,7 @@ public sealed partial class IlPredicateCompiler
             {
                 emit.MarkLabel(l);
                 emit.LoadArgument(0);
-                EmitFunctorId(emit, s.ContainerFid);
+                EmitBytecodeFid(emit, s.ContainerFid);
                 emit.LoadConstant(s.CallerPcAfter);
                 EmitHelperCall(emit, EngineCodeAddressOfMethod);
                 emit.StoreLocal(cont);
@@ -925,7 +946,7 @@ public sealed partial class IlPredicateCompiler
             EnqueueAlternative(emit, callee, clauses, j + 1, next!);
         }
         emit.LoadArgument(0);
-        EmitFunctorId(emit, callee.FunctorId);
+        EmitBytecodeFid(emit, callee.FunctorId);
         emit.LoadConstant(clauses[j].Start);
         EmitHelperCall(emit, EngineDeoptToMethod);
         // Not the call's result: a call the return follows takes the tail.

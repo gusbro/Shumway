@@ -25,6 +25,9 @@ public sealed partial class IlPredicateCompiler
     internal static SelfDelegateEmitter SelfFromHolder(int holderKey) =>
         e =>
         {
+            // The key is this process's: a persisted method cannot carry it.
+            if (_persistPatches is not null)
+                throw new NotSupportedException("Persisted IL cannot reference the runtime delegate holder.");
             e.LoadField(IndexedDelegateHolder.SlotsField);
             e.LoadConstant(holderKey);
             e.LoadElement<Func<Activation, int, bool>>();
