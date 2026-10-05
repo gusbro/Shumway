@@ -236,6 +236,13 @@ public sealed class IlPromotionStore
         if (offer.Requested || PromotionsSuspended || ++offer.Count < PersistedThreshold
             || !Earned(offer.Cost, offer.Count))
             return false;
+        return Request(offer);
+    }
+
+    // Not in Tick: a method that creates a lambda allocates what the lambda
+    // captures on entry, and Tick runs at every dispatch of a waiting predicate.
+    private bool Request(Offer offer)
+    {
         _mutationStamp.TryGetValue(offer.FunctorId, out int stamp);
         if (stamp != offer.Stamp)
         {
@@ -278,6 +285,12 @@ public sealed class IlPromotionStore
             || (PersistedThreshold > 0
                 && (++waiting.Count < PersistedThreshold || !Earned(waiting.Cost, waiting.Count))))
             return;
+        RequestBound(functorId, waiting);
+    }
+
+    // Not in CountBound, for Request's reason.
+    private void RequestBound(int functorId, BoundCps waiting)
+    {
         waiting.Requested = true;
         _persistedTaken += waiting.Cost;
         _mutationStamp.TryGetValue(functorId, out int stamp);
@@ -366,7 +379,12 @@ public sealed class IlPromotionStore
     internal Func<Activation, bool>? TryGetDispatchWrapper(int functorId)
     {
         if (_dispatchWrappers.TryGetValue(functorId, out var w)) return w;
-        if (!_delegates.TryGetValue(functorId, out var del)) return null;
+        return _delegates.TryGetValue(functorId, out var del) ? NewDispatchWrapper(functorId, del) : null;
+    }
+
+    // Not in TryGetDispatchWrapper, for Request's reason.
+    private Func<Activation, bool> NewDispatchWrapper(int functorId, PredicateDelegate del)
+    {
         Func<Activation, bool> wrapper;
         if (_cpsCode.TryGetValue(functorId, out var cps))
         {
@@ -816,7 +834,13 @@ public sealed class IlPromotionStore
 
         int effectiveThreshold = _primeImmediately.Contains(functorId) ? 1 : Threshold;
         if (count < effectiveThreshold) return null;
+        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic);
+    }
 
+    // Not in RecordInvocation, for Request's reason.
+    private PredicateDelegate? CompileAtThreshold(int functorId, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic)
+    {
         // A null snapshot (no visible clauses yet) is a retry, not a rejection —
         // clauses may arrive on a later assertz.
         CompiledPredicate target = predicate;

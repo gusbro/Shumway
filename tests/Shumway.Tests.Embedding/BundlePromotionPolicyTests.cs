@@ -114,6 +114,35 @@ public sealed class BundlePromotionPolicyTests : IDisposable
         Assert.True(e.IlPromotion.IsPromoted(Fid("top", 1)), "top/1 not taken once it costs nothing");
     }
 
+    private static long Allocated(PrologEngine e, string goal)
+    {
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.True(e.Query(goal).Success, goal);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Fact]
+    public void APredicateThatWaits_IsCountedWithoutAllocating()
+    {
+        var e = PrologEngine.FromBundle(BundleReader.FromBytes(Bundle(stripWam: false)));
+        e.IlPromotion.PersistedThreshold = 4;
+        e.IlPromotion.PersistedFreeBytes = 0;
+        e.IlPromotion.PersistedCallsPerByte = 1_000_000;
+        // The engine's own areas reach their size first.
+        for (int i = 0; i < 3; i++)
+        {
+            Allocated(e, "climb(1999, _).");
+            Allocated(e, "climb(199, _).");
+        }
+        long few = Allocated(e, "climb(199, _).");
+        long many = Allocated(e, "climb(1999, _).");
+        // ANTI-VACUITY: climb/2 still waits, so each of its calls was counted.
+        Assert.True(e.IlPromotion.HasOffer(Fid("climb", 2)), "climb/2 has no offer");
+        Assert.False(e.IlPromotion.IsPromoted(Fid("climb", 2)), "climb/2 was taken");
+        // 1800 more counts. A closure per count is 40 bytes each.
+        Assert.True(many - few < 1800 * 8, $"1800 counts allocated {many - few} bytes");
+    }
+
     [Fact]
     public void AStrippedBundlesContinuationMethods_AreEarnedTheSameWay()
     {

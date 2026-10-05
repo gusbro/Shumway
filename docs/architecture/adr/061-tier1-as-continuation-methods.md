@@ -291,9 +291,10 @@ the eight passes with regions and 8.55 s with continuation methods.
 
 Still open:
 
-- A predicate that waits is counted at every dispatch, about 60 ns: a
-  bundle whose predicates never earn their code runs up to 10% behind the
-  same program with no compiled code at all.
+- A predicate that waits is counted at every dispatch (two probes by its
+  address, and the count): a bundle none of whose predicates earns its code
+  runs 10% behind the same program with no compiled code at all on Blint,
+  and 13 to 16% behind on the CLP(Z) puzzles of the next section.
 - With `--strip-wam` there is no bytecode to run meanwhile: the delegates
   compile on the engine's thread at their first call (Blint: 3.09 s with
   continuation methods, 4.12 s with regions). A region method that hands
@@ -305,6 +306,81 @@ Still open:
   frames (up to 15 KB each for an unoptimized region).
 - The cold method and the alternatives method are each the whole predicate
   again, three fifths of the compile time between them (next section).
+
+### The policy on two large programs
+
+The three numbers were set on Blint over eight passes. They were measured
+again with the calls per byte at 1, 4, 16 and 64, over a longer run and on
+a second program: thirteen CLP(Z) puzzles (cryptarithms, queens, two
+sudokus, a magic square, the zebra puzzle and others) run one after the
+other over the `clpz` library, linked with it and the libraries it loads.
+That bundle carries compiled code for 2,172 predicates, against Blint's 300.
+
+Cumulative seconds, each configuration in its own process, the processes
+interleaved, minimum over them (five for Blint, three for the puzzles; the
+notebook's clock varies by half between processes, and the medians order
+the configurations the same way). The columns are the calls per byte:
+
+| | interpreter | continuation methods, 1 | 4 | 16 | 64 | regions, 4 | 16 | 64 | one method per predicate, 4 | 16 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Blint, 30 passes | 32.5 | 24.8 | 23.8 | 27.9 | 28.8 | 26.3 | 27.6 | 28.7 | 26.1 | 25.6 |
+| its processor time | 36.9 | 34.7 | 30.7 | 34.2 | 33.4 | 32.0 | 32.9 | 33.9 | 33.0 | 32.7 |
+| the puzzles, 16 passes | 45.5 | 46.0 | 44.9 | 44.0 | 44.9 | 39.0 | 39.4 | 40.9 | 40.0 | 40.9 |
+| their processor time | 48.4 | 70.8 | 60.6 | 55.4 | 51.5 | 48.8 | 45.4 | 46.7 | 49.3 | 48.1 |
+
+Four calls per byte stays. On Blint it is the best in time and in processor
+time for continuation methods; one call per byte reaches a faster pass
+(0.47 s against 0.55 s, with 103 predicates and 1.36 MB of IL taken against
+73 and 0.67 MB) and has not paid for it after 30 passes. On the puzzles the
+calls per byte change little in time and a great deal in processor time.
+There continuation methods only match the interpreter over 16 passes, while
+regions and one method per predicate are 12 to 14% ahead: continuation
+methods end with the fastest pass (1.52 to 1.57 s, against 1.70 s for
+regions and 2.31 s interpreted) and pay more on the way. What that costs is
+not in the three numbers:
+
+- The whole bundle of the puzzles as continuation methods is 24.0 MB of IL
+  and 86 s of JIT time in a traced run (regions 6.4 MB and 42 s, one method
+  per predicate 3.1 MB and 23 s). By kind: the alternatives methods 41.9 s
+  (1,737 methods, 7.5 MB), the entries 27.2 s (2,234, 6.0 MB), the
+  continuations 9.8 s (2,317, 4.1 MB), the cold methods 6.9 s (2,234,
+  6.1 MB, the JIT's first tier).
+- Of the alternatives methods a run compiles, few are ever entered: 40 of
+  133 after 16 passes at four calls per byte, 60 of 207 at one (on Blint, 15
+  of 22 after eight passes). A predicate has one when it can leave a choice
+  point, and most calls of most predicates leave none. Compiled only once
+  the predicate is retried, they would take about a third off the JIT time
+  of continuation methods on this program. Open.
+- Seven predicates of `clpz` are past `CpsMaxIlBytes` and get no
+  continuation methods, `get_atts/2` and `put_atts/2` among them (11% of
+  the engine thread's samples between the two, with everything compiled).
+  Four of the seven are single methods past what the JIT optimizes (60,000
+  bytes of IL; `run_propagator/4` is 86 KB) and compile without
+  optimization in any of the three forms.
+- With every predicate's code taken before the first pass, the best pass of
+  a run takes 1.58 s as continuation methods, 1.62 s as one method per
+  predicate and 1.81 s as regions, against 2.2 s interpreted. In the second
+  of those the interpreter's loop still has 38% of the engine thread's
+  samples, and the compiled predicates 15%. What runs on the bytecode there
+  is open; whatever it is, no policy recovers it.
+
+Two things were tried in the same runs:
+
+- Counting a waiting predicate allocated: the method that counts also held
+  the lambda that requests the compile, and what a lambda captures is
+  allocated when its method is entered. The request is now a method of its
+  own, and so are the compile at the threshold and the making of a dispatch
+  wrapper, which allocated at every meta-call of an uncompiled predicate.
+  While their predicates wait the puzzles allocate 38 MB a pass, as they do
+  with no compiled code, down from 176 MB.
+- The runtime delays its own tiering while methods are still being called
+  for the first time, and code that is being installed keeps that going:
+  over a process that runs three passes of the puzzles the tiering was
+  paused for 11.9 of 17.1 s, against 3.6 of 11.6 s interpreted. With that
+  delay off (`System.Runtime.TieredCompilation.CallCountingDelayMs` at 0)
+  the first pass of the puzzles takes 5.3 s instead of 7.7 s (3.7 s
+  interpreted), and eight passes take no less than before on either
+  program. Not adopted.
 
 ### What a bundle's methods cost to compile
 
