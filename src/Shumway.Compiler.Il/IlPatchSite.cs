@@ -114,6 +114,10 @@ public sealed class IlPersistedEntry
     /// <summary>ADR-049: the method wakes where Tier-0 does; else the engine
     /// wakes at its returns.</summary>
     public bool Wakes { get; init; }
+
+    /// <summary>ADR-061: what compiling the predicate's code costs: the IL
+    /// bytes of its methods. The loader weighs it against the predicate's calls.</summary>
+    public int Cost { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -152,6 +156,7 @@ public static class IlPersistedEntryCodec
                     bw.Write(mCursor);
                 }
             bw.Write(e.Wakes);
+            bw.Write(e.Cost);
             var cps = e.Cps;
             bw.Write((uint)(cps?.Methods.Length ?? 0));
             if (cps is not null)
@@ -207,6 +212,7 @@ public static class IlPersistedEntryCodec
                 }
             }
             bool wakes = br.ReadBoolean();
+            int cost = br.ReadInt32();
             IlPredicateCompiler.CpsLayout? cps = null;
             uint cpsMethods = br.ReadUInt32();
             if (cpsMethods > 0)
@@ -231,6 +237,7 @@ public static class IlPersistedEntryCodec
                 IndexGraph = graph,
                 RegionMembers = members,
                 Wakes = wakes,
+                Cost = cost,
                 Cps = cps,
             });
         }

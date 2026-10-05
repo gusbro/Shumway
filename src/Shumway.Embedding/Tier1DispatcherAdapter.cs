@@ -21,6 +21,10 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // engine-lifetime wrappers, not per-query closures.
     private readonly Dictionary<int, Func<Activation, bool>> _dispatchCache = new();
 
+    // The predicates a bundle offers compiled code for, by address: a dispatch
+    // of one costs this probe and a count until its code is installed.
+    private readonly Dictionary<int, IlPromotionStore.Offer> _offerCache = new();
+
     // The activation this query runs on: a dynamic predicate's snapshot is
     // linked into its code space when it promotes (ADR-054).
     private readonly Activation? _engine;
@@ -146,9 +150,17 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         if (_evictionStampSeen != _store.EvictionStamp)
         {
             _dispatchCache.Clear();
+            _offerCache.Clear();
             _evictionStampSeen = _store.EvictionStamp;
         }
         if (_dispatchCache.TryGetValue(targetAddress, out var cached)) return cached;
+        if (_offerCache.TryGetValue(targetAddress, out var waiting))
+        {
+            // The re-index counter of a dynamic predicate counts these too.
+            if (waiting.IsDynamic) _jitProfile.RecordCall(waiting.FunctorId);
+            if (!_store.Tick(waiting)) return null;
+            _offerCache.Remove(targetAddress);
+        }
 
         // No predicate at this address (launcher stub, unindexed clause body).
         if (!_predicatesByAddress.TryGetValue(targetAddress, out var pred))
@@ -185,6 +197,22 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // JIT-indexing profile counts only not-yet-promoted predicates — a promoted
         // one already runs as IL, so the indexing decision is moot.
         _jitProfile.RecordCall(functorId);
+
+        // A bundle's compiled code waits for the predicate to be hot.
+        if (_store.TryGetOffer(functorId) is { } offer)
+        {
+            if (!_store.Tick(offer))
+            {
+                // Not past a wasm tier, which counts the same dispatches first.
+                if (_store.Wasm is not { Enabled: true }) _offerCache[targetAddress] = offer;
+                return null;
+            }
+            if (_store.TryGetDispatchWrapper(functorId) is { } wrappedOffer)
+            {
+                _dispatchCache[targetAddress] = wrappedOffer;
+                return wrappedOffer;
+            }
+        }
 
         // Already-rejected predicates (dynamic / oversized / layout-excluded) are the
         // majority of dispatches in a real program; without this early-out each would

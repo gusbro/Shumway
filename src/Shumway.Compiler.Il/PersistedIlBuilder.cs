@@ -75,6 +75,10 @@ public static class PersistedIlBuilder
         /// engine wakes at its returns.</summary>
         public bool Wakes { get; init; }
 
+        /// <summary>ADR-061: the IL bytes of the predicate's methods (its
+        /// delegate's, and those of its continuation methods).</summary>
+        public int Cost { get; init; }
+
         /// <summary>ADR-049: the predicates whose bytecode the method enters
         /// at a wake, whose WAM a bundle keeps.</summary>
         public int[] BytecodeEntered { get; init; } = Array.Empty<int>();
@@ -103,13 +107,21 @@ public static class PersistedIlBuilder
     /// resolution. This is how a multi-entry bundle compiles each entry's IL
     /// against the whole program (cross-module calls resolve) while emitting
     /// each predicate exactly once, in its own entry.</param>
+    /// <param name="bytecodeShipped">The functors whose bytecode the bundle
+    /// carries: a wake hands the activation only to those (ADR-049). Null for
+    /// every predicate in <paramref name="predicates"/>.</param>
+    /// <param name="compiledByWorker">The bundle keeps its predicates' bytecode:
+    /// the engine runs it until a predicate is hot, and the loader's worker
+    /// compiles its method then. Such a method is optimized at once.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
         ISet<int>? prunableFids = null,
         Func<int, IReadOnlyList<double>?>? floatPoolProvider = null,
-        ISet<int>? emitOnly = null)
+        ISet<int>? emitOnly = null,
+        ISet<int>? bytecodeShipped = null,
+        bool compiledByWorker = false)
     {
 #if NETFRAMEWORK
         // Framework's native persisted emit: AssemblyBuilder in Save mode —
@@ -185,7 +197,7 @@ public static class PersistedIlBuilder
         // routes through a sentinel + records the IlPatchSite. After
         // psab.Save() below we scan the resulting PE for each
         // sentinel to fill in AbsoluteByteOffset.
-        var patches = ic.BeginPersistEmit();
+        var patches = ic.BeginPersistEmit(bytecodeShipped, compiledByWorker);
         var entries = new List<Entry>();
         int slot = 0;
         int ordinal = 0;
@@ -212,6 +224,7 @@ public static class PersistedIlBuilder
             // whole per-predicate emit; restored in the finally below.
             var emitPrevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
             IlPredicateCompiler.TakeBytecodeEntered();
+            IlPredicateCompiler.TakePersistedIlBytes();
             IlPredicateCompiler.CpsLayout? cps = null;
             try
             {
@@ -219,13 +232,25 @@ public static class PersistedIlBuilder
                 // choice points, as at run time; a dynamic snapshot keeps its own.
                 using var wam = IlPredicateCompiler.WamChoicePoints(
                     IlPredicateCompiler.CpsMode && !pred.IsDynamicSnapshot);
-                ic.EmitPersistedMethod(
+                // ADR-061: with continuation methods the predicate's delegate
+                // is its cold method; a method of its own would be the same
+                // code a fifth time. Not with no bytecode: the delegate then
+                // compiles at its first call, on the engine's thread, and the
+                // cold method's tail calls make the JIT optimize it at once.
+                void OwnMethod() => ic.EmitPersistedMethod(
                     typeBuilder, methodName, pred,
                     delegatesField: delegatesField,
                     slot: slot,
                     calleeMap: probeCalleeMap);
+                if (!compiledByWorker) OwnMethod();
                 if (!pred.IsDynamicSnapshot)
                     cps = ic.EmitPersistedCps(typeBuilder, pred, probeCalleeMap, slot);
+                if (compiledByWorker && cps is not null)
+                {
+                    methodName = cps.ColdMethod;
+                    ic.LastRegionMemberCursors = null;
+                }
+                else if (compiledByWorker) OwnMethod();
             }
             catch (Exception ex)
                 when (ex is NotSupportedException or IlEmitException)
@@ -267,6 +292,7 @@ public static class PersistedIlBuilder
                 Strippable = !indexed || indexGraph is not null,
                 Cps = cps,
                 Wakes = IlPredicateCompiler.WakePoints,
+                Cost = IlPredicateCompiler.TakePersistedIlBytes(),
                 BytecodeEntered = IlPredicateCompiler.TakeBytecodeEntered(),
             });
             IlPredicateCompiler.EndFloatPool(emitPrevPool);

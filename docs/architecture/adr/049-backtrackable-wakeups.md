@@ -165,7 +165,11 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    staging lies between them (no argument register is live there, and the
    staging binds nothing); any other point hands the activation to the
    interpreter (point 10). The wasm tier hands its points to the
-   interpreter too.
+   interpreter too. A predicate with no bytecode of its own keeps the
+   first form in every mode, and is not a region: a dynamic predicate's
+   snapshot (ADR-023), whose functor runs the live clause chain, and in a
+   bundle any predicate whose bytecode the bundle does not carry under its
+   functor.
 
 10. **A wake inside a construct that skipped a choice point hands the
     activation to the interpreter.** A CP-free guard (ADR-031), and a
@@ -189,9 +193,14 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     needs the predicate's bytecode: a dynamic predicate's snapshot (ADR-023)
     with such a point stays on Tier-0, and a guard that inlines a dynamic
     snapshot (ADR-034) is not CP-free, since the woken goal could change
-    what it inlined. A bundle's persisted IL has these points too: under
-    `--strip-wam` the bundle keeps the bytecode of every predicate a
-    handover enters, its own or an inlined callee's.
+    what it inlined. A bundle's persisted IL has these points too, into the
+    bytecode the bundle carries: each module's code is compiled from the
+    bytecode that module ships (the baked prelude's from the baked prelude,
+    whose helper predicates are numbered by the compile that made them), and
+    under `--strip-wam` the bundle keeps the bytecode of every predicate a
+    handover enters, its own or an inlined callee's. A persisted method whose
+    emission fails ends in a throw and is left out of the bundle's table, so
+    nothing binds it.
 
 11. **A stretch of unifications is atomic with respect to woken goals**, as
     SICStus documents. The stretch is a clause's head unification and the

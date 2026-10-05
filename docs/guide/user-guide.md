@@ -473,15 +473,26 @@ engine.LoadBundle("app.shum");
 var sol = engine.Query("main(Arg).");
 ```
 
-`LoadBundle` consults every module in the bundle. A **persisted** Tier-1 IL
-assembly (`shumway-link --with-compiled-il`) is bound at load, so those
-predicates run as compiled IL from the first query. Predicates that ship as
-WAM bytecode (a plain bundle) are **not** compiled at load: that would
-compile the whole program to IL up front (~1.5 s on a large one) for code that may
-never run hot. Instead each promotes to Tier-1 IL lazily once its call counter
-crosses the threshold. To front-load the whole set anyway (a server that will
-serve many queries and wants steady-state speed from the first) call
-`compile_all/0` (or `compile_all(-Count)` for how many it compiled), or the C#
+`LoadBundle` consults every module in the bundle and compiles nothing. A
+predicate starts on its WAM bytecode and switches to Tier-1 IL once it is
+hot, and the compiling happens on a background thread: the query never waits
+for it.
+
+- In a plain bundle the IL is generated then, once the predicate's call
+  counter crosses the threshold.
+- A **persisted** Tier-1 IL assembly (`shumway-link --with-compiled-il`)
+  already holds the IL. A predicate takes it after 32 calls, as at run time,
+  while the code taken stays within a budget, which a small program never
+  leaves. Past the budget a predicate takes its code when its calls have
+  paid for compiling it, so a short run of a large program does not spend
+  its time compiling code it barely uses. `SHUMWAY_IL_BUNDLE_PROMOTE` tunes
+  this (see [configuration](configuration.md)).
+- With `--strip-wam` there is no bytecode to start on: each predicate
+  compiles at its first call, on the thread that runs the query.
+
+To front-load the whole set anyway (a server that will serve many queries
+and wants steady-state speed from the first) call `compile_all/0` (or
+`compile_all(-Count)` for how many it compiled), or the C#
 `engine.WarmAllCompilable()`.
 
 ---
@@ -709,7 +720,7 @@ shumway-link -o app.shum \
 | `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here. |
 | `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
-| `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
+| `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle: each predicate switches from its bytecode to that IL once it is hot, with no IL generation at run time. By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
 | `--no-region-prune` | With `--with-compiled-il`: emit one standalone IL method per predicate instead of the default pruned region layout. Mainly for inspecting the generated code; bundles are larger and typically slower. |
 | `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL: standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM, except for those whose bytecode the IL continues in when a delayed goal wakes (`freeze/2`, `when/2`, `dif/2`, constraints). JIT-only (the IL must load, not for Native AOT). |
 | `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |

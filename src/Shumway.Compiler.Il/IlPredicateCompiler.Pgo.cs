@@ -33,6 +33,7 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        using var code = new CodeScope(predicate);
         if (predicate.ClauseCount > 1
             && TryDescribeIndexedAtomPredicate(predicate, out var info))
         {
@@ -60,6 +61,7 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        using var code = new CodeScope(predicate);
         if (profileKey < 0
             || !TryDescribeIndexedAtomPredicate(predicate, out var info))
         {

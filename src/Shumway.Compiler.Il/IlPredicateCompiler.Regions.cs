@@ -303,6 +303,8 @@ public sealed partial class IlPredicateCompiler
         // mutates the RegionForcedRootFids static between the root-selector
         // probe phase and the compile phase.
         if (RegionForcedRootFids?.Contains(p.FunctorId) == true) return false;
+        // ADR-049: a member's wake hands the activation to its bytecode.
+        if (!HasBytecode(p)) return false;
         // the rest (CanCompileCore + RegionMemberOk) is a pure
         // function of (predicate, calleeMap), recomputed thousands of times by
         // the RegionRootSelector fixpoint (once per call-site edge per region
@@ -760,7 +762,7 @@ public sealed partial class IlPredicateCompiler
                                 ? 6 : OpcodeTable.Get(code2[pc2]).Size;
                         }
                     },
-                    wakeDeopt: !member.IsDynamicSnapshot);
+                    wakeDeopt: HasBytecode(member));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -956,7 +958,7 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(ctx.FailLabel);
                     },
                     dynamicCursor: e2 => e2.LoadLocal(idxNext!),
-                    wakeDeopt: !member.IsDynamicSnapshot);
+                    wakeDeopt: HasBytecode(member));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

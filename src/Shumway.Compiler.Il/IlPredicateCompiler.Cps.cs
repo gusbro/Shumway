@@ -88,6 +88,8 @@ public sealed partial class IlPredicateCompiler
         // entered from Fail only, with the frame to restore.
         public bool IsAlt;
         public int ColdIlSize;
+        // The cold method's resume entries, which no hot method has.
+        public int ColdResumeEntryBytes;
         // ADR-024: a native block was inlined.
         public bool NativeCode;
         // The method's shared register = constant unification.
@@ -140,17 +142,7 @@ public sealed partial class IlPredicateCompiler
     // enum lacks and its runtime ignores.
     private const MethodImplAttributes CpsAggressiveOptimization = (MethodImplAttributes)0x0200;
 
-    /// <summary>ADR-061: the alternatives method compiles at its first use, not
-    /// at install. Backtracking already pays for the path not taken first, and
-    /// many hot predicates never backtrack into their own choice points. Entry
-    /// and continuation methods compile at install; the cold method at its first
-    /// call.</summary>
-    internal static bool CpsLazyAlternatives { get; set; } = true;
-
-    /// <summary>Tests only: every method compiles at install, the cold and the
-    /// alternatives method too, so that the JIT checks all the emitted IL. The
-    /// counters record those two kinds compiled so.</summary>
-    internal static bool CpsCompileEveryMethod { get; set; }
+    // The cold and the alternatives methods compiled, for tests.
     internal static int CpsCompiledColdMethods, CpsCompiledAlternativesMethods;
 
     // A predicate's code must stay alive while any activation's table points
@@ -174,9 +166,8 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Emits a predicate's continuation methods into a persisted
-    /// assembly's type, beside its method there, which they resume through.
-    /// Null when the predicate cannot have them; the loader binds the layout
-    /// (<see cref="BindCps"/>).</summary>
+    /// assembly's type. Null, with nothing emitted, when the predicate cannot
+    /// have them; the loader binds the layout (<see cref="BindCps"/>).</summary>
     public CpsLayout? EmitPersistedCps(TypeBuilder type, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, int slot)
     {
@@ -186,17 +177,19 @@ public sealed partial class IlPredicateCompiler
         // its patch sites are dropped.
         int sites = patches.Count, sentinel = _persistNextSentinel;
         CpsLayout? trial;
+        _persistScratch = true;
         try
         {
             trial = EmitCps(CpsTypeBuilder(predicate.FunctorId), predicate, calleeMap,
                 static (_, _) => false, "Alt", (CpsStubs.Jump, CpsStubs.Fail));
         }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or IlEmitException)
         {
             trial = null;
         }
         finally
         {
+            _persistScratch = false;
             patches.RemoveRange(sites, patches.Count - sites);
             _persistNextSentinel = sentinel;
         }
@@ -204,7 +197,7 @@ public sealed partial class IlPredicateCompiler
         // The assembly carries its own stubs, the process's being dynamic.
         if (_persistedStubs is not { } stubs || stubs.Type != type)
         {
-            var (jump, fail) = CpsStubs.Define(type, "Cps");
+            var (jump, fail) = CpsStubs.Define(type, PersistedStubPrefix);
             _persistedStubs = stubs = (type, jump, fail);
         }
         return EmitCps(type, predicate, calleeMap, static (_, _) => false, $"Alt_{slot}",
@@ -217,11 +210,25 @@ public sealed partial class IlPredicateCompiler
     public sealed class CpsLayout
     {
         public required (int Cursor, string Method)[] Methods { get; init; }
+
+        /// <summary>The cold method: the predicate at any cursor. A bundle
+        /// that keeps its bytecode binds it as the predicate's delegate.</summary>
+        public string ColdMethod
+        {
+            get
+            {
+                foreach (var (cursor, method) in Methods)
+                    if (cursor == CpsColdCursor) return method;
+                throw new InvalidOperationException("ADR-061: a layout with no cold method.");
+            }
+        }
+
         public required int[] Alternatives { get; init; }
         public required string AltField { get; init; }
     }
 
     [ThreadStatic] private static (TypeBuilder Type, MethodInfo Jump, MethodInfo Fail)? _persistedStubs;
+    private const string PersistedStubPrefix = "Cps";
 
     private CpsLayout? EmitCps(TypeBuilder type, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate baseDelegate,
@@ -283,11 +290,19 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>The continuation methods of <paramref name="functorId"/> in a
-    /// created type, as the dispatch reaches them: code by cursor, the entry and
-    /// the cold method as delegates; the alternatives' table filled. Without
-    /// <paramref name="prepare"/> each method compiles at its first call.</summary>
-    public static CpsCode BindCps(Type created, CpsLayout layout, int functorId, bool prepare = true)
+    /// created type, as the dispatch reaches them: native code by cursor, the
+    /// entry and the cold method as delegates; the alternatives' table filled.
+    /// Every method is compiled here, on the caller's thread (the compile
+    /// worker's): one left for its first call would compile on the engine's.</summary>
+    public static CpsCode BindCps(Type created, CpsLayout layout, int functorId)
     {
+        // A bundle's type carries its own tail-call stubs.
+        if (created.GetMethod(PersistedStubPrefix + "Jump") is { } jump)
+        {
+            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(jump.MethodHandle);
+            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(
+                created.GetMethod(PersistedStubPrefix + "Fail")!.MethodHandle);
+        }
         nint entry = 0, altEntry = 0;
         PredicateDelegate? entryDelegate = null, coldDelegate = null;
         var resumes = new List<(int, nint)>();
@@ -299,27 +314,18 @@ public sealed partial class IlPredicateCompiler
             var method = created.GetMethod(name)
                 ?? throw new InvalidOperationException($"ADR-061: no continuation method {name}.");
             var handle = method.MethodHandle;
+            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
             if (cursor == CpsColdCursor)   // its hot methods, and a wake's resume
             {
                 coldDelegate = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
-                if (CpsCompileEveryMethod)
-                {
-                    System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
-                    Interlocked.Increment(ref CpsCompiledColdMethods);
-                }
+                Interlocked.Increment(ref CpsCompiledColdMethods);
                 continue;
             }
             // The native code, not the precode stub (one jump less per transfer).
-            // A lazy method's pointer is its stub, which compiles it at first use.
-            if (CpsCompileEveryMethod || prepare && (cursor != CpsAltCursor || !CpsLazyAlternatives))
-            {
-                System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(handle);
-                if (cursor == CpsAltCursor && CpsCompileEveryMethod)
-                    Interlocked.Increment(ref CpsCompiledAlternativesMethods);
-            }
             nint code = handle.GetFunctionPointer();
             if (cursor == CpsAltCursor)
             {
+                Interlocked.Increment(ref CpsCompiledAlternativesMethods);
                 altEntry = code;
                 foreach (int c in layout.Alternatives) byCursor[c] = code;
                 continue;
@@ -380,6 +386,7 @@ public sealed partial class IlPredicateCompiler
         cps.UrcEntry = null;
         cps.UrcReturns.Clear();
         cps.Restored = false;
+        cps.ColdResumeEntryBytes = 0;
         cps.SwitchLabels = null;
         cps.Switches = 0;
         cps.Prune = CpsPruneContinuations && !cps.Cold && !cps.IsAlt
@@ -438,7 +445,11 @@ public sealed partial class IlPredicateCompiler
         DumpIl(emit, header);
         var method = emit.CreateMethod();
         method.SetImplementationFlags(CpsAggressiveOptimization);
-        if (cps.Cold) cps.ColdIlSize = method.GetILGenerator().ILOffset;
+        // The size limit is on a body the hot methods repeat: the resume
+        // entries are the cold method's alone.
+        if (cps.Cold) cps.ColdIlSize = method.GetILGenerator().ILOffset - cps.ColdResumeEntryBytes;
+        if (_persistPatches is not null && !_persistScratch)
+            _persistIlBytes += method.GetILGenerator().ILOffset;
         method.InitLocals = ZeroLocals;
         cps.Methods.Add((cps.Cold ? CpsColdCursor : cps.IsAlt ? CpsAltCursor : cps.Cursor, method.Name));
         del = cps.Base;
@@ -732,7 +743,7 @@ public sealed partial class IlPredicateCompiler
     {
         if (_cps is { } c && c.Switches++ == 0) c.SwitchLabels = labels;
         else if (_cps is { } c2) c2.SwitchLabels = null;
-        if (WamCps && _cps is null && _resumeEntries is { } entries)
+        if (WamCps && _cps is null or { Cold: true } && _resumeEntries is { } entries)
         {
             // The dispatch loop resumes a WAM choice point here, its frame
             // unrestored: an alternative's entry restores it first.
@@ -816,12 +827,13 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo EnginePushCpWithMarksMethod =
         typeof(Activation).GetMethod(nameof(Activation.PushChoicePointWithMarks))!;
 
-    /// <summary>The base delegate's resume entries (see EmitCursorSwitch): an
-    /// alternative's restores the frame on top (a trust), any other branches
-    /// straight on.</summary>
+    /// <summary>The resume entries of a delegate or a cold method (see
+    /// EmitCursorSwitch): an alternative's restores the frame on top (a
+    /// trust), any other branches straight on.</summary>
     private static void EmitResumeEntries(IlEmit emit)
     {
         if (_resumeEntries is not { Count: > 0 } entries) return;
+        int start = emit.Size;
         var alts = _methodAlternatives!;
         if (alts.Overlaps(_methodContinuations!))
             throw new NotSupportedException(
@@ -848,6 +860,7 @@ public sealed partial class IlPredicateCompiler
             }
         }
         entries.Clear();
+        if (_cps is { Cold: true } cold) cold.ColdResumeEntryBytes = emit.Size - start;
     }
 
     /// <summary>ADR-057/058 in the alternatives method: a failure whose top
@@ -1181,7 +1194,11 @@ public sealed partial class IlPredicateCompiler
                 TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
             Define(type, "");
             var stubs = type.CreateType()!;
-            return (stubs.GetMethod("Jump")!, stubs.GetMethod("Fail")!);
+            var (jump, fail) = (stubs.GetMethod("Jump")!, stubs.GetMethod("Fail")!);
+            // Compiled where they are built (a compile worker), not at their first call.
+            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(jump.MethodHandle);
+            System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(fail.MethodHandle);
+            return (jump, fail);
         }
 
         /// <summary>Defines the stubs on <paramref name="type"/>, their names

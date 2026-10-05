@@ -59,9 +59,11 @@ public static class BundleWriter
             // caller as "call->unresolved" — measured 26% IL coverage (6.8%
             // among cross-module callers) on a real 39-module corpus bundle.
             PrologEngine? warmEngine = null;
+            HashSet<int>? bytecodeShipped = null;
             if (includeCompiledIl && effective.Any(en => en.CompiledIl is null))
             {
                 warmEngine = BuildWarmEngine(effective);
+                bytecodeShipped = BytecodeAtRunTime(effective, warmEngine);
                 // Stable-dynamic census — the link-time calleeMap only ever
                 // sees a dynamic predicate's hollow trampoline (the compiler
                 // peels its clauses into DynamicSeeds), so the CP-free stats
@@ -120,7 +122,7 @@ public static class BundleWriter
                     // continuation methods there are no regions, so no prune.
                     compiledIl = CompileEntryToIl(effective[i],
                         Shumway.Compiler.Il.IlPredicateCompiler.CpsMode ? null : regionPruneSeeds,
-                        warmEngine!);
+                        warmEngine!, bytecodeShipped!, stripWam);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
                     if (_lastBytecodeEntered is not null) bytecodeEntered.UnionWith(_lastBytecodeEntered);
@@ -318,7 +320,6 @@ public static class BundleWriter
     private static Shumway.Embedding.PrologEngine BuildWarmEngine(BundleEntry[] entries)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
-        var engine = new Shumway.Embedding.PrologEngine();
         var bare = new List<BundleEntry>();
         var sources = new List<string>();
         foreach (var e in entries)
@@ -343,15 +344,62 @@ public static class BundleWriter
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
-        if (bare.Count > 0) engine.LoadBundle(new Bundle(bare));
+        // A bundle that bakes the prelude runs on that prelude, not on the
+        // engine's own: its helper predicates ($prelude$$disj_N) are numbered
+        // by the compile that made them, and compiled code names them.
+        Shumway.Embedding.PrologEngine engine;
+        if (bare.Any(e => e.ModuleName == Prelude.ModuleName))
+            engine = Shumway.Embedding.PrologEngine.FromBundle(new Bundle(bare));
+        else
+        {
+            engine = new Shumway.Embedding.PrologEngine();
+            if (bare.Count > 0) engine.LoadBundle(new Bundle(bare));
+        }
         foreach (var s in sources) engine.ConsultString(s);
         engine.Query("true.");
         return engine;
     }
 
+    /// <summary>ADR-049: the functors whose bytecode an engine that loads the
+    /// bundle will have under that functor, which is where a wake in compiled
+    /// code may hand the activation: what the bytecode-backed entries carry,
+    /// and what the warm engine consulted (its own prelude, and the entries
+    /// that are only source, which the loading engine consults too). Not the
+    /// control helpers of what is consulted ($disj_N, $neg_N): each consult
+    /// numbers its own.</summary>
+    private static HashSet<int> BytecodeAtRunTime(BundleEntry[] entries, PrologEngine warmEngine)
+    {
+        var fids = new HashSet<int>();
+        foreach (var e in entries)
+            if (e.CompiledBytecode is not null && e.Defined.Count > 0)
+                foreach (var pred in CompiledModuleCodec.Decode(e.CompiledBytecode).Predicates)
+                    if (pred.Bytecode.Length > 0) fids.Add(pred.FunctorId);
+        foreach (int fid in warmEngine.StaticPredicateCache.Keys)
+        {
+            var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+            string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+            if (!IsControlHelper(name)) fids.Add(fid);
+        }
+        return fids;
+    }
+
+    // "$kind_N", bare or after a module's prefix ("mod$$kind_N").
+    private static bool IsControlHelper(string name)
+    {
+        int underscore = name.LastIndexOf('_');
+        int dollar = name.LastIndexOf('$');
+        if (dollar < 0 || underscore <= dollar + 1 || underscore == name.Length - 1) return false;
+        if (dollar > 0 && name[dollar - 1] != '$') return false;
+        for (int i = underscore + 1; i < name.Length; i++)
+            if (name[i] is < '0' or > '9') return false;
+        for (int i = dollar + 1; i < underscore; i++)
+            if (name[i] is < 'a' or > 'z') return false;
+        return true;
+    }
+
     private static byte[] CompileEntryToIl(BundleEntry entry,
         IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds,
-        Shumway.Embedding.PrologEngine engine)
+        Shumway.Embedding.PrologEngine engine, ISet<int> bytecodeShipped, bool stripWam)
     {
         // `engine` is the shared whole-bundle warm engine (BuildWarmEngine).
         // Pull every predicate it knows: static (consulted source),
@@ -369,13 +417,13 @@ public static class BundleWriter
         // The emit set — this entry's own predicates (each predicate ships IL
         // exactly once, in its defining entry; the T7 prelude dedup falls out
         // of this too). Three cases:
-        //  * the $prelude entry emits the prelude-owned set by name — its
-        //    synthesized control helpers ($prelude$$disj_N / $neg_N) get
-        //    fresh E12 ids on every recompile, so the engine's fids are the
-        //    only valid identity (a "$prelude$…" name, or a bare indicator
-        //    from the compiled prelude object's public/dynamic set);
         //  * a bytecode-backed entry emits its decoded fids plus its dynamic
-        //    seeds' fids;
+        //    seeds' fids. The baked $prelude entry is one: the warm engine
+        //    loaded it (BuildWarmEngine), so its helpers ($prelude$$disj_N /
+        //    $neg_N) are the ones the bundle ships;
+        //  * a $prelude entry without bytecode emits the prelude-owned set by
+        //    name (a "$prelude$…" name, or a bare indicator from the compiled
+        //    prelude object's public/dynamic set);
         //  * a legacy source-only entry (hand-built test bundles) emits
         //    everything except the prelude-owned set.
         var emitOnly = new HashSet<int>();
@@ -390,12 +438,7 @@ public static class BundleWriter
             return name.StartsWith(Prelude.ModuleName + "$", StringComparison.Ordinal)
                 || preludeBare.Contains((name, arity));
         }
-        if (entry.ModuleName == Prelude.ModuleName)
-        {
-            foreach (int f in predicates.Keys)
-                if (IsPreludeOwned(f)) emitOnly.Add(f);
-        }
-        else if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
+        if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
         {
             foreach (var p in CompiledModuleCodec.Decode(entry.CompiledBytecode).Predicates)
                 emitOnly.Add(p.FunctorId);
@@ -403,6 +446,11 @@ public static class BundleWriter
                 emitOnly.Add(Shumway.Core.FunctorTable.Intern(
                     Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                     seed.Indicator.Arity));
+        }
+        else if (entry.ModuleName == Prelude.ModuleName)
+        {
+            foreach (int f in predicates.Keys)
+                if (IsPreludeOwned(f)) emitOnly.Add(f);
         }
         else
         {
@@ -600,7 +648,11 @@ public static class BundleWriter
                 // literals against its own module's pool (precompiled static) or
                 // the build engine's live pool (dynamic snapshots).
                 engine.FloatPoolForFid,
-                emitOnly: emitOnly);
+                emitOnly: emitOnly,
+                bytecodeShipped: bytecodeShipped,
+                // Without --strip-wam every predicate keeps its bytecode, and
+                // the loader's worker compiles its method when it is hot.
+                compiledByWorker: !stripWam);
         }
         finally
         {
@@ -634,6 +686,7 @@ public static class BundleWriter
                 RegionMembers = pe.RegionMembers,
                 Cps = pe.Cps,
                 Wakes = pe.Wakes,
+                Cost = pe.Cost,
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);

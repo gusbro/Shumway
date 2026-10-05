@@ -169,7 +169,7 @@ public sealed partial class IlPredicateCompiler
                     predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
                     clauseLabels[i + 1], failLabel,
                     effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}",
-                    wakeDeopt: !predicate.IsDynamicSnapshot);
+                    wakeDeopt: HasBytecode(predicate));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

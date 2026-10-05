@@ -1942,7 +1942,7 @@ public sealed partial class PrologEngine
         // Promotion can also install MID-query, so the flag is decided by
         // whether it is possible, not by what is installed right now.
         engine.GcPreciseRegisterBounds =
-            IlPromotion.Threshold <= 0 && IlPromotion.PromotedCount == 0;
+            IlPromotion.Threshold <= 0 && IlPromotion.PromotedCount == 0 && !IlPromotion.HasOffers;
 
         if (StackDiagEnabled)
         {

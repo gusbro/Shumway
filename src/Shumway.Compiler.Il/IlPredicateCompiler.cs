@@ -93,6 +93,18 @@ public sealed partial class IlPredicateCompiler
     /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
     internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
 
+    // In a persist batch: the IL bytes of the methods emitted into the
+    // bundle's type since the last take. A scratch pass counts nothing.
+    [ThreadStatic] private static int _persistIlBytes;
+    [ThreadStatic] private static bool _persistScratch;
+
+    public static int TakePersistedIlBytes()
+    {
+        int bytes = _persistIlBytes;
+        _persistIlBytes = 0;
+        return bytes;
+    }
+
     // Label names must be unique per method (the IL dump names a branch target
     // by its label), but a region method emits several member bodies with
     // body-local pcs, so a pc-keyed name can repeat across members. A monotonic
@@ -141,6 +153,7 @@ public sealed partial class IlPredicateCompiler
         EmitWakeAlternatives(emit); // ADR-049
         EmitWakeDispatch(emit);
         EmitResumeEntries(emit);   // ADR-061
+        if (_persistOptimized) emit.OptimizeAtOnce();
         if (IlDumpPath is not null)
         {
             string text;
@@ -150,7 +163,9 @@ public sealed partial class IlPredicateCompiler
                 System.IO.File.AppendAllText(IlDumpPath,
                     $"\n;;; ===== {header} =====\n{text}\n");
         }
-        return emit.CreateMethod();
+        var method = emit.CreateMethod();
+        _persistIlBytes += method.GetILGenerator().ILOffset;
+        return method;
     }
 
     private static readonly MethodInfo CellAtomMethod =
@@ -730,11 +745,12 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        using var code = new CodeScope(predicate);
         DiagnoseInlineCandidates(predicate, calleeMap);
         DiagnoseRegion(predicate, calleeMap);
         // Region compilation (Stage 3, gated): emit the root + its local
         // closure as one IL method when the region is in the minimal subset.
-        if (EffectiveRegionCompile && !CpsMode && calleeMap is not null)   // ADR-061: no regions
+        if (EffectiveRegionCompile && !CpsMode && !_noBytecode && calleeMap is not null)   // ADR-061: no regions
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));
@@ -991,12 +1007,33 @@ public sealed partial class IlPredicateCompiler
         ArgumentNullException.ThrowIfNull(methodName);
         ArgumentNullException.ThrowIfNull(predicate);
 
+        using var code = new CodeScope(predicate);
         var emit = IlEmit.BuildMethod(
             typeBuilder,
             methodName,
             System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
             System.Reflection.CallingConventions.Standard,
             record: IlDumpPath is not null);
+        try
+        {
+            return EmitPersistedBody(emit, predicate, delegatesField, slot, calleeMap);
+        }
+        catch (Exception ex) when (ex is NotSupportedException or IlEmitException)
+        {
+            // The method is already in the type: left half built, the type
+            // could not be created.
+            emit.Abandon();
+            throw;
+        }
+    }
+
+    private System.Reflection.Emit.MethodBuilder EmitPersistedBody(
+        IlEmit emit,
+        CompiledPredicate predicate,
+        System.Reflection.FieldInfo? delegatesField,
+        int slot,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
         AttachRegisterFile(emit);   // ADR-060
         BeginMethodEmission();
 
@@ -1015,7 +1052,7 @@ public sealed partial class IlPredicateCompiler
         // every other persisted method. (Region compilation is off unless RegionCompile
         // is set; with it on, every predicate compiles as a region root — correct but
         // duplicative until the prune skips absorbed-only members.)
-        if (EffectiveRegionCompile && !CpsMode && calleeMap is not null)   // ADR-061: no regions
+        if (EffectiveRegionCompile && !CpsMode && !_noBytecode && calleeMap is not null)   // ADR-061: no regions
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));

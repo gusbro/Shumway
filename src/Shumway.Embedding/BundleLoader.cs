@@ -788,10 +788,76 @@ internal sealed class BundleLoader
     private sealed class PersistedIlModule
     {
         public required List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
-            bool Wakes, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? Cps)> Bound;
+            bool Wakes)> Bound;
+        public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
+        public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
+
+        private Dictionary<int, Shumway.Compiler.Il.PredicateDelegate>? _byFunctor;
+
+        public Shumway.Compiler.Il.PredicateDelegate? DelegateOf(int functorId)
+        {
+            if (_byFunctor is null)
+            {
+                var map = new Dictionary<int, Shumway.Compiler.Il.PredicateDelegate>(Bound.Count);
+                foreach (var (_, fid, del, _) in Bound) map[fid] = del;
+                _byFunctor = map;
+            }
+            return _byFunctor.TryGetValue(functorId, out var d) ? d : null;
+        }
+
+        // ADR-061: where each predicate's continuation methods are in Type.
+        // Bound and compiled when the predicate is hot, once per process.
+        public required Type Type;
+        public Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? CpsLayouts;
+        private readonly Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode> _cps = new();
+
+        /// <summary>The predicate's continuation methods, compiled on the
+        /// caller's thread (the compile worker's).</summary>
+        public Shumway.Compiler.Il.IlPredicateCompiler.CpsCode BindCps(int functorId)
+        {
+            lock (_cps)
+            {
+                if (!_cps.TryGetValue(functorId, out var code))
+                    _cps[functorId] = code = Shumway.Compiler.Il.IlPredicateCompiler.BindCps(
+                        Type, CpsLayouts![functorId], functorId);
+                return code;
+            }
+        }
+    }
+
+    /// <summary>What an entry's compiled code holds, by predicate, read from its
+    /// table: the image is not touched. Functor ids are this process's.</summary>
+    private sealed class PersistedIlIndex
+    {
+        public required List<(int FunctorId, bool Wakes, bool HasCps, int Cost)> Predicates;
         public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
         public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
     }
+
+    // By the table's own bytes: engines that load one bundle share the index.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], PersistedIlIndex>
+        _persistedIndexes = new();
+
+    private static PersistedIlIndex ReadPersistedIndex(byte[] table) =>
+        _persistedIndexes.GetValue(table, static bytes =>
+        {
+            var index = new PersistedIlIndex { Predicates = new() };
+            foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name).Id, pe.Arity);
+                index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost));
+                if (pe.IndexGraph is { Length: > 0 } graph)
+                    (index.IndexGraphs ??= new())[fid] = graph;
+                if (pe.RegionMembers is { Count: > 0 } members)
+                    foreach (var (name, arity, cursor) in members)
+                    {
+                        int member = Shumway.Core.FunctorTable.Intern(
+                            Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+                        (index.RegionAliases ??= new())[member] = Activation.EncodeResumeMarker(fid, cursor);
+                    }
+            }
+            return index;
+        });
 
     private static readonly Dictionary<string, PersistedIlModule?> _loadedPersistedIl = new();
     private static readonly object _loadedPersistedIlLock = new();
@@ -898,6 +964,8 @@ internal sealed class BundleLoader
 
         // Method-name layout from PersistedIlBuilder:
         //   P_{slot}_{functorId}_{sanitisedName}
+        // or, for a predicate with continuation methods, its cold method's
+        // name (ADR-061), which only the table gives.
         // when CompiledIlEntries is present (V3+ bundles), use the
         // per-method (name, arity) table to intern the name in this process
         // and bind the delegate under the runtime functor id. Falls back to
@@ -925,14 +993,13 @@ internal sealed class BundleLoader
             }
         }
         var bound = new List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
-            bool Wakes, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? Cps)>();
-        var cpsLayouts = new List<(int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout)>();
+            bool Wakes)>();
+        Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? cpsLayouts = null;
         Dictionary<int, byte[]>? indexGraphs = null;
         Dictionary<int, int>? regionAliases = null;
         foreach (var method in type.GetMethods(
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
         {
-            if (!method.Name.StartsWith("P_")) continue;
             int slot;
             int functorId;
             if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
@@ -941,6 +1008,14 @@ internal sealed class BundleLoader
                 functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
                 slot = info.Slot;
             }
+            else if (methodInfo is not null)
+            {
+                // The table names every predicate's method: one outside it is
+                // a continuation method, a stub, or a method whose emission
+                // failed, a body that only throws.
+                continue;
+            }
+            else if (!method.Name.StartsWith("P_")) continue;
             else
             {
                 int u1 = method.Name.IndexOf('_');
@@ -956,8 +1031,8 @@ internal sealed class BundleLoader
             var del = (Shumway.Compiler.Il.PredicateDelegate)method.CreateDelegate(
                 typeof(Shumway.Compiler.Il.PredicateDelegate));
             if (cpsByMethod is not null && cpsByMethod.TryGetValue(method.Name, out var cpsLayout))
-                cpsLayouts.Add((bound.Count, cpsLayout));
-            bound.Add((slot, functorId, del, wakingMethods?.Contains(method.Name) == true, null));
+                (cpsLayouts ??= new())[functorId] = cpsLayout;
+            bound.Add((slot, functorId, del, wakingMethods?.Contains(method.Name) == true));
             if (graphByMethod is not null
                 && graphByMethod.TryGetValue(method.Name, out var graphBytes))
                 (indexGraphs ??= new())[functorId] = graphBytes;
@@ -986,24 +1061,16 @@ internal sealed class BundleLoader
         {
             int size = bound.Max(b => b.Slot) + 1;
             var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
-            foreach (var (slot, _, del, _, _) in bound) arr[slot] = del;
+            foreach (var (slot, _, del, _) in bound) arr[slot] = del;
             dF.SetValue(null, arr);
-        }
-        // ADR-061: each method compiles at its first call, not here: a bundle
-        // binds every predicate at load, not only the hot ones.
-        foreach (var (i, layout) in cpsLayouts)
-        {
-            var b = bound[i];
-            bound[i] = b with
-            {
-                Cps = Shumway.Compiler.Il.IlPredicateCompiler.BindCps(type, layout, b.FunctorId, prepare: false),
-            };
         }
         return new PersistedIlModule
         {
             Bound = bound,
             IndexGraphs = indexGraphs,
             RegionAliases = regionAliases,
+            Type = type,
+            CpsLayouts = cpsLayouts,
         };
     }
 
@@ -1303,42 +1370,123 @@ internal sealed class BundleLoader
         if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
             || !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return;
-        var module = GetOrLoadPersistedIl(entry);
-        if (module is null)
+        if (entry.CompiledIlEntries is not { Length: > 0 } table)
         {
-            // The image loaded but its type could not surface — on .NET
-            // Framework this is a bundle whose IL was emitted by the .NET 10
-            // toolchain (System.Private.CoreLib refs Framework cannot
-            // resolve). Correctness survives on the bytecode, but silently
-            // losing the persisted tier hides a real deployment mistake.
-            if (!E._warnedIlUnbindable.Add(entry.ModuleName)) return;
-            E.Warn($"bundle entry '{entry.ModuleName}': persisted IL could not "
-                + "be bound on this runtime; using bytecode."
-#if NETFRAMEWORK
-                + " A bundle for a .NET Framework host must be linked with the"
-                + " net48 build of shumway-link."
-#endif
-                );
+            // No table (an old or a hand-built bundle): nothing says which
+            // predicate is which before the image loads, so all bind now.
+            if (LoadedModule(entry) is { } untabled)
+                foreach (var (_, functorId, del, wakes) in untabled.Bound)
+                    E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes);
             return;
         }
-        foreach (var (_, functorId, del, wakes, cps) in module.Bound)
+        var index = ReadPersistedIndex(table);
+        // Nothing is compiled at load, nor is the image loaded when no
+        // predicate needs it yet. A predicate whose bytecode the engine has
+        // runs on it until it has earned its code (ADR-061), and the compile
+        // worker loads and binds it then; one with no bytecode (--strip-wam)
+        // has its delegate bound now, and so does a region's root that a
+        // member with no bytecode enters through its alias. With a threshold
+        // of zero every delegate is bound now.
+        bool atLoad = E.IlPromotion.PersistedThreshold <= 0;
+        HashSet<int>? withBytecode = null;
+        if (string.IsNullOrEmpty(entry.Source)
+            && E._precompiledModules.TryGetValue(entry.ModuleName, out var precompiled))
         {
-            E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes);
-            if (cps is not null) E.IlPromotion.RegisterBoundCps(functorId, del, cps);
+            withBytecode = new HashSet<int>();
+            foreach (var pred in precompiled.Predicates)
+                if (pred.Bytecode.Length > 0) withBytecode.Add(pred.FunctorId);
+        }
+        HashSet<int>? aliasRoots = null;
+        if (index.RegionAliases is not null && withBytecode is not null)
+            foreach (var (member, marker) in index.RegionAliases)
+                if (!withBytecode.Contains(member))
+                    (aliasRoots ??= new()).Add(Activation.DecodeResumeMarker(marker).FunctorId);
+        PersistedIlModule? module = null;
+        bool unbindable = false;
+        foreach (var (functorId, wakes, hasCps, cost) in index.Predicates)
+        {
+            int fid = functorId;
+            if (!atLoad && withBytecode?.Contains(fid) != false && aliasRoots?.Contains(fid) != true)
+            {
+                E.IlPromotion.OfferPersisted(fid, wakes, E._dynStore.IsDynamic(fid),
+                    () => BindOffered(entry, fid), _ => WarnUnbindable(entry), cost);
+                continue;
+            }
+            if (unbindable) continue;
+            module ??= LoadedModule(entry);
+            if (module is null)
+            {
+                unbindable = true;
+                continue;
+            }
+            if (module.DelegateOf(fid) is not { } del) continue;
+            E.IlPromotion.RegisterBoundDelegate(fid, del, wakes);
+            var bound = module;
+            if (hasCps) E.IlPromotion.OfferBoundCps(fid, del, () => bound.BindCps(fid), cost);
         }
         // A stripped indexed predicate carries its dispatch graph in the bundle.
         // Stash it by runtime functor id; each query's fresh engine gets it
         // registered at setup. Without a WAM body the delegate would otherwise
         // have nothing to rebuild the switch model from.
-        if (module.IndexGraphs is not null)
-            foreach (var kv in module.IndexGraphs)
+        if (index.IndexGraphs is not null)
+            foreach (var kv in index.IndexGraphs)
                 E._persistedIndexGraphs[kv.Key] = kv.Value;
         // A region method publishes its members' entry cursors; the alias marker
-        // dispatches the region delegate at the member's entry. Consulted by the
-        // warm below to skip a member the region already covers.
-        if (module.RegionAliases is not null)
-            foreach (var kv in module.RegionAliases)
+        // dispatches the region delegate at the member's entry.
+        if (index.RegionAliases is not null)
+            foreach (var kv in index.RegionAliases)
                 E._regionMemberAliases[kv.Key] = kv.Value;
+    }
+
+    // The entry's image, loaded now, on the caller's thread; null (after a
+    // warning) when this runtime cannot bind it.
+    private PersistedIlModule? LoadedModule(BundleEntry entry)
+    {
+        var module = GetOrLoadPersistedIl(entry);
+        if (module is null) WarnUnbindable(entry);
+        return module;
+    }
+
+    // The image loaded but its type could not surface — on .NET Framework
+    // this is a bundle whose IL was emitted by the .NET 10 toolchain
+    // (System.Private.CoreLib refs Framework cannot resolve). Correctness
+    // survives on the bytecode, but silently losing the persisted tier hides a
+    // real deployment mistake. Engine thread only.
+    private void WarnUnbindable(BundleEntry entry)
+    {
+        if (!E._warnedIlUnbindable.Add(entry.ModuleName)) return;
+        E.Warn($"bundle entry '{entry.ModuleName}': persisted IL could not "
+            + "be bound on this runtime; using bytecode."
+#if NETFRAMEWORK
+            + " A bundle for a .NET Framework host must be linked with the"
+            + " net48 build of shumway-link."
+#endif
+            );
+    }
+
+    // On the compile worker: the entry's image loaded (once per process), and
+    // the predicate's method and continuation methods compiled.
+    private static (Shumway.Compiler.Il.PredicateDelegate, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode?)
+        BindOffered(BundleEntry entry, int functorId)
+    {
+        var module = GetOrLoadPersistedIl(entry)
+            ?? throw new InvalidOperationException(
+                $"bundle entry '{entry.ModuleName}': its persisted IL cannot be bound on this runtime.");
+        var del = module.DelegateOf(functorId)
+            ?? throw new InvalidOperationException(
+                $"bundle entry '{entry.ModuleName}': no compiled method for functor {functorId}.");
+        System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(del.Method.MethodHandle);
+        Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? cps = null;
+        if (module.CpsLayouts?.ContainsKey(functorId) == true)
+        {
+            // Without them the predicate runs on its delegate.
+            try { cps = module.BindCps(functorId); }
+            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
+                                           or MissingMethodException)
+            {
+            }
+        }
+        return (del, cps);
     }
 
     private Shumway.Compiler.Wam.CompiledModule DecodeAndRegisterPrecompiledModule(
@@ -1548,17 +1696,12 @@ internal sealed class BundleLoader
             E.RegisterNativePrototypes(
                 Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls!));
 
-        // Bind this entry's persisted Tier-1 IL before the warm below. A
-        // source-stripped IL bundle warms here, and RegisterBoundDelegate is
-        // first-wins: if warm ran first it would IL-compile the region roots
-        // standalone and block the persisted delegates (measured: 692 of 1644
-        // persisted delegates lost on a clpz bundle at threshold 32). Binding
-        // here also publishes _regionMemberAliases so the warm skips region
-        // members. Idempotent — the whole-bundle pass re-runs it (cached).
-        BindPersistedIlForEntry(entry);
-        // Decode + literal-remap + record + warm IL (the bytecode is the definition
-        // here, so register the static predicates).
+        // Decode + literal-remap + record (the bytecode is the definition here,
+        // so register the static predicates), then offer the entry's persisted
+        // Tier-1 IL: which predicates have bytecode decides what is bound now.
+        // Idempotent — the whole-bundle pass re-runs it (cached).
         DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: true);
+        BindPersistedIlForEntry(entry);
 
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the

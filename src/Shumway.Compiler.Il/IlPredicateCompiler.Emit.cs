@@ -64,13 +64,19 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Begin a persisted-emit batch. Subsequent
     /// <see cref="EmitPersistedMethod"/> calls (until
     /// <see cref="EndPersistEmit"/>) accumulate patch sites into the
-    /// returned list.</summary>
-    public List<IlPatchSite> BeginPersistEmit()
+    /// returned list. <paramref name="bytecodeShipped"/>: the functors whose
+    /// bytecode the bundle carries, the only ones a wake may hand the
+    /// activation to (ADR-049); null for all. <paramref name="compiledByWorker"/>:
+    /// the loader's worker compiles each method before it first runs, so it is
+    /// optimized at once, like code emitted at run time.</summary>
+    public List<IlPatchSite> BeginPersistEmit(ISet<int>? bytecodeShipped = null, bool compiledByWorker = false)
     {
         var list = new List<IlPatchSite>();
         _persistPatches = list;
         _persistNextSentinel = IlPatchSiteCodec.SentinelBase;
         _bytecodeEntered = new HashSet<int>();
+        _bytecodeShipped = bytecodeShipped;
+        _persistOptimized = compiledByWorker;
         return list;
     }
 
@@ -80,6 +86,8 @@ public sealed partial class IlPredicateCompiler
     {
         _persistPatches = null;
         _bytecodeEntered = null;
+        _bytecodeShipped = null;
+        _persistOptimized = false;
         _persistedStubs = null;
     }
 
@@ -2562,7 +2570,7 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(failLabel);
                     },
                     dynamicCursor: LoadNext,
-                    wakeDeopt: !predicate.IsDynamicSnapshot);
+                    wakeDeopt: HasBytecode(predicate));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

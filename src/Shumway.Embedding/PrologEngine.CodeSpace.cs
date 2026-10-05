@@ -500,8 +500,10 @@ public sealed partial class PrologEngine
     /// unpromotable shapes (dynamics, oversized) are skipped inside Warm.</summary>
     public int WarmAllCompilable()
     {
-        if (IlPromotion.Threshold <= 0) return 0;
         int before = IlPromotion.PromotedCount;
+        // A bundle's own compiled code needs no tier to be on.
+        IlPromotion.PromoteOffers();
+        if (IlPromotion.Threshold <= 0) return IlPromotion.PromotedCount - before;
         // Every predicate the engine has already compiled to WAM: each loaded
         // bundle module's decoded predicates (source-stripped and the bytecode
         // blob of a source-carrying entry), plus the consulted-source static

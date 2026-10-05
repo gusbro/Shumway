@@ -38,14 +38,48 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The functor id of a predicate whose bytecode the code enters.</summary>
     private static void EmitBytecodeFid(IlEmit emit, int fid)
     {
+        if (_bytecodeShipped?.Contains(fid) == false)
+            throw new NotSupportedException("ADR-049: a wake would enter bytecode the bundle does not carry.");
         _bytecodeEntered?.Add(fid);
         EmitFunctorId(emit, fid);
     }
 
     /// <summary>Without continuation methods (regions, and the delegates of
     /// that mode), a wake point hands the activation to the interpreter: a
-    /// region keeps state across a point that a re-entry would not find.</summary>
-    private static bool DeoptWakes => !CpsMode;
+    /// region keeps state across a point that a re-entry would not find. A
+    /// predicate with no bytecode to hand it to re-enters its own delegate.</summary>
+    private static bool DeoptWakes => !CpsMode && !_noBytecode;
+
+    // The predicate being emitted has no bytecode of its own under its
+    // functor: a dynamic predicate's snapshot (ADR-023), whose functor runs
+    // the live clause chain, or code a bundle carries without that WAM. No
+    // wake hands the activation to its bytecode, and no region takes it.
+    [ThreadStatic] private static bool _noBytecode;
+
+    // In a persist batch, the functors whose bytecode the bundle carries.
+    [ThreadStatic] private static ISet<int>? _bytecodeShipped;
+
+    // In a persist batch: a compile worker compiles each method before it
+    // runs, so none starts unoptimized (tiered, with patchpoints that compile
+    // on the engine's thread).
+    [ThreadStatic] private static bool _persistOptimized;
+
+    private static bool HasBytecode(CompiledPredicate p)
+        => !p.IsDynamicSnapshot && _bytecodeShipped?.Contains(p.FunctorId) != false;
+
+    /// <summary>The scope of one predicate's emission.</summary>
+    private readonly struct CodeScope : IDisposable
+    {
+        private readonly bool _prev;
+
+        public CodeScope(CompiledPredicate predicate)
+        {
+            _prev = _noBytecode;
+            _noBytecode = !HasBytecode(predicate);
+        }
+
+        public void Dispose() => _noBytecode = _prev;
+    }
 
     // The region member whose code is being emitted, or 0 outside a region.
     [ThreadStatic] private static int _emitMemberFid;
@@ -189,7 +223,7 @@ public sealed partial class IlPredicateCompiler
                     ContainerFid = CodeFid, CallerPcAfter = pcAfter, Guard = g,
                 };
                 return;
-            case ChainScope { Shared: not null } c when !c.Callee.IsDynamicSnapshot:
+            case ChainScope { Shared: not null } c when HasBytecode(c.Callee):
                 try
                 {
                     var (allocated, slot) = FrameState(c.Callee.BytecodeUnfused, c.Clauses[c.Clause].Start, pcAfter);
@@ -473,8 +507,8 @@ public sealed partial class IlPredicateCompiler
         }
         if ((guard is null && shared is null && !DeoptWakes) || opaque != _opaqueDepth)
             throw new NotSupportedException("ADR-049: a wake point inside a construct with no guard.");
-        if (guard is { HasBytecode: false })
-            throw new NotSupportedException("ADR-049: a wake point in a snapshot's guard.");
+        if (_noBytecode || guard is { HasBytecode: false })
+            throw new NotSupportedException("ADR-049: a wake point in a guard of a predicate with no bytecode.");
         int n = levels.Count;
         var fids = new int[n];
         var allocated = new bool[n];
@@ -487,8 +521,8 @@ public sealed partial class IlPredicateCompiler
                 LeafScope l => (l.Callee, 0),
                 _ => throw new InvalidOperationException(),
             };
-            if (callee.IsDynamicSnapshot)
-                throw new NotSupportedException("ADR-049: a wake point in an inlined snapshot.");
+            if (!HasBytecode(callee))
+                throw new NotSupportedException("ADR-049: a wake point in an inlined callee with no bytecode.");
             fids[i] = callee.FunctorId;
             int at = i + 1 < n ? levels[i + 1].CallerPcAfter : pc;
             (allocated[i], slots[i]) = FrameState(callee.BytecodeUnfused, start, at);

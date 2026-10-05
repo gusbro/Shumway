@@ -4,10 +4,9 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-061: an alternatives method compiles at its first use and a
-/// cold method at its first call, so a test that never reaches one never has
-/// the JIT check its IL. Here every continuation method compiles at install
-/// (<see cref="IlPredicateCompiler.CpsCompileEveryMethod"/>), and the answers
+/// <summary>ADR-061: every continuation method of a predicate compiles on
+/// the compile worker before the engine switches to it, the cold and the
+/// alternatives method too: the JIT checks all the emitted IL, and the answers
 /// are the interpreter's.</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
@@ -15,17 +14,9 @@ public sealed class CpsEveryMethodCompilesTests : IDisposable
 {
     private readonly bool _savedCpsMode = IlPredicateCompiler.CpsMode;
 
-    public CpsEveryMethodCompilesTests()
-    {
-        IlPredicateCompiler.CpsMode = true;
-        IlPredicateCompiler.CpsCompileEveryMethod = true;
-    }
+    public CpsEveryMethodCompilesTests() => IlPredicateCompiler.CpsMode = true;
 
-    public void Dispose()
-    {
-        IlPredicateCompiler.CpsCompileEveryMethod = false;
-        IlPredicateCompiler.CpsMode = _savedCpsMode;
-    }
+    public void Dispose() => IlPredicateCompiler.CpsMode = _savedCpsMode;
 
     // digit/1 is backtracked into; kind/2's choice points are cut away by its
     // callers; walk/3 is deterministic; grow/2 reaches big integers.

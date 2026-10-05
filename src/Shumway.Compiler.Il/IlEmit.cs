@@ -114,6 +114,9 @@ public sealed class IlEmit
     /// <summary>The method's instructions as text; empty unless recorded.</summary>
     public string Instructions() => _text?.ToString() ?? "";
 
+    /// <summary>The IL bytes emitted so far, a pending call apart.</summary>
+    public int Size => _il.ILOffset;
+
     /// <summary>The labels declared and not yet marked.</summary>
     public IReadOnlyList<IlLabel> UnmarkedLabels => _labels.Where(l => !l.Marked).ToList();
 
@@ -462,6 +465,30 @@ public sealed class IlEmit
     public void Throw()
     {
         Op(OpCodes.Throw);
+        _unreachable = true;
+    }
+
+    /// <summary>The built method compiles with full optimization at its first
+    /// compile and is not compiled again (AggressiveOptimization).</summary>
+    public void OptimizeAtOnce()
+        => (_method ?? throw new InvalidOperationException("not a built method"))
+            .SetImplementationFlags((MethodImplAttributes)0x0200);
+
+    /// <summary>Ends a method whose emission failed: what is there stays, every
+    /// label is marked and the body ends in a throw. Nothing calls it; its
+    /// type can be created.</summary>
+    public void Abandon()
+    {
+        _pendingMethod = null;
+        foreach (var l in _labels)
+            if (!l.Marked)
+            {
+                l.Marked = true;
+                _il.MarkLabel(l.Label);
+            }
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Throw);
+        _text?.Append("; abandoned\nldnull\nthrow\n");
         _unreachable = true;
     }
 

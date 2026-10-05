@@ -1271,7 +1271,10 @@ public sealed partial class Activation
     public void EvictCps(int functorId)
     {
         var t = _cpsEntry;
-        if (t is not null && (uint)functorId < (uint)t.Length) t[functorId] = 0;
+        // Installed together: no entry, no continuation to look for (a
+        // dynamic predicate is evicted at every assert and retract).
+        if (t is null || (uint)functorId >= (uint)t.Length || t[functorId] == 0) return;
+        t[functorId] = 0;
         var a = _cpsAltEntry;
         if (a is not null && (uint)functorId < (uint)a.Length) a[functorId] = 0;
         var r = _cpsResume;

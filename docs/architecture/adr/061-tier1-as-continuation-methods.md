@@ -209,14 +209,139 @@ Two rules follow for the bundle:
   predicate's snapshot, a predicate a later consult may define). The linker
   knows which is which; .NET metadata then resolves the direct calls, and
   the persisted image needs no patch for them.
-- **Loading must not compile the whole bundle.** Filling a slot with native
-  code needs `PrepareMethod`, which compiles the method. At load a slot takes
-  the method's precode entry (valid at once, one extra jump); it is upgraded
-  to the native code when the method has run. Direct calls inside the
-  assembly need no pointer at all.
+- **Loading compiles nothing, and neither does the engine's thread.** At
+  load a predicate whose bytecode the bundle carries gets an offer of its
+  compiled code and runs on the bytecode. When it has earned the code (When
+  a bundle's code is taken, below) the compile worker loads the image, if no
+  predicate needed it before, and compiles the predicate's methods
+  (`PrepareMethod`); the engine switches at its next dispatch of the
+  predicate. A predicate with no bytecode
+  (`--strip-wam`) has its delegate bound at load, which the runtime compiles
+  at its first call; its continuation methods wait for the worker in the
+  same way. `PromoteOffers` (`compile_all/0`, `WarmAllCompilable`) takes
+  every offer at once, for a host that pays at load.
+- **A predicate with continuation methods has no method of its own.** In a
+  bundle that keeps its bytecode the cold method is bound as the predicate's
+  delegate. It is the whole predicate, and with the resume entries a
+  delegate has (an alternative's restores the choice point on top first) it
+  takes every cursor the dispatch loop enters a predicate at. The
+  predicate's own method would be the same code a fifth time (What a
+  bundle's methods cost to compile, below). With no bytecode
+  (`--strip-wam`) the predicate keeps its own method: that one runs from the
+  first call and compiles there, on the engine's thread, and the cold method
+  makes tail calls, which the JIT answers with full optimization at the
+  first compile (for Blint's first pass 1.28 s of JIT on the engine's thread
+  against 0.40 s).
 
 The bundle assembly is loaded once per process and never unloaded, as today;
 the collectible generation (item 3) is for runtime promotion only.
+
+### When a bundle's code is taken
+
+Compiling a bundle's code is the expensive step (What a promotion costs).
+Blint's bundle holds 1.1 MB of IL as regions and 4.4 MB as continuation
+methods; in a traced run the worker took 7 s for the 495 methods of the
+first 95 predicates it was asked for. A worker that compiles each predicate
+as soon as it is warm keeps a core busy through the whole of a short run,
+and the engine's thread pays for it:
+
+- The runtime tiers up its own methods only after a delay that every method
+  called for the first time re-arms. Each switch to compiled code calls
+  engine methods the interpreter had not, and the interpreter's hot methods
+  stay unoptimized about a second longer.
+- The two compilers share the machine with the interpreter. On the
+  four-core notebook these numbers come from, one more thread that works on
+  memory slows a compute-bound thread by 16%, and two by 32%.
+
+So a predicate takes its code when it has paid for it:
+
+1. it has been called `PersistedThreshold` times (32, the threshold of
+   promotion at run time), and
+2. either the code taken so far, with its own, stays within
+   `PersistedFreeBytes` (64,000), or its calls are at least
+   `PersistedCallsPerByte` (4) times its own bytes.
+
+The bytes are the IL of the methods the bundle carries for the predicate:
+the JIT's time grows with them. The linker records
+them per predicate (`IlPersistedEntry.Cost`). The free bytes let a small
+program run compiled at once, callers and callees together: without them
+`queens` takes 1.62 s with continuation methods and 1.39 s with regions.
+Past them a predicate that is barely called stays on its bytecode.
+`SHUMWAY_IL_BUNDLE_PROMOTE=threshold[,freeBytes[,callsPerByte]]`
+sets the three: `32,0,0` takes every predicate at 32 calls, and a threshold
+of `0` binds every delegate at load, each method compiling at its first
+call on the thread that calls it.
+
+Cold processes, seconds, minimum of eight (of five for the eight passes),
+bundles that keep their bytecode:
+
+| | interpreter | regions, at 32 calls | regions, earned | continuation methods, at 32 calls | continuation methods, earned |
+|---|---:|---:|---:|---:|---:|
+| Blint over its own source | 2.09 | 2.58 | 2.37 | 3.16 | 2.47 |
+| the same, eight passes in one process | 8.79 | 7.43 | 6.91 | 10.27 | 7.06 |
+| `queens`, 3000 times | 2.15 | 1.10 | 1.07 | 1.11 | 1.19 |
+| `nreverse`, 30000 times | 2.24 | 0.87 | 0.90 | 0.88 | 0.88 |
+| `tak`, 10 times | 0.89 | 0.69 | 0.69 | 0.65 | 0.65 |
+
+A first calibration asked for 1000 calls and 40 per byte. It compiled about
+25 of Blint's 182 region methods and stopped there (101 are called 32 times
+or more), which is the tier turned off for most of a program: 7.19 s over
+the eight passes with regions and 8.55 s with continuation methods.
+
+Still open:
+
+- A predicate that waits is counted at every dispatch, about 60 ns: a
+  bundle whose predicates never earn their code runs up to 10% behind the
+  same program with no compiled code at all.
+- With `--strip-wam` there is no bytecode to run meanwhile: the delegates
+  compile on the engine's thread at their first call (Blint: 3.09 s with
+  continuation methods, 4.12 s with regions). A region method that hands
+  over to another with a `tail.` call compiles with full optimization at its
+  first call, whatever its size: the JIT gives no first tier to a method
+  with an explicit tail call. Replacing that call with an ordinary one
+  brings Blint to 3.41 s and was rejected: the transfers between methods
+  stop being jumps, and the stack that 64 hops then hold depends on the
+  frames (up to 15 KB each for an unoptimized region).
+- The cold method and the alternatives method are each the whole predicate
+  again, three fifths of the compile time between them (next section).
+
+### What a bundle's methods cost to compile
+
+Blint's bundle with every predicate's code taken at once (`PromoteOffers`),
+on one thread:
+
+| | methods | IL | JIT |
+|---|---:|---:|---:|
+| regions | 189 | 1.13 MB | 3.0 s |
+| continuation methods, and a method of its own per predicate | 1,752 | 4.40 MB | 12.0 s |
+| continuation methods, the cold method as the delegate | 1,455 | 4.06 MB | 9.6 s |
+
+By kind, in a traced run (the trace slows the JIT): the alternatives
+methods 3.4 s (200 methods, 1.05 MB), the cold methods 3.3 s (297, 1.07 MB),
+the entries 1.9 s (297, 0.91 MB), the continuations 1.1 s (656, 0.94 MB). A
+run that takes its code as it earns it pays for what it uses: over Blint's
+eight passes the worker compiled 237 generated methods in 1,504 ms before
+and 188 in 1,207 ms after, for 54 predicates; with regions, 56 methods in
+714 ms.
+
+The cold method is not only a slow path. Share of the engine thread's
+samples inside cold methods once everything is compiled (one process, the
+programs of What a promotion costs): `qsort` 23%, `flatten` 25%, `serialize`
+5%, `boyer` 5%, `queens` 4%, `zebra` 2%, none in `sendmore`, `crypt`,
+`nreverse` and `tak`; Blint 3%. A cut that discards a choice point leaves
+the hot method for the cold one (the intrinsic covers the cut with nothing
+to discard), and a self-recursive last call is a branch inside the method
+it runs in: `partition/4` stays in its cold method for the rest of the
+list. The delegates of code emitted at run time take another 6 to 9% of
+the samples.
+
+So the cold method has to run as fast as the hot ones for now. In a
+delegate's form (no register held, each operation its helper's call) its IL
+halves, 1.07 to 0.49 MB, and its JIT time drops by 13%: the JIT inlines the
+helpers, and its time follows the code it produces, not the IL. That was
+0.3 s of the bill above, and `qsort` ran 7% slower (0.285 to 0.307 s, three
+copies, three runs). Rejected until the cut that discards stays in the hot
+methods.
 
 ## Results
 
@@ -410,12 +535,14 @@ continuation methods / regions, minimum and median): `sendmore`
 - The methods of a collectible `AssemblyBuilder` are not tiered: without
   `AggressiveOptimization` they still compile with full optimization. The
   one choice per method is `NoOptimization`.
-- The alternatives method compiles at its first use
-  (`CpsLazyAlternatives`): in Blint 46 of the 101 are ever entered. Its
-  pointer is then the method's stub, one jump more per entry, which
-  measures nothing (`crypt` compiled at install and entered through the
-  stub: 0.99/1.01). `CpsCompileEveryMethod` compiles every method at
-  install, for the test that has the JIT check all the IL.
+- Every method of a predicate compiles on the worker before the engine
+  switches to it, the alternatives method and the cold method too, so that
+  nothing compiles on the engine's thread. Compiling those two at their
+  first use was the earlier shape (in Blint 46 of the 101 alternatives
+  methods are ever entered): it saved their JIT and put it on the engine's
+  thread. An alternatives method entered through its stub instead of its
+  native code, one jump more per entry, measured nothing (`crypt`:
+  0.99/1.01).
 - The JIT inlines engine methods with their dynamic PGO profile, and a
   method compiled later finds more of it: `crypt`'s meta-call alternatives
   method had 16 inlinees with profile data compiled at first use, 9 at
@@ -712,9 +839,10 @@ the runtime may not.
    Done in part: a bundle linked with `SHUMWAY_IL_CPS=1` carries each
    predicate's continuation methods beside its method, in the same
    assembly with its own copy of the tail-call stubs, and no regions (so no
-   dead-region prune). The loader binds them under the runtime functor ids,
-   each method compiled at its first call; transfers go through the same
-   tables as at run time, not yet direct calls. Their emission runs first
+   dead-region prune). The loader offers them under the runtime functor
+   ids, and the compile worker binds and compiles a predicate's methods when
+   it has earned them (When a bundle's code is taken); transfers go through
+   the same tables as at run time, not yet direct calls. Their emission runs first
    into a scratch type, since a method left half emitted would fail the
    whole assembly.
 5. Regions removed. The wasm tier mirrored with `return_call` and

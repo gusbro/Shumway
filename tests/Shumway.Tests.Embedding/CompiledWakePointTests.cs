@@ -25,13 +25,15 @@ public sealed class CompiledWakePointTests : IDisposable
     private readonly bool _savedCpsMode = IlPredicateCompiler.CpsMode;
     private readonly int _savedMaxBytes = IlPredicateCompiler.CpsMaxBytecodeBytes;
     private readonly bool _savedContinuations = IlPredicateCompiler.CpFreeGuardContinuations;
+    private readonly int _savedThreshold = IlPromotionStore.DefaultPersistedThreshold;
 
-    public CompiledWakePointTests() => IlPredicateCompiler.CpsCompileEveryMethod = true;
+    // A bundle's code waits for its predicate's first call (the suite binds at load).
+    public CompiledWakePointTests() => IlPromotionStore.DefaultPersistedThreshold = 1;
 
     public void Dispose()
     {
+        IlPromotionStore.DefaultPersistedThreshold = _savedThreshold;
         IlPredicateCompiler.CpFreeGuardContinuations = _savedContinuations;
-        IlPredicateCompiler.CpsCompileEveryMethod = false;
         IlPredicateCompiler.CpsMaxBytecodeBytes = _savedMaxBytes;
         IlPredicateCompiler.CpsMode = _savedCpsMode;
     }
@@ -235,6 +237,68 @@ public sealed class CompiledWakePointTests : IDisposable
             Assert.Equal(Answer(plain, g), Answer(tiered, g));
     }
 
+    // d/2: a dynamic predicate whose rule calls a builtin after a binding.
+    // e/2: the same in the first of two clauses. f/2: in a branch of an
+    // if-then-else. g/2: in a guard, which no snapshot compiles (it stays on
+    // Tier-0). A dynamic predicate's compiled form is a snapshot of its
+    // clauses (ADR-023), and its functor's bytecode is the live clause chain:
+    // a wake there has no bytecode to hand the activation to.
+    private const string DynamicCorpus = """
+        :- dynamic d/2, e/2, f/2, g/2.
+        d(X, L) :- X = a, atom_length(hello, L).
+        e(a, L) :- atom_length(hi, L).
+        e(_, 0).
+        f(X, Y) :- ( X = a -> atom_length(abc, Y) ; Y = 0 ), Y >= 0.
+        g(a, W) :- atom(W), !.
+        g(_, no).
+        v(X, Y) :- ( var(X) -> Y = v ; Y = X ).
+        """;
+
+    private static readonly string[] DynamicGoals =
+    {
+        "findall(A-L, (freeze(X, true), d(X, L), v(X, A)), R).",
+        "findall(A-L, (freeze(X, (L = 5 ; L = 6)), d(X, L), v(X, A)), R).",
+        "findall(A-L, (freeze(X, true), e(X, L), v(X, A)), R).",
+        "findall(A-L, (freeze(X, L = 0), e(X, L), v(X, A)), R).",
+        "findall(A-L, (freeze(X, true), f(X, L), v(X, A)), R).",
+        "findall(A-W, (freeze(X, W = yes), g(X, W), v(X, A)), R).",
+        "findall(A-W, (freeze(X, member(W, [1, yes])), g(X, W), v(X, A)), R).",
+    };
+
+    private static int DynamicFid(string n, int a) =>
+        FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ADynamicPredicatesSnapshotWakes_AsTheInterpreterDoes(bool continuationMethods, bool sharedCopies)
+    {
+        IlPredicateCompiler.CpsMode = continuationMethods;
+        IlPredicateCompiler.CpFreeGuardContinuations = sharedCopies;
+        PrologEngine Dynamic(int threshold)
+        {
+            var e = new PrologEngine();
+            e.UseCoroutining();
+            e.IlPromotion.Threshold = threshold;
+            e.ConsultString(DynamicCorpus);
+            return e;
+        }
+        var plain = Dynamic(0);
+        var tiered = Dynamic(1);
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (string g in DynamicGoals) tiered.Query(g);
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        }
+        // ANTI-VACUITY: the snapshot whose wake point is outside any guard runs compiled.
+        Assert.True(tiered.IlPromotion.IsPromoted(DynamicFid("d", 2)), "d/2 not promoted");
+
+        foreach (string g in DynamicGoals)
+            Assert.Equal(Answer(plain, g), Answer(tiered, g));
+    }
+
     private static readonly PredicateRef[] EntryPoints =
     {
         new("bl", 3), new("pg", 2), new("pl", 2), new("pa", 3), new("pq", 2), new("pr", 3),
@@ -274,19 +338,103 @@ public sealed class CompiledWakePointTests : IDisposable
         IlPredicateCompiler.CpsMode = false;
         var bundled = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
         bundled.UseCoroutining();
+        bundled.IlPromotion.PersistedCallsPerByte = 0;
+        var compiled = new[] { ("bl", 3), ("pg", 2), ("pl", 2), ("pq", 2), ("pr", 3), ("pr2", 2),
+                     ("pm", 2), ("pf", 2), ("pn", 2), ("ps", 2), ("pd", 2), ("tok", 2), ("pp", 3), ("top", 2) }
+            .Select(p => FunctorTable.Intern(AtomTable.Intern(p.Item1, permanent: true).Id, p.Item2)).ToArray();
+        // At load nothing is compiled: a predicate with bytecode runs on it
+        // until it is hot. Under --strip-wam a predicate a wake hands the
+        // activation to keeps its bytecode too; one without is bound.
+        foreach (int fid in compiled)
+        {
+            Assert.NotEqual(bundled.IlPromotion.HasOffer(fid), bundled.IlPromotion.IsPromoted(fid));
+            if (!stripWam) Assert.True(bundled.IlPromotion.HasOffer(fid), $"functor {fid} bound at load");
+            Assert.Null(bundled.IlPromotion.TryGetCps(fid));
+        }
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (string g in Goals) bundled.Query(g);
+            Assert.True(bundled.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        }
         // ANTI-VACUITY: the predicates run the bundle's code, which wakes, with
         // continuation methods when linked with them.
-        foreach (var (n, a) in new[] { ("bl", 3), ("pg", 2), ("pl", 2), ("pq", 2), ("pr", 3), ("pr2", 2),
-                     ("pm", 2), ("pf", 2), ("pn", 2), ("ps", 2), ("pd", 2), ("tok", 2), ("pp", 3), ("top", 2) })
+        foreach (int fid in compiled)
         {
-            int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
-            Assert.True(bundled.IlPromotion.IsPromoted(fid), $"{n}/{a} not bound");
-            Assert.False(bundled.IlPromotion.IsBound(fid), $"{n}/{a} bound without wake points");
+            Assert.True(bundled.IlPromotion.IsPromoted(fid), $"functor {fid} not promoted");
+            Assert.False(bundled.IlPromotion.IsBound(fid), $"functor {fid} bound without wake points");
             Assert.Equal(continuationMethods, bundled.IlPromotion.TryGetCps(fid) is not null);
         }
 
         foreach (string g in Goals)
             Assert.Equal(Answer(plain, g), Answer(bundled, g));
+    }
+
+    // The same from an executable's bundle, which bakes the prelude and the
+    // snapshots of the dynamic predicates it ships with clauses.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ABundlesDynamicPredicateWakes_AsTheInterpreterDoes(bool continuationMethods, bool stripWam)
+    {
+        IlPredicateCompiler.CpsMode = continuationMethods;
+        PrologEngine plain = new();
+        plain.UseCoroutining();
+        plain.ConsultString(DynamicCorpus);
+        byte[] bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(DynamicCorpus, "m", ShmoBuildMode.Release) },
+            EntryPoints = new PredicateRef[] { new("d", 2), new("e", 2), new("f", 2), new("g", 2), new("v", 2) },
+            StripSource = true,
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+            StripWam = stripWam,
+        }).Bytes!;
+        IlPredicateCompiler.CpsMode = false;
+        var bundled = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
+        bundled.UseCoroutining();
+        bundled.IlPromotion.PersistedCallsPerByte = 0;
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (string g in DynamicGoals) bundled.Query(g);
+            Assert.True(bundled.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        }
+        // ANTI-VACUITY: d/2 runs the snapshot the bundle carries compiled.
+        Assert.True(bundled.IlPromotion.IsPromoted(DynamicFid("d", 2)), "d/2 not promoted");
+
+        foreach (string g in DynamicGoals)
+            Assert.Equal(Answer(plain, g), Answer(bundled, g));
+    }
+
+    // A wake hands the activation to bytecode by functor: the compiled code of
+    // a bundle's module is the code of the bytecode that module ships. The
+    // baked prelude's helpers ($prelude$$disj_N) are numbered by the compile
+    // that made them.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ABakedPreludesCompiledCodeIsItsBytecodes(bool continuationMethods)
+    {
+        IlPredicateCompiler.CpsMode = continuationMethods;
+        var bundle = BundleReader.FromBytes(BundleBytes(stripWam: false, bakePrelude: true));
+        static (string, int) Indicator(int fid)
+        {
+            var (atom, arity) = FunctorTable.Lookup(fid);
+            return (AtomTable.GetById(atom)!.Name, arity);
+        }
+        int helpers = 0;
+        foreach (var entry in bundle.Entries)
+        {
+            if (entry.CompiledIlEntries is null) continue;
+            var shipped = CompiledModuleCodec.Decode(entry.CompiledBytecode!).Predicates
+                .Where(p => p.Bytecode.Length > 0).Select(p => Indicator(p.FunctorId)).ToHashSet();
+            var compiled = IlPersistedEntryCodec.Decode(entry.CompiledIlEntries);
+            helpers += compiled.Count(e => e.Name.StartsWith("$prelude$$", StringComparison.Ordinal));
+            Assert.Empty(compiled.Where(e => !shipped.Contains((e.Name, e.Arity)))
+                .Select(e => $"{entry.ModuleName}: {e.Name}/{e.Arity}"));
+        }
+        Assert.True(helpers > 50, $"only {helpers} prelude helpers compiled");
     }
 
     // Persisted IL runs in an assembly of its own, without the access checks
