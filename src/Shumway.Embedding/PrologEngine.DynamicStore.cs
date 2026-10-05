@@ -467,6 +467,26 @@ public sealed partial class PrologEngine
     /// the chainAddrs set) buy almost nothing.</summary>
     private const int ReclaimDeadThreshold = 4;
 
+    /// <summary>For a test: after each sweep, the chunks the chain's links
+    /// still pass through that hold no live clause, and the most seen. A
+    /// retired head stays where the trampoline points, so one is normal.</summary>
+    internal bool ChainAudit;
+    internal int ChainDeadLinkedMax;
+
+    private static int DeadChunksLinked(byte[] program, DynChainState chain, int failStub)
+    {
+        var live = new HashSet<int>();
+        for (var e = chain.FirstLive; e is not null; e = e.NextLive) live.Add(e.ChunkAddr);
+        int dead = 0, addr = chain.HeadClauseAddr;
+        for (int steps = 0; addr >= 0 && addr != failStub && steps < 1_000_000; steps++)
+        {
+            if (!IsChainInstructionAt(program, addr)) break;
+            if (!live.Contains(addr)) dead++;
+            addr = Shumway.Core.BytecodeIO.ReadInt32(program, addr + 1);
+        }
+        return dead;
+    }
+
     /// <summary>number of times the automatic dead-chain
     /// reclamation actually fired across this engine's lifetime.
     /// Deterministic diagnostic for tests; the re-thread itself lives in
@@ -832,16 +852,19 @@ public sealed partial class PrologEngine
         // that slot, and a bypass replayed earlier in this same loop did
         // too. O(retirements since the last sweep), where the full pass was
         // O(live) to fix a handful.
-        foreach (var (prevAddr, entry) in chain.PendingBypass)
+        foreach (var (prevAddr, nextAddr) in chain.PendingBypass)
         {
-            if (prevAddr <= 0 || entry.NextOperandAddr <= 0) continue;
+            if (prevAddr <= 0 || nextAddr <= 0) continue;
             if (prevAddr + sizeof(int) > program.Length
-                || entry.NextOperandAddr + sizeof(int) > program.Length) continue;
+                || nextAddr + sizeof(int) > program.Length) continue;
             Shumway.Core.BytecodeIO.WriteInt32(program, prevAddr,
-                Shumway.Core.BytecodeIO.ReadInt32(program, entry.NextOperandAddr));
+                Shumway.Core.BytecodeIO.ReadInt32(program, nextAddr));
         }
         ChainRethreadLinks += chain.PendingBypass.Count;
         chain.PendingBypass.Clear();
+        if (ChainAudit)
+            ChainDeadLinkedMax = Math.Max(ChainDeadLinkedMax,
+                DeadChunksLinked(program, chain, engine.DynamicFailStubAddr));
         // The bytecode tail is now the live tail; appends patch through this.
         if (chain.LastLive is { } lastLive && lastLive.NextOperandAddr > 0)
             chain.TailNextAddr = lastLive.NextOperandAddr;
@@ -2817,7 +2840,7 @@ public sealed partial class PrologEngine
             died: chunkAddr + DiedOperandLocal,
             next: chunkAddr + NextOperandLocal,
             chunkAddr: chunkAddr,
-            chunkLength: chunk.Length));
+            chunkLength: chunk.Length), oldHead);
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;

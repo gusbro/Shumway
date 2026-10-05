@@ -1625,14 +1625,15 @@ internal sealed class DynChainState
     // live choice point may still resume into it), so each retirement records
     // the one link that will need re-making: the address of the nearest live
     // predecessor's <next> operand, captured while the live list still knows
-    // it. The sweep replays the records in retirement order, reading each
-    // retired entry's own <next> slot for the continuation -- reading it at
-    // replay time is what keeps a chunk appended after the retirement
-    // connected, because the append patched exactly that slot.
+    // it, and the address of the retired chunk's own. The sweep replays the
+    // records in order, reading the retired chunk's <next> slot for the
+    // continuation -- reading it at replay time is what keeps a chunk
+    // appended after the retirement connected, because the append patched
+    // exactly that slot.
     public DynChainEntry? FirstLive, LastLive;
     public int LiveCount;
     public int RetiredCount;
-    public readonly List<(int PrevAddr, DynChainEntry Entry)> PendingBypass = new();
+    public readonly List<(int PrevAddr, int NextAddr)> PendingBypass = new();
 
     /// <summary>The single live entry holding a clause, or nothing while the
     /// clause has none or has ever had more than one -- the walk decides
@@ -1671,7 +1672,7 @@ internal sealed class DynChainState
         }
         int prevAddr = e.PrevLive is { } pl ? pl.NextOperandAddr
             : HeadClauseAddr >= 0 ? HeadClauseAddr + 1 : -1;
-        PendingBypass.Add((prevAddr, e));
+        PendingBypass.Add((prevAddr, e.NextOperandAddr));
         if (e.PrevLive is { } pv) pv.NextLive = e.NextLive; else FirstLive = e.NextLive;
         if (e.NextLive is { } nx) nx.PrevLive = e.PrevLive; else LastLive = e.PrevLive;
         e.PrevLive = e.NextLive = null;
@@ -1740,9 +1741,22 @@ internal sealed class DynChainState
     }
 
     /// <summary>Prepending shifts every position up by one, and patches the
-    /// head link itself.</summary>
-    public void PrependEntry(DynChainEntry e)
+    /// head link itself. <paramref name="oldHeadAddr"/>: the chunk the chain
+    /// started at, which now follows this one; -1 for none.</summary>
+    public void PrependEntry(DynChainEntry e, int oldHeadAddr)
     {
+        // A head that holds no live clause (the empty stub, or a retired
+        // entry: a head retires in place, its record bypasses nothing) is
+        // now behind this entry, where every dispatch would walk it. The
+        // record goes after the pending ones, which settle its <next> first.
+        // Without it a stack kept with asserta and retract grows the chain
+        // by a dead clause per pop. A first live entry with no address
+        // known counts as the head: linking past a live clause loses it.
+        bool oldHeadLive = FirstLive is { } first
+            && (first.ChunkAddr == oldHeadAddr || first.NextOperandAddr - 1 == oldHeadAddr
+                || (first.ChunkAddr < 0 && first.NextOperandAddr <= 0));
+        if (oldHeadAddr >= 0 && !oldHeadLive && e.NextOperandAddr > 0)
+            PendingBypass.Add((e.NextOperandAddr, oldHeadAddr + 1));
         Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
         if (e.ChunkAddr < 0) SourceBlockEntries++;
         if (!_byClause.TryAdd(e.Clause, e)) _byClause[e.Clause] = null;
@@ -1753,13 +1767,6 @@ internal sealed class DynChainState
         // The new entry is at 0, so "the first N are verified" no longer
         // describes anything; re-verify from scratch.
         VerifiedCount = 0;
-        // The prepend takes over the head's <next> slot: a pending bypass
-        // anchored there would clobber it at replay, so those records move
-        // to the slot that now feeds what the head used to -- this entry's.
-        if (HeadClauseAddr >= 0 && e.NextOperandAddr > 0)
-            for (int i = 0; i < PendingBypass.Count; i++)
-                if (PendingBypass[i].PrevAddr == HeadClauseAddr + 1)
-                    PendingBypass[i] = (e.NextOperandAddr, PendingBypass[i].Entry);
     }
 
     public void ClearEntries()
