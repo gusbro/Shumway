@@ -402,7 +402,13 @@ internal sealed class DynamicCodePatcher
             // clause's body (they match every concrete key) plus the
             // new clause's body, then add (new_key → new_chain_head)
             // to the sub-switch table.
-            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId);
+            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId, newClause, prepended: false);
+            if (varArgBodies is null)
+            {
+                E.InvalidatePersistent();
+                E.RebuildEngineFidChainView(engine, functorId);
+                return true;   // the rebuild took the store, the new clause included
+            }
             int newBucketHead = BuildAndAppendNewBucketChain(
                 engine, failStub, headArity: headComp.Args.Length,
                 varArgBodies, bodyAddr);
@@ -517,41 +523,47 @@ internal sealed class DynamicCodePatcher
         return false;
     }
 
-    /// <summary>walks the var-fallthrough chain and
-    /// returns the body addresses of clauses whose arg-0 is var
-    /// (so they'd be merged into every concrete bucket chain). The
-    /// var chain enumerates clauses in source order, so its Nth
-    /// entry's <c>execute &lt;body&gt;</c> target is the body of
-    /// <c>E._dynStore[functorId][N]</c>; the dynamic-store
-    /// clause carries the original arg-0 classification.</summary>
-    private List<int> CollectVarArgBodies(Activation engine, int varChainHead, int functorId)
+    /// <summary>The bodies of the clauses whose first argument is a
+    /// variable, in order: each goes into the chain of a key first seen now.
+    /// The live entries of the chain of all clauses are the store's clauses
+    /// in order, the new one apart: it is in the store already, last after an
+    /// assertz and first after an asserta, and has no entry yet. A retracted
+    /// clause's entry stays linked until the sweep and stands for no stored
+    /// clause. Null when the two do not line up: the caller rebuilds the
+    /// predicate from the store.</summary>
+    private List<int>? CollectVarArgBodies(Activation engine, int varChainHead, int functorId,
+        Shumway.Compiler.Ast.Clause newClause, bool prepended)
     {
         var result = new List<int>();
-        if (!E._dynStore.TryGetClauses(functorId, out var clauses))
-            return result;
+        if (!E._dynStore.TryGetClauses(functorId, out var clauses) || clauses.Count == 0)
+            return null;
+        if (!ReferenceEquals(clauses[prepended ? 0 : clauses.Count - 1], newClause)) return null;
         var prog = engine.CurrentProgram!;
         int failStub = engine.DynamicFailStubAddr;
         int cur = varChainHead;
-        int idx = 0;
+        int idx = prepended ? 1 : 0, end = prepended ? clauses.Count : clauses.Count - 1;
         // Cycle guard — same bound as WalkChainToTailNextOperand: a
         // corrupted <next> cycle must terminate the walk, not hang it.
         int stepsLeft = prog.Length / 5 + 1;
         while (true)
         {
-            if (cur < 0 || cur + 27 > prog.Length || --stepsLeft < 0) break;
+            if (cur < 0 || cur + 27 > prog.Length || --stepsLeft < 0) return null;
             int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
             int execOpPos = cur + chainHeaderSize + 17;
-            if (execOpPos + 5 > prog.Length) break;
-            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
-            int bodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
-            if (idx < clauses.Count - 1 && IsVarArgAt0(clauses[idx]))
-                result.Add(bodyAddr);
-            idx++;
+            if (execOpPos + 5 > prog.Length) return null;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) return null;
+            if (Shumway.Core.BytecodeIO.ReadInt64(prog, cur + chainHeaderSize + 9) == long.MaxValue)
+            {
+                if (idx >= end) return null;
+                if (IsVarArgAt0(clauses[idx]))
+                    result.Add(Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1));
+                idx++;
+            }
             int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
             if (next == failStub) break;
             cur = next;
         }
-        return result;
+        return idx == end ? result : null;
     }
 
     private static bool IsVarArgAt0(Shumway.Compiler.Ast.Clause c)
@@ -797,7 +809,13 @@ internal sealed class DynamicCodePatcher
         // No demotion needed for the new bucket.
         if (isNewKey)
         {
-            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId);
+            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId, newClause, prepended: true);
+            if (varArgBodies is null)
+            {
+                E.InvalidatePersistent();
+                E.RebuildEngineFidChainView(engine, functorId);
+                return true;   // the rebuild took the store, the new clause included
+            }
             // Asserta-flavoured layout: new body first, var-args after.
             int newBucketHead = BuildAndAppendBucketChainAsserta(
                 engine, failStub, arity, bodyAddr, varArgBodies);
@@ -1117,6 +1135,144 @@ internal sealed class DynamicCodePatcher
             }
         }
         return anyPatched;
+    }
+
+    // A retract kills the clause's entry in each chain that holds it and
+    // unlinks none: every later call walks the dead entries of its key. Once
+    // they are as many as the live clauses they are unlinked, so that a
+    // predicate drained and filled again inside one query does not grow its
+    // chains by a generation each time. The sweep costs a walk of every
+    // chain; at that count the retracts that caused it pay for it.
+    private const int IndexedSweepThreshold = 4;
+
+    /// <summary>Retracts from a predicate in the indexed layout, and the
+    /// sweeps that unlinked entries.</summary>
+    internal long IndexedRetracts, IndexedSweeps;
+
+    /// <summary>After a retract killed a clause's entries in the indexed layout.</summary>
+    internal void NoteIndexedRetract(Activation engine, int functorId)
+    {
+        if (GetChainTable(engine) is not { } table
+            || !table.Chains.TryGetValue(functorId, out var chain)) return;
+        IndexedRetracts++;
+        int dead = ++chain.IndexedDead;
+        if (dead < IndexedSweepThreshold || dead < chain.IndexedSweepAt) return;
+        int live = E._dynStore.HasClauses(functorId)
+            ? E._dynStore.PhysicalClauses(functorId).Count - E._dynStore.TombstoneCount(functorId) : 0;
+        if (dead < live) return;
+        if (SweepIndexedDead(engine, functorId, chain))
+        {
+            chain.IndexedDead = 0;
+            chain.IndexedSweepAt = 0;
+        }
+        // A goal is still walking the predicate: not again until a quarter more.
+        else chain.IndexedSweepAt = dead + Math.Max(IndexedSweepThreshold, dead / 4);
+    }
+
+    /// <summary>Unlinks the dead entries of every chain of an indexed
+    /// predicate, each chain's head apart (the switch points at it). Their
+    /// bytes stay, and so do their own links: the sweep does not run while a
+    /// choice point of an activation on this buffer resumes at one of the
+    /// predicate's entries, since that goal may have to see a clause retracted
+    /// after it began (the logical update view). False when it did not run.</summary>
+    private bool SweepIndexedDead(Activation engine, int functorId, DynChainState chain)
+    {
+        if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
+        var prog = engine.CurrentProgram!;
+        int failStub = engine.DynamicFailStubAddr;
+        if (failStub <= 0) return false;
+        var heads = new HashSet<int>();
+        EnumerateChainHeadsRecursive(
+            engine, engine.CurrentFunctorAddresses![functorId] + 1, heads, new HashSet<int>());
+
+        // Every chain is read whole before anything is written.
+        var entries = new HashSet<int>();
+        var links = new List<(int NextOperand, int Target)>();
+        foreach (int head in heads)
+        {
+            int cur = head, keptNext = -1;
+            int stepsLeft = prog.Length / 5 + 1;
+            while (cur != failStub)
+            {
+                if (cur <= 0 || cur + 27 > prog.Length || --stepsLeft < 0) return false;
+                int header = ChainEntryHeaderSize(prog, cur);
+                if (cur + header + 22 > prog.Length
+                    || prog[cur + header] != (byte)Shumway.Core.Opcode.CheckVisible
+                    || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return false;
+                entries.Add(cur);
+                bool dead = Shumway.Core.BytecodeIO.ReadInt64(prog, cur + header + 9) != long.MaxValue;
+                if (keptNext < 0 || !dead)
+                {
+                    if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != cur)
+                        links.Add((keptNext, cur));
+                    keptNext = cur + 1;
+                }
+                cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            }
+            if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != failStub)
+                links.Add((keptNext, failStub));
+        }
+        if (links.Count == 0) return true;
+        if (AnyChoicePointResumesAt(engine, entries)) return false;
+
+        foreach (var (nextOperand, target) in links)
+            Shumway.Core.BytecodeIO.WriteInt32(prog, nextOperand, target);
+        // The table's tail may be an entry no chain links any more: an
+        // append that falls back to it rebuilds the predicate instead.
+        chain.TailNextAddr = -1;
+        IndexedSweeps++;
+        return true;
+    }
+
+    // A goal still enumerating a predicate has a choice point whose
+    // alternative is one of its chain entries. The activations that share
+    // this buffer count as much as the running one.
+    private bool AnyChoicePointResumesAt(Activation engine, HashSet<int> addresses)
+    {
+        static bool Resumes(Activation a, HashSet<int> at)
+        {
+            foreach (var (_, savedBp, _) in a.EnumerateChoicePoints())
+                if (at.Contains(savedBp)) return true;
+            return false;
+        }
+        if (Resumes(engine, addresses)) return true;
+        if (OthersOnBuffer(engine) is { } others)
+            foreach (var other in others)
+                if (Resumes(other, addresses)) return true;
+        return false;
+    }
+
+    /// <summary>The other open activations that run on
+    /// <paramref name="engine"/>'s buffer: a query nested in another starts
+    /// on the buffer the suspended one is on. Null for none, the ordinary
+    /// case. A goal of theirs may be walking a chain the running activation
+    /// is about to relink.</summary>
+    internal List<Activation>? OthersOnBuffer(Activation engine)
+    {
+        List<Activation>? result = null;
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+            if (_liveEngines[i].TryGetTarget(out var other) && !ReferenceEquals(other, engine)
+                && ReferenceEquals(other.CurrentProgram, engine.CurrentProgram))
+                (result ??= new List<Activation>()).Add(other);
+        return result;
+    }
+
+    /// <summary>For a test: the dead entries the chain of all clauses of an
+    /// indexed predicate still links, its head apart; -1 for another layout.</summary>
+    internal int IndexedDeadLinked(Activation engine, int functorId)
+    {
+        if (!IsExtensibleIndexedLayout(engine, functorId)) return -1;
+        var prog = engine.CurrentProgram!;
+        int failStub = engine.DynamicFailStubAddr;
+        int head = FindFinalVarChainHead(engine, engine.CurrentFunctorAddresses![functorId]);
+        if (head < 0) return -1;
+        int dead = 0, stepsLeft = prog.Length / 5 + 1;
+        for (int cur = Shumway.Core.BytecodeIO.ReadInt32(prog, head + 1);
+             cur != failStub && cur > 0 && cur + 27 <= prog.Length && --stepsLeft >= 0;
+             cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1))
+            if (Shumway.Core.BytecodeIO.ReadInt64(prog, cur + ChainEntryHeaderSize(prog, cur) + 9) != long.MaxValue)
+                dead++;
+        return dead;
     }
 
     /// <summary>writes <paramref name="newTable"/> into
@@ -1606,6 +1762,11 @@ internal sealed class DynChainState
     // retracts -- invisible under 32,000 clauses and 64% of a 128,000-clause
     // drain. It is a count.
     public int SourceBlockEntries;
+
+    // The indexed layout: retracts since its dead entries were last
+    // unlinked, and the count the next sweep waits for after one a goal in
+    // flight blocked (DynamicCodePatcher.NoteIndexedRetract).
+    public int IndexedDead, IndexedSweepAt;
 
     public void WidenBounds(int addr)
     {

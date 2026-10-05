@@ -444,7 +444,13 @@ public sealed partial class PrologEngine
             }
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
+        {
+            ChainPatcher.NoteIndexedRetract(engine, functorId);
+            if (ChainAudit)
+                IndexedDeadLinkedMax = Math.Max(IndexedDeadLinkedMax,
+                    ChainPatcher.IndexedDeadLinked(engine, functorId));
             return true;
+        }
         // Fallback: hot indexed predicate that we couldn't retract in
         // place → rebuild via persistent invalidation.
         if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
@@ -472,6 +478,10 @@ public sealed partial class PrologEngine
     /// retired head stays where the trampoline points, so one is normal.</summary>
     internal bool ChainAudit;
     internal int ChainDeadLinkedMax;
+
+    /// <summary>For a test: after each retract from an indexed predicate, the
+    /// dead entries its chain of all clauses still links, and the most seen.</summary>
+    internal int IndexedDeadLinkedMax;
 
     private static int DeadChunksLinked(byte[] program, DynChainState chain, int failStub)
     {
@@ -528,6 +538,22 @@ public sealed partial class PrologEngine
         return set;
     }
 
+    private bool ChoicePointInChain(Activation activation, DynChainState chain,
+        int lo, int hi, ref HashSet<int>? chainAddrs)
+    {
+        foreach (var (_, savedBp, _) in activation.EnumerateChoicePoints())
+        {
+            if (savedBp < lo || savedBp > hi) continue;
+            if (chainAddrs is null)
+            {
+                ChainAddressSetsBuilt++;
+                chainAddrs = BuildChainAddressSet(chain);
+            }
+            if (chainAddrs.Contains(savedBp)) return true;
+        }
+        return false;
+    }
+
     private void TryReclaimDeadDynamicChain(Activation engine, int functorId)
     {
         if (engine.CurrentProgram is null) return;
@@ -560,16 +586,12 @@ public sealed partial class PrologEngine
         if (chain.HeadClauseAddr < lo) lo = chain.HeadClauseAddr;
         if (chain.HeadClauseAddr > hi) hi = chain.HeadClauseAddr;
         HashSet<int>? chainAddrs = null;
-        foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
-        {
-            if (savedBp < lo || savedBp > hi) continue;
-            if (chainAddrs is null)
-            {
-                ChainAddressSetsBuilt++;
-                chainAddrs = BuildChainAddressSet(chain);
-            }
-            if (chainAddrs.Contains(savedBp)) return;
-        }
+        if (ChoicePointInChain(engine, chain, lo, hi, ref chainAddrs)) return;
+        // The goal walking the chain may be a suspended activation's: a
+        // query nested in another runs on the same buffer.
+        if (ChainPatcher.OthersOnBuffer(engine) is { } others)
+            foreach (var other in others)
+                if (ChoicePointInChain(other, chain, lo, hi, ref chainAddrs)) return;
         ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
@@ -2491,6 +2513,18 @@ public sealed partial class PrologEngine
         // — no rebuild needed. Returns true if handled here.
         if (TryAppendToIndexedDynamic(engine, functorId, newClause))
             return;
+        // An indexed predicate that cannot take the clause in place (a key
+        // of a kind it has no switch for) is rebuilt from the store. The
+        // chain extension below is not for it: the table's tail is one
+        // chain's as it stood at setup, so a patch there unlinks what was
+        // appended since, and the chunk it links has its body inline, which
+        // the indexed layout's retract does not find.
+        if (IsExtensibleIndexedLayout(engine, functorId))
+        {
+            if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+            RebuildEngineFidChainView(engine, functorId);
+            return;
+        }
         // Fall back to the chain layout or, for cases
         // can't yet handle (new key, var-arg, multi-arg
         // indexed), to the persistent-buffer rebuild.

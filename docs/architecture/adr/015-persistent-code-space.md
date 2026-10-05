@@ -302,6 +302,67 @@ fits, or to compact the region when no baked address is outstanding.
 Compaction is not free to schedule: it moves addresses by definition, so
 it may only run where the engine can prove nothing holds one.
 
+## Addendum: unlinking dead entries
+
+A retracted clause's entry stays in its chain with `died` set, and every
+call that reaches it pays a `check_visible` that fails. Left alone they
+accumulate: a predicate emptied and filled again holds every generation it
+ever had. So they are unlinked: the `<next>` of the entry before them is
+pointed past them. Their bytes and their own `<next>` stay, since a choice
+point may resume there.
+
+**When.** A sweep of a predicate does not run while a choice point resumes
+at one of its chain entries. That goal began before the retracts and has to
+see the clauses they removed (section 3): its own next entry is intact
+either way, but a live entry further on would send it past the dead ones
+that follow. The choice points are those of every open activation on the
+buffer, not only the one that retracts: a query nested in another (a
+foreign predicate that runs a query, a consult) starts on the buffer the
+suspended one is on.
+
+**The two layouts.**
+
+- A plain chain records one link to re-make per retirement and replays
+  them (`GarbageCollectClauses`), from four dead entries on.
+- The indexed layout has a chain per key and one of all clauses, and a
+  retract kills the clause's entry in each. They are unlinked in one walk
+  of every chain (`DynamicCodePatcher.SweepIndexedDead`) once the retracts
+  since the last sweep are as many as the live clauses: at that count they
+  pay for the walk. Each chain's head stays, since the switch points at
+  it. Before this the indexed layout was never swept.
+
+Blint linting itself, interpreter only, dead entries walked:
+
+| | before | after |
+|---|---:|---:|
+| the first query, one pass | 219,310 | 219,310 |
+| each later query, one pass | 577,892 | 234,143 |
+| a later query of three passes | 2,939,494 | 717,472 |
+
+In the first query every predicate starts empty and grows as a plain
+chain. A later one starts with the hot ones indexed (`pred_used_i/2`, 1,044
+clauses), empties them and fills them again: each call then walked the
+1,044 dead entries, and in a query of several passes 1,044 more per pass.
+
+**What the indexed layout takes in place.** Two paths gave wrong answers
+and were fixed with the sweep:
+
+- The chain of a key first seen gets the clauses whose first argument is a
+  variable. They are found by walking the chain of all clauses beside the
+  store's list, and the walk counted dead entries as clauses: after a
+  retract it took the wrong bodies, and after an `asserta`, whose clause is
+  already first in the store, it was off by one. It now pairs the live
+  entries with the stored clauses, the new one apart, and rebuilds the
+  predicate from the store when the two do not line up.
+- A clause the layout cannot take (a key of a kind it has no switch for,
+  such as an integer among atoms) fell back to the plain chain's extension,
+  which patches the tail the table recorded at setup. That unlinked the
+  entries appended since, and it linked a chunk with its body inline, which
+  the indexed retract does not find: the clause stayed visible after its
+  retract. The predicate is now rebuilt as a plain chain from the store
+  (`RebuildEngineFidChainView`), and compiled indexed again at the next
+  query's setup.
+
 ## Consequences
 
 - Per-query overhead drops from O(program) to O(query goal).

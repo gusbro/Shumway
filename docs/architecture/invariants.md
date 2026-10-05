@@ -120,6 +120,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   generations checked per clause (`check_visible`). Mid-query
   `assertz`/`retract` is visible to LATER goals of the same query, never to
   the in-flight call. (ADR-015.)
+- **A dead chain entry is unlinked only while no goal is walking its
+  predicate**: no choice point of any open activation on the buffer resumes
+  at one of the predicate's entries. A goal that began before a retract sees
+  the clause until it ends, and a query nested in another shares its
+  buffer. (ADR-015, addendum on unlinking dead entries.)
 
 ## Compilation tiers
 
