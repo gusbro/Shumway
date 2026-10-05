@@ -111,6 +111,13 @@
 % comparison. Removing the Prolog clauses lets the module-local calls
 % fall through to the builtins.
 
+% ===== the integers of this library =====
+% -576460752303423488 to 576460752303423487, what a domain can hold. One
+% past that range in a constraint or a domain is refused where it is read
+% (representation_error): accepted, `X #\= 10^30` would hold of every
+% value X can take and leave an answer that no longer says it.
+clpfd_fits_bound(B) :- ( integer(B) -> '$fd_fits'(B) ; true ).
+
 % truncating (toward zero) division of a bound by a positive K.
 clpfd_btruncdiv(C, K, R) :-
     ( C == inf -> R = inf
@@ -284,7 +291,8 @@ clpfd_first_var([_|R], V) :- clpfd_first_var(R, V).
 % `A in 6..9.`, no `5 #< A, A #< 10` residue).
 clpfd_prop_to_goal('$fd_lt'(X, Y),    (X #< Y))   :- var(X), var(Y).
 clpfd_prop_to_goal('$fd_le'(X, Y),    (X #=< Y))  :- var(X), var(Y).
-clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :- var(X), var(Y).
+clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
+    ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
 clpfd_prop_to_goal('$fd_times'(A,B,C),(A * B #= C)).
 clpfd_prop_to_goal('$fd_min'(A,B,C),  (min(A,B) #= C)).
@@ -297,9 +305,25 @@ clpfd_prop_to_goal('$fd_alldiff_view'(Vs), all_different(Vs)).
 % coefficient vector it is stored as. With fewer than two variables left
 % the domains already say everything it does.
 clpfd_prop_to_goal('$fd_neq_lin'(Cs, Vs, K), G) :-
-    clpfd_two_free(Vs), clpfd_lin_goal(Cs, Vs, K, (#\=), G).
+    ( clpfd_two_free(Vs) -> true ; clpfd_neq_lin_open(Cs, Vs, K) ),
+    clpfd_lin_goal(Cs, Vs, K, (#\=), G).
 clpfd_prop_to_goal('$fd_linear'(Cs, Vs, Rel, K), G) :-
     clpfd_two_free(Vs), clpfd_rel_op(Rel, Op), clpfd_lin_goal(Cs, Vs, K, Op, G).
+
+% A disequality against an integer is said by the domain, the integer
+% being out of it, except for the least and the greatest integer of the
+% library on a side with no bound: those stay in (nothing can bound what
+% is left past them) and the answer has to say the disequality itself.
+clpfd_still_in(K, V) :-
+    integer(K), var(V),
+    K >= -576460752303423488, K =< 576460752303423487,
+    clpfd_dom_of(V, D), clpfd_in_dom(K, D).
+
+clpfd_neq_lin_open(Cs, Vs, RHS) :-
+    clpfd_neq_lin_scan(Cs, Vs, 0, Sum, none, Free),
+    nonvar(Free), Free = one(C, V),
+    Diff is RHS - Sum, Val is Diff // C, C * Val =:= Diff,
+    clpfd_still_in(Val, V).
 
 clpfd_rel_op(=,  (#=)).
 clpfd_rel_op(=<, (#=<)).
@@ -360,6 +384,7 @@ clpfd_term_expr(C-V, C*V).
     ( var(Spec) -> throw(error(instantiation_error, (in)/2)) ; true ),
     ( integer(Spec) -> X #= Spec
     ; Spec = L..H ->
+        clpfd_fits_bound(L), clpfd_fits_bound(H),
         clpfd_makevar(X),
         clpfd_dom_of(X, D),
         clpfd_iv(L, H, IV),
@@ -373,7 +398,7 @@ clpfd_ins_([], _).
 clpfd_ins_([X|Xs], Spec) :- 'in'(X, Spec), clpfd_ins_(Xs, Spec).
 
 % ===== arithmetic expressions reduced to an FD term =====
-clpfd_expr(E, E) :- integer(E), !.
+clpfd_expr(E, E) :- integer(E), !, '$fd_fits'(E).
 clpfd_expr(E, V) :- var(E), !, clpfd_makevar(E), V = E.
 clpfd_expr(A + B, V) :- !,
     clpfd_expr(A, VA), clpfd_expr(B, VB),
@@ -457,15 +482,15 @@ clpfd_pow(VA, N, V) :- N > 1, N1 is N - 1,
 % clpfd_lin(Expr, K, T0, T, C0, C): accumulate K*Expr into the term list
 % (a [Coeff-Var] per variable occurrence) and the running constant.
 % Fails on any non-linear sub-term so the caller can fall back.
-clpfd_lin(E, K, T0, T, C0, C) :- integer(E), !, C is C0 + K * E, T = T0.
+clpfd_lin(E, K, T0, T, C0, C) :- integer(E), !, '$fd_fits'(E), C is C0 + K * E, T = T0.
 clpfd_lin(E, K, T0, T, C0, C) :- var(E), !, T = [K-E | T0], C = C0.
 clpfd_lin(A + B, K, T0, T, C0, C) :- !,
     clpfd_lin(A, K, T0, T1, C0, C1), clpfd_lin(B, K, T1, T, C1, C).
 clpfd_lin(A - B, K, T0, T, C0, C) :- !,
     clpfd_lin(A, K, T0, T1, C0, C1), K1 is -K, clpfd_lin(B, K1, T1, T, C1, C).
 clpfd_lin(- A, K, T0, T, C0, C) :- !, K1 is -K, clpfd_lin(A, K1, T0, T, C0, C).
-clpfd_lin(A * B, K, T0, T, C0, C) :- integer(A), !, K1 is K * A, clpfd_lin(B, K1, T0, T, C0, C).
-clpfd_lin(A * B, K, T0, T, C0, C) :- integer(B), !, K1 is K * B, clpfd_lin(A, K1, T0, T, C0, C).
+clpfd_lin(A * B, K, T0, T, C0, C) :- integer(A), !, '$fd_fits'(A), K1 is K * A, clpfd_lin(B, K1, T0, T, C0, C).
+clpfd_lin(A * B, K, T0, T, C0, C) :- integer(B), !, '$fd_fits'(B), K1 is K * B, clpfd_lin(A, K1, T0, T, C0, C).
 
 clpfd_norm(L, R, Terms, Const) :-
     clpfd_lin(L, 1, [], T1, 0, C1),

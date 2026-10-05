@@ -302,6 +302,22 @@ on the same variable are not supported. From Prolog source, the same
 libraries load with `:- use_module(library(clpfd))` /
 `library(clpr)` / `library(coroutining))`.
 
+The integers of `clpfd` are those from -576460752303423488 to
+576460752303423487, and `inf` and `sup` stand for a side with no bound. An
+integer outside that range in a constraint or a domain raises
+`representation_error(max_clpfd_integer)` or
+`representation_error(min_clpfd_integer)`, and so does a constraint whose
+solutions all lie outside it. A bound that a propagation computes outside
+the range leaves its side of the domain open:
+
+```prolog
+?- X #= 576460752303423487 + 1.
+% error: representation_error(max_clpfd_integer)
+
+?- X in 1..1000000000, Y in 1..1000000000000, Z #= X * Y.
+Z in 1..sup, ...
+```
+
 The coroutining library provides `freeze/2` (delay a goal until a
 variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 `nonvar/1`, `ground/1`, `?=/2`, and their `(,)`/`(;)` combinations), and

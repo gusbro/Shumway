@@ -1,4 +1,5 @@
 using System;
+using Shumway.Core;
 
 namespace Shumway.Builtins;
 
@@ -120,7 +121,11 @@ public sealed class ClpfdDomain
         return Make(w, n);
     }
 
-    /// <summary>Remove the single value V (splitting an interval if interior).</summary>
+    /// <summary>Remove the single value V (splitting an interval if interior).
+    /// The least and the greatest inline integer stay in an interval that is
+    /// unbounded on their side: what would be left there starts one past
+    /// them, which no bound can say, and a domain may hold more than the
+    /// constraints allow but never less.</summary>
     public ClpfdDomain Without(long v)
     {
         if (!Contains(v)) return this;
@@ -130,6 +135,7 @@ public sealed class ClpfdDomain
         {
             long lo = _iv[i], hi = _iv[i + 1];
             if (v < lo || v > hi) { w[n++] = lo; w[n++] = hi; continue; }
+            if ((v == Cell.MinInt60 && lo == Inf) || (v == Cell.MaxInt60 && hi == Sup)) return this;
             if (lo < v) { w[n++] = lo; w[n++] = v - 1; }   // safe: lo<v so v-1≥lo, no underflow at inf
             if (v < hi) { w[n++] = v + 1; w[n++] = hi; }   // safe: v<hi so v+1≤hi, no overflow at sup
         }
@@ -176,8 +182,16 @@ public sealed class ClpfdDomain
         return Make(w, n);
     }
 
-    /// <summary>This domain with the finite integer interval [lo, hi] removed.</summary>
-    public ClpfdDomain RemoveInterval(long lo, long hi) => Above(lo - 1).Union(Below(hi + 1));
+    /// <summary>This domain with the finite integer interval [lo, hi] removed.
+    /// At an end of the inline range the part left on an unbounded side keeps
+    /// the end value, for <see cref="Without"/>'s reason.</summary>
+    public ClpfdDomain RemoveInterval(long lo, long hi)
+    {
+        if (IsEmpty) return this;
+        ClpfdDomain left = lo != Cell.MinInt60 ? Above(lo - 1) : Min == Inf ? Above(lo) : Empty;
+        ClpfdDomain right = hi != Cell.MaxInt60 ? Below(hi + 1) : Max == Sup ? Below(hi) : Empty;
+        return left.Union(right);
+    }
 
     /// <summary>True when every value lies in [lo, hi] (the domain is a subset).</summary>
     public bool Within(long lo, long hi) => !IsEmpty && Min >= lo && Max <= hi;

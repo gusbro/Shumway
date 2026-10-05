@@ -9,12 +9,29 @@ namespace Shumway.Builtins;
 /// interval walking (the dominant cost of finite-domain solving) out of
 /// interpreted Prolog. Bounds (min/max/cut points) round-trip as integers or
 /// the atoms <c>inf</c>/<c>sup</c>; values are integers.
+///
+/// <para>A domain holds inline integers; a side that ends in <c>inf</c> or
+/// <c>sup</c> is unbounded, and stands for the integers past the inline
+/// range too. A bound or a value past the range (bound arithmetic is exact)
+/// cuts nothing on its own side and everything on the other. When all that
+/// is left is the part of an unbounded side past the range, that is
+/// <c>representation_error(max_clpfd_integer)</c> or
+/// <c>min_clpfd_integer</c> and not the empty domain: failing would answer
+/// no to a constraint that has solutions.</para>
 /// </summary>
 public static class ClpfdDomainBuiltins
 {
     private const long Inf = ClpfdDomain.Inf;
     private const long Sup = ClpfdDomain.Sup;
     private const long SizeInfinite = 1000000000;
+
+    // What an integer past the inline range reads as: beyond every value a
+    // domain holds on its side, and still inside inf and sup.
+    private const long PastMax = Cell.MaxInt60 + 1;
+    private const long PastMin = Cell.MinInt60 - 1;
+
+    private static PrologRuntimeException PastRange(bool above) =>
+        new("representation_error", above ? "max_clpfd_integer" : "min_clpfd_integer");
 
     // Interned in Register(), not in field initializers: a beforefieldinit
     // cctor runs at an unspecified time that differs between runtimes (Mono
@@ -122,6 +139,7 @@ public static class ClpfdDomainBuiltins
             Tag.Int => c.AsInt,
             Tag.Atom when c.AsAtomId == InfAtom => Inf,
             Tag.Atom when c.AsAtomId == SupAtom => Sup,
+            Tag.BigInt => engine.AsBigInt(c).Sign > 0 ? PastMax : PastMin,
             _ => throw new PrologRuntimeException("type_error", "fd_bound"),
         };
     }
@@ -129,8 +147,12 @@ public static class ClpfdDomainBuiltins
     private static long ReadInt(Activation engine, int reg)
     {
         Cell c = Arg(engine, reg);
-        if (c.Tag != Tag.Int) throw new PrologRuntimeException("type_error", "integer");
-        return c.AsInt;
+        return c.Tag switch
+        {
+            Tag.Int => c.AsInt,
+            Tag.BigInt => engine.AsBigInt(c).Sign > 0 ? PastMax : PastMin,
+            _ => throw new PrologRuntimeException("type_error", "integer"),
+        };
     }
 
     private static bool WriteBound(Activation engine, int reg, long v)
@@ -141,9 +163,22 @@ public static class ClpfdDomainBuiltins
 
     // ---- builtins ----
 
-    /// <summary>$dom_new(+Lo, +Hi, -Dom): the interval domain [Lo, Hi].</summary>
-    public static bool New(Activation engine) =>
-        WriteDom(engine, 2, ClpfdDomain.Interval(ReadBound(engine, 0), ReadBound(engine, 1)));
+    /// <summary>$dom_new(+Lo, +Hi, -Dom): the interval domain [Lo, Hi]. An
+    /// interval that lies past the range whole holds integers and none a
+    /// domain can: the representation error. One that reaches past it is
+    /// unbounded on that side.</summary>
+    public static bool New(Activation engine)
+    {
+        long lo = ReadBound(engine, 0), hi = ReadBound(engine, 1);
+        if (lo <= hi)
+        {
+            if (lo == PastMax) throw PastRange(above: true);
+            if (hi == PastMin) throw PastRange(above: false);
+            if (lo == PastMin) lo = Inf;
+            if (hi == PastMax) hi = Sup;
+        }
+        return WriteDom(engine, 2, ClpfdDomain.Interval(lo, hi));
+    }
 
     /// <summary>$dom_universal(-Dom): [inf, sup].</summary>
     public static bool UniversalB(Activation engine) => WriteDom(engine, 0, ClpfdDomain.Universal);
@@ -162,12 +197,26 @@ public static class ClpfdDomainBuiltins
     }
 
     /// <summary>$dom_above(+Dom, +B, -Dom2): part of Dom at or below B.</summary>
-    public static bool Above(Activation engine) =>
-        WriteDom(engine, 2, Dom(engine, 0).Above(ReadBound(engine, 1)));
+    public static bool Above(Activation engine) => Cut(engine, keepBelow: true);
 
     /// <summary>$dom_below(+Dom, +B, -Dom2): part of Dom at or above B.</summary>
-    public static bool Below(Activation engine) =>
-        WriteDom(engine, 2, Dom(engine, 0).Below(ReadBound(engine, 1)));
+    public static bool Below(Activation engine) => Cut(engine, keepBelow: false);
+
+    private static bool Cut(Activation engine, bool keepBelow)
+    {
+        var d = Dom(engine, 0);
+        long b = ReadBound(engine, 1);
+        if (b != PastMax && b != PastMin)
+            return WriteDom(engine, 2, keepBelow ? d.Above(b) : d.Below(b));
+        // A bound past the range. Every value Dom holds is on one side of it.
+        if (keepBelow == (b == PastMax))
+            return engine.UnifyRegisterWithCell(2, Arg(engine, 0));
+        // Nothing Dom holds is left, and on a side with no bound of its own
+        // the integers past the range are.
+        if (!d.IsEmpty && (keepBelow ? d.Min == Inf : d.Max == Sup))
+            throw PastRange(above: !keepBelow);
+        return WriteDom(engine, 2, ClpfdDomain.Empty);
+    }
 
     /// <summary>$dom_isect(+D1, +D2, -D3): intersection.</summary>
     public static bool Isect(Activation engine) =>
@@ -195,18 +244,43 @@ public static class ClpfdDomainBuiltins
     {
         Cell incoming = Arg(engine, 0);
         var d = Dom(engine, 0);
-        var without = d.Without(ReadInt(engine, 1));
+        long v = ReadInt(engine, 1);
+        // An integer past the range is in no domain: nothing to remove.
+        var without = v == PastMax || v == PastMin ? d : d.Without(v);
         return ReferenceEquals(without, d)
             ? engine.UnifyRegisterWithCell(2, incoming)
             : WriteDom(engine, 2, without);
     }
 
-    /// <summary>$dom_size(+Dom, -N): value count (or a big sentinel if infinite).</summary>
+    /// <summary>$dom_size(+Dom, -N): value count (or a big sentinel if infinite).
+    /// The whole inline range counts one more value than an Int cell holds,
+    /// and reads as the largest it does.</summary>
     public static bool Size(Activation engine) =>
-        engine.UnifyRegisterWithCell(1, Cell.Int(Dom(engine, 0).Size(SizeInfinite)));
+        engine.UnifyRegisterWithCell(1,
+            Cell.Int(System.Math.Min(Dom(engine, 0).Size(SizeInfinite), Cell.MaxInt60)));
 
-    /// <summary>$dom_contains(+Dom, +V): V is an integer in Dom.</summary>
-    public static bool Contains(Activation engine) => Dom(engine, 0).Contains(ReadInt(engine, 1));
+    /// <summary>$dom_contains(+Dom, +V): V is an integer in Dom. An integer
+    /// past the range is in none that is bounded on its side; of one that
+    /// is not, it is a member this library cannot bind the variable to.</summary>
+    public static bool Contains(Activation engine)
+    {
+        var d = Dom(engine, 0);
+        long v = ReadInt(engine, 1);
+        if (v != PastMax && v != PastMin) return d.Contains(v);
+        if (!d.IsEmpty && (v == PastMax ? d.Max == Sup : d.Min == Inf))
+            throw PastRange(above: v == PastMax);
+        return false;
+    }
+
+    /// <summary>$fd_fits(+Integer): an integer a domain can hold. One past
+    /// the range is the representation error, which is what a constraint
+    /// that names such an integer gets.</summary>
+    public static bool Fits(Activation engine)
+    {
+        long v = ReadInt(engine, 0);
+        if (v == PastMax || v == PastMin) throw PastRange(above: v == PastMax);
+        return true;
+    }
 
     /// <summary>$dom_empty(+Dom): Dom has no values.</summary>
     public static bool IsEmptyB(Activation engine) => Dom(engine, 0).IsEmpty;
@@ -378,5 +452,6 @@ public static class ClpfdDomainBuiltins
         BuiltinsRegistry.Register("$dom_values", 2, Values);
         BuiltinsRegistry.Register("$dom_intervals", 2, Intervals);
         BuiltinsRegistry.Register("$fd_hall", 3, Hall);
+        BuiltinsRegistry.Register("$fd_fits", 1, Fits);
     }
 }
