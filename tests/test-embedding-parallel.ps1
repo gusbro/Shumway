@@ -159,13 +159,19 @@ foreach ($e in $procs) {
 # Phase 2: the exclusive population, alone in the process, serially (they all
 # share one xUnit collection). Runs only after every parallel bucket is done.
 $exLog = Join-Path $logDir 'exclusive.log'
+# A failing test writes to stderr, and under 'Stop' the redirect turns that
+# line into a terminating error: the script ended here, with no summary and
+# no name of the test that failed.
+$ErrorActionPreference = 'Continue'
 dotnet test $proj -c $Configuration -f $Framework --no-build --nologo @fxProps `
     --filter $exclusiveFilter --blame-hang-timeout 300s @crashArgs `
     @(if ($Platform -ne '') { @('--', "RunConfiguration.TargetPlatform=$Platform") }) *> $exLog
+$exExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
 $exTail = (Get-Content $exLog | Select-String -Pattern 'Passed!|Failed!' | Select-Object -Last 1)
 if ($null -eq $exTail) { $exTail = "(no summary - see $exLog)" }
 Write-Host ("[parallel] {0,-8} {1}" -f 'excl', $exTail)
-if (($LASTEXITCODE -ne 0) -or ("$exTail" -notmatch 'Passed!')) {
+if (($exExit -ne 0) -or ("$exTail" -notmatch 'Passed!')) {
     $failed = $true
     Get-Content $exLog | Select-String -Pattern '^\s*Failed ' |
         ForEach-Object { Write-Host ("[parallel]   {0}" -f $_.Line.Trim()) }
