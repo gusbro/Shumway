@@ -1930,13 +1930,15 @@ public sealed partial class IlPredicateCompiler
             // Guard-fail restore stub: undo the guard, then fall to the next
             // clause. Reached only by the guard prefix's fail branches.
             emit.MarkLabel(guardFail);
-            // ADR-061: a point to resume at; the undo leaves from here.
-            if (cpsFields) CpsInstructionBoundary(emit, false);
             if (g.Framed)
             {
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineDeallocateMethod);
             }
+            // ADR-061: a point to resume at; the undo leaves from here. After
+            // the deallocate: the cold method runs from the boundary, and
+            // would pop the frame a second time.
+            if (cpsFields) CpsInstructionBoundary(emit, false);
             if (g.NeedsSnapshot && cpsFields && CpsHotExit)
             {
                 // Nothing bound: the undo is three stores. Else the cold method's.

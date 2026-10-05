@@ -116,6 +116,12 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   before the goal after the cut, in every tier**: the interpreter after each
   cut instruction, Tier-1 IL inside `NeckCut` and `CutToLevel`, a wasm
   module by stepping aside to the interpreter's cut (`WasmAbi.CleanupReach`).
+- **A cut lowers B without `Cut` only where `Cut` would do nothing else but
+  compact the trails**: no side-stack entry above the barrier and no cleanup
+  handler at or above it (`_cutQuickFloor`), and the trails within the
+  compaction budget (`_cutCompactAt`). A floor too high costs a transfer to
+  the cold method; one too low skips a prune hook or a cleanup. (ADR-061, "A
+  cut that only lowers B".)
 
 ## Logical update view
 

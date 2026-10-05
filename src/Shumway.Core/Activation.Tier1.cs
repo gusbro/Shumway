@@ -807,7 +807,10 @@ public sealed partial class Activation
     // dispatch picks up at the target rather than returning to the
     // caller's continuation immediately. Cleared by the handler that
     // observes it.
-    public bool IlTailCallPending { get; set; }
+    public bool IlTailCallPending { get => _ilTailCallPending; set => _ilTailCallPending = value; }
+
+    // A field: a continuation method sets it without a call (ADR-061 item 6).
+    [EditorBrowsable(EditorBrowsableState.Never)] public bool _ilTailCallPending;
 
     // A deopt rides the same two signals as a tail call (Pc + the flag
     // above) and means the opposite: a tail call says "continue at this
@@ -1062,20 +1065,26 @@ public sealed partial class Activation
 
     /// <summary>ADR-061: the code a call to <paramref name="functorId"/> may enter
     /// by a tail call, with Pc set to <paramref name="entryMarker"/> as the
-    /// dispatch loop sets it; 0 when the call must go through the loop (a safe
-    /// point is due, a wake is pending, a debug session is attached, or the
-    /// callee has no continuation methods).</summary>
+    /// dispatch loop sets it. <see cref="CpsThroughLoop"/>, with Pc set the
+    /// same, when the callee has no continuation methods: the caller returns
+    /// to the dispatch loop, which runs the marker. 0, touching nothing, when
+    /// the call has work to do first (a safe point is due, a wake is pending,
+    /// a debug session is attached).</summary>
     [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public nint CpsCallTarget(int functorId, int entryMarker)
     {
-        var t = _cpsEntry;
-        if (t is null || (uint)functorId >= (uint)t.Length) return 0;
-        nint code = t[functorId];
-        if (code == 0 || CallSafePointDue || _pendingWakeups.Count > 0 || _debug is not null)
-            return 0;
+        if (CallSafePointDue || _pendingWakeups.Count > 0 || _debug is not null) return 0;
         _p = entryMarker;
+        var t = _cpsEntry;
+        nint code;
+        if (t is null || (uint)functorId >= (uint)t.Length || (code = t[functorId]) == 0)
+            return CpsThroughLoop;
         return code;
     }
+
+    /// <summary>What <see cref="CpsCallTarget"/> answers for a callee without
+    /// continuation methods. No code is at this address.</summary>
+    public const int CpsThroughLoop = 1;
 
     /// <summary>ADR-061: the code a proceed may enter by a tail call (the
     /// continuation <see cref="Cp"/> names), with Pc set to Cp; 0 when the
@@ -1211,6 +1220,7 @@ public sealed partial class Activation
         top.OnPrune = null;
         top.CpsAlt = null;
         _ilCpTop--;
+        ResetCutQuickFloor();
         return code;
     }
 
@@ -1231,6 +1241,7 @@ public sealed partial class Activation
         {
             Del = del, Cursor = nextCursor, Key = _b, CpsAlt = alt,
         };
+        if (_cutQuickFloor < _b) _cutQuickFloor = _b;
     }
 
     /// <summary>ADR-061: publishes a predicate's continuation methods.</summary>
@@ -1354,6 +1365,7 @@ public sealed partial class Activation
         {
             Del = del, Cursor = nextCursor, Key = _b, OnPrune = onPrune,
         };
+        if (_cutQuickFloor < _b) _cutQuickFloor = _b;
     }
 
     /// <summary>ADR-037 — a resume delegate that always fails. <see cref="SoftCut"/>
@@ -1671,6 +1683,7 @@ public sealed partial class Activation
             _ilCpStack[_ilCpTop - 1].CpsAlt = null;
             _ilCpTop--;
         }
+        ResetCutQuickFloor();
     }
 
     /// <summary>Pops the topmost IL choice point, restoring engine state
@@ -1725,6 +1738,7 @@ public sealed partial class Activation
         _ilCpStack[_ilCpTop - 1].OnPrune = null;
         _ilCpStack[_ilCpTop - 1].CpsAlt = null;
         _ilCpTop--;
+        ResetCutQuickFloor();
         return (info.Del, info.Cursor);
     }
 

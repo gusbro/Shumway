@@ -48,9 +48,11 @@ public sealed class IlPromotionStore
     internal int CpsCodeCount => _cpsCode.Count;
 
     /// <summary>What the interpreter's tables invoke for <paramref name="functorId"/>:
-    /// an entry (cursor 0) goes to the continuation methods when there are any,
-    /// an instruction boundary to their cold method (where its wake points
-    /// resume, ADR-049), every other cursor to the delegate.</summary>
+    /// with continuation methods, an entry (cursor 0) goes to the entry
+    /// method, an instruction boundary to the cold method (where its wake
+    /// points resume, ADR-049), a continuation's cursor to its method and a
+    /// choice point's to the alternatives method; any other cursor to the
+    /// delegate.</summary>
     internal Func<Activation, int, bool> TableEntry(int functorId, PredicateDelegate del)
     {
         if (!_cpsCode.TryGetValue(functorId, out var cps))
@@ -65,8 +67,25 @@ public sealed class IlPromotionStore
         }
         var entry = cps.EntryDelegate;
         var cold = cps.ColdDelegate;
+        var byCursor = cps.ByCursor;
+        if (IlPredicateCompiler.CountColdEntries)   // a test's count
+            return (engine, cursor) =>
+            {
+                if (cursor == 0)
+                {
+                    IlPredicateCompiler.LoopCalls++;
+                    return entry(engine, 0);
+                }
+                if (cursor >= IlPredicateCompiler.ColdCursorBase) return cold(engine, cursor);
+                if ((uint)cursor >= (uint)byCursor.Length || byCursor[cursor] is not { } own)
+                    return del(engine, cursor);
+                if (ReferenceEquals(own, cps.AltDelegate)) IlPredicateCompiler.LoopAlternatives++;
+                else IlPredicateCompiler.LoopContinuations++;
+                return own(engine, cursor);
+            };
         return (engine, cursor) => cursor == 0 ? entry(engine, 0)
             : cursor >= IlPredicateCompiler.ColdCursorBase ? cold(engine, cursor)
+            : (uint)cursor < (uint)byCursor.Length && byCursor[cursor] is { } own ? own(engine, cursor)
             : del(engine, cursor);
     }
 

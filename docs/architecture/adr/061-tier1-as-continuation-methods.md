@@ -229,9 +229,10 @@ Two rules follow for the bundle:
   bundle's methods cost to compile, below). With no bytecode
   (`--strip-wam`) the predicate keeps its own method: that one runs from the
   first call and compiles there, on the engine's thread, and the cold method
-  makes tail calls, which the JIT answers with full optimization at the
-  first compile (for Blint's first pass 1.28 s of JIT on the engine's thread
-  against 0.40 s).
+  is twice its IL (The cold method through the dispatch loop, below; while
+  the cold method made tail calls the JIT also compiled it with full
+  optimization at once, 1.28 s on the engine's thread for Blint's first
+  pass against 0.40 s).
 
 The bundle assembly is loaded once per process and never unloaded, as today;
 the collectible generation (item 3) is for runtime promotion only.
@@ -342,6 +343,219 @@ helpers, and its time follows the code it produces, not the IL. That was
 0.3 s of the bill above, and `qsort` ran 7% slower (0.285 to 0.307 s, three
 copies, three runs). Rejected until the cut that discards stays in the hot
 methods.
+
+### What sent a hot method to its cold method
+
+A census: a cold method counts its entries by instruction boundary, each
+exit site of a hot method names itself when it is emitted, and the
+interpreter's table counts what the dispatch loop enters. Entries into cold
+methods over one run of the harness of What a promotion costs (two rounds
+of each program, and of Blint):
+
+| program | before | after |
+|---|---:|---:|
+| `flatten` | 48,924,048 | 15,840 |
+| `boyer` | 25,080,156 | 18,180 |
+| `qsort` | 21,300,048 | 26,268 |
+| `zebra` | 17,764,320 | 276 |
+| Blint | about 14,100,000 | 15,627 |
+| `queens` | 11,251,200 | 624 |
+| `serialize` | 2,070,084 | 5,712 |
+| `nreverse` | 720 | 720 |
+| `tak` | 120 | 120 |
+| `crypt` | 60 | 60 |
+| `sendmore` | 0 | 0 |
+
+The cut that discards a choice point was the third cause, not the first.
+In the order of what they sent:
+
+1. **A binding that has to be trailed.** The inline unifications
+   (`get_list`, a register against a constant) left for the cold method
+   when the cell was older than HB. A hot method now pushes the trail entry
+   itself (`EmitHotTrail`), after the site's last exit and before its first
+   write, with one comparison against HB as before. A full trail is still
+   the cold method's, which grows it. One path that was rare became common
+   with it: a CP-free guard (ADR-031) that fails with a binding to undo
+   leaves for the cold method from its fail point. In a clause with a frame
+   that boundary sat before the frame's deallocation, which the cold method
+   then ran a second time; it is after it now.
+2. **A unification that fails on its first test.** `get_list` against an
+   atom, or a constant against another constant, took the slow path only to
+   be told no. A cell whose tag no list unifies with (a structure, an atom,
+   an integer, a float, a big integer) fails at the site; so does an atom or
+   a small integer against a cell that is an atom, an integer, a structure
+   or a list. An attributed variable and a packed string are in neither set
+   (ADR-047, ADR-049). The tests sit after the reference test, off the
+   paths of a list and of a variable: on those paths they cost `nreverse` 8
+   to 14%.
+3. **A reference to a reference.** The inline paths followed one step; a
+   hot method follows the chain.
+4. **A call to a predicate with no continuation methods** (a dynamic
+   predicate on its bytecode, a predicate still earning its code).
+   `CpsCallTarget` answers `CpsThroughLoop` for it, with Pc at the callee's
+   marker, and the hot method returns to the dispatch loop itself. It still
+   leaves for the cold method when the call has work to do first (a safe
+   point is due, a wake is pending).
+5. **A cut that discards a choice point.** Next.
+
+The dispatch loop was the other way out of the hot methods. A return from
+a callee on its bytecode, and a failure the interpreter backtracks into a
+choice point of compiled code, entered the predicate's delegate, which ran
+the rest of the clause. The interpreter's table (`TableEntry`) now enters
+the continuation method of a cursor a proceed enters and the alternatives
+method for a cursor a choice point resumes (it restores the frame at its
+entry, as when `Fail` enters it). In Blint's run the loop made 3.6 million
+entries into delegates at continuation cursors and 2.5 million at other
+cursors; it now makes 1.75 million, all into the predicates' own methods,
+and none into a delegate.
+
+#### A cut that only lowers B
+
+`Cut` does four things: it fires the cleanup handlers at or above its
+barrier (`setup_call_cleanup/3`), pops the side-stack entries above it and
+runs their prune hooks (a foreign iterator's `Dispose`), lowers B, and
+compacts the trails. A hot method's cut to a choice point below B is the
+store to B alone when:
+
+- the barrier is at or above `_cutQuickFloor`, a word the activation keeps:
+  the key of the top side-stack entry, or one above the highest cleanup
+  handler's level, whichever is higher. It is raised where a side-stack
+  entry is pushed, and recomputed where one is popped and where a handler
+  is registered or forgotten;
+- the two trails together hold at most `_cutCompactAt` entries.
+
+Otherwise the cut leaves for the cold method's, which is `Cut`. What the
+store skips is the compaction: the entries a cut makes unnecessary stay on
+the trails. That is sound (untrailing one resets a cell the backtrack
+discards anyway) and bounded: after a `Cut` has compacted them, the trails
+may grow by as much as they then hold, and by 1,024 entries at least,
+before a hot method's cut leaves for it again (`Cut` sets `_cutCompactAt`
+from what its compaction kept). 200,000 trailed bindings under 200,000 cuts
+in one pass keep 125 entries; without the bound, 200,000. The room is
+1,024 entries by measurement (one process, the room a setting): from 256 to
+1,024 `flatten`, `qsort`, `boyer` and `serialize` ran the same; at 8,192
+`flatten` and `qsort` ran 2 to 7% slower, the entries the cuts leave being
+written through that much more of the cache; at 128, 1 to 3% slower, for
+the compactions.
+
+The test reads the floor and the trail tops and nothing else. A first form
+read the three conditions from their sources (the side stack's top entry
+with its bounds check, the handler list, the trail tops); the JIT inlined
+it, and `tak`, whose cut never discards anything, ran 4 to 6% slower (eight
+rounds, two copies, repeated): the extra code changed the register
+allocation of the whole method (its frame grew from 72 to 88 bytes, and
+the clause that allocates ten Y slots spilled). With the floor, 0.99 to
+1.00.
+
+A cut that discards a `setup_call_cleanup/3` scope runs the cleanup before
+the goal after the cut. Bytecode did; compiled code, regions and
+continuation methods alike, left it queued until the interpreter next ran a
+goal, or until the query ended, where it ran on a copy and its bindings
+were lost. `NeckCut` and `CutToLevel` now run what their cut queued
+(`Tier1CleanupFlusher`). The wasm tier's cut lowered B in its own memory
+and knew nothing of the handlers; it steps aside to the interpreter's cut
+when its barrier reaches one (`WasmAbi.CleanupReach`, the handlers' part of
+the floor).
+
+Against the code before these changes (one process, ABBA over renamed
+copies, two copies of each build, minimum of eight rounds):
+
+| program | ratio |
+|---|---:|
+| `qsort` | 0.79 |
+| `crypt` | 0.81 |
+| `flatten` | 0.82 |
+| `queens` | 0.93 |
+| Blint | 0.93 |
+| `zebra` | 0.94 |
+| `boyer` | 0.96 |
+| `serialize` | 0.97 |
+| `nreverse` | 1.01 |
+| `tak` | 1.02 |
+| `sendmore` | 1.03 to 1.07 |
+
+`sendmore` never left its hot methods and gains nothing. Its two large
+methods (19 and 23 KB of machine code) grew by 91 bytes of IL, at the list
+of its head, and the code of its loops is the same IL as before: the
+difference is the JIT's layout and register allocation, the 5% a copy of
+the same code moves by (What a promotion costs).
+
+The cold method is now cold, and stopped being compiled as if it were not
+(next).
+
+### The cold method through the dispatch loop
+
+With its entries down to a few thousand, the cold method no longer has to
+run as fast as the hot ones, and it stopped costing what they cost:
+
+- It makes no tail call. A call, a proceed and a failure return to the
+  dispatch loop, as a delegate's do, and the loop enters the callee's entry
+  method, the continuation method or the alternatives method (the table
+  above). A hot method still reaches it by a tail call, so the transfer
+  into it stacks nothing, and its return is to the loop.
+- Its self-recursive last call is a call like any other. The recursion is
+  not a loop in the method, and a cold stretch ends at it instead of
+  running the rest of the list.
+- It is not marked to be optimized at once. `PrepareMethod`, on the compile
+  worker, compiles the JIT's first tier; the runtime's own background
+  thread compiles the optimized one for a cold method that is called
+  thirty times. The first tier replaces a method on the stack when a loop
+  of it runs long, and that compile is on the thread running the method:
+  with the recursion out of it, the JIT's trace of Blint's eight passes
+  shows none for a cold method.
+
+The emitter adds `tail.` to a call that the method's return follows; a cold
+method takes none (`IlEmit.NoTailCalls`).
+
+Blint's bundle with every predicate's code taken at once, traced, by kind:
+
+| | methods | IL | before | after |
+|---|---:|---:|---:|---:|
+| alternatives | 200 | 1.11 MB | 3,148 ms | 3,238 ms |
+| cold | 297 | 1.08 to 1.02 MB | 2,906 ms | 666 ms |
+| entries | 297 | 0.98 MB | 1,935 ms | 1,896 ms |
+| continuations | 656 | 1.03 MB | 1,109 ms | 1,213 ms |
+| all | 1,457 | 4.20 to 4.15 MB | 9,102 ms | 7,015 ms |
+
+A run that takes its code as it earns it, Blint's eight passes from a
+bundle with its bytecode: the worker compiled 184 generated methods in
+1,229 ms before (the cold methods 397 ms) and 187 in 805 ms after (94 ms:
+51 cold methods at the first tier and one at the optimized one). With
+regions it compiled 56 methods in 714 ms.
+
+One pass of Blint from that bundle (16 processes, the best five): 2.30 to
+2.40 s against 2.33 to 2.49 s, and 3.05 to 3.28 s of CPU against 3.25 to
+3.55 s. Once compiled, the cold method through the loop against the cold
+method by tail calls (one build, one process, ABBA, two copies, minimum of
+eight rounds):
+
+| program | ratio |
+|---|---:|
+| Blint | 0.97 to 1.01 |
+| `boyer` | 0.98 |
+| `crypt` | 0.98 |
+| `flatten` | 0.95 to 0.99 |
+| `nreverse` | 1.00 |
+| `qsort` | 0.98 to 1.03 |
+| `queens` | 0.99 |
+| `sendmore` | 0.98 |
+| `serialize` | 1.00 |
+| `tak` | 0.98 |
+| `zebra` | 0.99 to 1.03 |
+
+Tried and rejected:
+
+- **The cold method in the delegate's form** (no register held in a local,
+  each operation its helper's call). Its IL halves again, 1.02 to 0.45 MB,
+  and its first-tier compile goes from 666 to 471 ms; one pass of Blint ran
+  0.15 s slower (2.49 to 2.53 s against 2.30 to 2.40 s). The first tier
+  inlines nothing, so every operation is a call.
+- **The cold method as the delegate of a bundle with no bytecode**
+  (`--strip-wam`), in place of the predicate's own method. That delegate
+  compiles at its first call, on the engine's thread, and the cold method
+  is twice the IL of the method it would replace: one pass of Blint went
+  from 2.87 to 3.23 s (minimum of eight processes). Such a bundle keeps a
+  method of its own per predicate.
 
 ## Results
 
@@ -567,6 +781,16 @@ continuation methods / regions, minimum and median): `sendmore`
 Each was built and measured against the stage 1 shape above. They are
 recorded so that they are not retried without a new reason.
 
+- **The alternatives method as the predicate's entry.** A predicate with
+  alternatives got no entry method: its alternatives method, which carries
+  every clause already, was entered at cursor 0 too and skipped its restore
+  there. Blint's bundle compiled in 5,800 ms for 7,917 (1,257 methods for
+  1,458, 3.27 MB of IL for 4.15). Once compiled, every call paid for it:
+  the entry ran the prologue of a method with calls, and an unfolded
+  cursor. `crypt` 20% slower, `nreverse` 13%, `qsort` 11%, `flatten` 9%,
+  `queens` 7%, `tak` 6%; `sendmore` 11% faster; Blint and `zebra` the same
+  (one build, one process, ABBA, two copies). A predicate's code is taken
+  when it is hot, and the entry's speed is what it is taken for.
 - **Registers read from their fields instead of held in locals.** The
   intrinsics reloaded each register from its field where they needed it, and
   nothing was held across instructions, to lower register pressure. The

@@ -80,6 +80,9 @@ public sealed partial class IlPredicateCompiler
         var write = emit.DefineLabel($"glw_write_{NextLabelSeq()}");
         var slow = emit.DefineLabel($"glw_slow_{NextLabelSeq()}");
         var done = emit.DefineLabel($"glw_done_{NextLabelSeq()}");
+        bool hotFail = CpsHotExit;   // as TryEmitGetList
+        var other = hotFail ? emit.DefineLabel($"glw_other_{NextLabelSeq()}") : slow;
+        var otherRef = hotFail ? emit.DefineLabel($"glw_other_ref_{NextLabelSeq()}") : slow;
 
         EmitLoadEngineField(emit, EngRegisters);
         emit.StoreLocal(regs);
@@ -104,7 +107,9 @@ public sealed partial class IlPredicateCompiler
         EmitTagIs(emit, c, Tag.Lis);
         emit.BranchIfTrue(read);
         EmitTagIs(emit, c, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(other);
+        var deref = emit.DefineLabel($"glw_deref_{NextLabelSeq()}");
+        if (hotFail) emit.MarkLabel(deref);
         emit.LoadLocal(p);
         emit.StoreLocal(home);
         emit.LoadLocal(heap);
@@ -118,11 +123,11 @@ public sealed partial class IlPredicateCompiler
         EmitTagIs(emit, d, Tag.Lis);
         emit.BranchIfTrue(read);
         EmitTagIs(emit, d, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(otherRef);
         emit.LoadLocal(p);
         emit.LoadLocal(home);
         emit.BranchIfEqual(write);
-        emit.Branch(slow);
+        emit.Branch(hotFail ? deref : slow);
 
         // Read: each instruction against its cell of the pair at p.
         emit.MarkLabel(read);
@@ -164,13 +169,6 @@ public sealed partial class IlPredicateCompiler
         // Write: the pair at the heap top, its two cells, then the binding.
         emit.MarkLabel(write);
         bool hotWrite = CpsHotExit;
-        if (hotWrite)
-        {
-            // A trailed binding is the cold method's, decided before any write.
-            emit.LoadLocal(home);
-            EmitLoadEngineField(emit, EngHb);
-            emit.BranchIfLess(slow);
-        }
         bool storesValue = false;
         foreach (var a in args)
             if (a.Op is Opcode.UnifyValueX or Opcode.UnifyValueY) storesValue = true;
@@ -190,6 +188,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLength<Cell>();
         emit.Convert<int>();
         emit.BranchIfGreater(slow);
+        if (hotWrite) EmitHotTrail(emit, home, slow);
         emit.LoadArgument(0);
         emit.LoadLocal(p);
         emit.LoadConstant(2);
@@ -247,6 +246,14 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(trailed);
         emit.Branch(done);
 
+        if (hotFail)
+        {
+            emit.MarkLabel(other);
+            EmitBranchIfTagIn(emit, c, NeverAListTags, failLabel);
+            emit.Branch(slow);
+            emit.MarkLabel(otherRef);
+            EmitBranchIfTagIn(emit, d, NeverAListTags, failLabel);
+        }
         // The helpers, as the instructions compile alone.
         emit.MarkLabel(slow);
         if (!EmitColdExit(emit))   // ADR-061: a hot method leaves for the cold one

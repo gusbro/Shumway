@@ -87,8 +87,7 @@ public sealed partial class IlPredicateCompiler
         f[Index(MachineRegs.StackArray)] = EngineField(nameof(Activation._stack));
         f[Index(MachineRegs.RegisterArray)] = EngineField(nameof(Activation._registers));
         f[Index(MachineRegs.HeapArray)] = EngineField(nameof(Activation._heap));
-        // The binding trail array is not on the public surface (ADR-060 item
-        // 10); a region cannot hold it.
+        // The binding trail array has no entry: no region holds it.
         return f;
     }
 

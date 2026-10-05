@@ -88,7 +88,10 @@ public sealed partial class IlPredicateCompiler
             if (CpsHotExit)
             {
                 emit.Pop();
-                EmitColdExit(emit);
+                EmitHotCut(emit, rf, rf.Local(MachineRegs.B0));
+                emit.LoadArgument(0);
+                emit.Branch(skip);
+                EmitHotCutSlow(emit);
             }
             else
             {
@@ -107,13 +110,22 @@ public sealed partial class IlPredicateCompiler
             emit.StoreLocal(slot);
             emit.StoreLocal(act);
             var skip = emit.DefineLabel($"cut_none_{NextLabelSeq()}");
+            var level = rf.Temp(typeof(int), KTopA);
             EmitYIndex(emit, rf, slot);
             emit.LoadElement<Cell>();
             emit.LoadField(CellDataField);
             emit.Convert<int>();
+            emit.StoreLocal(level);
+            emit.LoadLocal(level);
             emit.LoadLocal(rf.Local(MachineRegs.B));
             emit.BranchIfGreaterOrEqual(skip);
-            if (!EmitColdExit(emit))
+            if (CpsHotExit)
+            {
+                EmitHotCut(emit, rf, level);
+                emit.Branch(skip);
+                EmitHotCutSlow(emit);
+            }
+            else
             {
                 emit.LoadLocal(act);
                 emit.LoadLocal(slot);
@@ -137,6 +149,42 @@ public sealed partial class IlPredicateCompiler
         if (method == EngineMaybeCollectHeapAtCallMethod)
             return EmitGuardedCall(emit, rf, method, EngineCallSafePointDueGetter, null);
         return false;
+    }
+
+    /// <summary>Cuts a hot method makes itself, over the methods emitted in
+    /// this process.</summary>
+    internal static int HotCutSites;
+
+    [ThreadStatic] private static IlLabel? _hotCutSlow;
+
+    private static readonly FieldInfo EngCutQuickFloor = EngineField(nameof(Activation._cutQuickFloor));
+    private static readonly FieldInfo EngCutCompactAt = EngineField(nameof(Activation._cutCompactAt));
+
+    /// <summary>In a hot method, the cut to the choice point in
+    /// <paramref name="barrier"/>, known to be below B: the store to B when
+    /// that is all the cut is (Activation._cutQuickFloor), else a branch to
+    /// the label <see cref="EmitHotCutSlow"/> marks next.</summary>
+    private static void EmitHotCut(IlEmit emit, RegisterFile rf, IlLocal barrier)
+    {
+        System.Threading.Interlocked.Increment(ref HotCutSites);
+        _hotCutSlow = emit.DefineLabel($"cut_slow_{NextLabelSeq()}");
+        emit.LoadLocal(barrier);
+        EmitLoadEngineField(emit, EngCutQuickFloor);
+        emit.BranchIfLess(_hotCutSlow);
+        EmitLoadEngineField(emit, EngBindingTrailTop);
+        EmitLoadEngineField(emit, EngExtraTrailTop);
+        emit.Add();
+        EmitLoadEngineField(emit, EngCutCompactAt);
+        emit.BranchIfGreater(_hotCutSlow);
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => emit.LoadLocal(barrier));
+    }
+
+    /// <summary>The rest of the cut is the cold method's.</summary>
+    private static void EmitHotCutSlow(IlEmit emit)
+    {
+        emit.MarkLabel(_hotCutSlow!);
+        _hotCutSlow = null;
+        EmitColdExit(emit);
     }
 
     private static bool EmitRegisterRead(

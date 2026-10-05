@@ -46,6 +46,13 @@ public sealed partial class IlPredicateCompiler
         /// <summary>The cold method, which the dispatch loop enters at a cursor
         /// from <see cref="ColdCursorBase"/> (a wake's resume, ADR-049).</summary>
         public required PredicateDelegate ColdDelegate { get; init; }
+        /// <summary>What the dispatch loop enters at a cursor: the continuation
+        /// method of one a proceed enters, the alternatives method for one a
+        /// choice point resumes (it restores the frame, as when entered from
+        /// Fail). Null, or past the end: the predicate's delegate.</summary>
+        public required PredicateDelegate?[] ByCursor { get; init; }
+        /// <summary>The alternatives method among them, or null.</summary>
+        public PredicateDelegate? AltDelegate { get; init; }
         // Raw code pointers do not keep a collectible assembly alive.
         public required Type KeepAlive { get; init; }
     }
@@ -144,6 +151,24 @@ public sealed partial class IlPredicateCompiler
 
     // The cold and the alternatives methods compiled, for tests.
     internal static int CpsCompiledColdMethods, CpsCompiledAlternativesMethods;
+
+    /// <summary>For a test: a cold method emitted at run time while this is
+    /// set counts in <see cref="ColdEntries"/> each time it is entered at an
+    /// instruction boundary (a hot method's slow path, or a wake's resume),
+    /// and a dispatch table built while it is set counts each entry from
+    /// the dispatch loop into an entry method (<see cref="LoopCalls"/>), a
+    /// continuation method (<see cref="LoopContinuations"/>) or the
+    /// alternatives method (<see cref="LoopAlternatives"/>).</summary>
+    public static bool CountColdEntries { get; set; }
+
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static long ColdEntries;
+
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static long LoopCalls, LoopContinuations, LoopAlternatives;
+
+    private static readonly FieldInfo ColdEntriesField =
+        typeof(IlPredicateCompiler).GetField(nameof(ColdEntries))!;
 
     // A predicate's code must stay alive while any activation's table points
     // into it; stage 1 keeps every generation.
@@ -304,11 +329,14 @@ public sealed partial class IlPredicateCompiler
                 created.GetMethod(PersistedStubPrefix + "Fail")!.MethodHandle);
         }
         nint entry = 0, altEntry = 0;
-        PredicateDelegate? entryDelegate = null, coldDelegate = null;
+        PredicateDelegate? entryDelegate = null, coldDelegate = null, altDelegate = null;
         var resumes = new List<(int, nint)>();
         int maxCursor = 0;
         foreach (int c in layout.Alternatives) maxCursor = Math.Max(maxCursor, c);
         var byCursor = new nint[maxCursor + 1];
+        foreach (var (c, _) in layout.Methods)
+            if (c > 0) maxCursor = Math.Max(maxCursor, c);
+        var loop = new PredicateDelegate?[maxCursor + 1];
         foreach (var (cursor, name) in layout.Methods)
         {
             var method = created.GetMethod(name)
@@ -327,6 +355,7 @@ public sealed partial class IlPredicateCompiler
             {
                 Interlocked.Increment(ref CpsCompiledAlternativesMethods);
                 altEntry = code;
+                altDelegate = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
                 foreach (int c in layout.Alternatives) byCursor[c] = code;
                 continue;
             }
@@ -335,13 +364,21 @@ public sealed partial class IlPredicateCompiler
                 entry = code;
                 entryDelegate = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
             }
-            else resumes.Add((Activation.EncodeResumeMarker(functorId, cursor), code));
+            else
+            {
+                resumes.Add((Activation.EncodeResumeMarker(functorId, cursor), code));
+                // The method sets its own cursor: its argument is not read.
+                loop[cursor] = (PredicateDelegate)method.CreateDelegate(typeof(PredicateDelegate));
+            }
         }
+        if (altDelegate is not null)
+            foreach (int c in layout.Alternatives)
+                loop[c] ??= altDelegate;
         created.GetField(layout.AltField)!.SetValue(null, byCursor);
         return new CpsCode
         {
             Entry = entry, EntryDelegate = entryDelegate!, Resumes = resumes.ToArray(), KeepAlive = created,
-            AltEntry = altEntry, ColdDelegate = coldDelegate!,
+            AltEntry = altEntry, ColdDelegate = coldDelegate!, ByCursor = loop, AltDelegate = altDelegate,
         };
     }
 
@@ -400,6 +437,7 @@ public sealed partial class IlPredicateCompiler
         {
             cps.ColdEmit = emit;
             cps.ColdDispatch = emit.DefineLabel("cps_cold_dispatch");
+            emit.NoTailCalls = CpsColdThroughLoop;
             return emit;
         }
         if (cps.IsAlt) return emit;
@@ -425,6 +463,13 @@ public sealed partial class IlPredicateCompiler
             // The boundary dispatch, after the body so that every label exists.
             var none = emit.DefineLabel("cps_cold_none");
             emit.MarkLabel(cps.ColdDispatch!);
+            if (CountColdEntries && _persistPatches is null)
+            {
+                emit.LoadField(ColdEntriesField);
+                emit.LoadConstant(1L);
+                emit.Add();
+                emit.StoreField(ColdEntriesField);
+            }
             emit.LoadArgument(1);
             emit.LoadConstant(CpsBoundaryBase);
             emit.Subtract();
@@ -444,7 +489,12 @@ public sealed partial class IlPredicateCompiler
         }
         DumpIl(emit, header);
         var method = emit.CreateMethod();
-        method.SetImplementationFlags(CpsAggressiveOptimization);
+        // The cold method takes the JIT's tiers: a first compile without
+        // optimization, and an optimized one in the background if it turns
+        // out to run. It makes no tail call and its recursion is not a loop
+        // in it (ColdTransfers), so nothing of it compiles on the engine's
+        // thread.
+        if (!ColdTransfers) method.SetImplementationFlags(CpsAggressiveOptimization);
         // The size limit is on a body the hot methods repeat: the resume
         // entries are the cold method's alone.
         if (cps.Cold) cps.ColdIlSize = method.GetILGenerator().ILOffset - cps.ColdResumeEntryBytes;
@@ -1021,7 +1071,7 @@ public sealed partial class IlPredicateCompiler
             if (WamCps) EmitCpsResumeOwnWam(emit, l, labels);
             else EmitCpsResumeOwn(emit, c, l, labels);
         }
-        if (CpsEmitting)
+        if (CpsEmitting && !ColdTransfers)
         {
             emit.LoadArgument(0);
             emit.LoadConstant(0);
@@ -1033,6 +1083,20 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(false);
         EmitReturn(emit);
     }
+
+    /// <summary>Whether a cold method transfers through the dispatch loop (a
+    /// call, a proceed and a failure return to it, as a delegate's do) and
+    /// compiles by the JIT's tiers. Off: it transfers by tail calls and
+    /// compiles optimized at once, as the hot methods do. A switch for
+    /// measuring one against the other.</summary>
+    public static bool CpsColdThroughLoop { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_CPS_COLD_LOOP") != "0";
+
+    // The cold method being emitted transfers through the dispatch loop: it
+    // makes no tail call, and its self-recursive last call is a call like
+    // any other, so that the recursion is no loop for the JIT's first tier
+    // to replace on the stack (a compile on the thread that runs it).
+    private static bool ColdTransfers => _cps is { Cold: true } && CpsColdThroughLoop;
 
     private static readonly Type IlCpEntryType = typeof(Activation.IlChoicePointEntry);
     private static readonly FieldInfo IlCpStackField =
@@ -1134,18 +1198,45 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo EngineCpsProceedTargetMethod =
         typeof(Activation).GetMethod(nameof(Activation.CpsProceedTarget))!;
 
+    private static readonly FieldInfo EngIlTailCallPending = EngineField(nameof(Activation._ilTailCallPending));
+
     /// <summary>Under continuation emission: enters the callee's entry method by
-    /// a tail call when the activation allows it. Otherwise a hot method leaves
-    /// for the cold one, which takes the dispatch-loop path, and the result is
-    /// true: the caller emits no fallback. False: the fallback follows.</summary>
+    /// a tail call when the activation allows it. A hot method otherwise
+    /// returns to the dispatch loop, with Pc at the callee's marker, when the
+    /// callee has no continuation methods, and leaves for its cold method
+    /// when the call has work to do first; the result is then true: the
+    /// caller emits no fallback. False: the fallback (the dispatch-loop path)
+    /// follows.</summary>
     private static bool EmitCpsCall(IlEmit emit, int calleeFid)
     {
-        if (!CpsEmitting) return false;
+        if (!CpsEmitting || ColdTransfers) return false;
+        var code = emit.DeclareLocal<nint>($"cps_code_{NextLabelSeq()}");
+        var none = emit.DefineLabel($"cps_none_{NextLabelSeq()}");
         emit.LoadArgument(0);
         EmitFunctorId(emit, calleeFid);
         EmitResumeMarker(emit, calleeFid, 0);
         EmitHelperCall(emit, EngineCpsCallTargetMethod);
-        EmitCpsJump(emit);
+        emit.StoreLocal(code);
+        emit.LoadLocal(code);
+        emit.LoadConstant(Activation.CpsThroughLoop);
+        emit.Convert<nint>();
+        emit.UnsignedBranchIfLessOrEqual(none);
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        emit.LoadLocal(code);
+        emit.Call(_cps!.Jump);   // as EmitCpsJump
+        emit.Return();
+        emit.MarkLabel(none);
+        if (!CpsHotExit) return false;
+        var work = emit.DefineLabel($"cps_work_{NextLabelSeq()}");
+        emit.LoadLocal(code);
+        emit.BranchIfFalse(work);
+        emit.LoadArgument(0);
+        emit.LoadConstant(true);
+        emit.StoreField(EngIlTailCallPending);
+        emit.LoadConstant(true);
+        EmitReturn(emit);
+        emit.MarkLabel(work);
         return EmitColdExit(emit);
     }
 
@@ -1154,7 +1245,7 @@ public sealed partial class IlPredicateCompiler
     /// return that follows.</summary>
     private static void EmitCpsProceed(IlEmit emit)
     {
-        if (!CpsEmitting) return;
+        if (!CpsEmitting || ColdTransfers) return;
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineCpsProceedTargetMethod);
         EmitCpsJump(emit);

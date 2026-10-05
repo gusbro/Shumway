@@ -75,6 +75,7 @@ public sealed partial class Activation
         int r = _nextCleanupRef++;
         _cleanupHandlers.Add(new CleanupHandler
             { Level = _b, Ref = r, Enqueued = false, Live = liveCleanup });
+        ResetCutQuickFloor();
         return r;
     }
 
@@ -88,6 +89,7 @@ public sealed partial class Activation
             {
                 _cleanupHandlers.RemoveAt(i);
                 if (_cleanupHandlers.Count == 0) _cleanupLevelsSorted = true;
+                ResetCutQuickFloor();
                 return;
             }
     }

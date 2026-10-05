@@ -26,6 +26,67 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo EngineOccursModeGetter =
         typeof(Activation).GetProperty(nameof(Activation.OccursMode))!.GetGetMethod()!;
     private static readonly FieldInfo EngHeap = EngineField(nameof(Activation._heap));
+    private static readonly FieldInfo EngBindingTrail = EngineField(nameof(Activation._bindingTrail));
+
+    /// <summary>Bindings a hot method trails inline, over the methods emitted
+    /// in this process.</summary>
+    internal static int HotTrailSites;
+
+    // The tags of a cell that no list unifies with: get_list's helper would
+    // only say no. An attributed variable and a packed string are not among
+    // them (they unify with a list), nor a reference, which may lead to one.
+    private const int NeverAListTags = 1 << (int)Tag.Str | 1 << (int)Tag.Atom | 1 << (int)Tag.Int
+        | 1 << (int)Tag.Float | 1 << (int)Tag.BigInt;
+
+    // An atom or a small integer is its bits: a cell with other bits and one
+    // of these tags is another term.
+    private const int ImmediateTags = 1 << (int)Tag.Atom | 1 << (int)Tag.Int;
+    private const int NeverAnotherImmediateTags = ImmediateTags | 1 << (int)Tag.Str | 1 << (int)Tag.Lis;
+
+    /// <summary>Branches when the tag of the raw bits in
+    /// <paramref name="bits"/> is one of <paramref name="tags"/> (1 &lt;&lt; tag each).</summary>
+    private static void EmitBranchIfTagIn(IlEmit emit, IlLocal bits, int tags, IlLabel target)
+    {
+        emit.LoadConstant(tags);
+        emit.LoadLocal(bits);
+        emit.LoadConstant(Cell.TagShift);
+        emit.UnsignedShiftRight();
+        emit.Convert<int>();
+        emit.UnsignedShiftRight();
+        emit.LoadConstant(1);
+        emit.And();
+        emit.BranchIfTrue(target);
+    }
+
+    /// <summary>In a hot method, the trail entry of the binding about to be
+    /// stored at <paramref name="home"/>, when the cell is older than HB:
+    /// TrailBind inline. Emitted after the site's last exit to the cold
+    /// method and before its first write: a full trail is the cold method's,
+    /// which grows it and runs the instruction again. A hot method makes no
+    /// call that returns (ADR-061 item 6).</summary>
+    private static void EmitHotTrail(IlEmit emit, IlLocal home, IlLabel slow)
+    {
+        System.Threading.Interlocked.Increment(ref HotTrailSites);
+        var done = emit.DefineLabel($"trail_done_{NextLabelSeq()}");
+        emit.LoadLocal(home);
+        EmitLoadEngineField(emit, EngHb);
+        emit.BranchIfGreaterOrEqual(done);
+        EmitLoadEngineField(emit, EngBindingTrailTop);
+        EmitLoadEngineField(emit, EngBindingTrail);
+        emit.LoadLength<int>();
+        emit.Convert<int>();
+        emit.BranchIfGreaterOrEqual(slow);
+        EmitLoadEngineField(emit, EngBindingTrail);
+        EmitLoadEngineField(emit, EngBindingTrailTop);
+        emit.LoadLocal(home);
+        emit.StoreElement<int>();
+        emit.LoadArgument(0);
+        EmitLoadEngineField(emit, EngBindingTrailTop);
+        emit.LoadConstant(1);
+        emit.Add();
+        EmitStoreEngineField(emit, EngBindingTrailTop);
+        emit.MarkLabel(done);
+    }
     private static readonly FieldInfo EngCellsAllocated = EngineField(nameof(Activation._cellsAllocated));
     private static readonly FieldInfo EngWriteMode = EngineField(nameof(Activation._writeMode));
     private static readonly FieldInfo EngUnifyPointer = EngineField(nameof(Activation._unifyPointer));
@@ -67,6 +128,12 @@ public sealed partial class IlPredicateCompiler
         var write = emit.DefineLabel($"gl_write_{NextLabelSeq()}");
         var slow = emit.DefineLabel($"gl_slow_{NextLabelSeq()}");
         var done = emit.DefineLabel($"gl_done_{NextLabelSeq()}");
+        // A hot method's slow path leaves for the cold method: a cell no list
+        // unifies with fails here instead. Its test is off the paths of a
+        // list and of a variable.
+        bool hotFail = CpsHotExit;
+        var other = hotFail ? emit.DefineLabel($"gl_other_{NextLabelSeq()}") : slow;
+        var otherRef = hotFail ? emit.DefineLabel($"gl_other_ref_{NextLabelSeq()}") : slow;
 
         EmitLoadEngineField(emit, EngRegisters);
         emit.StoreLocal(regs);
@@ -94,7 +161,11 @@ public sealed partial class IlPredicateCompiler
         EmitTagIs(emit, c, Tag.Lis);
         emit.BranchIfTrue(read);
         EmitTagIs(emit, c, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(other);
+        // A hot method follows the whole chain of references; elsewhere the
+        // second step is the helper's.
+        var deref = emit.DefineLabel($"gl_deref_{NextLabelSeq()}");
+        if (hotFail) emit.MarkLabel(deref);
         emit.LoadLocal(p);
         emit.StoreLocal(home);
         emit.LoadLocal(heap);
@@ -109,11 +180,11 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(read);
         // A plain unbound variable is a Ref to itself.
         EmitTagIs(emit, d, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(otherRef);
         emit.LoadLocal(p);
         emit.LoadLocal(home);
         emit.BranchIfEqual(write);
-        emit.Branch(slow);
+        emit.Branch(hotFail ? deref : slow);
 
         // Read: p is the head's cell.
         emit.MarkLabel(read);
@@ -147,13 +218,6 @@ public sealed partial class IlPredicateCompiler
         // Write: bind the variable at home to a list at the heap top.
         emit.MarkLabel(write);
         bool hotWrite = CpsHotExit;
-        if (hotWrite)
-        {
-            // A trailed binding is the cold method's, decided before any write.
-            emit.LoadLocal(home);
-            EmitLoadEngineField(emit, EngHb);
-            emit.BranchIfLess(slow);
-        }
         if (window == ListWindow.ValXVarX)
         {
             // The occurs check tests the head value against the variable.
@@ -163,7 +227,11 @@ public sealed partial class IlPredicateCompiler
         }
         EmitLoadEngineField(emit, EngHeapTop);
         emit.StoreLocal(p);
-        if (window != ListWindow.Plain)
+        if (window == ListWindow.Plain)
+        {
+            if (hotWrite) EmitHotTrail(emit, home, slow);
+        }
+        else
         {
             // The pair is allocated here: it must fit.
             emit.LoadLocal(p);
@@ -173,6 +241,7 @@ public sealed partial class IlPredicateCompiler
             emit.LoadLength<Cell>();
             emit.Convert<int>();
             emit.BranchIfGreater(slow);
+            if (hotWrite) EmitHotTrail(emit, home, slow);
             emit.LoadArgument(0);
             emit.LoadLocal(p);
             emit.LoadConstant(2);
@@ -229,6 +298,14 @@ public sealed partial class IlPredicateCompiler
         }
         emit.Branch(done);
 
+        if (hotFail)
+        {
+            emit.MarkLabel(other);
+            EmitBranchIfTagIn(emit, c, NeverAListTags, failLabel);
+            emit.Branch(slow);
+            emit.MarkLabel(otherRef);
+            EmitBranchIfTagIn(emit, d, NeverAListTags, failLabel);
+        }
         emit.MarkLabel(slow);
         if (!EmitColdExit(emit))   // ADR-061: a hot method leaves for the cold one
         {
@@ -500,6 +577,11 @@ public sealed partial class IlPredicateCompiler
         var slow = emit.DefineLabel($"urc_slow_{NextLabelSeq()}");
         var done = emit.DefineLabel($"urc_done_{NextLabelSeq()}");
         var trailed = emit.DefineLabel($"urc_trailed_{NextLabelSeq()}");
+        // A hot method's slow path leaves for the cold method: two distinct
+        // constants fail here instead. The test is off the paths of the same
+        // constant and of a variable.
+        bool hot = sharedIn is null && CpsHotExit;
+        var other = hot ? emit.DefineLabel($"urc_other_{NextLabelSeq()}") : slow;
 
         emit.StoreLocal(value);
         emit.StoreLocal(reg);
@@ -524,12 +606,15 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(bits);
         emit.BranchIfEqual(yes);
         EmitTagIs(emit, c, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(other);
+        EmitLoadEngineField(emit, EngHeap);
+        emit.StoreLocal(heap);
+        // As get_list: a hot method follows the whole chain.
+        var deref = emit.DefineLabel($"urc_deref_{NextLabelSeq()}");
+        if (hot) emit.MarkLabel(deref);
         emit.LoadLocal(c);
         emit.Convert<int>();
         emit.StoreLocal(home);
-        EmitLoadEngineField(emit, EngHeap);
-        emit.StoreLocal(heap);
         emit.LoadLocal(heap);
         emit.LoadLocal(home);
         emit.LoadElement<Cell>();
@@ -540,23 +625,16 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfEqual(yes);
         // A plain unbound variable is a Ref to itself.
         EmitTagIs(emit, c, Tag.Ref);
-        emit.BranchIfFalse(slow);
+        emit.BranchIfFalse(other);
         emit.LoadLocal(c);
         emit.Convert<int>();
         emit.LoadLocal(home);
         emit.BranchIfEqual(bind);
-        emit.Branch(slow);
+        emit.Branch(hot ? deref : slow);
 
         // Bind(home, value): the store, and the trail when home is older than HB.
         emit.MarkLabel(bind);
-        bool hot = sharedIn is null && CpsHotExit;
-        if (hot)
-        {
-            // A trailed binding is the cold method's, decided before the store.
-            emit.LoadLocal(home);
-            EmitLoadEngineField(emit, EngHb);
-            emit.BranchIfLess(slow);
-        }
+        if (hot) EmitHotTrail(emit, home, slow);
         EmitHeapCell(emit, heap, home, 0, () => emit.LoadLocal(bits));
         if (!hot)
         {
@@ -571,6 +649,24 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(yes);
         emit.LoadConstant(true);
         emit.Branch(done);
+
+        if (hot)
+        {
+            // c is neither the constant nor a reference: with an atom or a
+            // small integer for the constant (it is its bits), a cell of
+            // these tags is another term.
+            var no = emit.DefineLabel($"urc_no_{NextLabelSeq()}");
+            var immediate = emit.DefineLabel($"urc_imm_{NextLabelSeq()}");
+            emit.MarkLabel(other);
+            EmitBranchIfTagIn(emit, bits, ImmediateTags, immediate);
+            emit.Branch(slow);
+            emit.MarkLabel(immediate);
+            EmitBranchIfTagIn(emit, c, NeverAnotherImmediateTags, no);
+            emit.Branch(slow);
+            emit.MarkLabel(no);
+            emit.LoadConstant(false);
+            emit.Branch(done);
+        }
 
         emit.MarkLabel(slow);
         if (sharedIn is not null || !EmitColdExit(emit))

@@ -116,8 +116,8 @@ public sealed class CpsColdMethodTests : IDisposable
     }
 
     // With no bytecode the delegate compiles at its first call, on the
-    // engine's thread: the predicate's own method, which has no tail call and
-    // so starts unoptimized. The cold method would compile optimized there.
+    // engine's thread: the predicate's own method. The cold method is twice
+    // its IL.
     [Fact]
     public void WithNoBytecode_APredicateKeepsItsOwnMethod()
     {

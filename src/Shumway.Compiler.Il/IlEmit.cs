@@ -446,10 +446,15 @@ public sealed class IlEmit
         Text("newobj", constructor.ToString());
     }
 
+    /// <summary>No call of this method gets the <c>tail.</c> prefix. The JIT
+    /// gives no first tier to a method with an explicit tail call: it
+    /// compiles it with full optimization at its first compile.</summary>
+    public bool NoTailCalls { get; set; }
+
     public void Return()
     {
         if (_unreachable) throw Fail("Unreachable code detected");
-        if (_pendingMethod is { } m && (_pendingBuilt || TailCallable(m)))
+        if (!NoTailCalls && _pendingMethod is { } m && (_pendingBuilt || TailCallable(m)))
         {
             _il.Emit(OpCodes.Tailcall);
             _il.Emit(_pendingOp, m);

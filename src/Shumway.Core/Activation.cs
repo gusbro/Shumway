@@ -60,7 +60,7 @@ public sealed partial class Activation
     [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _registers;
 
     // ----- Trails -----
-    private int[] _bindingTrail;
+    [EditorBrowsable(EditorBrowsableState.Never)] public int[] _bindingTrail;
     [EditorBrowsable(EditorBrowsableState.Never)] public int _bindingTrailTop;
 
     private ExtraTrailEntry[] _extraTrail;

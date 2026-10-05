@@ -1012,19 +1012,23 @@ public sealed partial class Activation
         // foreach-over-dict-Keys loop (which was 5.31%
         // self-time on Activation.Cut in Blint with user IL active,
         // plus a List<int> allocation per cut that hit any IL CP).
-        while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
+        if (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
         {
-            // fire the optional cleanup hook before
-            // dropping the entry. Non-det foreign predicates
-            // register iter.Dispose here so a generator's
-            // try / finally / using runs deterministically when
-            // Prolog `!` cuts past the CP.
-            var onPrune = _ilCpStack[_ilCpTop - 1].OnPrune;
-            if (onPrune is not null) onPrune();
-            _ilCpStack[_ilCpTop - 1].Del = null!;     // release delegate
-            _ilCpStack[_ilCpTop - 1].OnPrune = null;  // release callback
-            _ilCpStack[_ilCpTop - 1].CpsAlt = null;
-            _ilCpTop--;
+            do
+            {
+                // fire the optional cleanup hook before
+                // dropping the entry. Non-det foreign predicates
+                // register iter.Dispose here so a generator's
+                // try / finally / using runs deterministically when
+                // Prolog `!` cuts past the CP.
+                var onPrune = _ilCpStack[_ilCpTop - 1].OnPrune;
+                if (onPrune is not null) onPrune();
+                _ilCpStack[_ilCpTop - 1].Del = null!;     // release delegate
+                _ilCpStack[_ilCpTop - 1].OnPrune = null;  // release callback
+                _ilCpStack[_ilCpTop - 1].CpsAlt = null;
+                _ilCpTop--;
+            } while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier);
+            ResetCutQuickFloor();
         }
 
         _b = barrier;
@@ -1045,6 +1049,11 @@ public sealed partial class Activation
         }
 
         CompactTrails(_b, parentBindingTop, parentExtraTop, parentHeapTop);
+        // ADR-061: the trails are compact. A cut that only lowers B may let
+        // them grow by as much as they hold now, and by CutCompactSlack at
+        // least, before one leaves for this compaction again.
+        int kept = _bindingTrailTop + _extraTrailTop;
+        _cutCompactAt = kept + Math.Max(CutCompactSlack, kept);
     }
 
     // The compaction watermark: the barrier and parent tops the last walk
@@ -1101,6 +1110,39 @@ public sealed partial class Activation
             Cut(_b0);
             if (_pendingCleanupRefs is not null) FlushCleanupsAfterCut();
         }
+    }
+
+    // ADR-061: a hot method's cut to a choice point below B is a store to B
+    // when the barrier is at or above _cutQuickFloor and the two trail tops
+    // together are at most _cutCompactAt; otherwise it leaves for the cold
+    // method's cut (Cut). The trail entries Cut would have dropped stay until
+    // a later compaction: sound (they are the ones no backtrack needs) and
+    // bounded, since Cut sets _cutCompactAt from what its compaction kept.
+
+    /// <summary>ADR-061: the lowest barrier a cut reaches with nothing for
+    /// <see cref="Cut"/> to do but lower B: the top side-stack entry's key
+    /// (Cut pops the entries above its barrier) and one above the highest
+    /// cleanup handler's level (Cut fires the ones at or above it).</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _cutQuickFloor = -1;
+
+    /// <summary>ADR-061: what the trails may hold before a hot method's cut
+    /// leaves for <see cref="Cut"/>, which compacts them.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _cutCompactAt = CutCompactSlack;
+
+    // The least room a compaction gives the cuts after it. Not more: the
+    // entries the cuts leave are written through that much more of the
+    // cache. Not much less: each compaction is a transfer to the cold
+    // method. (ADR-061, "A cut that only lowers B".)
+    private const int CutCompactSlack = 1024;
+
+    // After every pop of the side stack and every change of the cleanup
+    // handlers. A push raises the floor at its site. A floor left too high
+    // sends every cut to Cut; one left too low skips a prune hook or a
+    // cleanup.
+    private void ResetCutQuickFloor()
+    {
+        int floor = _ilCpTop == 0 ? -1 : _ilCpStack[_ilCpTop - 1].Key;
+        _cutQuickFloor = Math.Max(floor, CleanupFloor);
     }
 
     /// <summary>Cut to the barrier captured earlier by <see cref="GetLevel"/>

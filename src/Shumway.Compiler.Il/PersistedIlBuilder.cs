@@ -236,7 +236,7 @@ public static class PersistedIlBuilder
                 // is its cold method; a method of its own would be the same
                 // code a fifth time. Not with no bytecode: the delegate then
                 // compiles at its first call, on the engine's thread, and the
-                // cold method's tail calls make the JIT optimize it at once.
+                // cold method is twice the code of a method of its own.
                 void OwnMethod() => ic.EmitPersistedMethod(
                     typeBuilder, methodName, pred,
                     delegatesField: delegatesField,

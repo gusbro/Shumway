@@ -1814,7 +1814,7 @@ public sealed partial class IlPredicateCompiler
                 // makes a non-tail call: the branch continues with the entry's code
                 // up to that call, which leaves the method. Continuing beats a
                 // transfer to the entry method (an epilogue, a jump and its prologue).
-                if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
+                if (selfTailLabel is not null && siteFunctorId == selfFunctorId && !ColdTransfers)
                 {
                     // ADR-049: the back-edge is the goal boundary the skipped
                     // dispatch-loop round trip would have provided — it
