@@ -1096,7 +1096,11 @@ public sealed partial class Activation
     {
         // Usually nothing sits above the entry barrier: the test inlines into
         // the caller, and only a cut that prunes pays the call.
-        if (_b > _b0) Cut(_b0);
+        if (_b > _b0)
+        {
+            Cut(_b0);
+            if (_pendingCleanupRefs is not null) FlushCleanupsAfterCut();
+        }
     }
 
     /// <summary>Cut to the barrier captured earlier by <see cref="GetLevel"/>
@@ -1106,7 +1110,11 @@ public sealed partial class Activation
     /// tag bits above bit 31). Mirrors the bytecode interpreter's
     /// <c>cut</c> opcode so Tier-1 IL can emit deep cut as a single engine
     /// call.</summary>
-    public void CutToLevel(int slot) => Cut((int)GetY(slot).Data);
+    public void CutToLevel(int slot)
+    {
+        Cut((int)GetY(slot).Data);
+        if (_pendingCleanupRefs is not null) FlushCleanupsAfterCut();
+    }
 
     /// <summary>The <c>BP</c> (next-alternative) value written by
     /// <see cref="SoftCut"/> to mark an else choice point neutralised. Distinct

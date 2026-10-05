@@ -398,7 +398,7 @@ public sealed partial class Activation
         m[WasmAbi.MetaCacheMask] = bases.MetaCacheMask;
         m[WasmAbi.AtomMarkerBase] = bases.AtomMarkerBase;
         m[WasmAbi.AtomMarkerLength] = bases.AtomMarkerLength;
-        m[WasmAbi.CleanupsPending] = HasPendingCleanups ? 1 : 0;
+        m[WasmAbi.CleanupReach] = WasmCleanupReach;
         m[WasmAbi.AttrWriteBase] = bases.AttrWriteBase;
         m[WasmAbi.AttrWriteLimit] = bases.AttrWriteLimit;
         m[WasmAbi.AttrWriteTop] = 0;

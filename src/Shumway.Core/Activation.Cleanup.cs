@@ -169,6 +169,40 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>Set by the bytecode interpreter: runs the cleanups a cut
+    /// enqueued, as its own cut instructions do after <see cref="Cut"/>.
+    /// Compiled code holds only the activation.</summary>
+    internal Action? Tier1CleanupFlusher { get; set; }
+
+    // A cut that discarded a setup_call_cleanup/3 scope runs its cleanup
+    // before the goal after the cut, in compiled code as in bytecode: the
+    // cleanup's bindings and effects are that goal's to see.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void FlushCleanupsAfterCut()
+    {
+        if (HasPendingCleanups) Tier1CleanupFlusher?.Invoke();
+    }
+
+    // The lowest barrier a cut reaches without firing a handler: one above
+    // the highest handler's level, since Cut fires the ones at or above its
+    // barrier. -1 with none.
+    private int CleanupFloor
+        => _cleanupHandlers is not { Count: > 0 } hs ? -1
+            : _cleanupLevelsSorted ? hs[hs.Count - 1].Level + 1 : int.MaxValue;
+
+    /// <summary>WasmAbi.CleanupReach: zero when no cut reaches a cleanup,
+    /// else one more than <see cref="CleanupFloor"/>; everything when a
+    /// cleanup is already queued, which the next cut on the host runs.</summary>
+    internal int WasmCleanupReach
+    {
+        get
+        {
+            if (HasPendingCleanups) return int.MaxValue;
+            int floor = CleanupFloor;
+            return floor == int.MaxValue ? floor : floor + 1;
+        }
+    }
+
     public bool HasCleanupHandlers => _cleanupHandlers is { Count: > 0 };
     public bool HasPendingCleanups => _pendingCleanupRefs is { Count: > 0 };
 

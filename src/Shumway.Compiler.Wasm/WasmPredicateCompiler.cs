@@ -132,7 +132,7 @@ public static class WasmPredicateCompiler
         13 => "no atom-marker table staged",
         14 => "atom id past the marker table",
         15 => "no module covers this zero-arity goal",
-        16 => "setup_call_cleanup handlers are live, so the cut declines",
+        16 => "a cut that reaches a setup_call_cleanup handler: the cleanup is the host's to run",
         34 => "an arithmetic expression the module does not evaluate",
         35 => "an arithmetic operand that is neither a number nor an expression",
         30 => "a cut dropped an attribute entry, which orphans its record",
@@ -4875,7 +4875,7 @@ public static class WasmPredicateCompiler
                         // A live setup_call_cleanup handler makes a cut run
                         // cleanups, and running one is meta-calling a goal
                         // from inside the cut. That is host work.
-                        LoadSlot32(WasmAbi.CleanupsPending);
+                        LoadSlot32(WasmAbi.CleanupReach);
                         Op(new Int32Constant(0));
                         Op(new Int32NotEqual());
                         MetaGuard(16);
@@ -10049,6 +10049,17 @@ public static class WasmPredicateCompiler
             Op(new Int32LessThanSigned());
             OpenIf();
             {
+                // A cut that reaches a setup_call_cleanup handler runs the
+                // cleanup before the next goal: the interpreter's cut does
+                // both (WasmAbi.CleanupReach).
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                LoadSlot32(WasmAbi.CleanupReach);
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                EmitDeopt(pc, 16);
+                CloseNested();
                 // The extra-trail top the barrier's choice point saved:
                 // stack[barrier + 1 + arity + 5], with arity at stack[barrier].
                 // A barrier of -1 has no choice point, and the top it implies

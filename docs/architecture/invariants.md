@@ -112,6 +112,10 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   effects.
 - **Trail compaction must preserve live `AttrModify`/`BigIntAlloc` entries**
   (a dropped attribute-restore entry corrupts constraint stores on backtrack).
+- **A cut that discards a `setup_call_cleanup/3` scope runs the cleanup
+  before the goal after the cut, in every tier**: the interpreter after each
+  cut instruction, Tier-1 IL inside `NeckCut` and `CutToLevel`, a wasm
+  module by stepping aside to the interpreter's cut (`WasmAbi.CleanupReach`).
 
 ## Logical update view
 

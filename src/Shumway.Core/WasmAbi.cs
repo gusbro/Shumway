@@ -252,17 +252,21 @@ public static class WasmAbi
     /// <summary>Entries in the atom marker table.</summary>
     public const int AtomMarkerLength = 44;
 
-    /// <summary>Non-zero while setup_call_cleanup/3 has live handlers.
+    /// <summary>How far a cut may go without reaching a
+    /// setup_call_cleanup/3 handler: zero while none is live, else a cut to
+    /// <c>barrier</c> reaches one when <c>barrier + 1</c> is below the value
+    /// (Activation.WasmCleanupReach).
     ///
-    /// <para>A cut may fire them, and running a cleanup is meta-calling a
-    /// goal from inside the cut -- host work. So the module's inline cut
-    /// declines whenever any is live, which is the common case being
-    /// nothing.</para>
+    /// <para>A cut that reaches a handler runs its cleanup before the next
+    /// goal, and running a cleanup is meta-calling a goal from inside the
+    /// cut -- host work. So the module's cut steps aside there, and its
+    /// inline meta-call cut whenever any handler is live, the common case
+    /// being none.</para>
     ///
     /// <para>A slot of its own rather than a Flags bit: Flags makes the code
     /// bail at the next safe point, and this must stop one emitted form, not
     /// the whole chain.</para></summary>
-    public const int CleanupsPending = 45;
+    public const int CleanupReach = 45;
 
     /// <summary>The thread's function table, as emscripten names it. Every
     /// module a thread registers lands in this one, which is what lets a
