@@ -62,6 +62,11 @@ public sealed class WasmTierDelegate
     /// <summary>Crossings that stayed inside wasm (one module tail-calling
     /// another). The counter a host switch turns into when the hop works.</summary>
     public static long DiagInWasmHops;
+
+    /// <summary>Dispatches through a function's loop and transfers between
+    /// functions, from modules compiled with
+    /// WasmPredicateCompiler.CountTransfers on.</summary>
+    public static long DiagDispatches, DiagTransfers;
     /// <summary>Requests per builtin id — which builtins actually cost a
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
@@ -188,6 +193,7 @@ public sealed class WasmTierDelegate
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
+        DiagDispatches = DiagTransfers = 0;
         DiagMaxStackTop = DiagMaxChoiceTop = 0;
         DiagCpCensus = DiagEnvCensus = null;
         for (int i = 0; i < DiagBuiltinCallerKeys.Length; i++)
@@ -265,6 +271,13 @@ public sealed class WasmTierDelegate
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountHops(long hops) => DiagInWasmHops += hops;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountTransfers(long dispatches, long transfers)
+    {
+        DiagDispatches += dispatches;
+        DiagTransfers += transfers;
+    }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CaptureLastGuard(IWasmChainContext cx)
@@ -788,6 +801,7 @@ public sealed class WasmTierDelegate
                         $"builtin resume address {ret} unknown to any module");
             }
             CountHops(cx.ReadSlot(WasmAbi.HopCount));
+            CountTransfers(cx.ReadSlot(WasmAbi.DispatchCount), cx.ReadSlot(WasmAbi.TransferCount));
         }
         // The chain owns the memory-side choice-point stack and lowered _b
         // over it (cut, trust, backtracking between members) without touching

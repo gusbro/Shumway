@@ -98,14 +98,17 @@ public sealed class WasmModuleRegistry
     /// compiled with; the member-to-member ones are its baked jumps.
     /// <paramref name="displaced"/> are the functors of other modules this
     /// install pushed to bytecode: the baked callers the taken-over functors
-    /// drag along (see the class remarks).</summary>
+    /// drag along (see the class remarks). <paramref name="functionOfCursor"/>
+    /// is, for a module of continuation functions, the function holding each
+    /// cursor; null enters every cursor through run.</summary>
     public Module Install(
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
         IReadOnlyDictionary<int, int> entryAddressByFid,
         int registerDemand,
         IEnumerable<(int Caller, int Callee)> callEdges,
-        out IReadOnlyList<int> displaced)
+        out IReadOnlyList<int> displaced,
+        IReadOnlyList<int>? functionOfCursor = null)
     {
         int id = Table.NextModuleId();
         if (id != _byId.Count)
@@ -134,7 +137,7 @@ public sealed class WasmModuleRegistry
         foreach (var (fid, cursor) in entryCursorByFid)
         {
             int marker = Activation.EncodeResumeMarker(fid, 0);
-            Table.Set(marker, id, cursor);
+            Table.Set(marker, id, cursor, functionOfCursor?[cursor] ?? 0);
             Table.SetCallMarker(fid, marker);
             var (atomId, arity) = FunctorTable.Lookup(fid);
             if (arity == 0) Table.SetAtomCallMarker(atomId, marker);
@@ -143,7 +146,8 @@ public sealed class WasmModuleRegistry
         {
             int fid = m.AddrIndex.OwnerFunctorOf(address);
             if (fid < 0) continue;              // precedes every member
-            Table.Set(Activation.EncodeResumeMarker(fid, address), id, cursor);
+            Table.Set(Activation.EncodeResumeMarker(fid, address), id, cursor,
+                      functionOfCursor?[cursor] ?? 0);
         }
         if (registerDemand > RegisterDemand) RegisterDemand = registerDemand;
         return m;

@@ -127,7 +127,12 @@ export async function withTraces(session, channels, label, fn) {
  * Reports, per goal, the best time of each tier, their ratio, and the tier's
  * counters for the timed run (chains, hops, deopts, exits) and where its time
  * went (inside the delegate, in the interpreter). With trace=, the
- * tier's timed runs carry those channels and post their dumps.
+ * tier's timed runs carry those channels and post their dumps. With cps=ab,
+ * each round also builds the program as continuation functions (ADR-061)
+ * and times that form beside the other, ABBA; with cps=abc, both of their
+ * grains (a function per entry point, and per partition). grain=lazy builds
+ * a module per predicate as each crosses a dispatch threshold (threshold=,
+ * default 2) instead of the program as one.
  */
 export async function wasmProbe({ session, libraries, emit, hash }) {
   const eq = hash.indexOf('=');
@@ -137,6 +142,12 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
   const rounds = Number(params.get('rounds') ?? 1);
   const budget = Number(params.get('budget') ?? 300);
   const channels = (params.get('trace') ?? '').split(',').filter(Boolean);
+  // getAll: the probe's name is the first key, and a probe named like an
+  // option would shadow it.
+  const cpsOpt = params.getAll('cps');
+  const abcCps = cpsOpt.includes('abc');
+  const abCps = abcCps || cpsOpt.includes('ab');
+  const tierCmd = params.get('grain') === 'lazy' ? (params.get('threshold') ?? '2') : 'all';
   const label = `probe ${file}`;
   try {
     if (!/^[\w-]+$/.test(file ?? '')) throw new Error(`bad probe name '${file}'`);
@@ -162,14 +173,27 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
     const err = await session.consult(source);
     if (err) throw new Error('consult failed: ' + err);
 
+    // A form change needs a rebuild, and only going off and back to all
+    // makes one.
+    const forms = { all: 'cps off', cps: 'cps on', cpsb: 'cps budget' };
+    const enter = async (mode) => {
+      if (!abCps) return setTierMode(session, mode === 'off' ? 'off' : tierCmd);
+      await setTierMode(session, 'off');
+      if (mode === 'off') return;
+      await session.exports().JitCompileControl(forms[mode]);
+      await setTierMode(session, tierCmd);
+    };
+    const tierModes = abcCps ? ['all', 'cps', 'cpsb'] : abCps ? ['all', 'cps'] : ['all'];
     const best = {}, ok = {}, counts = {}, times = {};
     for (let r = 0; r < rounds; r++) {
-      for (const mode of ['off', 'all', 'all', 'off']) {
-        await setTierMode(session, mode);
+      const modes = abcCps ? ['off', 'all', 'cps', 'cpsb', 'cpsb', 'cps', 'all', 'off']
+        : abCps ? ['off', 'all', 'cps', 'cps', 'all', 'off'] : ['off', 'all', 'all', 'off'];
+      for (const mode of modes) {
+        await enter(mode);
         for (const [name, goal] of probes) {
           await timedGoal(session, goal, budget);            // warm
           await readCounters(session);                       // reset
-          const run = mode === 'all' && channels.length > 0
+          const run = tierModes.includes(mode) && channels.length > 0
             ? await withTraces(session, channels, `${label} ${name}`,
                                () => timedGoal(session, goal, budget))
             : await timedGoal(session, goal, budget);
@@ -180,7 +204,7 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
             times[key] = time;
           }
           ok[key] = (ok[key] ?? true) && run.ok;
-          if (mode === 'all') counts[name] = line;
+          if (tierModes.includes(mode)) counts[`${name} ${mode}`] = line;
           mark(`${label}: round ${r} ${mode.padEnd(3)} ${name} -> ${Math.round(run.ms)}ms `
              + `${run.state}  ${line}`);
         }
@@ -191,16 +215,24 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
     const rows = probes.map(([name]) => {
       const off = best[`${name} off`], all = best[`${name} all`];
       const ratio = off > 0 && all > 0 ? `x${(off / all).toFixed(2)}` : '?';
-      const bad = ok[`${name} off`] && ok[`${name} all`] ? '' : '  FAILED';
+      const bad = tierModes.every((m) => ok[`${name} ${m}`]) && ok[`${name} off`] ? '' : '  FAILED';
+      const col = (m) => {
+        const t = best[`${name} ${m}`];
+        return `  ${m} ${String(Math.round(t ?? -1)).padStart(7)}ms`
+          + `  ${m}/tier1 ${all > 0 && t > 0 ? (t / all).toFixed(3) : '?'}`;
+      };
+      const cpsCol = tierModes.filter((m) => m !== 'all').map(col).join('');
       return `${name.padEnd(width)}  tier0 ${String(Math.round(off ?? -1)).padStart(7)}ms`
            + `  tier1 ${String(Math.round(all ?? -1)).padStart(7)}ms  ${ratio.padStart(6)}`
-           + `${bad}  ${counts[name] ?? ''}`
+           + `${cpsCol}${bad}  ${counts[`${name} all`] ?? ''}`
+           + tierModes.filter((m) => m !== 'all')
+               .map((m) => `\n${''.padEnd(width)}  ${m}: ${counts[`${name} ${m}`] ?? ''}`).join('')
            // Where the tier's best run went: the delegate's four buckets and
            // the interpreter's own share; the rest of the wall is the query's
            // setup and its answer.
            + (times[`${name} all`] ? `\n${''.padEnd(width)}  ${times[`${name} all`].trim()}` : '');
     });
-    const report = `${label} (n=${n}, best of ${rounds} ABBA rounds)\n${rows.join('\n')}\n${clock}\n`;
+    const report = `${label} (n=${n}, ${tierCmd === 'all' ? 'batch' : `lazy at ${tierCmd}`}, best of ${rounds} ABBA rounds)\n${rows.join('\n')}\n${clock}\n`;
     emit(report);
     const pre = document.createElement('pre');
     pre.id = 'wasmprobe';

@@ -161,10 +161,11 @@ public static class WasmAbi
     /// of baked <c>if (bp == const)</c> comparisons, one per choice-point site
     /// in the module.</para>
     ///
-    /// <para>Row layout: <c>((moduleId + 1) &lt;&lt; 32) | cursor</c>. Zero means
-    /// the marker does not resolve here, which is the safe direction: the
-    /// module returns the verdict and the host takes over, exactly as it did
-    /// before there was a table.</para>
+    /// <para>Row layout: <c>((moduleId + 1) &lt;&lt; 40) | (function &lt;&lt; 20) |
+    /// cursor</c> (<see cref="WasmResumeTable"/>). Zero means the marker does
+    /// not resolve here, which is the safe direction: the module returns the
+    /// verdict and the host takes over, exactly as it did before there was a
+    /// table.</para>
     ///
     /// <para>Per world, never global. Functor ids and the marker pool are
     /// process-wide, but bytecode addresses belong to each engine's code space:
@@ -535,7 +536,13 @@ public static class WasmAbi
     public const int CompactedBinding = 79;
     public const int CompactedExtra = 80;
 
-    public const int SlotCount = 81;
+    /// <summary>Diagnostic (WasmPredicateCompiler.CountTransfers): dispatches
+    /// through a function's loop, and transfers between functions, during
+    /// the chain. Zero in a module compiled without the switch.</summary>
+    public const int DispatchCount = 81;
+    public const int TransferCount = 82;
+
+    public const int SlotCount = 83;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

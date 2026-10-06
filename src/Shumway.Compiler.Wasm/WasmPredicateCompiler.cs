@@ -55,9 +55,10 @@ public static class WasmPredicateCompiler
 
     public static WasmGroupEntry CompileGroup(IReadOnlyList<WasmGroupMember> members,
                                               IWasmCompileEnv env, bool shared = false,
-                                              int moduleId = 0)
+                                              int moduleId = 0, bool? cps = null,
+                                              WasmCpsGrain? grain = null)
     {
-        var c = new Compilation(members, env, moduleId);
+        var c = new Compilation(members, env, moduleId, cps ?? CpsMode, grain ?? CpsGrain);
         c.RejectDispatchOnlyPredicates();
         c.Decode();
         c.RejectIfCrossingsDominate();
@@ -74,6 +75,29 @@ public static class WasmPredicateCompiler
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
+
+    /// <summary>ADR-061 stage 5, the wasm side of continuation methods:
+    /// functions entered at their entry points (see <see cref="CpsGrain"/>),
+    /// transfers as tail calls that carry the machine in their arguments, and
+    /// resume rows that name the function. Off by default, like the IL
+    /// tier's.</summary>
+    public static bool CpsMode { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_CPS") == "1";
+
+    /// <summary>Under <see cref="CpsMode"/>, what a function holds: one entry
+    /// point, or the leaders of whole members up to the partition budget,
+    /// where a return or a backtrack between them is a branch.
+    /// <c>SHUMWAY_WASM_CPS_GRAIN=budget</c>.</summary>
+    /// <summary>Diagnostic, off: every dispatch through a function's loop
+    /// and every transfer between functions (a tail call, a hop, a route
+    /// through run) counts into the mailbox (WasmAbi.DispatchCount and
+    /// TransferCount), so a test can say how a form moves control without a
+    /// clock. Puts real instructions in every module compiled while on.</summary>
+    public static bool CountTransfers;
+
+    public static WasmCpsGrain CpsGrain { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_WASM_CPS_GRAIN") == "budget"
+            ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
 
     /// <summary>Emit the meta-call's guard stamps (which guard declined, and
     /// the functor id it saw) into DiagA/DiagB. Off: unlike the host-side
@@ -177,8 +201,11 @@ public static class WasmPredicateCompiler
     }
 
     private sealed class Compilation(IReadOnlyList<WasmGroupMember> members,
-                                     IWasmCompileEnv env, int moduleId)
+                                     IWasmCompileEnv env, int moduleId, bool cps,
+                                     WasmCpsGrain grain)
     {
+        private readonly bool _cps = cps;
+        private readonly WasmCpsGrain _grain = grain;
         private readonly IReadOnlyList<WasmGroupMember> _members = members;
         private readonly IWasmCompileEnv _env = env;
         private readonly int _moduleId = moduleId;
@@ -213,6 +240,10 @@ public static class WasmPredicateCompiler
         // a partition is a cursor range [Lo, Hi).
         private readonly List<(int Lo, int Hi)> _parts = new();
         private (int Lo, int Hi) _curPart;
+        // CPS: the function being emitted (1 + partition, K + 1 the resolver).
+        private int _curFunction;
+        // Emitting a partition's cases, whose blocks TryBrForward counts.
+        private bool _inPartition;
 
         /// <summary>Partition budget in decoded WAM instructions (~40 wasm
         /// instructions each). Two ceilings, and the lower one rules. The
@@ -234,6 +265,14 @@ public static class WasmPredicateCompiler
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
+        private int RouterIndex => _parts.Count + 8;    // CPS only: K+8 the cursor router
+
+        /// <summary>CPS: the locals a transfer carries as arguments, 0 to
+        /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
+        /// cursor and LCur), the four bases and the machine registers. The
+        /// write mode and the unify pointer are dead at every leader; the
+        /// cell tally's base stays in the mailbox.</summary>
+        private const int CpsParams = (int)LCP + 1;
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -687,6 +726,9 @@ public static class WasmPredicateCompiler
             foreach (int addr in _leaders)
                 if (!_byPc.ContainsKey(addr))
                     throw new WasmCompileException($"jump target {addr} is not an instruction boundary");
+            if (_leaders.Count >= 1 << WasmResumeTable.CursorBits)
+                throw new WasmCompileException(
+                    $"{_leaders.Count} cursors: past a resume row's cursor field");
 
             // Cursor 0 is address 0 -- the fresh-entry convention resume
             // markers already use.
@@ -696,23 +738,14 @@ public static class WasmPredicateCompiler
             _failCase = next;
             _proceedCase = next + 1;
 
-            // Cut partitions: accumulate whole members until the budget is
-            // crossed. A member above the budget alone still gets exactly one
-            // partition (it fit in a single function before grouping existed).
-            var instrsPerSec = new int[_members.Count];
-            foreach (var ins in _instrs) instrsPerSec[ins.Section]++;
-            var addrs = new List<int>(_leaders);
-            int start = 0; long cost = 0; int prevSec = -1;
-            for (int i = 0; i < addrs.Count; i++)
+            if (_cps && _grain == WasmCpsGrain.EntryPoint) CutAtEntryPoints();
+            else CutByBudget();
+            if (_cps)
             {
-                int sec = _instrs[_byPc[addrs[i]]].Section;
-                if (sec == prevSec) continue;
-                if (cost >= PartitionBudgetWamInstrs && i > start)
-                { _parts.Add((start, i)); start = i; cost = 0; }
-                cost += instrsPerSec[sec];
-                prevSec = sec;
+                _partOfCursor = new int[_failCase];
+                for (int p = 0; p < _parts.Count; p++)
+                    for (int c = _parts[p].Lo; c < _parts[p].Hi; c++) _partOfCursor[c] = p;
             }
-            _parts.Add((start, addrs.Count));
 
             // The proceed jump table: every in-group non-tail call bakes
             // Cp = marker(callerFid, resume cursor) as a constant; a proceed
@@ -733,6 +766,54 @@ public static class WasmPredicateCompiler
                 _callSites.TryGetValue(edge, out int seen);
                 _callSites[edge] = seen + 1;
             }
+        }
+
+        /// <summary>CPS: a partition starts at every entry point -- a member's
+        /// entry and the return of a predicate call -- and holds the leaders
+        /// up to the next one. The alternatives a choice point resumes stay
+        /// with the code before them, so a predicate that backtracks into
+        /// itself does it with a branch. A call to a builtin the module
+        /// answers itself falls through, so its return does not start
+        /// one.</summary>
+        private void CutAtEntryPoints()
+        {
+            var entries = new HashSet<int>();
+            foreach (var m in _members) entries.Add(m.Bias);
+            foreach (var ins in _instrs)
+            {
+                if (ins.Op == Opcode.Call
+                    && _callee.TryGetValue(ins.Pc, out int callee)
+                    && !_env.TryGetBuiltin(callee, out _))
+                    entries.Add(ins.Pc + 9);
+            }
+            var addrs = new List<int>(_leaders);
+            int start = 0;
+            for (int i = 1; i < addrs.Count; i++)
+                if (entries.Contains(addrs[i])) { _parts.Add((start, i)); start = i; }
+            _parts.Add((start, addrs.Count));
+        }
+
+        private int[] _partOfCursor = Array.Empty<int>();
+
+        // Accumulate whole members until the budget is crossed. A member
+        // above the budget alone still gets exactly one partition (it fit in a
+        // single function before grouping existed).
+        private void CutByBudget()
+        {
+            var instrsPerSec = new int[_members.Count];
+            foreach (var ins in _instrs) instrsPerSec[ins.Section]++;
+            var addrs = new List<int>(_leaders);
+            int start = 0; long cost = 0; int prevSec = -1;
+            for (int i = 0; i < addrs.Count; i++)
+            {
+                int sec = _instrs[_byPc[addrs[i]]].Section;
+                if (sec == prevSec) continue;
+                if (cost >= PartitionBudgetWamInstrs && i > start)
+                { _parts.Add((start, i)); start = i; cost = 0; }
+                cost += instrsPerSec[sec];
+                prevSec = sec;
+            }
+            _parts.Add((start, addrs.Count));
         }
 
         private int CursorOf(int addr) => _cursorByAddr[addr];
@@ -757,6 +838,31 @@ public static class WasmPredicateCompiler
         /// <summary>Branch back to the dispatcher loop (LCur must be set).</summary>
         private void BrDispatch()
             => Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex))));
+
+        /// <summary>CPS, in a partition: case <paramref name="k"/> of this
+        /// function when it comes after the one being emitted. Its block
+        /// encloses this case, so a branch to its end is a branch to its code,
+        /// without the loop and its br_table. LCur still names it.</summary>
+        private bool TryBrForward(int k, int cursor)
+        {
+            if (!_cps || !_inPartition || k <= _caseIndex) return false;
+            Op(new Int32Constant(cursor));
+            Op(new LocalSet(LCur));
+            Op(new Branch((uint)(_extraDepth + (k - _caseIndex - 1))));
+            return true;
+        }
+
+        /// <summary>CountTransfers: one more in the slot.</summary>
+        private void Count(int slot)
+        {
+            if (!CountTransfers) return;
+            StoreSlot64(slot, () =>
+            {
+                LoadSlot64(slot);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+        }
 
         /// <summary>Resolves a resume marker through the resume table and, when
         /// it names this module, dispatches to its cursor. Leaves nothing on
@@ -795,22 +901,53 @@ public static class WasmPredicateCompiler
                 Op(new Int64Load());
                 Op(new LocalSet(LC2));                  // row
 
-                // The row's high half is moduleId + 1; zero means no row.
+                // The row's top bits are moduleId + 1, zero meaning no row;
+                // then the function holding the cursor, then the cursor
+                // (WasmResumeTable).
                 Op(new LocalGet(LC2));
-                Op(new Int64Constant(32));
+                Op(new Int64Constant(WasmResumeTable.CursorBits + WasmResumeTable.FunctionBits));
                 Op(new Int64ShiftRightUnsigned());
                 Op(new Int32WrapInt64());
                 Op(new Int32Constant(1));
                 Op(new Int32Subtract());
                 Op(new LocalSet(LT0));                  // owner module id
+                if (_cps)
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(WasmResumeTable.CursorBits));
+                    Op(new Int64ShiftRightUnsigned());
+                    Op(new Int32WrapInt64());
+                    Op(new Int32Constant((1 << WasmResumeTable.FunctionBits) - 1));
+                    Op(new Int32And());
+                    Op(new LocalSet(LT2));              // the function holding it
+                }
                 Op(new LocalGet(LT0));
                 Op(new Int32Constant(_env.EncodeModuleId(_moduleId)));       // baked: see CompileGroup
                 Op(new Int32Equal());
                 OpenIf();
                 {
-                    Op(new LocalGet(LC2));
-                    Op(new Int32WrapInt64());
-                    Op(new LocalSet(LCur));
+                    // LCur only where the row resolves: a caller that falls
+                    // through on a miss (a partition's fail case) still
+                    // holds its pseudo-cursor there.
+                    SetCursorFromRow();
+                    if (_cps)
+                    {
+                        // ADR-061: another function of this module is a tail
+                        // call through the table, the machine in the
+                        // arguments; this one's own cursor is a branch.
+                        Op(new LocalGet(LT2));
+                        Op(new Int32Constant(_curFunction));
+                        Op(new Int32NotEqual());
+                        OpenIf();
+                        {
+                            LoadModuleTableIndex(() => Op(new Int32Constant(_env.EncodeModuleId(_moduleId))));
+                            Op(new LocalGet(LT2));
+                            Op(new Int32Add());
+                            Op(new LocalSet(LT1));
+                            EmitCpsIndirect(LT1);
+                        }
+                        CloseNested();
+                    }
                     BrDispatch();
                 }
                 OpenElse();
@@ -829,12 +966,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32GreaterThanOrEqualSigned());
                     OpenIf();
                     {
-                        LoadSlot32(WasmAbi.ModuleIndexBase);
-                        Op(new LocalGet(LT0));
-                        Op(new Int32Constant(2));
-                        Op(new Int32ShiftLeft());
-                        Op(new Int32Add());
-                        Op(new Int32Load());
+                        LoadModuleTableIndex(() => Op(new LocalGet(LT0)));
                         Op(new LocalSet(LT1));          // table index, -1 absent
 
                         // Slot 0 is a real slot: absence has to be -1, or the
@@ -844,18 +976,34 @@ public static class WasmPredicateCompiler
                         Op(new Int32GreaterThanOrEqualSigned());
                         OpenIf();
                         {
-                            // The callee reloads the scalars in its prologue,
-                            // so they have to be in the mailbox first.
-                            StoreScalars();
                             StoreSlot64(WasmAbi.HopCount, () =>
                             {
                                 LoadSlot64(WasmAbi.HopCount);
                                 Op(new Int64Constant(1));
                                 Op(new Int64Add());
                             });
+                            SetCursorFromRow();
+                            if (_cps)
+                            {
+                                // A module of continuation functions takes
+                                // the machine as this one hands it.
+                                Op(new LocalGet(LT2));
+                                OpenIf();
+                                {
+                                    Op(new LocalGet(LT1));
+                                    Op(new LocalGet(LT2));
+                                    Op(new Int32Add());
+                                    Op(new LocalSet(LT1));
+                                    EmitCpsIndirect(LT1);
+                                }
+                                CloseNested();
+                            }
+                            // The callee reloads the scalars in its prologue,
+                            // so they have to be in the mailbox first.
+                            Count(WasmAbi.TransferCount);
+                            StoreScalars();
                             Op(new LocalGet(0));                // mailbox
-                            Op(new LocalGet(LC2));
-                            Op(new Int32WrapInt64());           // its cursor
+                            Op(new LocalGet(LCur));             // its cursor
                             Op(new LocalGet(LT1));
                             Op(new ReturnCallIndirect(0));
                         }
@@ -868,15 +1016,85 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
+        /// <summary>LCur = the cursor field of the row in LC2.</summary>
+        private void SetCursorFromRow()
+        {
+            Op(new LocalGet(LC2));
+            Op(new Int32WrapInt64());
+            Op(new Int32Constant((1 << WasmResumeTable.CursorBits) - 1));
+            Op(new Int32And());
+            Op(new LocalSet(LCur));
+        }
+
+        /// <summary>Pushes the thread's table index of the module whose id
+        /// <paramref name="moduleId"/> pushes (-1 where not registered).</summary>
+        private void LoadModuleTableIndex(Action moduleId)
+        {
+            LoadSlot32(WasmAbi.ModuleIndexBase);
+            moduleId();
+            Op(new Int32Constant(2));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new Int32Load());
+        }
+
+        /// <summary>CPS: tail-call the table entry <paramref name="indexLocal"/>
+        /// holds at LCur, the machine in the arguments.</summary>
+        private void EmitCpsIndirect(uint indexLocal)
+        {
+            Count(WasmAbi.TransferCount);
+            Op(new LocalGet(0));
+            Op(new LocalGet(LCur));
+            Op(new LocalGet(LCur));
+            for (uint l = LHeapB; l <= LCP; l++) Op(new LocalGet(l));
+            Op(new LocalGet(indexLocal));
+            Op(new ReturnCallIndirect(3));
+        }
+
         private void GoTo(int addr)
         {
-            Op(new Int32Constant(CursorOf(addr)));
+            int cursor = CursorOf(addr);
+            if (_cps && (cursor < _curPart.Lo || cursor >= _curPart.Hi))
+            {
+                EmitCpsTransfer((uint)(1 + _partOfCursor[cursor]), cursor);
+                return;
+            }
+            if (TryBrForward(cursor - _curPart.Lo, cursor)) return;
+            Op(new Int32Constant(cursor));
             Op(new LocalSet(LCur));
             BrDispatch();
         }
 
+        /// <summary>CPS: tail-call <paramref name="function"/> at
+        /// <paramref name="cursor"/> (LCur when negative), the machine in the
+        /// arguments and nothing in memory: the write mode and the unify
+        /// pointer are dead at every leader, and the cell tally's base sits in
+        /// the mailbox for the whole chain (see <see cref="EmitCpsPrologue"/>).</summary>
+        private void EmitCpsTransfer(uint function, int cursor)
+        {
+            Count(WasmAbi.TransferCount);
+            Op(new LocalGet(0));
+            for (int k = 0; k < 2; k++)
+                if (cursor >= 0) Op(new Int32Constant(cursor));
+                else Op(new LocalGet(LCur));
+            for (uint l = LHeapB; l <= LCP; l++) Op(new LocalGet(l));
+            Op(new ReturnCall(function));
+        }
+
+        /// <summary>CPS: what a function reads at entry besides its
+        /// arguments. Inside a chain the CellsClaimed slot holds the tally's
+        /// base (claimed minus H): run stores it, a backtrack that banks a
+        /// span stores it again, and StoreScalars, on every way out, puts the
+        /// claimed count back.</summary>
+        private void EmitCpsPrologue()
+        {
+            LoadSlot64(WasmAbi.CellsClaimed);
+            Op(new LocalSet(LCells));
+        }
+
         private void GoFail()
         {
+            if (TryBrForward(_curPart.Hi - _curPart.Lo, _failCase)) return;
             Op(new Int32Constant(_failCase));
             Op(new LocalSet(LCur));
             BrDispatch();
@@ -919,8 +1137,16 @@ public static class WasmPredicateCompiler
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
                 Returns = [WebAssemblyValueType.Int32],
             });
+            // 3 (CPS): a partition, the resolver and the router take the
+            // machine as arguments.
+            module.Types.Add(new WebAssemblyType
+            {
+                Parameters = Enumerable.Repeat(WebAssemblyValueType.Int32, CpsParams).ToArray(),
+                Returns = [WebAssemblyValueType.Int32],
+            });
             int k = _parts.Count;
-            for (int f = 0; f <= k + 1; f++) module.Functions.Add(new Function { Type = 0 });
+            module.Functions.Add(new Function { Type = 0 });
+            for (int f = 1; f <= k + 1; f++) module.Functions.Add(new Function { Type = _cps ? 3u : 0u });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 2 });
@@ -931,6 +1157,17 @@ public static class WasmPredicateCompiler
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
             });
+            if (_cps)
+            {
+                // The world registers these in its table right after run, at
+                // the index a row's function field adds to the module's.
+                for (int f = 1; f <= _parts.Count; f++)
+                    module.Exports.Add(new Export
+                    {
+                        Kind = ExternalKind.Function, Index = (uint)f, Name = "f" + f,
+                    });
+                module.CustomSections.Add(WasmCpsLayout.Section(_failCase, _parts.Select(p => p.Lo)));
+            }
 
             module.Codes.Add(BuildDispatcherBody());
             var addrsInOrder = new List<int>(_leaders);
@@ -1002,6 +1239,11 @@ public static class WasmPredicateCompiler
                     Locals = [],
                     Code = [new Int32Constant(3), new End()],
                 });
+            if (_cps)
+            {
+                module.Functions.Add(new Function { Type = 3 });
+                module.Codes.Add(BuildCpsRouterBody());
+            }
 
             // A diagnostic build names its functions, so a browser profile
             // reads "p12:clpz$state/3" instead of "wasm-function[12]".
@@ -1024,6 +1266,19 @@ public static class WasmPredicateCompiler
         private FunctionBody BuildDispatcherBody()
         {
             _code = new List<Instruction>();
+            if (_cps)
+            {
+                // run(mailbox, cursor): the machine out of the mailbox once,
+                // then the router with it in the arguments.
+                EmitPrologue();
+                StoreSlot64(WasmAbi.CellsClaimed, () => Op(new LocalGet(LCells)));
+                for (uint l = 0; l <= LCP; l++) Op(new LocalGet(l));
+                Op(new ReturnCall((uint)RouterIndex));
+                Op(new End());
+                var cpsBody = new FunctionBody { Locals = EngineLocals(), Code = _code };
+                _extraDepth = 0;
+                return cpsBody;
+            }
             Op(new LocalGet(1));
             Op(new Int32Constant(_failCase));
             Op(new Int32GreaterThanOrEqualSigned());
@@ -1051,6 +1306,47 @@ public static class WasmPredicateCompiler
             var body = new FunctionBody { Locals = [], Code = _code };
             _extraDepth = 0;
             return body;
+        }
+
+        /// <summary>CPS: the router. A pseudo-cursor goes to the resolver,
+        /// a cursor to the function holding it, by one br_table; the
+        /// arguments pass through untouched.</summary>
+        private FunctionBody BuildCpsRouterBody()
+        {
+            _code = new List<Instruction>();
+            int k = _parts.Count;
+            void PassOn(uint function)
+            {
+                for (uint l = 0; l <= LCP; l++) Op(new LocalGet(l));
+                Op(new ReturnCall(function));
+            }
+            Op(new LocalGet(LCur));
+            Op(new Int32Constant(_failCase));
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new If(BlockType.Empty));
+            PassOn((uint)(k + 1));
+            Op(new End());
+            for (int j = 0; j < k; j++) Op(new Block(BlockType.Empty));
+            Op(new LocalGet(LCur));
+            var labels = new uint[_failCase];
+            for (int c = 0; c < _failCase; c++) labels[c] = (uint)_partOfCursor[c];
+            Op(new BranchTable((uint)(k - 1), labels));
+            for (int j = 0; j < k; j++)
+            {
+                Op(new End());
+                PassOn((uint)(1 + j));
+            }
+            Op(new End());                                  // the function
+            return new FunctionBody { Locals = [], Code = _code };
+        }
+
+        /// <summary>CPS: <see cref="EngineLocals"/> less the ones the
+        /// arguments are.</summary>
+        private static Local[] CpsEngineLocals()
+        {
+            var locals = EngineLocals();
+            locals[0] = new Local { Count = 16 - (CpsParams - 2), Type = WebAssemblyValueType.Int32 };
+            return locals;
         }
 
         private static Local[] EngineLocals() =>
@@ -1130,6 +1426,8 @@ public static class WasmPredicateCompiler
             }
             names.Add("resolver"); names.Add("unifier"); names.Add("identity");
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
+            names.Add("compare");
+            if (_cps) names.Add("router");
 
             var payload = new List<byte>();
             static void Leb(List<byte> o, uint v)
@@ -1156,10 +1454,12 @@ public static class WasmPredicateCompiler
         {
             _code = new List<Instruction>();
             _curPart = part;
+            _curFunction = 1 + _parts.IndexOf(part);
+            _inPartition = true;
             int n = part.Hi - part.Lo;
             _caseCount = n + 2;                             // + $fail + $out
 
-            EmitPrologue();
+            if (_cps) EmitCpsPrologue(); else EmitPrologue();
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
@@ -1201,30 +1501,47 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
             for (int j = _caseCount - 1; j >= 0; j--) Op(new Block(BlockType.Empty));
-            // Route: FAIL pseudo-cursor -> local $fail; anything outside
-            // [Lo, Hi) (the proceed pseudo-cursor included) -> $out; a local
-            // cursor -> its case via br_table. Depths at this point,
-            // innermost first: cases 0..n-1, $fail = n, $out = n+1 (+1
-            // inside an If).
-            Op(new LocalGet(LCur));
-            Op(new Int32Constant(_failCase));
-            Op(new Int32Equal());
-            OpenIf();
-            Op(new Branch((uint)(n + 1)));                  // $fail
-            CloseNested();
-            Op(new LocalGet(LCur));
-            Op(new Int32Constant(part.Lo));
-            Op(new Int32Subtract());
-            Op(new LocalTee(LT0));
-            Op(new Int32Constant(n));
-            Op(new Int32GreaterThanOrEqualUnsigned());      // negative wraps huge
-            OpenIf();
-            Op(new Branch((uint)(n + 2)));                  // $out
-            CloseNested();
-            Op(new LocalGet(LT0));
-            var labels = new uint[n];
-            for (uint j = 0; j < n; j++) labels[j] = j;
-            Op(new BranchTable((uint)(n + 1), labels));     // default unreachable
+            Count(WasmAbi.DispatchCount);
+            if (_cps)
+            {
+                // ADR-061: a function dispatches only its own cursors and
+                // FAIL (a cursor of another function is a transfer, and
+                // PROCEED goes to the resolver), so FAIL is the br_table's
+                // default and there is no range test.
+                Op(new LocalGet(LCur));
+                Op(new Int32Constant(part.Lo));
+                Op(new Int32Subtract());
+                var cpsLabels = new uint[n];
+                for (uint j = 0; j < n; j++) cpsLabels[j] = j;
+                Op(new BranchTable((uint)n, cpsLabels));    // default: $fail
+            }
+            else
+            {
+                // Route: FAIL pseudo-cursor -> local $fail; anything outside
+                // [Lo, Hi) (the proceed pseudo-cursor included) -> $out; a
+                // local cursor -> its case via br_table. Depths at this point,
+                // innermost first: cases 0..n-1, $fail = n, $out = n+1 (+1
+                // inside an If).
+                Op(new LocalGet(LCur));
+                Op(new Int32Constant(_failCase));
+                Op(new Int32Equal());
+                OpenIf();
+                Op(new Branch((uint)(n + 1)));              // $fail
+                CloseNested();
+                Op(new LocalGet(LCur));
+                Op(new Int32Constant(part.Lo));
+                Op(new Int32Subtract());
+                Op(new LocalTee(LT0));
+                Op(new Int32Constant(n));
+                Op(new Int32GreaterThanOrEqualUnsigned());  // negative wraps huge
+                OpenIf();
+                Op(new Branch((uint)(n + 2)));              // $out
+                CloseNested();
+                Op(new LocalGet(LT0));
+                var labels = new uint[n];
+                for (uint j = 0; j < n; j++) labels[j] = j;
+                Op(new BranchTable((uint)(n + 1), labels)); // default unreachable
+            }
 
             for (int j = 0; j < n; j++)
             {
@@ -1241,7 +1558,11 @@ public static class WasmPredicateCompiler
             Op(new End());                                  // the loop
             EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
             Op(new End());                                  // the function
-            var body = new FunctionBody { Locals = EngineLocals(), Code = _code };
+            _inPartition = false;
+            var body = new FunctionBody
+            {
+                Locals = _cps ? CpsEngineLocals() : EngineLocals(), Code = _code,
+            };
             _extraDepth = 0;
             return body;
         }
@@ -1258,9 +1579,10 @@ public static class WasmPredicateCompiler
         {
             _code = new List<Instruction>();
             _curPart = (0, 0);
+            _curFunction = _parts.Count + 1;
             _caseCount = 3;                                 // $proceed, $fail, $out
 
-            EmitPrologue();
+            if (_cps) EmitCpsPrologue(); else EmitPrologue();
             OpenLoop();
             _extraDepth--;
             Op(new Block(BlockType.Empty));                 // $out
@@ -1291,7 +1613,10 @@ public static class WasmPredicateCompiler
             Op(new End());                                  // the loop
             EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
             Op(new End());                                  // the function
-            var body = new FunctionBody { Locals = EngineLocals(), Code = _code };
+            var body = new FunctionBody
+            {
+                Locals = _cps ? CpsEngineLocals() : EngineLocals(), Code = _code,
+            };
             _extraDepth = 0;
             return body;
         }
@@ -1404,6 +1729,8 @@ public static class WasmPredicateCompiler
         /// under a dispatcher loop.</summary>
         private void EmitContinueReturn()
         {
+            if (_cps) { EmitCpsTransfer((uint)RouterIndex, -1); return; }
+            Count(WasmAbi.TransferCount);
             StoreScalars();
             Op(new LocalGet(0));
             Op(new LocalGet(LCur));
@@ -1663,6 +1990,7 @@ public static class WasmPredicateCompiler
             // the copies are identical but for the miss.
             EmitResumeProbe(LT1);
             if (missReturnsToHost) EmitReturn(WasmVerdict.Fail);   // a foreign CP
+            else if (_cps) EmitCpsTransfer((uint)(_parts.Count + 1), _failCase);
             else EmitContinueReturn();                             // LCur is still FAIL
         }
 
@@ -3139,6 +3467,7 @@ public static class WasmPredicateCompiler
             OpenIf();
             EmitResumeProbe(LCP);
             CloseNested();
+            if (_cps) { EmitCpsTransfer((uint)(_parts.Count + 1), _proceedCase); return; }
             Op(new Int32Constant(_proceedCase));
             Op(new LocalSet(LCur));
             EmitContinueReturn();
@@ -8859,6 +9188,7 @@ public static class WasmPredicateCompiler
             Op(new Int64ExtendInt32Signed());
             Op(new Int64Add());
             Op(new LocalSet(LCells));
+            if (_cps) StoreSlot64(WasmAbi.CellsClaimed, () => Op(new LocalGet(LCells)));
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 7 * 8 });
             Op(new Int32WrapInt64()); Op(new LocalSet(LH));         // ctl[6]
             StoreSlot64(WasmAbi.ViewGen, () =>

@@ -16,7 +16,8 @@ param(
   [int]$Port = 9031,
   [int]$TimeoutSec = 900,
   [string]$Browser = '',                     # chrome.exe or msedge.exe; found if empty
-  [string]$Root = ''                         # the site to serve; the last publish if empty
+  [string]$Root = '',                        # the site to serve; the last publish if empty
+  [string]$JsFlags = ''                      # V8 flags for the run, e.g. '--no-liftoff'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -49,9 +50,10 @@ $page = $null
 $ok = $false
 try {
   Start-Sleep -Seconds 3
-  $page = Start-Process $Browser -PassThru -ArgumentList @(
-    '--headless=new', "--user-data-dir=$profileDir", '--no-first-run',
-    '--no-default-browser-check', "http://localhost:$Port/$Hook")
+  $browserArgs = @('--headless=new', "--user-data-dir=$profileDir", '--no-first-run',
+    '--no-default-browser-check')
+  if ($JsFlags) { $browserArgs += "--js-flags=$JsFlags" }
+  $page = Start-Process $Browser -PassThru -ArgumentList ($browserArgs + "http://localhost:$Port/$Hook")
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
   while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 5

@@ -118,7 +118,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         // refused module out of the registry altogether.
         _ = index.Value;
         var m = _modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
-                                 registerDemand, callEdges, out var displaced);
+                                 registerDemand, callEdges, out var displaced,
+                                 WasmCpsLayout.FunctionOfCursor(module));
         if (m.Id != _registrations.Count)
             throw new InvalidOperationException("module id out of step with registrations");
         _registrations.Add(new Registration(pinned, index));
@@ -2055,6 +2056,15 @@ internal static partial class WebShumwayApp
                 BrowserWasmTier.DiagCompileBuilds = 0;
                 BrowserWasmWorld.DiagRegisterTicks = 0;
                 return report;
+            }
+            // ADR-061 stage 5: the form the next build compiles to, so one page
+            // can measure both (#wasmprobe=...&cps=ab).
+            if (command is "cps on" or "cps budget" or "cps off")
+            {
+                Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode = command != "cps off";
+                Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsGrain = command == "cps budget"
+                    ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
+                return $"% jit_compile: {command}; the next build takes it\n";
             }
             if (command is "off" or "none")
                 return BrowserWasmTier.SetJit(engine, 0).Report;

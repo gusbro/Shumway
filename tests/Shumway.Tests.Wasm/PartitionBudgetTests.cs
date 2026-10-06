@@ -69,7 +69,7 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
         foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(e))
         {
             var m = new WasmGroupMember(pred, addr, null);
-            try { WasmPredicateCompiler.CompileGroup(new[] { m }, env); }
+            try { WasmPredicateCompiler.CompileGroup(new[] { m }, env, cps: false); }
             catch (WasmCompileException) { continue; }
             members.Add(m);
             if (biggest is null
@@ -81,7 +81,7 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
 
         // The predicate most likely to be cut, alone, is not cut.
         int alone = PartitionsOf(
-            WasmPredicateCompiler.CompileGroup(new[] { biggest! }, env).Module);
+            WasmPredicateCompiler.CompileGroup(new[] { biggest! }, env, cps: false).Module);
         var (aid, ar) = Shumway.Core.FunctorTable.Lookup(biggest!.Predicate.FunctorId);
         o.WriteLine($"largest predicate {Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}"
             + $" ({biggest.Predicate.Bytecode.Length} bytecode bytes): {alone} partition(s)");
@@ -89,7 +89,7 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
 
         // The whole program as one module is cut, which is the batch mode.
         int group = PartitionsOf(
-            WasmPredicateCompiler.CompileGroup(members, env).Module);
+            WasmPredicateCompiler.CompileGroup(members, env, cps: false).Module);
         o.WriteLine($"the whole program as one group of {members.Count}: {group} partitions");
         Assert.True(group > 1,
             "the whole program fit in one function: either the corpus shrank or "

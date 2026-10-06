@@ -68,7 +68,17 @@ EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
              * simply ignores it. */
             state: { h: globalThis.__shumwayState },
         });
-        return addFunction(inst.exports.run, 'iii');
+        var ex = inst.exports;
+        if (ex.f1 === undefined) return addFunction(ex.run, 'iii');
+        /* A module of continuation functions (ADR-061): run, then f1..fN at
+         * the next indexes, since a resume row names a function by its
+         * offset from run. */
+        var n = 1;
+        while (ex['f' + n] !== undefined) n++;
+        var base = wasmTable.grow(n);
+        wasmTable.set(base, ex.run);
+        for (var f = 1; f < n; f++) wasmTable.set(base + f, ex['f' + f]);
+        return base;
     } catch (e) {
         console.error('shumway_wasm_register: ' + e);
         return -1;

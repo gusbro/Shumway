@@ -28,9 +28,16 @@ namespace Shumway.Core;
 /// a process, would be the first to find out.</para></summary>
 public sealed class WasmResumeTable
 {
-    // Row: ((moduleId + 1) << 32) | cursor. Zero is "not here", which has to
-    // be distinguishable from a valid cursor 0 (the first leader of a module).
+    // Row: ((moduleId + 1) << 40) | (function << 20) | cursor. Zero is "not
+    // here", which has to be distinguishable from a valid cursor 0 (the first
+    // leader of a module). Function 0 enters through the module's run; a
+    // module of continuation functions (ADR-061) names the one holding the
+    // cursor, which the table holds at the module's index plus that number.
     private long[] _rows;
+
+    /// <summary>The widths of a row's cursor and function fields: a module
+    /// with more cursors or functions than they hold is not compiled.</summary>
+    public const int CursorBits = 20, FunctionBits = 20;
 
     public WasmResumeTable(int initialRows = 4096)
         => _rows = new long[initialRows];
@@ -360,9 +367,14 @@ public sealed class WasmResumeTable
     }
 
     /// <summary>Records where a marker resolves. <paramref name="cursor"/> is
-    /// the owning module's own dispatch cursor.</summary>
-    public void Set(int marker, int moduleId, int cursor)
+    /// the owning module's own dispatch cursor, <paramref name="function"/>
+    /// the module function holding it (0: its run).</summary>
+    public void Set(int marker, int moduleId, int cursor, int function = 0)
     {
+        if ((uint)cursor >= 1u << CursorBits || (uint)function >= 1u << FunctionBits
+            || (uint)moduleId >= (1u << (64 - CursorBits - FunctionBits)) - 1)
+            throw new ArgumentOutOfRangeException(nameof(cursor),
+                $"module {moduleId}, function {function}, cursor {cursor}: past a row's fields.");
         int i = marker - Activation.ResumeMarkerBase;
         if (i < 0) throw new ArgumentOutOfRangeException(nameof(marker),
             $"0x{marker:X} is not a resume marker.");
@@ -372,7 +384,8 @@ public sealed class WasmResumeTable
             while (grown <= i) grown *= 2;
             Array.Resize(ref _rows, grown);
         }
-        _rows[i] = ((long)(moduleId + 1) << 32) | (uint)cursor;
+        _rows[i] = ((long)(moduleId + 1) << (CursorBits + FunctionBits))
+                 | ((long)function << CursorBits) | (uint)cursor;
     }
 
     /// <summary>Forgets every row of one module: what an eviction does. Linear
@@ -388,9 +401,9 @@ public sealed class WasmResumeTable
 
     public void ClearModule(int moduleId)
     {
-        long tag = (long)(moduleId + 1) << 32;
+        ulong owner = (ulong)(moduleId + 1);
         for (int i = 0; i < _rows.Length; i++)
-            if ((_rows[i] & ~0xFFFFFFFFL) == tag) _rows[i] = 0;
+            if ((ulong)_rows[i] >> (CursorBits + FunctionBits) == owner) _rows[i] = 0;
     }
 
     /// <summary>Forgets every row of one functor: what an eviction, or a
@@ -417,8 +430,8 @@ public sealed class WasmResumeTable
         if ((uint)i >= (uint)_rows.Length) return false;
         long row = _rows[i];
         if (row == 0) return false;
-        moduleId = (int)(row >> 32) - 1;
-        cursor = (int)row;
+        moduleId = (int)((ulong)row >> (CursorBits + FunctionBits)) - 1;
+        cursor = (int)(row & ((1L << CursorBits) - 1));
         return true;
     }
 }

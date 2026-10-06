@@ -874,8 +874,10 @@ A resume marker is ALREADY a dense id: `EncodeResumeMarker` interns the
 (functor, address) pair in a process-wide pool and returns `Base + denseId`,
 so resolving one is a subscript, not a search. The table is a dense `i64`
 array in linear memory, indexed by `marker - ResumeMarkerBase`, one row per
-marker: `((moduleId + 1) << 32) | cursor`, zero meaning "not resolvable in
-this engine". Its base and length sit in the mailbox
+marker: `((moduleId + 1) << 40) | (function << 20) | cursor`, zero meaning
+"not resolvable in this engine". The function field is 0 for a module entered
+through its run, and names the function holding the cursor in a module of
+continuation functions (ADR-061, The wasm tier). Its base and length sit in the mailbox
 (`WasmAbi.ResumeTableBase`, `ResumeTableLength`), like the functor mirror.
 
 The table is PER ENGINE, and that is not negotiable: functor ids and the

@@ -106,12 +106,19 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
             { WasmAbi.TableModule, WasmAbi.TableField, Functions },
         });
+        int[]? functionOfCursor = WasmCpsLayout.FunctionOfCursor(module);
         var m = Modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
-                                registerDemand, callEdges, out var displaced);
-        // The slot is the module id: the module index array the hop reads
-        // maps i -> i here (the browser's addFunction picks its own).
-        while (Functions.Length <= m.Id) Functions.Grow(1);
-        Functions[m.Id] = TailEntry(instance.Exports);
+                                registerDemand, callEdges, out var displaced, functionOfCursor);
+        // run, then a module's continuation functions in order: a row's
+        // function field is the offset from run.
+        int functions = functionOfCursor is { Length: > 0 } fs ? fs.Max() : 0;
+        int at = (int)Functions.Length;
+        Functions.Grow((uint)(1 + functions));
+        Functions[at] = TailEntry(instance.Exports);
+        for (int f = 1; f <= functions; f++) Functions[at + f] = CpsTailEntry(instance.Exports, f);
+        if (_space.TableIndex.Count != m.Id)
+            throw new InvalidOperationException("module id out of step with the table");
+        _space.TableIndex.Add(at);
         _space.Instances.Add(instance);
         return displaced;
     }
@@ -143,6 +150,33 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         il.Emit(System.Reflection.Emit.OpCodes.Call, run);
         il.Emit(System.Reflection.Emit.OpCodes.Ret);
         return (Func<int, int, int>)stub.CreateDelegate(typeof(Func<int, int, int>), exports);
+    }
+
+    /// <summary>The table entry for a continuation function: the same
+    /// explicit tail call as <see cref="TailEntry"/>, with the machine in its
+    /// fourteen arguments.</summary>
+    private static Delegate CpsTailEntry(WasmRunExports exports, int function)
+    {
+        var type = exports.GetType();
+        var target = type.GetMethod("👻 " + function,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException($"no internal function {function}");
+        const int arity = 14;
+        var parameters = new Type[1 + arity];
+        parameters[0] = typeof(WasmRunExports);
+        for (int i = 1; i <= arity; i++) parameters[i] = typeof(int);
+        var stub = new System.Reflection.Emit.DynamicMethod("cps_tail", typeof(int),
+            parameters, type, skipVisibility: true);
+        var il = stub.GetILGenerator();
+        for (int i = 1; i <= arity; i++) il.Emit(System.Reflection.Emit.OpCodes.Ldarg, (short)i);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+        il.Emit(System.Reflection.Emit.OpCodes.Castclass, type);
+        il.Emit(System.Reflection.Emit.OpCodes.Tailcall);
+        il.Emit(System.Reflection.Emit.OpCodes.Call, target);
+        il.Emit(System.Reflection.Emit.OpCodes.Ret);
+        var funcType = System.Linq.Expressions.Expression.GetFuncType(
+            Enumerable.Repeat(typeof(int), arity + 1).ToArray());
+        return stub.CreateDelegate(funcType, exports);
     }
 
     public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => Modules.Evict(functorIds);
@@ -360,12 +394,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             fixed (long* p = resumeRows)
                 Buffer.MemoryCopy(p, mem + _resumeAt, resumeRows.Length * 8L,
                                   resumeRows.Length * 8L);
-            // moduleId -> function-table index. Here the two happen to be the
-            // same number, because the world registers itself at its own id;
-            // in the browser addFunction picks the index, so the indirection
-            // is what makes one emitted form work in both.
+            // moduleId -> function-table index of the module's run.
             for (int i = 0; i < moduleCount; i++)
-                *(int*)(mem + _moduleIndexAt + i * 4) = i;
+                *(int*)(mem + _moduleIndexAt + i * 4) = _w._space.TableIndex[i];
             // Copied whole rather than incrementally: unlike the functor
             // table, which only ever grows, this one has rows removed and
             // re-keyed under it, so there is no "synced up to here" mark to

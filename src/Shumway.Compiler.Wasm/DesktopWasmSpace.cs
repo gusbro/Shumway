@@ -26,6 +26,11 @@ public sealed class DesktopWasmSpace : IDisposable
     /// <summary>Indexed by module id. Never removed: a chain may be inside.</summary>
     public List<Instance<WasmRunExports>> Instances { get; } = new();
 
+    /// <summary>Indexed by module id: where the module's run sits in
+    /// <see cref="Functions"/>, its continuation functions (ADR-061) right
+    /// after it.</summary>
+    public List<int> TableIndex { get; } = new();
+
     // The functor mirror lives in the memory, so its sync state does too:
     // where it sits, and how many ids the image already holds.
     internal int FunctorAt = -1;

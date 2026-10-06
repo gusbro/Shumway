@@ -854,6 +854,93 @@ continuation methods / regions, minimum and median): `sendmore`
   with the layout the profile gave it: the common path first, the rare one
   in a call. In progress.
 
+### The wasm tier
+
+Under `SHUMWAY_IL_CPS=1` (`WasmPredicateCompiler.CpsMode`; in the browser
+the tier's `cps on` and `cps budget` commands), a module is made of
+continuation functions. What one holds is its grain
+(`SHUMWAY_WASM_CPS_GRAIN`): one entry point, that is a member's entry or the
+return of a predicate call with the alternatives after it, or whole members
+up to the partition budget, as the partitions of the other form. A function
+keeps a dispatch loop for its own leaders.
+
+The machine travels in the arguments: the mailbox, the cursor, the four
+area bases and H, TR, E, B, HB, ST and CP, which are locals 0 to 13 of every
+function, so no local index changed. The write mode and the unify pointer
+are dead at every leader and do not travel. The cell tally's base stays in
+the mailbox for the whole chain: run stores it, and so does a backtrack that
+banks a span.
+
+A transfer to a leader of another function known when compiling is a
+`return_call`. A resume row names the function holding its cursor (module,
+function, cursor in `WasmResumeTable`), so a return, a backtrack and a hop to
+another module of continuation functions are each one `return_call_indirect`
+through the thread's table. The world registers a module's functions right
+after its run, from the `shumway.cps` custom section the module carries,
+which a module baked at build time carries too. A hop to a module of the
+other form goes through its run, as before.
+
+Inside a function the loop dispatches only its own cursors and FAIL, since
+any other cursor is a transfer and PROCEED goes to the resolver: the routing
+is a subtraction and a `br_table` whose default is the fail case. A jump to
+a later leader of the function, and a failure, branch to that case's block,
+which encloses the code that jumps, so they skip the loop.
+
+Counted on the desktop (`WasmPredicateCompiler.CountTransfers`, the test
+`TheFormsMoveControlAsTheyAreBuilt`), per backtrack into `member/2` and per
+iteration of a call and its return:
+
+| form | backtrack: dispatches, transfers | call and return |
+|---|---:|---:|
+| partitions of the other form | 13, 0 | 5, 0 |
+| a function per entry point | 5, 2 | 3, 3 |
+| whole members up to the budget | 5, 0 | 3, 0 |
+
+Measured in a headless browser
+(`#wasmprobe=transfers&n=4000000&rounds=4&cps=abc`, the best of four ABBA
+rounds in one page), the time over the time of the partitions of the other
+form. Batch mode builds the program as one module; lazy mode builds a module
+per predicate (`grain=lazy`):
+
+| goal | entry point, batch | budget, batch | entry point, lazy | budget, lazy |
+|---|---:|---:|---:|---:|
+| call and return | 1.08 | 0.81 | 0.84 | 0.80 |
+| `nrev` | 0.99 | 0.84 | 0.86 | 0.93 |
+| `tak` | 1.16 | 0.89 | 1.26 | 1.17 |
+| `queens` | 1.02 | 0.77 | 0.98 | 0.95 |
+| backtracking over `member/2` | 1.08 | 0.84 | 1.13 | 0.99 |
+
+The way there, batch, a function per entry point:
+
+| goal | first form | nothing through memory | rows name the function | the alternatives with their entry |
+|---|---:|---:|---:|---:|
+| call and return | 1.27 | 1.07 | 1.06 | 1.32 |
+| `nrev` | 1.03 | 1.07 | 1.10 | 0.93 |
+| `tak` | 1.27 | 1.16 | 1.09 | 1.34 |
+| `queens` | 1.38 | 1.56 | 1.01 | 1.30 |
+| backtracking over `member/2` | 1.81 | 1.30 | 1.34 | 1.35 |
+
+The same code measured twice moved up to 30% between runs of four rounds,
+so the steps of the way there are within the noise but for the backtracking;
+the last table is the first whose margins clear it. The last column also
+carried a test of the first cursor at the top of the loop, which every local
+jump paid; the routing above replaced it.
+
+A partition is cheap where an IL region is not: a transfer inside it is a
+branch over locals, and there was never a crossing through the dispatch
+loop to save. A function per entry point turns every call, return and
+alternative into a transfer; the budget grain keeps them inside and takes
+the transfers between functions where they remain.
+
+`tak` in lazy mode is a module of one function with no transfer in it, and
+on the desktop it dispatches less at the budget grain than the partitions
+do (636,086 against 954,144) in the same time. Its 1.17 above came twice in
+the five-goal probe; alone (the same probe with two of its goals) it was
+0.90, and 1.07 with the browser's baseline compiler off, so not a matter of
+tier-up. Within one page the samples of one form spread from 147 to 361 ms,
+the first run after a rebuild being the slow one: the figure is the method's
+noise, or the other programs' modules around it, not a cost of the form.
+
 ### Tried in the engine and rejected
 
 Each was built and measured against the stage 1 shape above. They are
@@ -1149,6 +1236,8 @@ the runtime may not.
    whole assembly.
 5. Regions removed. The wasm tier mirrored with `return_call` and
    `return_call_indirect` over its function tables.
+   Done in part: the wasm tier's continuation functions behind the same
+   switch (see The wasm tier). Partitions by size remain the default.
 
 ## Validation
 
