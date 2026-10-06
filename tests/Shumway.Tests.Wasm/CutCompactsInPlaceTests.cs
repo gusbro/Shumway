@@ -35,10 +35,14 @@ public sealed class CutCompactsInPlaceTests(ITestOutputHelper o)
         old_attr(R) :- put_attr(V, m, 0), member(_, [a, b]), mutate(V),
                        get_attr(V, m, X), X == 1, R = yes.
 
-        % Younger than the choice point: the entry is DROPPED, which orphans
-        % its record and has to be written back. The module declines.
+        % Younger than the choice point the cut commits to, and older than
+        % the one the mutation follows: the mutation is trailed (attribute
+        % trailing has the HB check, so with no choice point between the
+        % variable and the mutation nothing would be), and the cut DROPS the
+        % entry, which orphans its record. The module parks it.
         young(R) :- member(_, [a, b]), put_attr(W, m, 1),
-                    put_attr(W, m, 2), !, get_attr(W, m, X), X == 2, R = yes.
+                    member(_, [c, d]), put_attr(W, m, 2), !,
+                    get_attr(W, m, X), X == 2, R = yes.
 
         % Bindings only: no extra trail at all, so the compaction needs no
         % image and runs whatever else is staged.
