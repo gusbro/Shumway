@@ -332,7 +332,7 @@ When proposing changes:
 | Local backtracking in Tier-1 IL regions | ADR-057 |
 | A region's choice points are WAM choice points | ADR-058 |
 | What a program may redefine | ADR-059 |
-| A region holds the machine registers in locals (proposed) | ADR-060 |
+| A region holds the machine registers in locals (accepted in part) | ADR-060 |
 | Tier-1 as continuation methods per predicate (proposed) | ADR-061 |
 | Shumway's own IL emitter | ADR-062 |
 | PSTR design | docs/design/pstr-design.md |

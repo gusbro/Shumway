@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed.
+Accepted and implemented (2026-09-18): phases 0 to 6 are in the tree and
+phase 7 measured it (see Phases).
 
 ## Context
 

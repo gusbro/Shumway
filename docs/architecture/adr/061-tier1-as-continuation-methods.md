@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed (2026-09-30). Stage 1 is implemented behind
-`SHUMWAY_IL_CPS=1` (2026-10-01; see Stage 1 in the engine). If accepted it replaces region compilation
+Proposed (2026-09-30). Implemented behind `SHUMWAY_IL_CPS=1`: stages 1 and 2;
+of stage 3, exceptions, wakes and the inference count; stages 4 (persisted
+bundles) and 5 (the wasm tier) in part (see Stages). Which form Tier-1 takes
+by default is not decided. If accepted it replaces region compilation
 ([Phase 29](../../history/phase-29-closure.md),
 [design](../../design/il-region-compilation.md)) and, for transfers between
 compiled code, the resume-marker round trip through the dispatch loop

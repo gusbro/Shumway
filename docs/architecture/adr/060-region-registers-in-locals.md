@@ -2,12 +2,17 @@
 
 ## Status
 
-Proposed (2026-09-29). Builds on
+Accepted in part (proposed 2026-09-29). Builds on
 [ADR-058](058-region-choice-points-are-wam-choice-points.md) and extends
-[ADR-011](011-il-compiler-architecture.md). When its stage 2 lands it replaces
-the emission form of ADR-058 item 6 (the push and the restore inline at every
-site) with sequences shared inside the region. The frame layout and the choice
-point model of ADR-058 do not change.
+[ADR-011](011-il-compiler-architecture.md). In the tree: stages 1, 2a and 2b,
+and the first step of stage 4; stage 3 was measured and not kept (see
+Results). Stage 2 replaced the emission form of ADR-058 item 6 (the push and
+the restore inline at every site) with sequences shared inside the region.
+The rest of stage 4 waits for the choice of Tier-1's form:
+[ADR-061](061-tier1-as-continuation-methods.md) would remove regions and
+narrow this record to what still pays inside a small method. Stage 5 is
+taken over by ADR-061's wasm stage. The frame layout and the choice point
+model of ADR-058 do not change.
 
 ## Context
 

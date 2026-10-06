@@ -2,14 +2,17 @@
 
 ## Status
 
-Accepted, phases 0–2 shipped. The engine compiles a hot predicate to a
-WebAssembly module and runs it natively; phase 0 (the Go/No-Go spike) and
-phases 1–2 (the backend and the live-engine wiring, desktop and browser) are
-in the tree with measurements. Phase 3 (AOT bundles) and phase B (open-coded
-builtins, decided by the bail-frequency data) remain. The full design and the
-running record live in [`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md);
-this ADR records the decisions the policy calls major — a new backend and a
-new external dependency.
+Accepted and shipped. The engine compiles a hot predicate to a WebAssembly
+module and runs it natively. In the tree, with measurements: phase 0 (the
+Go/No-Go spike), phases 1 and 2 (the backend and the live-engine wiring,
+desktop and browser), phase B (open-coded builtins, its gate cleared at about
+50x), the direct call between compiled predicates, group modules, the
+relocatable module baked at build time (what phase 3 became), and the hop
+between the modules of one engine inside wasm. The cleanups of the
+many-modules arc remain open. The full design and the running record live in
+[`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md); this ADR
+records the decisions the policy calls major: a new backend and a new
+external dependency.
 
 ## Context
 
@@ -125,17 +128,16 @@ is not a reason to change it.
 ## Consequences
 
 The tier runs in the live engine, desktop and browser, measured
-([`docs/benchmarks/browser.md`](../../benchmarks/browser.md)). A tight
-self-tail arithmetic loop stays inside the module and wins ~100–220x over the
-interpreted Tier-0; call-and-allocate-heavy code (nrev) barely moves, and
-recursion-heavy code (tak) is dominated by the non-tail-call boundary — its
-arithmetic is open-coded, so the tax is the three non-tail self-calls per
-invocation round-tripping the interpreter, not builtins. Those last two are
-not correctness limits — deopt returns them to the tier they were on — and the
-measurement points the next work at the inter-predicate call boundary: a
-direct wasm-to-wasm call that resolves the callee's table index instead of
-returning to the interpreter. Open-coded wasm builtins help builtin-dense
-predicates too, but the data puts calls first.
+([`docs/benchmarks/browser.md`](../../benchmarks/browser.md)). The first
+measurement put the cost at the boundary between predicates: a tight
+self-tail arithmetic loop stayed inside the module and won 100 to 220x over
+the interpreted Tier-0, while `nrev` and `tak` paid a round trip through the
+interpreter for every non-tail call. That boundary is gone. A call between
+the members of a module is a jump inside it, and a call or a backtrack into
+another module of the engine is a tail call inside wasm, so in a headless
+browser `nrev`, `tak` and `queens` run 15 to 25x over Tier-0. What leaves the
+module now is a builtin it does not answer itself, and the open-coded
+builtins of phase B took the frequent ones.
 
 The new dependency is permissive (Apache-2.0), executes in-process for tests,
 and is trimmed out of every non-browser build. No invariant in
