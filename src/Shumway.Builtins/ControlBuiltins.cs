@@ -166,7 +166,9 @@ public static class ControlBuiltins
     /// from here on. <c>off</c> (or <c>none</c>) stops promoting and returns
     /// what already promoted to Tier-0, <c>all</c> promotes each predicate on
     /// its first call, <c>on</c> is a moderate threshold, and a positive
-    /// integer is the call threshold to wait for.
+    /// integer is the call threshold to wait for. <c>cps</c> and
+    /// <c>nocps</c> set the form instead (ADR-061): continuation code, or the
+    /// default.
     ///
     /// <para>Which compiler Tier-1 is depends on the product and there is
     /// only one per build, so the same goal means the same thing in both:
@@ -203,6 +205,12 @@ public static class ControlBuiltins
             // here: one vocabulary, or a goal that works when typed and
             // raises when run.
             string? name = AtomTable.GetById(c.AsAtomId)?.Name;
+            if (name is "cps" or "nocps")
+            {
+                bool cps = name == "cps";
+                if (engine.JitFormControl is { } form) return form(cps);
+                return !cps;
+            }
             threshold = name switch
             {
                 "off" or "none" => 0,

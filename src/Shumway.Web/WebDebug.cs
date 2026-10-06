@@ -69,6 +69,7 @@ internal static partial class WebShumwayApp
                         debug.BreakHereNow();
                 };
                 engine.AttachDebugSession(_debug);
+                _debugMode = true;
                 return (string?)null;
             }
             catch (Exception ex) { return "error: " + ex.Message; }

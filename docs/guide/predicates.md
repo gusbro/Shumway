@@ -150,7 +150,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `ifthen(:Condition, :Then)` | engine | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
 | `ifthenelse(:Condition, :Then, :Else)` | engine | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | engine | Runs Goal, succeeding whether or not Goal does. |
-| `jit_compile(+Mode)` | engine | Sets Tier-1 promotion for the goals that follow: off returns the engine to the interpreter, all promotes each predicate on its first call, and a positive integer is the call threshold. Fails if the build has no Tier-1 to set. |
+| `jit_compile(+Mode)` | engine | Sets Tier-1 promotion for the goals that follow: off returns the engine to the interpreter, all promotes each predicate on its first call, and a positive integer is the call threshold. cps and nocps choose the form Tier-1 compiles to (continuation code, or the default). Fails if the build cannot set the mode asked for. |
 | `notrace` | engine | Turns the four-port tracer off. |
 | `once(:Goal)` | iso | Succeeds at most once, committing to the first solution of Goal. |
 | `repeat` | iso | Succeeds, and succeeds again on every backtrack: an unbounded choice point. |

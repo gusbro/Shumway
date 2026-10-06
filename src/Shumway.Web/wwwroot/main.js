@@ -279,8 +279,9 @@ async function run(queryText) {
   // compiles the whole static program now and after every consult,
   // jit_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the stdlib bundle's wasm module), jit_compile(status). reports.
-  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
+  // tier nor the stdlib bundle's wasm module), jit_compile(cps). and
+  // jit_compile(nocps). choose the form, jit_compile(status). reports.
+  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|cps|nocps|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
   if (jitCompile) {
     const report = await session.exports().JitCompileControl(jitCompile[1] || 'on');

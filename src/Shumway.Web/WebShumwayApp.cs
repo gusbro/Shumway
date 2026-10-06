@@ -181,8 +181,7 @@ internal static partial class WebShumwayApp
                 StartEngine();
                 // Same version the desktop banner and version_data report.
                 return Tier0Only
-                    ? $"Shumway Prolog {PrologEngine.VersionString} ready "
-                      + "(Tier-0 interpreter)."
+                    ? $"Shumway Prolog {PrologEngine.VersionString} ready ({TierNow()})."
                     : $"Shumway Prolog {PrologEngine.VersionString} ready.";
             }
             catch (Exception ex)
@@ -212,8 +211,29 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return "error: " + ex.Message; }
         });
 
+    /// <summary>What runs the user's goals now, for the page's notes: the
+    /// wasm tier when it is on, the interpreter otherwise, and always the
+    /// interpreter in debug mode, where everything consulted is compiled for
+    /// the debugger.</summary>
+    [JSExport]
+    internal static Task<string> TierName() => OnEngine(TierNow);
+
+    private static string TierNow()
+    {
+        if (_debugMode || BrowserWasmTier.Disabled || !Shumway.Core.RuntimeCaps.SupportsWasmCodegen
+            || _session?.Engine.IlPromotion.Wasm is not { Enabled: true })
+            return "Tier-0 interpreter";
+        return Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode
+            ? "Tier-1 WebAssembly, continuation functions"
+            : "Tier-1 WebAssembly";
+    }
+
+    // Set by DebugEnable on the engine it starts; any other start clears it.
+    private static bool _debugMode;
+
     private static void StartEngine()
     {
+        _debugMode = false;
         // Out and In must be set before the first query: query setup builds the
         // stream registry, and user_output / user_input keep whatever they were
         // handed then.

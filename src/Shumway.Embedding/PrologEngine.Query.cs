@@ -1820,6 +1820,7 @@ public sealed partial class PrologEngine
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
         engine.MetaArgSpecOf = MetaArgSpec;
         engine.JitControl = IlPromotion.SetJitThreshold;
+        engine.JitFormControl = IlPromotion.SetJitForm;
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads
         // _currentPredicatesByAddress at call time (set later in this setup).

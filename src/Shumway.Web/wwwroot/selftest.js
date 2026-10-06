@@ -749,8 +749,21 @@ export async function run(session, emit, out, editor, workspace) {
       const status = await session.exports().JitCompileControl('status');
       check('jit_compile status shows a promotion',
             /promoted \([1-9]/.test(status), true);
+      // The first line of the page names the tier from the same place.
+      check('the tier is named Tier-1', await session.tierName(), 'Tier-1 WebAssembly');
+      // The form: the program is built again as continuation functions, and
+      // answers as before; nocps builds it back.
+      check('jit_compile(cps) answers',
+            (await session.exports().JitCompileControl('cps')).includes('continuation functions'), true);
+      check('the tier names the form', await session.tierName(),
+            'Tier-1 WebAssembly, continuation functions');
+      check('continuation functions still answer', await solutions('wloop(50000).'), 'true');
+      check('jit_compile(nocps) answers',
+            (await session.exports().JitCompileControl('nocps')).includes('partitions'), true);
+      check('the default form is named again', await session.tierName(), 'Tier-1 WebAssembly');
       check('jit_compile off answers',
             (await session.exports().JitCompileControl('off')).includes('off'), true);
+      check('off names the interpreter', await session.tierName(), 'Tier-0 interpreter');
     }
   }
 

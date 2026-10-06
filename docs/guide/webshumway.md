@@ -11,8 +11,9 @@ The source is `src/Shumway.Web/`; the design decisions behind it are
 [ADR-042](../architecture/adr/042-webshumway.md).
 
 ```bash
-dotnet publish src/Shumway.Web -c Release
-# the site is bin/Release/Shumway.Web/net10.0/publish/wwwroot
+dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true
+# the site is src/Shumway.Web/bin/Release/net10.0/publish/wwwroot
+powershell -File src/Shumway.Web/WebShumwayServe.ps1    # http://localhost:8080/
 ```
 
 The engine is compiled ahead of time to WebAssembly, which is what makes
@@ -20,6 +21,14 @@ queries fast once the page is up; that publish takes around twenty minutes
 the first time (the wasm-tools workload is required). For a quick check of
 the page itself, `-p:RunAOTCompilation=false` publishes in a couple of
 minutes with the engine interpreted, several times slower.
+
+`-p:ShumwayWasmTier=true` builds in the just-in-time compiler, which turns
+the program into WebAssembly as it runs (see
+[Choosing how much gets compiled](#choosing-how-much-gets-compiled)).
+Without it the page runs everything on the interpreter, and its first line
+says `Tier-0 interpreter` where it would say `Tier-1 WebAssembly`.
+`WebShumwayServe.ps1` serves the site with the two headers the page needs
+(see [Hosting](#hosting)).
 
 ---
 
@@ -195,6 +204,8 @@ on, for the goals that follow:
 ?- jit_compile(all).     % compile everything, now and after every consult
 ?- jit_compile(16).      % compile a predicate once it has been called 16 times
 ?- jit_compile(off).     % stop compiling, and run on the interpreter again
+?- jit_compile(cps).     % compile to continuation functions from here on
+?- jit_compile(nocps).   % and back to the default form
 ```
 
 It is an ordinary predicate, so a directive in a consulted file works too:
@@ -219,6 +230,15 @@ were measuring. Reload the page to get the default back.
 
 `none` is accepted as another spelling of `off`, and `on` as a moderate
 threshold. At the top level, `jit_compile.` on its own means `on`.
+
+`cps` and `nocps` choose the form of the compiled code rather than how much
+of it there is: continuation functions, where control moves between compiled
+predicates by tail calls that carry the machine with them, or the default.
+Under `all` the program is compiled again in the new form; with a threshold,
+what was compiled goes back to the interpreter and is compiled again as it
+is called. The first line of the page names the form in use. The desktop
+system takes its form from `SHUMWAY_IL_CPS` when it starts, so there these
+two succeed only for the form already in use.
 
 `jit_compile(status).` is a top-level command rather than a setting, and
 belongs to the page the way `restart.` does: it reports what is compiled,

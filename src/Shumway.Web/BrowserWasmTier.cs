@@ -1013,7 +1013,32 @@ internal static class BrowserWasmTier
     /// and installed even when the tier is off -- otherwise nothing could
     /// turn it back on.</summary>
     internal static void WireJitControl(PrologEngine engine)
-        => engine.IlPromotion.JitPolicy = t => SetJit(engine, t).Ok;
+    {
+        engine.IlPromotion.JitPolicy = t => SetJit(engine, t).Ok;
+        engine.IlPromotion.JitFormPolicy = cps => SetForm(engine, cps).Ok;
+    }
+
+    /// <summary>jit_compile(cps) and jit_compile(nocps): the form the next
+    /// builds compile to, continuation functions at the budget grain
+    /// (ADR-061, the wasm tier) or partitions. Under jit_compile(all) the
+    /// next batch builds the program again in it; with a threshold, what
+    /// already promoted goes back at the next query setup and promotes again
+    /// in it.</summary>
+    internal static (bool Ok, string Report) SetForm(PrologEngine engine, bool cps)
+    {
+        if (!RuntimeCaps.SupportsWasmCodegen)
+            return (!cps, "% jit_compile: the capability is off in this build\n");
+        Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode = cps;
+        Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsGrain = WasmCpsGrain.Budget;
+        if (engine.IlPromotion.Wasm is { Enabled: true } wa)
+        {
+            if (wa.CompileAllOnConsult) wa.ForceNextBatch();
+            else engine.IlPromotion.QueueJitOff();
+        }
+        return (true, "% jit_compile: "
+            + (cps ? "continuation functions (ADR-061)" : "partitions")
+            + " from the next build on\n");
+    }
 
     /// <summary>The policy proper. Returns the page's wording too, so
     /// jit_compile and jit_compile cannot drift apart: one of them is the
@@ -2065,6 +2090,15 @@ internal static partial class WebShumwayApp
                 Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsGrain = command == "cps budget"
                     ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
                 return $"% jit_compile: {command}; the next build takes it\n";
+            }
+            if (command is "cps" or "nocps")
+            {
+                var (_, report) = BrowserWasmTier.SetForm(engine, command == "cps");
+                // Typed at the top level, between queries: build now, as
+                // jit_compile(all) does, so the next goal runs in the form.
+                if (store.Wasm is { Enabled: true, CompileAllOnConsult: true } w)
+                    w.CompileAllTick(engine);
+                return report;
             }
             if (command is "off" or "none")
                 return BrowserWasmTier.SetJit(engine, 0).Report;

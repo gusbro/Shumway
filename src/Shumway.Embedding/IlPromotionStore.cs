@@ -756,6 +756,22 @@ public sealed class IlPromotionStore
     /// </summary>
     public Func<int, bool>? JitPolicy { get; set; }
 
+    /// <summary>jit_compile(cps) and jit_compile(nocps). A host whose tier
+    /// can change form in a live session supplies <see cref="JitFormPolicy"/>
+    /// (WebShumway's wasm tier). Without one only the form the process
+    /// started with holds: the IL compiler's comes from SHUMWAY_IL_CPS, and
+    /// what it compiled is cached across the process, so a switch here would
+    /// leave the cached predicates in the form they had.</summary>
+    public bool SetJitForm(bool cps)
+    {
+        if (JitFormPolicy is { } policy) return policy(cps);
+        return cps == Shumway.Compiler.Il.IlPredicateCompiler.CpsMode;
+    }
+
+    /// <summary>The host's own jit_compile(cps|nocps), when its tier can
+    /// change form in a live session.</summary>
+    public Func<bool, bool>? JitFormPolicy { get; set; }
+
     /// <summary>Queues the return of every promoted predicate to its
     /// bytecode, for a host policy that turned the tier off.</summary>
     public void QueueJitOff() => _jitOffPending = true;

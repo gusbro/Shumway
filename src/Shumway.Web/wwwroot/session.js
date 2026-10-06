@@ -70,6 +70,8 @@ export const cancel = async () => engine.QueryCancel();
 /** Throws the engine away and starts another — a workspace is its own program.
  *  Resolves to null, or the error text. */
 export const resetEngine = async () => engine.EngineReset();
+/** What runs the user's goals now: the wasm tier or the interpreter. */
+export const tierName = async () => engine.TierName();
 
 /** Hands a waiting `read/1` a line of input. */
 export const supplyInput = async (text) => engine.SupplyInput(text);

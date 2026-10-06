@@ -530,6 +530,12 @@ public sealed partial class Activation
     /// one".</para></summary>
     public Func<int, bool>? JitControl { get; set; }
 
+    /// <summary>jit_compile(cps) and jit_compile(nocps): the form Tier-1
+    /// compiles to from here on, continuation code (ADR-061) or the default.
+    /// Supplied by the host like <see cref="JitControl"/>; returns whether
+    /// the form was established. Null: only the default holds.</summary>
+    public Func<bool, bool>? JitFormControl { get; set; }
+
     /// <summary>Re-entrant semidet solve of a goal on this live activation, reusing
     /// the already-linked program (no fresh transient-region link, no new machine) —
     /// the cheap host→Prolog path for a foreign predicate that calls back into Prolog

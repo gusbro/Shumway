@@ -182,4 +182,25 @@ public sealed class JitCompileBuiltinTests
         Assert.True(off.Query(Work).Success);
         Assert.Empty(off.IlPromotion.PromotedFunctorIds());
     }
+
+    /// <summary>cps and nocps choose the form, not the amount. The desktop
+    /// tier takes its form when the process starts (the IL it compiled is
+    /// cached across the process), so only the form in use is established;
+    /// a host whose tier can change form in a live session (WebShumway's)
+    /// supplies the policy, and the goal is its to answer.</summary>
+    [Fact]
+    public void CpsAndNocpsChooseTheFormWhereTheHostCan()
+    {
+        var e = Engine();
+        bool inUse = Shumway.Compiler.Il.IlPredicateCompiler.CpsMode;
+        Assert.Equal(inUse, e.Query("jit_compile(cps).").Success);
+        Assert.Equal(!inUse, e.Query("jit_compile(nocps).").Success);
+        Assert.Equal(inUse, Shumway.Compiler.Il.IlPredicateCompiler.CpsMode);
+
+        var asked = new List<bool>();
+        e.IlPromotion.JitFormPolicy = cps => { asked.Add(cps); return true; };
+        Assert.True(e.Query("jit_compile(cps).").Success);
+        Assert.True(e.Query("jit_compile(nocps).").Success);
+        Assert.Equal(new[] { true, false }, asked);
+    }
 }
