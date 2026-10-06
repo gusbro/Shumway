@@ -8,13 +8,15 @@ namespace Shumway.Compiler.Il;
 public sealed class IlLabel
 {
     internal readonly Label Label;
+    internal readonly IlEmit Owner;
     internal bool Marked, Used;
 
     public string Name { get; }
 
-    internal IlLabel(Label label, string name)
+    internal IlLabel(Label label, IlEmit owner, string name)
     {
         Label = label;
+        Owner = owner;
         Name = name;
     }
 
@@ -56,7 +58,8 @@ public sealed class IlEmitException : InvalidOperationException
 /// generator as it comes, but a call, which waits for the next one: a call that
 /// the method's <c>ret</c> follows gets the <c>tail.</c> prefix when the
 /// callee allows it (see <c>TailCallable</c>). It checks that a label is
-/// marked at most once, that a label used is marked, and that no instruction
+/// marked at most once, that a label used is marked, that a label is used
+/// and marked only in the method that defined it, and that no instruction
 /// follows an unconditional transfer without a label; it does not track the
 /// types on the stack.
 /// </summary>
@@ -124,7 +127,7 @@ public sealed class IlEmit
 
     public IlLabel DefineLabel(string? name = null)
     {
-        var l = new IlLabel(_il.DefineLabel(), name ?? $"_label{_labelSeq++}");
+        var l = new IlLabel(_il.DefineLabel(), this, name ?? $"_label{_labelSeq++}");
         _labels.Add(l);
         return l;
     }
@@ -132,6 +135,7 @@ public sealed class IlEmit
     public void MarkLabel(IlLabel label)
     {
         Flush();
+        Own(label);
         if (label.Marked)
             throw Fail($"label [{label.Name}] has already been marked, and cannot be marked a second time");
         label.Marked = true;
@@ -377,9 +381,19 @@ public sealed class IlEmit
 
     // ---- branches ----
 
+    // A label is an index into its own method's label table: in another
+    // method it names some other label, or none (.NET Framework refuses the
+    // type then, "Bad label content in ILGenerator").
+    private void Own(IlLabel label)
+    {
+        if (!ReferenceEquals(label.Owner, this))
+            throw Fail($"label [{label.Name}] belongs to another method");
+    }
+
     private void BranchOp(OpCode op, IlLabel label)
     {
         Begin();
+        Own(label);
         label.Used = true;
         _il.Emit(op, label.Label);
         Text(op.Name!, label.Name);
@@ -407,7 +421,7 @@ public sealed class IlEmit
     public void Switch(params IlLabel[] labels)
     {
         Begin();
-        foreach (var l in labels) l.Used = true;
+        foreach (var l in labels) { Own(l); l.Used = true; }
         _il.Emit(OpCodes.Switch, labels.Select(l => l.Label).ToArray());
         if (_text is not null) Text("switch", string.Join(", ", labels.Select(l => l.Name)));
     }
@@ -415,6 +429,12 @@ public sealed class IlEmit
     // ---- calls and returns ----
 
     public void Call(MethodInfo method) => CallOp(OpCodes.Call, method);
+
+    /// <summary>A call whose callee the caller knows takes the <c>tail.</c>
+    /// prefix before a <c>ret</c>. For a <see cref="MethodBuilder"/> of another
+    /// emitter: on .NET Framework it answers no reflection before its type is
+    /// created, and asking (<c>GetParameters</c>) throws.</summary>
+    public void CallTailCallable(MethodInfo method) => CallOp(OpCodes.Call, method, built: true);
 
     public void CallVirtual(MethodInfo method) => CallOp(OpCodes.Callvirt, method);
 

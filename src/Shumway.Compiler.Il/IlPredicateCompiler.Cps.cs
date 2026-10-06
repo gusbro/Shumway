@@ -205,8 +205,12 @@ public sealed partial class IlPredicateCompiler
         _persistScratch = true;
         try
         {
-            trial = EmitCps(CpsTypeBuilder(predicate.FunctorId), predicate, calleeMap,
-                static (_, _) => false, "Alt", (CpsStubs.Jump, CpsStubs.Fail));
+            // Stubs of the scratch type's own, as the real pass calls the
+            // persisted type's: a trial against created ones would prove a
+            // call the real pass cannot make.
+            var scratch = CpsTypeBuilder(predicate.FunctorId);
+            trial = EmitCps(scratch, predicate, calleeMap,
+                static (_, _) => false, "Alt", CpsStubs.Define(scratch, PersistedStubPrefix));
         }
         catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or IlEmitException)
         {
@@ -1076,7 +1080,7 @@ public sealed partial class IlPredicateCompiler
             emit.LoadArgument(0);
             emit.LoadConstant(0);
             // IlEmit gives a call before a ret the tail. prefix.
-            emit.Call(_cps!.Fail);
+            emit.CallTailCallable(_cps!.Fail);
             emit.Return();
             return;
         }
@@ -1224,7 +1228,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadConstant(0);
         emit.LoadLocal(code);
-        emit.Call(_cps!.Jump);   // as EmitCpsJump
+        emit.CallTailCallable(_cps!.Jump);   // as EmitCpsJump
         emit.Return();
         emit.MarkLabel(none);
         if (!CpsHotExit) return false;
@@ -1264,7 +1268,7 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(code);
         // IlEmit gives a call before a ret the tail. prefix; the stub's own
         // tail. calli is emitted by hand.
-        emit.Call(_cps!.Jump);
+        emit.CallTailCallable(_cps!.Jump);
         emit.Return();
         emit.MarkLabel(none);
     }
