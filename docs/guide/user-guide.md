@@ -50,33 +50,6 @@ Shumway ships as several .NET projects, each with a clear role:
 You typically need only `Shumway.Embedding` plus one or more of the
 CLI tools.
 
-### Inspecting compiled bytecode (`shumway-disasm`)
-
-`shumway-disasm` compiles the static predicates in a source file (with
-first-/multi-argument indexing) and prints the WAM bytecode the Tier-0
-interpreter runs: the `switch_on_term` / `try` / `retry` / `trust`
-dispatch plus each clause body. It is a diagnostic aid for understanding
-or optimising code generation, not part of the build pipeline.
-
-```bash
-shumway-disasm benchmarks/vanroy/nreverse.pl      # every predicate
-shumway-disasm -p conc/3 benchmarks/vanroy/nreverse.pl   # one predicate
-shumway-disasm -e "p(X) :- X > 0."                # inline source
-```
-
-`-p Name/Arity` restricts the output (repeatable / comma-separated);
-`-e <source>` disassembles inline source instead of a file. By default
-it shows **release** bytecode (what the engine runs under
-`compile_mode=release`: no `meta dbg_info` markers); pass `--debug` to
-include the per-clause source-position markers. DCG rules are expanded;
-directives are skipped. The same functionality is available in-process
-via `Shumway.Compiler.Wam.PredicateDisassembler`.
-
-For the **Tier-1 IL** counterpart (what the IL compiler emits for a
-module, including region methods) use
-[`shumway-compile --dump-il`](#dumping-generated-wam-and-il-for-analysis)
-(and `--dump-wam` for a whole-module, dump-to-file WAM disassembly).
-
 ---
 
 ## Building from source
@@ -603,7 +576,7 @@ shumway-compile --dump-wam prog.wam.txt --dump-il prog.il.txt --regions \
   `switch_on_term` / `try` / `retry` / `trust` dispatch and clause bodies
   the Tier-0 interpreter runs. (For ad-hoc, stdout-only WAM inspection of
   a single predicate, [`shumway-disasm`](#inspecting-compiled-bytecode-shumway-disasm)
-  is often handier; `--dump-wam` is the whole-module, dump-to-file form
+  (next) is often handier; `--dump-wam` is the whole-module, dump-to-file form
   that pairs with `--dump-il`.)
 
 - **`--dump-il <file>`** runs the Tier-1 IL compiler over each predicate
@@ -627,6 +600,33 @@ members of another region).
 > `Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath` (and
 > `.RegionCompile`) before compiling, or use the `SHUMWAY_IL_DUMP` /
 > `SHUMWAY_REGION` environment variables when running the REPL.
+
+#### Inspecting compiled bytecode (`shumway-disasm`)
+
+`shumway-disasm` compiles the static predicates in a source file (with
+first-/multi-argument indexing) and prints the WAM bytecode the Tier-0
+interpreter runs: the `switch_on_term` / `try` / `retry` / `trust`
+dispatch plus each clause body. It is a diagnostic aid for understanding
+or optimising code generation, not part of the build pipeline.
+
+```bash
+shumway-disasm benchmarks/vanroy/nreverse.pl      # every predicate
+shumway-disasm -p conc/3 benchmarks/vanroy/nreverse.pl   # one predicate
+shumway-disasm -e "p(X) :- X > 0."                # inline source
+```
+
+`-p Name/Arity` restricts the output (repeatable / comma-separated);
+`-e <source>` disassembles inline source instead of a file. By default
+it shows **release** bytecode (what the engine runs under
+`compile_mode=release`: no `meta dbg_info` markers); pass `--debug` to
+include the per-clause source-position markers. DCG rules are expanded;
+directives are skipped. The same functionality is available in-process
+via `Shumway.Compiler.Wam.PredicateDisassembler`.
+
+For the **Tier-1 IL** counterpart (what the IL compiler emits for a
+module, including region methods) use `--dump-il`
+[above](#dumping-generated-wam-and-il-for-analysis), and `--dump-wam` for
+a whole-module, dump-to-file WAM disassembly.
 
 #### Packaging a third-party library into a bundle (`--consult`)
 
