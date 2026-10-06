@@ -206,9 +206,9 @@ public sealed class ClpfdIntegerRangeTests
             + "B in -576460752303423488.. -576460752303423487, " + then));
 
     [Fact]
-    public void TheSizeOfTheWholeRange_IsAnIntegerADomainHolds()
+    public void TheSizeOfTheWholeRange_IsExact()
         => Assert.Equal("true", Outcome(
-            $"'$dom_new'({Min}, {Max}, D), '$dom_size'(D, N), N =:= {Max}"));
+            $"'$dom_new'({Min}, {Max}, D), '$dom_size'(D, N), N =:= 2^60"));
 
     // The bound primitives against the engine's own arithmetic, on operands
     // and results past the inline range.

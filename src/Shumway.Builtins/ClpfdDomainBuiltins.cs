@@ -253,11 +253,36 @@ public static class ClpfdDomainBuiltins
     }
 
     /// <summary>$dom_size(+Dom, -N): value count (or a big sentinel if infinite).
-    /// The whole inline range counts one more value than an Int cell holds,
-    /// and reads as the largest it does.</summary>
-    public static bool Size(Activation engine) =>
-        engine.UnifyRegisterWithCell(1,
-            Cell.Int(System.Math.Min(Dom(engine, 0).Size(SizeInfinite), Cell.MaxInt60)));
+    /// A domain wider than half the inline range counts more values than an
+    /// inline integer holds.</summary>
+    public static bool Size(Activation engine)
+    {
+        long n = Dom(engine, 0).Size(SizeInfinite);
+        return engine.UnifyRegisterWithCell(1, n <= Cell.MaxInt60 ? Cell.Int(n) : engine.MakeBigInt(n));
+    }
+
+    /// <summary>$dom_next(+Dom, +V, -Next): the least value of Dom greater
+    /// than V. Fails when there is none.</summary>
+    public static bool Next(Activation engine) =>
+        Dom(engine, 0).TryNext(ReadInt(engine, 1), out long next)
+        && engine.UnifyRegisterWithCell(2, Cell.Int(next));
+
+    /// <summary>$dom_prev(+Dom, +V, -Previous): the greatest value of Dom
+    /// less than V. Fails when there is none.</summary>
+    public static bool Previous(Activation engine) =>
+        Dom(engine, 0).TryPrevious(ReadInt(engine, 1), out long previous)
+        && engine.UnifyRegisterWithCell(2, Cell.Int(previous));
+
+    /// <summary>$dom_nth0(+Dom, +I, -V): the value at zero-based position I,
+    /// ascending. Fails past the last one, and on a side with no bound.</summary>
+    public static bool Nth0(Activation engine)
+    {
+        Cell c = Arg(engine, 1);
+        if (c.Tag == Tag.BigInt) return false;
+        if (c.Tag != Tag.Int) throw new PrologRuntimeException("type_error", "integer");
+        return c.AsInt >= 0 && Dom(engine, 0).TryNth(c.AsInt, out long v)
+            && engine.UnifyRegisterWithCell(2, Cell.Int(v));
+    }
 
     /// <summary>$dom_contains(+Dom, +V): V is an integer in Dom. An integer
     /// past the range is in none that is bounded on its side; of one that
@@ -453,5 +478,8 @@ public static class ClpfdDomainBuiltins
         BuiltinsRegistry.Register("$dom_intervals", 2, Intervals);
         BuiltinsRegistry.Register("$fd_hall", 3, Hall);
         BuiltinsRegistry.Register("$fd_fits", 1, Fits);
+        BuiltinsRegistry.Register("$dom_next", 3, Next);
+        BuiltinsRegistry.Register("$dom_prev", 3, Previous);
+        BuiltinsRegistry.Register("$dom_nth0", 3, Nth0);
     }
 }

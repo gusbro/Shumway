@@ -196,6 +196,51 @@ public sealed class ClpfdDomain
     /// <summary>True when every value lies in [lo, hi] (the domain is a subset).</summary>
     public bool Within(long lo, long hi) => !IsEmpty && Min >= lo && Max <= hi;
 
+    /// <summary>The least value greater than <paramref name="v"/>, or false
+    /// when there is none. Labeling steps with it, so that a domain is never
+    /// written out whole: one of a billion values is tried as cheaply as one
+    /// of ten.</summary>
+    public bool TryNext(long v, out long next)
+    {
+        for (int i = 0; i < _iv.Length; i += 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (v < lo) { next = lo; return true; }
+            if (v < hi) { next = v + 1; return true; }
+        }
+        next = 0;
+        return false;
+    }
+
+    /// <summary>The greatest value less than <paramref name="v"/>, or false
+    /// when there is none.</summary>
+    public bool TryPrevious(long v, out long previous)
+    {
+        for (int i = _iv.Length - 2; i >= 0; i -= 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (v > hi) { previous = hi; return true; }
+            if (v > lo) { previous = v - 1; return true; }
+        }
+        previous = 0;
+        return false;
+    }
+
+    /// <summary>The value at zero-based position <paramref name="index"/> in
+    /// ascending order, or false past the last one.</summary>
+    public bool TryNth(long index, out long value)
+    {
+        for (int i = 0; i < _iv.Length; i += 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (lo == Inf || hi == Sup) break;
+            if (index <= hi - lo) { value = lo + index; return true; }
+            index -= hi - lo + 1;
+        }
+        value = 0;
+        return false;
+    }
+
     /// <summary>Enumerate every value (finite domains only). Used by labeling.</summary>
     public System.Collections.Generic.IEnumerable<long> Values()
     {

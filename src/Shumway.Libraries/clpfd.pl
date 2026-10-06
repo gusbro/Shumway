@@ -195,10 +195,13 @@ clpfd_run([P|Ps]) :- call(P), clpfd_run(Ps).
 
 % suspend a propagator on every FD variable it watches, then run it.
 clpfd_post(Prop, Vars) :- clpfd_watch(Vars, Prop), call(Prop).
+% A variable that occurs twice among Vars (X*X) watches the propagator
+% once: what it already watches first is this very propagator.
 clpfd_watch([], _).
 clpfd_watch([V|Vs], Prop) :-
-    ( get_attr(V, clpfd, fd(D, Ps)) -> put_attr(V, clpfd, fd(D, [Prop|Ps]))
-    ; true
+    (   get_attr(V, clpfd, fd(D, Ps)) ->
+        ( Ps = [P0|_], P0 == Prop -> true ; put_attr(V, clpfd, fd(D, [Prop|Ps])) )
+    ;   true
     ),
     clpfd_watch(Vs, Prop).
 
@@ -250,10 +253,12 @@ clpfd_attr_goals(fd(Dom, Props), V, Goals) :-
 % only narrows X's domain, which is already projected).
 clpfd_props_owned_by(Props, V, Goals) :- clpfd_props_owned(Props, V, Props, Goals).
 
+% A propagator twice in the list (two aliased variables both watched it)
+% is said once, at its last occurrence.
 clpfd_props_owned([], _, _, []).
 clpfd_props_owned([P|Ps], V, All, Goals) :-
     ( clpfd_prop_owner(P, V), \+ clpfd_prop_covered(P, All),
-      clpfd_prop_to_goal(P, G) ->
+      \+ clpfd_memq(P, Ps), clpfd_prop_to_goal(P, G) ->
         Goals = [G|Rest], clpfd_props_owned(Ps, V, All, Rest)
     ; clpfd_props_owned(Ps, V, All, Goals)
     ).
@@ -300,6 +305,15 @@ clpfd_prop_to_goal('$fd_max'(A,B,C),  (max(A,B) #= C)).
 clpfd_prop_to_goal('$fd_abs'(A,C),    (abs(A) #= C)).
 clpfd_prop_to_goal('$fd_idiv'(A,B,C), (A // B #= C)).
 clpfd_prop_to_goal('$fd_alldiff'(Vs), all_distinct(Vs)).
+% A reified comparison prints as the equivalence that was posted while its
+% truth value is open. Once the value is decided the propagator enforces
+% the comparison or its negation, and prints as that, by the rules of the
+% propagator it then behaves as (`#=` decided true has unified the two).
+clpfd_prop_to_goal('$fd_reif'(B, Kind, X, Y), G) :-
+    (   var(B) -> C =.. [Kind, X, Y], G = (C #<==> B)
+    ;   B =:= 1 -> clpfd_kind_prop(Kind, X, Y, P), clpfd_prop_to_goal(P, G)
+    ;   clpfd_neg(Kind, NKind), clpfd_kind_prop(NKind, X, Y, P), clpfd_prop_to_goal(P, G)
+    ).
 clpfd_prop_to_goal('$fd_alldiff_view'(Vs), all_different(Vs)).
 % A linear constraint prints as the relation the user wrote, not as the
 % coefficient vector it is stored as. With fewer than two variables left
@@ -324,6 +338,12 @@ clpfd_neq_lin_open(Cs, Vs, RHS) :-
     nonvar(Free), Free = one(C, V),
     Diff is RHS - Sum, Val is Diff // C, C * Val =:= Diff,
     clpfd_still_in(Val, V).
+
+clpfd_kind_prop('#<',   X, Y, '$fd_lt'(X, Y)).
+clpfd_kind_prop('#=<',  X, Y, '$fd_le'(X, Y)).
+clpfd_kind_prop('#>',   X, Y, '$fd_lt'(Y, X)).
+clpfd_kind_prop('#>=',  X, Y, '$fd_le'(Y, X)).
+clpfd_kind_prop('#\\=', X, Y, '$fd_neq'(X, Y)).
 
 clpfd_rel_op(=,  (#=)).
 clpfd_rel_op(=<, (#=<)).
@@ -724,17 +744,24 @@ clpfd_times_one(K, Y, C) :-
     ),
     clpfd_narrow_bounds(Y, YLo, YHi).
 
+% The product's bounds are the least and the greatest of the four corner
+% products, an unbounded side included (clpfd_bxmul): X in 1..sup gives
+% X*Z in 1..sup for Z in 1..10. X*X is a square, never negative.
 clpfd_times_gen(A, B, C) :-
-    clpfd_dom_of(A, DA), clpfd_dom_of(B, DB),
-    clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
-    clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
-    ( integer(AMin), integer(AMax), integer(BMin), integer(BMax) ->
-        P1 is AMin * BMin, P2 is AMin * BMax,
-        P3 is AMax * BMin, P4 is AMax * BMax,
-        CLo is min(min(P1, P2), min(P3, P4)),
-        CHi is max(max(P1, P2), max(P3, P4)),
-        clpfd_narrow_bounds(C, CLo, CHi)
-    ; true
+    clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+    (   A == B -> clpfd_square_bounds(AMin, AMax, CLo, CHi)
+    ;   clpfd_dom_of(B, DB), clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
+        clpfd_bxmul(AMin, BMin, P1), clpfd_bxmul(AMin, BMax, P2),
+        clpfd_bxmul(AMax, BMin, P3), clpfd_bxmul(AMax, BMax, P4),
+        clpfd_bmin(P1, P2, L1), clpfd_bmin(P3, P4, L2), clpfd_bmin(L1, L2, CLo),
+        clpfd_bmax(P1, P2, H1), clpfd_bmax(P3, P4, H2), clpfd_bmax(H1, H2, CHi)
+    ),
+    clpfd_narrow_bounds(C, CLo, CHi).
+
+clpfd_square_bounds(Lo, Hi, SLo, SHi) :-
+    (   clpfd_ble(0, Lo) -> clpfd_bxmul(Lo, Lo, SLo), clpfd_bxmul(Hi, Hi, SHi)
+    ;   clpfd_ble(Hi, 0) -> clpfd_bxmul(Hi, Hi, SLo), clpfd_bxmul(Lo, Lo, SHi)
+    ;   SLo = 0, clpfd_bxmul(Lo, Lo, S1), clpfd_bxmul(Hi, Hi, S2), clpfd_bmax(S1, S2, SHi)
     ).
 
 % C = min(A, B) — C tracks the smaller max/min of the two; since
@@ -999,27 +1026,40 @@ clpfd_del1([X|Xs], Y, Rest) :-
     ; Rest = [X|Rest1], clpfd_del1(Xs, Y, Rest1)
     ).
 
-% bind V to a value of its domain, on backtracking the next one.
+% bind V to a value of its domain, on backtracking the next one. The
+% values are stepped through ($dom_next, $dom_prev), never written out:
+% `X in 0..3000000000, label([X])` answers X = 0 as `X in 0..9` does.
 clpfd_pick(V, up, Ctx, Bt) :- !,
     clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
-    '$dom_values'(D, Vals), clpfd_try_values(Vals, V, Bt).
+    '$dom_min'(D, X), clpfd_try_up(D, X, V, Bt).
 clpfd_pick(V, down, Ctx, Bt) :- !,
     clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
-    '$dom_values'(D, Vals), clpfd_rev(Vals, [], R),
-    clpfd_try_values(R, V, Bt).
+    '$dom_max'(D, X), clpfd_try_down(D, X, V, Bt).
 % Domain splitting: the choice is a CONSTRAINT, not a value, so each
 % step halves the domain and propagates. That is what makes a wide
 % domain tractable, where trying values one by one is not.
 clpfd_pick(V, bisect, Ctx, Bt) :- !, clpfd_bisect(V, Ctx, Bt).
-clpfd_pick(V, Ord, Ctx, Bt) :-
+clpfd_pick(V, middle, Ctx, Bt) :- !,
     clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
-    '$dom_values'(D, Vals), clpfd_order_values(Ord, D, Vals, Ordered),
-    clpfd_try_values(Ordered, V, Bt).
+    clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
+    Mid2 is Lo + Hi - 1, M is Mid2 div 2,
+    ( clpfd_in_dom(M, D) -> Low = M ; clpfd_prev_or_none(D, M, Low) ),
+    ( '$dom_next'(D, M, High) -> true ; High = none ),
+    clpfd_try_middle(D, Mid2, Low, High, V, Bt).
+clpfd_pick(V, random_value, Ctx, Bt) :-
+    clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
+    clpfd_try_random(D, V, Bt).
 
 % One value per choice; re-entering here to try the next one IS the
 % backtrack backtracks/1 counts.
-clpfd_try_values([X|_], V, _) :- V = X.
-clpfd_try_values([_|T], V, Bt) :- clpfd_bump(Bt), clpfd_try_values(T, V, Bt).
+clpfd_try_up(D, X, V, Bt) :-
+    (   V = X
+    ;   clpfd_bump(Bt), '$dom_next'(D, X, Y), clpfd_try_up(D, Y, V, Bt)
+    ).
+clpfd_try_down(D, X, V, Bt) :-
+    (   V = X
+    ;   clpfd_bump(Bt), '$dom_prev'(D, X, Y), clpfd_try_down(D, Y, V, Bt)
+    ).
 
 clpfd_bisect(V, Ctx, Bt) :-
     (   integer(V) -> true
@@ -1042,32 +1082,33 @@ clpfd_bump(Key) :- nb_getval(Key, N), N1 is N + 1, nb_setval(Key, N1).
 % middle: by distance from the domain's midpoint, the lower value
 % first on a tie. Doubling keeps it in integers — the midpoint of
 % Lo..Hi falls between two values whenever the size is even. GNU
-% Prolog's own order, measured: 1..7 gives 3 4 2 5 1 6 7.
-clpfd_order_values(middle, D, Vals, Ordered) :-
-    clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
-    Mid2 is Lo + Hi - 1,
-    clpfd_key_values(Vals, Mid2, Keyed),
-    msort(Keyed, Sorted),
-    clpfd_unkey(Sorted, Ordered).
-clpfd_order_values(random_value, _, Vals, Ordered) :-
-    clpfd_shuffle(Vals, Ordered).
+% Prolog's own order, measured: 1..7 gives 3 4 2 5 1 6 7. Two cursors
+% walk out from the midpoint, Low down from M = (Lo+Hi-1) div 2 and High
+% up from past it; the nearer one goes first, Low on a tie.
+clpfd_try_middle(D, Mid2, Low, High, V, Bt) :-
+    (   High == none -> Low \== none, clpfd_try_down(D, Low, V, Bt)
+    ;   Low == none -> clpfd_try_up(D, High, V, Bt)
+    ;   Mid2 - 2 * Low =< 2 * High - Mid2 ->
+            (   V = Low
+            ;   clpfd_bump(Bt), clpfd_prev_or_none(D, Low, Low1),
+                clpfd_try_middle(D, Mid2, Low1, High, V, Bt)
+            )
+    ;   (   V = High
+        ;   clpfd_bump(Bt), ( '$dom_next'(D, High, High1) -> true ; High1 = none ),
+            clpfd_try_middle(D, Mid2, Low, High1, V, Bt)
+        )
+    ).
 
-clpfd_key_values([], _, []).
-clpfd_key_values([V|Vs], Mid2, [k(Dist, V)-V|Ks]) :-
-    Dist is abs(2 * V - Mid2),
-    clpfd_key_values(Vs, Mid2, Ks).
-clpfd_unkey([], []).
-clpfd_unkey([_-V|T], [V|Vs]) :- clpfd_unkey(T, Vs).
+clpfd_prev_or_none(D, X, P) :- ( '$dom_prev'(D, X, P0) -> P = P0 ; P = none ).
 
-% Fisher-Yates, so every value is offered exactly once.
-clpfd_shuffle([], []).
-clpfd_shuffle(Vals, [P|Rest]) :-
-    Vals = [_|_],
-    clpfd_length(Vals, N),
-    I is random(N),
-    clpfd_nth0(I, Vals, P),
-    clpfd_del1(Vals, P, Others),
-    clpfd_shuffle(Others, Rest).
+% random_value: each choice is uniform over the values not tried yet,
+% which offers every value once in a uniformly random order.
+clpfd_try_random(D, V, Bt) :-
+    '$dom_size'(D, N), N > 0,
+    I is random(N), '$dom_nth0'(D, I, X),
+    (   V = X
+    ;   clpfd_bump(Bt), '$dom_del'(D, X, D2), clpfd_try_random(D2, V, Bt)
+    ).
 
 %! indomain(?Var) | CLP(FD): labeling | Binds one variable to each value of its domain in turn, on backtracking.
 indomain(X) :-
@@ -1081,18 +1122,15 @@ indomain(X) :-
 % CONTEXT, which tells a catcher nothing about where to look.
 clpfd_indomain_up(V, D, Ctx) :-
     clpfd_dom_finite(D, Ctx),
-    '$dom_values'(D, Vals), member(V, Vals).
+    '$dom_min'(D, X), clpfd_try_up(D, X, V, no_bt).
 clpfd_indomain_down(V, D, Ctx) :-
     clpfd_dom_finite(D, Ctx),
-    '$dom_values'(D, Vals), clpfd_rev(Vals, [], R), member(V, R).
+    '$dom_max'(D, X), clpfd_try_down(D, X, V, no_bt).
 clpfd_dom_finite(D, Ctx) :-
     '$dom_min'(D, Mn), '$dom_max'(D, Mx),
     ( ( Mn == inf ; Mx == sup ) -> throw(error(instantiation_error, Ctx))
     ; true
     ).
-
-clpfd_rev([], A, A).
-clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
 
 % ===== all_different / all_distinct =====
 % all_different posts pairwise disequality: whenever a variable
@@ -1178,7 +1216,10 @@ clpfd_apply_doms([V-D | T]) :- clpfd_narrow(V, D), clpfd_apply_doms(T).
 '#/\\'(C1, C2) :- clpfd_reify(C1, 1), clpfd_reify(C2, 1).
 %! #\/(+Constraint1, +Constraint2) | CLP(FD): reification | At least one constraint holds (disjunction).
 '#\\/'(C1, C2) :-
-    clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 + B2 #>= 1.
+    clpfd_reify(C1, B1), clpfd_reify(C2, B2),
+    % One linear constraint, B1 + B2 #>= 1: the decomposition's auxiliary
+    % sum would be a variable the answer names and the user never wrote.
+    clpfd_post_lin([-1-B1, -1-B2], =<, -1).
 %! #\(+Constraint) | CLP(FD): reification | The constraint does not hold (negation).
 '#\\'(C) :- clpfd_reify(C, 0).
 

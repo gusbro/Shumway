@@ -246,6 +246,38 @@ public static class FdBoundBuiltins
         return WriteWide(engine, 2, b.Infinite != 0 ? b.Scaled(k.Sign > 0) : Wide.Of(b.Value * k));
     }
 
+    /// <summary>clpfd_bxmul(A, B, -R): the product of two bounds, a corner of
+    /// the product of two intervals. Zero times an infinity is zero: the
+    /// interval holds integers, and every one of them times zero is.</summary>
+    public static bool Bxmul(Activation engine)
+    {
+        if (!TryReadBound(engine, 0, out long a) || !TryReadBound(engine, 1, out long b))
+            return BxmulWide(engine);
+        if (a == 0 || b == 0) return engine.UnifyRegisterWithCell(2, Cell.Int(0));
+        bool infiniteA = a == Inf || a == Sup, infiniteB = b == Inf || b == Sup;
+        if (infiniteA || infiniteB)
+            return WriteInfinite(engine, 2, (a > 0) == (b > 0) ? Sup : Inf);
+        long r = unchecked(a * b);
+        if ((a > -Fits32 && a < Fits32 && b > -Fits32 && b < Fits32) || r / a == b)
+            return WriteFinite(engine, 2, r);
+        return BxmulWide(engine);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool BxmulWide(Activation engine)
+    {
+        Wide x = ReadWide(engine, 0), y = ReadWide(engine, 1);
+        bool zeroX = x.Infinite == 0 && x.Value.IsZero, zeroY = y.Infinite == 0 && y.Value.IsZero;
+        if (zeroX || zeroY) return engine.UnifyRegisterWithCell(2, Cell.Int(0));
+        if (x.Infinite != 0 || y.Infinite != 0)
+        {
+            bool positive = (x.Infinite != 0 ? x.Infinite > 0 : x.Value.Sign > 0)
+                         == (y.Infinite != 0 ? y.Infinite > 0 : y.Value.Sign > 0);
+            return WriteWide(engine, 2, positive ? Wide.PosInf : Wide.NegInf);
+        }
+        return WriteWide(engine, 2, Wide.Of(x.Value * y.Value));
+    }
+
     /// <summary>clpfd_bfloordiv(C, K, -R): ⌊C / K⌋ for nonzero integer K.</summary>
     public static bool Bfloordiv(Activation engine) => Divide(engine, ceiling: false);
 
@@ -314,5 +346,6 @@ public static class FdBoundBuiltins
         BuiltinsRegistry.Register("clpfd_bmul", 3, Bmul);
         BuiltinsRegistry.Register("clpfd_bfloordiv", 3, Bfloordiv);
         BuiltinsRegistry.Register("clpfd_bceildiv", 3, Bceildiv);
+        BuiltinsRegistry.Register("clpfd_bxmul", 3, Bxmul);
     }
 }
