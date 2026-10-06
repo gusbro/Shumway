@@ -29,6 +29,12 @@ public sealed partial class Activation
 
     private List<CleanupHandler>? _cleanupHandlers;
     private List<(int Ref, Cell Live, bool UseLive)>? _pendingCleanupRefs;
+    // The drains in progress, innermost last, each with the entries that were
+    // queued when it began. A cut inside a cleanup drains what that cleanup's
+    // own scopes queued at once, but never an outer drain's entries: those run
+    // in that drain's order, and a ball one of them throws must not cut the
+    // outer drain short and lose the rest.
+    private List<List<(int Ref, Cell Live, bool UseLive)>>? _cleanupDrains;
     private int _nextCleanupRef = 1;
 
     /// <summary>Marks the live Cleanup terms as heap roots. A handler holds its
@@ -41,6 +47,9 @@ public sealed partial class Activation
             foreach (var h in hs) GcMarkReferents(h.Live);
         if (_pendingCleanupRefs is { } ps)
             foreach (var p in ps) GcMarkReferents(p.Live);
+        if (_cleanupDrains is { } ds)
+            foreach (var d in ds)
+                foreach (var p in d) GcMarkReferents(p.Live);
     }
 
     /// <summary>Relocates those same Cleanup terms.</summary>
@@ -53,12 +62,19 @@ public sealed partial class Activation
                 h.Live = relocate(h.Live);
                 hs[i] = h;
             }
-        if (_pendingCleanupRefs is { } ps)
-            for (int i = 0; i < ps.Count; i++)
-            {
-                var (r, live, useLive) = ps[i];
-                ps[i] = (r, relocate(live), useLive);
-            }
+        if (_pendingCleanupRefs is { } ps) RelocatePending(ps, relocate);
+        if (_cleanupDrains is { } ds)
+            foreach (var d in ds) RelocatePending(d, relocate);
+    }
+
+    private static void RelocatePending(List<(int Ref, Cell Live, bool UseLive)> ps,
+                                        System.Func<Cell, Cell> relocate)
+    {
+        for (int i = 0; i < ps.Count; i++)
+        {
+            var (r, live, useLive) = ps[i];
+            ps[i] = (r, relocate(live), useLive);
+        }
     }
 
     /// <summary>Registers a cleanup handler at the current choice-point level and
@@ -116,10 +132,13 @@ public sealed partial class Activation
         // Registration level rises with registration order unless something
         // registers after backtracking below an older handler, which is
         // noticed as it happens; while that holds, the handlers that can fire
-        // are a suffix and binary search finds where it starts. The scan then
-        // runs forward from there, so the order they are enqueued in -- which
-        // is the order they will run in -- is exactly what it was.
-        for (int i = FirstCleanupAtOrAbove(barrier); i < _cleanupHandlers.Count; i++)
+        // are a suffix and binary search finds where it starts.
+        //
+        // From the youngest down: the order they are enqueued in is the order
+        // they run in, and a scope opened inside another registered after it,
+        // so the inner cleanup runs before the outer.
+        for (int i = _cleanupHandlers.Count - 1, first = FirstCleanupAtOrAbove(barrier);
+             i >= first; i--)
         {
             CleanupHandler h = _cleanupHandlers[i];
             if (!h.Enqueued && h.Level >= barrier)
@@ -157,7 +176,7 @@ public sealed partial class Activation
     public void FireAllRemainingCleanups()
     {
         if (_cleanupHandlers is null) return;
-        for (int i = 0; i < _cleanupHandlers.Count; i++)
+        for (int i = _cleanupHandlers.Count - 1; i >= 0; i--)   // inner first
         {
             CleanupHandler h = _cleanupHandlers[i];
             if (!h.Enqueued)
@@ -208,22 +227,48 @@ public sealed partial class Activation
     public bool HasCleanupHandlers => _cleanupHandlers is { Count: > 0 };
     public bool HasPendingCleanups => _pendingCleanupRefs is { Count: > 0 };
 
-    /// <summary>Pops one pending cleanup in queue order — a single cut
-    /// discarding nested scc scopes enqueues inside-out, so FIFO fires the
-    /// inner cleanup before the outer (WG17 `innerouter`). Fails when the
-    /// queue is empty; the interpreter's safe-point drain loops on this.</summary>
+    /// <summary>Starts a drain: it takes every entry queued now, and
+    /// <see cref="TryPopPendingCleanup"/> pops from those until
+    /// <see cref="EndCleanupDrain"/>. False, and no drain, with nothing
+    /// queued.</summary>
+    public bool BeginCleanupDrain()
+    {
+        if (_pendingCleanupRefs is not { Count: > 0 } q) return false;
+        (_cleanupDrains ??= new()).Add(q);
+        _pendingCleanupRefs = null;
+        return true;
+    }
+
+    /// <summary>Ends the innermost drain. What it did not run (it was cut
+    /// short by an error of the machine itself) goes back to the queue,
+    /// ahead of what was queued since.</summary>
+    public void EndCleanupDrain()
+    {
+        var d = _cleanupDrains![^1];
+        _cleanupDrains.RemoveAt(_cleanupDrains.Count - 1);
+        if (d.Count == 0) return;
+        if (_pendingCleanupRefs is { } q) d.AddRange(q);
+        _pendingCleanupRefs = d;
+    }
+
+    /// <summary>Pops one pending cleanup in queue order, from the innermost
+    /// drain's entries while one runs: a single cut discarding nested scc
+    /// scopes enqueues inside-out, so FIFO fires the inner cleanup before the
+    /// outer (WG17 `innerouter`). Fails when there is none; the drain loops
+    /// on this.</summary>
     public bool TryPopPendingCleanup(
         out int refId, out Cell liveCleanup, out bool useLive)
     {
-        if (_pendingCleanupRefs is null || _pendingCleanupRefs.Count == 0)
+        var from = _cleanupDrains is { Count: > 0 } ds ? ds[^1] : _pendingCleanupRefs;
+        if (from is null || from.Count == 0)
         {
             refId = 0;
             liveCleanup = default;
             useLive = false;
             return false;
         }
-        (refId, liveCleanup, useLive) = _pendingCleanupRefs[0];
-        _pendingCleanupRefs.RemoveAt(0);
+        (refId, liveCleanup, useLive) = from[0];
+        from.RemoveAt(0);
         return true;
     }
 }

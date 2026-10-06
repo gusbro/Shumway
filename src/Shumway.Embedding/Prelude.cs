@@ -693,10 +693,12 @@ internal static class Prelude
             ( B1 > B0 -> Deterministic = false ; Deterministic = true ),
             !.
 
-        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown.
+        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. An exception Cleanup raises propagates, unless another one is already in flight, which wins.
         % Cleanup runs with once/1 semantics — its choice points are destroyed and
         % its success/failure ignored, but an exception it raises propagates (that
-        % is exactly ignore/1). It fires exactly once, guarded by the retract of
+        % is exactly ignore/1), unless a ball is already in flight, which wins
+        % (SWI's rule; SICStus lets the cleanup's replace it). It fires exactly
+        % once, guarded by the retract of
         % the '$cleanup_pending'/2 fact that stably stores the goal:
         %   - deterministic success: fired synchronously, then the cut keeps the
         %     call deterministic (determinism sampled via '$choice_level', as
@@ -748,8 +750,12 @@ internal static class Prelude
         % Public so the catch-frame recovery dispatch ('$catch_begin') can
         % resolve its address by functor, as '$catch_run'/1 is.
         :- public '$scc_recover'/2.
+        % The ball in flight wins: a cleanup that throws as well does not
+        % replace it. The catch goal is a variable for the reason given at
+        % '$drain_cleanups'.
         '$scc_recover'(Ref, Error) :-
-            '$scc_fire'(Ref),
+            F = '$scc_fire'(Ref),
+            catch(F, _, true),
             throw(Error).
 
         % Exactly-once: the retract is the atomic guard. Forget the handler first
@@ -773,36 +779,38 @@ internal static class Prelude
             ( retract('$cleanup_pending'(Ref, _)) -> ignore(Cleanup) ; true ).
 
         % Run by the interpreter at a safe point when the engine enqueued cleanups
-        % from a teardown path. A Cleanup exception propagates out of the drain as
-        % a normal exception.
+        % from a teardown path.
         :- public '$drain_cleanups'/0.
         % A drained handler fired ASYNCHRONOUSLY (exception unwind, external
-        % cut, teardown). An exception the Cleanup itself throws here is
-        % DROPPED: when the trigger was an error unwind the original ball
-        % has already won (SWI/WG17 first-exception-wins — a late throw
-        % would surface as a phantom second error after the catch ran).
-        % Async fire runs the LIVE Cleanup term (handler slot) — its
-        % bindings reach the caller (scc(true, scc(...), Y=3), ! leaves
-        % Y=3). The retract stays the exactly-once guard. The catch goal is
-        % built at runtime so MetaTransform takes the runtime catch/3
-        % clause (see '$module_attr_goals' — an inlined static catch has no
-        % baked '$catchrec' address and silently fails); its ball is
-        % DROPPED: on an error unwind the original ball already won
-        % (first-exception-wins), a late throw would surface as a phantom
-        % second error after the catch ran.
-        % Live is the handler's live cell for a CUT fire (heap intact,
-        % bindings reach the caller) or the '$scc_use_copy' sentinel for an
-        % EXCEPTION/teardown fire (heap truncated below the catcher — the
-        % live cell may point at reclaimed memory; run the stable copy).
+        % cut, teardown). Live is the handler's live cell for a CUT fire (heap
+        % intact, bindings reach the caller: scc(true, scc(...), Y=3), !
+        % leaves Y=3) or the '$scc_use_copy' sentinel for an
+        % EXCEPTION/teardown fire (heap truncated below the catcher, the live
+        % cell may point at reclaimed memory: run the stable copy). The
+        % retract stays the exactly-once guard.
+        % A ball a cut fire throws propagates from the drain, after every
+        % pending cleanup has run, the first one winning. On an exception
+        % fire the ball in flight wins and the cleanup's is dropped (a late
+        % throw would surface as a phantom second error after the catch
+        % ran); on teardown there is nobody left to catch it.
+        % The catch goal is built at runtime so MetaTransform takes the
+        % runtime catch/3 clause (see '$module_attr_goals': an inlined static
+        % catch has no baked '$catchrec' address and silently fails).
         '$drain_cleanups' :-
+            '$drain_cleanups'(none, Ball),
+            ( Ball = ball(E) -> throw(E) ; true ).
+        '$drain_cleanups'(Ball0, Ball) :-
             ( '$pop_pending_cleanup'(Ref, Live)
             -> '$scc_forget'(Ref),
                ( retract('$cleanup_pending'(Ref, Copy))
-               -> ( Live == '$scc_use_copy' -> F = ignore(Copy) ; F = ignore(Live) ),
-                  catch(F, _, true)
-               ; true ),
-               '$drain_cleanups'
-            ; true ).
+               -> ( Live == '$scc_use_copy'
+                  -> F = ignore(Copy), catch(F, _, true), Ball1 = Ball0
+                  ;  F = ignore(Live), catch(F, E, true),
+                     ( Ball0 == none, nonvar(E) -> Ball1 = ball(E) ; Ball1 = Ball0 )
+                  )
+               ; Ball1 = Ball0 ),
+               '$drain_cleanups'(Ball1, Ball)
+            ; Ball = Ball0 ).
 
         %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
         :- public call_cleanup/2.

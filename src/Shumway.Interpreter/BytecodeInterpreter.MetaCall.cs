@@ -65,9 +65,16 @@ public sealed partial class BytecodeInterpreter
         for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
         int savedB = _engine.B;
 
-        bool ok = RunGoalInEngine(code, drainAddr);
-
-        if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
+        // Each drain runs the entries queued when it began; a scope its
+        // cleanups discard is queued anew and run by the next round, or at
+        // once by a cut inside the cleanup.
+        while (_engine.BeginCleanupDrain())
+        {
+            bool ok;
+            try { ok = RunGoalInEngine(code, drainAddr); }
+            finally { _engine.EndCleanupDrain(); }
+            if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
+        }
         for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
     }
 
@@ -1170,9 +1177,15 @@ public sealed partial class BytecodeInterpreter
                 }
             }
         }
-        finally { _engine.CatchFramesHeld = savedHeld; }
+        finally
+        {
+            // Also when a ball leaves: the floor is this driver's, and a
+            // driver further down that catches it backtracks to its own
+            // choice points, which the floor would hide.
+            _engine.CatchFramesHeld = savedHeld;
+            _engine.BacktrackFloor = savedFloor;
+        }
 
-        _engine.BacktrackFloor = savedFloor;
         _engine.SetPc(savedPc);
         _engine.SetCp(savedCp);
         _engine.SetB0(savedB0);

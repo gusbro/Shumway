@@ -124,13 +124,12 @@ public sealed class CatchFrameLifetimeTests
     // that counts that frame. A catch in that driver must not give it back:
     // its own frame would take the index, a ball for it would be caught by
     // the wrong driver, and the query would go on from the wrong place. A
-    // cleanup that throws reaches the drain's catch; one that catches its
-    // own ball brings its own. Whether the first ball reaches caught/2 is
-    // the drain's policy; either way the goal after it runs.
+    // cleanup that throws reaches the drain's catch, and its ball then
+    // reaches caught/2; one that catches its own ball brings its own.
     [Theory]
-    [InlineData("throw(oops)")]
-    [InlineData("catch(throw(oops), oops, true)")]
-    public void ACleanupThatThrowsAtACut_GoesOnAfterTheCatch(string cleanup)
+    [InlineData("throw(oops)", "caught")]
+    [InlineData("catch(throw(oops), oops, true)", "not_thrown")]
+    public void ACleanupThatThrowsAtACut_GoesOnAfterTheCatch(string cleanup, string r)
     {
         foreach (bool compiled in new[] { false, true })
         {
@@ -140,7 +139,7 @@ public sealed class CatchFrameLifetimeTests
                 var s = e.Query($"caught(({cleanup}), R), X = reached.");
                 string where = $"compiled: {compiled}, run {i}";
                 Assert.True(s.Success, where);
-                Assert.True(s["R"]!.ToString() is "not_thrown" or "caught", $"{where}: R = {s["R"]}");
+                Assert.True(s["R"]!.ToString() == r, $"{where}: R = {s["R"]}");
                 Assert.True(s["X"]!.ToString() == "reached", $"{where}: X = {s["X"]}");
             }
         }
