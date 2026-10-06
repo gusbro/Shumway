@@ -956,6 +956,51 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>Puts the cells bound or overwritten since the two trail marks
+    /// back to what they held at the marks, unwinding nothing: the cursors
+    /// start at the trail tops and move down to the marks in the order
+    /// <see cref="UnwindTrails"/> would take, and what each cell holds now
+    /// goes on <paramref name="held"/> for <see cref="RestoreViewedCells"/>.
+    /// Called again with lower marks it goes on from the cursors, so a walk
+    /// over nested catch frames pays for each entry once. A catch resolution
+    /// tests its catcher as it was when the catch began (ISO 7.8.9) while the
+    /// machine stays where the throw left it.</summary>
+    public void ViewCellsAsOf(int bindingMark, int extraMark, ref int bindingCursor, ref int extraCursor,
+        List<(int Index, Cell Held)> held)
+    {
+        while (extraCursor > extraMark)
+        {
+            ref var entry = ref _extraTrail[extraCursor - 1];
+            int marker = Math.Max(entry.BindingTrailMarker, bindingMark);
+            while (bindingCursor > marker)
+            {
+                int idx = _bindingTrail[--bindingCursor];
+                held.Add((idx, _heap[idx]));
+                _heap[idx] = Cell.UnboundVar(idx);
+            }
+            if (entry.Type == TrailType.ValueChange)
+            {
+                held.Add((entry.HeapIdx, _heap[entry.HeapIdx]));
+                _heap[entry.HeapIdx] = entry.OldValue;
+            }
+            extraCursor--;
+        }
+        while (bindingCursor > bindingMark)
+        {
+            int idx = _bindingTrail[--bindingCursor];
+            held.Add((idx, _heap[idx]));
+            _heap[idx] = Cell.UnboundVar(idx);
+        }
+    }
+
+    /// <summary>Undoes <see cref="ViewCellsAsOf"/>: every cell back to what
+    /// it held, latest change last.</summary>
+    public void RestoreViewedCells(List<(int Index, Cell Held)> held)
+    {
+        for (int i = held.Count - 1; i >= 0; i--)
+            _heap[held[i].Index] = held[i].Held;
+    }
+
     private void ProcessExtraUnwind(in ExtraTrailEntry entry)
     {
         switch (entry.Type)

@@ -202,61 +202,106 @@ public sealed partial class PrologEngine
         bool lowMemory = false)
     {
         hadActiveFrame = false;
-        for (int i = engine.CatchFrameCount - 1; i >= minFrameIndex; i--)
+        // The catcher is matched as it was when its catch began (ISO 7.8.9):
+        // the guarded goal may have bound its variables since, and such a
+        // binding is undone before the ball meets the catcher. The trial
+        // below runs on the machine as the throw left it, which no mismatch
+        // may disturb, so when it fails those bindings are viewed undone
+        // (ViewCellsAsOf) for a second trial: cheaply, since the view goes
+        // on from frame to frame and is put back once.
+        int viewBinding = engine.BindingTrailTop, viewExtra = engine.ExtraTrailTop;
+        List<(int Index, Cell Held)>? viewed = null;
+        try
         {
-            CatchFrame frame = engine.GetCatchFrame(i);
-            if (!frame.Active) continue;
-            hadActiveFrame = true;
-
-            if (lowMemory)
+            for (int i = engine.CatchFrameCount - 1; i >= minFrameIndex; i--)
             {
-                // A resource_error left the heap full: the speculative trial
-                // below would materialize the ball at the exhausted top, raise
-                // resource_error again from inside catch resolution, and the
-                // original error would escape every catch/3. The machine can
-                // only continue through a rollback anyway, so roll back to
-                // this frame first (exactly what a match commits to) and
-                // materialize in the reclaimed space — the ball is ground and
-                // the catcher slot predates the snapshot. A mismatch keeps
-                // walking outward: outer frames' snapshots are older, so each
-                // further rollback stays monotonic; if nothing matches the
-                // machine was dead regardless.
+                CatchFrame frame = engine.GetCatchFrame(i);
+                if (!frame.Active) continue;
+                hadActiveFrame = true;
+
+                if (lowMemory)
+                {
+                    // A resource_error left the heap full: the speculative trial
+                    // below would materialize the ball at the exhausted top, raise
+                    // resource_error again from inside catch resolution, and the
+                    // original error would escape every catch/3. The machine can
+                    // only continue through a rollback anyway, so roll back to
+                    // this frame first (exactly what a match commits to) and
+                    // materialize in the reclaimed space — the ball is ground and
+                    // the catcher slot predates the snapshot. A mismatch keeps
+                    // walking outward: outer frames' snapshots are older, so each
+                    // further rollback stays monotonic; if nothing matches the
+                    // machine was dead regardless.
+                    engine.UnwindToCatchFrame(i);
+                    Cell lmBall = Materializer.MaterializeAsCell(engine, ballTerm);
+                    if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, lmBall))
+                        continue;
+                    return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
+                }
+
+                // A match on the catcher as the goal left it is a match on the
+                // catcher as it was: the goal only instantiated it further.
+                // The binding after the rollback is the last word either way.
+                bool matched = CatcherAdmits(engine, frame, ballTerm);
+                if (!matched
+                    && (frame.SnapBindingTrailTop < viewBinding || frame.SnapExtraTrailTop < viewExtra))
+                {
+                    viewed ??= new List<(int, Cell)>();
+                    int viewedBefore = viewed.Count;
+                    engine.ViewCellsAsOf(frame.SnapBindingTrailTop, frame.SnapExtraTrailTop,
+                        ref viewBinding, ref viewExtra, viewed);
+                    // The same trial again only if the view changed a cell.
+                    if (viewed.Count > viewedBefore) matched = CatcherAdmits(engine, frame, ballTerm);
+                }
+                if (!matched) continue;
+
+                // Commit: roll back everything the guarded goal did, then bind
+                // the catcher to the ball for keeps and prime the recovery call.
+                // The rollback rewrites every viewed cell, so the view is over.
+                viewed = null;
                 engine.UnwindToCatchFrame(i);
-                Cell lmBall = Materializer.MaterializeAsCell(engine, ballTerm);
-                if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, lmBall))
+                Cell ball = Materializer.MaterializeAsCell(engine, ballTerm);
+                if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, ball))
+                {
+                    // Only a cell the goal overwrote in place can get here. The
+                    // machine is at this frame's snapshot now, older than any
+                    // frame left to try.
+                    viewBinding = engine.BindingTrailTop;
+                    viewExtra = engine.ExtraTrailTop;
                     continue;
+                }
                 return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
             }
-
-            // Speculatively unify the ball with the catcher, then undo —
-            // testing the match must not disturb the machine. That includes
-            // the wakeup queue: a catcher containing attributed variables
-            // queues verify_attributes wakeups during the trial, and their
-            // recorded heap indices point into the trial region truncated
-            // right below — flushing them later read garbage cells (clpz's
-            // all_distinct crashed on a phantom functor id).
-            int savedHeapTop = engine.HeapTop;
-            int savedBindingTrail = engine.BindingTrailTop;
-            int savedExtraTrail = engine.ExtraTrailTop;
-            int savedHb = engine.Hb;
-            int savedWakeups = engine.PendingWakeupCount;
-            engine.SetHb(engine.HeapTop);
-            Cell trialBall = Materializer.MaterializeAsCell(engine, ballTerm);
-            bool matched = engine.UnifyHeapWithCell(frame.CatcherHeapIdx, trialBall);
-            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
-            engine.SetHeapTop(savedHeapTop);
-            engine.SetHb(savedHb);
-            engine.TruncatePendingWakeups(savedWakeups);
-            if (!matched) continue;
-
-            // Commit: roll back everything the guarded goal did, then bind
-            // the catcher to the ball for keeps and prime the recovery call.
-            engine.UnwindToCatchFrame(i);
-            Cell ball = Materializer.MaterializeAsCell(engine, ballTerm);
-            engine.UnifyHeapWithCell(frame.CatcherHeapIdx, ball);
-            return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
+            return -1;
         }
-        return -1;
+        finally
+        {
+            if (viewed is not null) engine.RestoreViewedCells(viewed);
+        }
+    }
+
+    // Speculatively unifies the ball with the catcher, then undoes it:
+    // testing the match must not disturb the machine. That includes the
+    // wakeup queue: a catcher containing attributed variables queues
+    // verify_attributes wakeups during the trial, and their recorded heap
+    // indices point into the trial region truncated right below; flushing
+    // them later read garbage cells (clpz's all_distinct crashed on a
+    // phantom functor id).
+    private static bool CatcherAdmits(Activation engine, in CatchFrame frame, Term ballTerm)
+    {
+        int savedHeapTop = engine.HeapTop;
+        int savedBindingTrail = engine.BindingTrailTop;
+        int savedExtraTrail = engine.ExtraTrailTop;
+        int savedHb = engine.Hb;
+        int savedWakeups = engine.PendingWakeupCount;
+        engine.SetHb(engine.HeapTop);
+        Cell trialBall = Materializer.MaterializeAsCell(engine, ballTerm);
+        bool matched = engine.UnifyHeapWithCell(frame.CatcherHeapIdx, trialBall);
+        engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+        engine.SetHeapTop(savedHeapTop);
+        engine.SetHb(savedHb);
+        engine.TruncatePendingWakeups(savedWakeups);
+        return matched;
     }
 
     /// <summary>Decodes the recovery goal cell — a <c>'$catchrec_N'(Vars)</c>
