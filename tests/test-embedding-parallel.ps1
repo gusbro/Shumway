@@ -13,6 +13,7 @@
 # Usage:
 #   powershell -File tests/test-embedding-parallel.ps1            # routine gate (Category!=Slow)
 #   powershell -File tests/test-embedding-parallel.ps1 -Full      # pre-phase-close (includes Slow)
+#   powershell -File tests/test-embedding-parallel.ps1 -MaxParallel 3   # at most 3 at once
 #
 # The partitions are class-name-prefix buckets, hand-balanced from the
 # per-class timing analysis (2026-07-27). Rebalance by moving prefixes if a
@@ -31,6 +32,9 @@ param(
     # compiler emits DIFFERENT code in the two (the DbgCheck_* markers live
     # under `#if DEBUG`), so a Debug-only gate never sees the IL that runs.
     [string] $Configuration = 'Debug',
+    # At most this many test processes at once, 0 for all of them: a machine
+    # short of memory runs the buckets in waves.
+    [int] $MaxParallel = 0,
     # Collect a crash dump when a test HOST dies (as opposed to a test
     # failing). The net48 lanes have done this intermittently and the logs say
     # only that the process went away — a dump is the one artifact that says
@@ -104,6 +108,10 @@ $crashArgs = if ($CrashDumps) { @('--blame-crash', '--blame-crash-dump-type', 'f
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
 $procs = @()
 foreach ($b in $buckets) {
+    while ($MaxParallel -gt 0 -and
+           @($procs | Where-Object { -not $_.Proc.HasExited }).Count -ge $MaxParallel) {
+        Start-Sleep -Seconds 2
+    }
     $log = Join-Path $logDir "$($b.Name).log"
     # STDERR too, and per bucket. Unredirected it lands in the caller's own
     # output with nothing to say which bucket it came from — and stderr is

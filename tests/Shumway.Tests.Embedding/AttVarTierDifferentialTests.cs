@@ -131,8 +131,10 @@ public sealed class AttVarTierDifferentialTests(ITestOutputHelper o)
         var il = Il();
 
         // Warm the IL engine so the predicates the goal touches are promoted,
-        // then run the comparison on a promoted tier.
+        // then run the comparison on a promoted tier. A promotion compiles on
+        // a worker: under load the warm run can end before it lands.
         _ = Run(il, goal);
+        Assert.True(il.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         var a = Run(t0, goal);
         var b = Run(il, goal);
 
