@@ -914,6 +914,37 @@ public static class ShmoCompiler
     /// <summary>Like <see cref="TryCompileSource"/> but reads the
     /// source from <paramref name="path"/> and uses the file's bare
     /// name (sans extension) as the module-name fallback.</summary>
+    /// <summary>What an object compiled file-at-a-time would silently lose,
+    /// described for an error, or null when nothing is lost.
+    ///
+    /// <para>A hook is a consult-time concept: the consult pipeline
+    /// recognises the head, activates it early and adds it to the engine's
+    /// expansion aggregate. Compiled file-at-a-time there is no aggregate to
+    /// join, so the clause lands as an ordinary predicate (local, mangled,
+    /// and pruned by the linker for good measure) and the hook never fires:
+    /// the same source means two things. A module-qualified clause head is
+    /// read as the term it is and defines a predicate for ':'/2.</para>
+    ///
+    /// <para>Read off the object, not the text: a file that merely calls
+    /// term_expansion/2, or names it in a comment, compiles fine.</para></summary>
+    public static string? WhatFileAtATimeLoses(ShmoObject obj)
+    {
+        foreach (var d in obj.Defined)
+        {
+            if (d.Indicator is { Name: ":", Arity: 2 })
+                return "defines a module-qualified clause head (a ':'/2 predicate).";
+            // The name may carry the module prefix of an export-qualified
+            // module (Name$p); the hook is what it ends with.
+            string name = d.Indicator.Name;
+            int cut = name.LastIndexOf('$');
+            if (cut >= 0) name = name[(cut + 1)..];
+            if ((name == "term_expansion" && d.Indicator.Arity is 2 or 6)
+                || (name == "goal_expansion" && d.Indicator.Arity == 2))
+                return $"defines {name}/{d.Indicator.Arity}, a load-time expansion hook.";
+        }
+        return null;
+    }
+
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,

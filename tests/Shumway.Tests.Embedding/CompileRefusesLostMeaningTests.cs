@@ -13,10 +13,11 @@ namespace Shumway.Tests.Embedding;
 /// the same file: consulted, a later `marker.` expands; compiled, linked and
 /// loaded, it does not. A module-qualified head is worse than lost -- read as
 /// the term it is, `user:term_expansion(...)` defines a predicate for ':'/2.
-/// Both used to produce an object and a note.</para></summary>
+/// Both used to produce an object and a note. shumway-link compiles a source
+/// it is given the same way, so it refuses the same files.</para></summary>
 public sealed class CompileRefusesLostMeaningTests
 {
-    private static string CompileExe()
+    private static string Exe(string project, string name)
     {
         string current = AppContext.BaseDirectory;
         for (int i = 0; i < 8 && current is not null; i++)
@@ -26,8 +27,8 @@ public sealed class CompileRefusesLostMeaningTests
                 string suffix = OperatingSystem.IsWindows() ? ".exe" : "";
                 foreach (string cfg in new[] { "Debug", "Release" })
                 {
-                    string p = Path.Combine(current, "src", "Shumway.Compile",
-                        "bin", cfg, "net10.0", "shumway-compile" + suffix);
+                    string p = Path.Combine(current, "src", project,
+                        "bin", cfg, "net10.0", name + suffix);
                     if (File.Exists(p)) return p;
                 }
                 return "";
@@ -70,7 +71,7 @@ public sealed class CompileRefusesLostMeaningTests
         // this reads whatever binary is on disk. A change to the compiler has
         // to be built before this test means anything (the red counter-proof
         // for it passed green until the exe was rebuilt).
-        string exe = CompileExe();
+        string exe = Exe("Shumway.Compile", "shumway-compile");
         if (exe.Length == 0) return;   // CLI not built
 
         string dir = Path.Combine(Path.GetTempPath(),
@@ -108,6 +109,51 @@ public sealed class CompileRefusesLostMeaningTests
             // --consult is the path the error names, and it works.
             r = Run(exe, "--consult", "-o", Path.Combine(dir, "viaconsult"), hook);
             Assert.Equal(0, r.Exit);
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch (IOException) { } }
+    }
+
+    [Fact]
+    public void TheLinkerRefusesTheSameSources()
+    {
+        // A separate build too: see above.
+        string exe = Exe("Shumway.Link", "shumway-link");
+        if (exe.Length == 0) return;   // CLI not built
+
+        string dir = Path.Combine(Path.GetTempPath(),
+            "shumway-refuse-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string hook = Write(dir, "hook.pl",
+                "term_expansion(marker, expanded).\nmain.\n");
+            string qualified = Write(dir, "qualified.pl",
+                "user:term_expansion(marker, expanded).\nmain.\n");
+            string mention = Write(dir, "mention.pl",
+                "main :- T = term_expansion(a, b), functor(T, _, 2).\n"
+                + "% goal_expansion( appears only here\n");
+
+            // A refused link must not leave an older bundle behind either.
+            string hookOut = Write(dir, "hook.shum", "stale");
+            var r = Run(exe, "--entry", "main/0", "-o", hookOut, hook);
+            Assert.Equal(1, r.Exit);
+            Assert.Contains("term_expansion/2", r.Err);
+            Assert.False(File.Exists(hookOut), "the refused link left a bundle");
+
+            string qOut = Path.Combine(dir, "qualified.shum");
+            r = Run(exe, "--entry", "main/0", "-o", qOut, qualified);
+            Assert.Equal(1, r.Exit);
+            Assert.Contains("module-qualified clause head", r.Err);
+            Assert.False(File.Exists(qOut), "the refused link wrote a bundle");
+
+            string mOut = Path.Combine(dir, "mention.shum");
+            r = Run(exe, "--entry", "main/0", "-o", mOut, mention);
+            Assert.True(r.Exit == 0, r.Err);
+            Assert.True(File.Exists(mOut), "a file that only mentions a hook must link");
+
+            // --consult is the path the error names, and it works.
+            r = Run(exe, "--consult", "--entry", "main/0", "-o", Path.Combine(dir, "viaconsult.shum"), hook);
+            Assert.True(r.Exit == 0, r.Err);
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch (IOException) { } }
     }

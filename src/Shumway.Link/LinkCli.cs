@@ -145,6 +145,20 @@ internal static class LinkCli
                         RemoveStaleOutputs(opts);
                         return ExitLinkError;
                     }
+                    // The same refusal as shumway-compile's: a hook compiled
+                    // file-at-a-time never fires, and the program linked from
+                    // it would mean something else than the consulted one.
+                    if (ShmoCompiler.WhatFileAtATimeLoses(res.Object) is { } lost)
+                    {
+                        Console.Error.WriteLine(
+                            $"shumway-link: {path} {lost} File-at-a-time compilation "
+                            + "would produce a program that means something else than the "
+                            + "consulted one, so it is refused rather than linked. Link "
+                            + "it with:" + Environment.NewLine
+                            + $"  shumway-link --consult -L <libdir> ... {path}");
+                        RemoveStaleOutputs(opts);
+                        return ExitLinkError;
+                    }
                     MaybeHintConsult(path);
                     objects.Add(res.Object);
                 }

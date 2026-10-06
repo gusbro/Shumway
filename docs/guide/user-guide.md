@@ -705,7 +705,11 @@ Two things to know going in:
   program you trust.
 - **You do not have to know the flag in advance.** `shumway-compile` prints a
   hint pointing at `--consult` whenever a file compiled the ordinary way
-  relies on load-time hooks or dependency-defined operators.
+  relies on load-time hooks or dependency-defined operators. A file that
+  defines `term_expansion/2`, `goal_expansion/2` or a clause for another
+  module (`M:Head :- Body`) is refused instead, by `shumway-compile` and
+  `shumway-link` alike: compiled one file at a time, the hook would never
+  run and the clause would define a predicate named `:`.
 
 ### Step 2: `shumway-link` (linker)
 
@@ -733,7 +737,7 @@ shumway-link -o app.shum \
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
-| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here. |
+| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here; one that defines an expansion hook or a clause for another module is refused. |
 | `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle: each predicate switches from its bytecode to that IL once it is hot, with no IL generation at run time. By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
