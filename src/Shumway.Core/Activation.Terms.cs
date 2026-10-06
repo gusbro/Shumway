@@ -1089,6 +1089,7 @@ public sealed partial class Activation
                         System.Console.Error.WriteLine($"[catch] undo-deact idx={entry.HeapIdx} count={_catchFrames.Count}");
                     CatchFrame f = _catchFrames[entry.HeapIdx];
                     f.Active = true;
+                    f.DeactivateRecord = -1;
                     _catchFrames[entry.HeapIdx] = f;
                     // Active again, so the scan has to be able to reach it.
                     if (entry.HeapIdx > _catchScanFrom) _catchScanFrom = entry.HeapIdx;

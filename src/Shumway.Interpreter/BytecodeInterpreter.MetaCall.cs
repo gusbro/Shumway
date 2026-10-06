@@ -1137,6 +1137,8 @@ public sealed partial class BytecodeInterpreter
         int savedE     = _engine.E;
         int savedFloor = _engine.BacktrackFloor;
         int entryCatchFrames = _engine.CatchFrameCount;
+        int savedHeld = _engine.CatchFramesHeld;
+        _engine.CatchFramesHeld = entryCatchFrames;
 
         // Inner backtracking may not unwind past the entry CP level.
         _engine.BacktrackFloor = savedB;
@@ -1148,23 +1150,27 @@ public sealed partial class BytecodeInterpreter
         _engine.SetPc(target);
 
         InterpreterResult result;
-        while (true)
+        try
         {
-            try { result = Dispatch(code); break; }
-            catch (TopLevelFailure) { result = InterpreterResult.Failed; break; }
-            catch (Exception ex) when (ResolveNestedCatch(ex, entryCatchFrames, out int recovery))
+            while (true)
             {
-                // A catch/3 frame opened inside this nested goal caught the
-                // ball. The C# unwinding already destroyed the inner Dispatch
-                // frames, but this driver frame — which owns the interrupted
-                // caller's continuation (saved Pc/Cp/B0 below) — must survive:
-                // resume the recovery in our own loop. A ball whose matching
-                // frame is outside the nested goal (or matches nothing)
-                // rethrows via the filter and unwinds this driver too, which
-                // is then correct — the outer rollback discards us wholesale.
-                _engine.SetPc(recovery);
+                try { result = Dispatch(code); break; }
+                catch (TopLevelFailure) { result = InterpreterResult.Failed; break; }
+                catch (Exception ex) when (ResolveNestedCatch(ex, entryCatchFrames, out int recovery))
+                {
+                    // A catch/3 frame opened inside this nested goal caught the
+                    // ball. The C# unwinding already destroyed the inner Dispatch
+                    // frames, but this driver frame — which owns the interrupted
+                    // caller's continuation (saved Pc/Cp/B0 below) — must survive:
+                    // resume the recovery in our own loop. A ball whose matching
+                    // frame is outside the nested goal (or matches nothing)
+                    // rethrows via the filter and unwinds this driver too, which
+                    // is then correct — the outer rollback discards us wholesale.
+                    _engine.SetPc(recovery);
+                }
             }
         }
+        finally { _engine.CatchFramesHeld = savedHeld; }
 
         _engine.BacktrackFloor = savedFloor;
         _engine.SetPc(savedPc);

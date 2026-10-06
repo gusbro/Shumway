@@ -353,6 +353,8 @@ public sealed partial class BytecodeInterpreter
         ProgramView savedReentrantCode = _reentrantCode;
         _reentrantCode = code;
         _engine.ReentrantSolve = _reentrantSolve ??= ReentrantSolveTransparent;
+        int savedHeld = _engine.CatchFramesHeld;
+        _engine.CatchFramesHeld = _engine.CatchFrameCount;
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
         catch (System.Exception ex) when (PcRing is not null
@@ -364,7 +366,11 @@ public sealed partial class BytecodeInterpreter
             DumpPcRing(code, _engine.P, ex.GetType().Name);
             throw;
         }
-        finally { _reentrantCode = savedReentrantCode; }
+        finally
+        {
+            _reentrantCode = savedReentrantCode;
+            _engine.CatchFramesHeld = savedHeld;
+        }
     }
 
     /// <summary>Backs <see cref="Activation.ReentrantSolve"/> (the host→Prolog
@@ -482,8 +488,11 @@ public sealed partial class BytecodeInterpreter
     public InterpreterResult Backtrack(ProgramView code)
     {
         if (!TryBacktrack()) return InterpreterResult.Failed;
+        int savedHeld = _engine.CatchFramesHeld;
+        _engine.CatchFramesHeld = _engine.CatchFrameCount;
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
+        finally { _engine.CatchFramesHeld = savedHeld; }
     }
 
     private InterpreterResult Dispatch(ProgramView code)

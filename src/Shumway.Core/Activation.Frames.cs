@@ -296,6 +296,14 @@ public sealed partial class Activation
     /// <summary>Number of catch frames on the stack (active or not).</summary>
     public int CatchFrameCount => _catchFrames.Count;
 
+    /// <summary>The frames below this index are counted by a driver further
+    /// down the C# stack, which resolves balls and deactivates frames by
+    /// index: none of them is given back while it runs, or a frame opened
+    /// above it would take the index of one it holds. A driver sets it to
+    /// <see cref="CatchFrameCount"/> on entry and restores it on every
+    /// exit.</summary>
+    public int CatchFramesHeld { get; set; }
+
     internal static readonly bool CatchDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
 
@@ -319,6 +327,8 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact-above idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
+            f.DeactivateRecord = _extraTrailTop;
+            _catchFrames[i] = f;
             Diagnostics.CommitTrace.Note(_cellsAllocated,
                 Diagnostics.CommitTrace.Kind.Trail,
                 (int)TrailType.CatchFrame, _extraTrailTop);
@@ -350,6 +360,7 @@ public sealed partial class Activation
     /// the clause that contained the original <c>catch/3</c>.</para></summary>
     public void PushCatchFrame(int catcherHeapIdx, int recoveryHeapIdx)
     {
+        ReclaimDeadCatchFrames();
         int index = _catchFrames.Count;
         _catchScanFrom = index;          // the new frame is active and on top
         _catchFrames.Add(new CatchFrame
@@ -367,6 +378,8 @@ public sealed partial class Activation
             SnapPendingWakeups = _pendingWakeups.Count,
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
+            PushRecord = _extraTrailTop,
+            DeactivateRecord = -1,
         });
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
@@ -395,6 +408,7 @@ public sealed partial class Activation
     /// re-activates it. A no-op when there is no active frame.</summary>
     public void DeactivateTopCatchFrame()
     {
+        ReclaimDeadCatchFrames();
         for (int i = System.Math.Min(_catchScanFrom, _catchFrames.Count - 1);
              i >= 0; i--)
         {
@@ -406,6 +420,7 @@ public sealed partial class Activation
                 return;
             }
             f.Active = false;
+            f.DeactivateRecord = _extraTrailTop;
             _catchFrames[i] = f;
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
@@ -452,24 +467,77 @@ public sealed partial class Activation
     /// this frame's push before anything is written.</para></summary>
     private bool TryReclaimCatchFrame(int i, in CatchFrame f)
     {
-        if (i != _catchFrames.Count - 1) return false;
+        if (i != _catchFrames.Count - 1 || i < CatchFramesHeld) return false;
         if (_b > f.SnapB) return false;
-        int rec = f.SnapExtraTrailTop;
-        if (rec < 0 || rec >= _extraTrailTop) return false;
-        if (_extraTrail[rec].Type != TrailType.CatchFrame
-            || _extraTrail[rec].OldValue.Data != CatchTrailPush
-            || _extraTrail[rec].HeapIdx != i) return false;
+        int rec = f.PushRecord;
+        if (!IsCatchRecord(rec, i, CatchTrailPush)) return false;
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
-        if (rec == _extraTrailTop - 1) _extraTrailTop = rec;
-        else
-        {
-            ExtraTrailEntry e = _extraTrail[rec];
-            e.OldValue = new Cell(CatchTrailReclaimed);
-            _extraTrail[rec] = e;
-        }
+        NeuterCatchRecord(rec);
         _catchFrames.RemoveAt(i);
+        // What the guarded goal trailed only because the frame raised the
+        // boundary is undone by nothing now: the trail keeps what a choice
+        // point or a live frame below still needs, and the boundary goes back
+        // to where it was. Without this a binding inside a catch/3 in a
+        // deterministic loop cost a trail entry per call, for good.
+        CompactTrails(_b, Math.Min(f.SnapBindingTrailTop, _bindingTrailTop),
+            Math.Min(rec, _extraTrailTop), HeapTopAtB());
+        if (!_trailEverything) AssignHb(f.SnapHb);
         return true;
+    }
+
+    /// <summary>Gives back the closed frames on top that nothing can come
+    /// back to: inactive, with every choice point of their guarded goal gone
+    /// (<c>_b &lt;= SnapB</c>), which is what a cut after a catch/3 whose goal
+    /// left one does. Such a frame could only be removed by its push record
+    /// unwinding, and a deterministic loop never unwinds: one frame and two
+    /// records a call. Run where a frame is opened or closed, so the tiers,
+    /// which reach catch/3 through those builtins, all give them back.</summary>
+    private void ReclaimDeadCatchFrames()
+    {
+        while (_catchFrames.Count > CatchFramesHeld)
+        {
+            int i = _catchFrames.Count - 1;
+            CatchFrame f = _catchFrames[i];
+            if (f.Active || _b > f.SnapB) return;
+            if (!IsCatchRecord(f.PushRecord, i, CatchTrailPush)
+                || !IsCatchRecord(f.DeactivateRecord, i, CatchTrailDeactivate)) return;
+            if (CatchDiag)
+                System.Console.Error.WriteLine($"[catch] reclaim-dead idx={i} xTop={_extraTrailTop}");
+            // The later record first, so the trail can shrink past both.
+            NeuterCatchRecord(f.DeactivateRecord);
+            NeuterCatchRecord(f.PushRecord);
+            _catchFrames.RemoveAt(i);
+            if (_catchScanFrom >= _catchFrames.Count) _catchScanFrom = _catchFrames.Count - 1;
+        }
+    }
+
+    private bool IsCatchRecord(int rec, int frame, long kind) =>
+        rec >= 0 && rec < _extraTrailTop
+        && _extraTrail[rec].Type == TrailType.CatchFrame
+        && _extraTrail[rec].OldValue.Data == kind
+        && _extraTrail[rec].HeapIdx == frame;
+
+    // A record of a frame that is gone. On top of the trail it goes, with
+    // any neutered records below it; elsewhere it stays as a record that
+    // undoes nothing, the entries after it being live, until a compaction.
+    private void NeuterCatchRecord(int rec)
+    {
+        ExtraTrailEntry e = _extraTrail[rec];
+        e.OldValue = new Cell(CatchTrailReclaimed);
+        _extraTrail[rec] = e;
+        while (_extraTrailTop > 0
+               && _extraTrail[_extraTrailTop - 1].Type == TrailType.CatchFrame
+               && _extraTrail[_extraTrailTop - 1].OldValue.Data == CatchTrailReclaimed)
+            _extraTrailTop--;
+    }
+
+    // The heap top of the newest choice point, 0 with none.
+    private int HeapTopAtB()
+    {
+        if (_b < 0) return 0;
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+        return (int)_stack[_b + CpHeapTopOffset(arity)].Data;
     }
 
     /// <summary>Rolls the machine back to the state captured when catch
@@ -1229,6 +1297,18 @@ public sealed partial class Activation
         return _attrTrailLog[logIndex].Home < effectiveFloor;
     }
 
+    // The frame a moved record belongs to follows it.
+    private void MovedCatchRecord(in ExtraTrailEntry entry, int to)
+    {
+        int i = entry.HeapIdx;
+        if ((uint)i >= (uint)_catchFrames.Count) return;
+        CatchFrame f = _catchFrames[i];
+        if (entry.OldValue.Data == CatchTrailPush) f.PushRecord = to;
+        else if (entry.OldValue.Data == CatchTrailDeactivate) f.DeactivateRecord = to;
+        else return;
+        _catchFrames[i] = f;
+    }
+
     private void CompactTrails(int barrier, int parentBindingTop, int parentExtraTop,
                                int parentHeapTop)
     {
@@ -1293,12 +1373,17 @@ public sealed partial class Activation
         // phantom-functor crash). Raise the survival floor to the highest
         // active frame's snapshot: entries whose target is below it must
         // survive for that frame's unwind.
+        // The frames' snapshots grow with their index (a frame is pushed at
+        // the current tops, and whatever lowers a top below a snapshot
+        // removes or clips that frame), so the highest active frame has the
+        // highest heap snapshot and the walk stops there.
         int effectiveFloor = parentHeapTop;
-        for (int fi = 0; fi < _catchFrames.Count; fi++)
+        for (int fi = _catchFrames.Count - 1; fi >= 0; fi--)
         {
             CatchFrame cf = _catchFrames[fi];
-            if (cf.Active && cf.SnapHeapTop > effectiveFloor)
-                effectiveFloor = cf.SnapHeapTop;
+            if (!cf.Active) continue;
+            if (cf.SnapHeapTop > effectiveFloor) effectiveFloor = cf.SnapHeapTop;
+            break;
         }
 
         int bindingRead = startBinding;
@@ -1349,7 +1434,7 @@ public sealed partial class Activation
             //   - CatchFrame: control state, not a heap cell — always keep.
             bool survives = entry.Type switch
             {
-                TrailType.CatchFrame => true,
+                TrailType.CatchFrame => entry.OldValue.Data != CatchTrailReclaimed,
                 TrailType.BigIntAlloc => true,
                 TrailType.RationalAlloc => true,   // side table, same contract as BigIntAlloc
                 // External-state restore (b_setval): HeapIdx indexes the
@@ -1364,6 +1449,8 @@ public sealed partial class Activation
             if (survives)
             {
                 entry.BindingTrailMarker = bindingWrite;
+                if (entry.Type == TrailType.CatchFrame && extraWrite != extraRead)
+                    MovedCatchRecord(entry, extraWrite);
                 _extraTrail[extraWrite++] = entry;
             }
             else if (AttrRecordTotal > 0 && entry.Type == TrailType.ValueChange)
@@ -1416,7 +1503,9 @@ public sealed partial class Activation
         // snapshot that points past the new top back down to it; on
         // throw, UnwindToCatchFrame's UnwindTrails(snap) won't ask
         // to roll back to a non-existent trail position.
-        for (int i = 0; i < _catchFrames.Count; i++)
+        // From the top down, for the order above: the first frame with
+        // nothing to clip has nothing to clip below it either.
+        for (int i = _catchFrames.Count - 1; i >= 0; i--)
         {
             CatchFrame f = _catchFrames[i];
             bool changed = false;
@@ -1430,7 +1519,9 @@ public sealed partial class Activation
                 f.SnapExtraTrailTop = _extraTrailTop;
                 changed = true;
             }
-            if (changed) { _catchFrames[i] = f; diagClippedFrame = true; }
+            if (!changed) break;
+            _catchFrames[i] = f;
+            diagClippedFrame = true;
         }
         Diagnostics.CompactCensus.NoteReach(diagReadLog, diagWroteLog,
                                             diagDroppedRecord, diagClippedFrame);

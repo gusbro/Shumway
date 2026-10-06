@@ -51,4 +51,11 @@ public struct CatchFrame
     // ----- Recovery continuation: where the enclosing clause resumes -----
     public int RecoveryE;
     public int RecoveryCp;
+
+    /// <summary>Where on the extra trail this frame's push record is, and its
+    /// deactivate record (-1 while active). A frame nothing can come back to
+    /// is given back by neutering exactly these two; the cut's compaction
+    /// keeps them current when it moves the records.</summary>
+    public int PushRecord;
+    public int DeactivateRecord;
 }
