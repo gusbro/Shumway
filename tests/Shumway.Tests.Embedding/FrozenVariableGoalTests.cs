@@ -179,7 +179,7 @@ public class FrozenVariableGoalTests
         // has a unifier once X and Y are one (X = a), so the constraint is
         // live and the question is only how many times it is shown.
         string s = AnswerOf("dif(f(X, Y), f(a, a)), X = Y.");
-        Assert.Equal("dif(X, a)", s);
+        Assert.Equal("X = Y,\ndif(X, a)", s.Replace("\r\n", "\n"));
     }
 
     [Fact]

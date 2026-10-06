@@ -129,9 +129,17 @@ public static class SolutionFormatter
         // that same `_Gn` turns up inside another variable's value, it is the
         // variable the user named. Rendering it as its name is what makes
         // `Y = f(X)` read as f of X rather than f of something anonymous.
+        // Several user variables can be that one variable (X = Y). It takes
+        // the first name in the query that the answer shows: a `_` name's
+        // binding is not shown, and the residual goals and the other
+        // variables' values would then name a variable the answer never
+        // relates to anything.
+        var namesInOrder = new List<int>(userVars.Count);
+        for (int i = 0; i < userVars.Count; i++) if (!IsHidden(userVars[i])) namesInOrder.Add(i);
+        for (int i = 0; i < userVars.Count; i++) if (IsHidden(userVars[i])) namesInOrder.Add(i);
         var displayName = new Dictionary<string, string>();
-        foreach (string name in userVars)
-            if (solution[name] is VarTerm ov) displayName.TryAdd(ov.Name, name);
+        foreach (int i in namesInOrder)
+            if (solution[userVars[i]] is VarTerm ov) displayName.TryAdd(ov.Name, userVars[i]);
 
         // A query variable can be spelled like an engine one: `_G11` typed by
         // the user, and the engine's name for heap cell 11, are two different
@@ -147,11 +155,12 @@ public static class SolutionFormatter
         var copyToOriginal = new Dictionary<string, string>();
         var copies = ResidualProjection.ListElements(
             solution[QueryWrapper.CopiesVarName]).ToList();
-        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
-            if (copies[i] is VarTerm cv) copyToOriginal.TryAdd(cv.Name, userVars[i]);
-        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
-            ResidualProjection.MapCopyNames(
-                copies[i], solution[userVars[i]], userVars[i], copyToOriginal);
+        foreach (int i in namesInOrder)
+            if (i < copies.Count && copies[i] is VarTerm cv) copyToOriginal.TryAdd(cv.Name, userVars[i]);
+        foreach (int i in namesInOrder)
+            if (i < copies.Count)
+                ResidualProjection.MapCopyNames(
+                    copies[i], solution[userVars[i]], userVars[i], copyToOriginal);
         // A copy that landed on an engine variable the user did name shows the name.
         foreach (string key in copyToOriginal.Keys.ToList())
             if (displayName.TryGetValue(copyToOriginal[key], out string? shown))
@@ -273,6 +282,9 @@ public static class SolutionFormatter
         // chained — `A = B, B = algo` instead of `A = algo, B = algo` — and
         // two vars sharing one still-unbound variable show their aliasing
         // (`A = B.`) instead of nothing. A lone unbound var stays omitted.
+        // A constrained variable is grouped too: its residual goals name one
+        // of the group, and without the chain the others vanish from the
+        // answer (`X in 0..9, Y = X` answered `X in 0..9`).
         //
         // A group is the variables whose values are the same term, and the
         // rendered text cannot be what decides that. Two unrelated values can
@@ -290,7 +302,7 @@ public static class SolutionFormatter
         foreach (string name in userVars)
         {
             Term? val = solution[name];
-            if (val is null || residualsByVar.ContainsKey(name)) continue;
+            if (val is null) continue;
             Term raw = val;
             if (cycleNames is not null)
             {
@@ -340,8 +352,34 @@ public static class SolutionFormatter
 
         var lines = new List<string>();
         var groupEmitted = new HashSet<int>();
+        var shownMembers = new List<string>();
         foreach (string name in userVars)
         {
+            if (groupOf.TryGetValue(name, out int grp) && groupEmitted.Add(grp))
+            {
+                // The chain runs through the names the answer shows. Through a
+                // hidden `_` name it printed `X = _T` and nothing after it:
+                // `X = _T, Z = _T` lost X = Z, and `X = f(a), _T = f(a)` lost
+                // what X is.
+                shownMembers.Clear();
+                foreach (string m in groupMembers[grp])
+                    if (!IsHidden(m)) shownMembers.Add(m);
+                for (int i = 0; i + 1 < shownMembers.Count; i++)
+                    AddBinding(lines, shownMembers[i], shownMembers[i + 1]);
+                // The last member carries the value — unless the shared value
+                // is itself an unbound variable (the chain alone says it all).
+                if (shownMembers.Count > 0 && solution[shownMembers[^1]] is not VarTerm)
+                    AddBinding(lines, shownMembers[^1], renderedValue[shownMembers[^1]]);
+                // One shown name aliased to a hidden one named after it:
+                // `X = _A` reports the alias, `_A = X` does not (SWI's rule).
+                // A constrained one says what it is in its residual goals.
+                else if (shownMembers.Count == 1 && !residualsByVar.ContainsKey(shownMembers[0]))
+                {
+                    var all = groupMembers[grp];
+                    int at = all.IndexOf(shownMembers[0]);
+                    if (at + 1 < all.Count) lines.Add($"{shownMembers[0]} = {all[at + 1]}");
+                }
+            }
             if (residualsByVar.TryGetValue(name, out var rs))
             {
                 // Residuals are reported whatever the variable is called: what
@@ -350,17 +388,7 @@ public static class SolutionFormatter
                 foreach (Term g in rs)
                     lines.Add(RenderResidual(g, residualSource, copyToOriginal, cycleNames,
                                              displayName, nameByValue, elide, ops));
-                continue;
             }
-            if (!groupOf.TryGetValue(name, out int grp) || !groupEmitted.Add(grp))
-                continue;   // no value, or its group was already emitted
-            var members = groupMembers[grp];
-            for (int i = 0; i + 1 < members.Count; i++)
-                AddBinding(lines, members[i], members[i + 1]);
-            // The last member carries the value — unless the shared value is
-            // itself an unbound variable (the chain alone says it all).
-            if (solution[members[^1]] is not VarTerm)
-                AddBinding(lines, members[^1], renderedValue[members[^1]]);
         }
         if (interiorCycles is not null)
             foreach (var (sname, owner) in interiorCycles)
@@ -566,7 +594,10 @@ public static class SolutionFormatter
     /// while <c>?- X = _A.</c> is <c>X = _A</c>.</para></summary>
     private static void AddBinding(List<string> lines, string name, string value)
     {
-        if (name.Length > 0 && name[0] == '_') return;
+        if (IsHidden(name)) return;
         lines.Add($"{name} = {value}");
     }
+
+    // A `_` variable's binding is not part of the answer.
+    private static bool IsHidden(string name) => name.Length > 0 && name[0] == '_';
 }
