@@ -147,12 +147,31 @@ when(Condition, Goal) :-
 '$when_holds'((A, B)) :- '$when_holds'(A), '$when_holds'(B).
 '$when_holds'((A ; B)) :- ( '$when_holds'(A) -> true ; '$when_holds'(B) ).
 
-% Watch every variable the condition mentions. A single shared Fired
-% flag in the trigger keeps Goal to one run even though several
-% variables (and re-attachments) carry a copy of the trigger.
+% Watch the variables whose binding can make the condition true, and only
+% those: the variable of nonvar/1, one variable of ground/1 (the next is
+% watched when that one is bound), both sides of ?=/2, the first part of a
+% conjunction that does not hold yet, and every branch of a disjunction.
+% Watching every variable the condition mentions re-checked it on bindings
+% that could not decide it, left a dead record on each, and walked the
+% whole condition, a long list a part already satisfied included, at every
+% re-attachment. A single shared Fired flag in the trigger keeps Goal to
+% one run even though several variables (and re-attachments) carry a copy
+% of the trigger. Called only for a condition that does not hold.
 '$when_attach'(Condition, Trigger) :-
-    term_variables(Condition, Vars),
+    '$when_triggers'(Condition, Vars0, []),
+    term_variables(Vars0, Vars),
     '$when_watch'(Vars, Trigger).
+
+'$when_triggers'(nonvar(X), [X|T], T).
+'$when_triggers'(ground(X), [V|T], T) :- term_variables(X, [V|_]).
+'$when_triggers'(?=(X, Y), [X, Y|T], T).
+'$when_triggers'((A, B), Vs, T) :-
+    (   '$when_holds'(A) -> '$when_triggers'(B, Vs, T)
+    ;   '$when_triggers'(A, Vs, T)
+    ).
+'$when_triggers'((A ; B), Vs, T) :-
+    '$when_triggers'(A, Vs, T0),
+    '$when_triggers'(B, T0, T).
 '$when_watch'([], _).
 '$when_watch'([V|Vs], Trigger) :-
     freeze(V, '$when_fire'(Trigger)),
