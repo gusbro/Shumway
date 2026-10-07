@@ -42,6 +42,10 @@ public sealed partial class Activation
     // copy the atomic value into a freshly-allocated heap cell. This costs at most one
     // extra heap cell per atomic operand and keeps the unify implementation single-form.
 
+    /// <summary>Unifies two value cells, wherever they were read from: a
+    /// register, a heap slot, a choice point's saved register.</summary>
+    public bool UnifyValues(Cell a, Cell b) => UnifyCells(a, b);
+
     /// <summary>Unifies the cells held in <c>X[<paramref name="aRegIdx"/>]</c> and
     /// <c>X[<paramref name="bRegIdx"/>]</c>.</summary>
     public bool UnifyRegisters(int aRegIdx, int bRegIdx)

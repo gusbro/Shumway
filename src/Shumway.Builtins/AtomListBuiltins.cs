@@ -97,24 +97,20 @@ public static class AtomListBuiltins
         return engine.UnifyRegisterWithHeapAt(2, start);
     }
 
-    /// <summary>Non-deterministic <c>append/3</c> path: L1 isn't bound, so
-    /// we drive the split off L3. Collect L3's elements, then enumerate
-    /// every split point 0..N. The CP machinery (<see cref="Activation.PushBuiltinChoicePoint"/>)
-    /// makes each backtrack try the next split.</summary>
+    /// <summary>Non-deterministic <c>append/3</c> path: L1 is open, so the
+    /// split is driven off L3.</summary>
     private static bool AppendSplit(Activation engine, int returnPc)
     {
-        // L3 must be ground enough to walk — collect its elements.
-        var elems = new List<Cell>();
+        int n = 0;
         Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
         var guard = new SpineGuard(cursor);
-        while (ListCursor.TryUncons(engine, cursor, out Cell el, out Cell elTail))
+        while (ListCursor.TryUncons(engine, cursor, out _, out Cell elTail))
         {
-            elems.Add(el);
+            n++;
             cursor = ListCursor.Resolve(engine, elTail);
             // A cyclic L3 has a split at every one of its infinitely many
-            // cells: enumerate them one at a time, as the two-clause append
-            // does, instead of collecting them first.
-            if (guard.Loops(cursor)) return new AppendCyclicCursor(returnPc).Start(engine);
+            // cells: the enumeration goes through them without end.
+            if (guard.Loops(cursor)) return new AppendStepCursor(returnPc).Start(engine);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
@@ -131,9 +127,8 @@ public static class AtomListBuiltins
         // `cursor` is L3's final tail: [] for a proper list, or some other
         // term (atom / compound) for an improper list. ISO append/3 splits an
         // improper list too — every suffix L2 simply carries that tail
-        // (append([3], fac, [3|fac]) etc.), so we thread it through to the L2
-        // build instead of rejecting it. For a proper list this tail is [],
-        // so the behaviour is unchanged.
+        // (append([3], fac, [3|fac]) etc.): L2 is a suffix of L3's own spine,
+        // so it carries it with no special case.
 
         // Mode-directed: a proper-list L2 pins the split point (the
         // append(-, +, +) suffix idiom), so the single candidate is checked
@@ -152,136 +147,82 @@ public static class AtomListBuiltins
         }
         if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
         {
-            if (m > elems.Count) return false;
-            int split = elems.Count - m;
-            // L2 is built here rather than shared with L3's spine, which is
-            // what the enumerating path below does. Sharing means walking to
-            // the split point, and this mode's common shape is a long prefix
-            // with a short L2 (`append(_, [Last], L)`): the walk would cost a
-            // step per element to save building the handful that L2 has.
-            int l1Heap = BuildListFromCells(engine, elems, 0, split, Cell.Atom(AtomTable.EmptyListId));
-            int l2Heap = BuildListFromCells(engine, elems, split, elems.Count, cursor);
+            if (m > n) return false;
+            int split = n - m;
+            // L1 is L3's first n - m elements, in one allocation (ADR-017
+            // layout, as the det path builds it); L2 is L3's suffix there.
+            int l1Heap = engine.AllocateHeap(2 * split + 1);
+            Cell suffix = ListCursor.Resolve(engine, engine.GetRegister(2));
+            for (int i = 0; i < split; i++)
+            {
+                ListCursor.TryUncons(engine, suffix, out Cell head, out Cell tail);
+                int lisIdx = l1Heap + 2 * i;
+                engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+                engine.SetHeap(lisIdx + 1, head);
+                suffix = ListCursor.Resolve(engine, tail);
+            }
+            engine.SetHeap(l1Heap + 2 * split, Cell.Atom(AtomTable.EmptyListId));
             return engine.UnifyRegisterWithHeapAt(0, l1Heap)
-                && engine.UnifyRegisterWithHeapAt(1, l2Heap);
+                && engine.UnifyRegisterWithCell(1, suffix);
         }
 
-        return new AppendSplitCursor(elems, CollectSuffixes(engine, elems.Count), returnPc)
-            .Start(engine);
+        return new AppendStepCursor(returnPc).Start(engine);
     }
 
-    /// <summary>The suffix at every split point, for the enumerating path.
+    /// <summary>Resume state for the enumerating <c>append/3</c> split: the
+    /// two-clause definition, run by hand.
+    /// <code>append([], L, L).
+    /// append([H|T], L, [H|R]) :- append(T, L, R).</code>
+    /// A step at (T, R), the rest of L1 and of L3, tries the first clause and
+    /// leaves a choice point for the second, which binds T to [H|T'] with one
+    /// new cons and steps to (T', R'). L1 grows a cell per solution instead of
+    /// being rebuilt for each, and nothing is collected up front.
     ///
-    /// <para>Every split hands L2 a suffix of L3, and that suffix already
-    /// exists inside L3's spine, so there is nothing to build for it: sharing
-    /// it is what the two-clause Prolog <c>append/3</c> does when it reaches
-    /// <c>append([], L, L)</c>. One walk of the spine, and each of the n + 1
-    /// solutions reads one entry instead of building a list, which is what
-    /// takes the enumeration from two lists per solution down to one.</para>
-    ///
-    /// <para>Only worth it when there are n + 1 solutions to amortise it over:
-    /// the deterministic split builds its single L2 instead.</para></summary>
-    private static List<Cell> CollectSuffixes(Activation engine, int count)
+    /// <para>T and R ride in the choice point as saved registers 3 and 4,
+    /// which the heap GC relocates; a heap cell kept in this object would go
+    /// stale at the first collection. Restoring them clobbers X3 and X4,
+    /// which are dead after the call: a variable used past a body goal lives
+    /// in a Y slot.</para></summary>
+    private sealed class AppendStepCursor
     {
-        var suffixes = new List<Cell>(count + 1);
-        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
-        for (int i = 0; ; i++)
-        {
-            suffixes.Add(cursor);
-            if (i == count) return suffixes;
-            ListCursor.TryUncons(engine, cursor, out _, out Cell tail);
-            cursor = ListCursor.Resolve(engine, tail);
-        }
-    }
-
-    /// <summary>Resume state for the non-deterministic <c>append/3</c> split:
-    /// the collected L3 elements, the suffix each split point yields, and the
-    /// running split index, plus a cached resume delegate — allocated once
-    /// per call and re-pushed unchanged on each backtrack, no per-split
-    /// closure.</summary>
-    private sealed class AppendSplitCursor
-    {
-        private readonly IReadOnlyList<Cell> _elems;
-        private readonly IReadOnlyList<Cell> _suffixes;
         private readonly int _returnPc;
-        private int _splitIdx;
         public readonly Func<Activation, int, bool> Resume;
 
-        public AppendSplitCursor(
-            IReadOnlyList<Cell> elems, IReadOnlyList<Cell> suffixes, int returnPc)
+        public AppendStepCursor(int returnPc)
         {
-            _elems = elems;
-            _suffixes = suffixes;
             _returnPc = returnPc;
-            _splitIdx = 0;
-            Resume = (e, _) => Attempt(e, isResume: true);
+            Resume = (e, _) => SecondClause(e);
         }
 
-        public bool Start(Activation engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine)
+            => FirstClause(engine, engine.GetRegister(0),
+                ListCursor.Resolve(engine, engine.GetRegister(2)), isResume: false);
 
-        private bool Attempt(Activation engine, bool isResume)
+        private bool FirstClause(Activation engine, Cell t, Cell r, bool isResume)
         {
-            int n = _elems.Count;
-            int splitIdx = _splitIdx;
-            if (splitIdx > n) return false;
-
-            // Push a CP for the next split point first (unless we're at the
-            // last one), so a backtrack into us retries with splitIdx + 1.
-            // arity 3: the CP must restore append/3's argument registers, else
-            // a following body goal whose builtin call takes >= (resultReg+1)
-            // args clobbers X0/X1 and the enumeration breaks on backtrack.
-            if (splitIdx < n)
+            // Past L3's last cell the second clause has nothing to match: the
+            // last split leaves no choice point.
+            if (ListCursor.TryUncons(engine, r, out _, out _))
             {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+                engine.PushBuiltinChoicePoint(Resume, arity: 5);
+                engine.SetTopCpArgRegister(3, t);
+                engine.SetTopCpArgRegister(4, r);
             }
-
-            // L1 = elems[0..splitIdx], built fresh because it is a new list.
-            // L2 is L3's own suffix from splitIdx on, so it is handed over
-            // rather than rebuilt.
-            int l1Heap = BuildListFromCells(engine, _elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
-            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
-            if (!engine.UnifyRegisterWithCell(1, _suffixes[splitIdx])) return false;
+            if (!engine.UnifyValues(t, Cell.Atom(AtomTable.EmptyListId))) return false;
+            if (!engine.UnifyRegisterWithCell(1, r)) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
         }
-    }
 
-    /// <summary>Resume state for <c>append/3</c> with L1 open and L3 cyclic:
-    /// split k binds L1 to L3's first k elements and L2 to the tail after
-    /// them, k = 0, 1, 2, ... without end, which is the two-clause append's
-    /// enumeration. Each attempt walks L3 from its start: the cursor holds no
-    /// heap address a collection could move.</summary>
-    private sealed class AppendCyclicCursor
-    {
-        private readonly int _returnPc;
-        private int _k;
-        public readonly Func<Activation, int, bool> Resume;
-
-        public AppendCyclicCursor(int returnPc)
+        private bool SecondClause(Activation engine)
         {
-            _returnPc = returnPc;
-            Resume = (e, _) => Attempt(e, isResume: true);
-        }
-
-        public bool Start(Activation engine) => Attempt(engine, isResume: false);
-
-        private bool Attempt(Activation engine, bool isResume)
-        {
-            int k = _k++;
-            engine.PushBuiltinChoicePoint(Resume, arity: 3);
-            var heads = new List<Cell>(k);
-            Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
-            for (int i = 0; i < k; i++)
-            {
-                ListCursor.TryUncons(engine, cursor, out Cell head, out Cell tail);
-                heads.Add(head);
-                cursor = ListCursor.Resolve(engine, tail);
-            }
-            int l1Heap = BuildListFromCells(engine, heads, 0, k, Cell.Atom(AtomTable.EmptyListId));
-            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
-            if (!engine.UnifyRegisterWithCell(1, cursor)) return false;
-            if (isResume) engine.ResumeAtReturnPc(_returnPc);
-            return true;
+            ListCursor.TryUncons(engine, engine.GetRegister(4), out Cell head, out Cell rTail);
+            int pair = engine.AllocateHeap(2);
+            engine.SetHeap(pair, head);
+            engine.SetHeap(pair + 1, Cell.UnboundVar(pair + 1));
+            if (!engine.UnifyValues(engine.GetRegister(3), Cell.Lis(pair))) return false;
+            return FirstClause(engine, Cell.Ref(pair + 1),
+                ListCursor.Resolve(engine, rTail), isResume: true);
         }
     }
 
@@ -348,28 +289,6 @@ public static class AtomListBuiltins
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
         }
-    }
-
-    private static int BuildListFromCells(
-        Activation engine, IReadOnlyList<Cell> elems, int start, int end, Cell finalTail)
-    {
-        int count = end - start;
-        if (count == 0)
-        {
-            int tailSlot = engine.AllocateHeap(1);
-            engine.SetHeap(tailSlot, finalTail);
-            return tailSlot;
-        }
-        int baseIdx = engine.AllocateHeap(2 * count + 1);
-        for (int i = 0; i < count; i++)
-        {
-            int lisIdx = baseIdx + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, elems[start + i]);
-        }
-        engine.SetHeap(baseIdx + 2 * count, finalTail);
-        return baseIdx;
     }
 
     // ---------- atom_codes/2 ----------
