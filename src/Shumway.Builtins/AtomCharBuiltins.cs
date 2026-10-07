@@ -997,6 +997,7 @@ public static class AtomCharBuiltins
         if (cursor.Tag is not (Tag.Lis or Tag.Pstr or Tag.Ref or Tag.AttVar)
             && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
+        var guard = new SpineGuard(cursor);
         while (true)
         {
             // A packed run of codes is consumed in bulk; a packed run of chars
@@ -1006,6 +1007,7 @@ public static class AtomCharBuiltins
                 && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
+                if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
                 continue;
             }
             if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell cTail)) break;
@@ -1022,6 +1024,7 @@ public static class AtomCharBuiltins
                     "representation_error", "character_code");
             Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, cTail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         // A non-nil tail is a partial / non-proper list — ISO reports this
         // as a type_error(list, _) (the entire arg, not just the tail).
@@ -1047,6 +1050,7 @@ public static class AtomCharBuiltins
         // is in its header — not in its tag (ADR-047). A packed code list still
         // raises type_error(character) here, but because its elements are
         // integers, which the loop below decides, rather than by assumption.
+        var guard = new SpineGuard(cursor);
         while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell hTail))
         {
             Cell head = Resolve(engine, rawHead);
@@ -1059,6 +1063,7 @@ public static class AtomCharBuiltins
                 throw new PrologRuntimeException("type_error", "character", engine, head);
             sb.Append(name);
             cursor = ListCursor.Resolve(engine, hTail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
         {

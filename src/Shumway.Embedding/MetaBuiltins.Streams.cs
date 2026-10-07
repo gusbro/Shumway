@@ -495,6 +495,7 @@ public static partial class MetaBuiltins
     {
         Term listTerm = MaterializeRegister(engine, optReg);
         Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
+        var guard = new SpineGuard(node);
         while (true)
         {
             if (node.Tag is Tag.Ref or Tag.AttVar)
@@ -527,6 +528,8 @@ public static partial class MetaBuiltins
                     IsoError.DomainError("read_option", culprit));
             }
             node = ResolveLocal(engine, engine.GetHeap(hb + 1));
+            if (guard.Loops(node))   // a cyclic list is no list
+                throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
         }
     }
 

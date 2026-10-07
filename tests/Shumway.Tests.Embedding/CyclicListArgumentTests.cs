@@ -45,6 +45,58 @@ public sealed class CyclicListArgumentTests
     public void KeysortReadsAPackedListsElements()
         => Assert.True(Holds("catch(keysort(\"ab\", _), error(type_error(pair, a), _), true)."));
 
+    private const string Cycles =
+        "L = [a, b|L], C = [0'a, 0'b|C], Ch = [a, b|Ch], Q = [quoted(true)|Q], "
+        + "R = [variables(_)|R], F = [force(true)|F], W = [type(text)|W]";
+
+    [Theory]
+    // Text read from a list, and option lists: what SICStus and Scryer answer.
+    [InlineData("atom_codes(_, C)")]
+    [InlineData("atom_chars(_, Ch)")]
+    [InlineData("string_codes(_, C)")]
+    [InlineData("string_chars(_, Ch)")]
+    [InlineData("format(C, [])")]
+    [InlineData("format('~w~w', L)")]
+    [InlineData("format('~s', [C])")]
+    [InlineData("write_term(t, Q)")]
+    [InlineData("read_term(user_input, _, R)")]
+    [InlineData("close(user_output, F)")]
+    public void TextAndOptionBuiltinsRefuseACyclicList(string goal)
+        => Assert.True(Holds(
+            $"{Cycles}, catch({goal}, error(type_error(list, X), _), true), "
+            + "nonvar(X), '$cyclic_spine'(X)."), goal);
+
+    [Fact]
+    public void OpenRefusesACyclicOptionList()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"shumway-cyclic-{Guid.NewGuid():N}.txt")
+            .Replace('\\', '/');
+        try
+        {
+            Assert.True(Holds(
+                $"{Cycles}, catch(open('{path}', write, _, W), error(type_error(list, X), _), true), "
+                + "nonvar(X), '$cyclic_spine'(X)."));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void ACyclicVariableNamesListIsAMalformedOption()
+        => Assert.True(Holds(
+            "V = ['X' = _|V], catch(write_term(t, [variable_names(V)]), "
+            + "error(domain_error(write_option, variable_names(_)), _), true)."));
+
+    [Fact]
+    public void ACyclicCodeListIsNotACodeList()
+        => Assert.True(Holds("C = [0'a, 0'b|C], \\+ '$is_code_list'(C, _)."));
+
+    [Theory]
+    // string_chars/string_codes walked cons cells only: a packed list (the
+    // default reading of "ab") was "not a proper list".
+    [InlineData("string_chars(S, \"ab\"), S == [a, b]")]
+    [InlineData("atom_codes(ab, Cs), string_codes(S, Cs), S == [a, b]")]
+    public void StringBuiltinsReadAPackedList(string query) => Assert.True(Holds(query + "."));
+
     [Theory]
     // A cycle, entered at once or after a lead-in: Tail is one of its cells.
     [InlineData("L = [a, b, c|L], '$skip_list'(_, L, T), T = [_|_].")]

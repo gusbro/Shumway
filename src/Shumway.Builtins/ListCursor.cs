@@ -33,28 +33,25 @@ internal static class ListCursor
     /// one, the non-list term ending an improper one, or a list cell inside
     /// the cycle of a cyclic spine (the only end <see cref="TryUncons"/>
     /// accepts). <paramref name="length"/> is the number of cells walked,
-    /// which for a cyclic spine is not a length. Brent's detection: one step
-    /// per cell, the cycle found within twice its length past its entry.</summary>
+    /// which for a cyclic spine is not a length.</summary>
     public static Cell SkipSpine(Activation engine, Cell list, out long length)
     {
         Cell cur = Resolve(engine, list);
-        Cell saved = cur;
-        long power = 1, lam = 0;
+        var guard = new SpineGuard(cur);
         length = 0;
         while (TryUncons(engine, cur, out _, out Cell tail))
         {
             cur = Resolve(engine, tail);
             length++;
-            if (cur.Equals(saved)) return cur;
-            if (++lam == power)
-            {
-                saved = cur;
-                power <<= 1;
-                lam = 0;
-            }
+            if (guard.Loops(cur)) return cur;
         }
         return cur;
     }
+
+    /// <summary>The ISO answer for a list argument whose spine loops: it is
+    /// neither a list nor a partial list.</summary>
+    public static PrologRuntimeException CyclicList(Activation engine, Cell list)
+        => new("type_error", "list", engine, list);
 
     /// <summary>True when the spine loops back on itself.</summary>
     public static bool IsCyclic(Activation engine, Cell list)

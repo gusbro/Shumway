@@ -199,11 +199,12 @@ public static class IOBuiltins
         Activation engine, Cell listStart, TermRenderOptions options)
     {
         Cell optsCell = listStart;
+        var guard = new SpineGuard(optsCell);
         // ISO §8.14.2.3: the list and every element must be instantiated;
         // an improper tail is type_error(list, WholeList); an element that
         // is not a recognised Name(Arg) option is domain_error(write_option,
         // Element); a bool option with a non-true/false argument reports the
-        // whole option as the culprit.
+        // whole option as the culprit. A cyclic list is not a list either.
         while (true)
         {
             if (optsCell.Tag is Tag.Ref or Tag.AttVar)
@@ -216,6 +217,7 @@ public static class IOBuiltins
             Cell head = Resolve(engine, engine.GetHeap(headIdx));
             ApplyOption(engine, head, options);
             optsCell = Resolve(engine, engine.GetHeap(headIdx + 1));
+            if (guard.Loops(optsCell)) throw ListCursor.CyclicList(engine, listStart);
         }
     }
 
@@ -324,6 +326,7 @@ public static class IOBuiltins
         // earlier one (Neumerkel vn #71 — write_term(T,[variable_names(['Bad'=T]),
         // variable_names(['Good'=T])]) prints Good).
         var localNames = new System.Collections.Generic.Dictionary<int, string>();
+        var guard = new SpineGuard(cur);
         while (cur.Tag == Tag.Lis)
         {
             int headIdx = cur.AsHeapIndex;
@@ -353,6 +356,10 @@ public static class IOBuiltins
                 }
             }
             cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+            // A cyclic list is no list: the option is malformed, as SICStus
+            // and Scryer answer.
+            if (guard.Loops(cur))
+                throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         }
         if (cur.Tag is Tag.Ref or Tag.AttVar) sawUnbound = true;
         else if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
@@ -622,6 +629,8 @@ public static class IOBuiltins
                         throw new PrologRuntimeException("type_error", "list", engine, cur);
                     // The cursor, not Tag.Lis: a packed list passed the type
                     // check above and then printed nothing.
+                    Cell sStart = cur;
+                    var sGuard = new SpineGuard(cur);
                     while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell sTail))
                     {
                         Cell head = Resolve(engine, rawHead);
@@ -649,6 +658,7 @@ public static class IOBuiltins
                                 "type_error", "integer", engine, head);
                         }
                         cur = ListCursor.Resolve(engine, sTail);
+                        if (sGuard.Loops(cur)) throw ListCursor.CyclicList(engine, sStart);
                     }
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
@@ -975,6 +985,7 @@ public static class IOBuiltins
     {
         var sb = new System.Text.StringBuilder();
         Cell cur = ListCursor.Resolve(engine, list);
+        var guard = new SpineGuard(cur);
         bool? codes = null;
         while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tTail))
         {
@@ -1004,7 +1015,10 @@ public static class IOBuiltins
                     throw new PrologRuntimeException("type_error", "character");
                 sb.Append(ch);
             }
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            // The tail TryUncons gave, not the cell after cur: a packed tail
+            // has no heap cell there.
+            cur = ListCursor.Resolve(engine, tTail);
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, list);
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
@@ -1017,10 +1031,12 @@ public static class IOBuiltins
     {
         var result = new List<Cell>();
         Cell cur = ListCursor.Resolve(engine, c);
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
             result.Add(head);
             cur = ListCursor.Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, Resolve(engine, c));
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");

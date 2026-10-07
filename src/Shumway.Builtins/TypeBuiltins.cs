@@ -290,7 +290,8 @@ public static class TypeBuiltins
 
     private static bool IsTypedList(Activation engine, bool chars)
     {
-        Cell cell = engine.GetRegister(0);
+        Cell cell = engine.NormalizeListCell(Resolve(engine, engine.GetRegister(0)));
+        var guard = new SpineGuard(cell);
         long len = 0;
         while (true)
         {
@@ -305,7 +306,8 @@ public static class TypeBuiltins
                 : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
             if (!ok) return false;
             len++;
-            cell = tail;
+            cell = engine.NormalizeListCell(Resolve(engine, tail));
+            if (guard.Loops(cell)) return false;   // a cyclic list is no list
         }
         return engine.UnifyRegisterWithCell(1, Cell.Int(len));
     }

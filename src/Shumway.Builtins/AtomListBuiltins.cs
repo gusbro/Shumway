@@ -376,6 +376,7 @@ public static class AtomListBuiltins
         if (cursor.Tag is not (Tag.Lis or Tag.Pstr)
             && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
+        var guard = new SpineGuard(cursor);
         while (true)
         {
             // A packed run of codes is consumed in bulk; a chars run falls
@@ -385,6 +386,7 @@ public static class AtomListBuiltins
                 && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
+                if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
                 continue;
             }
             if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell rTail)) break;
@@ -401,6 +403,7 @@ public static class AtomListBuiltins
                     "representation_error", "character_code");
             Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, rTail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");

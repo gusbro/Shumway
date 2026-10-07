@@ -390,6 +390,7 @@ public static class StreamBuiltins
         string? encodingName = null;
         bool? bomOpt = null;
         Cell cur = optsCell;
+        var guard = new SpineGuard(cur);
         while (cur.Tag == Tag.Lis)
         {
             Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
@@ -499,6 +500,7 @@ public static class StreamBuiltins
                         "domain_error", "stream_option", engine, head);
             }
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, optsCell);
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
@@ -659,31 +661,6 @@ public static class StreamBuiltins
         catch when (force) { /* force(true) swallows close errors */ }
         engine.Streams!.Remove(h);
         return true;
-    }
-
-    private static bool ContainsForceTrue(Activation engine, Cell listCell)
-    {
-        Cell cursor = DerefLocal(engine, listCell);
-        int trueAtomId = AtomTable.Intern("true", permanent: true).Id;
-        int forceFunctorId = FunctorTable.Intern(
-            AtomTable.Intern("force", permanent: true).Id, 1);
-        while (cursor.Tag == Tag.Lis)
-        {
-            int headIdx = cursor.AsHeapIndex;
-            Cell head = DerefLocal(engine, engine.GetHeap(headIdx));
-            if (head.Tag == Tag.Str)
-            {
-                int fIdx = head.AsHeapIndex;
-                Cell fCell = engine.GetHeap(fIdx);
-                if (fCell.Tag == Tag.Functor && fCell.AsFunctorId == forceFunctorId)
-                {
-                    Cell arg = DerefLocal(engine, engine.GetHeap(fIdx + 1));
-                    if (arg.Tag == Tag.Atom && arg.AsAtomId == trueAtomId) return true;
-                }
-            }
-            cursor = DerefLocal(engine, engine.GetHeap(headIdx + 1));
-        }
-        return false;
     }
 
     private static Cell DerefLocal(Activation engine, Cell c)
@@ -987,6 +964,7 @@ public static class StreamBuiltins
         bool force = false;
         Cell given = Resolve(engine, optsCell);
         Cell cur = given;
+        var guard = new SpineGuard(cur);
         while (true)
         {
             if (cur.Tag is Tag.Ref or Tag.AttVar)
@@ -1020,6 +998,7 @@ public static class StreamBuiltins
                 throw new PrologRuntimeException(
                     "domain_error", "close_option", engine, head);
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, given);
         }
     }
 
@@ -1131,6 +1110,7 @@ public static class StreamBuiltins
         TextKind kind = TextKind.Chars;
         bool sawAny = false;
         Cell cur = src;
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
         {
             Cell head = Resolve(engine, rawHead);
@@ -1155,6 +1135,7 @@ public static class StreamBuiltins
             }
             sawAny = true;
             cur = ListCursor.Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, src);
         }
         if (!ListCursor.IsNil(cur))
             throw new PrologRuntimeException("type_error", "list", engine, src);
