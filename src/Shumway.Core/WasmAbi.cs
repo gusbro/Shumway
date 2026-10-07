@@ -542,7 +542,13 @@ public static class WasmAbi
     public const int DispatchCount = 81;
     public const int TransferCount = 82;
 
-    public const int SlotCount = 83;
+    /// <summary>The engine's BacktrackFloor (-1 outside a nested driver). A
+    /// nested driver's sub-goal, a drained wakeup say, owns only the choice
+    /// points above it, so the fail case returns a failure at or below it to
+    /// the host instead of resuming the choice point in-chain.</summary>
+    public const int BacktrackFloor = 83;
+
+    public const int SlotCount = 84;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

@@ -364,6 +364,7 @@ public sealed partial class Activation
             : bases.HeapLimitCells;
         m[WasmAbi.StackTop] = _stackTop;
         m[WasmAbi.ChoiceTop] = _b;
+        m[WasmAbi.BacktrackFloor] = _backtrackFloor;
         m[WasmAbi.HeapBacktrack] = _hb;
         m[WasmAbi.TrailTop] = _bindingTrailTop;
         m[WasmAbi.Flags] = (HasPendingWakeups ? WasmAbi.FlagWakeupPending : 0)

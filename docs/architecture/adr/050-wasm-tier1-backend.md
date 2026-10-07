@@ -81,6 +81,10 @@ cursors, so a call return and a backtrack land in the same dispatch. `try`/
 `retry`/`trust` are open-coded (the full choice point in wasm); the general
 unifier is a second wasm function over a worklist above the stack top; ADR-020
 reserved builds are the engine's write-frame cascade replayed at compile time.
+A failure resumes a choice point in-chain only above `Activation.BacktrackFloor`,
+staged in the mailbox: the rule ADR-057 sets for IL. At or below it the choice
+point belongs to the computation outside a nested driver's sub-goal (a wakeup
+drained before a cut), and the failure goes back to the host.
 
 **D5 — all encodings are interned resume markers.** In the live engine
 (`EngineWasmCompileEnv`) a call target is `marker(callee, 0)`, a choice

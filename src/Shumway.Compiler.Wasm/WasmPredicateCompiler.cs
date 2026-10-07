@@ -1943,9 +1943,13 @@ public static class WasmPredicateCompiler
         /// a call on every failure, which is the hot path.</para></summary>
         private void EmitFailCase(bool missReturnsToHost)
         {
+            // At or below the floor the choice point is the outer
+            // computation's (ADR-057's rule, which the IL tier keeps too):
+            // resuming it here would run the rest of the outer clause inside
+            // a nested driver's sub-goal. -1 outside one, so B < 0 as before.
             Op(new LocalGet(LB));
-            Op(new Int32Constant(0));
-            Op(new Int32LessThanSigned());
+            LoadSlot32(WasmAbi.BacktrackFloor);
+            Op(new Int32LessThanOrEqualSigned());
             OpenIf();
             EmitReturn(WasmVerdict.Fail);
             CloseNested();
