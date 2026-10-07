@@ -1484,6 +1484,11 @@ public sealed partial class PrologEngine
             // ticks at all (a consult, then clpfd deopting into dead code).
             IlPromotion.Wasm?.ReconcileWithLink(this);
         }
+        // Modules released onto an existing link (the tier back on, or
+        // jit_compile(bundles_on)) install here too: in lazy mode no host
+        // tick would, until the next consult.
+        else if (IlPromotion.PendingWasmModules.Count > 0)
+            IlPromotion.Wasm?.InstallPendingBundles(this);
         // The product built before any static link existed patches its
         // reference to the one just built — they are consistent by
         // construction (the link was made from the product's StaticPreds).

@@ -278,9 +278,9 @@ async function run(queryText) {
   // nothing already running changes). Variants: jit_compile(N). sets the
   // promotion threshold (1 = promote on first call), jit_compile(all).
   // compiles the whole static program now and after every consult,
-  // jit_compile(off). stops promoting (what already promoted keeps running
-  // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the stdlib bundle's wasm module), jit_compile(cps). and
+  // jit_compile(off). returns everything to the interpreter from the next
+  // goal, bundles' wasm modules included, and the OFF sticks: a later
+  // restart. boots without the tier), jit_compile(cps). and
   // jit_compile(nocps). choose the form, jit_compile(status). reports,
   // jit_compile(bundles_off). compiles the predicates of bundle modules like
   // the program's own (to measure a baked module against a live build) and

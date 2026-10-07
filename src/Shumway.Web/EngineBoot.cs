@@ -60,9 +60,10 @@ internal static partial class WebShumwayApp
         if (engine.IlPromotion.Wasm is not { } wasm) return;
         // jit_compile(off) asked for no wasm: installing 530 predicates of
         // it at boot would answer a different question.
+        // Left queued, not dropped: with no tier attached nothing installs
+        // them, and a later jit_compile that attaches one installs them then.
         if (BrowserWasmTier.Disabled)
         {
-            engine.IlPromotion.PendingWasmModules.Clear();
             BrowserWasmTier.BundleInstallNote = "not installed (jit_compile off)";
             return;
         }

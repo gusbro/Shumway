@@ -22,9 +22,13 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         set
         {
             bool wasEnabled = Enabled;
+            bool wasOn = _threshold > 0;
             _threshold = value;
             if (wasEnabled != Enabled && ReferenceEquals(ilStore.Wasm, this))
                 ilStore.WasmEnabledChanged();
+            // On again: the modules held while it was off install at the
+            // next goal.
+            if (!wasOn && value > 0 && InstallBundles) ReleaseHeldBundles();
         }
     }
     private int _threshold;
@@ -77,11 +81,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         var pending = ilStore.PendingWasmModules;
         if (pending.Count == 0 || BundleInstaller is null) return 0;
-        if (!InstallBundles)
+        // jit_compile(off) holds them too: a module installed after the
+        // switch would run its predicates in wasm all the same.
+        if (!InstallBundles || Threshold <= 0)
         {
             _heldBundles.AddRange(pending);
             pending.Clear();
-            BundleInstallNote = "held: jit_compile(bundles_off)";
+            BundleInstallNote = InstallBundles
+                ? "held: jit_compile(off)" : "held: jit_compile(bundles_off)";
             return 0;
         }
         if (engine._staticLink is null)
@@ -115,6 +122,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     private readonly List<byte[]> _installedBundles = new();
     private readonly List<byte[]> _heldBundles = new();
 
+    private int ReleaseHeldBundles()
+    {
+        int released = _heldBundles.Count;
+        ilStore.PendingWasmModules.AddRange(_heldBundles);
+        _heldBundles.Clear();
+        return released;
+    }
+
     /// <summary>jit_compile(bundles_off): the predicates running from bundle
     /// modules are evicted and later modules held, so the tier compiles
     /// those predicates as it compiles the program's own; that is how a
@@ -125,13 +140,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         InstallBundles = on;
         var pending = ilStore.PendingWasmModules;
-        if (on)
-        {
-            int released = _heldBundles.Count;
-            pending.AddRange(_heldBundles);
-            _heldBundles.Clear();
-            return released;
-        }
+        if (on) return ReleaseHeldBundles();
         _heldBundles.AddRange(_installedBundles);
         _installedBundles.Clear();
         _heldBundles.AddRange(pending);
