@@ -377,52 +377,15 @@ public sealed partial class BytecodeInterpreter
             || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
     }
 
-    /// <summary>The same §7.8.3 check for a goal still in term form (the
-    /// in-engine meta-call path): the whole goal is the culprit.</summary>
-    private void CheckBodyConvertible(Cell goal)
-    {
-        if (!Shumway.Core.MetaBodyConvert.IsBodyConvertible(
-                _engine, goal, throughQualifiers: false))
-            throw new PrologRuntimeException("type_error", "callable", _engine, goal);
-    }
-
-    /// <summary>Runs one goal term in the live engine. Handles
-    /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
-    /// constants; any other goal is dispatched as a plain call — a
-    /// builtin runs directly, a user/prelude predicate runs via
-    /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
-    /// existence error.</summary>
+    /// <summary>Runs one goal term in the live engine. Handles the
+    /// <c>true</c> / <c>fail</c> constants; a control construct, a
+    /// conjunction included, runs through <c>'$wake_call'/1</c>; any other
+    /// goal is dispatched as a plain call — a builtin runs directly, a
+    /// user/prelude predicate runs via <see cref="RunGoalInEngine"/>. An
+    /// undefined predicate raises an existence error.</summary>
     private bool MetaCallInEngine(ProgramView code, Cell goal)
     {
-        // A conjunction runs left to right with its right arguments waiting
-        // here, not on the C# stack: its depth is the program's (a frozen
-        // goal list). Each waits as its heap slot, read when its turn comes.
-        Stack<int>? rest = null;
-        while (true)
-        {
-            goal = DerefCell(goal);
-            if (goal.Tag == Tag.Str
-                && _engine.GetHeap(goal.AsHeapIndex).AsFunctorId == ConjFunctorId)
-            {
-                // §7.8.3: converting the goal to a body must succeed before
-                // any of it runs — call((fail, 3)) is
-                // type_error(callable, (fail,3)), with the whole goal as the
-                // culprit, and `fail` never executes.
-                CheckBodyConvertible(goal);
-                (rest ??= new Stack<int>()).Push(goal.AsHeapIndex + 2);
-                goal = _engine.GetHeap(goal.AsHeapIndex + 1);
-                continue;
-            }
-            if (!MetaCallGoal(code, goal)) return false;
-            if (rest is null || rest.Count == 0) return true;
-            goal = _engine.GetHeap(rest.Pop());
-        }
-    }
-
-    /// <summary>MetaCallInEngine for a dereferenced goal that is not a
-    /// conjunction.</summary>
-    private bool MetaCallGoal(ProgramView code, Cell goal)
-    {
+        goal = DerefCell(goal);
         int functorId;
         int argBase;
         int arity;
@@ -461,8 +424,11 @@ public sealed partial class BytecodeInterpreter
         // Route it through the prelude's '$wake_call'/1, whose body is
         // call(G): the full meta-call machinery, which also gives the goal
         // its own cut barrier — `!` inside a woken goal commits no further
-        // than the goal, exactly as inside call/1.
-        if (functorId == DisjFunctorId || functorId == ArrowFunctorId
+        // than the goal, exactly as inside call/1. A conjunction too: run
+        // here goal by goal, each once, (member(X, [1,2]), X > 1) failed,
+        // and its §7.8.3 check is call/1's, made once at that boundary.
+        if (functorId == ConjFunctorId
+            || functorId == DisjFunctorId || functorId == ArrowFunctorId
             || functorId == SoftArrowFunctorId || functorId == NegFunctorId
             || functorId == NotFunctorId || functorId == CutFunctorId)
         {
@@ -645,8 +611,11 @@ public sealed partial class BytecodeInterpreter
         // before any of it runs — call((fail, 3)) and call(',', fail, 3)
         // are both type_error(callable, (fail,3)), and `fail` must not
         // execute first. Checked here (not after the route cache) so the
-        // cached path is covered too.
-        if (IsControlConstruct(atomId, totalArity))
+        // cached path is covered too. Only at the boundary: a '$call'/2
+        // sub-dispatch runs a piece of a body the boundary already checked
+        // and converted whole, and re-walking the rest of it at every piece
+        // made call/1 of an n-goal conjunction quadratic.
+        if (convertBody && IsControlConstruct(atomId, totalArity))
             Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
                 _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits

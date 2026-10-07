@@ -266,8 +266,9 @@ public sealed partial class IlPredicateCompiler
 
             // §7.8.3 — a control construct's arguments must convert
             // before any of it runs. Same spot as the bytecode twin:
-            // ahead of the route cache, so the cached path is covered.
-            if (totalArity == 2 && AtomTable.GetById(atomId)?.Name
+            // ahead of the route cache, so the cached path is covered;
+            // and, as there, only at the boundary.
+            if (convertBody && totalArity == 2 && AtomTable.GetById(atomId)?.Name
                     is "," or ";" or "->" or "*->")
                 MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
 

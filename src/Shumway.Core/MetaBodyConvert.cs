@@ -48,7 +48,7 @@ public static class MetaBodyConvert
     {
         Cell a = StripQual(engine, engine.GetRegister(0));
         Cell b = StripQual(engine, engine.GetRegister(1));
-        if (Convertible(engine, a, true, 0) && Convertible(engine, b, true, 0))
+        if (Convertible(engine, a, 0) && Convertible(engine, b, 0))
         {
             bool w0 = false;
             Cell c0 = WrapVariableSubgoals(engine, engine.GetRegister(0), ref w0);
@@ -94,12 +94,9 @@ public static class MetaBodyConvert
         fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid;
 
     /// <summary>§7.8.3: whether every goal position of the control skeleton
-    /// holds a callable term or a variable. <paramref name="throughQualifiers"/>
-    /// looks through <c>'$mqual'</c>/<c>':'</c> to the goal they tag.</summary>
-    public static bool IsBodyConvertible(Activation engine, Cell c, bool throughQualifiers)
-        => Convertible(engine, c, throughQualifiers, 0);
-
-    private static bool Convertible(Activation engine, Cell c, bool throughQualifiers, int depth)
+    /// holds a callable term or a variable, seen through <c>'$mqual'</c>/
+    /// <c>':'</c> to the goal they tag.</summary>
+    private static bool Convertible(Activation engine, Cell c, int depth)
     {
         // The right argument loops: a right-nested chain costs no stack.
         while (true)
@@ -117,14 +114,13 @@ public static class MetaBodyConvert
                     int fid = engine.GetHeap(fIdx).AsFunctorId;
                     if (IsControl(fid))
                     {
-                        if (depth >= RecursionBudget)
-                            return ConvertibleDeep(engine, c, throughQualifiers);
-                        if (!Convertible(engine, engine.GetHeap(fIdx + 1), throughQualifiers, depth + 1))
+                        if (depth >= RecursionBudget) return ConvertibleDeep(engine, c);
+                        if (!Convertible(engine, engine.GetHeap(fIdx + 1), depth + 1))
                             return false;
                         c = engine.GetHeap(fIdx + 2);
                         continue;
                     }
-                    if (throughQualifiers && (fid == MqualFid || fid == ColonFid))
+                    if (fid == MqualFid || fid == ColonFid)
                     {
                         c = engine.GetHeap(fIdx + 2);
                         continue;
@@ -139,7 +135,7 @@ public static class MetaBodyConvert
 
     /// <summary>Convertible past the recursion budget. The check reads and
     /// never writes, so the visiting order is free.</summary>
-    private static bool ConvertibleDeep(Activation engine, Cell root, bool throughQualifiers)
+    private static bool ConvertibleDeep(Activation engine, Cell root)
     {
         var pending = new Stack<Cell>();
         pending.Push(root);
@@ -161,7 +157,7 @@ public static class MetaBodyConvert
                         pending.Push(engine.GetHeap(fIdx + 2));
                         pending.Push(engine.GetHeap(fIdx + 1));
                     }
-                    else if (throughQualifiers && (fid == MqualFid || fid == ColonFid))
+                    else if (fid == MqualFid || fid == ColonFid)
                         pending.Push(engine.GetHeap(fIdx + 2));
                     continue;
                 }
