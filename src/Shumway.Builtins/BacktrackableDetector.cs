@@ -10,8 +10,8 @@ namespace Shumway.Builtins;
 /// <summary>Determines whether a builtin is "backtrackable" — i.e. it pushes a
 /// choice point at runtime — by statically analysing its implementation method's
 /// IL for a transitive call to a CP-creating sink (<see cref="Activation"/>'s
-/// <c>PushBuiltinChoicePoint</c> / <c>PushIlChoicePoint</c>, or
-/// <see cref="IndexEnumCursor.Start"/>). Derived, not declared: this replaces a
+/// <c>PushBuiltinChoicePoint</c> / <c>PushIlChoicePoint</c> /
+/// <c>ArmBuiltinChoicePoint</c>, or <see cref="IndexEnumCursor.Start"/>). Derived, not declared: this replaces a
 /// hand-maintained name list whose every omission was a silent Tier-1 IL
 /// solution-loss bug (the IL emit skips the resume-marker setup for a builtin it
 /// thinks is deterministic, so the cursor resumes at PC 0).
@@ -56,7 +56,7 @@ internal static class BacktrackableDetector
     {
         var set = new HashSet<MethodBase>();
         foreach (var m in typeof(Activation).GetMethods())
-            if (m.Name is "PushBuiltinChoicePoint" or "PushIlChoicePoint")
+            if (m.Name is "PushBuiltinChoicePoint" or "PushIlChoicePoint" or "ArmBuiltinChoicePoint")
                 set.Add(m);
         foreach (var m in typeof(IndexEnumCursor).GetMethods())
             if (m.Name == "Start")

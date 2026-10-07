@@ -129,12 +129,11 @@ public static class StringBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
+            bool more = splitIdx < _ab.Length;
+            if (more) _splitIdx = splitIdx + 1;
+            // arity 3: the retry restores string_concat/3's args.
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more, isResume);
             if (splitIdx > _ab.Length) return false;
-            if (splitIdx < _ab.Length)
-            {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore string_concat/3 args
-            }
             int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx), StringKind);
             int bPstr = engine.MakePstr(_ab.Substring(splitIdx), StringKind);
             if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;

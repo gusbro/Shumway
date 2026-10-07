@@ -172,12 +172,25 @@ public static class ListBuiltins
         // dead after the call: a variable used past a body goal lives in a
         // Y slot.
         Cell cur = Resolve(engine, engine.GetRegister(isResume ? 3 : 1));
-        if (!UnconsOrExtend(engine, ref cur, out Cell head))
-            return false;                              // improper tail
+        Cell head;
+        if (ListCursor.TryUncons(engine, cur, out head, out Cell tail))
+        {
+            cur = Resolve(engine, tail);
+            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
+        }
+        else
+        {
+            // A partial list grows a cell here, before the choice point: the
+            // frame being retried saved a heap top below it, so that frame is
+            // trusted and a new one pushed above the new cell.
+            if (isResume) engine.TrustBuiltinChoicePoint();
+            if (!UnconsOrExtend(engine, ref cur, out head))
+                return false;                          // improper tail
+            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume: false);
+        }
 
         long pos = c.Pos;
         c.Pos = pos + 1;
-        engine.PushBuiltinChoicePoint(c.Resume, arity: 4);
         engine.SetTopCpArgRegister(3, cur);
 
         long idxVal = c.OneBased ? pos + 1 : pos;

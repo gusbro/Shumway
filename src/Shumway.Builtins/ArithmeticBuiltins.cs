@@ -204,7 +204,7 @@ public static class ArithmeticBuiltins
                 // a following body goal whose builtin call takes >= 3 args
                 // clobbers X2; without restoring it the resume's
                 // UnifyRegisterWithCell(2, ...) would corrupt the enumeration.
-                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+                engine.ArmBuiltinChoicePoint(cursor.Resume, arity: 3, more: true, isResume: false);
             }
             return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
         }
@@ -231,7 +231,7 @@ public static class ArithmeticBuiltins
             if (loB < hiB)
             {
                 var cursor = new BetweenBigCursor(loB, hiB, engine.BuiltinReturnPc);
-                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+                engine.ArmBuiltinChoicePoint(cursor.Resume, arity: 3, more: true, isResume: false);
             }
             return engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, loB));
         }
@@ -261,8 +261,7 @@ public static class ArithmeticBuiltins
         private bool Step(Activation engine, int _)
         {
             _current += 1;   // this backtrack yields the next value
-            if (_current < _hi)
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: _current < _hi, isResume: true);
             if (!engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, _current)))
                 return false;
             engine.ResumeAtReturnPc(_returnPc);
@@ -271,9 +270,9 @@ public static class ArithmeticBuiltins
     }
 
     /// <summary>Resume state for a non-deterministic <c>between/3</c>
-    /// enumeration: the running position plus a cached resume delegate,
-    /// re-pushed unchanged on each backtrack so advancing allocates nothing
-    /// per step.</summary>
+    /// enumeration: the running position plus a cached resume delegate; the
+    /// choice point is retried in place, so advancing allocates nothing per
+    /// step.</summary>
     private sealed class BetweenCursor
     {
         private long _current;
@@ -292,8 +291,7 @@ public static class ArithmeticBuiltins
         private bool Step(Activation engine, int _)
         {
             long next = ++_current;   // this backtrack yields the next value
-            if (next < _hi)
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: next < _hi, isResume: true);
             if (!engine.UnifyRegisterWithCell(2, Cell.Int(next))) return false;
             engine.ResumeAtReturnPc(_returnPc);
             return true;

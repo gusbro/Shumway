@@ -457,7 +457,7 @@ public sealed partial class BytecodeInterpreter
                 // what the session needs is the reconciliation point, and B
                 // still names the CP being resumed here.
                 _engine.Debug?.OnRedo(_engine, -1);
-                var (del, cursor) = _engine.PopIlChoicePointAndRestore();
+                var (del, cursor) = _engine.RetryOrPopIlChoicePoint();
                 if (del(_engine, cursor))
                 {
                     // Success: if the IL signalled a tail-call,

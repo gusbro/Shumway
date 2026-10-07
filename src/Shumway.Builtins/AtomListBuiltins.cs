@@ -251,9 +251,9 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int k = _k;
-            // Always re-arm for k+1 — the solution set is unbounded.
+            // The solution set is unbounded: there is always a k + 1.
             _k = k + 1;
-            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: true, isResume);
 
             // L1 = [V1..Vk] (fresh vars, closed). Unify first so the shared
             // var cells pick up L1's actual elements before L3 sees them.
@@ -533,13 +533,11 @@ public static class AtomListBuiltins
                    && char.IsLowSurrogate(_cName[splitIdx])
                    && char.IsHighSurrogate(_cName[splitIdx - 1]))
                 splitIdx++;
+            bool more = splitIdx < _cName.Length;
+            if (more) _splitIdx = splitIdx + 1;
+            // arity 3: the retry restores atom_concat/3's args.
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more, isResume);
             if (splitIdx > _cName.Length) return false;
-
-            if (splitIdx < _cName.Length)
-            {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore atom_concat/3 args
-            }
 
             string a = _cName.Substring(0, splitIdx);
             string b = _cName.Substring(splitIdx);

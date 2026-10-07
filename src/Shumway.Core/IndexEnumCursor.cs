@@ -3,15 +3,14 @@ namespace Shumway.Core;
 /// <summary>Reusable resume driver for a builtin that enumerates a fixed,
 /// precomputed set of candidates <c>0.._count-1</c> on backtracking, unifying
 /// each via a caller-supplied <paramref name="tryAt"/>. Allocates one cursor +
-/// one <c>tryAt</c> delegate per enumeration call and re-pushes the cached
-/// resume delegate unchanged on every backtrack — nothing per step (the same
-/// fix applied to <c>between/3</c> and the other backtrackable builtins, which
-/// previously allocated a fresh closure per candidate).
+/// one <c>tryAt</c> delegate per enumeration call, and its choice point is
+/// retried in place (<see cref="Activation.ArmBuiltinChoicePoint"/>): nothing
+/// per step.
 ///
 /// <para><c>tryAt(engine, i)</c> unifies candidate <c>i</c> into the argument
 /// registers and returns whether it matched; a <c>false</c> return lets the
-/// engine backtrack into the cursor, which then tries <c>i+1</c> — exactly the
-/// behaviour of the per-step <c>…Step</c> methods this replaces. <c>arity</c>
+/// engine backtrack into the cursor, which then tries <c>i+1</c>. It runs after
+/// the choice point is armed, so what it binds a retry undoes. <c>arity</c>
 /// is how many argument registers the choice point must save / restore.</para></summary>
 public sealed class IndexEnumCursor
 {
@@ -41,14 +40,14 @@ public sealed class IndexEnumCursor
         if (count <= 0) return false;
         var c = new IndexEnumCursor(count, arity, returnPc, tryAt);
         c._index = 1;
-        if (count > 1) engine.PushBuiltinChoicePoint(c._resume, arity);
+        engine.ArmBuiltinChoicePoint(c._resume, arity, more: count > 1, isResume: false);
         return tryAt(engine, 0);
     }
 
     private bool Resume(Activation engine, int _)
     {
         int i = _index++;
-        if (_index < _count) engine.PushBuiltinChoicePoint(_resume, _arity);
+        engine.ArmBuiltinChoicePoint(_resume, _arity, more: _index < _count, isResume: true);
         bool ok = _tryAt(engine, i);
         if (ok) engine.ResumeAtReturnPc(_returnPc);
         return ok;   // false → engine backtracks into the CP just pushed (next i)

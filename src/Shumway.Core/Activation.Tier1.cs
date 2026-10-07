@@ -1329,6 +1329,10 @@ public sealed partial class Activation
         // resumes through Del only. Per generation, not per functor: a
         // recompiled predicate may number its cursors differently.
         public nint[]? CpsAlt;
+        // A builtin's choice point armed by ArmBuiltinChoicePoint: a backtrack
+        // restores it and leaves it in place, and its delegate trusts it on
+        // its last solution.
+        public bool RetryInPlace;
     }
 
     // stack-array replacement for the previous
@@ -1423,6 +1427,7 @@ public sealed partial class Activation
     public void PushBuiltinChoicePoint(
         Func<Activation, int, bool> del, int arity)
     {
+        CountBuiltinCpPush();
         PushIlChoicePoint(del, nextCursor: 0, arity: arity);
     }
 
@@ -1435,7 +1440,67 @@ public sealed partial class Activation
     public void PushBuiltinChoicePoint(
         Func<Activation, int, bool> del, int arity, Action? onPrune)
     {
+        CountBuiltinCpPush();
         PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
+    }
+
+    /// <summary>Choice points pushed by builtins, process-wide: one per
+    /// enumeration for a builtin retried in place, one per solution for the
+    /// others. Diagnostic.</summary>
+    public static long DiagBuiltinCpPushes;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountBuiltinCpPush() => DiagBuiltinCpPushes++;
+
+    /// <summary>A builtin's choice point that is retried in place, as a WAM
+    /// retry is: the first call pushes it when more solutions are to come
+    /// (<paramref name="isResume"/> false); a backtrack restores it without
+    /// popping it and runs <paramref name="del"/>, which calls this again with
+    /// <paramref name="isResume"/> true, keeping the frame while more remain
+    /// and trusting it on the last solution, before it unifies anything. A
+    /// failed attempt with more to come returns false and is retried in the
+    /// same frame.
+    ///
+    /// <para>Trap: the frame's saved heap top and trail tops do not move, so
+    /// a delegate must not bind or allocate, before arming, anything a later
+    /// retry still needs: that is undone at the next backtrack. Such a step
+    /// trusts the frame and pushes a new one (<see
+    /// cref="TrustBuiltinChoicePoint"/>, then this with <paramref
+    /// name="isResume"/> false).</para></summary>
+    public void ArmBuiltinChoicePoint(
+        Func<Activation, int, bool> del, int arity, bool more, bool isResume)
+    {
+        if (isResume)
+        {
+            if (!more) TrustBuiltinChoicePoint();
+            return;
+        }
+        if (!more) return;
+        CountBuiltinCpPush();
+        PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: null);
+        _ilCpStack[_ilCpTop - 1].RetryInPlace = true;
+    }
+
+    /// <summary>Pops the builtin choice point being retried in place; the
+    /// retry has restored its state already.</summary>
+    public void TrustBuiltinChoicePoint()
+    {
+        if (_ilCpTop == 0 || _ilCpStack[_ilCpTop - 1].Key != _b
+            || !_ilCpStack[_ilCpTop - 1].RetryInPlace)
+            throw new InvalidOperationException(
+                "TrustBuiltinChoicePoint: the top choice point is not one retried in place.");
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+        AssignHb((int)_stack[_b + CpHbOffset(arity)].Data);
+        int oldB = _b;
+        _b = (int)_stack[_b + CpBOffset(arity)].Data;
+        _stackTop = oldB;
+        ref var top = ref _ilCpStack[_ilCpTop - 1];
+        top.Del = null!;
+        top.OnPrune = null;
+        top.CpsAlt = null;
+        top.RetryInPlace = false;
+        _ilCpTop--;
+        ResetCutQuickFloor();
     }
 
     // ----- ADR-033: the guard continuation stack -----
@@ -1713,6 +1778,21 @@ public sealed partial class Activation
         }
     }
     private static bool _traceCpStack;
+
+    /// <summary>The backtrack into the topmost IL choice point: one armed by
+    /// <see cref="ArmBuiltinChoicePoint"/> is restored as a retry restores, and
+    /// stays; any other is popped and restored.</summary>
+    public (Func<Activation, int, bool> Del, int Cursor) RetryOrPopIlChoicePoint()
+    {
+        ref var top = ref _ilCpStack[_ilCpTop - 1];
+        if (!top.RetryInPlace) return PopIlChoicePointAndRestore();
+        int arity = RestoreCommonFromCurrentCp();
+        AssignHb(_heapTop);
+        // Frames above the choice point are dead: what the pop and the
+        // delegate's push used to leave.
+        _stackTop = _b + CpSize(arity);
+        return (top.Del, top.Cursor);
+    }
 
     public (Func<Activation, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
     {

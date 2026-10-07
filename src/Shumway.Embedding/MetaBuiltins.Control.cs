@@ -216,13 +216,11 @@ public static partial class MetaBuiltins
 
     private static void ArmRepeat(Activation engine, int returnPc)
     {
-        // The CP re-arms with one cached delegate (held on the cursor) rather
-        // than a fresh closure per backtrack — repeat drives unbounded
-        // failure-driven loops (`repeat, Goal, fail`), so a per-backtrack
-        // closure was ~100 bytes of Gen0 garbage per iteration, the same
-        // bottleneck fixed in between/3.
+        // One cached delegate (held on the cursor) and one frame, retried in
+        // place: repeat drives unbounded failure-driven loops (`repeat, Goal,
+        // fail`), which must allocate nothing per iteration.
         var cursor = new RepeatCursor(returnPc);
-        engine.PushBuiltinChoicePoint(cursor.Resume, arity: 0);
+        engine.ArmBuiltinChoicePoint(cursor.Resume, arity: 0, more: true, isResume: false);
     }
 
     private sealed class RepeatCursor
@@ -238,7 +236,7 @@ public static partial class MetaBuiltins
 
         private bool Step(Activation engine, int _)
         {
-            engine.PushBuiltinChoicePoint(Resume, arity: 0);   // re-arm, same delegate
+            engine.ArmBuiltinChoicePoint(Resume, arity: 0, more: true, isResume: true);
             engine.ResumeAtReturnPc(_returnPc);
             return true;
         }
