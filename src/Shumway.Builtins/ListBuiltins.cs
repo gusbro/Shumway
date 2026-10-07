@@ -192,10 +192,12 @@ public static class ListBuiltins
     {
         var heads = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
             heads.Add(head);
             cur = Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.InfiniteList();
         }
         if (cur.Tag == Tag.Ref)
             // A partial list — the tail is unbound, so we can't
@@ -216,11 +218,13 @@ public static class ListBuiltins
         Cell cur = Resolve(engine, engine.GetRegister(0));
         Cell last = default;
         bool any = false;
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
             last = head;
             any = true;
             cur = Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.InfiniteList();
         }
         if (!any) return false;              // empty list — no last element
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
@@ -235,6 +239,8 @@ public static class ListBuiltins
         // equal duplicates.
         var seen = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cur);
+        bool cyclic = false;
         while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
         {
             Cell head = Resolve(engine, rawHead);
@@ -249,8 +255,12 @@ public static class ListBuiltins
             }
             if (!dup) seen.Add(head);
             cur = Resolve(engine, tail);
+            // A cyclic spine repeats what it has shown: its elements are a
+            // finite set, every one of them seen by the time the walk is
+            // back on a cell it has been on.
+            if (guard.Loops(cur)) { cyclic = true; break; }
         }
-        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
+        if (!cyclic && (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)) return false;
         int listIdx = BuildList(engine, seen);
         return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }

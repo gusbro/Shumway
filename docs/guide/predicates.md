@@ -234,7 +234,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `append(+ListOfLists, -List)` | library | Concatenates a list of lists. |
-| `append(?List1, ?List2, ?List)` | library | Concatenates List1 and List2 into List; backtracks over splits of List. |
+| `append(?List1, ?List2, ?List)` | library | Concatenates List1 and List2 into List; backtracks over splits of List. A cyclic List1 raises resource_error(finite_memory). |
 | `delete(+List, +Elem, -Rest)` | library | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | library | Excluded holds the elements of List for which Goal fails. |
 | `flatten(+Nested, -Flat)` | library | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
@@ -244,9 +244,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `include(:Goal, +List, -Included)` | library | Included holds the elements of List for which Goal succeeds. |
 | `intersection(+Set1, +Set2, -Intersection)` | library | Intersection holds the elements of Set1 that also occur in Set2. |
 | `keysort(+Pairs, -Sorted)` | iso | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
-| `last(?List, ?Last)` | library | Relates a list to its last element. |
+| `last(?List, ?Last)` | library | Relates a list to its last element. A cyclic list raises resource_error(finite_memory). |
 | `length(?List, ?Length)` | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails. |
-| `list_to_set(+List, -Set)` | library | Removes duplicates from a list, keeping the first occurrence of each. |
+| `list_to_set(+List, -Set)` | library | Removes duplicates from a list, keeping the first occurrence of each. A cyclic list gives the set of its distinct elements. |
 | `map_list_to_pairs(:Key, +List, -KeyedPairs)` | library | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
 | `maplist(:Goal, ?List)` | library | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | library | Succeeds if Goal holds for corresponding elements of two lists. |
@@ -274,7 +274,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `partition(:Goal, +List, -Included, -Excluded)` | library | Splits List by whether Goal succeeds on each element. |
 | `permutation(?List, ?Permutation)` | library | True when the two lists are permutations of each other; enumerates permutations. |
 | `predsort(:Pred, +List, -Sorted)` | library | Sorts List by a three-way comparison predicate, dropping elements compared equal. |
-| `reverse(?List, ?Reversed)` | library | Relates a list to its reverse. |
+| `reverse(?List, ?Reversed)` | library | Relates a list to its reverse. A cyclic list raises resource_error(finite_memory). |
 | `select(?Elem, ?List, ?Rest)` | library | Rest is List with one occurrence of Elem removed; backtracks over occurrences. |
 | `sort(+List, -Sorted)` | iso | Sorts a list into standard order, removing duplicates. |
 | `sort(+Key, +Order, +List, -Sorted)` | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |

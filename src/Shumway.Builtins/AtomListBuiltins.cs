@@ -59,10 +59,14 @@ public static class AtomListBuiltins
         // again filling — no intermediate buffer.
         int count = 0;
         Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cursor);
         while (ListCursor.TryUncons(engine, cursor, out _, out Cell countTail))
         {
             count++;
             cursor = ListCursor.Resolve(engine, countTail);
+            // A cyclic L1 has no end to append L2 at: the two-clause append
+            // builds forever, and the answer is the one length/2 gives.
+            if (guard.Loops(cursor)) throw ListCursor.InfiniteList();
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             return AppendSplit(engine, engine.BuiltinReturnPc);
@@ -102,10 +106,15 @@ public static class AtomListBuiltins
         // L3 must be ground enough to walk — collect its elements.
         var elems = new List<Cell>();
         Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
+        var guard = new SpineGuard(cursor);
         while (ListCursor.TryUncons(engine, cursor, out Cell el, out Cell elTail))
         {
             elems.Add(el);
             cursor = ListCursor.Resolve(engine, elTail);
+            // A cyclic L3 has a split at every one of its infinitely many
+            // cells: enumerate them one at a time, as the two-clause append
+            // does, instead of collecting them first.
+            if (guard.Loops(cursor)) return new AppendCyclicCursor(returnPc).Start(engine);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
@@ -132,10 +141,14 @@ public static class AtomListBuiltins
         // match while the remaining splits can only fail.
         int m = 0;
         Cell c2 = ListCursor.Resolve(engine, engine.GetRegister(1));
+        var l2Guard = new SpineGuard(c2);
         while (ListCursor.TryUncons(engine, c2, out _, out Cell c2Tail))
         {
             m++;
             c2 = ListCursor.Resolve(engine, c2Tail);
+            // A cyclic L2 has no length to pin the split with: try the
+            // splits in turn, as the two-clause append does (each fails).
+            if (l2Guard.Loops(c2)) break;
         }
         if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
         {
@@ -228,6 +241,45 @@ public static class AtomListBuiltins
             int l1Heap = BuildListFromCells(engine, _elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
             if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
             if (!engine.UnifyRegisterWithCell(1, _suffixes[splitIdx])) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
+    }
+
+    /// <summary>Resume state for <c>append/3</c> with L1 open and L3 cyclic:
+    /// split k binds L1 to L3's first k elements and L2 to the tail after
+    /// them, k = 0, 1, 2, ... without end, which is the two-clause append's
+    /// enumeration. Each attempt walks L3 from its start: the cursor holds no
+    /// heap address a collection could move.</summary>
+    private sealed class AppendCyclicCursor
+    {
+        private readonly int _returnPc;
+        private int _k;
+        public readonly Func<Activation, int, bool> Resume;
+
+        public AppendCyclicCursor(int returnPc)
+        {
+            _returnPc = returnPc;
+            Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Activation engine, bool isResume)
+        {
+            int k = _k++;
+            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            var heads = new List<Cell>(k);
+            Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
+            for (int i = 0; i < k; i++)
+            {
+                ListCursor.TryUncons(engine, cursor, out Cell head, out Cell tail);
+                heads.Add(head);
+                cursor = ListCursor.Resolve(engine, tail);
+            }
+            int l1Heap = BuildListFromCells(engine, heads, 0, k, Cell.Atom(AtomTable.EmptyListId));
+            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
+            if (!engine.UnifyRegisterWithCell(1, cursor)) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
         }

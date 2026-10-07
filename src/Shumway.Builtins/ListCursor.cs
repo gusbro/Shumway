@@ -48,6 +48,12 @@ internal static class ListCursor
         return cur;
     }
 
+    /// <summary>The answer for a walk that would build or traverse an
+    /// infinite list to its end (reverse/2, last/2, append/3 with a cyclic
+    /// first list): the one length/2 gives, as Scryer does.</summary>
+    public static PrologRuntimeException InfiniteList()
+        => new("resource_error", "finite_memory");
+
     /// <summary>The ISO answer for a list argument whose spine loops: it is
     /// neither a list nor a partial list.</summary>
     public static PrologRuntimeException CyclicList(Activation engine, Cell list)

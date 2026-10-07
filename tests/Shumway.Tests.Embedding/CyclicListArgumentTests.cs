@@ -120,4 +120,67 @@ public sealed class CyclicListArgumentTests
     [InlineData("L = [a|L], \\+ length(L, 3).")]
     [InlineData("L = [a|L], catch(length(L, _), error(resource_error(_), _), true).")]
     public void TheSpinePrimitivesAgree(string query) => Assert.True(Holds(query));
+
+    [Theory]
+    // A walk to the end of an infinite list: the answer length/2 gives.
+    [InlineData("reverse(L, _)")]
+    [InlineData("last(L, _)")]
+    [InlineData("append(L, [x], _)")]
+    [InlineData("append(L, _, _)")]
+    public void AWalkToTheEndOfACyclicListIsOutOfMemory(string goal)
+        => Assert.True(Holds(
+            $"L = [a, b|L], catch(({goal}, fail), error(resource_error(finite_memory), _), true)."), goal);
+
+    [Theory]
+    [InlineData("L = [a, b, a|L], list_to_set(L, S), S == [a, b].")]
+    [InlineData("C = [b, c|C], L = [a, b|C], list_to_set(L, S), S == [a, b, c].")]
+    // A cyclic element on a finite spine is an ordinary element.
+    [InlineData("X = [y, f(X)], list_to_set([X, y, X], S), S = [E, y], E == X.")]
+    public void ListToSetOfACyclicListIsItsElements(string query) => Assert.True(Holds(query));
+
+    [Theory]
+    // L1 open, L3 cyclic: the splits come one at a time, without end.
+    [InlineData("L = [a, b|L], append(X, Y, L), length(X, 3), !, X == [a, b, a], Y = [b, a|_].")]
+    [InlineData("L = [a, b|L], append([a|X], _, L), X = [_, _|_], !, X == [b, a].")]
+    [InlineData("L = [a, b|L], findall(X, (append(X, _, L), (length(X, 2) -> ! ; true)), Xs), "
+        + "Xs == [[], [a], [a, b]].")]
+    // A cyclic L2 is no suffix of a finite list: every split fails.
+    [InlineData("L = [a|L], \\+ append(_, L, [a, a]).")]
+    [InlineData("L = [a|L], \\+ append(_, L, [a|foo]).")]
+    // A proper L1 in front of a cyclic L2 is a cyclic list.
+    [InlineData("L = [a|L], append([x], L, R), R = [x, a, a|_], '$cyclic_spine'(R).")]
+    public void AppendSplitsACyclicListTheWayTheTwoClauseAppendDoes(string query)
+        => Assert.True(Holds(query));
+
+    /// <summary>What the two-clause Prolog definitions do on a cyclic list
+    /// these do too: search it forever, as SICStus and Scryer do. Forever has
+    /// to stay interruptible.</summary>
+    [Theory]
+    [InlineData("member(aaa, L)")]
+    [InlineData("memberchk(aaa, L)")]
+    [InlineData("member(X, L), X == aaa")]
+    [InlineData("nth0(_, L, aaa)")]
+    [InlineData("nth1(_, L, aaa)")]
+    [InlineData("append(_, [z], L)")]
+    public void ASearchOfACyclicListRunsUntilCancelled(string goal)
+    {
+        string query = $"L = [a, b|L], {goal}.";
+        var e = new PrologEngine();
+        Exception? error = null;
+        bool ended = false;
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var t = new Thread(() =>
+        {
+            try
+            {
+                foreach (var _ in e.QueryAll(query, cts.Token)) { }
+                ended = true;
+            }
+            catch (Exception ex) { error = ex; }
+        }) { IsBackground = true };
+        t.Start();
+        Assert.True(t.Join(TimeSpan.FromSeconds(60)), $"a cancel did not stop: {query}");
+        Assert.False(ended, $"ended without the cancel: {query}");
+        Assert.IsAssignableFrom<OperationCanceledException>(error);
+    }
 }

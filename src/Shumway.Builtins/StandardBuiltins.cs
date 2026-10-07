@@ -265,7 +265,7 @@ public static class StandardBuiltins
         const string Lists = "Lists";
         const string Strings = "Atoms & strings";
         BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append,
-            Lists, "append(?List1, ?List2, ?List)", "Concatenates List1 and List2 into List; backtracks over splits of List.", kind: PredicateKind.Library);
+            Lists, "append(?List1, ?List2, ?List)", "Concatenates List1 and List2 into List; backtracks over splits of List. A cyclic List1 raises resource_error(finite_memory).", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("atom_codes",   2, AtomListBuiltins.AtomCodes,
             Strings, "atom_codes(?Atom, ?Codes)", "Converts between an atom and its list of character codes.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("atom_concat",  3, AtomListBuiltins.AtomConcat,
@@ -398,10 +398,10 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("nth1",         3, ListBuiltins.Nth1,
             Lists, "nth1(?Index, ?List, ?Elem)", "Relates a 1-based index to the list element at that position.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("reverse",      2, ListBuiltins.Reverse,
-            Lists, "reverse(?List, ?Reversed)", "Relates a list to its reverse.", kind: PredicateKind.Library);
+            Lists, "reverse(?List, ?Reversed)", "Relates a list to its reverse. A cyclic list raises resource_error(finite_memory).", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("last",         2, ListBuiltins.Last,
-            Lists, "last(?List, ?Last)", "Relates a list to its last element.", kind: PredicateKind.Library);
+            Lists, "last(?List, ?Last)", "Relates a list to its last element. A cyclic list raises resource_error(finite_memory).", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("list_to_set",  2, ListBuiltins.ListToSet,
-            Lists, "list_to_set(+List, -Set)", "Removes duplicates from a list, keeping the first occurrence of each.", kind: PredicateKind.Library);
+            Lists, "list_to_set(+List, -Set)", "Removes duplicates from a list, keeping the first occurrence of each. A cyclic list gives the set of its distinct elements.", kind: PredicateKind.Library);
     }
 }
