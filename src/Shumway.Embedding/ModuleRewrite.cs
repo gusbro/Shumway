@@ -194,6 +194,18 @@ public static class ModuleRewrite
 
         if (goal is CompoundTerm c)
         {
+            // Qualified with the module the clause is compiled in: the goal
+            // itself, resolved like any call here. It needs no module table,
+            // so a compile that has none (a .shmo, a link-time recompile)
+            // still calls it directly rather than through ':'/2, a meta-call
+            // and on the wasm tier an exit to the host (atts' goal_expansion
+            // writes one per get_atts/put_atts).
+            if (c.Functor == ":" && c.Args.Length == 2
+                && c.Args[0] is AtomTerm ownMod && ownMod.Name == ctx.ModuleName
+                && c.Args[1] is AtomTerm or CompoundTerm
+                && !IsOwnQualifiedControl(c.Args[1]))
+                return RewritePlainGoal(c.Args[1], ctx);
+
             // A statically written Module:Goal resolves at compile time when
             // the resolver is available — the runtime ':'/2 path costs a full
             // meta-dispatch per call (the atts goal_expansion emits one per
@@ -627,6 +639,18 @@ public static class ModuleRewrite
             AtomTable.Intern(name, permanent: true).Id, arity);
         return ctx.Imports.TryGetValue(functorId, out sourceModule!);
     }
+
+    // What an own-module qualification must keep: a control construct or
+    // \+ is lowered inline, and the runtime path is what carries the module
+    // into its sub-goals.
+    private static bool IsOwnQualifiedControl(Term inner) => inner switch
+    {
+        AtomTerm a => IsControlFlow(a.Name, 0),
+        CompoundTerm k => IsControlFlow(k.Functor, k.Args.Length)
+            || (k.Functor == "\\+" && k.Args.Length == 1)
+            || (k.Functor == ":" && k.Args.Length == 2),
+        _ => true,
+    };
 
     private static bool IsControlFlow(string functor, int arity) => (functor, arity) switch
     {

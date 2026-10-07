@@ -454,7 +454,8 @@ public static class ShmoCompiler
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null,
-        Func<int, string?, int[]?>? metaArgSpec = null)
+        Func<int, string?, int[]?>? metaArgSpec = null,
+        Func<string, string, int, string?>? qualifiedResolver = null)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -781,7 +782,10 @@ public static class ShmoCompiler
                     imp.Pred.Arity)] = imp.Source;
         var rewriteCtx = new ModuleRewrite.Context(
             moduleName, localFids, dynamicFids, importFidMap)
-        { MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec };
+        {
+            MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec,
+            QualifiedStaticResolver = qualifiedResolver,
+        };
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));

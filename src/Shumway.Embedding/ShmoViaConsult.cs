@@ -209,7 +209,12 @@ public static class ShmoViaConsult
                 exports: exports,
                 imports: imports,
                 dialect: manifest.Dialect,
-                metaArgSpec: e.MetaArgSpec);
+                metaArgSpec: e.MetaArgSpec,
+                // A Module:Goal resolves as the consult that loaded this module
+                // resolves it, against the same modules: compiled to ':'/2 it
+                // is a meta-call, and on the wasm tier an exit to the host
+                // (atts generates one per clause of a module's get_atts).
+                qualifiedResolver: e.ResolveQualifiedStatic);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)
