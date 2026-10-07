@@ -236,6 +236,7 @@ async function step() {
   let tag, text;
   try { ({ tag, text } = await session.next(answerWidth())); }
   finally { stepping = false; debugUi.setRunning(false); searching(); }
+  keepCompiledOnDemand();
   // The promise resolving means the search is no longer suspended at a stop.
   debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
@@ -554,7 +555,21 @@ let consultEpoch = 0;
 
 async function whileConsulting(work) {
   consultsInFlight++;
-  try { return await work(); } finally { consultsInFlight--; consultEpoch++; }
+  try { return await work(); }
+  finally {
+    consultsInFlight--; consultEpoch++;
+    await keepCompiledOnDemand();
+  }
+}
+
+// A consult or a query compiles a library it needs that has no bundle yet: the
+// bundle is stored like the batch's, so a reload does not compile it again.
+async function keepCompiledOnDemand() {
+  try {
+    if (!(await libraries.takeCompiledOnDemand())) return;
+    await libraries.persist();
+    if (librariesDialog.open) await refreshLibraries();
+  } catch { /* storing is a convenience; the bundle is in place either way */ }
 }
 
 /**
@@ -767,7 +782,7 @@ async function refreshLibraries() {
       build.textContent = entry.compiled ? 'rebuild' : 'compile';
       build.addEventListener('click', async () => {
         const failed = await withBusy(`compiling ${entry.name}`,
-                                      () => libraries.compile(name, entry.name));
+                                      () => libraries.compile(name, entry.name, true));
         await libraries.persist();
         emit(failed ? `% ${entry.name}: ${failed}\n` : `% ${entry.name} compiled\n`,
              failed ? 'error' : 'note');
@@ -1863,7 +1878,7 @@ if (persistMode) {
         'wrev([], A, A).\nwrev([X|Xs], A, R) :- wrev(Xs, [X|A], R).\n');
       const baked = (status) => Number(/(\d+) baked/.exec(status)?.[1] ?? 0);
       const before = baked(await session.exports().JitCompileControl('status'));
-      lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl')) + '\n');
+      lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl', true)) + '\n');
       await session.consult(':- use_module(library(wccl)).');
       const errL = await session.start('numlist(1, 100, L), wrev(L, R), R = [100|_].');
       if (errL) lines.push('library start error: ' + errL + '\n');
@@ -1978,7 +1993,7 @@ if (persistMode) {
       let compiled = '(not compiled)';
       if (compileFirst) {
         const t = performance.now();
-        compiled = JSON.stringify(await libraries.compile(c, 'clpz'))
+        compiled = JSON.stringify(await libraries.compile(c, 'clpz', true))
                  + ` in ${Math.round(performance.now() - t)}ms`;
       }
       const t2 = performance.now();
@@ -2059,6 +2074,75 @@ if (persistMode) {
     emit('\nclpz page-instrumentation done\n');
   } catch (ex) {
     mark(`clpz page CRASHED: ${ex && ex.stack ? ex.stack : ex}`);
+  }
+} else if (location.hash === '#libondemand') {
+  // A program consulted while the batch is still compiling an imported
+  // collection: atts compiled, clpz not yet. clpz used to load from source
+  // over atts' bundle, whose expansion hooks a bundle did not keep live
+  // (`attribute/1` unknown at the consult, get_atts/2 at the query). Now the
+  // consult compiles what it needs, and a bundle's hooks are live: the sudoku
+  // and a program of its own over library(atts) both answer.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const page = () => (document.getElementById('out')?.textContent ?? '');
+    let seen = page().length;
+    const newPageText = () => { const t = page(); const d = t.slice(seen); seen = t.length; return d; };
+    const collection = 'scryer';
+    const m = await import('./measure.js');
+    const loaded = await m.loadScryerLibrary(libraries, collection);
+    mark(`ondemand: collection holds ${(await libraries.files(collection)).length} files (wrote ${loaded.files})`);
+
+    const batch = buildCollection(collection);   // as an import starts it
+    const compiled = async (lib) =>
+      (await libraries.entries(collection)).find((e) => e.name === lib)?.compiled ?? false;
+    for (let i = 0; i < 1200 && !(await compiled('atts')); i++) await idle(250);
+    mark(`ondemand: atts compiled=${await compiled('atts')}, clpz compiled=${await compiled('clpz')}`);
+
+    const consultTimed = async (text, label) => {
+      newPageText();
+      const t = performance.now();
+      const err = await whileConsulting(() => session.consult(text, ''));
+      mark(`ondemand: ${label} consult ${Math.round(performance.now() - t)}ms -> ${err ? 'ERROR ' + err : 'ok'}`);
+      mark(`ondemand: ${label} page said >>>\n${newPageText().trim() || '(nothing)'}\n<<<`);
+    };
+    const answer = async (goal, label) => {
+      const e0 = await session.start(goal);
+      const r = e0 ? { tag: 'e', text: e0 } : await session.next(200);
+      if (r.tag === 's') await session.cancel();
+      mark(`ondemand: ${label} -> ${r.tag} ${r.text}`);
+    };
+
+    await consultTimed([
+      ':- use_module(library(clpz)).',
+      ':- use_module(library(lists)).',
+      'sudoku(Rows) :- length(Rows, 9), maplist(same_length(Rows), Rows),',
+      '    append(Rows, Vs), Vs ins 1..9, maplist(all_distinct, Rows),',
+      '    transpose(Rows, Columns), maplist(all_distinct, Columns),',
+      '    Rows = [As,Bs,Cs,Ds,Es,Fs,Gs,Hs,Is],',
+      '    blocks(As, Bs, Cs), blocks(Ds, Es, Fs), blocks(Gs, Hs, Is).',
+      'blocks([], [], []).',
+      'blocks([N1,N2,N3|Ns1], [N4,N5,N6|Ns2], [N7,N8,N9|Ns3]) :-',
+      '    all_distinct([N1,N2,N3,N4,N5,N6,N7,N8,N9]), blocks(Ns1, Ns2, Ns3).',
+      'problem(1, [[_,_,_,_,_,_,_,_,_],[_,_,_,_,_,3,_,8,5],[_,_,1,_,2,_,_,_,_],',
+      '            [_,_,_,5,_,7,_,_,_],[_,_,4,_,_,_,1,_,_],[_,9,_,_,_,_,_,_,_],',
+      '            [5,_,_,_,_,_,_,7,3],[_,_,2,_,1,_,_,_,_],[_,_,_,_,4,_,_,_,9]]).',
+    ].join('\n') + '\n', 'sudoku');
+    await answer('problem(1, Rows), sudoku(Rows), maplist(labeling([ff]), Rows), Rows = [R|_].', 'sudoku');
+
+    await consultTimed([
+      ':- use_module(library(atts)).',
+      ':- attribute color/1.',
+      'paint(X, C) :- put_atts(X, color(C)).',
+      'color_of(X, C) :- get_atts(X, color(C)).',
+    ].join('\n') + '\n', 'atts');
+    await answer('paint(X, red), color_of(X, C).', 'atts');
+
+    mark(`ondemand: clpz compiled=${await compiled('clpz')}, lists compiled=${await compiled('lists')}`);
+    if (buildRun) buildRun.cancel = true;
+    await batch;
+    mark('ONDEMAND DONE');
+  } catch (ex) {
+    mark(`ondemand CRASHED: ${ex && ex.stack ? ex.stack : ex}`);
   }
 } else if (location.hash === '#clpzwho') {
   // WHO answers library(clpz) in the browser? The smoke goal FAILS rather

@@ -558,6 +558,15 @@ public sealed partial class PrologEngine
             _libraryDirs!.Add(full);
     }
 
+    /// <summary>Asked when <c>use_module(library(Name))</c> resolves to a
+    /// source file (ADR-038): the host may return another file to load in its
+    /// place, typically a bundle it compiles from that source the first time
+    /// it is needed, or null to load the source. Called with the library's
+    /// name and the source's full path, on the thread doing the load; a
+    /// library the engine replaces with its own (a native override) never
+    /// reaches it.</summary>
+    public Func<string, string, string?>? LibrarySourceResolver { get; set; }
+
     /// <summary>Adds <paramref name="path"/> to this engine's library search
     /// path (ADR-038), so a later <c>use_module(library(X))</c> can resolve
     /// <c>X.pl</c> / <c>X.shum</c> under it. Idempotent; the directory need not
@@ -771,6 +780,13 @@ public sealed partial class PrologEngine
                                 ? WithDialect(dirDialect, () => LoadNativeOverride(libName))
                                 : LoadNativeOverride(libName);
                             return libName == "atts" ? "atts" : overrideModule;
+                        }
+                        if (LibrarySourceResolver is { } resolve
+                            && libPath.EndsWith(".pl", StringComparison.OrdinalIgnoreCase)
+                            && resolve(libName, libPath) is { } replaced)
+                        {
+                            libPath = replaced;
+                            dirDialect = DialectForResolvedPath(libPath);
                         }
                         return dirDialect is not null
                             ? WithDialect(dirDialect, () => LoadResolvedLibrary(libName, libPath))

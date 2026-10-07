@@ -173,7 +173,14 @@ async function collect(dir, prefix, into) {
   }
 }
 
-export const compile = (name, library) => engine.LibraryCompile(name, library);
+// Without force, a library that has a bundle already is left as it is: the
+// batch queued it before a consult compiled it on demand.
+export const compile = (name, library, force = false) =>
+  engine.LibraryCompile(name, library, force);
+
+/** Whether a consult or a query compiled a library it needed since the last
+ *  ask (the engine compiles an uncompiled one on first use). */
+export const takeCompiledOnDemand = () => engine.LibraryTakeCompiledOnDemand();
 
 /** Everything the last compile of one library had to say. */
 export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, library);

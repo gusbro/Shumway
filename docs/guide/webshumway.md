@@ -142,7 +142,15 @@ It runs by itself in the background after an import, one library after another:
 - it can be stopped, and what is built stays built: across reloads too;
 - a big collection (SWI's library is about two hundred files) is not compiled
   through unasked: above eighty libraries the batch does what the workspace
-  imports and stops. The rest are a button away and still load from source.
+  imports and stops. The rest are a button away, or built when first imported.
+
+A library a program imports before the batch has reached it is **compiled
+then**, by the consult (or the query) that imports it: the output says which
+library, and that the wait is a one-time one, since the bundle is kept like the
+batch's. If the batch is compiling another library at that moment, that one
+finishes first; the batch starts no other until the import has its bundle. So a
+program never loads a library from source over others already compiled, which
+breaks a library that relies on another's expansion hooks while it loads.
 
 Compiling uses the **consult** path (`ShmoViaConsult`), the only one that works
 for a library which generates clauses as it loads (which is what clpz and its
@@ -170,7 +178,7 @@ each of them:
 | in the list | what it means |
 |---|---|
 | compiled | ready, and fast |
-| source only | not built yet; it works, it just loads slowly |
+| source only | not built yet; the first program that imports it builds it |
 | compiled, with warnings | it built, but part of it did not load: often a foreign interface |
 | will not compile | it cannot be built here; **details** says why |
 

@@ -124,6 +124,13 @@ fed from all of:
 (2) file resolver (`Dir/X.pl` then `Dir/X.shum`) → (3) `CompatLibraries` (unchanged) →
 (4) error.
 
+A host may set `PrologEngine.LibrarySourceResolver`. When step (2) lands on a
+`.pl`, the resolver is asked first and may return another file to load in its
+place, or null for the source. WebShumway uses it to compile an imported library
+into its bundle the first time a program imports it, so a library never loads
+from source over others already compiled. A native override (ADR-040) is decided
+before it, on the source, and never reaches it.
+
 ### 3. Linker — resolve a `use_module` dependency like a C linker resolves a symbol
 
 `:- use_module(library(X))` in a separately-compiled program adds a link dependency

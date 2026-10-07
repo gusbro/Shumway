@@ -75,6 +75,8 @@ internal static partial class WebShumwayApp
     internal static void RegisterLibraries()
     {
         Directory.CreateDirectory(LibrariesRoot);
+        PrologEngine engine = _session!.Engine;
+        engine.LibrarySourceResolver = (library, source) => CompileOnDemand(engine, library, source);
         foreach (string dir in Directory.GetDirectories(LibrariesRoot))
         {
             string marker = Path.Combine(dir, DialectMarker);
@@ -161,9 +163,11 @@ internal static partial class WebShumwayApp
     /// way that works for a library which generates clauses as it loads, which
     /// is exactly what clpz and its attributed-variable machinery do.</para>
     ///
-    /// <para>Returns null, or the diagnostic.</para></summary>
+    /// <para>Returns null, or the diagnostic. Without <paramref name="force"/>
+    /// a library that has a bundle already is left as it is: the batch queued
+    /// it before a consult compiled it on demand.</para></summary>
     [JSExport]
-    internal static Task<string?> LibraryCompile(string name, string library)
+    internal static Task<string?> LibraryCompile(string name, string library, bool force)
         // Not on the engine gate. Compiling builds its own ephemeral engine and
         // never touches the session's, so holding the gate for its whole
         // duration bought nothing and cost everything: pressing Consult while a
@@ -174,59 +178,175 @@ internal static partial class WebShumwayApp
         => Task.Run<string?>(() =>
         {
             string root = ResolveLibrary(name);
-            string sources = Path.Combine(root, SourceDir);
-            string entry = Path.Combine(sources, library + ".pl");
-            if (!File.Exists(entry)) return $"{name} has no {library}.pl";
-
-            string marker = Path.Combine(root, DialectMarker);
-            string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
-
-            // The consult's warnings are caught, not printed. This runs on the
-            // page's behalf rather than the user's, and what a library from
-            // another system says while it loads is not their output.
-            var said = new StringWriter();
+            EnterCompileGate(onDemand: false);
             try
             {
-                var errors = new List<ShmoCompileError>();
-                var compiled = ShmoViaConsult.CompileMany(
-                    new[] { entry }, new[] { sources }, ShmoBuildMode.Release, errors,
-                    string.IsNullOrEmpty(dialect) ? null : dialect, said);
-                if (errors.Count > 0)
-                {
-                    string text = string.Join(
-                        "\n", errors.Select(e => $"{e.Line}:{e.Column}: {e.Message}"));
-                    return RecordDiagnostic(root, library, text, said, failed: true);
-                }
-                if (compiled.Count == 0)
-                    return RecordDiagnostic(root, library, "nothing compiled", said, failed: true);
-
-                // Packed by the librarian, not the linker: a library has no entry
-                // point, so there is nothing to compute reachability from — every
-                // module it brought in is kept. Under the wasm tier the archive
-                // also carries its predicates as a wasm module, baked here once
-                // (the batch compile the tier would otherwise run on every
-                // visit) and installed when the library loads.
-                bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
-                byte[] bytes = Librarian.CreateArchive(compiled
-                    .Select(c => new BundleArchiveMember(
-                        c.ModuleName + ".shmo", ShmoWriter.ToBytes(c.Object)))
-                    .ToList(),
-                    wasm ? b => WasmBundleTier.Bake(b, stdlib: false) : null);
-                // Written under a temporary name and moved into place, so what
-                // `library(X)` can see is either the old bundle or the new one
-                // and never half of one — a consult may look while this runs.
-                string target = Path.Combine(root, library + ".shum");
-                string partial = target + ".partial";
-                File.WriteAllBytes(partial, bytes);
-                File.Move(partial, target, overwrite: true);
-                RecordDiagnostic(root, library, null, said, failed: false);
-                return null;
+                if (!force && File.Exists(Path.Combine(root, library + ".shum"))) return null;
+                return CompileLibrary(root, name, library);
             }
-            catch (Exception ex)
-            {
-                return RecordDiagnostic(root, library, ex.Message, said, failed: true);
-            }
+            finally { ExitCompileGate(); }
         });
+
+    // One compile at a time, and one a consult is waiting for goes first: the
+    // batch finishes the library it is on and starts no other until then. Not
+    // the engine gate: compiling builds its own engine (see LibraryCompile).
+    private static readonly object CompileGate = new();
+    private static bool _compiling;
+    private static int _onDemandWaiting;
+
+    private static void EnterCompileGate(bool onDemand)
+    {
+        lock (CompileGate)
+        {
+            if (onDemand) _onDemandWaiting++;
+            // CA1416: blocking is unsupported on the browser's main thread.
+            // Both callers are pool threads: the batch's Task.Run, and a
+            // consult or query on the engine's (CompileOnDemand refuses the
+            // JavaScript thread).
+#pragma warning disable CA1416
+            while (_compiling || (!onDemand && _onDemandWaiting > 0))
+                Monitor.Wait(CompileGate);
+#pragma warning restore CA1416
+            if (onDemand) _onDemandWaiting--;
+            _compiling = true;
+        }
+    }
+
+    private static void ExitCompileGate()
+    {
+        lock (CompileGate)
+        {
+            _compiling = false;
+            Monitor.PulseAll(CompileGate);
+        }
+    }
+
+    // Libraries compiled on demand since the page last asked: it stores them,
+    // as it stores what the batch compiles, so a reload does not compile them
+    // again.
+    private static int _compiledOnDemand;
+
+    /// <summary>True when a consult or a query compiled a library it needed
+    /// since the last call.</summary>
+    [JSExport]
+    internal static Task<bool> LibraryTakeCompiledOnDemand()
+        => Task.FromResult(Interlocked.Exchange(ref _compiledOnDemand, 0) > 0);
+
+    /// <summary>The engine's <see cref="PrologEngine.LibrarySourceResolver"/>:
+    /// a library of an imported collection that has no bundle yet is compiled
+    /// when a program first needs it, and the bundle is what loads.
+    ///
+    /// <para>Loading its sources instead mixed them with the libraries the
+    /// batch had compiled already, and a source that relies on another
+    /// library's expansion hooks has to load the way it compiles: everything
+    /// from source, in one engine. Loading from source is also several times
+    /// slower, every time; this is one compile, kept from then on.</para></summary>
+    private static string? CompileOnDemand(PrologEngine engine, string library, string source)
+    {
+        string? sources = Path.GetDirectoryName(source);
+        string? root = sources is null ? null : Path.GetDirectoryName(sources);
+        if (root is null || Path.GetFileName(sources) != SourceDir
+            || Path.GetDirectoryName(root) != LibrariesRoot)
+            return null;   // not a library of an imported collection
+        // Waiting for a compile there would freeze the page: load the source.
+        if (SynchronizationContext.Current == _jsThread) return null;
+        string name = Path.GetFileName(root);
+        string target = Path.Combine(root, library + ".shum");
+        // Its last compile failed: trying again on every consult would only
+        // repeat the wait, and the list already says why.
+        if (LastCompileFailed(root, library)) return null;
+
+        TextWriter say = engine.Out;
+        say.WriteLine($"% library({library}) from {name} is not compiled yet: compiling it now."
+            + " This happens once; the compiled library is kept for next time.");
+        say.Flush();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        string? failed;
+        EnterCompileGate(onDemand: true);
+        try
+        {
+            // The batch may have been compiling this very library.
+            failed = File.Exists(target) ? null : CompileLibrary(root, name, library);
+        }
+        finally { ExitCompileGate(); }
+
+        if (failed is null && File.Exists(target))
+        {
+            Interlocked.Increment(ref _compiledOnDemand);
+            say.WriteLine($"% library({library}) compiled in {clock.Elapsed.TotalSeconds:0.#} s.");
+            say.Flush();
+            return target;
+        }
+        say.WriteLine($"% library({library}) did not compile ({failed}); loading it from source."
+            + " The library list has the details.");
+        say.Flush();
+        return null;
+    }
+
+    private static bool LastCompileFailed(string root, string library)
+    {
+        string marker = Path.Combine(root, library + DiagnosticSuffix);
+        try { return File.Exists(marker) && File.ReadLines(marker).FirstOrDefault() == "failed"; }
+        catch (IOException) { return false; }
+    }
+
+    /// <summary>Compiles one library into its bundle. Returns null, or the
+    /// diagnostic. Callers hold the compile gate.</summary>
+    private static string? CompileLibrary(string root, string name, string library)
+    {
+        string sources = Path.Combine(root, SourceDir);
+        string entry = Path.Combine(sources, library + ".pl");
+        if (!File.Exists(entry)) return $"{name} has no {library}.pl";
+
+        string marker = Path.Combine(root, DialectMarker);
+        string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
+
+        // The consult's warnings are caught, not printed. This runs on the
+        // page's behalf rather than the user's, and what a library from
+        // another system says while it loads is not their output.
+        var said = new StringWriter();
+        try
+        {
+            var errors = new List<ShmoCompileError>();
+            var compiled = ShmoViaConsult.CompileMany(
+                new[] { entry }, new[] { sources }, ShmoBuildMode.Release, errors,
+                string.IsNullOrEmpty(dialect) ? null : dialect, said);
+            if (errors.Count > 0)
+            {
+                string text = string.Join(
+                    "\n", errors.Select(e => $"{e.Line}:{e.Column}: {e.Message}"));
+                return RecordDiagnostic(root, library, text, said, failed: true);
+            }
+            if (compiled.Count == 0)
+                return RecordDiagnostic(root, library, "nothing compiled", said, failed: true);
+
+            // Packed by the librarian, not the linker: a library has no entry
+            // point, so there is nothing to compute reachability from — every
+            // module it brought in is kept. Under the wasm tier the archive
+            // also carries its predicates as a wasm module, baked here once
+            // (the batch compile the tier would otherwise run on every
+            // visit) and installed when the library loads.
+            bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
+            byte[] bytes = Librarian.CreateArchive(compiled
+                .Select(c => new BundleArchiveMember(
+                    c.ModuleName + ".shmo", ShmoWriter.ToBytes(c.Object)))
+                .ToList(),
+                wasm ? b => WasmBundleTier.Bake(b, stdlib: false) : null);
+            // Written under a temporary name and moved into place, so what
+            // `library(X)` can see is either the old bundle or the new one
+            // and never half of one — a consult may look while this runs.
+            string target = Path.Combine(root, library + ".shum");
+            string partial = target + ".partial";
+            File.WriteAllBytes(partial, bytes);
+            File.Move(partial, target, overwrite: true);
+            RecordDiagnostic(root, library, null, said, failed: false);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return RecordDiagnostic(root, library, ex.Message, said, failed: true);
+        }
+    }
 
     /// <summary>Files what a compile had to say, and gives back the headline —
     /// which is what <see cref="LibraryCompile"/> returns, so a caller that
