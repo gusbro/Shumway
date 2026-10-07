@@ -351,6 +351,10 @@ public static class MetaBodyConvert
         Cell a1 = arity > 1 ? engine.GetHeap(src + 2) : default;
         Cell w0 = arg0Goal && arity > 0 ? TagGoal(engine, module, a0, depth) : a0;
         Cell w1 = arg1Goal && arity > 1 ? TagGoal(engine, module, a1, depth) : a1;
+        // Already distributed: each call/N boundary of a nested if-then-else
+        // distributes again, and a rebuild here copied the whole construct
+        // every time.
+        if (w0.Equals(a0) && w1.Equals(a1)) return ctor;
         return Rebuild(engine, fid, arity, w0, w1);
     }
 
@@ -369,8 +373,18 @@ public static class MetaBodyConvert
         return fid == ArrowFid || fid == SoftArrowFid;
     }
 
+    /// <summary>The goal tagged with the module, unless it carries a tag
+    /// already: the innermost tag is the one that resolves (PrepareMqualGoal),
+    /// so another one outside it changes nothing. Re-tagging at every
+    /// boundary of a nested if-then-else nested one tag per level, and the
+    /// construct grew with each.</summary>
     private static Cell TagModule(Activation engine, int module, Cell goal)
     {
+        Cell d = Deref(engine, goal);
+        if (d.Tag == Tag.Str
+            && engine.GetHeap(d.AsHeapIndex).AsFunctorId is var qf
+            && (qf == MqualFid || qf == ColonFid))
+            return goal;
         int f = engine.AllocateHeap(3);
         engine.SetHeap(f, Cell.Functor(MqualFid));
         engine.SetHeap(f + 1, Cell.Atom(module));
@@ -391,6 +405,7 @@ public static class MetaBodyConvert
     /// is the next argument to tag (2: both done, rebuild).</summary>
     private struct DistributeFrame
     {
+        public Cell Ctor;
         public int Src;
         public int Fid;
         public int Arity;
@@ -431,7 +446,10 @@ public static class MetaBodyConvert
                 if (i == 0) top.W0 = w; else top.W1 = w;
                 continue;
             }
-            Cell built = Rebuild(engine, top.Fid, top.Arity, top.W0, top.W1);
+            Cell built = top.W0.Equals(top.Arity > 0 ? engine.GetHeap(top.Src + 1) : default)
+                         && top.W1.Equals(top.Arity > 1 ? engine.GetHeap(top.Src + 2) : default)
+                ? top.Ctor
+                : Rebuild(engine, top.Fid, top.Arity, top.W0, top.W1);
             if (--count == 0) return built;
             ref DistributeFrame parent = ref frames[count - 1];
             if (parent.Next == 1) parent.W0 = built; else parent.W1 = built;
@@ -444,7 +462,7 @@ public static class MetaBodyConvert
             int fid = engine.GetHeap(src).AsFunctorId;
             fs[n++] = new DistributeFrame
             {
-                Src = src, Fid = fid, Arity = FunctorTable.Lookup(fid).Arity,
+                Ctor = c, Src = src, Fid = fid, Arity = FunctorTable.Lookup(fid).Arity,
                 Goal0 = g0, Goal1 = g1,
             };
         }
