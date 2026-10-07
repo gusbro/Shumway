@@ -1467,7 +1467,9 @@ internal static class Prelude
         pairs_values(Pairs, Values) :- pairs_keys_values(Pairs, _, Values).
 
         %! predsort(:Pred, +List, -Sorted) | Lists | library | Sorts List by a three-way comparison predicate, dropping elements compared equal.
-        predsort(P, List, Sorted) :- '$predsort_all'(List, P, [], Sorted).
+        predsort(P, List, Sorted) :-
+            '$not_cyclic_list'(List, predsort/3),
+            '$predsort_all'(List, P, [], Sorted).
         '$predsort_all'([], _, Acc, Acc).
         '$predsort_all'([H|T], P, Acc, Sorted) :-
             '$predsort_ins'(Acc, P, H, Acc1),
@@ -1482,6 +1484,7 @@ internal static class Prelude
 
         %! sort(+Key, +Order, +List, -Sorted) | Lists | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
         sort(Key, Order, List, Sorted) :-
+            '$not_cyclic_list'(List, sort/4),
             '$sort4_tag'(List, Key, 0, Tagged),
             msort(Tagged, Asc),
             ( ( Order == ('@<') ; Order == ('@>') ) -> '$sort4_dedup'(Asc, Uniq)
@@ -1491,6 +1494,12 @@ internal static class Prelude
             ; Ordered = Uniq
             ),
             '$sort4_elems'(Ordered, Sorted).
+        % A cyclic list is not a list: the walks below would build forever.
+        '$not_cyclic_list'(List, Context) :-
+            (   '$cyclic_spine'(List)
+            ->  throw(error(type_error(list, List), Context))
+            ;   true
+            ).
         '$sort4_tag'([], _, _, []).
         '$sort4_tag'([E|Es], Key, I, [k(K, I, E)|Ps]) :-
             ( Key =:= 0 -> K = E ; arg(Key, E, K) ),

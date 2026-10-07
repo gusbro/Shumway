@@ -28,6 +28,38 @@ internal static class ListCursor
     public static bool IsNil(Cell c)
         => c.Tag == Tag.Atom && c.AsAtomId == AtomTable.EmptyListId;
 
+    /// <summary>Walks the spine, heads not entered, and returns where it
+    /// stopped: <c>[]</c> for a proper list, the unbound tail of a partial
+    /// one, the non-list term ending an improper one, or a list cell inside
+    /// the cycle of a cyclic spine (the only end <see cref="TryUncons"/>
+    /// accepts). <paramref name="length"/> is the number of cells walked,
+    /// which for a cyclic spine is not a length. Brent's detection: one step
+    /// per cell, the cycle found within twice its length past its entry.</summary>
+    public static Cell SkipSpine(Activation engine, Cell list, out long length)
+    {
+        Cell cur = Resolve(engine, list);
+        Cell saved = cur;
+        long power = 1, lam = 0;
+        length = 0;
+        while (TryUncons(engine, cur, out _, out Cell tail))
+        {
+            cur = Resolve(engine, tail);
+            length++;
+            if (cur.Equals(saved)) return cur;
+            if (++lam == power)
+            {
+                saved = cur;
+                power <<= 1;
+                lam = 0;
+            }
+        }
+        return cur;
+    }
+
+    /// <summary>True when the spine loops back on itself.</summary>
+    public static bool IsCyclic(Activation engine, Cell list)
+        => TryUncons(engine, SkipSpine(engine, list, out _), out _, out _);
+
     /// <summary>True unless the cell is a partial list — one whose spine or any
     /// element is still unbound. The text builtins use it to choose direction:
     /// a proper ground list is checked against the atom's text, anything else

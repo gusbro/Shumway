@@ -55,56 +55,19 @@ public static class MultiSolutionHelpers
     /// ground.</summary>
     public static bool ListLength(Activation engine)
     {
-        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
-        // Tortoise-and-hare over the spine: a cyclic list has no finite
-        // length, and without the check this while loop is an uninterruptible
-        // C# spin — `L = [a|L], length(L, 0)` hung the engine past every safe
-        // point (Neumerkel's length case 27).
-        Cell hare = cur;
-        bool hareRuns = true;
-        int count = 0;
-        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
-        {
-            count++;
-            cur = ListCursor.Resolve(engine, tail);
-            // Compare only after the hare advanced both steps: a hare that
-            // ran off the end proves the spine finite, and comparing anyway
-            // reports "cycle" when the tortoise catches it resting on nil —
-            // which failed length/2 on every short proper list.
-            if (hareRuns && ListCursor.TryUncons(engine, hare, out _, out Cell h1)
-                && ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
-            {
-                hare = ListCursor.Resolve(engine, h2);
-                if (cur.Equals(hare)) return false;   // the spine loops
-            }
-            else hareRuns = false;
-        }
-        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            return false;
+        // A cyclic spine ends on one of its cells, not on nil: no length, and
+        // a walk without the detection is an uninterruptible C# spin
+        // (Neumerkel's length case 27).
+        Cell end = ListCursor.SkipSpine(engine, engine.GetRegister(0), out long count);
+        if (!ListCursor.IsNil(end)) return false;
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
     }
 
     /// <summary><c>'$cyclic_spine'(L)</c> — true when L's list spine loops
-    /// (tortoise and hare; heads are not entered). The prelude's length/2
-    /// fails such lists outright: walking them, in C# or in Prolog, never
-    /// ends.</summary>
+    /// (heads are not entered). The prelude's length/2 fails such lists
+    /// outright: walking them, in C# or in Prolog, never ends.</summary>
     public static bool CyclicSpine(Activation engine)
-    {
-        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
-        Cell hare = cur;
-        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
-        {
-            cur = ListCursor.Resolve(engine, tail);
-            // Same rule as ListLength: only a hare that advanced both steps
-            // may be compared — one that ran off the end proves finiteness.
-            if (!ListCursor.TryUncons(engine, hare, out _, out Cell h1)
-                || !ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
-                return false;
-            hare = ListCursor.Resolve(engine, h2);
-            if (cur.Equals(hare)) return true;
-        }
-        return false;
-    }
+        => ListCursor.IsCyclic(engine, engine.GetRegister(0));
 
     /// <summary><c>'$make_var_list'(N, List)</c> — builds a fresh list
     /// of <c>N</c> unbound variables and unifies it with <c>List</c>.

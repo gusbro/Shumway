@@ -31,7 +31,6 @@ public static class SortBuiltins
     {
         var pairs = new List<(Cell Pair, Cell Key, int Index)>();
         Cell listStart = Resolve(engine, engine.GetRegister(0));
-        Cell cursor = listStart;
         int index = 0;
         // §8.4.3/8.4.4: the list argument is checked as a whole first —
         // an unbound one is an instantiation_error, a bound non-list (or
@@ -41,22 +40,25 @@ public static class SortBuiltins
         Cell sortedArg = Resolve(engine, engine.GetRegister(1));
         CheckPartialListArgument(engine, sortedArg);
         // §8.4.4.3: the sorted argument's bound elements have to be pairs too.
-        for (Cell sc = sortedArg; sc.Tag == Tag.Lis;
-             sc = Resolve(engine, engine.GetHeap(sc.AsHeapIndex + 1)))
+        // Both walks go through the cursor: a packed list is a list (ADR-047),
+        // and its elements, characters, are not pairs.
+        for (Cell sc = ListCursor.Resolve(engine, sortedArg);
+             ListCursor.TryUncons(engine, sc, out Cell sh, out Cell st);
+             sc = ListCursor.Resolve(engine, st))
         {
-            Cell el = Resolve(engine, engine.GetHeap(sc.AsHeapIndex));
+            Cell el = Resolve(engine, sh);
             if (el.Tag is Tag.Ref or Tag.AttVar) continue;
             ExtractPairKey(engine, el);
         }
-        while (cursor.Tag == Tag.Lis)
+        for (Cell cursor = ListCursor.Resolve(engine, listStart);
+             ListCursor.TryUncons(engine, cursor, out Cell head, out Cell tail);
+             cursor = ListCursor.Resolve(engine, tail))
         {
-            int headIdx = cursor.AsHeapIndex;
-            Cell pair = Resolve(engine, engine.GetHeap(headIdx));
+            Cell pair = Resolve(engine, head);
             if (pair.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
             Cell key = ExtractPairKey(engine, pair);
             pairs.Add((pair, key, index++));
-            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
 
         // Sort by key, breaking ties by original index → stable.
@@ -72,42 +74,28 @@ public static class SortBuiltins
         return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }
 
-    /// <summary>The sort family's list argument (§8.4.3.3): unbound (or
-    /// with an unbound tail) is an instantiation_error; a bound
-    /// non-list — including an improper tail — is type_error(list, L),
-    /// the whole argument being the culprit.</summary>
     /// <summary>§8.4: the sorted argument is checked too — it has to be a
     /// partial list (a variable, or a list ending in [] or a variable).
-    /// <c>sort([], 3)</c> is type_error(list, 3), not a quiet failure.</summary>
+    /// <c>sort([], 3)</c> is type_error(list, 3), not a quiet failure, and so
+    /// is a cyclic list, as SICStus and Scryer answer.</summary>
     private static void CheckPartialListArgument(Activation engine, Cell listStart)
     {
-        Cell cur = listStart;
-        while (true)
-        {
-            if (cur.Tag is Tag.Ref or Tag.AttVar) return;
-            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return;
-            if (cur.Tag == Tag.Pstr) return;
-            if (cur.Tag != Tag.Lis)
-                throw new PrologRuntimeException(
-                    "type_error", "list", engine, listStart);
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
-        }
+        Cell end = ListCursor.SkipSpine(engine, listStart, out _);
+        if (end.Tag is Tag.Ref or Tag.AttVar || ListCursor.IsNil(end)) return;
+        throw new PrologRuntimeException("type_error", "list", engine, listStart);
     }
 
+    /// <summary>The sort family's list argument (§8.4.3.3): unbound (or
+    /// with an unbound tail) is an instantiation_error; a bound non-list,
+    /// an improper or a cyclic one included, is type_error(list, L), the
+    /// whole argument being the culprit.</summary>
     private static void CheckSortListArgument(Activation engine, Cell listStart)
     {
-        // Through the list-like cursor: a packed list is a list (ADR-047).
-        Cell cur = engine.NormalizeListCell(listStart);
-        while (true)
-        {
-            if (cur.Tag is Tag.Ref or Tag.AttVar)
-                throw new PrologRuntimeException("instantiation_error");
-            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return;
-            if (!engine.TryUnconsListLike(cur, out _, out Cell tail))
-                throw new PrologRuntimeException(
-                    "type_error", "list", engine, listStart);
-            cur = engine.NormalizeListCell(Resolve(engine, tail));
-        }
+        Cell end = ListCursor.SkipSpine(engine, listStart, out _);
+        if (end.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (!ListCursor.IsNil(end))
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
     }
 
     /// <summary>Extracts the <c>K</c> from a <c>K-V</c> pair cell.

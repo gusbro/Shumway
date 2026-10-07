@@ -163,22 +163,10 @@ public static class TypeBuiltins
 
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
     /// terminated by the empty-list atom. An unbound tail makes it a partial
-    /// list — fails. An atom other than <c>[]</c> at the tail — fails. The
-    /// walk is bounded by the heap: a proper list has no more conses than
-    /// cells, so running out means a cyclic spine — fails, never hangs.</summary>
+    /// list — fails. An atom other than <c>[]</c> at the tail — fails. A
+    /// cyclic spine fails too: the walk detects the cycle.</summary>
     public static bool IsList(Activation engine)
-    {
-        Cell cell = engine.GetRegister(0);
-        int guard = engine.HeapTop + 2;
-        while (guard-- > 0)
-        {
-            cell = ListCursor.Resolve(engine, cell);
-            if (ListCursor.IsNil(cell)) return true;
-            if (!engine.TryUnconsListLike(cell, out _, out Cell tail)) return false;
-            cell = tail;
-        }
-        return false;
-    }
+        => ListCursor.IsNil(ListCursor.SkipSpine(engine, engine.GetRegister(0), out _));
 
     /// <summary><c>ground(X)</c> — X contains no unbound variables. Walks
     /// the heap representation recursively; on the first dereferenced
@@ -287,23 +275,17 @@ public static class TypeBuiltins
     public static bool IsCodeList(Activation engine) => IsTypedList(engine, chars: false);
 
     /// <summary><c>'$skip_list'(-Length, ?List, -Tail)</c> — SWI's robust
-    /// list-length primitive: counts the cons cells of List (a proper or partial
-    /// list), unifying Length with the count and Tail with the remainder — <c>[]</c>
-    /// for a proper list, or the unbound variable / non-list atom that terminates
-    /// a partial / improper one. Never fails on a bad list (unlike length/2).</summary>
+    /// list-length primitive: counts the cells of List's spine, unifying Length
+    /// with the count and Tail with where the spine ends — <c>[]</c> for a
+    /// proper list, the unbound variable or non-list term that terminates a
+    /// partial or improper one, and a list cell of the cycle for a cyclic
+    /// spine (Length is then the cells walked, not a length). Never fails on a
+    /// bad list (unlike length/2) and always terminates.</summary>
     public static bool SkipList(Activation engine)
     {
-        Cell cell = engine.GetRegister(1);
-        long len = 0;
-        while (true)
-        {
-            cell = Resolve(engine, cell);
-            if (cell.Tag != Tag.Lis) break;
-            len++;
-            cell = engine.GetHeap(cell.AsHeapIndex + 1);
-        }
+        Cell end = ListCursor.SkipSpine(engine, engine.GetRegister(1), out long len);
         if (!engine.UnifyRegisterWithCell(0, Cell.Int(len))) return false;
-        return engine.UnifyRegisterWithCell(2, cell);
+        return engine.UnifyRegisterWithCell(2, end);
     }
 
     private static bool IsTypedList(Activation engine, bool chars)
