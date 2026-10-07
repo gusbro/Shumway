@@ -1631,8 +1631,8 @@ internal static partial class WebShumwayApp
                     "COUNTERS OFF: this build did not compile them, so every "
                     + "tally below is zero because nobody counted, not because "
                     + "nothing happened. No deopt ranking and no guard "
-                    + "histogram. Republish with -p:ShumwayDiag=true beside "
-                    + "-p:ShumwayWasmTier=true. The times are real.");
+                    + "histogram. Republish with -p:ShumwayDiag=true. "
+                    + "The times are real.");
             rounds = Math.Max(1, rounds);
             try
             {

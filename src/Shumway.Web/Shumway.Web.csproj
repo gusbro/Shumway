@@ -25,11 +25,12 @@
          COOP/COEP headers. See docs. -->
     <WasmEnableThreads>true</WasmEnableThreads>
 
-    <!-- The wasm Tier-1 is OPT-IN for this app. A published WebShumway is
-         Tier-0 unless asked otherwise: the tier is still an arc under
-         measurement, and switching it on also drags in the emscripten relink
-         for the shim and a ~3 MB wasm module in the stdlib bundle.
-         Build or publish with -p:ShumwayWasmTier=true to include it. -->
+    <!-- The wasm Tier-1 is on: Directory.Build.rsp beside this file sets
+         it as a global property, so every project this build reaches agrees
+         on it. It brings the emscripten relink for the shim and a ~3 MB wasm
+         module in the stdlib bundle; -p:ShumwayWasmTier=false leaves it out.
+         The default here only applies to a build that does not read the
+         response file. -->
     <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
 
     <!-- The engine is AOT-compiled to wasm by default: measured 6-9x faster

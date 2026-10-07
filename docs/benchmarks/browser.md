@@ -31,18 +31,16 @@ out 5x slower on the desktop and 1.1-2.2x faster in the browser. Counts
 ### Publish and serve
 
 ```bash
-# Two flags, and leaving out either one fails quietly.
-#
-#   ShumwayWasmTier: the tier is opt-in. Without it a published
-#   WebShumway is Tier-0, every hook below still runs, and the times
-#   measure the interpreter.
+# The tier is in by default (ShumwayWasmTier=false would leave it out, and
+# every hook below would still run and time the interpreter). One flag, and
+# leaving it out fails quietly:
 #
 #   ShumwayDiag: the counters are [Conditional("SHUMWAY_DIAG")]. Without
 #   it they compile to nothing and read zero -- chains, hops, switches,
 #   deopts, builtin exits and both rankings. A page reporting "deopts=0"
 #   then means "not counted", not "none", and the output cannot tell the
 #   two apart.
-dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
+dotnet publish src/Shumway.Web -c Release -p:ShumwayDiag=true
 
 # Serves that publish with the cross-origin-isolation headers (COOP/COEP)
 # sent for real, so there is no service-worker synthesis and no

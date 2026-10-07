@@ -7,8 +7,8 @@
 #   powershell -File src/Shumway.Web/WebShumwayHook.ps1 `
 #       -Hook '#wasmprobe=exits&n=100000' -Done 'probe exits: done|CRASHED'
 #
-# Publish first, with the flags the hooks need:
-#   dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
+# Publish first, with the counters the hooks read:
+#   dotnet publish src/Shumway.Web -c Release -p:ShumwayDiag=true
 param(
   [Parameter(Mandatory)] [string]$Hook,      # the URL fragment, '#' included
   [Parameter(Mandatory)] [string]$Done,      # regex on the report that ends the run

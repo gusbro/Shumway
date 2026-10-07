@@ -28,7 +28,7 @@
                       SkipGetTargetFrameworkProperties="true" UndefineProperties="TargetFramework" />
   </ItemGroup>
 
-  <!-- With the wasm tier (Shumway.Web, -p:ShumwayWasmTier=true) each bundle
+  <!-- With the wasm tier (ShumwayWasmTier=true: Shumway.Web's build) each bundle
        also carries its predicates as a relocatable wasm module, installed
        when the library loads instead of compiled in the browser. The two
        flavours bake into different directories so switching the flag never

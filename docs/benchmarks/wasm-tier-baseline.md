@@ -13,7 +13,7 @@ For what the hooks are and how to run them, see
 ```bash
 # Ratios: a publish WITHOUT the diagnostic build (its counters and clocks
 # cost time on every chain).
-dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true
+dotnet publish src/Shumway.Web -c Release
 
 powershell -File src/Shumway.Web/WebShumwayHook.ps1 `
     -Hook '#wasmprobe=exits&n=20000&rounds=3' -Done 'probe exits: done|CRASHED'
@@ -21,7 +21,7 @@ powershell -File src/Shumway.Web/WebShumwayHook.ps1 `
     -Hook '#wasmclpz=2' -Done 'wasm clpz: Triska examples on Scryer|CRASHED'
 
 # Counts: a diagnostic publish, one case.
-dotnet publish src/Shumway.Web -c Release -p:ShumwayWasmTier=true -p:ShumwayDiag=true
+dotnet publish src/Shumway.Web -c Release -p:ShumwayDiag=true
 powershell -File src/Shumway.Web/WebShumwayHook.ps1 `
     -Hook '#wasmclpz=1:sudoku' -Done 'wasm clpz: Triska examples on Scryer|CRASHED'
 ```

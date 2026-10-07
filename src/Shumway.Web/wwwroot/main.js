@@ -2233,7 +2233,7 @@ if (persistMode) {
   // posting plus labeling -- on each tier, each stage bounded by a cancel so
   // a hang costs seconds instead of the whole run, and dumps the tier's
   // counters (deopt and builtin-exit rankings) after each. Needs a build with
-  // -p:ShumwayDiag=true as well as -p:ShumwayWasmTier=true.
+  // -p:ShumwayDiag=true.
   const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
   try {
     emit('--- clpz diag: staged SEND+MORE, tier0 vs wasm ---\n');
