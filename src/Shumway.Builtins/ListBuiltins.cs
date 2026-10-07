@@ -56,7 +56,9 @@ public static class ListBuiltins
         // A variable index enumerates every position on backtracking — the
         // SWI/SICStus library behaviour real programs rely on (e.g. iterating a
         // board with nth0(Row, Board, R)). A bound non-integer is a type error.
-        if (n.Tag == Tag.Ref)
+        // An attributed index is a variable too: each position binds it and
+        // its constraints decide.
+        if (n.Tag is Tag.Ref or Tag.AttVar)
             return NthStep(engine, new NthCursor(oneBased, engine.BuiltinReturnPc), isResume: false);
         if (n.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer", engine, n);
@@ -143,12 +145,11 @@ public static class ListBuiltins
     /// <summary>Resume state for a variable-index <c>nth0</c>/<c>nth1</c>
     /// enumeration: the running position plus a cached resume delegate
     /// (allocated once per call, re-pushed unchanged on every backtrack —
-    /// no per-position closure). The position is re-walked from register 1
-    /// each step rather than caching a heap index, because a heap GC between
-    /// backtracks can move the list cells.</summary>
+    /// no per-position closure). The rest of the list is not kept here: a
+    /// heap GC between backtracks moves the list cells (see NthStep).</summary>
     private sealed class NthCursor
     {
-        public int Pos;
+        public long Pos;
         public readonly bool OneBased;
         public readonly int ReturnPc;
         public readonly Func<Activation, int, bool> Resume;
@@ -164,17 +165,20 @@ public static class ListBuiltins
 
     private static bool NthStep(Activation engine, NthCursor c, bool isResume)
     {
-        Cell cur = Resolve(engine, engine.GetRegister(1));
-        for (int k = 0; k < c.Pos; k++)
-        {
-            if (!UnconsOrExtend(engine, ref cur, out _)) return false;
-        }
+        // The rest of the list rides in the choice point as a fourth saved
+        // register, which the heap GC relocates, so a step goes on from where
+        // the previous one stopped: walking from the list's start each time
+        // makes the enumeration quadratic. Restoring it clobbers X3, which is
+        // dead after the call: a variable used past a body goal lives in a
+        // Y slot.
+        Cell cur = Resolve(engine, engine.GetRegister(isResume ? 3 : 1));
         if (!UnconsOrExtend(engine, ref cur, out Cell head))
             return false;                              // improper tail
 
-        int pos = c.Pos;
+        long pos = c.Pos;
         c.Pos = pos + 1;
-        engine.PushBuiltinChoicePoint(c.Resume, arity: 3);
+        engine.PushBuiltinChoicePoint(c.Resume, arity: 4);
+        engine.SetTopCpArgRegister(3, cur);
 
         long idxVal = c.OneBased ? pos + 1 : pos;
         if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
