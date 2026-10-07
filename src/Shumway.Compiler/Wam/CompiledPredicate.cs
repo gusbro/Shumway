@@ -177,6 +177,11 @@ public sealed class CompiledPredicate
     public IReadOnlyList<DebugClauseFrame> DebugFrames { get; set; }
         = Array.Empty<DebugClauseFrame>();
 
+    /// <summary>ADR-035 — compiled debuggable: a debugger may stop inside it,
+    /// which it can only do on the interpreter (a breakpoint is a byte
+    /// patched into the bytecode), so no tier promotes it.</summary>
+    public bool IsDebuggable => DebugFrames.Count > 0;
+
     public CompiledPredicate(
         byte[] bytecode,
         int functorId,

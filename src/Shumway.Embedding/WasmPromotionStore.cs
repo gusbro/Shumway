@@ -368,6 +368,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             if (_unpromotable.Contains(fid)) continue;
             if (already.Contains(fid)) continue;
             if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
+            if (pred.IsDebuggable) continue;
             candidates.Add((pred, addr));
         }
         if (candidates.Count == 0) return 0;
@@ -398,6 +399,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             int fid = pred.FunctorId;
             if (_unpromotable.Contains(fid) || already.Contains(fid)) continue;
             if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
+            if (pred.IsDebuggable) continue;
             var del = Promoter(pred, addr);
             if (del is null) { _unpromotable.Add(fid); continue; }
             ilStore.RegisterBoundDelegate(fid, del);
@@ -473,6 +475,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         count++;
         _counters[functorId] = count;
         if (count < Threshold) return null;
+        // ADR-035: debuggable code stays on the interpreter (see
+        // IlPromotionStore.CompileAtThreshold).
+        if (predicate.IsDebuggable) return null;
         // A snapshot is a module of its own, so it never waits for a batch.
         if (shadow) return PromoteShadow(functorId, engine!);
 

@@ -857,6 +857,10 @@ public sealed class IlPromotionStore
     private PredicateDelegate? CompileAtThreshold(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic)
     {
+        // ADR-035: debuggable code stays on the interpreter. Not left to the
+        // debug opcodes the compiler refuses: a fact or a rule ending in a
+        // builtin carries none, and compiled, a breakpoint in it never fires.
+        if (predicate.IsDebuggable) return null;
         // A null snapshot (no visible clauses yet) is a retry, not a rejection —
         // clauses may arrive on a later assertz.
         CompiledPredicate target = predicate;
