@@ -509,61 +509,21 @@ public sealed partial class IlPredicateCompiler
                 int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
                 if (fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid)
                 {
-                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: true);
+                    goal = MetaBodyConvert.DistributeModule(
+                        engine, goal, module, arg0Goal: true, arg1Goal: true);
                     engine.SetRegister(0, goal);
                     return -1;
                 }
                 if (fid == NegFid || fid == NotFid)
                 {
-                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: false);
+                    goal = MetaBodyConvert.DistributeModule(
+                        engine, goal, module, arg0Goal: true, arg1Goal: false);
                     engine.SetRegister(0, goal);
                     return -1;
                 }
             }
             engine.SetRegister(0, goal);
             return module;
-        }
-
-        private static Cell BuildMqual(Activation engine, int moduleAtomId, Cell goalCell)
-        {
-            int f = engine.AllocateHeap(3);
-            engine.SetHeap(f, Cell.Functor(MqualFid));
-            engine.SetHeap(f + 1, Cell.Atom(moduleAtomId));
-            engine.SetHeap(f + 2, goalCell);
-            return Cell.Str(f);
-        }
-
-        /// <summary>Mirror of BytecodeInterpreter.WrapGoal (ADR-037): distributes
-        /// the module into an if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) rather than
-        /// wrapping it whole, so the enclosing <c>;</c>'s structural if-then-else /
-        /// soft-cut match still fires.</summary>
-        private static Cell WrapGoal(Activation engine, int module, Cell goalCell)
-        {
-            Cell d = DerefCell(engine, goalCell);
-            if (d.Tag == Tag.Str)
-            {
-                int f = engine.GetHeap(d.AsHeapIndex).AsFunctorId;
-                if (f == ArrowFid || f == SoftArrowFid)
-                    return DistributeMqual(engine, d, module, arg0Goal: true, arg1Goal: true);
-            }
-            return BuildMqual(engine, module, goalCell);
-        }
-
-        private static Cell DistributeMqual(
-            Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal)
-        {
-            int src = ctor.AsHeapIndex;
-            int fid = engine.GetHeap(src).AsFunctorId;
-            var (_, arity) = FunctorTable.Lookup(fid);
-            Cell a0 = arity > 0 ? engine.GetHeap(src + 1) : default;
-            Cell a1 = arity > 1 ? engine.GetHeap(src + 2) : default;
-            Cell w0 = arg0Goal && arity > 0 ? WrapGoal(engine, module, a0) : a0;
-            Cell w1 = arg1Goal && arity > 1 ? WrapGoal(engine, module, a1) : a1;
-            int f = engine.AllocateHeap(arity + 1);
-            engine.SetHeap(f, Cell.Functor(fid));
-            if (arity > 0) engine.SetHeap(f + 1, w0);
-            if (arity > 1) engine.SetHeap(f + 2, w1);
-            return Cell.Str(f);
         }
 
         private static Cell DerefCell(Activation engine, Cell c) =>

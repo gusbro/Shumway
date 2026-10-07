@@ -377,57 +377,13 @@ public sealed partial class BytecodeInterpreter
             || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
     }
 
-    private bool IsBodyConvertible(Cell c)
-    {
-        c = DerefCell(c);
-        switch (c.Tag)
-        {
-            case Tag.Ref:
-            case Tag.AttVar:
-            case Tag.Atom:
-                return true;
-            case Tag.Str:
-            {
-                int fIdx = c.AsHeapIndex;
-                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
-                    _engine.GetHeap(fIdx).AsFunctorId);
-                if (IsControlConstruct(aid, ar))
-                    return IsBodyConvertible(_engine.GetHeap(fIdx + 1))
-                        && IsBodyConvertible(_engine.GetHeap(fIdx + 2));
-                return true;
-            }
-            default:
-                return false;
-        }
-    }
-
     /// <summary>The same §7.8.3 check for a goal still in term form (the
-    /// in-engine meta-call path).</summary>
-    private void CheckBodyConvertible(Cell part, Cell whole)
+    /// in-engine meta-call path): the whole goal is the culprit.</summary>
+    private void CheckBodyConvertible(Cell goal)
     {
-        Cell c = DerefCell(part);
-        switch (c.Tag)
-        {
-            case Tag.Ref:
-            case Tag.AttVar:
-            case Tag.Atom:
-                return;
-            case Tag.Str:
-            {
-                int fIdx = c.AsHeapIndex;
-                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
-                    _engine.GetHeap(fIdx).AsFunctorId);
-                if (IsControlConstruct(aid, ar))
-                {
-                    CheckBodyConvertible(_engine.GetHeap(fIdx + 1), whole);
-                    CheckBodyConvertible(_engine.GetHeap(fIdx + 2), whole);
-                }
-                return;
-            }
-            default:
-                throw new PrologRuntimeException(
-                    "type_error", "callable", _engine, whole);
-        }
+        if (!Shumway.Core.MetaBodyConvert.IsBodyConvertible(
+                _engine, goal, throughQualifiers: false))
+            throw new PrologRuntimeException("type_error", "callable", _engine, goal);
     }
 
     /// <summary>Runs one goal term in the live engine. Handles
@@ -438,7 +394,35 @@ public sealed partial class BytecodeInterpreter
     /// existence error.</summary>
     private bool MetaCallInEngine(ProgramView code, Cell goal)
     {
-        goal = DerefCell(goal);
+        // A conjunction runs left to right with its right arguments waiting
+        // here, not on the C# stack: its depth is the program's (a frozen
+        // goal list). Each waits as its heap slot, read when its turn comes.
+        Stack<int>? rest = null;
+        while (true)
+        {
+            goal = DerefCell(goal);
+            if (goal.Tag == Tag.Str
+                && _engine.GetHeap(goal.AsHeapIndex).AsFunctorId == ConjFunctorId)
+            {
+                // §7.8.3: converting the goal to a body must succeed before
+                // any of it runs — call((fail, 3)) is
+                // type_error(callable, (fail,3)), with the whole goal as the
+                // culprit, and `fail` never executes.
+                CheckBodyConvertible(goal);
+                (rest ??= new Stack<int>()).Push(goal.AsHeapIndex + 2);
+                goal = _engine.GetHeap(goal.AsHeapIndex + 1);
+                continue;
+            }
+            if (!MetaCallGoal(code, goal)) return false;
+            if (rest is null || rest.Count == 0) return true;
+            goal = _engine.GetHeap(rest.Pop());
+        }
+    }
+
+    /// <summary>MetaCallInEngine for a dereferenced goal that is not a
+    /// conjunction.</summary>
+    private bool MetaCallGoal(ProgramView code, Cell goal)
+    {
         int functorId;
         int argBase;
         int arity;
@@ -469,16 +453,6 @@ public sealed partial class BytecodeInterpreter
                   ce.StampBuiltin("call", 1); throw ce; }
         }
 
-        if (functorId == ConjFunctorId)
-        {
-            // §7.8.3: converting the goal to a body must succeed before
-            // any of it runs — call((fail, 3)) is
-            // type_error(callable, (fail,3)), with the whole goal as the
-            // culprit, and `fail` never executes.
-            CheckBodyConvertible(goal, goal);
-            return MetaCallInEngine(code, _engine.GetHeap(argBase))
-                && MetaCallInEngine(code, _engine.GetHeap(argBase + 1));
-        }
         if (functorId == TrueFunctorId) return true;
         if (functorId == FailFunctorId) return false;
 
@@ -983,70 +957,21 @@ public sealed partial class BytecodeInterpreter
             if (fid == ConjFunctorId || fid == DisjFunctorId
                 || fid == ArrowFunctorId || fid == SoftArrowFunctorId)
             {
-                goal = DistributeMqual(goal, module, arg0Goal: true, arg1Goal: true);
+                goal = Shumway.Core.MetaBodyConvert.DistributeModule(
+                    _engine, goal, module, arg0Goal: true, arg1Goal: true);
                 _engine.SetRegister(0, goal);
                 return -1;
             }
             if (fid == NegFunctorId || fid == NotFunctorId)
             {
-                goal = DistributeMqual(goal, module, arg0Goal: true, arg1Goal: false);
+                goal = Shumway.Core.MetaBodyConvert.DistributeModule(
+                    _engine, goal, module, arg0Goal: true, arg1Goal: false);
                 _engine.SetRegister(0, goal);
                 return -1;
             }
         }
         _engine.SetRegister(0, goal);
         return module;
-    }
-
-    /// <summary>Tags a goal-position sub-arg with the resolution module. Normally
-    /// wraps it as <c>'$mqual'(Module, Goal)</c>; but when the goal is itself an
-    /// if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) — the shape a <c>;</c> matches
-    /// structurally in <c>'$call_disj'</c> to give it if-then-else / soft-cut
-    /// semantics — it distributes the module into the construct's Cond/Then
-    /// instead. A wrapping <c>$mqual</c> there would hide the <c>-&gt;</c>/<c>*-&gt;</c>
-    /// from that match (falling to the plain-disjunction clauses, which run both
-    /// branches / raise <c>existence_error(*-&gt;/2)</c>).</summary>
-    private Cell WrapGoal(int module, Cell goalCell)
-    {
-        Cell d = DerefCell(goalCell);
-        if (d.Tag == Tag.Str)
-        {
-            int f = _engine.GetHeap(d.AsHeapIndex).AsFunctorId;
-            if (f == ArrowFunctorId || f == SoftArrowFunctorId)
-                return DistributeMqual(d, module, arg0Goal: true, arg1Goal: true);
-        }
-        return BuildMqual(module, goalCell);
-    }
-
-    /// <summary>Allocates <c>'$mqual'(Module, Goal)</c> on the heap.</summary>
-    private Cell BuildMqual(int moduleAtomId, Cell goalCell)
-    {
-        int f = _engine.AllocateHeap(3);
-        _engine.SetHeap(f, Cell.Functor(MqualFunctorId));
-        _engine.SetHeap(f + 1, Cell.Atom(moduleAtomId));
-        _engine.SetHeap(f + 2, goalCell);
-        return Cell.Str(f);
-    }
-
-    /// <summary>Rebuilds a binary/unary control construct with its goal-position
-    /// sub-args re-tagged <c>'$mqual'(Module, sub)</c>, so a module travels into
-    /// the sub-goals a runtime-variable meta-goal resolves.</summary>
-    private Cell DistributeMqual(Cell ctor, int module, bool arg0Goal, bool arg1Goal)
-    {
-        int src = ctor.AsHeapIndex;
-        int fid = _engine.GetHeap(src).AsFunctorId;
-        var (_, arity) = FunctorTable.Lookup(fid);
-        // Capture the source args before BuildMqual allocates (so the reserved
-        // ctor block and the $mqual blocks never interleave mid-write).
-        Cell a0 = arity > 0 ? _engine.GetHeap(src + 1) : default;
-        Cell a1 = arity > 1 ? _engine.GetHeap(src + 2) : default;
-        Cell w0 = arg0Goal && arity > 0 ? WrapGoal(module, a0) : a0;
-        Cell w1 = arg1Goal && arity > 1 ? WrapGoal(module, a1) : a1;
-        int f = _engine.AllocateHeap(arity + 1);
-        _engine.SetHeap(f, Cell.Functor(fid));
-        if (arity > 0) _engine.SetHeap(f + 1, w0);
-        if (arity > 1) _engine.SetHeap(f + 2, w1);
-        return Cell.Str(f);
     }
 
     /// <summary>Builds the mangled <c>module$name/arity</c> functor id used to
