@@ -115,7 +115,7 @@ looks like a hang and is not.
 | `#wasmthread` | Design probe: is engine work pinned to one thread? A module registers in the calling thread's own table, so a pool that hands out a different thread makes every module pay registration again. |
 | `#wasmspike[=NxM]` | Phase-0 spike, kept as the reproducer for `browser-spike.md`. |
 | `#wasmsplit[=hopsxrounds]` | Phase-0 spike (the `return_call_indirect` Go/No-Go), kept as the reproducer for `wasm-split-spike.md`. |
-| `#wasmclpz[=rounds[:case,...]]` | Triska's CLP(Z) examples over Scryer's real `clpz.pl`, Tier-0 against the tier, with an oracle per case; the case list narrows the run. Needs [Scryer's library](#scryers-library). |
+| `#wasmclpz[=rounds[:case,...]]` | Triska's CLP(Z) examples over Scryer's real `clpz.pl`, Tier-0 against the tier, with an oracle per case; the case list narrows the run. clpz loads from its bundle, compiled on demand. `#wasmclpzsrc=...` loads it from source instead, and a trailing `&bundles_off` has the tier compile the bundles' predicates live (`jit_compile(bundles_off)`). Needs [Scryer's library](#scryers-library). |
 | `#wasmprobe=<file>[&n=N][&rounds=R][&trace=ch,...][&budget=s][&cps=ab|abc][&grain=lazy]` | The generic probe: the goals `wwwroot/probes/<file>.pl` declares, Tier-0 against the tier, best time, ratio and the tier's counters per goal. See [Probes](#probes). |
 
 ### Probes

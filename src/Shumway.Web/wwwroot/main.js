@@ -281,8 +281,11 @@ async function run(queryText) {
   // jit_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
   // tier nor the stdlib bundle's wasm module), jit_compile(cps). and
-  // jit_compile(nocps). choose the form, jit_compile(status). reports.
-  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|cps|nocps|\d+)\s*\))?\s*\.?\s*$/
+  // jit_compile(nocps). choose the form, jit_compile(status). reports,
+  // jit_compile(bundles_off). compiles the predicates of bundle modules like
+  // the program's own (to measure a baked module against a live build) and
+  // jit_compile(bundles_on). installs the modules again.
+  const jitCompile = /^\s*jit_compile\s*(?:\(\s*(on|off|all|status|cps|nocps|bundles_on|bundles_off|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
   if (jitCompile) {
     const report = await session.exports().JitCompileControl(jitCompile[1] || 'on');
@@ -2490,16 +2493,30 @@ if (persistMode) {
   const m = await import('./measure.js');
   const mark = m.mark;
   try {
-    const spec = /^#wasmclpz=(\d+)(?::([\w,]+))?$/.exec(location.hash);
-    const rounds = spec ? Number(spec[1]) : 1;
-    const onlyCases = spec && spec[2] ? spec[2].split(',') : null;
+    // &bundles_off: the tier compiles the bundles' predicates like the
+    // program's own, instead of installing their baked modules.
+    const bundlesOff = location.hash.endsWith('&bundles_off');
+    const spec = /^#wasmclpz(src)?=(\d+)(?::([\w,]+))?(?:&bundles_off)?$/.exec(location.hash);
+    const fromSource = !!(spec && spec[1]);
+    const rounds = spec ? Number(spec[2]) : 1;
+    const onlyCases = spec && spec[3] ? spec[3].split(',') : null;
     emit(`--- wasm clpz: Triska examples, tier0 vs tier1, x${rounds} rounds ---\n`);
 
     // 1. Scryer's library tree into a 'scryer' collection.
     const lib = await m.loadScryerLibrary(libraries, 'scryer_clpz');
     const files = { length: lib.files }, bytes = lib.bytes, tWrite = lib.ms;
     mark(`clpz: wrote ${lib.files} files, ${bytes} chars, ${Math.round(tWrite)}ms`);
+    // #wasmclpzsrc: clpz loads from its source rather than a bundle compiled
+    // on demand, the way it loaded before that existed: a compile recorded as
+    // failed is not retried.
+    if (fromSource) {
+      await session.exports().LibraryPutDiagnostic('scryer_clpz', 'clpz',
+        'failed\nloaded from source for this measurement');
+      mark('clpz: loading clpz from source');
+    }
 
+    if (bundlesOff)
+      mark('clpz: ' + (await session.exports().JitCompileControl('bundles_off')).trim());
     // 2. clpz + the benchmark program. The load is itself a number.
     const cases = await (await fetch('scryerlib/cases.pl')).text();
     const tLoad0 = performance.now();

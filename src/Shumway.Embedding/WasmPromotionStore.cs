@@ -77,6 +77,13 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         var pending = ilStore.PendingWasmModules;
         if (pending.Count == 0 || BundleInstaller is null) return 0;
+        if (!InstallBundles)
+        {
+            _heldBundles.AddRange(pending);
+            pending.Clear();
+            BundleInstallNote = "held: jit_compile(bundles_off)";
+            return 0;
+        }
         if (engine._staticLink is null)
         {
             engine.Query("true.");
@@ -92,11 +99,50 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             foreach (int fid in fids) BundleFids.Add(fid);
             installed += fids.Count;
             BundleInstallNote = note;
+            if (fids.Count > 0) _installedBundles.Add(module);
         }
         _lastBundleInstalled = installed;
         return installed;
     }
     private int _lastBundleInstalled;
+
+    /// <summary>Whether a bundle's baked wasm module is installed
+    /// (jit_compile(bundles_on), jit_compile(bundles_off)). See <see cref="SetBundles"/>.</summary>
+    public bool InstallBundles { get; private set; } = true;
+
+    // Modules installed, kept so that turning bundles off and on again
+    // installs them again; and modules held while bundles are off.
+    private readonly List<byte[]> _installedBundles = new();
+    private readonly List<byte[]> _heldBundles = new();
+
+    /// <summary>jit_compile(bundles_off): the predicates running from bundle
+    /// modules are evicted and later modules held, so the tier compiles
+    /// those predicates as it compiles the program's own; that is how a
+    /// baked module is measured against what the tier builds. On: the held
+    /// modules install at the next goal. Returns the predicates evicted (off)
+    /// or the modules released (on).</summary>
+    public int SetBundles(bool on)
+    {
+        InstallBundles = on;
+        var pending = ilStore.PendingWasmModules;
+        if (on)
+        {
+            int released = _heldBundles.Count;
+            pending.AddRange(_heldBundles);
+            _heldBundles.Clear();
+            return released;
+        }
+        _heldBundles.AddRange(_installedBundles);
+        _installedBundles.Clear();
+        _heldBundles.AddRange(pending);
+        pending.Clear();
+        if (BundleFids.Count == 0) return 0;
+        var all = new List<int>(BundleFids);
+        Displaced(all);
+        var gone = StaleEvicted?.Invoke(all);
+        if (gone is not null) Displaced(gone);
+        return all.Count;
+    }
 
     /// <summary>jit_compile(all): compile the whole static program as it is
     /// consulted, not when the user's first query happens to need the link —

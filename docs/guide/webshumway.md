@@ -250,6 +250,13 @@ system takes its form from `SHUMWAY_IL_CPS` when it starts, so there these
 two succeed only for the form already in use.
 
 `jit_compile(status).` is a top-level command rather than a setting, and
+A compiled library, and the standard library, carry their predicates as a
+WebAssembly module baked when they were compiled, and loading them installs
+it. At the top level, `jit_compile(bundles_off).` compiles those predicates
+the way it compiles your program's instead, and `jit_compile(bundles_on).`
+installs the modules again. It is a measuring switch: it tells whether a
+baked module runs as well as what the compiler builds live.
+
 belongs to the page the way `restart.` does: it reports what is compiled,
 what was refused and why, and the tier's counters. Ask for it from a program
 and you get a domain error, because there is nothing for a program to do with

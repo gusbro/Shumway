@@ -2022,6 +2022,7 @@ internal static partial class WebShumwayApp
                     .ToList();
                 string report = $"% jit_compile: threshold={w.Threshold}\n"
                     + $"%   stdlib bundle wasm: {BrowserWasmTier.BundleInstallNote}\n"
+                    + (w.InstallBundles ? "" : "%   bundles: off (their predicates compile like the program's own)\n")
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
@@ -2100,6 +2101,17 @@ internal static partial class WebShumwayApp
                     w.CompileAllTick(engine);
                 return report;
             }
+            if (command is "bundles_on" or "bundles_off")
+            {
+                if (store.Wasm is not { } bw)
+                    return "% jit_compile: not attached (jit_compile. to attach)\n";
+                bool on = command == "bundles_on";
+                int moved = bw.SetBundles(on);
+                return on
+                    ? $"% jit_compile: bundles on; {moved} held module(s) install at the next goal\n"
+                    : $"% jit_compile: bundles off; {moved} predicates left their bundle modules"
+                      + " and are compiled like the program's own\n";
+            }
             if (command is "off" or "none")
                 return BrowserWasmTier.SetJit(engine, 0).Report;
             if (command == "all")
@@ -2110,7 +2122,7 @@ internal static partial class WebShumwayApp
             int threshold = command == "on" ? 16
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
-                return "% jit_compile: all | none | status | <threshold>\n";
+                return "% jit_compile: all | none | status | <threshold> | bundles_on | bundles_off\n";
             return BrowserWasmTier.SetJit(engine, threshold).Report;
         });
 
