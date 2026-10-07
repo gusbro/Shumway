@@ -651,6 +651,12 @@ execute, hooks run, `use_module` dependencies are pulled in) and then writes
 a library written for another engine (SICStus, Scryer, SWI) and turn it into a
 Shumway bundle *without editing its source*.
 
+A library whose job is to install `term_expansion` / `goal_expansion` hooks for
+the programs that import it keeps them in its bundle: loading the bundle makes
+them live for whatever is consulted afterwards, as consulting its source does.
+Scryer's `atts` is one: its hooks are what turn `:- attribute color/1.` and
+`get_atts/2` in your program into working code.
+
 **Worked recipe: a program using Scryer's `clpz`, from an unpatched
 checkout.** Point Shumway at your own copy of the library (nothing
 third-party is shipped in Shumway; you supply the sources). Say `app.pl` is:

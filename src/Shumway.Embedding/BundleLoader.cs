@@ -1590,6 +1590,9 @@ internal sealed class BundleLoader
                 if (!E._dynStore.HasClauses(fid))
                     E._dynStore[fid] = new List<Clause>();
             }
+            // An expansion hook is global, as the consult that compiled this
+            // module made it (see the shipped clauses below).
+            else if (PrologEngine.IsGlobalHookFunctor(fid)) { }
             else // Local — record the bare fid so query setup can fold
                  // it into the module's locals.
             {
@@ -1606,9 +1609,30 @@ internal sealed class BundleLoader
         // the consult of the same source would (privacy is judged at
         // clause/2 time). Shipped, not compiled: the entry's bytecode is
         // what runs. Never for the prelude: its predicates are builtins.
+        // An expansion hook's clauses are the exception: compiled from source,
+        // as the consult that built this module left them, they join the one
+        // global hook that every later consult runs, each body resolved in its
+        // module. The entry's bytecode holds them as a local of the module,
+        // which expands nothing: a library that exists to install a hook
+        // (Scryer's atts) did nothing for a program loaded after it.
+        bool joinedHook = false;
         if (!isPrelude)
             foreach (var encoded in entry.ClauseTerms)
-                manifest.ShippedClauses.Add(TermCodec.DecodeClause(encoded));
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                if (ConsultPipeline.IsHookClauseHead(clause))
+                {
+                    manifest.Clauses.Add(clause);
+                    joinedHook = true;
+                }
+                else manifest.ShippedClauses.Add(clause);
+            }
+        if (joinedHook)
+        {
+            E._hookIndexValid = false;
+            foreach (int hookFid in PrologEngine.GlobalHookFunctors)
+                E.InvalidateIlForFunctor(hookFid);
+        }
 
         // seed _dynamicClauses with the source-declared
         // clauses of every `:- dynamic foo/N.` predicate. Mirrors what

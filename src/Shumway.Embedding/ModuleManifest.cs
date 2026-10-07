@@ -30,7 +30,8 @@ public sealed class ModuleManifest
     /// <summary>A bundle's raw static clauses, for <c>clause/2</c> and
     /// <c>listing/1</c> only: the entry's bytecode already runs them, so
     /// they must never join <see cref="Clauses"/> (that would recompile the
-    /// module over its precompiled form). Read through
+    /// module over its precompiled form). An expansion hook's clauses are not
+    /// here: they go to <see cref="Clauses"/> (BundleLoader). Read through
     /// <see cref="InspectableClauses"/>.</summary>
     public List<Clause> ShippedClauses { get; }
     /// <summary>Every clause an inspection builtin may show: the compiled

@@ -615,7 +615,7 @@ internal sealed class ConsultPipeline
 
     // A collected (M:-stripped) clause defining a term_expansion / goal_expansion
     // hook — its head is one of those functors.
-    private static bool IsHookClauseHead(Clause c)
+    internal static bool IsHookClauseHead(Clause c)
     {
         Term head = c.Kind == ClauseKind.Rule
             && c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }

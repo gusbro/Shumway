@@ -527,6 +527,9 @@ public sealed partial class PrologEngine
     internal static bool IsGlobalHookFunctor(int fid) =>
         fid == TermExpansionFid || fid == GoalExpansionFid || fid == TermExpansion6Fid;
 
+    internal static readonly int[] GlobalHookFunctors =
+        { TermExpansionFid, GoalExpansionFid, TermExpansion6Fid };
+
     // Apply goal_expansion to every body goal of a clause (or a directive's goal).
     // A fact has no body and is returned unchanged.
     internal Clause ExpandClauseGoals(Clause clause)
