@@ -48,6 +48,11 @@ internal sealed class BundleLoader
     /// can skip the WAM compile for those clauses.</summary>
     public void LoadBundle(Bundle bundle) => LoadBundleCore(bundle, bundleDir: null);
 
+    /// <summary>The modules the last bundle load brought in. Set as the load
+    /// finishes, so a nested load (an entry importing another bundle) has
+    /// already set and spent its own.</summary>
+    internal IReadOnlyList<string> LastLoadedModules { get; private set; } = Array.Empty<string>();
+
     /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
     /// debugger can open, and return its full path. Named for the module so
     /// <see cref="Shumway.Core.DebugSiteTable"/>'s base-name file identity matches the
@@ -397,6 +402,9 @@ internal sealed class BundleLoader
         // tier after loading the stdlib bundle.
         foreach (var module in bundle.WasmModules)
             E.IlPromotion.PendingWasmModules.Add(module);
+        LastLoadedModules = effectiveEntries
+            .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
+            .Distinct().ToList();
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");

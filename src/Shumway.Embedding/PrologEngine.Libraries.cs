@@ -914,6 +914,13 @@ public sealed partial class PrologEngine
             if (_consultedPaths.Contains(full)) ReconsultFile(path);
             else ConsultFile(path);
 
+            // ADR-035: a library bundle is code the user did not write, as
+            // clpfd is. Release-compiled is not enough: the interpreter raises
+            // a port at every call, and unmarked, a step stops in it.
+            if (isBundle)
+                foreach (string module in Bundles.LastLoadedModules)
+                    if (module != DefaultModuleName) MarkModuleNonDebuggable(module);
+
             // From a bundle, the module being imported is the one named like the
             // library — which is what `library(clpz)` asked for. Without this an
             // export-qualified module loaded from a bundle fed no import table,
