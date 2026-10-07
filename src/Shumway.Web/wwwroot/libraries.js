@@ -189,7 +189,8 @@ export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, libr
  * What a collection provides: `[{name, state, note}]`, one per importable
  * library. Scryer's lib/ is one folder and forty-six of these.
  *
- * `state` is 'compiled', 'source' or 'failed', and `note` is the headline of
+ * `state` is 'compiled', 'source', 'failed' or 'native' (the engine has its
+ * own version, so there is nothing to build), and `note` is the headline of
  * the last compile's diagnostic when there was one — a library that failed, or
  * one that compiled while every one of its directives raised, which comes to
  * the same thing for whoever tries to call it.

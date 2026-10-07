@@ -181,6 +181,7 @@ each of them:
 | source only | not built yet; the first program that imports it builds it |
 | compiled, with warnings | it built, but part of it did not load: often a foreign interface |
 | will not compile | it cannot be built here; **details** says why |
+| provided by Shumway | the engine has its own version (Scryer's `builtins`, `format`, `dif`, ...); importing it gives that one, and there is nothing to build |
 
 The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the

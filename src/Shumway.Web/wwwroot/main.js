@@ -611,7 +611,8 @@ async function buildCollection(name) {
   const run = { name, cancel: false };
   buildRun = run;
 
-  const queue = (await libraries.entries(name)).filter((e) => !e.compiled);
+  const queue = (await libraries.entries(name))
+    .filter((e) => !e.compiled && e.state !== 'native');
   const total = queue.length;
   let built = 0, stoppedEarly = false;
   const failed = [];
@@ -747,7 +748,8 @@ async function refreshLibraries() {
       });
 
       const state = document.createElement('span');
-      state.textContent = entry.state === 'failed' ? 'will not compile'
+      state.textContent = entry.state === 'native' ? 'provided by Shumway'
+        : entry.state === 'failed' ? 'will not compile'
         : entry.note ? 'compiled, with warnings'
         : entry.compiled ? 'compiled'
         : 'source only';
@@ -789,7 +791,8 @@ async function refreshLibraries() {
         await refreshLibraries();
       });
 
-      row.append(open, state, build);
+      // The engine has its own version: nothing to build.
+      row.append(open, state, ...(entry.state === 'native' ? [] : [build]));
       if (why) row.append(why);
       parts.push(row);
     }
@@ -2091,6 +2094,9 @@ if (persistMode) {
     const m = await import('./measure.js');
     const loaded = await m.loadScryerLibrary(libraries, collection);
     mark(`ondemand: collection holds ${(await libraries.files(collection)).length} files (wrote ${loaded.files})`);
+    const native = (await libraries.entries(collection))
+      .filter((e) => e.state === 'native').map((e) => e.name);
+    mark(`ondemand: provided by Shumway: ${native.join(', ')}`);
 
     const batch = buildCollection(collection);   // as an import starts it
     const compiled = async (lib) =>
@@ -2140,6 +2146,11 @@ if (persistMode) {
     mark(`ondemand: clpz compiled=${await compiled('clpz')}, lists compiled=${await compiled('lists')}`);
     if (buildRun) buildRun.cancel = true;
     await batch;
+    // The batch must not have built a library the engine replaces: its bundle
+    // would be all a later import finds.
+    for (const lib of native)
+      await answer(`( exists_file('/libraries/${collection}/${lib}.shum') -> B = built ; B = none ).`,
+                   `${lib} bundle`);
     mark('ONDEMAND DONE');
   } catch (ex) {
     mark(`ondemand CRASHED: ${ex && ex.stack ? ex.stack : ex}`);

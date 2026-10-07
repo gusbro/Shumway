@@ -95,19 +95,32 @@ public static class ShmoViaConsult
         var rootModuleSet = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (string rp in rootPaths)
         {
+            // ADR-040: a root is a library of its collection's dialect as much
+            // as the dependencies it pulls in, so it is read the way
+            // use_module would load it (the dialect's flags, operators and
+            // shim) and its module records the dialect. Read plainly, a Scryer
+            // library failed on an operator only Scryer's VM declares.
+            string? rootDialect = dialect is { Length: > 0 }
+                ? dialect
+                : e.DialectForResolvedPath(System.IO.Path.GetFullPath(rp));
             string text = Shumway.Core.TextFile.ReadAllText(rp);
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);
             string name;
-            if (m.Success) { name = m.Groups[1].Value; e.ConsultFile(rp); }
+            if (m.Success)
+            {
+                name = m.Groups[1].Value;
+                e.WithLibraryDialect(rootDialect, () => { e.ConsultFile(rp); return 0; });
+            }
             else
             {
                 name = System.IO.Path.GetFileNameWithoutExtension(rp);
                 // ConsultString has no path — record the root's source file so
                 // its timestamp is right (roots regenerate anyway, but keep it honest).
                 e._moduleSourceFile[name] = System.IO.Path.GetFullPath(rp);
-                e.ConsultString($":- module('{name}').\n" + text);
+                e.WithLibraryDialect(rootDialect,
+                    () => { e.ConsultString($":- module('{name}').\n" + text); return 0; });
             }
             if (rootModuleSet.Add(name)) rootModules.Add(name);
         }

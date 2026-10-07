@@ -290,10 +290,19 @@ internal static partial class WebShumwayApp
         catch (IOException) { return false; }
     }
 
+    /// <summary>A library the engine replaces with its own (Scryer's builtins,
+    /// format, dif, ...): loading it gives the engine's version, so there is
+    /// nothing to compile, and a bundle of it would only be loaded in its place.</summary>
+    private static bool ProvidedNatively(string root, string library)
+        => PrologEngine.ProvidesLibraryNatively(
+            library, Path.Combine(root, SourceDir, library + ".pl"));
+
     /// <summary>Compiles one library into its bundle. Returns null, or the
     /// diagnostic. Callers hold the compile gate.</summary>
     private static string? CompileLibrary(string root, string name, string library)
     {
+        if (ProvidedNatively(root, library))
+            return $"{library} is provided by Shumway itself: there is nothing to compile";
         string sources = Path.Combine(root, SourceDir);
         string entry = Path.Combine(sources, library + ".pl");
         if (!File.Exists(entry)) return $"{name} has no {library}.pl";
@@ -417,6 +426,7 @@ internal static partial class WebShumwayApp
 
     private static string DescribeEntry(string root, string library)
     {
+        if (ProvidedNatively(root, library)) return $"{library}\tnative";
         var (kind, headline) = ReadDiagnostic(root, library);
         string state = kind == "failed" ? "failed"
             : File.Exists(Path.Combine(root, library + ".shum")) ? "compiled"

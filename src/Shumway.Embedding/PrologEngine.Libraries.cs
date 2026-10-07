@@ -114,7 +114,7 @@ public sealed partial class PrologEngine
     // null when no ancestor directory is tagged. Walks up so a subdirectory
     // library (library(dcg/basics) → <tagged>/dcg/basics.pl) inherits the
     // tagged root's dialect.
-    private string? DialectForResolvedPath(string resolvedPath)
+    internal string? DialectForResolvedPath(string resolvedPath)
     {
         if (_libraryDirDialect is null) return null;
         string? dir = System.IO.Path.GetDirectoryName(resolvedPath);
@@ -341,7 +341,9 @@ public sealed partial class PrologEngine
             ["format"] = new[] { "format_args_cells", "library(pio)" },
             // Trealla library(builtins): its auto-load base wraps dozens of C
             // natives ($load_ops, $bb_*, ...); the engine is that layer.
-            ["builtins"] = new[] { "$load_ops" },
+            // Scryer's redefines the ISO builtins over its VM's internals
+            // (non_counted_backtracking is its VM's own operator).
+            ["builtins"] = new[] { "$load_ops", "non_counted_backtracking" },
             // Trealla library(atts): get_atts/put_atts are C builtins there;
             // Shumway ships its own atts (CompatLibraries) over the native
             // attribute-list primitives.
@@ -375,10 +377,35 @@ public sealed partial class PrologEngine
     /// and the resolved file at <paramref name="path"/> carries the candidate's
     /// marker — meaning it is the (unsupportable) SWI version, so the load should
     /// be discarded in favour of Shumway's native equivalent. A non-candidate name
-    /// short-circuits without touching the file.</summary>
+    /// short-circuits without touching the file.
+    ///
+    /// <para>A compiled form has no text to look in, so a <c>.shum</c> is judged
+    /// by the library's source wherever it sits on the path (a collection keeps
+    /// its bundles at its root and its sources under it). Judged by the bundle,
+    /// a library compiled before it was known to be replaced would load in place
+    /// of the engine's own.</para></summary>
     private bool ShouldUseNativeOverride(string name, string path)
     {
         if (!NativeOverrideMarkers.TryGetValue(name, out string[]? markers)) return false;
+        if (!path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+            return CarriesMarker(path, markers);
+        foreach (string dir in EnumerateLibraryDirs())
+        {
+            string source = System.IO.Path.Combine(dir, name + ".pl");
+            if (System.IO.File.Exists(source) && CarriesMarker(source, markers)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>True when the engine replaces the library whose source is
+    /// <paramref name="sourcePath"/> with its own (ADR-040): loading it gives
+    /// the engine's version, so a host has nothing to compile for it.</summary>
+    public static bool ProvidesLibraryNatively(string name, string sourcePath)
+        => NativeOverrideMarkers.TryGetValue(name, out string[]? markers)
+           && CarriesMarker(sourcePath, markers);
+
+    private static bool CarriesMarker(string path, string[] markers)
+    {
         try
         {
             string text = System.IO.File.ReadAllText(path);
