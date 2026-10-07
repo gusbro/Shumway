@@ -124,6 +124,27 @@ export async function run(session, emit, out, editor, workspace) {
   await paint("p('unterminated");
   check('half-typed text still reproduces', editor.getText(), "p('unterminated");
 
+  // A file written on Windows ends its lines with CR LF. A carriage return in
+  // the element is a character of its line, and the caret could not climb
+  // past a blank line between two of them: the editor keeps line feeds only.
+  await paint('a.\r\n\r\nb.\r\n');
+  check('line ends arrive as line feeds', editor.getText(), 'a.\n\nb.\n');
+  {
+    program.focus();
+    const sel = getSelection();
+    sel.collapse(program, program.childNodes.length);
+    const caret = () => {
+      const r = document.createRange();
+      r.selectNodeContents(program);
+      r.setEnd(sel.focusNode, sel.focusOffset);
+      return r.toString().length;
+    };
+    const climbed = [caret()];
+    for (let i = 0; i < 3; i++) { sel.modify('move', 'backward', 'line'); climbed.push(caret()); }
+    // From the end: b., the blank line, a. -- one line per step.
+    check('the caret climbs a blank line', climbed.join(' '), '7 4 3 0');
+  }
+
   // A program-declared operator must colour as one once consulted — the payoff
   // of asking the live table instead of a fixed pattern list.
   await paint('X #= Y.');
