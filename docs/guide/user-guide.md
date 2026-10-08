@@ -291,6 +291,17 @@ the range leaves its side of the domain open:
 Z in 1..sup, ...
 ```
 
+A domain is an integer, `L..H`, or a union of domains (`X in 1..3 \/ 7..9`).
+Expressions may use `+`, `-`, `*`, `//` (truncating), `div` (floor), `mod`,
+`rem`, `abs`, `min`, `max` and `**` with a constant exponent; dividing by
+zero fails. `fd_var/1`, `fd_inf/2`, `fd_sup/2`, `fd_size/2` and `fd_dom/2`
+read a variable's domain:
+
+```prolog
+?- X in 0..20, X mod 7 #= 2, fd_dom(X, D).
+D = 2..16, ...
+```
+
 The coroutining library provides `freeze/2` (delay a goal until a
 variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 `nonvar/1`, `ground/1`, `?=/2`, and their `(,)`/`(;)` combinations), and

@@ -426,7 +426,7 @@ clpfd_term_expr(1-V, V) :- !.
 clpfd_term_expr(C-V, C*V).
 
 % ===== in / ins =====
-%! in(?Var, +Domain) | CLP(FD): domains | Constrains a variable to a finite domain (e.g. X in 1..9).
+%! in(?Var, +Domain) | CLP(FD): domains | Constrains a variable to a domain: an integer, L..H, or a union of domains.
 %! ins(?Vars, +Domain) | CLP(FD): domains | Constrains every variable in a list to a finite domain.
 % An unbound Spec must NOT reach the `Spec = L..H` test: unifying
 % there BINDS the caller's variable to a fresh interval, and the

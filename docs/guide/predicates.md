@@ -524,7 +524,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
 | Predicate | Kind | Description |
 | --- | --- | --- |
-| `in(?Var, +Domain)` | library | Constrains a variable to a finite domain (e.g. X in 1..9). |
+| `in(?Var, +Domain)` | library | Constrains a variable to a domain: an integer, L..H, or a union of domains. |
 | `ins(?Vars, +Domain)` | library | Constrains every variable in a list to a finite domain. |
 
 ## CLP(FD): arithmetic constraints
