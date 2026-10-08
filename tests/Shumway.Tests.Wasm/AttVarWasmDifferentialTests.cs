@@ -279,6 +279,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a sorted domain variable keeps its domain" },
         { "catch((X in 0..1, X = b), error(type_error(integer, V), _), true), V == b.",
           "binding a domain variable to an atom is a type error" },
+        { "X in 1..3 \\/ 7..9, fd_size(X, S), S == 6, fd_dom(X, D), D == (1..3 \\/ 7..9).",
+          "a union domain and the reflection predicates" },
+        { "X in 1..9, X #\\= 5, X #> 3, fd_inf(X, I), fd_sup(X, H), I-H == 4-9.",
+          "bounds read back after propagation" },
     };
 
     [Theory]

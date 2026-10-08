@@ -71,6 +71,11 @@
 :- public indomain/1.
 :- public all_different/1.
 :- public all_distinct/1.
+:- public fd_var/1.
+:- public fd_inf/2.
+:- public fd_sup/2.
+:- public fd_size/2.
+:- public fd_dom/2.
 :- public ('#<==>')/2.
 :- public ('#==>')/2.
 :- public ('#<==')/2.
@@ -149,9 +154,15 @@ clpfd_app([], L, L).
 clpfd_app([H|T], L, [H|R]) :- clpfd_app(T, L, R).
 
 % render a domain as an `in` expression for residual-constraint display.
-clpfd_dom_expr(D, Expr) :- '$dom_intervals'(D, IVs), clpfd_iv_expr(IVs, Expr).
-clpfd_iv_expr([L-H], L..H) :- !.
-clpfd_iv_expr([L-H|T], (L..H \/ Rest)) :- clpfd_iv_expr(T, Rest).
+% Left-nested so that it prints without parentheses (\/ is yfx), and a
+% one-value interval as the integer: 1..3\/5\/8..9.
+clpfd_dom_expr(D, Expr) :-
+    '$dom_intervals'(D, [IV|IVs]),
+    clpfd_iv_term(IV, E0),
+    clpfd_iv_join(IVs, E0, Expr).
+clpfd_iv_join([], E, E).
+clpfd_iv_join([IV|IVs], E0, E) :- clpfd_iv_term(IV, E1), clpfd_iv_join(IVs, E0 \/ E1, E).
+clpfd_iv_term(L-H, T) :- ( L == H -> T = L ; T = L..H ).
 
 % ===== FD variables =====
 % the domain of X: a singleton for an integer, the attribute's domain
@@ -405,19 +416,58 @@ clpfd_term_expr(C-V, C*V).
 'in'(X, Spec) :-
     ( var(Spec) -> throw(error(instantiation_error, (in)/2)) ; true ),
     ( integer(Spec) -> X #= Spec
-    ; Spec = L..H ->
-        clpfd_fits_bound(L), clpfd_fits_bound(H),
+    ; clpfd_spec_dom(Spec, SD) ->
         clpfd_makevar(X),
         clpfd_dom_of(X, D),
-        clpfd_iv(L, H, IV),
-        clpfd_dom_isect(D, IV, D2),
+        clpfd_dom_isect(D, SD, D2),
         clpfd_narrow(X, D2)
-    ; throw(error(type_error(fd_domain, Spec), _))
+    ; throw(error(domain_error(clpfd_domain, Spec), (in)/2))
     ).
+
+% A domain is an integer, L..H, or two domains joined by \/; L is an
+% integer or inf, H an integer or sup. A variable where a value belongs is
+% an instantiation error; anything else malformed fails, and in/2 reports
+% the whole domain it was given.
+clpfd_spec_dom(S, _) :- var(S), !, throw(error(instantiation_error, (in)/2)).
+clpfd_spec_dom(K, D) :- integer(K), !, clpfd_fits_bound(K), clpfd_iv(K, K, D).
+clpfd_spec_dom(L..H, D) :- !,
+    clpfd_spec_bound(L, inf), clpfd_spec_bound(H, sup),
+    clpfd_fits_bound(L), clpfd_fits_bound(H), clpfd_iv(L, H, D).
+clpfd_spec_dom(A \/ B, D) :-
+    clpfd_spec_dom(A, DA), clpfd_spec_dom(B, DB), '$dom_union'(DA, DB, D).
+
+clpfd_spec_bound(B, _) :- var(B), !, throw(error(instantiation_error, (in)/2)).
+clpfd_spec_bound(B, Open) :- ( integer(B) -> true ; B == Open ).
 
 'ins'(Vs, Spec) :- '$must_be'(list, Vs, (ins)/2), clpfd_ins_(Vs, Spec).
 clpfd_ins_([], _).
 clpfd_ins_([X|Xs], Spec) :- 'in'(X, Spec), clpfd_ins_(Xs, Spec).
+
+% ===== reflection =====
+% An integer is its own one-value domain; a variable without one has the
+% universal domain, inf..sup.
+%! fd_var(@Term) | CLP(FD): reflection | Term is a variable with a CLP(FD) domain.
+fd_var(X) :- var(X), get_attr(X, clpfd, _).
+%! fd_inf(+Var, -Inf) | CLP(FD): reflection | Inf is the least value Var can take, or inf when it has no lower bound.
+fd_inf(X, Inf) :- clpfd_refl_dom(X, fd_inf/2, D), clpfd_dom_min(D, Inf).
+%! fd_sup(+Var, -Sup) | CLP(FD): reflection | Sup is the greatest value Var can take, or sup when it has no upper bound.
+fd_sup(X, Sup) :- clpfd_refl_dom(X, fd_sup/2, D), clpfd_dom_max(D, Sup).
+%! fd_size(+Var, -Size) | CLP(FD): reflection | Size is the number of values Var can take, or sup when there is no bound on one side.
+fd_size(X, Size) :-
+    clpfd_refl_dom(X, fd_size/2, D),
+    clpfd_dom_min(D, L), clpfd_dom_max(D, H),
+    ( ( L == inf ; H == sup ) -> Size = sup ; clpfd_dom_size(D, Size) ).
+%! fd_dom(+Var, -Dom) | CLP(FD): reflection | Dom is the domain of Var, written as in/2 reads it.
+fd_dom(X, Dom) :-
+    ( integer(X) -> Dom = X..X
+    ; clpfd_refl_dom(X, fd_dom/2, D), clpfd_dom_expr(D, Dom)
+    ).
+
+clpfd_refl_dom(X, Ctx, D) :-
+    ( integer(X) -> clpfd_iv(X, X, D)
+    ; var(X) -> clpfd_dom_of(X, D)
+    ; throw(error(type_error(integer, X), Ctx))
+    ).
 
 % ===== arithmetic expressions reduced to an FD term =====
 clpfd_expr(E, E) :- integer(E), !, '$fd_fits'(E).

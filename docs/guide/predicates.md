@@ -9,7 +9,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 Kind says whether a program may define a predicate of the same name: never for control and ISO, inside a module for engine, anywhere for library. See [redefining-predicates.md](redefining-predicates.md).
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(R)](#clpr)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
@@ -573,6 +573,18 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | `#==>(+Constraint1, +Constraint2)` | library | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | library | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | library | At least one constraint holds (disjunction). |
+
+## CLP(FD): reflection
+
+Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `fd_dom(+Var, -Dom)` | library | Dom is the domain of Var, written as in/2 reads it. |
+| `fd_inf(+Var, -Inf)` | library | Inf is the least value Var can take, or inf when it has no lower bound. |
+| `fd_size(+Var, -Size)` | library | Size is the number of values Var can take, or sup when there is no bound on one side. |
+| `fd_sup(+Var, -Sup)` | library | Sup is the greatest value Var can take, or sup when it has no upper bound. |
+| `fd_var(@Term)` | library | Term is a variable with a CLP(FD) domain. |
 
 ## CLP(R)
 

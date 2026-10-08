@@ -116,6 +116,7 @@ public static class PredicateDoc
         "CLP(FD): global constraints",
         "CLP(FD): labeling",
         "CLP(FD): reification",
+        "CLP(FD): reflection",
         "CLP(R)",
     };
 
@@ -139,6 +140,7 @@ public static class PredicateDoc
         ("CLP(FD): global constraints", "clpfd", "UseClpfd"),
         ("CLP(FD): labeling", "clpfd", "UseClpfd"),
         ("CLP(FD): reification", "clpfd", "UseClpfd"),
+        ("CLP(FD): reflection", "clpfd", "UseClpfd"),
         ("CLP(R)", "clpr", "UseClpr"),
     };
 

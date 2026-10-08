@@ -118,7 +118,7 @@ public class SolverVariableArgumentTests
     [InlineData("sum([_], foo, _)", "domain_error(clpfd_relation, foo)")]
     [InlineData("scalar_product([1], [_], bogus, _)", "domain_error(clpfd_relation, bogus)")]
     [InlineData("labeling([bogus], [])", "domain_error(labeling_option, bogus)")]
-    [InlineData("_X in foo", "type_error(fd_domain, foo)")]
+    [InlineData("_X in foo", "domain_error(clpfd_domain, foo)")]
     public void ABoundButWrongValueKeepsItsError(string goal, string expected)
         => Assert.Equal(expected, ErrorKindOf("clpfd", goal));
 
