@@ -69,6 +69,14 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         wake_pm(_, none).
         wake_gt(a, Y) :- Y > 2.
         wake_gtx(a, Y) :- Y * 2 + 1 > 5.
+        :- public sortp/2.
+        :- public msortp/2.
+        :- public appendp/3.
+        :- public univp/2.
+        sortp(L, S) :- sort(L, S).
+        msortp(L, S) :- msort(L, S).
+        appendp(A, B, C) :- append(A, B, C).
+        univp(T, L) :- T =.. L.
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -123,6 +131,23 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a comparison waits for the woken goal, and fails back into its alternatives" },
         { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gtx(X, Y)), Ys).",
           "the same with an expression" },
+    };
+
+    /// <summary>An attvar whose home is a list cell or an argument slot, handed
+    /// back by a builtin that builds a new term: the element is the variable.
+    /// A copy fails these on both tiers alike, so agreeing is not enough; and
+    /// the copy is gone with the failure, so the orphan probe cannot see it.
+    /// </summary>
+    public static TheoryData<string, string> KeptVariableShapes() => new()
+    {
+        { "L = [X], put_attr(X, m2, a), sortp(L, [A]), A == X, get_attr(A, m2, V), V == a.",
+          "sort/2 keeps an attvar that lives in a list cell" },
+        { "L = [X, b], put_attr(X, m2, a), msortp(L, [A, _]), A == X, get_attr(A, m2, V), V == a.",
+          "msort/2 keeps an attvar that lives in a list cell" },
+        { "L = [X], put_attr(X, m2, a), appendp(L, [b], [A, _]), A == X, get_attr(A, m2, V), V == a.",
+          "append/3 keeps an attvar that lives in a list cell" },
+        { "T = f(X), put_attr(X, m2, a), univp(T, [_, A]), A == X, get_attr(A, m2, V), V == a.",
+          "=../2 keeps an attvar that lives in an argument slot" },
     };
 
     private static PrologEngine Tier0()
@@ -193,7 +218,13 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 
     [Theory]
     [MemberData(nameof(Shapes))]
-    public void Tier0AndWasmAgree(string goal, string what)
+    public void Tier0AndWasmAgree(string goal, string what) => Agree(goal, what, mustSucceed: false);
+
+    [Theory]
+    [MemberData(nameof(KeptVariableShapes))]
+    public void BothTiersHandBackTheVariable(string goal, string what) => Agree(goal, what, mustSucceed: true);
+
+    private void Agree(string goal, string what, bool mustSucceed)
     {
         var t0 = Tier0();
         var (w, members) = Wasm();
@@ -209,12 +240,14 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Ok, b.Ok);
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
+            if (mustSucceed) Assert.True(a.Ok, $"both tiers failed: {what}");
 
             // Anti-vacuity: a goal calling a corpus predicate must have run on
             // the tier, or this compares Tier-0 with Tier-0.
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
-                || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_");
+                || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_")
+                || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }
@@ -242,6 +275,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "the constraint inside findall" },
         { "length(Qs, 4), Qs ins 1..4, all_distinct(Qs), labeling([], Qs), Qs = [_,_,_,_].",
           "all_distinct plus labeling" },
+        { "length(L, 2), L ins 0..1, msort(L, [A, _]), ( A = 5 -> fail ; true ).",
+          "a sorted domain variable keeps its domain" },
     };
 
     [Theory]
@@ -268,6 +303,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Ok, b.Ok);
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
+            Assert.True(a.Ok, $"both tiers failed: {what}");
             // The library must actually be on the tier, or this proves nothing.
             Assert.True(members.Count > 5,
                 $"expected the library in the group, saw {members.Count}");

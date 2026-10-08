@@ -122,7 +122,8 @@ public static class SortBuiltins
         // *dereferenced* cell so an unbound element stays an unbound REF
         // pointing at its own var, and a bound-to-value element stays a
         // plain value cell — both work as elements of the result list and
-        // both are compared correctly by StandardOrderComparator.
+        // both are compared correctly by StandardOrderComparator. An
+        // attributed element is its ATTVAR cell; SetHeap stores it as a REF.
         var elements = new List<Cell>();
         Cell listStart = Resolve(engine, engine.GetRegister(0));
         Cell cursor = listStart;
