@@ -7,9 +7,9 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// A bundle's MetaTransform helpers (<c>$disj_N</c> / <c>$neg_N</c> / …) are
 /// numbered by ShmoCompiler's per-module 0-based counter. The engine's runtime
-/// <c>NextMetaHelperId</c> — which re-numbers a bundled module's DYNAMIC clause
+/// <c>NextMetaHelperId</c> — which re-numbers a bundled module's dynamic clause
 /// helpers at query setup — starts low too, so without intervention a dynamic
-/// clause's helper can mint the SAME mangled functor id as a compiled static
+/// clause's helper can mint the same mangled functor id as a compiled static
 /// helper (e.g. <c>clpz$$disj_253</c>) and shadow it with the wrong body. The
 /// symptom in the field: clpz constraint narrowing (label/1, queens, every
 /// non-singleton domain update) silently failed or gave a wrong answer when
@@ -30,7 +30,7 @@ public class BundleHelperIdCollisionTests
     {
         var e = new PrologEngine();
         e.ObserveBundleHelperId(HelperFid("clpz$$disj_253", 3));
-        // The next runtime helper id must land ABOVE the bundled one, so a
+        // The next runtime helper id must land above the bundled one, so a
         // query-setup re-transform can never reproduce clpz$$disj_253.
         Assert.True(e.NextMetaHelperId() > 253);
     }
@@ -60,7 +60,7 @@ public class BundleHelperIdCollisionTests
     public void ObserveBundleHelperId_IgnoresNonHelperNames()
     {
         var e = new PrologEngine();
-        // A plain predicate name with no `$<kind>_` marker must NOT be parsed
+        // A plain predicate name with no `$<kind>_` marker must not be parsed
         // as a helper: no `$` before the trailing digits.
         int before = e.NextMetaHelperId();      // consumes one id
         e.ObserveBundleHelperId(HelperFid("append", 3));     // no underscore

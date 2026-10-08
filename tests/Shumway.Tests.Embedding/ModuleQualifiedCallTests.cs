@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// call/N with a module-qualified goal `M:G`. `call(M:Goal, Extra...)` must
-/// extend Goal with the extra arguments INSIDE the module qualification —
+/// extend Goal with the extra arguments inside the module qualification —
 /// `call(m:foo, X)` is `m:foo(X)`, not `:(m, foo, X)` (a spurious (:)/3). Real
 /// libraries depend on this: library(error)'s must_be/2 runs `call(error:ilist,
 /// Term)` through a meta-argument, which is how Scryer's DCG expander reaches it.

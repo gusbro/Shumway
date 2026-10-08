@@ -7,9 +7,10 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 407 (Phase 29, ADR-021 candidate #2) — conservative meta-wrapper
 /// unfolding (<c>MetaWrapperUnfold</c>). User-defined control wrappers
-/// (Arity-compat <c>ifthen/2</c>, <c>ifthenelse/3</c>, not-via-cut-fail)
+/// (the Arity-compat shapes of <c>ifthen/2</c>, <c>ifthenelse/3</c>, not-via-cut-fail,
+/// under names of their own: the prelude defines those two, ADR-059)
 /// called with statically-known goals are unfolded into inline if-then-else at
-/// the call site. These tests pin the SEMANTICS through the public engine —
+/// the call site. These tests pin the semantics through the public engine —
 /// the same programs must behave identically whether or not the unfold fires,
 /// so every case here encodes the wrapper contract, including the edges where
 /// a naive unfold would diverge (then-goal failure, cut opacity, lazy type
@@ -24,17 +25,17 @@ public class Chunk407Tests
         return engine;
     }
 
-    // ----- T2: Blint-style ifthen/2 (C -> !, T  +  catch-all) -----
+    // ----- T2: Blint-style if_then/2 (C -> !, T  +  catch-all) -----
 
     private const string IfThen =
-        "ifthen(X,Y) :- X -> !, Y.\n"
-        + "ifthen(_,_) :- !.\n"
+        "if_then(X,Y) :- X -> !, Y.\n"
+        + "if_then(_,_) :- !.\n"
         + ":- dynamic hit/1.\n";
 
     [Fact]
     public void IfThen_CondSucceeds_RunsThen()
     {
-        var e = Make(IfThen + "go :- ifthen(true, assertz(hit(yes))).\n");
+        var e = Make(IfThen + "go :- if_then(true, assertz(hit(yes))).\n");
         Assert.True(e.Query("go.").Success);
         Assert.True(e.Query("hit(yes).").Success);
     }
@@ -42,7 +43,7 @@ public class Chunk407Tests
     [Fact]
     public void IfThen_CondFails_SkipsThen_Succeeds()
     {
-        var e = Make(IfThen + "go :- ifthen(fail, assertz(hit(no))).\n");
+        var e = Make(IfThen + "go :- if_then(fail, assertz(hit(no))).\n");
         Assert.True(e.Query("go.").Success);
         Assert.False(e.Query("hit(no).").Success);
     }
@@ -53,18 +54,18 @@ public class Chunk407Tests
         // The committed branch: C succeeded -> T's failure must FAIL the call
         // (the catch-all was cut away). A naive (C, T ; true) unfold would
         // wrongly succeed here.
-        var e = Make(IfThen + "go :- ifthen(true, fail).\n");
+        var e = Make(IfThen + "go :- if_then(true, fail).\n");
         Assert.False(e.Query("go.").Success);
     }
 
     [Fact]
     public void IfThen_CondCommitsFirstSolution()
     {
-        // C = member-like generator: ifthen commits to C's FIRST solution;
-        // backtracking into go/1 must NOT re-enter the condition.
+        // C = member-like generator: if_then commits to C's first solution;
+        // backtracking into go/1 must not re-enter the condition.
         var e = Make(IfThen
             + "pick(1).\npick(2).\npick(3).\n"
-            + "go(X) :- ifthen(pick(X), true).\n");
+            + "go(X) :- if_then(pick(X), true).\n");
         var all = e.QueryAll("go(X).").ToList();
         Assert.Single(all);
         Assert.Equal(1, all[0].Get<int>("X"));
@@ -73,12 +74,12 @@ public class Chunk407Tests
     [Fact]
     public void IfThen_CutInsidePassedGoal_StaysOpaque()
     {
-        // A ! inside the goal the CALLER passes is opaque both ways (meta-call
+        // A ! inside the goal the caller passes is opaque both ways (meta-call
         // barrier / ISO condition opacity): the caller's own choice points
         // survive. outer/1 enumerates both solutions.
         var e = Make(IfThen
             + "pick(1).\npick(2).\n"
-            + "outer(X) :- pick(X), ifthen((true, !), true).\n");
+            + "outer(X) :- pick(X), if_then((true, !), true).\n");
         var all = e.QueryAll("outer(X).").ToList();
         Assert.Equal(2, all.Count);
     }
@@ -103,9 +104,9 @@ public class Chunk407Tests
     public void IfThenElse_BothBranches()
     {
         var e = Make(
-            "ifthenelse(X,Y,Z) :- X -> Y ; Z.\n"
+            "if_then_else(X,Y,Z) :- X -> Y ; Z.\n"
             + ":- dynamic got/1.\n"
-            + "go(C) :- ifthenelse(C, assertz(got(then)), assertz(got(else))).\n");
+            + "go(C) :- if_then_else(C, assertz(got(then)), assertz(got(else))).\n");
         Assert.True(e.Query("go(true).").Success);
         Assert.True(e.Query("got(then).").Success);
         Assert.False(e.Query("got(else).").Success);
@@ -137,14 +138,14 @@ public class Chunk407Tests
         Assert.False(e.Query("no.").Success);
     }
 
-    // ----- guards: where the unfold must NOT change behaviour -----
+    // ----- guards: where the unfold must not change behaviour -----
 
     [Fact]
     public void VariableGoalArg_StillDispatchesAtRuntime()
     {
-        // The call site passes a VARIABLE goal — no unfold; the wrapper's
+        // The call site passes a variable goal — no unfold; the wrapper's
         // standalone form must meta-call it.
-        var e = Make(IfThen + "go(G) :- ifthen(G, assertz(hit(ran))).\n");
+        var e = Make(IfThen + "go(G) :- if_then(G, assertz(hit(ran))).\n");
         Assert.True(e.Query("go(true).").Success);
         Assert.True(e.Query("hit(ran).").Success);
     }
@@ -154,18 +155,18 @@ public class Chunk407Tests
     {
         // call/1 with a runtime-built wrapper goal: the wrapper predicate must
         // still exist standalone even when every static site was unfolded.
-        var e = Make(IfThen + "go :- ifthen(true, true).\n");
-        Assert.True(e.Query("G = ifthen(true, assertz(hit(meta))), call(G).").Success);
+        var e = Make(IfThen + "go :- if_then(true, true).\n");
+        Assert.True(e.Query("G = if_then(true, assertz(hit(meta))), call(G).").Success);
         Assert.True(e.Query("hit(meta).").Success);
     }
 
     [Fact]
     public void NonCallableArg_KeepsLazyTypeError()
     {
-        // ifthen(1, true): the original raises type_error(callable) AT RUN TIME
+        // if_then(1, true): the original raises type_error(callable) at run time
         // inside the wrapper. The unfold skips non-callable args, so the error
         // surfaces exactly as before (catchable, not a compile-time failure).
-        var e = Make(IfThen + "go :- ifthen(1, true).\n");
+        var e = Make(IfThen + "go :- if_then(1, true).\n");
         Assert.True(e.Query("catch(go, error(type_error(callable, _), _), true).").Success);
     }
 
@@ -188,7 +189,7 @@ public class Chunk407Tests
     public void NestedWrapperArguments_UnfoldRecursively()
     {
         var e = Make(IfThen
-            + "go :- ifthen(true, ifthen(true, assertz(hit(nested)))).\n");
+            + "go :- if_then(true, if_then(true, assertz(hit(nested)))).\n");
         Assert.True(e.Query("go.").Success);
         Assert.True(e.Query("hit(nested).").Success);
     }
@@ -200,7 +201,7 @@ public class Chunk407Tests
         // ( pick(X) -> use(X) ; true ) must see the binding.
         var e = Make(IfThen
             + "pick(7).\n"
-            + "go(R) :- ifthen(pick(X), R = X).\n");
+            + "go(R) :- if_then(pick(X), R = X).\n");
         var s = e.Query("go(R).");
         Assert.True(s.Success);
         Assert.Equal(7, s.Get<int>("R"));

@@ -70,7 +70,7 @@ public class Chunk131dTests
     public void Format_TildeD_NonInteger_RaisesTypeError()
     {
         var e = new PrologEngine();
-        // ~d takes an arithmetic EXPRESSION (GNU/SWI/SICStus): a
+        // ~d takes an arithmetic expression (GNU/SWI/SICStus): a
         // non-evaluable argument is type_error(evaluable, Name/Arity),
         // and format("~d", [1+1]) prints 2.
         var sol = e.Query(
@@ -85,7 +85,7 @@ public class Chunk131dTests
     public void Format_TildeS_NonIntListElement_RaisesTypeError()
     {
         var e = new PrologEngine();
-        // ~s takes a code list OR a char list, so a list of atoms is read as
+        // ~s takes a code list or a char list, so a list of atoms is read as
         // characters and a multi-char atom in it is type_error(character, _).
         var sol = e.Query(
             "catch(format('~s', [[foo, bar]]), error(type_error(T, _), _), true).");

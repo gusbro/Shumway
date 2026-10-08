@@ -8,7 +8,7 @@ namespace Shumway.Builtins;
 /// the <c>length/2</c> / <c>append/3</c> / <c>sort/2</c> family this is
 /// the bread-and-butter list toolkit user code reaches for.
 ///
-/// <para><see cref="Member"/> is NOT registered — <c>member/2</c> lives
+/// <para><see cref="Member"/> is not registered — <c>member/2</c> lives
 /// in the Prolog prelude so it enumerates solutions via standard
 /// backtracking; the first-solution C# version here is unreachable from
 /// Prolog source.</para>
@@ -56,7 +56,9 @@ public static class ListBuiltins
         // A variable index enumerates every position on backtracking — the
         // SWI/SICStus library behaviour real programs rely on (e.g. iterating a
         // board with nth0(Row, Board, R)). A bound non-integer is a type error.
-        if (n.Tag == Tag.Ref)
+        // An attributed index is a variable too: each position binds it and
+        // its constraints decide.
+        if (n.Tag is Tag.Ref or Tag.AttVar)
             return NthStep(engine, new NthCursor(oneBased, engine.BuiltinReturnPc), isResume: false);
         if (n.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer", engine, n);
@@ -79,7 +81,7 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             i++;
         }
-        // Prologue generate mode: an integer index against a PARTIAL list
+        // Prologue generate mode: an integer index against a partial list
         // (unbound tail) extends it — nth0(2, Es, E) gives Es = [_,_,E|_].
         // A closed or improper tail still just fails.
         if (cur.Tag != Tag.Ref) return false;
@@ -88,7 +90,7 @@ public static class ListBuiltins
             && engine.UnifyRegisterWithCell(2, Cell.Ref(elemSlot));
     }
 
-    /// <summary>Advances one list cell, EXTENDING a partial list by a fresh
+    /// <summary>Advances one list cell, extending a partial list by a fresh
     /// <c>[H|T]</c> cons when the walk reaches an unbound tail — the prologue
     /// generate mode, and what makes a variable-index enumeration over a
     /// partial list produce answers ad infinitum instead of stopping at the
@@ -143,12 +145,11 @@ public static class ListBuiltins
     /// <summary>Resume state for a variable-index <c>nth0</c>/<c>nth1</c>
     /// enumeration: the running position plus a cached resume delegate
     /// (allocated once per call, re-pushed unchanged on every backtrack —
-    /// no per-position closure). The position is re-walked from register 1
-    /// each step rather than caching a heap index, because a heap GC between
-    /// backtracks can move the list cells.</summary>
+    /// no per-position closure). The rest of the list is not kept here: a
+    /// heap GC between backtracks moves the list cells (see NthStep).</summary>
     private sealed class NthCursor
     {
-        public int Pos;
+        public long Pos;
         public readonly bool OneBased;
         public readonly int ReturnPc;
         public readonly Func<Activation, int, bool> Resume;
@@ -164,17 +165,33 @@ public static class ListBuiltins
 
     private static bool NthStep(Activation engine, NthCursor c, bool isResume)
     {
-        Cell cur = Resolve(engine, engine.GetRegister(1));
-        for (int k = 0; k < c.Pos; k++)
+        // The rest of the list rides in the choice point as a fourth saved
+        // register, which the heap GC relocates, so a step goes on from where
+        // the previous one stopped: walking from the list's start each time
+        // makes the enumeration quadratic. Restoring it clobbers X3, which is
+        // dead after the call: a variable used past a body goal lives in a
+        // Y slot.
+        Cell cur = Resolve(engine, engine.GetRegister(isResume ? 3 : 1));
+        Cell head;
+        if (ListCursor.TryUncons(engine, cur, out head, out Cell tail))
         {
-            if (!UnconsOrExtend(engine, ref cur, out _)) return false;
+            cur = Resolve(engine, tail);
+            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
         }
-        if (!UnconsOrExtend(engine, ref cur, out Cell head))
-            return false;                              // improper tail
+        else
+        {
+            // A partial list grows a cell here, before the choice point: the
+            // frame being retried saved a heap top below it, so that frame is
+            // trusted and a new one pushed above the new cell.
+            if (isResume) engine.TrustBuiltinChoicePoint();
+            if (!UnconsOrExtend(engine, ref cur, out head))
+                return false;                          // improper tail
+            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume: false);
+        }
 
-        int pos = c.Pos;
+        long pos = c.Pos;
         c.Pos = pos + 1;
-        engine.PushBuiltinChoicePoint(c.Resume, arity: 3);
+        engine.SetTopCpArgRegister(3, cur);
 
         long idxVal = c.OneBased ? pos + 1 : pos;
         if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
@@ -192,10 +209,12 @@ public static class ListBuiltins
     {
         var heads = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
             heads.Add(head);
             cur = Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.InfiniteList();
         }
         if (cur.Tag == Tag.Ref)
             // A partial list — the tail is unbound, so we can't
@@ -216,11 +235,13 @@ public static class ListBuiltins
         Cell cur = Resolve(engine, engine.GetRegister(0));
         Cell last = default;
         bool any = false;
+        var guard = new SpineGuard(cur);
         while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
             last = head;
             any = true;
             cur = Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.InfiniteList();
         }
         if (!any) return false;              // empty list — no last element
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
@@ -235,6 +256,8 @@ public static class ListBuiltins
         // equal duplicates.
         var seen = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cur);
+        bool cyclic = false;
         while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
         {
             Cell head = Resolve(engine, rawHead);
@@ -249,8 +272,12 @@ public static class ListBuiltins
             }
             if (!dup) seen.Add(head);
             cur = Resolve(engine, tail);
+            // A cyclic spine repeats what it has shown: its elements are a
+            // finite set, every one of them seen by the time the walk is
+            // back on a cell it has been on.
+            if (guard.Loops(cur)) { cyclic = true; break; }
         }
-        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
+        if (!cyclic && (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)) return false;
         int listIdx = BuildList(engine, seen);
         return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }

@@ -106,12 +106,12 @@ TARGET machine only needs Framework. Differences on the Framework path:
 
 ### 4. Tier-1 and persisted IL
 
-Sigil (net461) emits `DynamicMethod` on Framework's JIT unchanged — runtime
-promotion worked on first try, x86 and x64. For persisted IL,
+The IL emitter (ADR-062) emits `DynamicMethod` on Framework's JIT unchanged:
+runtime promotion works on x86 and x64. For persisted IL,
 `PersistedIlBuilder.Build` uses **Framework's `AssemblyBuilder` in Save
 mode** — the API `PersistedAssemblyBuilder` was designed to mirror — under
-`#if NETFRAMEWORK`; everything below the assembly shell (TypeBuilder, Sigil
-`BuildMethod`, patch sentinels, the PE scan) is shared code. Save is
+`#if NETFRAMEWORK`; everything below the assembly shell (TypeBuilder,
+`IlEmit.BuildMethod`, patch sentinels, the PE scan) is shared code. Save is
 disk-only there, so a temp dir round-trips the bytes.
 
 **The deployment matrix** (settled empirically):

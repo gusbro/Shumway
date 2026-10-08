@@ -62,7 +62,7 @@ public sealed class PrologPredicateAttribute : Attribute
     /// non-deterministic generator: on success Prolog can
     /// backtrack into it for additional solutions, exactly like a
     /// native predicate built on multi-clause backtracking. The
-    /// method MUST return <c>IEnumerable&lt;T&gt;</c> for some
+    /// method must return <c>IEnumerable&lt;T&gt;</c> for some
     /// <c>T</c>; the source generator emits an iterator-driven
     /// bridge that pushes a choice point per solution and re-
     /// invokes the iterator on backtrack.

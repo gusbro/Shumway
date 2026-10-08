@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// ADR-037 — soft cut. <c>( Cond *-&gt; Then ; Else )</c> lowers inline to
 /// <c>try_me_else; get_level_b; Cond; soft_cut; Then ; ELSE: trust_me; Else</c>.
-/// Unlike <c>-&gt;</c>, it does NOT commit to Cond's first solution: Then runs for
+/// Unlike <c>-&gt;</c>, it does not commit to Cond's first solution: Then runs for
 /// every solution of Cond, Else runs only when Cond has none. The distinctive
 /// property is that Cond's non-determinism survives the commit.
 /// </summary>
@@ -44,7 +44,7 @@ public class Adr037SoftCutTests
     [Fact]
     public void SoftCut_PreservesCondNondeterminism_ThenPerSolution()
     {
-        // THE distinguishing case vs ->: Then runs once per Cond solution, so all
+        // The distinguishing case vs ->: Then runs once per Cond solution, so all
         // three are produced (-> would commit to the first and give [t(1)]).
         var e = Load("go(X, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).");
         Assert.True(e.Query("findall(R, go(_, R), L), L == [t(1),t(2),t(3)].").Success);
@@ -64,7 +64,7 @@ public class Adr037SoftCutTests
     {
         // The property the top-level determinism check reads: with a
         // deterministic condition the *-> leaves the choice-point level
-        // unchanged (the ELSE CP is discarded, not just neutralised).
+        // unchanged (the else CP is discarded, not just neutralised).
         var e = new PrologEngine();
         Assert.True(e.Query(
             "'$choice_level'(B0), ( true *-> true ; fail ), '$choice_level'(B1), B1 =:= B0.")
@@ -108,7 +108,7 @@ public class Adr037SoftCutTests
         Assert.True(e.Query("findall(X, run(member(X,[a,b]), _), L), L == [a,b].").Success);
     }
 
-    // NOTE (follow-up): a *-> whose branches contain a cut, whose parts are
+    // Note (follow-up): a *-> whose branches contain a cut, whose parts are
     // nested control constructs, or that is built at runtime is not yet lowered
     // (the inline path requires plain Then/Else and a plain-or-call condition);
     // such a *-> currently keeps the pre-ADR-037 behaviour. Covered by the
@@ -118,7 +118,7 @@ public class Adr037SoftCutTests
     public void Time1_IsDeterministic_ForDeterministicGoal()
     {
         // Regression: time(true) used to leave a spurious choice point (the ;
-        // else branch), so the top-level offered ';'. With *-> the ELSE CP is
+        // else branch), so the top-level offered ';'. With *-> the else CP is
         // discarded once the deterministic goal succeeds. Measure the choice
         // level directly — the property the top-level determinism check reads.
         var e = new PrologEngine();

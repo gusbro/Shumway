@@ -249,7 +249,7 @@ public class Chunk84Tests
         // and a caller that commits to the first one used to wait for all
         // 4,140.
         //
-        // Measured in HEAP CELLS, not seconds. The cell counter is a pure
+        // Measured in heap cells, not seconds. The cell counter is a pure
         // function of the program — byte-identical across runs, machines and
         // builds — where a wall-clock ratio is not: this test failed once in
         // CI on a commit that had passed minutes earlier, which says

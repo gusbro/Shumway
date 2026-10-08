@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.Libraries\Shumway.Libraries.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

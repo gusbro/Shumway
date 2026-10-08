@@ -47,7 +47,7 @@ public class Chunk373Tests
     [Fact]
     public void Flag_DefaultsOn()
     {
-        // Chunk 418 — region compilation defaults ON (validated: corpus
+        // Chunk 418 — region compilation defaults on (validated: corpus
         // output-identical, qsort -22% / boyer -15% / ITE-recursion ~2x,
         // one-shot neutral under default promotion). SHUMWAY_REGION=0
         // still disables it, so skip the assert when the suite runs with
@@ -71,9 +71,9 @@ public class Chunk373Tests
     [Fact]
     public void NonChainMultiClauseMember_NotEmittable()
     {
-        // A multi-clause member that is NOT a plain try_me_else chain (here a
+        // A multi-clause member that is not a plain try_me_else chain (here a
         // synthetic 2-clause body with no try_me_else) is not emittable — only
-        // chain members are (Stage 4). A REAL try_me_else-chain member IS emittable;
+        // chain members are (Stage 4). A real try_me_else-chain member is emittable;
         // that path is validated end-to-end (REPL findall cases + the full Embedding
         // suite run with SHUMWAY_REGION=1), since the flag can't be toggled per-test.
         var leaf = Pred(2, 2, LeafProceed());
@@ -85,7 +85,7 @@ public class Chunk373Tests
     [Fact]
     public void MemberWithCut_IsEmittable_Stage5()
     {
-        // A member with a cut IS emittable since Stage 5: the intra-region call
+        // A member with a cut is emittable since Stage 5: the intra-region call
         // emits SetB0(e.B), so the member's cut prunes only its own choice points
         // (chunk-367 barrier scoping). Validated end-to-end with discriminating
         // findall cases (a member commits its body to the first solution while a

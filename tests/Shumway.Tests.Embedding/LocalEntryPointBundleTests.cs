@@ -4,9 +4,9 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>A LOCAL entry-point predicate (no <c>:- public</c>, no
+/// <summary>A local entry-point predicate (no <c>:- public</c>, no
 /// <c>:- module</c> → mangled <c>module$name</c>) must be callable by its bare
-/// name from a bundle, including a SOURCE-STRIPPED (release) WAM-only bundle.
+/// name from a bundle, including a source-stripped (release) WAM-only bundle.
 ///
 /// <para>Regression: <c>shumway-link -s -g main</c> on a release <c>.shmo</c>
 /// (no <c>--with-compiled-il</c>) produced an exe that raised
@@ -47,7 +47,7 @@ public sealed class LocalEntryPointBundleTests
     }
 
     // Multi-module: app's local entry main/1 calls util's public greet/2, and
-    // BOTH modules define a local tag/1 with the SAME name. Promoting the entry
+    // both modules define a local tag/1 with the same name. Promoting the entry
     // must not leak visibility — util's greet sees util's tag, app's main sees
     // app's tag. Source-stripped WAM-only bundle (the fixed path).
     private const string Util =

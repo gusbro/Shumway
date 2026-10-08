@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-035 — a bundle compiled with <c>shumway-compile --debug</c> bakes the debuggable WAM
-/// AND its debug side tables (stop sites, per-clause frames/variables/head-args) straight into
+/// and its debug side tables (stop sites, per-clause frames/variables/head-args) straight into
 /// the <c>.shmo</c>, so a debug bundle is debuggable at load with no re-consult from source.
 /// These tests cover the two halves that enable it: the compiler emits the debug info under
 /// Debug build mode, and <see cref="CompiledModuleCodec"/> round-trips it (re-interning stop

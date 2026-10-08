@@ -18,7 +18,7 @@ public static partial class MetaBuiltins
 
     public static void EnsureRegistered()
     {
-        // The flag goes up AFTER the registrations, not before. Claiming it
+        // The flag goes up after the registrations, not before. Claiming it
         // first let a second caller straight through while the registry was
         // still half-populated — it saw "already done" and then could not find
         // a builtin the first caller had not reached yet (`call/1 is not a
@@ -44,7 +44,7 @@ public static partial class MetaBuiltins
         const string Io = "Input / output";
 
         // findall/3 is a prelude predicate (live-engine collect loop over
-        // call/1), NOT a builtin — the old isolated-sub-engine builtin lacked
+        // call/1), not a builtin — the old isolated-sub-engine builtin lacked
         // the parent's bundle-precompiled definitions (a source-stripped
         // bundle's module-local goal was absent from the sub-engine) and hid
         // the goal's side effects. See Prelude findall/3. A statically-callable
@@ -64,7 +64,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
         BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
-        // (live-engine findall + fail-on-empty), NOT builtins — the old
+        // (live-engine findall + fail-on-empty), not builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled
         // definitions. A statically-callable bagof/setof is still rewritten by
         // MetaTransform with full witness grouping. See Prelude bagof/3, setof/3.
@@ -73,9 +73,9 @@ public static partial class MetaBuiltins
         // goals' side effects. See Prelude forall/2.
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
             Term, "copy_term(?Term, -Copy)",
-            "Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy.");
+            "Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy.", kind: PredicateKind.Iso);
         // Scryer system builtin (iso_ext's copy_term_nat/2 wraps it): a copy
-        // where attributed variables come out as fresh PLAIN variables — which
+        // where attributed variables come out as fresh plain variables — which
         // is exactly what HeapTermCopy-backed copy_term/2 produces.
         BuiltinsRegistry.Register("$copy_term_without_attr_vars", 2, CopyTerm);
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
@@ -88,7 +88,8 @@ public static partial class MetaBuiltins
             Term, "term_attvars(+Term, -Vars)",
             "Unifies Vars with the attributed variables reachable from Term.");
         BuiltinsRegistry.Register("$dif_check", 4, DifCheck);
-        BuiltinsRegistry.Register("$wake_hook_goal", 5, WakeHookGoal);
+        BuiltinsRegistry.Register("$wake_hook_goal", 6, WakeHookGoal);
+        BuiltinsRegistry.Register("$wake_settle", 2, WakeSettle);
         BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
         // call_with_timeout/2,3 live in the prelude; these carry the deadline.
         BuiltinsRegistry.Register("$timeout_push", 1, TimeoutPush);
@@ -102,21 +103,21 @@ public static partial class MetaBuiltins
             "If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails.");
 
         BuiltinsRegistry.Register("call", 1, Call1,
-            Control, "call(:Goal)", "Calls a goal.");
+            Control, "call(:Goal)", "Calls a goal.", kind: PredicateKind.Control);
         BuiltinsRegistry.Register("call", 2, Call2,
-            Control, "call(:Goal, +Extra1)", "Calls a goal extended with one extra argument.");
+            Control, "call(:Goal, +Extra1)", "Calls a goal extended with one extra argument.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 3, Call3,
-            Control, "call(:Goal, +Extra1, +Extra2)", "Calls a goal extended with two extra arguments.");
+            Control, "call(:Goal, +Extra1, +Extra2)", "Calls a goal extended with two extra arguments.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 4, Call4,
-            Control, "call(:Goal, +Extra1, ..., +Extra3)", "Calls a goal extended with three extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra3)", "Calls a goal extended with three extra arguments.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 5, Call5,
-            Control, "call(:Goal, +Extra1, ..., +Extra4)", "Calls a goal extended with four extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra4)", "Calls a goal extended with four extra arguments.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 6, Call6,
-            Control, "call(:Goal, +Extra1, ..., +Extra5)", "Calls a goal extended with five extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra5)", "Calls a goal extended with five extra arguments.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 7, Call7,
-            Control, "call(:Goal, +Extra1, ..., +Extra6)", "Calls a goal extended with six extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra6)", "Calls a goal extended with six extra arguments.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("call", 8, Call8,
-            Control, "call(:Goal, +Extra1, ..., +Extra7)", "Calls a goal extended with seven extra arguments (ISO requires call/2..8).");
+            Control, "call(:Goal, +Extra1, ..., +Extra7)", "Calls a goal extended with seven extra arguments (ISO requires call/2..8).", kind: PredicateKind.Iso);
         // '$call'/2: a cut-barrier-carrying meta-call. The
         // $call_* control helpers re-enter call dispatch through it so a
         // `!` in a runtime compound goal cuts to the enclosing call's
@@ -124,7 +125,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
         BuiltinsRegistry.Register("repeat", 0, Repeat,
             Control, "repeat",
-            "Succeeds, and succeeds again on every backtrack: an unbounded choice point.");
+            "Succeeds, and succeeds again on every backtrack: an unbounded choice point.", kind: PredicateKind.Iso);
 
         // ADR-022 item 1 — the embedded-native-block dispatcher. The native
         // transform rewrites a captured block to `'$native_run'('$nb$…', V1..Vk)`;
@@ -167,9 +168,9 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("make_c_string", 4, MakeCString4);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
-            Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
+            Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("asserta", 1, Asserta,
-            Database, "asserta(+Clause)", "Adds a clause to the front of its dynamic predicate.");
+            Database, "asserta(+Clause)", "Adds a clause to the front of its dynamic predicate.", kind: PredicateKind.Iso);
         // 'assert/1' is the historical name; ISO and SWI
         // both accept it as a synonym for assertz/1.
         BuiltinsRegistry.Register("assert",  1, Assertz,
@@ -195,7 +196,7 @@ public static partial class MetaBuiltins
             + "is whole-database either way, so naming one predicate narrows what is "
             + "checked, not what is compacted.");
         BuiltinsRegistry.Register("retract", 1, Retract,
-            Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
+            Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("$retractall_modifiable", 1, RetractAllModifiable);
         // ADR-016: reachability-based heap garbage collection. Runs as a
         // goal (a safe point — all structures complete and rooted in
@@ -237,7 +238,7 @@ public static partial class MetaBuiltins
             + "for debugging (shumway --debug).");
 
         BuiltinsRegistry.Register("throw", 1, Throw,
-            Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
+            Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.", kind: PredicateKind.Control);
         // catch/3 is a prelude predicate built on the catch-frame
         // plumbing ($catch_begin/$catch_end), not a builtin — the old isolated-
         // sub-engine builtin hid the guarded goal's side effects. MetaTransform
@@ -284,7 +285,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$tbl_seen_clear", 0, TableSeenClear);
         BuiltinsRegistry.Register("$tbl_solve_complete", 1, TableSolveComplete);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
-            Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
+            Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.", kind: PredicateKind.Iso);
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars,
             Term, "numbervars(+Term, +Start, -End)", "Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start.");
@@ -292,7 +293,7 @@ public static partial class MetaBuiltins
             Term, "numbervars(+Term, +Start, -End, +Options)", "As numbervars/3 with an accepted, ignored option list.");
         BuiltinsRegistry.Register("term_variables",    2, TermVariables,
             Term, "term_variables(+Term, -Variables)",
-            "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).");
+            "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
             Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
         BuiltinsRegistry.Register("term_string",       2, TermString,
@@ -301,15 +302,15 @@ public static partial class MetaBuiltins
             Term, "term_string(?Term, ?String, +Options)", "As term_string/2 with an accepted, ignored option list.");
 
         BuiltinsRegistry.Register("functor", 3, Functor,
-            Term, "functor(?Term, ?Name, ?Arity)", "Relates a term to its functor name and arity.");
+            Term, "functor(?Term, ?Name, ?Arity)", "Relates a term to its functor name and arity.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("compound_name_arity", 3, CompoundNameArity,
             Term, "compound_name_arity(?Compound, ?Name, ?Arity)", "Like functor/3 but restricted to compound terms (arity >= 1).");
         BuiltinsRegistry.Register("arg",     3, Arg,
-            Term, "arg(+N, +Term, ?Arg)", "Unifies Arg with the Nth argument of the compound term.");
+            Term, "arg(+N, +Term, ?Arg)", "Unifies Arg with the Nth argument of the compound term.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("is_stream", 1, IsStream,
             Reflect, "is_stream(@Term)", "Succeeds if Term is a stream handle or a registered stream alias.");
         BuiltinsRegistry.Register("=..",     2, Univ,
-            Term, "=..(?Term, ?List)", "Relates a term to the list of its functor and arguments.");
+            Term, "=..(?Term, ?List)", "Relates a term to the list of its functor and arguments.", kind: PredicateKind.Iso);
 
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom,
             Term, "read_term_from_atom(+Atom, -Term)", "Parses an atom into a term.");
@@ -387,14 +388,14 @@ public static partial class MetaBuiltins
 
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
             Reflect, "current_op(?Priority, ?Type, ?Name)",
-            "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).");
+            "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("char_conversion", 2, CharConversion,
             Reflect, "char_conversion(+InChar, +OutChar)",
             "Registers a one-character-to-one-character mapping the lexer applies "
-            + "to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry.");
+            + "to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
             Reflect, "current_char_conversion(?InChar, ?OutChar)",
-            "Enumerates the active char-conversion table (ISO §8.14.10).");
+            "Enumerates the active char-conversion table (ISO §8.14.10).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("asserta", 2, AssertaRef,
             "Database", "asserta(+Clause, -Ref)",
             "Adds Clause at the front of its predicate and unifies Ref with its clause reference.");
@@ -406,11 +407,11 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
         BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,
-            Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
+            Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,
-            Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.");
+            Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag,
-            Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
+            Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
             "Writes a report of runtime, walltime, heap/trail/stack use, heap-GC "
@@ -429,15 +430,15 @@ public static partial class MetaBuiltins
             + "A diagnostic: it reports what a term costs, not how it is stored.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
-            "Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]. Any other key raises domain_error(statistics_key, Key).");
+            "Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]; inferences gives the goals the interpreter dispatched (only with Tier-1 off). Any other key raises domain_error(statistics_key, Key).");
         BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
             Reflect, "predicate_property(+Head, ?Property)",
             "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");
         BuiltinsRegistry.Register("module_property", 2, ModuleProperty,
             Reflect, "module_property(?Module, ?Property)",
             "Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound.");
-        // with_output_to/2 itself is a PRELUDE predicate (the goal must run in
-        // the LIVE engine so its side effects — op/3, assertz — survive);
+        // with_output_to/2 itself is a prelude predicate (the goal must run in
+        // the live engine so its side effects — op/3, assertz — survive);
         // these are its redirection primitives.
         BuiltinsRegistry.Register("$wot_begin", 1, WotBegin,
             Io, "'$wot_begin'(+Sink)", "Internal: begins a with_output_to capture.");
@@ -458,15 +459,15 @@ public static partial class MetaBuiltins
             "Enumerates open streams (ISO §8.11.8.1).");
         BuiltinsRegistry.Register("stream_property", 2, StreamProperty,
             Io, "stream_property(?Stream, ?Property)",
-            "Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2).");
+            "Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_stream_position", 2, SetStreamPosition,
             Io, "set_stream_position(+Stream, +Position)",
-            "Seeks the stream to the given byte position (ISO §8.11.10).");
+            "Seeks the stream to the given byte position (ISO §8.11.10).", kind: PredicateKind.Iso);
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. delegate to the existing
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
-            Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
+            Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.", kind: PredicateKind.Iso);
         // ISO read_term/3 — read_term(+Stream, -Term, +Options). Honours the
         // variable_names/1, singletons/1 and variables/1 read options (binding
         // each to a proper list that shares the term's variable cells); other
@@ -476,11 +477,11 @@ public static partial class MetaBuiltins
         // (Logtalk's linter).
         BuiltinsRegistry.Register("read_term", 3, ReadTermWithOptions,
             Io, "read_term(+Stream, -Term, +Options)",
-            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options.");
+            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("read",      1, Read1,
-            Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
+            Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("read",      2, Read2,
-            Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
+            Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("http_download", 2, HttpDownload,
             Io, "http_download(+URL, +File)",
             "Downloads URL's raw bytes to File (HTTP/HTTPS); a network or "
@@ -505,7 +506,7 @@ public static partial class MetaBuiltins
             "Converts between Shumway's canonical '/'-separated path form and the "
             + "host's native form. Either argument may be the bound one; on a "
             + "system whose separator is already '/' the two forms are the same.");
-        // Unshadowable alias for shim internals: a loaded library may EXPORT
+        // Unshadowable alias for shim internals: a loaded library may export
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
         // name would loop through the very library it serves.
@@ -565,7 +566,7 @@ public static partial class MetaBuiltins
             + "(no consult history); restore_state/1 then merges them into "
             + "the engine's current state via assertz without resetting.");
         // Arity save/restore — dynamic-database snapshots with destructive
-        // REPLACE semantics (distinct from save_state's merge/replay family).
+        // replace semantics (distinct from save_state's merge/replay family).
         BuiltinsRegistry.Register("save", 0, Save0,
             Database, "save",
             "Snapshots the current user dynamic database (all dynamic "

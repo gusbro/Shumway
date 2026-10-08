@@ -10,7 +10,7 @@ namespace Shumway.Tests.Wasm;
 /// <summary>The attributed-variable corpus of the IL differential, run
 /// against the WASM tier with Tier-0 as the oracle. An attvar cell exists
 /// only at its home — Deref does not follow AttVar — so a tier that copies
-/// one leaves an ORPHAN the attribute machinery cannot see; the probe scans
+/// one leaves an orphan the attribute machinery cannot see; the probe scans
 /// for exactly that after every shape.</summary>
 public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 {
@@ -50,6 +50,25 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         stale_b(Y) :- X = h(1, 2, 3, 4), Y = done(X).
         stale_c(N) :- freeze(Z, true), functor(Z, f, 0), N > 1.
         stale_c(N) :- X = h(1, 2, 3, N), X = h(_, _, _, 0).
+        :- public wake_bl/3.
+        :- public wake_pg/2.
+        :- public wake_pq/2.
+        :- public wake_pm/2.
+        :- public wake_gt/2.
+        :- public wake_gtx/2.
+        wake_bl(X, Z, L) :- X = a, atom_length(Z, L).
+        wake_pg(a, W) :- atom(W), !.
+        wake_pg(_, no).
+        wake_q(a, W) :- atom(W).
+        wake_q(_, 1).
+        wake_pq(X, W) :- wake_q(X, W), !.
+        wake_pq(_, 2).
+        wake_mem(X, [X|_]).
+        wake_mem(X, [_|T]) :- wake_mem(X, T).
+        wake_pm(X, L) :- wake_mem(X, L), !.
+        wake_pm(_, none).
+        wake_gt(a, Y) :- Y > 2.
+        wake_gtx(a, Y) :- Y * 2 + 1 > 5.
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -90,6 +109,20 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a builtin's wake, then a failure inside the tier: the retry builds over the home" },
         { "stale_c(0).",
           "a builtin's wake, then an inline comparison fails before any wake check" },
+        { "findall(L, (freeze(X, (Z = hello ; Z = hi)), wake_bl(X, Z, L)), Ls).",
+          "a binding, then a builtin: the woken goal runs before it" },
+        { "findall(W, (freeze(X, W = yes), wake_pg(X, W)), Ws).",
+          "a guard's head binds, then a builtin in the guard" },
+        { "findall(W, (freeze(X, wake_mem(W, [1, yes])), wake_pq(X, W)), Ws).",
+          "a guard's callee binds, then a builtin in the callee; the woken goal has alternatives" },
+        { "findall(W, (freeze(X, W = 1), wake_pq(X, W)), Ws).",
+          "a guard's callee binds, the woken goal fails the builtin: the callee's next clause" },
+        { "findall(X, (freeze(X, X \\== a), wake_pm(X, [a, b, c])), Xs).",
+          "memberchk: the woken goal fails at the callee's proceed" },
+        { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gt(X, Y)), Ys).",
+          "a comparison waits for the woken goal, and fails back into its alternatives" },
+        { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gtx(X, Y)), Ys).",
+          "the same with an expression" },
     };
 
     private static PrologEngine Tier0()
@@ -113,11 +146,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 
         void Install()
         {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
-            var addrMap = new Dictionary<int, int>(members.Count);
-            foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, addrMap, entry.RegisterDemand);
+            TieredEngine.Install(world, members, env);
         }
 
         store.Wasm = new WasmPromotionStore(store)
@@ -181,11 +210,11 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
 
-            // ANTI-VACUITY: a goal calling a corpus predicate must have run ON
+            // Anti-vacuity: a goal calling a corpus predicate must have run on
             // the tier, or this compares Tier-0 with Tier-0.
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
-                || goal.Contains("twice(") || goal.Contains("stale_");
+                || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }
@@ -239,7 +268,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             Assert.Equal(a.Ok, b.Ok);
             Assert.Equal(a.Detail, b.Detail);
             Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
-            // The library must actually be ON the tier, or this proves nothing.
+            // The library must actually be on the tier, or this proves nothing.
             Assert.True(members.Count > 5,
                 $"expected the library in the group, saw {members.Count}");
         }

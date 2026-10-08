@@ -40,7 +40,7 @@ public class ExportQualifiedModuleTests
         return e;
     }
 
-    // Succeeds iff goal has a solution, false on failure OR existence_error.
+    // Succeeds iff goal has a solution, false on failure or existence_error.
     private static bool Holds(PrologEngine e, string goal) =>
         e.Query($"catch(({goal}), _, fail).").Success;
 
@@ -108,7 +108,7 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void ExportQualifiedModule_CallsBareGlobalPreludeWithoutImport()
     {
-        // check/1 uses member/2 (prelude, bare-global) with NO
+        // check/1 uses member/2 (prelude, bare-global) with no
         // use_module(library(lists)) — the bare-global fallthrough covers it.
         using var libs = new LibSet().Add("usesmember",
             ":- module(usesmember, [check/2]).\n" +
@@ -125,10 +125,10 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void ImportingLibraryWithADirectiveGoal_LeavesProgramPredicatesResolvable()
     {
-        // Regression: a library whose consult runs a directive AS A GOAL (an
+        // Regression: a library whose consult runs a directive as A goal (an
         // unrecognised `:- G`, like `:- meta_predicate(...)`) triggers a query
-        // setup DURING the enclosing consult, which used to cache a stale static
-        // rewrite — leaving the importing program's OWN predicates unresolvable
+        // setup during the enclosing consult, which used to cache a stale static
+        // rewrite — leaving the importing program's own predicates unresolvable
         // (existence_error even though current_predicate reports them defined).
         using var libs = new LibSet().Add("gendir",
             ":- module(gendir, [g/0]).\n" +
@@ -149,7 +149,7 @@ public class ExportQualifiedModuleTests
     {
         using var libs = new LibSet().Add("greetq", GreetQ);
         var e = EngineWith(libs);
-        // The body call is a VARIABLE meta-call (call(G) with G bound at runtime)
+        // The body call is a variable meta-call (call(G) with G bound at runtime)
         // — resolution goes through the runtime $mqual import path, not the
         // compile-time ModuleRewrite one.
         e.ConsultString("""
@@ -162,9 +162,9 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void ReExportOfBuiltin_ResolvesBareGlobal()
     {
-        // Regression: a library that LISTS an export it does not itself define
+        // Regression: a library that lists an export it does not itself define
         // (SWI's library(terms) re-exports the builtin term_variables/2). The
-        // import must NOT map the name to a dangling terms$term_variables — it
+        // import must not map the name to a dangling terms$term_variables — it
         // must fall through to the bare-global builtin. Both a direct bare call
         // and a call from inside a library-local predicate must work.
         using var libs = new LibSet().Add("reterms",
@@ -186,9 +186,9 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void ReExportOfImportedPredicate_ResolvesToTheDefiningModule()
     {
-        // SICStus-style re-export: B imports pepe/1 from A and LISTS it in its own
+        // SICStus-style re-export: B imports pepe/1 from A and lists it in its own
         // export list without defining it. An importer of B must resolve pepe to
-        // the DEFINING module (A$pepe) — not to a dangling B$pepe, and not fall
+        // the defining module (A$pepe) — not to a dangling B$pepe, and not fall
         // through to bare-global (where nothing lives).
         using var libs = new LibSet()
             .Add("defmod", ":- module(defmod, [pepe/1]).\npepe(defined_in_a).\n")
@@ -291,7 +291,7 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void DirectlyConsultedModule_AutoImportsExportsIntoUser()
     {
-        // SWI behaviour: loading a module file DIRECTLY (consult, not as a
+        // SWI behaviour: loading a module file directly (consult, not as a
         // use_module dependency) imports its exports into `user`, so they
         // are callable bare right after loading.
         var e = new PrologEngine();
@@ -301,17 +301,15 @@ public class ExportQualifiedModuleTests
             secret(x).
             """);
         Assert.True(Holds(e, "hello(world)"));
-        // Non-exported predicates stay module-local — but the module was
-        // consulted DIRECTLY, so they too are callable bare, through the
-        // consult-direct fallback rather than the import table (see
-        // DirectConsultLocalTests for the use_module contrast).
-        Assert.True(Holds(e, "secret(x)"));
+        // Non-exported predicates stay module-local.
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => e.Query("secret(_)."));
     }
 
     [Fact]
     public void UseModuleDependency_DoesNotLeakExportsIntoUser()
     {
-        // A module pulled in as a DEPENDENCY of a use_module load feeds only
+        // A module pulled in as a dependency of a use_module load feeds only
         // the importer's table — its exports must not appear in `user`.
         using var libs = new LibSet()
             .Add("depb", ":- module(depb, [pb/1]).\npb(from_b).\n")
@@ -347,7 +345,7 @@ public class ExportQualifiedModuleTests
     [Fact]
     public void StaticQualifiedCall_ModuleLoadedLater_StillResolves()
     {
-        // The caller consults BEFORE the target module exists: the qualified
+        // The caller consults before the target module exists: the qualified
         // goal stays on the runtime path, and once the module loads the
         // transform cache re-keys (_modulesVersion) so a later query
         // resolves statically. Either way the call must succeed.
@@ -385,7 +383,7 @@ public class ExportQualifiedModuleTests
         Assert.True(e.Query(
             "'$copy_term_without_attr_vars'(f(X, g(X), 7), C), C = f(A, g(B), 7), A == B.")
             .Success);
-        // An attributed variable copies as a fresh PLAIN variable.
+        // An attributed variable copies as a fresh plain variable.
         e.ConsultString("""
             t :- put_attr(V, m, 1), '$copy_term_without_attr_vars'(h(V), h(C)),
                  var(C), \+ attvar(C), V \== C.

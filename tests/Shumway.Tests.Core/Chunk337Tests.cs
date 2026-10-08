@@ -6,18 +6,18 @@ namespace Shumway.Tests.Core;
 
 /// <summary>
 /// Chunk 337 (Phase 28): a cut's trail compaction must not drop an
-/// <c>AttrModify</c> entry that belongs to an OLD attributed variable just
+/// <c>AttrModify</c> entry that belongs to an old attributed variable just
 /// because the entry's <c>HeapIdx</c> is large.
 ///
 /// <para>For a <c>ValueChange</c> entry, <c>ExtraTrailEntry.HeapIdx</c> is the
 /// modified heap cell, so the "drop young cells" compaction rule
 /// (<c>HeapIdx &lt; parentHeapTop</c>) is correct. But for an <c>AttrModify</c>
 /// entry, <c>HeapIdx</c> is an index into <c>_attrTrailLog</c> — a monotonic
-/// counter of attribute mutations, NOT a heap address. Once a long-running
+/// counter of attribute mutations, not a heap address. Once a long-running
 /// computation has mutated more attributes than the parent CP's heap top, that
 /// counter exceeds <c>parentHeapTop</c> and the old (buggy) rule wrongly
-/// dropped the entry — even for an OLD attvar whose record restore is still
-/// required. The fix tests the attvar's HOME instead.</para>
+/// dropped the entry — even for an old attvar whose record restore is still
+/// required. The fix tests the attvar's home instead.</para>
 ///
 /// <para>This is the engine root cause of the clpfd "donald"
 /// <c>type_error(evaluable, fd(_,_))</c>: clpfd's many small if-then-else cuts
@@ -34,13 +34,13 @@ public class Chunk337Tests
         var engine = new Activation();
         const int mod = 1;
 
-        // An OLD attributed variable X (low heap home) with attribute value v0.
+        // An old attributed variable X (low heap home) with attribute value v0.
         int x = engine.AllocateHeapUnbound();
         int v0 = engine.AllocateHeap(1);
         engine.SetHeap(v0, Cell.Atom(50));
         engine.PutAttr(x, mod, v0);
 
-        // Inflate the attribute-mutation log WITHOUT growing the heap: re-set a
+        // Inflate the attribute-mutation log without growing the heap: re-set a
         // throwaway attvar to the same value cell many times. This drives the
         // _attrTrailLog counter (stored in each AttrModify entry's HeapIdx) far
         // past the tiny heap top — exactly donald's deep-search regime.
@@ -56,9 +56,9 @@ public class Chunk337Tests
         int outerBinding = engine.BindingTrailTop;
         int outerExtra = engine.ExtraTrailTop;
 
-        // Modify the OLD attvar X above the outer CP. Its AttrModify entry now
+        // Modify the old attvar X above the outer CP. Its AttrModify entry now
         // carries a HeapIdx (log index ~200) far above the parent heap top
-        // (~4), while its attvar HOME (x ~0) sits below it — the misclassified
+        // (~4), while its attvar home (x ~0) sits below it — the misclassified
         // case the old rule got wrong.
         int v1 = engine.AllocateHeap(1);
         engine.SetHeap(v1, Cell.Atom(77));
@@ -68,11 +68,11 @@ public class Chunk337Tests
         // An inner choice point, then a cut committing to the outer CP. This
         // runs CompactTrails relative to the outer CP's small heap top. The
         // buggy rule drops X's entry (HeapIdx 200 >= 4); the fixed rule keeps
-        // it (HOME 0 < 4).
+        // it (home 0 < 4).
         engine.PushChoicePoint(0, 998);
         engine.Cut(outerB);
 
-        // Backtrack to the outer CP: X's attribute MUST be restored to v0.
+        // Backtrack to the outer CP: X's attribute must be restored to v0.
         // With the bug it stays at v1 (the dropped entry never ran).
         engine.UnwindTrails(outerBinding, outerExtra);
         Assert.Equal(v0, engine.GetAttr(x, mod));
@@ -114,7 +114,7 @@ public class Chunk337Tests
     }
 
     // The sibling bug: BigIntAlloc entries overload HeapIdx to mean the
-    // big-integer TABLE size before the allocation (not a heap address). The
+    // big-integer table size before the allocation (not a heap address). The
     // old `HeapIdx < parentHeapTop` test wrongly dropped the entry once the
     // table outgrew the parent CP's heap top, so a cut+backtrack failed to trim
     // the bigint table — a leak (and potential id reuse under a surviving
@@ -146,7 +146,7 @@ public class Chunk337Tests
         engine.PushChoicePoint(0, 998);
         engine.Cut(outerB);
 
-        // Backtrack to the outer CP: the bigint table MUST be trimmed back.
+        // Backtrack to the outer CP: the bigint table must be trimmed back.
         // With the bug the dropped entry never trims, leaving the slot leaked.
         engine.UnwindTrails(outerBinding, outerExtra);
         Assert.Equal(countAtOuter, engine.BigIntTableCount);

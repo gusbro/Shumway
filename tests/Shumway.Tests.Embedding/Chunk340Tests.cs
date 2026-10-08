@@ -82,7 +82,7 @@ public class Chunk340Tests
         Assert.Equal(new[] { (1L, 1L), (3L, 4L), (5L, 7L) }, pairs);
     }
 
-    // The headline case: donald solved by plain LEFTMOST labeling. Before the
+    // The headline case: donald solved by plain leftmost labeling. Before the
     // global propagator this did not terminate; the strong combined-coefficient
     // propagation now makes leftmost feasible. (ff is the fast order; this test
     // uses leftmost precisely because it exercises the propagation strength.)

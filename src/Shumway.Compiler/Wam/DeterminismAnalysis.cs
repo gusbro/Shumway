@@ -10,12 +10,12 @@ namespace Shumway.Compiler.Wam;
 /// classification delegates to it, so both use one determinism model.
 ///
 /// <para><b>Determinism fixpoint.</b> A user predicate is <em>det</em> (leaves no
-/// CP on success) when its dispatch is deterministic — single clause, OR every
+/// CP on success) when its dispatch is deterministic — single clause, or every
 /// clause except the last that <em>can succeed</em> commits via a top-level cut
 /// (the last clause is reached only via <c>trust</c>; a clause with a top-level
-/// <c>fail</c>/<c>false</c> never yields, so it is exempt) — AND every goal after
+/// <c>fail</c>/<c>false</c> never yields, so it is exempt) — and every goal after
 /// the last cut in each can-succeed clause body itself leaves no CP. First-argument
-/// key exclusivity is deliberately NOT used (it is mode-dependent). Goals are
+/// key exclusivity is deliberately not used (it is mode-dependent). Goals are
 /// classified against a conservative builtin whitelist, the det control constructs,
 /// and — recursively — the det set being computed, via a <em>greatest</em> fixpoint
 /// (assume all eligible predicates det, remove the provably non-det) so a predicate
@@ -59,7 +59,7 @@ public sealed class DeterminismAnalysis
         Nondet,
     }
 
-    // Builtins that leave NO choice point in any mode (whitelist; everything else
+    // Builtins that leave no choice point in any mode (whitelist; everything else
     // is treated as nondet — sound/conservative). NB: atom_concat/3, sub_atom/5,
     // member/2, between/3, … are deliberately absent — they backtrack.
     private static readonly HashSet<string> KnownDetBuiltins = new()
@@ -146,7 +146,7 @@ public sealed class DeterminismAnalysis
             flat[ind] = perClause;
         }
 
-        // GREATEST fixpoint: optimistically assume every eligible predicate is
+        // Greatest fixpoint: optimistically assume every eligible predicate is
         // det, then remove any that is provably non-det (bad dispatch, or a body
         // goal that leaves a CP) — where a recursive / mutually-recursive call is
         // classified against the *current* assumption. This proves a predicate
@@ -187,7 +187,7 @@ public sealed class DeterminismAnalysis
         System.ArgumentNullException.ThrowIfNull(clauses);
         var analysis = Build(clauses, isEligible);
 
-        // Find, per eligible predicate, the index of its LAST clause in the
+        // Find, per eligible predicate, the index of its last clause in the
         // original list (last textual occurrence of the indicator).
         var lastClauseIndex = new Dictionary<string, int>();
         var eligibleInd = new HashSet<string>();
@@ -282,12 +282,12 @@ public sealed class DeterminismAnalysis
         return true;
     }
 
-    // --- ADR-030 linker closure: the WHOLE-PROGRAM variant. ---
+    // --- ADR-030 linker closure: the whole-program variant. ---
 
     /// <summary>Whole-program determinism (the ADR-030 linker closure). The same
-    /// greatest-fixpoint model as <see cref="Build"/>, but over EVERY module's
+    /// greatest-fixpoint model as <see cref="Build"/>, but over every module's
     /// clauses at once: a goal resolves module-locally first, then to the global
-    /// PUBLIC definition — so a cross-module callee is no longer opaque and the
+    /// public definition — so a cross-module callee is no longer opaque and the
     /// <see cref="GoalKind.CrossModule"/> blocker disappears for anything the
     /// program actually defines. Qualified indicators are
     /// <c>module + '' + name/arity</c>.</summary>
@@ -474,7 +474,7 @@ public sealed class DeterminismAnalysis
 
     // Deterministic dispatch, mode-AGNOSTICALLY (we do not know the call's
     // instantiation): single clause (no clause-alternative CP is ever created),
-    // OR every clause EXCEPT the last that CAN SUCCEED commits via a top-level
+    // or every clause except the last that can succeed commits via a top-level
     // cut. The last clause needs no cut — it is reached only via `trust`, with
     // the clause-selection CP already consumed. A clause that can never succeed
     // (a top-level `fail`/`false` conjunct) never yields, so it leaves no CP on
@@ -486,7 +486,7 @@ public sealed class DeterminismAnalysis
     // in PredIsDet (also skipping can't-succeed clauses) covers what each clause
     // leaves after its cut — the two together are sound.
     //
-    // First-argument mutual exclusivity is DELIBERATELY NOT used: it only makes
+    // First-argument mutual exclusivity is deliberately not used: it only makes
     // dispatch deterministic when the call supplies a ground first argument
     // (`q(a). q(b).` still leaves a CP under `q(X)`), so relying on it would be
     // unsound for a partially-instantiated call. This rule instead keys off the
@@ -516,7 +516,7 @@ public sealed class DeterminismAnalysis
         return true;
     }
 
-    // The goals that never push a CP AND never need a frame (matches the
+    // The goals that never push a CP and never need a frame (matches the
     // compiler's IsInlineBodyGoal): cut / true / fail, is, =, the six rel-ops.
     private static bool IsInlineLike(Term g) => g switch
     {

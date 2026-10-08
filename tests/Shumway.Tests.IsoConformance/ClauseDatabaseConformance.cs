@@ -228,7 +228,7 @@ public class ClauseDatabaseConformance
     {
         // §8.9.1.3: head or body subterm that cannot be a goal raises
         // type_error(callable, Culprit) at assert time — the culprit is
-        // the offending SUBTERM (4), not the whole clause.
+        // the offending subterm (4), not the whole clause.
         var e = new PrologEngine();
         Assert.True(e.Query(
             "catch(asserta(4), error(type_error(callable, 4), _), true).").Success);
@@ -275,7 +275,7 @@ public class ClauseDatabaseConformance
     [Fact]
     public void Abolish_ThenCall_IsExistenceError()
     {
-        // §8.9.4: after abolish the predicate is UNDEFINED — a NEW call
+        // §8.9.4: after abolish the predicate is undefined — a new call
         // raises existence_error; a declared-but-empty dynamic still fails.
         var e = new PrologEngine();
         Assert.True(e.Query(
@@ -305,7 +305,7 @@ public class ClauseDatabaseConformance
     [Fact]
     public void Retract_RuleFormMatchesFacts()
     {
-        // retract((H :- B)) treats a stored FACT as (H :- true).
+        // retract((H :- B)) treats a stored fact as (H :- true).
         var e = new PrologEngine();
         Assert.True(e.Query(
             "assertz(adb_legs(spider, 8)), "

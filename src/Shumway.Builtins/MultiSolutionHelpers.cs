@@ -20,10 +20,10 @@ public static class MultiSolutionHelpers
     /// <summary><c>'$get_cut_barrier'(K)</c>: unifies K with the
     /// clause's cut barrier (<see cref="Activation.B0"/>, the choice-point level the
     /// caller's Call/Execute established — what a neck cut commits to). Inserted
-    /// by <c>MetaTransform</c> as the FIRST body goal of a clause that has a
+    /// by <c>MetaTransform</c> as the first body goal of a clause that has a
     /// <c>!</c> inside a <c>;</c>/<c>-&gt;</c> branch: the branch lowers to a
     /// synthesised helper, and the captured barrier threads through to it so the
-    /// branch cut commits the HOST clause (ISO 7.8.8 cut transparency in
+    /// branch cut commits the host clause (ISO 7.8.8 cut transparency in
     /// then/else and disjunction branches) instead of just the helper. The cut
     /// itself runs as <c>'$call'(!, K)</c> — the barrier-cut path.</summary>
     public static bool GetCutBarrier(Activation engine)
@@ -35,7 +35,7 @@ public static class MultiSolutionHelpers
     /// helper's <c>Else</c>-alternative CP), committing away <c>Else</c> once the
     /// condition has succeeded while leaving the condition's own choice points
     /// intact. This is the builtin form <c>MetaTransform</c> emits for a
-    /// <c>( Cond *-&gt; Then ; Else )</c> that is NOT inline-eligible (a cut in a
+    /// <c>( Cond *-&gt; Then ; Else )</c> that is not inline-eligible (a cut in a
     /// branch, nested control in a part); the inline-eligible case commits with the
     /// <c>soft_cut</c> opcode directly. See <see cref="Activation.SoftCut"/>.</summary>
     public static bool SoftCut1(Activation engine)
@@ -55,56 +55,19 @@ public static class MultiSolutionHelpers
     /// ground.</summary>
     public static bool ListLength(Activation engine)
     {
-        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
-        // Tortoise-and-hare over the SPINE: a cyclic list has no finite
-        // length, and without the check this while loop is an uninterruptible
-        // C# spin — `L = [a|L], length(L, 0)` hung the engine past every safe
-        // point (Neumerkel's length case 27).
-        Cell hare = cur;
-        bool hareRuns = true;
-        int count = 0;
-        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
-        {
-            count++;
-            cur = ListCursor.Resolve(engine, tail);
-            // Compare ONLY after the hare advanced BOTH steps: a hare that
-            // ran off the end proves the spine finite, and comparing anyway
-            // reports "cycle" when the tortoise catches it resting on nil —
-            // which failed length/2 on every short proper list.
-            if (hareRuns && ListCursor.TryUncons(engine, hare, out _, out Cell h1)
-                && ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
-            {
-                hare = ListCursor.Resolve(engine, h2);
-                if (cur.Equals(hare)) return false;   // the spine loops
-            }
-            else hareRuns = false;
-        }
-        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            return false;
+        // A cyclic spine ends on one of its cells, not on nil: no length, and
+        // a walk without the detection is an uninterruptible C# spin
+        // (Neumerkel's length case 27).
+        Cell end = ListCursor.SkipSpine(engine, engine.GetRegister(0), out long count);
+        if (!ListCursor.IsNil(end)) return false;
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
     }
 
-    /// <summary><c>'$cyclic_spine'(L)</c> — true when L's list SPINE loops
-    /// (tortoise and hare; heads are not entered). The prelude's length/2
-    /// fails such lists outright: walking them, in C# or in Prolog, never
-    /// ends.</summary>
+    /// <summary><c>'$cyclic_spine'(L)</c> — true when L's list spine loops
+    /// (heads are not entered). The prelude's length/2 fails such lists
+    /// outright: walking them, in C# or in Prolog, never ends.</summary>
     public static bool CyclicSpine(Activation engine)
-    {
-        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
-        Cell hare = cur;
-        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
-        {
-            cur = ListCursor.Resolve(engine, tail);
-            // Same rule as ListLength: only a hare that advanced BOTH steps
-            // may be compared — one that ran off the end proves finiteness.
-            if (!ListCursor.TryUncons(engine, hare, out _, out Cell h1)
-                || !ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
-                return false;
-            hare = ListCursor.Resolve(engine, h2);
-            if (cur.Equals(hare)) return true;
-        }
-        return false;
-    }
+        => ListCursor.IsCyclic(engine, engine.GetRegister(0));
 
     /// <summary><c>'$make_var_list'(N, List)</c> — builds a fresh list
     /// of <c>N</c> unbound variables and unifies it with <c>List</c>.
@@ -116,10 +79,10 @@ public static class MultiSolutionHelpers
         // ISO precedence — instantiation_error before type_error.
         if (nCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        // A BIGINT count is a well-typed integer no list can ever have: the
+        // A bigint count is a well-typed integer no list can ever have: the
         // heap cannot hold 2N+1 cells of it. Fail, like the length such a
         // list will never reach (Neumerkel's length case 31); the bare (int)
-        // cast this replaces silently TRUNCATED a large long instead.
+        // cast this replaces silently truncated a large long instead.
         if (nCell.Tag != Tag.Int)
         {
             if (nCell.Tag == Tag.BigInt) return false;
@@ -148,7 +111,7 @@ public static class MultiSolutionHelpers
             throw new PrologRuntimeException("type_error", "atom");
         Atom? atomObj = AtomTable.GetById(atomCell.AsAtomId);
         string name = atomObj?.Name ?? "";
-        // Offsets and lengths are CODE POINTS. For the (rare) non-BMP atom,
+        // Offsets and lengths are code points. For the (rare) non-BMP atom,
         // precompute each code point's starting unit index once so every
         // decomposition still slices in O(1).
         int[]? cpBounds = atomObj is { IsAllBmp: false }
@@ -220,7 +183,7 @@ public static class MultiSolutionHelpers
     }
 
     /// <summary><c>'$sub_atom_enum'(Atom, Before, Length, After, Sub)</c> — the
-    /// LAZY sub_atom/5 enumerator. Yields each <c>(Before, Length, After, Sub)</c>
+    /// lazy sub_atom/5 enumerator. Yields each <c>(Before, Length, After, Sub)</c>
     /// decomposition one at a time on backtracking via the shared
     /// <see cref="IndexEnumCursor"/>, instead of materialising all
     /// <c>(len+1)(len+2)/2</c> decompositions onto the heap up front (O(1) extra
@@ -228,7 +191,7 @@ public static class MultiSolutionHelpers
     /// ascending — identical to the eager list — so a bound argument filters via
     /// the per-decomposition unification.
     ///
-    /// <para>TRAP: a cursor builtin like this MUST be seen as backtrackable by
+    /// <para>Trap: a cursor builtin like this must be seen as backtrackable by
     /// the Tier-1 IL emit, or it skips the resume-marker /
     /// <c>BuiltinReturnPc</c> setup and the cursor resumes at PC 0 (silent
     /// solution loss). <see cref="BacktrackableDetector"/> derives that flag
@@ -253,7 +216,7 @@ public static class MultiSolutionHelpers
         if (atomCell.Tag == Tag.Atom) name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         else if (!SwiLenient.TryCoerce(engine, atomCell, out name))
             throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
-        // Offsets/lengths are CODE POINTS. BMP atoms (the per-atom shape,
+        // Offsets/lengths are code points. BMP atoms (the per-atom shape,
         // computed at intern) keep the exact unit-based code below; a
         // non-BMP one gets a boundary table so slices stay O(1).
         int[]? cpb = null;
@@ -266,7 +229,7 @@ public static class MultiSolutionHelpers
         int len = cpb is null ? name.Length : cpb.Length - 1;
 
         // Mode analysis: pre-filter the candidate set by every bound argument
-        // so (in the common modes) a candidate is enumerated ONLY if it will
+        // so (in the common modes) a candidate is enumerated only if it will
         // unify. The cursor drops its choice point exactly at the last real
         // solution, so a bound-mode call is deterministic like GNU/SWI —
         // without this, a sub_atom during a long-lived caller leaves a dead CP
@@ -307,7 +270,7 @@ public static class MultiSolutionHelpers
             int lsUnits = sub.Length;
             int ls = cpb is null ? lsUnits : Utf16Text.CodePointLength(sub);
             if (lFix >= 0 && lFix != ls) return false;
-            // An occurrence must start AND end on a code-point boundary —
+            // An occurrence must start and end on a code-point boundary —
             // matching sub's units at cp position b spans exactly ls code
             // points iff the end lands on cpb[b + ls].
             bool OccursAt(int b)

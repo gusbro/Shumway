@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary><c>predicate_property/2</c> reporting
 /// <c>meta_predicate(Template)</c> from recorded <c>:- meta_predicate</c>
-/// directives — including for a MODULE-QUALIFIED query (<c>user:freeze</c>),
+/// directives — including for a module-qualified query (<c>user:freeze</c>),
 /// which is the exact shape Logtalk's compiler asks to decide whether a goal
 /// argument must be wrapped for its calling context. Without this, a goal
 /// handed through a qualified forwarding call woke up unwrapped in

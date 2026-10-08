@@ -17,7 +17,7 @@ namespace Shumway.Compiler.Il;
 /// UsesWamBackedIndexedDispatch) — each a full bytecode walk with ~10+
 /// collection allocations.</para>
 ///
-/// <para>The analyses take a <c>calleeMap</c>, but its ONLY influence on the
+/// <para>The analyses take a <c>calleeMap</c>, but its only influence on the
 /// result is conjunctive: <c>IsClauseBodyOpcode</c> rejects a <c>Call</c>
 /// opcode whose callee fid is missing from the map (or has no call-site
 /// metadata, or when the map is null). So the memo stores the
@@ -32,7 +32,7 @@ namespace Shumway.Compiler.Il;
 internal sealed class IlShapeMemo
 {
     /// <summary>The structural describe result, or null when the bytecode
-    /// does not match the shape under ANY calleeMap.</summary>
+    /// does not match the shape under any calleeMap.</summary>
     private readonly object? _info;
 
     /// <summary>The callee fid of every <c>Call</c> opcode the structural
@@ -49,7 +49,7 @@ internal sealed class IlShapeMemo
 
     /// <summary>Re-applies the calleeMap-dependent half of the analysis:
     /// returns the memoized describe result iff the shape matched
-    /// structurally AND every recorded <c>Call</c> callee resolves in
+    /// structurally and every recorded <c>Call</c> callee resolves in
     /// <paramref name="calleeMap"/>.</summary>
     internal bool Resolve<T>(
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, out T? info)

@@ -53,7 +53,7 @@ public class EdinburghIoTests
     [Fact]
     public void Get_SkipsNonPrintingControlChars()
     {
-        // get/1 skips non-printing codes (< 32) but DOES return space
+        // get/1 skips non-printing codes (< 32) but does return space
         // and printable chars. "\t\n\rHi" → first read returns 'H' (72).
         // Space (32) is printable, so it would have been returned too.
         string path = Path.Combine(Path.GetTempPath(),
@@ -151,8 +151,8 @@ public class EdinburghIoTests
     public void Tell_Twice_KeepsPreviousOpen_AndRetellResumes()
     {
         // Phase 33 (PrologToC corpus) — real Edinburgh semantics: tell/1 on
-        // a second file leaves the first OPEN (only told/0 closes), and
-        // tell/1 back to the first file RESUMES it, appending where it left
+        // a second file leaves the first open (only told/0 closes), and
+        // tell/1 back to the first file resumes it, appending where it left
         // off. The classic multi-output juggle (`tell(a), telling(SP),
         // tell(b), … tell(SP), told`) depends on exactly this; the previous
         // behaviour (close-on-switch) broke it.

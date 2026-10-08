@@ -3,9 +3,9 @@ namespace Shumway.TopLevel;
 /// <summary>What the reader asked for at the more-solutions prompt.</summary>
 public enum MoreAnswers
 {
-    /// <summary>Anything else, <c>.</c> or RETURN — this answer is enough.</summary>
+    /// <summary>Anything else, <c>.</c> or return — this answer is enough.</summary>
     Stop,
-    /// <summary><c>;</c>, SPACE, Tab or <c>n</c>.</summary>
+    /// <summary><c>;</c>, space, Tab or <c>n</c>.</summary>
     One,
     /// <summary><c>a</c> — every remaining solution, without asking again.</summary>
     All,
@@ -41,7 +41,7 @@ public static class AnswerPrompt
     /// <summary>How many answers <c>f</c> asks for, having already shown
     /// <paramref name="shown"/>.
     ///
-    /// <para>Not "five more": five is a chunk BOUNDARY, so pressing it fills
+    /// <para>Not "five more": five is a chunk boundary, so pressing it fills
     /// out the current group — four after one answer, five after five. Answers
     /// then arrive in aligned blocks however you got there, which is what makes
     /// a long enumeration countable at a glance.</para></summary>

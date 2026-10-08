@@ -13,7 +13,7 @@ public sealed class NativeBlockBailException : Exception { }
 
 /// <summary>ADR-022 item 2 — the shared typed analysis of a native block, used by
 /// both code generators: the Expression-tree delegate compiler
-/// (<c>NativeBlockCompiler</c>, runtime) and the Sigil inline emitter
+/// (<c>NativeBlockCompiler</c>, runtime) and the inline IL emitter
 /// (<c>NativeBlockIlEmitter</c>, build-time IL). It assigns each Prolog variable
 /// and block-local one of three model CLR types — <c>long</c> (every integer
 /// kind), <c>double</c> (every floating kind), <c>string</c> — mirroring the
@@ -22,7 +22,7 @@ public sealed class NativeBlockBailException : Exception { }
 public sealed class NativeBlockTyping
 {
     /// <summary>Model CLR type (long/double/string) of each Prolog variable and
-    /// block-local, by name. A <c>reftype</c> variable is NOT here — it is in
+    /// block-local, by name. A <c>reftype</c> variable is not here — it is in
     /// <see cref="ReftypeVars"/> instead, because its CLR type (<c>TermSlot</c>)
     /// lives in Shumway.Embedding, which this assembly can't name; each code
     /// generator supplies the concrete type.</summary>

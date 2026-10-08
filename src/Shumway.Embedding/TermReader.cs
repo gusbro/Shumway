@@ -43,7 +43,7 @@ public static class TermReader
     //
     // The walk needs a work stack (pending frames), a result stack (built
     // child Terms awaiting their parent) and the cycle-detection path set.
-    // These are transient per-walk scratch — NOT engine state — so pooling
+    // These are transient per-walk scratch — not engine state — so pooling
     // them per-thread keeps the engine thread-agile (a walk is synchronous and
     // single-threaded; the buffers simply follow the executing thread) while
     // avoiding a fresh allocation per findall solution (the intent,
@@ -59,7 +59,7 @@ public static class TermReader
     private readonly struct Frame
     {
         // 0 = Expand a heap index into a Term.
-        // 1 = Assemble a compound (STR/FUNCTOR) from Arity results.
+        // 1 = Assemble a compound (STR/functor) from Arity results.
         // 2 = Assemble a cons cell from 2 results (head, tail).
         // 3 = Prepend a packed text run to 1 result (the PSTR's tail).
         // 4 = Push the marker for a part of the term the budget did not
@@ -100,14 +100,14 @@ public static class TermReader
     /// <summary>Materializes at most <paramref name="limit"/> nodes, standing
     /// in <c>'...'</c> for everything past that; <c>0</c> means all of it.
     ///
-    /// <para>For a DISPLAY, where the term is about to be elided anyway.
+    /// <para>For a display, where the term is about to be elided anyway.
     /// Eliding afterwards bounds the output and not the work: an answer of a
     /// million and a half cells was built as a million and a half AST nodes so
-    /// that twelve of them could be shown, which cost more than SOLVING the
+    /// that twelve of them could be shown, which cost more than solving the
     /// query. Everything else that materializes -- findall/3, copy_term/2,
     /// reading an attribute -- wants the whole term and passes no limit.</para>
     ///
-    /// <para>The cut lands where a node would be EXPANDED, so every assemble
+    /// <para>The cut lands where a node would be expanded, so every assemble
     /// frame still gets the arity it is waiting for, and a list whose spine
     /// runs out reads as <c>[a, b|...]</c>, which is what a top level shows
     /// anyway.</para></summary>
@@ -272,14 +272,14 @@ public static class TermReader
 
             case Tag.Pstr:
             {
-                // A packed list crosses to C# as the LIST it is (ADR-047
+                // A packed list crosses to C# as the list it is (ADR-047
                 // decision 6): the representation is not observable at the
                 // boundary, so a C# method called with a packed list and with
                 // the equivalent cons list must receive the same thing. Handing
                 // over a StringTerm instead meant every caller matching
                 // `Functor == "."` — 52 sites — silently missed it.
                 //
-                // Expand THIS segment only and let the machine expand the tail,
+                // Expand this segment only and let the machine expand the tail,
                 // which may be the next segment of a lazy concat and lands back
                 // here. Term.TryAsText is the way to read the text without
                 // paying for the nodes.
@@ -303,7 +303,7 @@ public static class TermReader
                     new Term[] { new IntTerm(cell.AsForeignId) }));
                 break;
 
-            // A STR ref points at the functor cell; a bare FUNCTOR cell reached
+            // A STR ref points at the functor cell; a bare functor cell reached
             // as a value (ADR-017 inline builds whose ref was elided) is the
             // head of the compound rooted right here.
             case Tag.Str:
@@ -322,7 +322,7 @@ public static class TermReader
                 Cell functorCell = engine.GetHeap(functorIdx);
                 var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
                 string name = NameOfAtom(atomId);
-                // A display of a WIDE term does not need the width. One frame
+                // A display of a wide term does not need the width. One frame
                 // per argument meant a million arguments cost a million
                 // ellipses and printed every one of them: the budget bounded
                 // what the answer said and not what it cost to say. Take what

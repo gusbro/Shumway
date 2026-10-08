@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// engine happens to be built out of.
 ///
 /// <para>An engine booted from a bundle with a baked prelude holds the prelude
-/// as PRECOMPILED records rather than manifest clauses, which is a different
+/// as precompiled records rather than manifest clauses, which is a different
 /// path through the enumeration. It used to list every prelude local
 /// (<c>$prelude$$member3/3: 2 clauses, source stripped</c>) — noise that also
 /// said the engine's own innards had no source, which is true and irrelevant.</para>
@@ -67,9 +67,9 @@ public sealed class ListingScopeTests
         var e = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
         string text = Listing(e);
 
-        // The user's own predicate is reported — with no source to show, since a
-        // release bundle carries none, which is what that message is FOR.
-        Assert.Contains("mine/1", text);
+        // The user's own predicate is listed from the clauses the bundle
+        // ships for inspection (a release bundle carries no source).
+        Assert.Contains("mine(1).", text);
         // The prelude's, on the other hand, are not the user's program at all.
         Assert.DoesNotContain("$prelude", text);
     }

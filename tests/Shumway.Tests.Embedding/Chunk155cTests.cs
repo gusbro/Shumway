@@ -93,7 +93,7 @@ public class Chunk155cTests
         // Quick existence checks first.
         Assert.True(e.Query("p(c, 3).").Success);
         Assert.True(e.Query("p(c, generic).").Success);
-        // Querying p(c, X) should yield (c, 3) AND (c, generic).
+        // Querying p(c, X) should yield (c, 3) and (c, generic).
         // The (c, generic) match comes from the var-arg clause merged
         // into the new bucket.
         var cSols = e.QueryAll("p(c, X).").Select(s => s["X"]).ToList();

@@ -45,7 +45,7 @@ public class LibrarySearchPathTests
     }
 
     // A query that must not throw an existence_error — succeeds iff the goal
-    // has a solution, false if it fails OR the predicate is undefined.
+    // has a solution, false if it fails or the predicate is undefined.
     private static bool Holds(PrologEngine e, string goal) =>
         e.Query($"catch(({goal}), _, fail).").Success;
 
@@ -90,7 +90,7 @@ public class LibrarySearchPathTests
     [Fact]
     public void BakedLibrary_TakesPrecedenceOverFile()
     {
-        // A file named clpfd.pl on the search path must NOT shadow the baked
+        // A file named clpfd.pl on the search path must not shadow the baked
         // C# CLP(FD) library — the baked switch wins.
         using var lib = new LibDir("clpfd", "shadow_marker(tripped).\n");
         var engine = new PrologEngine();

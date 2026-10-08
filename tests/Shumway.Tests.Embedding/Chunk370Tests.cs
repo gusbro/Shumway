@@ -9,7 +9,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 370 (Phase 29, region compilation — Stage 1): region DISCOVERY
+/// Chunk 370 (Phase 29, region compilation — Stage 1): region discovery
 /// (<see cref="IlRegionBuilder"/>). Builds the flat-local-code-space region — a
 /// root predicate plus its transitively-reachable local callees, breadth-first,
 /// up to an IL-size budget — over which a later stage emits one IL method with

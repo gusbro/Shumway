@@ -39,7 +39,7 @@ public static class ShmoCompiler
     /// in-place pre-pass (op / set_prolog_flag / char_conversion, plus
     /// the arity_compat <c>c</c> / <c>prolog</c> section markers), and
     /// the PrologEngine consult pass (discontiguous / multifile /
-    /// table / mode). Anything else is an UNKNOWN directive: under
+    /// table / mode). Anything else is an unknown directive: under
     /// <c>arity_compat</c> it's reported as a warning and skipped
     /// (Arity sources carry directives like <c>extrn</c> that have no
     /// Shumway meaning); without the flag behaviour is unchanged.</summary>
@@ -70,7 +70,7 @@ public static class ShmoCompiler
     public static readonly HashSet<string> SilentlyIgnoredDirectives = new()
     {
         "extrn",
-        // encoding/1 is ACTED ON before the text reaches the parser
+        // encoding/1 is acted on before the text reaches the parser
         // (TextFile.DecodeSource re-decodes the file); by the time the
         // directive is seen here its work is done.
         "encoding",
@@ -136,11 +136,11 @@ public static class ShmoCompiler
     /// on one clause is captured as an error and the parser resyncs to
     /// the next clause-terminator dot before trying the next one.
     /// Malformed directives (<c>:- public foo.</c>, etc.) are likewise
-    /// captured. The result carries every error AND — only when zero
+    /// captured. The result carries every error and — only when zero
     /// errors fired — the resulting <see cref="ShmoObject"/>. Stops
     /// after <paramref name="maxErrors"/> errors (default 100).</summary>
     /// <param name="clauseFilter">Prelude pruning — when non-null,
-    /// only clauses whose HEAD indicator satisfies the filter are compiled;
+    /// only clauses whose head indicator satisfies the filter are compiled;
     /// directives are unaffected. Used by the linker to bake a reachability-
     /// reduced prelude.</param>
     public static ShmoCompileResult TryCompileSource(string source,
@@ -171,7 +171,7 @@ public static class ShmoCompiler
         // set_prolog_flag(arity_compat, _) directive can still flip it).
         var readerFlags = new Shumway.Compiler.Parsing.PrologFlags
         { ArityCompat = arityCompat };
-        // record whether Arity mode was EVER on during the
+        // record whether Arity mode was ever on during the
         // compile (the --arity pre-enable, or an in-file
         // set_prolog_flag(arity_compat, true) flip at any point). The
         // resulting ShmoObject carries it so the linker can apply Arity
@@ -196,7 +196,7 @@ public static class ShmoCompiler
 
         // ISO `:- include(File)` — textual inclusion (IncludeExpander), so
         // `shumway-compile loader.pl` compiles the whole included tree into
-        // one object. Included files parse against the SAME operator table
+        // one object. Included files parse against the same operator table
         // (an :- op/3 in an earlier include is live for later siblings).
         // Errors inside an included file surface as a compile error naming
         // that file (no per-included-file recovery in this first cut).
@@ -214,15 +214,15 @@ public static class ShmoCompiler
                 return new ShmoCompileResult(null, errors, warnings);
             }
         }
-        // First pass: walk RAW (untransformed) clauses to read
+        // First pass: walk raw (untransformed) clauses to read
         // directives (so we know which predicates are dynamic) and
         // collect the raw bodies. We need the raw bodies for two
         // reasons:
         //
         //   1. a `:- dynamic foo/N.` clause must be
-        //      serialised RAW to DynamicSeeds, because the engine's
+        //      serialised raw to DynamicSeeds, because the engine's
         //      SetupQueryFromTerm runs DcgTransform / MetaTransform /
-        //      PhraseTransform on _dynamicClauses AGAIN — mirroring
+        //      PhraseTransform on _dynamicClauses again — mirroring
         //      what ConsultString does at line 4022. Pre-transforming
         //      here would double-apply.
         //
@@ -231,7 +231,7 @@ public static class ShmoCompiler
         //      meta-builtin goal args so the raw body still
         //      enumerates everything reachable.
         // the fallback (the file's base name when compiling a
-        // file, "user" for bare in-memory sources) IS the module name when
+        // file, "user" for bare in-memory sources) is the module name when
         // no `:- module/1` directive is present. The forcing of
         // PrologEngine.DefaultModuleName here made every module-less file
         // compile as module "user": two such files could never be linked
@@ -264,10 +264,13 @@ public static class ShmoCompiler
         var nativeDecls = new System.Text.StringBuilder();
         // Collect the `:- op/3` definitions this
         // source executed (ClauseReader already applied them to the parse
-        // table in-place; here we RECORD them, in source order and with
+        // table in-place; here we record them, in source order and with
         // list-name forms expanded) so they travel .shmo → .shum and
         // LoadBundle replays them into the runtime operator table.
         var operatorDefs = new List<ShmoOperatorDef>();
+        // ADR-056: this file's meta_predicate declarations, so its module
+        // qualifies the closures it passes to them.
+        var fileMetaTemplates = new Dictionary<int, Term>();
 
         foreach (var clause in allClauses)
         {
@@ -275,6 +278,8 @@ public static class ShmoCompiler
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
+                if (d.Args[0] is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
+                    ModuleRewrite.RecordMetaTemplate(fileMetaTemplates, metaDir.Args[0]);
                 if (d.Args[0] is CompoundTerm nd && nd.Functor == "$native_decls"
                     && nd.Args.Length == 1 && nd.Args[0] is StringTerm ndText)
                 {
@@ -315,7 +320,7 @@ public static class ShmoCompiler
                     foreach (var spec in ReadPiListLenient(modDir.Args[1]))
                         exportSet.Add(spec);
                     // ADR-046 — op(P,T,N) entries of the export list persist
-                    // with a '*' suffix on the type: EXPORTED (installed into
+                    // with a '*' suffix on the type: Exported (installed into
                     // an importer's layer / advertised at LoadBundle), vs the
                     // module's private ops from bare `:- op` directives.
                     Term exCursor = modDir.Args[1];
@@ -351,9 +356,9 @@ public static class ShmoCompiler
                     if (umDir.Args.Length == 2)
                         filter = new List<PredicateRef>(ReadPiListLenient(umDir.Args[1]));
                     libraryDeps.Add(new ShmoLibraryDep(libName, filter, baked));
-                    // /2 imports are resolved from the SOURCE alone (the filter is
+                    // /2 imports are resolved from the source alone (the filter is
                     // the list of imported indicators) — the compiler never needs
-                    // the library. /1 (import-all) is resolved by the LINKER, which
+                    // the library. /1 (import-all) is resolved by the linker, which
                     // has the library's export surface; the compiler only records
                     // the dependency here.
                     if (!baked && filter is not null)
@@ -373,7 +378,7 @@ public static class ShmoCompiler
                         clause.Position.Line, clause.Position.Column));
                 }
                 // arity_compat only: an unrecognised
-                // directive is a WARNING, not an error — Arity sources
+                // directive is a warning, not an error — Arity sources
                 // carry directives (`:- extrn ...`, `:- disable_*`)
                 // with no Shumway meaning; compilation continues.
                 // readerFlags reflects in-file set_prolog_flag flips.
@@ -412,7 +417,10 @@ public static class ShmoCompiler
             nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet,
             operatorDefs, multifileSet,
             isExportQualified: isExportQualified, exports: exportSet,
-            imports: importEntries, libraryDeps: libraryDeps);
+            imports: importEntries, libraryDeps: libraryDeps,
+            metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(t)
+                : ModuleRewrite.DefaultMetaArgSpec(fid, local));
     }
 
     /// <summary>the compile back-half, shared by
@@ -420,7 +428,7 @@ public static class ShmoCompiler
     /// linker's cross-module unfold recompile (which reconstructs the inputs
     /// from a V4 <c>.shmo</c>'s metadata + <c>ClauseTerms</c>/<c>DynamicSeeds</c>
     /// and re-enters here with rewritten clauses). <paramref name="moduleName"/>
-    /// is the RESOLVED runtime module name (the `:- module/1` directive's
+    /// is the resolved runtime module name (the `:- module/1` directive's
     /// argument, else the per-file fallback).
     /// <paramref name="qualifiedRefs"/> is appended to by the call-graph
     /// walk.</summary>
@@ -445,17 +453,29 @@ public static class ShmoCompiler
         IReadOnlyCollection<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
-        string? dialect = null)
+        string? dialect = null,
+        Func<int, string?, int[]?>? metaArgSpec = null,
+        Func<string, string, int, string?>? qualifiedResolver = null)
     {
+        // A clause for a predicate the prelude declares dynamic is a dynamic
+        // clause here too (what the live consult does through its store),
+        // never a static predicate shadowing the declaration; only the
+        // predicates this source actually has clauses for join, so an
+        // object does not claim to define every prelude hook.
+        if (moduleName != Prelude.ModuleName)
+            foreach (var clause in rawClauses)
+                if (TryExtractHead(clause) is { } h && Prelude.DynamicDeclarations.Contains(h))
+                    dynamicSet.Add(h);
+
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
-        // (RAW), the rest go through the same DcgTransform +
+        // (raw), the rest go through the same DcgTransform +
         // MetaTransform + PhraseTransform pipeline ConsultString uses.
         // Helper clauses MetaTransform adds (catch's first arg becomes
         // a separate `$catchgoal_N/M` clause, etc.) end up in the
         // static set — they're synthetic, never dynamic.
         // ADR-024 — drop the Arity term-interface predicates' source clauses (the
         // builtins provide them) and any redefinition of a Shumway builtin (e.g.
-        // make_c_string/4); their native blocks are never compiled. Must run BEFORE
+        // make_c_string/4); their native blocks are never compiled. Must run before
         // the native transform below. Gated on arity_compat.
         if (arityCompat)
         {
@@ -468,13 +488,13 @@ public static class ShmoCompiler
 
         // ADR-022 — embedded native blocks. Rewrite each `$native_goal(Text)` to
         // the portable `'$native_run'('$nb$mod$i', Vars)` dispatch and collect the
-        // per-block marshalling data, BEFORE partitioning — so a `:- dynamic` /
+        // per-block marshalling data, before partitioning — so a `:- dynamic` /
         // `:- visible` predicate whose source clauses use native code is handled
         // too: its rewritten clause (carrying `$native_run`, a normal builtin) goes
         // to the dynamic seeds and runs the block via the engine's block table
         // exactly as a static clause does (declaring a predicate dynamic is about
         // assert/retract, not about whether its source clauses can compile).
-        // Interop resolution is NOT validated here (the interop class isn't known
+        // Interop resolution is not validated here (the interop class isn't known
         // at compile time) — it is enforced at run time when a block executes (an
         // unresolved call throws) and at link time by `--foreign-dll`.
         var nativeBlocks = new List<ShmoNativeBlock>();
@@ -505,7 +525,7 @@ public static class ShmoCompiler
 
         var dynamicSeedAccum = new Dictionary<PredicateRef, List<byte[]>>();
         // ADR-023 priming — the raw clauses of each `:- dynamic`/`:- visible`
-        // predicate, kept as terms so a static-style WAM/IL SNAPSHOT can be
+        // predicate, kept as terms so a static-style WAM/IL snapshot can be
         // compiled for them (dumped via --dump-wam/--dump-il, IL-bakeable). The
         // seeds above stay the mutable truth; the snapshot is the from-the-first-
         // call form the engine evicts on the first mutation.
@@ -531,7 +551,7 @@ public static class ShmoCompiler
             }
         }
 
-        // Tabling (the consult-time transform, moved to COMPILE time). A
+        // Tabling (the consult-time transform, moved to compile time). A
         // `:- table p/N` predicate's static clauses are re-headed to the
         // semi-naive '$tbase$p'/'$trec$p' split and a driver clause
         // 'p(..) :- $tbl_dispatch(p(..), $tbase$p(..), $trec$p(..))' is added,
@@ -559,17 +579,17 @@ public static class ShmoCompiler
                 publicSet.Add(new PredicateRef("$trec$" + t.Name, t.Arity));
             }
             // The engine transform mutates a functor-id `publics` set purely as
-            // an OUTPUT (the public indicators are derived above directly), so a
+            // an output (the public indicators are derived above directly), so a
             // throwaway set suffices here.
             staticInput = PrologEngine.TransformTabledPredicates(
                 staticInput, tabledFids, new HashSet<int>());
 
-            // Tabled NEGATION (well-founded semantics): when a clause negates a
+            // Tabled negation (well-founded semantics): when a clause negates a
             // tabled goal the transform adds a '$wfs_mode' marker fact so
             // '$tbl_dispatch' runs the alternating fixpoint. '$wfs_mode'/0 is a
-            // DYNAMIC functor (prelude :- dynamic) read at runtime via
+            // dynamic functor (prelude :- dynamic) read at runtime via
             // clause/2 — which in a source-stripped bundle sees only the
-            // DYNAMIC store (LoadEntryFromBytecode has no static AST). The
+            // dynamic store (LoadEntryFromBytecode has no static AST). The
             // engine consult path leaves it a static clause, visible there via
             // StaticClausesFor; here we instead route it to the dynamic seeds
             // (rehydrated into _dynamicClauses at load) so a release / IL bundle
@@ -605,13 +625,13 @@ public static class ShmoCompiler
         // so any detected wrapper is immutable.
         // the pipeline is split at the MetaTransform
         // boundary: preMeta (post-unfold, post-DCG, pre-MetaTransform)
-        // is the LAST stage where meta-call structure is still visible
+        // is the last stage where meta-call structure is still visible
         // (MetaTransform's rewrite turns `call(g(X))` into a
         // direct `g(X)` and inlines findall/bagof/... goals into
         // helper bodies). The DIRECT-vs-META edge marking walks
-        // preMeta; the call-graph EDGES still walk the fully
+        // preMeta; the call-graph edges still walk the fully
         // transformed clauses below, unchanged.
-        // ADR-037 — lower `Head => Body` (SsuRule) FIRST, mirroring
+        // ADR-037 — lower `Head => Body` (SsuRule) first, mirroring
         // ClausePipeline's SSU→DCG→Meta order. The consult path stores raw
         // SsuRule/DcgRule clauses in the manifest (lowering happens only for the
         // engine's own bytecode), so a re-compile from those parts (ShmoViaConsult,
@@ -623,11 +643,11 @@ public static class ShmoCompiler
             failFast: buildMode != ShmoBuildMode.Debuggable);
         var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
 
-        // module-wide DIRECT / META reference sets. A
+        // module-wide direct / meta reference sets. A
         // target lands in metaRefs when referenced from inside a
         // meta-call argument, in directRefs when referenced as a plain
         // body goal; an edge's IsMeta = metaRefs ∧ ¬directRefs (see
-        // ShmoCallEdge). Dynamic-head clauses' RAW bodies are walked
+        // ShmoCallEdge). Dynamic-head clauses' raw bodies are walked
         // too, mirroring the edge walk below.
         var metaRefs = new HashSet<PredicateRef>();
         var directRefs = new HashSet<PredicateRef>();
@@ -671,7 +691,7 @@ public static class ShmoCompiler
             staticClauses.Add(clause);
         }
 
-        // Dynamic clauses' call graph: walk RAW bodies, since that's
+        // Dynamic clauses' call graph: walk raw bodies, since that's
         // what the linker needs to know about. The engine's runtime
         // MetaTransform will produce the same helper-call edges then,
         // but the linker can't see across that boundary yet so we
@@ -745,7 +765,7 @@ public static class ShmoCompiler
                 Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity);
             if (!publicFids.Contains(fid)) localFids.Add(fid);
         }
-        // The mangling context uses the RESOLVED runtime module name (the
+        // The mangling context uses the resolved runtime module name (the
         // directive's argument, else the per-file fallback),
         // matching what the engine applies when it loads the entry: the
         // source-carrying LoadBundle path consults under the entry's module
@@ -761,7 +781,11 @@ public static class ShmoCompiler
                     Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
                     imp.Pred.Arity)] = imp.Source;
         var rewriteCtx = new ModuleRewrite.Context(
-            moduleName, localFids, dynamicFids, importFidMap);
+            moduleName, localFids, dynamicFids, importFidMap)
+        {
+            MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec,
+            QualifiedStaticResolver = qualifiedResolver,
+        };
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
@@ -775,7 +799,7 @@ public static class ShmoCompiler
         // ADR-035 — the Debuggable build mode bakes the debuggable WAM (frames on every
         // rule clause, every named var in a Y slot, no trimming, no cut-elision, runtime-
         // switchable last call, stop sites + var maps) straight into the .shmo, so a debug
-        // bundle is debuggable with NO re-consult at load. DebugFileId blames the module's
+        // bundle is debuggable with no re-consult at load. DebugFileId blames the module's
         // own file (by base name, the identity DebugSiteTable uses) for any position that
         // doesn't carry its own — matching the <module>.pl the load path materialises for
         // display. Plain Debug (source-retention only) stays release-shape.
@@ -795,7 +819,7 @@ public static class ShmoCompiler
         // `:- dynamic`/`:- visible` predicate's clauses (the same ClausePipeline
         // transform + ModuleRewrite a static predicate gets, then compiled as an
         // ordinary try_me_else chain). This is the from-the-first-call form the
-        // engine runs and evicts on the first mutation. In-memory only — NOT
+        // engine runs and evicts on the first mutation. In-memory only — not
         // serialized into the .shmo (the runtime rebuilds its own snapshot from
         // the live clauses); it exists so --dump-wam / --dump-il can show the
         // WAM/IL these predicates actually run, which the empty static module
@@ -839,10 +863,10 @@ public static class ShmoCompiler
         var dynamicSeeds = new List<ShmoDynamicSeed>(dynamicSeedAccum.Count);
         foreach (var (ind, encodedList) in dynamicSeedAccum)
         {
-            // A multifile seed is pre-mangled HERE, under its origin module —
+            // A multifile seed is pre-mangled here, under its origin module —
             // several modules contribute clauses to the same fid, so the
             // load-time per-fid seed-module rewrite (one module context for
-            // ALL of a fid's clauses) cannot be used. The rewrite is
+            // all of a fid's clauses) cannot be used. The rewrite is
             // idempotent for the linker's recompile paths: an already-mangled
             // `module$name` never matches a local fid again.
             if (multifileSet?.Contains(ind) == true)
@@ -857,7 +881,7 @@ public static class ShmoCompiler
                 dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
         }
 
-        // the LTO channel: persist the RAW static clauses
+        // the LTO channel: persist the raw static clauses
         // (pre-unfold, pre-pipeline) so the linker can re-run the full
         // transform stack (cross-module unfold included) and recompile this
         // module without its source. Release included by design — the .shmo
@@ -894,6 +918,37 @@ public static class ShmoCompiler
     /// <summary>Like <see cref="TryCompileSource"/> but reads the
     /// source from <paramref name="path"/> and uses the file's bare
     /// name (sans extension) as the module-name fallback.</summary>
+    /// <summary>What an object compiled file-at-a-time would silently lose,
+    /// described for an error, or null when nothing is lost.
+    ///
+    /// <para>A hook is a consult-time concept: the consult pipeline
+    /// recognises the head, activates it early and adds it to the engine's
+    /// expansion aggregate. Compiled file-at-a-time there is no aggregate to
+    /// join, so the clause lands as an ordinary predicate (local, mangled,
+    /// and pruned by the linker for good measure) and the hook never fires:
+    /// the same source means two things. A module-qualified clause head is
+    /// read as the term it is and defines a predicate for ':'/2.</para>
+    ///
+    /// <para>Read off the object, not the text: a file that merely calls
+    /// term_expansion/2, or names it in a comment, compiles fine.</para></summary>
+    public static string? WhatFileAtATimeLoses(ShmoObject obj)
+    {
+        foreach (var d in obj.Defined)
+        {
+            if (d.Indicator is { Name: ":", Arity: 2 })
+                return "defines a module-qualified clause head (a ':'/2 predicate).";
+            // The name may carry the module prefix of an export-qualified
+            // module (Name$p); the hook is what it ends with.
+            string name = d.Indicator.Name;
+            int cut = name.LastIndexOf('$');
+            if (cut >= 0) name = name[(cut + 1)..];
+            if ((name == "term_expansion" && d.Indicator.Arity is 2 or 6)
+                || (name == "goal_expansion" && d.Indicator.Arity == 2))
+                return $"defines {name}/{d.Indicator.Arity}, a load-time expansion hook.";
+        }
+        return null;
+    }
+
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
@@ -942,7 +997,7 @@ public static class ShmoCompiler
             return false;
         }
         // `dynamic` and its Arity-Prolog spelling `visible` — both declare a
-        // mutable predicate. A visible/dynamic predicate WITH clauses still gets
+        // mutable predicate. A visible/dynamic predicate with clauses still gets
         // a build-time WAM/IL snapshot (dumped, IL-bakeable) that runs from the
         // first call and is evicted on the first assert/retract (ADR-023).
         if (body is CompoundTerm dyn
@@ -956,9 +1011,9 @@ public static class ShmoCompiler
         // `:- multifile foo/N` — several modules contribute clauses to one
         // predicate. Multifile implies dynamic (matching the consult path:
         // MarkDynamic + clause store), so visibility is Dynamic and the
-        // linker's globalDynamic namespace — a module LIST per indicator —
+        // linker's globalDynamic namespace — a module list per indicator —
         // merges the contributors with no duplicate_public error. The
-        // clauses are pre-mangled under THIS module at compile time (see
+        // clauses are pre-mangled under this module at compile time (see
         // CompileFromParts) so the load path needs no per-fid seed module.
         if (body is CompoundTerm mf && mf.Functor == "multifile" && mf.Args.Length == 1)
         {
@@ -984,9 +1039,9 @@ public static class ShmoCompiler
         }
         // :- table p/N — tabling. Recorded here so CompileFromParts can apply
         // the semi-naive transform (PrologEngine.TransformTabledPredicates) at
-        // COMPILE time, baking the '$tbase$p'/'$trec$p'/driver clauses into the
+        // compile time, baking the '$tbase$p'/'$trec$p'/driver clauses into the
         // .shmo bytecode. Without this the transform only ran at consult/load
-        // time off the entry's SOURCE — so a source-stripped (release) bundle
+        // time off the entry's source — so a source-stripped (release) bundle
         // could not table at all, and an IL bundle's raw-predicate IL shadowed
         // the load-time driver. (The engine's consult-time transform stays for
         // plain ConsultString and the debug-bundle re-consult path; no single
@@ -1031,7 +1086,7 @@ public static class ShmoCompiler
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
             libName = lib.Name;
-            baked = lib.Name is "clpfd" or "clpr" or "coroutining";
+            baked = LibraryBundles.IsEngineLibrary(lib.Name);
             return true;
         }
         if (spec is AtomTerm fileAtom)
@@ -1084,7 +1139,7 @@ public static class ShmoCompiler
     private static bool TryReadFunctorSpec(Term term, out PredicateRef spec)
     {
         // arity_compat — strip an Arity directive annotation (`foo/8:far`,
-        // `f/2:system(...)`); see PrologEngine's twin. `:` is LOOSER than `/`
+        // `f/2:system(...)`); see PrologEngine's twin. `:` is looser than `/`
         // (600 vs 400, as in GNU/SWI/Scryer), so the annotation wraps the whole
         // indicator; the tighter grouping is accepted too, for sources read
         // under a table that puts `:` below `/`.
@@ -1277,7 +1332,7 @@ public static class ShmoCompiler
                 }
                 // Negation-as-failure runs its argument as a goal — under
                 // Arity, `\+ und_fact(X)` over a never-asserted fact
-                // predicate is valid (it succeeds). META.
+                // predicate is valid (it succeeds). Meta.
                 if ((c.Functor == "\\+" || c.Functor == "not") && c.Args.Length == 1)
                 {
                     MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);

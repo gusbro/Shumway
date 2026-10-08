@@ -55,7 +55,7 @@ public class PrefixOpParenAmbiguityTests
     public void NotSpaceParen_IsUnaryAppliedToConjunction()
     {
         // 'not (a, b)' — same disambiguation once `not` is declared an
-        // operator (it is NOT one in the default table: ISO/GNU/SWI keep
+        // operator (it is not one in the default table: ISO/GNU/SWI keep
         // it a plain atom; Arity sources get it via arity_compat).
         var ops = OperatorTable.Default();
         ops.Define("not", 900, OperatorType.Fy);

@@ -2,7 +2,7 @@ namespace Shumway.Compiler.Ast;
 
 /// <summary>
 /// ISO 13211-1 §7.6.2 — converting a term to the body of a clause. A clause
-/// enters the database in its CONVERTED form, so a variable in goal position
+/// enters the database in its converted form, so a variable in goal position
 /// is stored as <c>call(V)</c> and <c>clause/2</c> hands that back.
 ///
 /// <para>The conversion descends the control skeleton <c>','</c>, <c>';'</c>

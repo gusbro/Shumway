@@ -84,7 +84,7 @@ public sealed class NativeReftypeTests
         Assert.Equal(2.5, fv);
 
         var a = new TermSlot(); a.PutAtom("hi");
-        Assert.Equal(TermSlot.String, ReftypeApi.findtype_c(a));   // atom reads as STRING(4)
+        Assert.Equal(TermSlot.String, ReftypeApi.findtype_c(a));   // atom reads as string(4)
         Assert.True(ReftypeApi.gettxt_c(a, out var av));
         Assert.Equal("hi", av);
     }
@@ -117,7 +117,7 @@ public sealed class NativeReftypeTests
     public void InterfaceClausesDropped_BuiltinsProvideThem()
     {
         var e = new PrologEngine();
-        // These clauses carry reftype-struct-tier native blocks that would NOT
+        // These clauses carry reftype-struct-tier native blocks that would not
         // compile (`(*Ref)->ntype`). Under arity_compat they are dropped and the
         // builtins take over — consult succeeds and the predicates work.
         e.ConsultString("""
@@ -186,7 +186,7 @@ public sealed class NativeReftypeTests
     public void Tier1Inline_ReftypeBlock_InlinesIntoIl()
     {
         // ADR-024 stage C: when go/2 promotes to Tier-1 IL, its reftype blocks are
-        // emitted INLINE into the predicate's IL (no $native_run dispatch).
+        // emitted inline into the predicate's IL (no $native_run dispatch).
         int before = Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined;
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(TermInterop));
@@ -211,6 +211,9 @@ public sealed class NativeReftypeTests
         // in-flight compile before reading its side-effect counter.
         Assert.True(e.IlPromotion.WaitForPendingPromotions(),
             "background promotion of go/2 timed out");
+        // Promoted: the compiled code answers (under ADR-061 its continuation
+        // methods reach the embedding layer the blocks call into).
+        Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
         // both reftype blocks inlined into the predicate's IL.
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }
@@ -312,12 +315,12 @@ public sealed class NativeReftypeTests
 
     // ------------------------------------------------------------------
     // Preprocessed-source smoke: Arity-era native sources are C compiler
-    // output INTERLEAVED with Prolog — #line markers with mixed separator
+    // output interleaved with Prolog — #line markers with mixed separator
     // styles, `:- c.` … `:- prolog.` blocks carrying typedefs / unions /
     // pragmas / prototypes / __stdcall callback typedefs, extern reftype
     // globals, and clauses whose bodies mix `{...}` native blocks with
     // fill_par/reftype_term round-trips. The three sources below are
-    // SYNTHETIC (an invented depot-inventory library) but preserve that
+    // synthetic (an invented depot-inventory library) but preserve that
     // shape one construct at a time, so the whole pipeline is exercised
     // self-contained.
     // ------------------------------------------------------------------
@@ -443,7 +446,7 @@ public sealed class NativeReftypeTests
         #line 69 "B:\\gen\\int\\depot_scan.c"
         """;
 
-    /// <summary>A user with MULTIPLE reftype globals in play across one
+    /// <summary>A user with multiple reftype globals in play across one
     /// clause — the i_SupTyp shape.</summary>
     private const string DepotMove = """
         #line 1 "B:\\gen\\int\\depot_move.c"

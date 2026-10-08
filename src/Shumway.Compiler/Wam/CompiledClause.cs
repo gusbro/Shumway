@@ -35,10 +35,10 @@ public sealed class CompiledClause
     /// address.</summary>
     public IReadOnlyList<CallSite> CallSites { get; }
 
-    /// <summary>ADR-025 — CLAUSE-LOCAL address operands emitted by the inline
+    /// <summary>ADR-025 — clause-local address operands emitted by the inline
     /// if-then-else lowering (the <c>try_me_else</c> else-target and the
     /// <c>jump</c> end-target). Each entry is the byte offset of a 4-byte
-    /// operand whose VALUE is a clause-local address; PredicateCompiler shifts
+    /// operand whose value is a clause-local address; PredicateCompiler shifts
     /// both the site and the value by the clause's placement offset and folds
     /// them into the predicate's dispatch sites, which the linker then makes
     /// program-absolute. Empty for clauses without inline control flow.</summary>
@@ -46,7 +46,7 @@ public sealed class CompiledClause
 
     /// <summary>ADR-035 — the places a debugger may stop inside this clause: its
     /// entry, and the first instruction of each body goal. Recorded under
-    /// <c>compile_mode=debug</c> only, and EMPTY OF BYTECODE — a stop site is a
+    /// <c>compile_mode=debug</c> only, and empty of bytecode — a stop site is a
     /// note about an offset, not an instruction. Arming a breakpoint patches the
     /// opcode byte at that offset to <c>Break</c> and remembers what was there;
     /// nothing is emitted, so debug code that nobody is stopping in runs at full
@@ -71,7 +71,7 @@ public sealed class CompiledClause
     /// <summary>ADR-035 — the head's argument terms, as written. What lets a debugger show
     /// a stack frame as the CALL it is — <c>total([item(book,25)], 10, _G5)</c> — rather
     /// than a bare <c>total/3</c>: each argument is the head skeleton with the clause's
-    /// variables substituted by their CURRENT values, so the display instantiates as the
+    /// variables substituted by their current values, so the display instantiates as the
     /// clause runs. Recorded under <c>compile_mode=debug</c> only; null otherwise.</summary>
     public IReadOnlyList<Shumway.Compiler.Ast.Term>? DebugHeadArgs { get; }
 

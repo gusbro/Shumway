@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>How a transcript's answer descriptions are read. A query is
 /// recognised by its principal functor alone — <c>Id ?- Goal</c> or
 /// <c>?- Goal</c> — and every sentence after it, up to the next query,
-/// describes that query's answers. Before, only the FIRST such sentence was
+/// describes that query's answers. Before, only the first such sentence was
 /// taken: the rest reached the compiler, which rejected each as a clause for
 /// <c>,/2</c> with a message naming neither the quad nor the file, while the
 /// test itself reported a pass on the one description it had read.
@@ -90,7 +90,7 @@ public sealed class QuadsAnswerDescriptionTests
     [Fact]
     public void AnUnexpectedAlternativeNeverMakesATestPass()
     {
-        // `unexpected` marks a wrong answer: it is written down BECAUSE
+        // `unexpected` marks a wrong answer: it is written down because
         // producing it is wrong, so a run that matches it does not pass.
         string report = RunQuads("t1\n?- atom(a).\n   true, unexpected.\n");
         Assert.Contains("quads: 0/1", report);
@@ -109,7 +109,7 @@ public sealed class QuadsAnswerDescriptionTests
     public void ADescriptionItCannotReadIsReportedAgainstItsQuad()
     {
         // The point of the whole exercise: a description written in a
-        // vocabulary this harness does not know is NAMED, with its quad,
+        // vocabulary this harness does not know is named, with its quad,
         // instead of quietly matching whatever happened.
         string report = RunQuads("t1\n?- atom(a).\n   some_word_we_do_not_know.\n");
         Assert.Contains("not understood", report);
@@ -121,7 +121,7 @@ public sealed class QuadsAnswerDescriptionTests
     public void AnAnswerSequenceCutShortIsStillReadable()
     {
         // `...` says the answers go on; nothing narrower is claimed, so it
-        // must NOT be reported as unreadable.
+        // must not be reported as unreadable.
         string report = RunQuads(
             "t1\n?- member(X, [a,b,c]).\n   X = a ; X = b ; ... .\n");
         Assert.Contains("quads: 1/1", report);
@@ -131,7 +131,7 @@ public sealed class QuadsAnswerDescriptionTests
     [Theory]
     // inputs(Text) and peeks(Text) say what the goal reads: it must consume
     // the first and leave the second unread. The pair is supplied as one
-    // input and BOTH halves are checked, which is what makes a claim about
+    // input and both halves are checked, which is what makes a claim about
     // reading testable at all.
     [InlineData("   inputs(\"foo.\"), peeks(\" \"), T = foo.\n", "quads: 1/1")]
     // A wrong claim about what is left over fails.
@@ -152,7 +152,7 @@ public sealed class QuadsAnswerDescriptionTests
     }
 
     [Theory]
-    // What the goal WRITES is compared too. A description claiming one text
+    // What the goal writes is compared too. A description claiming one text
     // while the goal prints another describes a different system, and used
     // to pass because the text was taken on trust: the harness printed the
     // real output to the console and reported a pass.
@@ -215,7 +215,7 @@ public sealed class QuadsAnswerDescriptionTests
     [Fact]
     public void AnElidedPartOfAnErrorMatchesAnything()
     {
-        // `...` stands for a part that was not written down. What IS
+        // `...` stands for a part that was not written down. What is
         // written still has to agree: the elision is not a blanket pass.
         Assert.Contains("quads: 1/1",
             RunQuads("t1\n?- atom_length(a, a).\n   type_error(integer, ...).\n"));
@@ -247,7 +247,7 @@ public sealed class QuadsAnswerDescriptionTests
     }
 
     [Theory]
-    // What the goal ANSWERS is compared, not just that it answered. The
+    // What the goal answers is compared, not just that it answered. The
     // description and the query are separate terms, so the L of one is not
     // the L of the other: only their names relate them, and the names come
     // from the source. Without that link all a transcript could say was
@@ -260,7 +260,7 @@ public sealed class QuadsAnswerDescriptionTests
         => Assert.Contains(expected, RunQuads("t1\n" + quad));
 
     [Theory]
-    // `;` separates SUCCESSIVE answers, in order. A sequence written down in
+    // `;` separates successive answers, in order. A sequence written down in
     // full claims there are no further answers.
     [InlineData("   X = a ; X = b ; X = c.\n", "quads: 1/1")]
     [InlineData("   X = a ; X = b.\n", "quads: 0/1")]
@@ -302,7 +302,7 @@ public sealed class QuadsAnswerDescriptionTests
     [Fact]
     public void SharingBetweenTheAnswersVariablesIsPartOfTheAnswer()
     {
-        // X = f(Y) says X's argument IS Y. A description that renames it
+        // X = f(Y) says X's argument is Y. A description that renames it
         // describes an answer where the two are independent, which is a
         // different answer.
         Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = f(Y).\n   X = f(Y).\n"));
@@ -377,7 +377,7 @@ public sealed class QuadsAnswerDescriptionTests
     [Theory]
     // `waits` says the goal blocks for input that never comes. What makes
     // that observable is not the blocking, which no harness can wait out,
-    // but the READING: a goal that waits went looking for input. It runs
+    // but the reading: a goal that waits went looking for input. It runs
     // against one character of input, and the question is whether that
     // character is still there afterwards.
     [InlineData("?- read(_).\n   waits.\n", "quads: 1/1")]
@@ -428,7 +428,7 @@ public sealed class QuadsAnswerDescriptionTests
     }
 
     [Theory]
-    // What those rules must NOT reject: a value that is a variable the query
+    // What those rules must not reject: a value that is a variable the query
     // does have is a real claim about sharing, and a fresh variable inside a
     // value is how an answer's own variable is written.
     [InlineData("?- X = Y.\n   X = Y.\n", "quads: 1/1")]

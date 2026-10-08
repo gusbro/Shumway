@@ -5,11 +5,11 @@ namespace Shumway.Core;
 /// <summary>
 /// Two-layer int-keyed read-mostly map: a small mutable per-query
 /// <em>overlay</em> over a shared frozen <em>base</em>. Query setup used to
-/// COPY the persistent base dictionaries (functor→address, address→predicate)
+/// copy the persistent base dictionaries (functor→address, address→predicate)
 /// into fresh per-query dictionaries — an O(program) copy per query that
 /// dominated warm setup on large programs. The overlay holds the per-query
 /// entries (query-region links, bare-name aliases, mid-query trampolines) and
-/// wins on lookup; the base is the persistent cache, shared BY REFERENCE.
+/// wins on lookup; the base is the persistent cache, shared by reference.
 ///
 /// <para>Freeze contract: the base must never be mutated in place while a view
 /// over it is alive. The persistent caches honor this — a persistent rebuild

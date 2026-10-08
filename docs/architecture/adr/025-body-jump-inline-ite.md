@@ -117,7 +117,7 @@ the new shape **before** the compiler starts emitting it (otherwise predicates
 with body-ITE would LOSE IL promotion — a regression against today's
 helper form, which IL compiles and regions optimize):
 
-- `jump` → a Sigil unconditional `br` to the target's label (trivial);
+- `jump` → an unconditional `br` to the target's label (trivial);
 - mid-body `try_me_else`/`trust_me` → the existing IL choice-point machinery
   (`PushIlChoicePoint` + a resume cursor at ELSE), the same pattern the clause
   chains already use;

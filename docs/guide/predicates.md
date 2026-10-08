@@ -7,582 +7,585 @@ Every predicate Shumway provides, grouped by area. Most are available to any pro
 
 Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
 
+Kind says whether a program may define a predicate of the same name: never for control and ISO, inside a module for engine, anywhere for library. See [redefining-predicates.md](redefining-predicates.md).
+
 Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
-| Predicate | Description |
-| --- | --- |
-| `=(?Term1, ?Term2)` | Unifies the two terms. |
-| `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
-| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it. |
-| `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
-| `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `=(?Term1, ?Term2)` | iso | Unifies the two terms. |
+| `==(@Term1, @Term2)` | iso | Succeeds if the two terms are structurally identical. |
+| `\=(?Term1, ?Term2)` | iso | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it. |
+| `\==(@Term1, @Term2)` | iso | Succeeds if the two terms are not structurally identical. |
+| `unify_with_occurs_check(?Term1, ?Term2)` | iso | Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification. |
 
 ## Type checking
 
-| Predicate | Description |
-| --- | --- |
-| `acyclic_term(@Term)` | Succeeds if the argument is a finite (acyclic) term. |
-| `atom(@Term)` | Succeeds if the argument is an atom. |
-| `atom_si(@Term)` | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom. |
-| `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
-| `atomic_si(@Term)` | Sound atomic test (si family). |
-| `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
-| `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
-| `can_be(+Type, @Term)` | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises. |
-| `character_si(@Term)` | Sound one-char-atom test (si family). |
-| `chars_si(@Term)` | Sound list-of-characters test (si family). |
-| `compound(@Term)` | Succeeds if the argument is a compound term. |
-| `cyclic_term(@Term)` | Succeeds if the argument is a cyclic (infinite/rational) term. |
-| `float(@Term)` | Succeeds if the argument is a float. |
-| `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
-| `integer(@Term)` | Succeeds if the argument is an integer. |
-| `integer_si(@Term)` | Sound integer test (si family). |
-| `is_list(@Term)` | Succeeds if the argument is a proper list. |
-| `list_si(@Term)` | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail. |
-| `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), type_error(Type, Value) if Value is of the wrong type, or domain_error(Domain, Value) if Type names a domain of values (not_less_than_zero, io_mode, oneof(L), ...) and Value lies outside it. |
-| `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
-| `number(@Term)` | Succeeds if the argument is a number. |
-| `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
-| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (this engine has no separate string type). |
-| `var(@Term)` | Succeeds if the argument is an unbound variable. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `acyclic_term(@Term)` | iso | Succeeds if the argument is a finite (acyclic) term. |
+| `atom(@Term)` | iso | Succeeds if the argument is an atom. |
+| `atom_si(@Term)` | engine | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom. |
+| `atomic(@Term)` | iso | Succeeds if the argument is atomic (atom, number or string). |
+| `atomic_si(@Term)` | engine | Sound atomic test (si family). |
+| `attvar(@Term)` | engine | Succeeds if the argument is an attributed variable. |
+| `callable(@Term)` | iso | Succeeds if the argument is an atom or a compound term. |
+| `can_be(+Type, @Term)` | engine | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises. |
+| `character_si(@Term)` | engine | Sound one-char-atom test (si family). |
+| `chars_si(@Term)` | engine | Sound list-of-characters test (si family). |
+| `compound(@Term)` | iso | Succeeds if the argument is a compound term. |
+| `cyclic_term(@Term)` | engine | Succeeds if the argument is a cyclic (infinite/rational) term. |
+| `float(@Term)` | iso | Succeeds if the argument is a float. |
+| `ground(@Term)` | iso | Succeeds if the argument contains no unbound variables. |
+| `integer(@Term)` | iso | Succeeds if the argument is an integer. |
+| `integer_si(@Term)` | engine | Sound integer test (si family). |
+| `is_list(@Term)` | engine | Succeeds if the argument is a proper list. |
+| `list_si(@Term)` | engine | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail. |
+| `must_be(+Type, @Value)` | engine | Throws instantiation_error if Value is unbound (unless Type is var), type_error(Type, Value) if Value is of the wrong type, or domain_error(Domain, Value) if Type names a domain of values (not_less_than_zero, io_mode, oneof(L), ...) and Value lies outside it. |
+| `nonvar(@Term)` | iso | Succeeds if the argument is not an unbound variable. |
+| `number(@Term)` | iso | Succeeds if the argument is a number. |
+| `rational(@Term)` | engine | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
+| `string(@Term)` | engine | Succeeds if the argument is a non-empty proper list of characters or of codes (this engine has no separate string type). |
+| `var(@Term)` | iso | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
 
-| Predicate | Description |
-| --- | --- |
-| `<(+Expr1, +Expr2)` | Arithmetic less-than comparison. |
-| `=:=(+Expr1, +Expr2)` | Succeeds if the two arithmetic expressions are equal. |
-| `=<(+Expr1, +Expr2)` | Arithmetic less-than-or-equal comparison. |
-| `=\=(+Expr1, +Expr2)` | Succeeds if the two arithmetic expressions are unequal. |
-| `>(+Expr1, +Expr2)` | Arithmetic greater-than comparison. |
-| `>=(+Expr1, +Expr2)` | Arithmetic greater-than-or-equal comparison. |
-| `between(+Low, +High, ?X)` | Succeeds when X is in the inclusive integer range; enumerates it when unbound. |
-| `evaluable_property(+Callable, ?Property)` | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType). |
-| `is(?Result, +Expr)` | Evaluates the arithmetic expression on the right and unifies it with the left. |
-| `plus(?Int1, ?Int2, ?Sum)` | Relates Int1 + Int2 = Sum, solving for whichever single argument is unbound. |
-| `succ(?Int1, ?Int2)` | Relates a non-negative integer to its successor, in either direction. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `<(+Expr1, +Expr2)` | iso | Arithmetic less-than comparison. |
+| `=:=(+Expr1, +Expr2)` | iso | Succeeds if the two arithmetic expressions are equal. |
+| `=<(+Expr1, +Expr2)` | iso | Arithmetic less-than-or-equal comparison. |
+| `=\=(+Expr1, +Expr2)` | iso | Succeeds if the two arithmetic expressions are unequal. |
+| `>(+Expr1, +Expr2)` | iso | Arithmetic greater-than comparison. |
+| `>=(+Expr1, +Expr2)` | iso | Arithmetic greater-than-or-equal comparison. |
+| `between(+Low, +High, ?X)` | engine | Succeeds when X is in the inclusive integer range; enumerates it when unbound. |
+| `evaluable_property(+Callable, ?Property)` | engine | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType). |
+| `is(?Result, +Expr)` | iso | Evaluates the arithmetic expression on the right and unifies it with the left. |
+| `plus(?Int1, ?Int2, ?Sum)` | engine | Relates Int1 + Int2 = Sum, solving for whichever single argument is unbound. |
+| `succ(?Int1, ?Int2)` | engine | Relates a non-negative integer to its successor, in either direction. |
 
 ## Term ordering
 
-| Predicate | Description |
-| --- | --- |
-| `=@=(@Term1, @Term2)` | Term1 and Term2 are variants (structurally equal up to variable renaming). |
-| `@<(@Term1, @Term2)` | Standard-order-of-terms less-than comparison. |
-| `@=<(@Term1, @Term2)` | Standard-order-of-terms less-than-or-equal comparison. |
-| `@>(@Term1, @Term2)` | Standard-order-of-terms greater-than comparison. |
-| `@>=(@Term1, @Term2)` | Standard-order-of-terms greater-than-or-equal comparison. |
-| `\=@=(@Term1, @Term2)` | Term1 and Term2 are not variants. |
-| `compare(?Order, @Term1, @Term2)` | Unifies Order with the relation (<, = or >) between the two terms. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `=@=(@Term1, @Term2)` | engine | Term1 and Term2 are variants (structurally equal up to variable renaming). |
+| `@<(@Term1, @Term2)` | iso | Standard-order-of-terms less-than comparison. |
+| `@=<(@Term1, @Term2)` | iso | Standard-order-of-terms less-than-or-equal comparison. |
+| `@>(@Term1, @Term2)` | iso | Standard-order-of-terms greater-than comparison. |
+| `@>=(@Term1, @Term2)` | iso | Standard-order-of-terms greater-than-or-equal comparison. |
+| `\=@=(@Term1, @Term2)` | engine | Term1 and Term2 are not variants. |
+| `compare(?Order, @Term1, @Term2)` | iso | Unifies Order with the relation (<, = or >) between the two terms. |
 
 ## Term inspection & construction
 
-| Predicate | Description |
-| --- | --- |
-| `=..(?Term, ?List)` | Relates a term to the list of its functor and arguments. |
-| `?=(@X, @Y)` | Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify). |
-| `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
-| `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
-| `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1). |
-| `copy_term(?Term, -Copy)` | Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy. |
-| `copy_term(?Term, -Copy, -Goals)` | Copies a term with fresh variables and hands back the goals that put the attributes back on the copy. Running them, as in copy_term(T, C, Gs), maplist(call, Gs), is how a copy keeps the constraints of the original. |
-| `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
-| `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
-| `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
-| `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
-| `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
-| `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
-| `numbervars(+Term, +Start, -End, +Options)` | As numbervars/3 with an accepted, ignored option list. |
-| `random(-X)` | Unifies X with a fresh pseudo-random float in [0.0, 1.0). |
-| `random_between(+Low, +High, -X)` | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends). |
-| `randomize(+Seed)` | Reseeds the engine's random generator. Seed is an integer. |
-| `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
-| `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options are accepted and currently ignored. |
-| `set_seed(+Seed)` | Reseeds the engine's random generator; alias of randomize/1. |
-| `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
-| `string_search(+Case, +SubAtom, +Atom, ?Location)` | Arity string_search/4: like string_search/3 with a leading case flag: 0 searches case-sensitively, 1 case-insensitively. |
-| `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom: the text is interned as an atom, since this engine has no separate string type. |
-| `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
-| `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
-| `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
-| `term_singletons(@Term, -Singletons)` | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance. |
-| `term_string(?Term, ?String)` | Converts between a term and its textual string representation. |
-| `term_string(?Term, ?String, +Options)` | As term_string/2 with an accepted, ignored option list. |
-| `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
-| `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
-| `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
-| `variant(@Term1, @Term2)` | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption). |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `=..(?Term, ?List)` | iso | Relates a term to the list of its functor and arguments. |
+| `?=(@X, @Y)` | engine | Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify). |
+| `arg(+N, +Term, ?Arg)` | iso | Unifies Arg with the Nth argument of the compound term. |
+| `atom_to_term(+Atom, -Term, -Bindings)` | engine | Parses an atom into a term plus its variable bindings. |
+| `compound_name_arity(?Compound, ?Name, ?Arity)` | engine | Like functor/3 but restricted to compound terms (arity >= 1). |
+| `copy_term(?Term, -Copy)` | iso | Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy. |
+| `copy_term(?Term, -Copy, -Goals)` | engine | Copies a term with fresh variables and hands back the goals that put the attributes back on the copy. Running them, as in copy_term(T, C, Gs), maplist(call, Gs), is how a copy keeps the constraints of the original. |
+| `expand_term(+Term, -Expanded)` | engine | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
+| `functor(?Term, ?Name, ?Arity)` | iso | Relates a term to its functor name and arity. |
+| `get_seed(-Seed)` | engine | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
+| `is_digit(+Char)` | engine | True when Char is a one-character atom representing an ASCII digit. |
+| `name(?AtomOrNumber, ?Codes)` | engine | Bidirectional conversion between an atom/number and its character-code list. |
+| `numbervars(+Term, +Start, -End)` | engine | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
+| `numbervars(+Term, +Start, -End, +Options)` | engine | As numbervars/3 with an accepted, ignored option list. |
+| `random(-X)` | engine | Unifies X with a fresh pseudo-random float in [0.0, 1.0). |
+| `random_between(+Low, +High, -X)` | engine | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends). |
+| `randomize(+Seed)` | engine | Reseeds the engine's random generator. Seed is an integer. |
+| `read_term_from_atom(+Atom, -Term)` | engine | Parses an atom into a term. |
+| `read_term_from_atom(+Atom, -Term, +Options)` | engine | Parses an atom into a term; Options are accepted and currently ignored. |
+| `set_seed(+Seed)` | engine | Reseeds the engine's random generator; alias of randomize/1. |
+| `string_search(+SubAtom, +Atom, ?Location)` | engine | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
+| `string_search(+Case, +SubAtom, +Atom, ?Location)` | engine | Arity string_search/4: like string_search/3 with a leading case flag: 0 searches case-sensitively, 1 case-insensitively. |
+| `string_term(?Atom, ?Term)` | engine | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom: the text is interned as an atom, since this engine has no separate string type. |
+| `string_termq(?Atom, ?Term)` | engine | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
+| `subsumes_term(@General, @Specific)` | iso | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
+| `term_attvars(+Term, -Vars)` | engine | Unifies Vars with the attributed variables reachable from Term. |
+| `term_singletons(@Term, -Singletons)` | engine | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance. |
+| `term_string(?Term, ?String)` | engine | Converts between a term and its textual string representation. |
+| `term_string(?Term, ?String, +Options)` | engine | As term_string/2 with an accepted, ignored option list. |
+| `term_to_atom(?Term, ?Atom)` | engine | Converts between a term and its textual atom representation. |
+| `term_variables(+Term, -Variables)` | iso | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
+| `unifiable(@X, @Y, -Unifier)` | engine | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
+| `variant(@Term1, @Term2)` | engine | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption). |
 
 ## Control
 
-| Predicate | Description |
-| --- | --- |
-| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches. |
-| `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
-| `call(:Goal)` | Calls a goal. |
-| `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
-| `call(:Goal, +Extra1, +Extra2)` | Calls a goal extended with two extra arguments. |
-| `call(:Goal, +Extra1, ..., +Extra3)` | Calls a goal extended with three extra arguments. |
-| `call(:Goal, +Extra1, ..., +Extra4)` | Calls a goal extended with four extra arguments. |
-| `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
-| `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
-| `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
-| `call_cleanup(:Goal, :Cleanup)` | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
-| `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
-| `call_nth(:Goal, ?N)` | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
-| `call_with_limit(+N, :Goal)` | Solutions of Goal, at most the first N. Fails when N < 1. |
-| `call_with_offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
-| `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
-| `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
-| `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
-| `debugger_break` | Stops in the attached source-level debugger, here, with this clause's stack and variables. Succeeds without doing anything if no debugger is attached, so it is safe to leave in a program. Requires the code to have been compiled for debugging (shumway --debug). |
-| `fail` | Always fails. |
-| `false` | Always fails; the ISO synonym of fail/0. |
-| `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
-| `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state. Always succeeds. |
-| `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
-| `halt` | Halts the engine with exit code 0. |
-| `halt(+Status)` | Halts the engine with the given exit code. |
-| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded. |
-| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
-| `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
-| `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
-| `notrace` | Turns the four-port tracer off. |
-| `once(:Goal)` | Succeeds at most once, committing to the first solution of Goal. |
-| `repeat` | Succeeds, and succeeds again on every backtrack: an unbounded choice point. |
-| `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
-| `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
-| `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
-| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
-| `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
-| `true` | Always succeeds. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `:(+Module, :Goal)` | engine | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches. |
+| `apply(:Goal, +ExtraArgs)` | engine | Calls Goal with the list of extra arguments appended. |
+| `call(:Goal)` | control | Calls a goal. |
+| `call(:Goal, +Extra1)` | iso | Calls a goal extended with one extra argument. |
+| `call(:Goal, +Extra1, +Extra2)` | iso | Calls a goal extended with two extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra3)` | iso | Calls a goal extended with three extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra4)` | iso | Calls a goal extended with four extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra5)` | iso | Calls a goal extended with five extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra6)` | iso | Calls a goal extended with six extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra7)` | iso | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
+| `call_cleanup(:Goal, :Cleanup)` | engine | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
+| `call_det(:Goal, -Deterministic)` | engine | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
+| `call_nth(:Goal, ?N)` | engine | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
+| `call_with_limit(+N, :Goal)` | engine | Solutions of Goal, at most the first N. Fails when N < 1. |
+| `call_with_offset(+N, :Goal)` | engine | Solutions of Goal after skipping the first N. |
+| `catch(:Goal, ?Catcher, :Recovery)` | control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
+| `compile_all` | engine | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
+| `compile_all(-Count)` | engine | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
+| `debugger_break` | engine | Stops in the attached source-level debugger, here, with this clause's stack and variables. Succeeds without doing anything if no debugger is attached, so it is safe to leave in a program. Requires the code to have been compiled for debugging (shumway --debug). |
+| `fail` | control | Always fails. |
+| `false` | iso | Always fails; the ISO synonym of fail/0. |
+| `forall(:Condition, :Action)` | engine | Succeeds if Action holds for every solution of Condition. |
+| `garbage_collect` | engine | Mark-compacts the heap, reclaiming cells unreachable from the live machine state. Always succeeds. |
+| `get_cpu_time(-Time)` | engine | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
+| `halt` | iso | Halts the engine with exit code 0. |
+| `halt(+Status)` | iso | Halts the engine with the given exit code. |
+| `if(:Condition, :Then, :Else)` | engine | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded. |
+| `ifthen(:Condition, :Then)` | engine | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
+| `ifthenelse(:Condition, :Then, :Else)` | engine | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
+| `ignore(:Goal)` | engine | Runs Goal, succeeding whether or not Goal does. |
+| `jit_compile(+Mode)` | engine | Sets Tier-1 promotion for the goals that follow: off returns the engine to the interpreter, all promotes each predicate on its first call, and a positive integer is the call threshold. cps and nocps choose the form Tier-1 compiles to (continuation code, or the default). Fails if the build cannot set the mode asked for. |
+| `notrace` | engine | Turns the four-port tracer off. |
+| `once(:Goal)` | iso | Succeeds at most once, committing to the first solution of Goal. |
+| `repeat` | iso | Succeeds, and succeeds again on every backtrack: an unbounded choice point. |
+| `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | engine | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. An exception Cleanup raises propagates, unless another one is already in flight, which wins. |
+| `throw(+Exception)` | control | Throws an exception term, unwinding to the nearest catch/3. |
+| `time(:Goal)` | engine | Calls Goal like call/1 and prints a per-answer resource report: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. |
+| `time_out(:Goal, +MilliSeconds, -Result)` | engine | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
+| `trace` | engine | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
+| `true` | control | Always succeeds. |
 
 ## Findall & aggregation
 
-| Predicate | Description |
-| --- | --- |
-| `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
-| `bagof(?Template, :Goal, -List)` | Collects Goal's solutions; fails when there are none. |
-| `countall(:Goal, ?N)` | N is the total number of answers of Goal. |
-| `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
-| `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
-| `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `aggregate_all(+Template, :Goal, -Result)` | engine | Aggregates Goal's solutions with a count, sum, bag or set template. |
+| `bagof(?Template, :Goal, -List)` | iso | Collects Goal's solutions; fails when there are none. |
+| `countall(:Goal, ?N)` | engine | N is the total number of answers of Goal. |
+| `findall(?Template, :Goal, -List)` | iso | Collects an instance of Template for every solution of Goal into a list. |
+| `findall(?Template, :Goal, -List, ?Tail)` | engine | Like findall/3 but the result is a difference list ending in Tail. |
+| `setof(?Template, :Goal, -List)` | iso | Like bagof/3 but the result list is sorted and duplicate-free. |
 
 ## Database
 
-| Predicate | Description |
-| --- | --- |
-| `[+File\|+Files]` | Edinburgh consult syntax: calling a list as a goal consults each element in order, so `?- [file1, file2, ...].` loads every file of the list and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts. |
-| `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
-| `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
-| `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
-| `assert(+Clause)` | Historical synonym for assertz/1. |
-| `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
-| `asserta(+Clause, -Ref)` | Adds Clause at the front of its predicate and unifies Ref with its clause reference. |
-| `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
-| `assertz(+Clause, -Ref)` | Adds Clause at the end of its predicate and unifies Ref with its clause reference. |
-| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
-| `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
-| `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
-| `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Checks that Name/Arity names a dynamic predicate, then does the same work as the 0-arg form: the reclamation is whole-database either way, so naming one predicate narrows what is checked, not what is compacted. |
-| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension is loaded as a compiled bundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. File may also be a list of specifications, each consulted in order, or the atom user: clauses are then read from current input until end of input or a line reading end_of_file. |
-| `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user). |
-| `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
-| `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
-| `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
-| `eraseall(+Key)` | Removes every recorded entry stored under Key. |
-| `file_list(+File)` | Saves the entire user database (all listable predicates) to File as plain Prolog source. |
-| `file_list(+File, +Spec)` | Saves selected predicates to File. Spec is either Name/Arity or a list [Name1/Arity1, Name2/Arity2, ...]. |
-| `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses. |
-| `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
-| `instance(+Ref, -Term)` | Unifies Term with the term recorded under Ref. |
-| `key_count(+Key, -Count)` | Unifies Count with the number of recorded entries stored under Key. |
-| `keys(?Key)` | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
-| `listing` | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates. |
-| `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
-| `nref(+Ref, -Next)` | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
-| `pref(+Ref, -Prev)` | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
-| `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched. |
-| `record_after(+Ref, ?Term, -NewRef)` | Inserts Term immediately after the entry with reference Ref in the same key's chain. |
-| `record_before(+Ref, ?Term, -NewRef)` | Inserts Term immediately before the entry with reference Ref in the same key's chain. |
-| `recorda(+Key, +Term)` | 2-arg form of recorda/3 (reference discarded). |
-| `recorda(+Key, ?Term, -Ref)` | Adds Term at the start of the chain stored under Key in the recorded database, returning a fresh reference. The recorded DB is separate from dynamic predicates: keys are arbitrary terms (not functor/arity). |
-| `recorded(+Key, ?Term)` | 2-arg form of recorded/3 (reference discarded); backtracks over matches. |
-| `recorded(+Key, ?Term, -Ref)` | Enumerates on backtracking the (Term, Ref) pairs stored under Key. |
-| `recordz(+Key, +Term)` | 2-arg form of recordz/3 (reference discarded). |
-| `recordz(+Key, ?Term, -Ref)` | Like recorda/3 but appends Term at the end of the chain under Key. |
-| `ref(?X)` | Succeeds when X is a live recorded-database reference (an integer previously returned by recorda/3 or recordz/3 and not yet erased). |
-| `replace(+Ref, +Term)` | Replaces the term in the entry with reference Ref. The chain position and the reference itself are preserved. |
-| `restore` | Destructively resets the user dynamic database to the last save/0 snapshot: every user dynamic predicate's clauses are removed (declarations survive, so calls fail rather than raise) and the snapshot's clauses re-installed. Without a prior save/0 the snapshot is empty, so restore/0 just clears all user dynamics. Static predicates are never touched. Effects are permanent (not undone by backtracking) and visible to later goals of the same query. Arity-Prolog compatible. |
-| `restore(+File)` | restore/0 semantics with the snapshot read from File (written by save/1). Raises existence_error if File does not exist. Arity-Prolog compatible builtin. |
-| `restore_state(+File)` | Restores a snapshot produced by save_state/1,2. Full-mode snapshots reset the engine first and replay the saved consults; dynamic-only snapshots merge their clauses into the engine via assertz. Throws existence_error if File doesn't exist, or type_error if it isn't a save_state snapshot. |
-| `retract(+Clause)` | Removes the first clause that unifies with the argument. |
-| `retractall(+Head)` | Removes every clause whose head unifies with Head. |
-| `save` | Snapshots the current user dynamic database (all dynamic predicates' clauses) in memory, replacing any previous save/0 snapshot. System-internal ($-prefixed) dynamics are excluded. Restore with restore/0. Arity-Prolog compatible builtin. |
-| `save(+File)` | Like save/0 but writes the dynamic-database snapshot to File (a compact binary only Shumway reads back). Restore with restore/1. Arity-Prolog compatible builtin. |
-| `save_state(+File)` | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. |
-| `save_state(+File, +Options)` | Like save_state/1 but accepts an options list. Recognised: dynamic_only(true) restricts the snapshot to dynamic clauses (no consult history); restore_state/1 then merges them into the engine's current state via assertz without resetting. |
-| `use_module(+Spec)` | Loads a library or file. Spec is either library(Name), where Name is one of the built-in libraries (clpfd, clpr), or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
-| `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal: true, false or undefined. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `[+File\|+Files]` | engine | Edinburgh consult syntax: calling a list as a goal consults each element in order, so `?- [file1, file2, ...].` loads every file of the list and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts. |
+| `abolish(+PredicateIndicator)` | iso | Removes every clause of the named dynamic predicate. |
+| `abolish_all_tables` | engine | Discards every tabled answer; later queries recompute against the current program. |
+| `abolish_table(+PredicateIndicator)` | engine | Discards the tabled answers of one predicate, given as Name/Arity. |
+| `assert(+Clause)` | engine | Historical synonym for assertz/1. |
+| `asserta(+Clause)` | iso | Adds a clause to the front of its dynamic predicate. |
+| `asserta(+Clause, -Ref)` | engine | Adds Clause at the front of its predicate and unifies Ref with its clause reference. |
+| `assertz(+Clause)` | iso | Adds a clause to the end of its dynamic predicate. |
+| `assertz(+Clause, -Ref)` | engine | Adds Clause at the end of its predicate and unifies Ref with its clause reference. |
+| `clause(+Head, ?Body)` | iso | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
+| `clause(?Head, ?Body, ?Ref)` | engine | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
+| `compact_dynamic_buffer` | engine | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
+| `compact_dynamic_buffer(+Name/Arity)` | engine | Per-predicate hint variant. Checks that Name/Arity names a dynamic predicate, then does the same work as the 0-arg form: the reclamation is whole-database either way, so naming one predicate narrows what is checked, not what is compacted. |
+| `consult(+File)` | engine | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension is loaded as a compiled bundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. File may also be a list of specifications, each consulted in order, or the atom user: clauses are then read from current input until end of input or a line reading end_of_file. |
+| `consult_text(+Text)` | engine | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user). |
+| `current_predicate(?PredicateIndicator)` | iso | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
+| `ensure_loaded(+File)` | engine | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
+| `erase(+Ref)` | engine | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
+| `eraseall(+Key)` | engine | Removes every recorded entry stored under Key. |
+| `file_list(+File)` | engine | Saves the entire user database (all listable predicates) to File as plain Prolog source. |
+| `file_list(+File, +Spec)` | engine | Saves selected predicates to File. Spec is either Name/Arity or a list [Name1/Arity1, Name2/Arity2, ...]. |
+| `garbage_collect_clauses` | engine | Re-threads every dynamic predicate's chain to skip retracted clauses. |
+| `garbage_collect_clauses(+Name/Arity)` | engine | Re-threads the named predicate's chain to skip retracted clauses. |
+| `instance(+Ref, -Term)` | engine | Unifies Term with the term recorded under Ref. |
+| `key_count(+Key, -Count)` | engine | Unifies Count with the number of recorded entries stored under Key. |
+| `keys(?Key)` | engine | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
+| `listing` | engine | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates. |
+| `listing(+Spec)` | engine | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
+| `nref(+Ref, -Next)` | engine | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
+| `pref(+Ref, -Prev)` | engine | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
+| `reconsult(+File)` | engine | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched. |
+| `record_after(+Ref, ?Term, -NewRef)` | engine | Inserts Term immediately after the entry with reference Ref in the same key's chain. |
+| `record_before(+Ref, ?Term, -NewRef)` | engine | Inserts Term immediately before the entry with reference Ref in the same key's chain. |
+| `recorda(+Key, +Term)` | engine | 2-arg form of recorda/3 (reference discarded). |
+| `recorda(+Key, ?Term, -Ref)` | engine | Adds Term at the start of the chain stored under Key in the recorded database, returning a fresh reference. The recorded DB is separate from dynamic predicates: keys are arbitrary terms (not functor/arity). |
+| `recorded(+Key, ?Term)` | engine | 2-arg form of recorded/3 (reference discarded); backtracks over matches. |
+| `recorded(+Key, ?Term, -Ref)` | engine | Enumerates on backtracking the (Term, Ref) pairs stored under Key. |
+| `recordz(+Key, +Term)` | engine | 2-arg form of recordz/3 (reference discarded). |
+| `recordz(+Key, ?Term, -Ref)` | engine | Like recorda/3 but appends Term at the end of the chain under Key. |
+| `ref(?X)` | engine | Succeeds when X is a live recorded-database reference (an integer previously returned by recorda/3 or recordz/3 and not yet erased). |
+| `replace(+Ref, +Term)` | engine | Replaces the term in the entry with reference Ref. The chain position and the reference itself are preserved. |
+| `restore` | engine | Destructively resets the user dynamic database to the last save/0 snapshot: every user dynamic predicate's clauses are removed (declarations survive, so calls fail rather than raise) and the snapshot's clauses re-installed. Without a prior save/0 the snapshot is empty, so restore/0 just clears all user dynamics. Static predicates are never touched. Effects are permanent (not undone by backtracking) and visible to later goals of the same query. Arity-Prolog compatible. |
+| `restore(+File)` | engine | restore/0 semantics with the snapshot read from File (written by save/1). Raises existence_error if File does not exist. Arity-Prolog compatible builtin. |
+| `restore_state(+File)` | engine | Restores a snapshot produced by save_state/1,2. Full-mode snapshots reset the engine first and replay the saved consults; dynamic-only snapshots merge their clauses into the engine via assertz. Throws existence_error if File doesn't exist, or type_error if it isn't a save_state snapshot. |
+| `retract(+Clause)` | iso | Removes the first clause that unifies with the argument. |
+| `retractall(+Head)` | iso | Removes every clause whose head unifies with Head. |
+| `save` | engine | Snapshots the current user dynamic database (all dynamic predicates' clauses) in memory, replacing any previous save/0 snapshot. System-internal ($-prefixed) dynamics are excluded. Restore with restore/0. Arity-Prolog compatible builtin. |
+| `save(+File)` | engine | Like save/0 but writes the dynamic-database snapshot to File (a compact binary only Shumway reads back). Restore with restore/1. Arity-Prolog compatible builtin. |
+| `save_state(+File)` | engine | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. |
+| `save_state(+File, +Options)` | engine | Like save_state/1 but accepts an options list. Recognised: dynamic_only(true) restricts the snapshot to dynamic clauses (no consult history); restore_state/1 then merges them into the engine's current state via assertz without resetting. |
+| `use_module(+Spec)` | engine | Loads a library or file. Spec is either library(Name), where Name is one of the built-in libraries (clpfd, clpr), or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
+| `well_founded(+Goal, -Status)` | engine | The well-founded truth value of a tabled Goal: true, false or undefined. |
 
 ## Lists
 
-| Predicate | Description |
-| --- | --- |
-| `append(+ListOfLists, -List)` | Concatenates a list of lists. |
-| `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
-| `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
-| `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
-| `flatten(+Nested, -Flat)` | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
-| `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
-| `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
-| `foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V)` | Folds Goal over three lists, threading an accumulator from V0 to V. |
-| `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
-| `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
-| `keysort(+Pairs, -Sorted)` | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
-| `last(?List, ?Last)` | Relates a list to its last element. |
-| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails. |
-| `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
-| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
-| `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
-| `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
-| `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
-| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4)` | Succeeds if Goal holds for corresponding elements of four lists. |
-| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5)` | Succeeds if Goal holds for corresponding elements of five lists. |
-| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6)` | Succeeds if Goal holds for corresponding elements of six lists. |
-| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7)` | Succeeds if Goal holds for corresponding elements of seven lists. |
-| `max_list(+List, -Max)` | Max is the largest number in the non-empty list. |
-| `max_member(?Max, +List)` | Max is the largest element of List in the standard order of terms. |
-| `member(?Elem, ?List)` | Succeeds when Elem is a member of List; enumerates members on backtracking. |
-| `memberchk(?Elem, +List)` | Like member/2 but succeeds at most once, with no backtracking over further matches. |
-| `min_list(+List, -Min)` | Min is the smallest number in the non-empty list. |
-| `min_member(?Min, +List)` | Min is the smallest element of List in the standard order of terms. |
-| `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
-| `nonmember(?Elem, +List)` | True when Elem does not unify with any element of List. |
-| `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
-| `nth0(?Index, ?List, ?Elem, ?Rest)` | Relates a 0-based index, the element there, and the list without that occurrence. |
-| `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
-| `nth1(?Index, ?List, ?Elem, ?Rest)` | Relates a 1-based index, the element there, and the list without that occurrence. |
-| `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
-| `pairs_keys(+Pairs, -Keys)` | The keys of a list of Key-Value pairs. |
-| `pairs_keys_values(?Pairs, ?Keys, ?Values)` | Relates a list of Key-Value pairs to its lists of keys and values. |
-| `pairs_values(+Pairs, -Values)` | The values of a list of Key-Value pairs. |
-| `partition(:Goal, +List, -Included, -Excluded)` | Splits List by whether Goal succeeds on each element. |
-| `permutation(?List, ?Permutation)` | True when the two lists are permutations of each other; enumerates permutations. |
-| `predsort(:Pred, +List, -Sorted)` | Sorts List by a three-way comparison predicate, dropping elements compared equal. |
-| `reverse(?List, ?Reversed)` | Relates a list to its reverse. |
-| `select(?Elem, ?List, ?Rest)` | Rest is List with one occurrence of Elem removed; backtracks over occurrences. |
-| `sort(+List, -Sorted)` | Sorts a list into standard order, removing duplicates. |
-| `sort(+Key, +Order, +List, -Sorted)` | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |
-| `subtract(+Set, +Delete, -Rest)` | Rest is Set without the elements that also occur in Delete. |
-| `sum_list(+List, -Sum)` | Sum is the sum of the numbers in List. |
-| `sumlist(+List, -Sum)` | Sum is the sum of the numbers in List (alias of sum_list/2). |
-| `union(+Set1, +Set2, -Union)` | Union holds the elements of Set1 not in Set2, followed by all of Set2. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `append(+ListOfLists, -List)` | library | Concatenates a list of lists. |
+| `append(?List1, ?List2, ?List)` | library | Concatenates List1 and List2 into List; backtracks over splits of List. A cyclic List1 raises resource_error(finite_memory). |
+| `delete(+List, +Elem, -Rest)` | library | Rest is List with every element that unifies with Elem removed. |
+| `exclude(:Goal, +List, -Excluded)` | library | Excluded holds the elements of List for which Goal fails. |
+| `flatten(+Nested, -Flat)` | library | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
+| `foldl(:Goal, ?List, +V0, -V)` | library | Folds Goal over a list, threading an accumulator from V0 to V. |
+| `foldl(:Goal, ?List1, ?List2, +V0, -V)` | library | Folds Goal over two lists, threading an accumulator from V0 to V. |
+| `foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V)` | library | Folds Goal over three lists, threading an accumulator from V0 to V. |
+| `include(:Goal, +List, -Included)` | library | Included holds the elements of List for which Goal succeeds. |
+| `intersection(+Set1, +Set2, -Intersection)` | library | Intersection holds the elements of Set1 that also occur in Set2. |
+| `keysort(+Pairs, -Sorted)` | iso | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
+| `last(?List, ?Last)` | library | Relates a list to its last element. A cyclic list raises resource_error(finite_memory). |
+| `length(?List, ?Length)` | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails. |
+| `list_to_set(+List, -Set)` | library | Removes duplicates from a list, keeping the first occurrence of each. A cyclic list gives the set of its distinct elements. |
+| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | library | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
+| `maplist(:Goal, ?List)` | library | Succeeds if Goal holds for every element of List. |
+| `maplist(:Goal, ?List1, ?List2)` | library | Succeeds if Goal holds for corresponding elements of two lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3)` | library | Succeeds if Goal holds for corresponding elements of three lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4)` | library | Succeeds if Goal holds for corresponding elements of four lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5)` | library | Succeeds if Goal holds for corresponding elements of five lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6)` | library | Succeeds if Goal holds for corresponding elements of six lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7)` | library | Succeeds if Goal holds for corresponding elements of seven lists. |
+| `max_list(+List, -Max)` | library | Max is the largest number in the non-empty list. |
+| `max_member(?Max, +List)` | library | Max is the largest element of List in the standard order of terms. |
+| `member(?Elem, ?List)` | library | Succeeds when Elem is a member of List; enumerates members on backtracking. |
+| `memberchk(?Elem, +List)` | library | Like member/2 but succeeds at most once, with no backtracking over further matches. |
+| `min_list(+List, -Min)` | library | Min is the smallest number in the non-empty list. |
+| `min_member(?Min, +List)` | library | Min is the smallest element of List in the standard order of terms. |
+| `msort(+List, -Sorted)` | engine | Sorts a list into standard order, keeping duplicates. |
+| `nonmember(?Elem, +List)` | library | True when Elem does not unify with any element of List. |
+| `nth0(?Index, ?List, ?Elem)` | library | Relates a 0-based index to the list element at that position. |
+| `nth0(?Index, ?List, ?Elem, ?Rest)` | library | Relates a 0-based index, the element there, and the list without that occurrence. |
+| `nth1(?Index, ?List, ?Elem)` | library | Relates a 1-based index to the list element at that position. |
+| `nth1(?Index, ?List, ?Elem, ?Rest)` | library | Relates a 1-based index, the element there, and the list without that occurrence. |
+| `numlist(+Low, +High, -List)` | library | List is the consecutive integers from Low to High inclusive. |
+| `pairs_keys(+Pairs, -Keys)` | library | The keys of a list of Key-Value pairs. |
+| `pairs_keys_values(?Pairs, ?Keys, ?Values)` | library | Relates a list of Key-Value pairs to its lists of keys and values. |
+| `pairs_values(+Pairs, -Values)` | library | The values of a list of Key-Value pairs. |
+| `partition(:Goal, +List, -Included, -Excluded)` | library | Splits List by whether Goal succeeds on each element. |
+| `permutation(?List, ?Permutation)` | library | True when the two lists are permutations of each other; enumerates permutations. |
+| `predsort(:Pred, +List, -Sorted)` | library | Sorts List by a three-way comparison predicate, dropping elements compared equal. |
+| `reverse(?List, ?Reversed)` | library | Relates a list to its reverse. A cyclic list raises resource_error(finite_memory). |
+| `select(?Elem, ?List, ?Rest)` | library | Rest is List with one occurrence of Elem removed; backtracks over occurrences. |
+| `sort(+List, -Sorted)` | iso | Sorts a list into standard order, removing duplicates. |
+| `sort(+Key, +Order, +List, -Sorted)` | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |
+| `subtract(+Set, +Delete, -Rest)` | library | Rest is Set without the elements that also occur in Delete. |
+| `sum_list(+List, -Sum)` | library | Sum is the sum of the numbers in List. |
+| `sumlist(+List, -Sum)` | library | Sum is the sum of the numbers in List (alias of sum_list/2). |
+| `union(+Set1, +Set2, -Union)` | library | Union holds the elements of Set1 not in Set2, followed by all of Set2. |
 
 ## Atoms & strings
 
-| Predicate | Description |
-| --- | --- |
-| `atom_chars(?Atom, ?Chars)` | Converts between an atom and its list of one-character atoms. |
-| `atom_codes(?Atom, ?Codes)` | Converts between an atom and its list of character codes. |
-| `atom_concat(?Atom1, ?Atom2, ?Atom)` | Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom. |
-| `atom_length(+Atom, ?Length)` | Relates an atom to its length in characters. |
-| `atom_number(?Atom, ?Number)` | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
-| `atom_string(?Atom, ?String)` | Converts between an atom and a string. |
-| `atomic_concat(+Atomic1, +Atomic2, -Atom)` | Concatenates two atomic terms into a single atom. |
-| `atomic_list_concat(+List, -Atom)` | Concatenates a list of atomic terms into a single atom. |
-| `atomic_list_concat(?List, +Separator, ?Atom)` | Joins a list of atomics with a separator, or splits an atom on the separator. |
-| `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
-| `char_type(+Char, ?Type)` | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights. |
-| `downcase_atom(+Atom, -Lower)` | Relates an atom to its lower-cased form. |
-| `gensym(+Base, -Unique)` | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
-| `number_chars(?Number, ?Chars)` | Converts between a number and its list of one-character atoms. |
-| `number_codes(?Number, ?Codes)` | Converts between a number and its list of character codes. |
-| `number_string(?Number, ?String)` | Converts between a number and its string representation; fails if the string is not numeric. |
-| `reset_gensym` | Resets every gensym/2 counter to 0. |
-| `reset_gensym(+Base)` | Resets the gensym/2 counter for Base to 0. |
-| `split_string(+String, +SepChars, +PadChars, -SubStrings)` | Splits a string on separator characters, trimming pad characters. |
-| `string_chars(?String, ?Chars)` | Converts between a string and its list of one-character atoms. |
-| `string_codes(?String, ?Codes)` | Converts between a string and its list of character codes. |
-| `string_concat(?String1, ?String2, ?String)` | Concatenates String1 and String2 into String. |
-| `string_length(+String, ?Length)` | Relates a string to its length in characters. |
-| `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
-| `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | Backtracks over every substring decomposition of String; the parts are strings. |
-| `unicode_property(+Code, ?Property)` | Unicode properties of the character with code Code. Property is category(Category) with Category the two-letter Unicode general category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables. |
-| `upcase_atom(+Atom, -Upper)` | Relates an atom to its upper-cased form. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `atom_chars(?Atom, ?Chars)` | iso | Converts between an atom and its list of one-character atoms. |
+| `atom_codes(?Atom, ?Codes)` | iso | Converts between an atom and its list of character codes. |
+| `atom_concat(?Atom1, ?Atom2, ?Atom)` | iso | Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom. |
+| `atom_length(+Atom, ?Length)` | iso | Relates an atom to its length in characters. |
+| `atom_number(?Atom, ?Number)` | engine | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
+| `atom_string(?Atom, ?String)` | engine | Converts between an atom and a string. |
+| `atomic_concat(+Atomic1, +Atomic2, -Atom)` | engine | Concatenates two atomic terms into a single atom. |
+| `atomic_list_concat(+List, -Atom)` | engine | Concatenates a list of atomic terms into a single atom. |
+| `atomic_list_concat(?List, +Separator, ?Atom)` | engine | Joins a list of atomics with a separator, or splits an atom on the separator. |
+| `char_code(?Char, ?Code)` | iso | Relates a one-character atom to its character code. |
+| `char_type(+Char, ?Type)` | engine | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights. |
+| `downcase_atom(+Atom, -Lower)` | engine | Relates an atom to its lower-cased form. |
+| `gensym(+Base, -Unique)` | engine | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
+| `number_chars(?Number, ?Chars)` | iso | Converts between a number and its list of one-character atoms. |
+| `number_codes(?Number, ?Codes)` | iso | Converts between a number and its list of character codes. |
+| `number_string(?Number, ?String)` | engine | Converts between a number and its string representation; fails if the string is not numeric. |
+| `reset_gensym` | engine | Resets every gensym/2 counter to 0. |
+| `reset_gensym(+Base)` | engine | Resets the gensym/2 counter for Base to 0. |
+| `split_string(+String, +SepChars, +PadChars, -SubStrings)` | engine | Splits a string on separator characters, trimming pad characters. |
+| `string_chars(?String, ?Chars)` | engine | Converts between a string and its list of one-character atoms. |
+| `string_codes(?String, ?Codes)` | engine | Converts between a string and its list of character codes. |
+| `string_concat(?String1, ?String2, ?String)` | engine | Concatenates String1 and String2 into String. |
+| `string_length(+String, ?Length)` | engine | Relates a string to its length in characters. |
+| `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | iso | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
+| `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | engine | Backtracks over every substring decomposition of String; the parts are strings. |
+| `unicode_property(+Code, ?Property)` | engine | Unicode properties of the character with code Code. Property is category(Category) with Category the two-letter Unicode general category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables. |
+| `upcase_atom(+Atom, -Upper)` | engine | Relates an atom to its upper-cased form. |
 
 ## Attributed variables
 
-| Predicate | Description |
-| --- | --- |
-| `call_residue_vars(:Goal, -Vars)` | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any. |
-| `del_attr(+Var, +Module)` | Removes a module's attribute from a variable. |
-| `get_attr(+Var, +Module, -Value)` | Reads a module's attribute from a variable, the value put_attr/3 stored. |
-| `get_atts(+Var, +Module, ?Attr)` | SICStus/Scryer style, with the module written out: reads back what put_atts/3 attached, unifying Attr with the attribute Var carries under Module whose functor and arity match, so get_atts(V, m, dom(D)) reads the dom/1 one. Fails when there is no such attribute; -Attr succeeds when there is none. |
-| `put_attr(+Var, +Module, +Value)` | Attaches (or replaces) a module's attribute on a variable: the SWI form, one value per module. |
-| `put_atts(+Var, +Module, +Attr)` | SICStus/Scryer style, with the module written out: attaches Attr to Var under Module. Attributes are keyed by functor and arity, so one module can hold several at once and putting dom(5) replaces an earlier dom(_). +Attr and a bare Attr both set; -Attr removes. Available without loading anything; library(atts) adds the module-implicit put_atts/2 it generates from a :- attribute declaration. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `call_residue_vars(:Goal, -Vars)` | engine | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any. |
+| `del_attr(+Var, +Module)` | engine | Removes a module's attribute from a variable. |
+| `get_attr(+Var, +Module, -Value)` | engine | Reads a module's attribute from a variable, the value put_attr/3 stored. |
+| `get_atts(+Var, +Module, ?Attr)` | engine | SICStus/Scryer style, with the module written out: reads back what put_atts/3 attached, unifying Attr with the attribute Var carries under Module whose functor and arity match, so get_atts(V, m, dom(D)) reads the dom/1 one. Fails when there is no such attribute; -Attr succeeds when there is none. |
+| `put_attr(+Var, +Module, +Value)` | engine | Attaches (or replaces) a module's attribute on a variable: the SWI form, one value per module. |
+| `put_atts(+Var, +Module, +Attr)` | engine | SICStus/Scryer style, with the module written out: attaches Attr to Var under Module. Attributes are keyed by functor and arity, so one module can hold several at once and putting dom(5) replaces an earlier dom(_). +Attr and a bare Attr both set; -Attr removes. Available without loading anything; library(atts) adds the module-implicit put_atts/2 it generates from a :- attribute declaration. |
 
 ## Coroutining
 
 Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutining()`).
 
-| Predicate | Description |
-| --- | --- |
-| `dif(?X, ?Y)` | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
-| `freeze(?Var, :Goal)` | Delays Goal until Var is bound; runs it at once when Var is already bound. |
-| `frozen(@Term, -Goal)` | Unifies Goal with the conjunction of the freeze/2, dif/2 and when/2 goals that re-create the constraints on the variables of Term (true when none). |
-| `when(+Condition, :Goal)` | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `dif(?X, ?Y)` | library | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
+| `freeze(?Var, :Goal)` | library | Delays Goal until Var is bound; runs it at once when Var is already bound. |
+| `frozen(@Term, -Goal)` | library | Unifies Goal with the conjunction of the freeze/2, dif/2 and when/2 goals that re-create the constraints on the variables of Term (true when none). |
+| `when(+Condition, :Goal)` | library | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
 
 ## Input / output
 
-| Predicate | Description |
-| --- | --- |
-| `absolute_file_name(+FileSpec, -Absolute)` | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
-| `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
-| `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
-| `chdir(?Path)` | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
-| `close(+Stream)` | Closes an open stream. |
-| `close(+Stream, +Options)` | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
-| `copy_file(+From, +To)` | Copies file From to To (overwriting To). Raises existence_error(source_sink, From) when From is missing. |
-| `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
-| `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
-| `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
-| `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
-| `delete_file(+File)` | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
-| `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
-| `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..'. |
-| `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
-| `display(+Stream, +Term)` | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted. |
-| `exists_directory(+Path)` | Succeeds when Path exists and is a directory. |
-| `exists_file(+File)` | Succeeds when File exists and is a regular file. |
-| `file_modification_time(+File, -Time)` | Unifies Time with File's last-modification time as integer Unix-epoch seconds. Raises existence_error when absent. |
-| `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). |
-| `file_permission(+File, +Permission)` | Succeeds when File (a file or directory) grants Permission: read, write, execute or search. A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
-| `file_size(+File, -Bytes)` | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
-| `flush_output` | Flushes the current output stream (ISO §8.11.7). |
-| `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
-| `format(+Format)` | Like format/2 with no arguments. |
-| `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
-| `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
-| `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |
-| `get(?Code)` | Reads the next printable character code from the current input stream (skipping non-printing codes < 32). EOF returns -1. |
-| `get(+Stream, ?Code)` | Stream variant of get/1. |
-| `get0(?Code)` | Reads the next character code from the current input stream without skipping non-printing codes. EOF returns -1. |
-| `get0(+Stream, ?Code)` | Stream variant of get0/1. |
-| `get_byte(-Byte)` | Reads one byte from the current input binary stream (ISO §8.13.1). |
-| `get_byte(+Stream, -Byte)` | Reads one byte from a binary stream (ISO §8.13.1). |
-| `get_char(-Char)` | Reads one character from the current input stream (ISO §8.12.1). |
-| `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
-| `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
-| `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
-| `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
-| `http_download(+URL, +File)` | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
-| `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
-| `nl` | Writes a newline to the current output stream. |
-| `nl(+Stream)` | Writes a newline to the given stream. |
-| `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
-| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action). ISO §8.11.5. |
-| `partial_string(+Text, ?Ls, ?Ls0)` | Ls is the packed list of Text's characters with Ls0 as its tail. |
-| `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
-| `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
-| `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
-| `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
-| `peek_code(-Code)` | Peeks one character code from current input (ISO §8.12.5). |
-| `peek_code(+Stream, -Code)` | Peeks one character code from a stream (ISO §8.12.5). |
-| `pid(-Pid)` | Unifies Pid with the current process id. |
-| `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
-| `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
-| `print(+Term)` | Writes a term using print conventions. |
-| `print(+Stream, +Term)` | Writes a term to a stream using print conventions. |
-| `prolog_load_context(?Key, ?Value)` | Load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
-| `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form. Either argument may be the bound one; on a system whose separator is already '/' the two forms are the same. |
-| `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
-| `put(+Stream, +Code)` | Stream variant of put/1. |
-| `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
-| `put_byte(+Stream, +Byte)` | Writes one byte to a binary stream (ISO §8.13.3). |
-| `put_char(+Char)` | Writes a single-character atom to the current output stream (ISO §8.12.3). |
-| `put_char(+Stream, +Char)` | Writes a single-character atom to the given stream (ISO §8.12.3). |
-| `put_code(+Code)` | Writes the character for Code to the current output stream (ISO §8.12.6). |
-| `put_code(+Stream, +Code)` | Writes the character for Code to a stream (ISO §8.12.6). |
-| `read(-Term)` | Reads one term from current input (ISO §8.14.2). |
-| `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
-| `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
-| `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
-| `read_term_from_chars(+Chars, -Term, +Options)` | Reads a term from a character list, honouring read_term/2 options. |
-| `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
-| `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
-| `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
-| `see(+File)` | Opens File for reading and makes it the current input stream. An already-open see-stream is closed first. |
-| `seeing(?File)` | Unifies File with the name of the current input stream's file (or `user` when current input is user_input). |
-| `seen` | Closes the current input stream (if not user_input) and reverts current input to user_input. |
-| `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
-| `set_output(+Stream)` | Sets the current output stream (ISO §8.11.4). |
-| `set_stream_position(+Stream, +Position)` | Seeks the stream to the given byte position (ISO §8.11.10). |
-| `shell(+Command)` | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
-| `shell(+Command, -Status)` | Runs Command through the platform shell and unifies Status with its exit code. |
-| `skip(+Code)` | Reads from the current input stream, discarding characters until the code Code is read. |
-| `skip(+Stream, +Code)` | Stream variant of skip/1. |
-| `sleep(+Seconds)` | Suspends execution for Seconds (integer or float). |
-| `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
-| `tab(+N)` | Writes N spaces to the current output stream. |
-| `tab(+Stream, +N)` | Stream variant of tab/1: writes N spaces to Stream. |
-| `tell(+File)` | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
-| `telling(?File)` | Unifies File with the name of the current output stream's file (or `user` when current output is user_output). |
-| `told` | Closes the current output stream (if not user_output) and reverts current output to user_output. |
-| `with_output_to(+Sink, :Goal)` | Runs Goal once, capturing its output into the atom(A) or string(S) sink. |
-| `working_directory(-Old, +New)` | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
-| `write(+Term)` | Writes a term to the current output stream. |
-| `write(+Stream, +Term)` | Writes a term to the given stream. |
-| `write_canonical(+Term)` | Writes a term in a quoted, operator-free form that reads back. |
-| `write_canonical(+Stream, +Term)` | Writes a term in canonical form to a stream (ISO §8.14.6). |
-| `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
-| `write_term(+Stream, +Term, +Options)` | Writes a term to a stream honouring options (ISO §8.14.3). |
-| `write_term_to_chars(+Term, +Options, -Chars)` | Writes a term to a character list with write_term/2's options. |
-| `writeln(+Term)` | Writes a term followed by a newline. |
-| `writeq(+Term)` | Writes a term in quoted (parseable) form (ISO §8.14.5). |
-| `writeq(+Stream, +Term)` | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `absolute_file_name(+FileSpec, -Absolute)` | engine | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
+| `at_end_of_stream` | iso | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
+| `at_end_of_stream(+Stream)` | iso | Succeeds if the given stream is at end of file (ISO §8.11.9). |
+| `chdir(?Path)` | engine | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
+| `close(+Stream)` | iso | Closes an open stream. |
+| `close(+Stream, +Options)` | iso | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
+| `copy_file(+From, +To)` | engine | Copies file From to To (overwriting To). Raises existence_error(source_sink, From) when From is missing. |
+| `current_input(-Stream)` | iso | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
+| `current_output(-Stream)` | iso | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
+| `current_stream(?Filename, ?Mode, ?Stream)` | engine | Enumerates open streams (ISO §8.11.8.1). |
+| `delete(+File)` | engine | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
+| `delete_file(+File)` | engine | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
+| `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | engine | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
+| `directory_files(+Directory, -Files)` | engine | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..'. |
+| `display(+Term)` | engine | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
+| `display(+Stream, +Term)` | engine | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted. |
+| `exists_directory(+Path)` | engine | Succeeds when Path exists and is a directory. |
+| `exists_file(+File)` | engine | Succeeds when File exists and is a regular file. |
+| `file_modification_time(+File, -Time)` | engine | Unifies Time with File's last-modification time as integer Unix-epoch seconds. Raises existence_error when absent. |
+| `file_name_extension(?Base, ?Ext, ?Full)` | engine | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). |
+| `file_permission(+File, +Permission)` | engine | Succeeds when File (a file or directory) grants Permission: read, write, execute or search. A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
+| `file_size(+File, -Bytes)` | engine | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
+| `flush_output` | iso | Flushes the current output stream (ISO §8.11.7). |
+| `flush_output(+Stream)` | iso | Flushes the given stream (ISO §8.11.7). |
+| `format(+Format)` | engine | Like format/2 with no arguments. |
+| `format(+Format, +Arguments)` | engine | Writes formatted output from a control string and an argument list. |
+| `format(+Stream, +Format, +Arguments)` | engine | Writes formatted output to the given stream. |
+| `format_to_atom(-Atom, +Format, +Args)` | engine | Like format/2 but captures the formatted output into an atom. |
+| `get(?Code)` | engine | Reads the next printable character code from the current input stream (skipping non-printing codes < 32). EOF returns -1. |
+| `get(+Stream, ?Code)` | engine | Stream variant of get/1. |
+| `get0(?Code)` | engine | Reads the next character code from the current input stream without skipping non-printing codes. EOF returns -1. |
+| `get0(+Stream, ?Code)` | engine | Stream variant of get0/1. |
+| `get_byte(-Byte)` | iso | Reads one byte from the current input binary stream (ISO §8.13.1). |
+| `get_byte(+Stream, -Byte)` | iso | Reads one byte from a binary stream (ISO §8.13.1). |
+| `get_char(-Char)` | iso | Reads one character from the current input stream (ISO §8.12.1). |
+| `get_char(+Stream, -Char)` | iso | Reads and consumes one character from a stream. |
+| `get_code(-Code)` | iso | Reads one character code from the current input stream (ISO §8.12.4). |
+| `get_code(+Stream, -Code)` | iso | Reads one character code from a stream (ISO §8.12.4). |
+| `getenv(+Name, -Value)` | engine | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
+| `http_download(+URL, +File)` | engine | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
+| `mkdir(+Path)` | engine | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
+| `nl` | iso | Writes a newline to the current output stream. |
+| `nl(+Stream)` | iso | Writes a newline to the given stream. |
+| `open(+File, +Mode, -Stream)` | iso | Opens a file as a stream handle. |
+| `open(+File, +Mode, -Stream, +Options)` | iso | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action). ISO §8.11.5. |
+| `partial_string(+Text, ?Ls, ?Ls0)` | engine | Ls is the packed list of Text's characters with Ls0 as its tail. |
+| `peek_byte(-Byte)` | iso | Peeks one byte from the current input binary stream (ISO §8.13.2). |
+| `peek_byte(+Stream, -Byte)` | iso | Peeks one byte from a binary stream (ISO §8.13.2). |
+| `peek_char(-Char)` | iso | Peeks one character from the current input stream (ISO §8.12.2). |
+| `peek_char(+Stream, -Char)` | iso | Peeks the next character of a stream without consuming it. |
+| `peek_code(-Code)` | iso | Peeks one character code from current input (ISO §8.12.5). |
+| `peek_code(+Stream, -Code)` | iso | Peeks one character code from a stream (ISO §8.12.5). |
+| `pid(-Pid)` | engine | Unifies Pid with the current process id. |
+| `portray_clause(+Clause)` | engine | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
+| `portray_clause(+Stream, +Clause)` | engine | Like portray_clause/1 but writes to the given stream. |
+| `print(+Term)` | engine | Writes a term using print conventions. |
+| `print(+Stream, +Term)` | engine | Writes a term to a stream using print conventions. |
+| `prolog_load_context(?Key, ?Value)` | engine | Load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
+| `prolog_to_os_filename(?PrologPath, ?OsPath)` | engine | Converts between Shumway's canonical '/'-separated path form and the host's native form. Either argument may be the bound one; on a system whose separator is already '/' the two forms are the same. |
+| `put(+Code)` | engine | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
+| `put(+Stream, +Code)` | engine | Stream variant of put/1. |
+| `put_byte(+Byte)` | iso | Writes one byte to the current output binary stream (ISO §8.13.3). |
+| `put_byte(+Stream, +Byte)` | iso | Writes one byte to a binary stream (ISO §8.13.3). |
+| `put_char(+Char)` | iso | Writes a single-character atom to the current output stream (ISO §8.12.3). |
+| `put_char(+Stream, +Char)` | iso | Writes a single-character atom to the given stream (ISO §8.12.3). |
+| `put_code(+Code)` | iso | Writes the character for Code to the current output stream (ISO §8.12.6). |
+| `put_code(+Stream, +Code)` | iso | Writes the character for Code to a stream (ISO §8.12.6). |
+| `read(-Term)` | iso | Reads one term from current input (ISO §8.14.2). |
+| `read(+Stream, -Term)` | iso | Reads one term from a stream (ISO §8.14.2). |
+| `read_term(+Stream, -Term)` | iso | Reads one term from a read-mode stream. |
+| `read_term(+Stream, -Term, +Options)` | iso | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
+| `read_term_from_chars(+Chars, -Term, +Options)` | engine | Reads a term from a character list, honouring read_term/2 options. |
+| `read_term_from_stream(+Stream, -Term)` | engine | Reads one term from a read-mode stream. |
+| `rename(+From, +To)` | engine | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
+| `rmdir(+Path)` | engine | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
+| `see(+File)` | engine | Opens File for reading and makes it the current input stream. An already-open see-stream is closed first. |
+| `seeing(?File)` | engine | Unifies File with the name of the current input stream's file (or `user` when current input is user_input). |
+| `seen` | engine | Closes the current input stream (if not user_input) and reverts current input to user_input. |
+| `set_input(+Stream)` | iso | Sets the current input stream (ISO §8.11.3). |
+| `set_output(+Stream)` | iso | Sets the current output stream (ISO §8.11.4). |
+| `set_stream_position(+Stream, +Position)` | iso | Seeks the stream to the given byte position (ISO §8.11.10). |
+| `shell(+Command)` | engine | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
+| `shell(+Command, -Status)` | engine | Runs Command through the platform shell and unifies Status with its exit code. |
+| `skip(+Code)` | engine | Reads from the current input stream, discarding characters until the code Code is read. |
+| `skip(+Stream, +Code)` | engine | Stream variant of skip/1. |
+| `sleep(+Seconds)` | engine | Suspends execution for Seconds (integer or float). |
+| `stream_property(?Stream, ?Property)` | iso | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
+| `tab(+N)` | engine | Writes N spaces to the current output stream. |
+| `tab(+Stream, +N)` | engine | Stream variant of tab/1: writes N spaces to Stream. |
+| `tell(+File)` | engine | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
+| `telling(?File)` | engine | Unifies File with the name of the current output stream's file (or `user` when current output is user_output). |
+| `told` | engine | Closes the current output stream (if not user_output) and reverts current output to user_output. |
+| `with_output_to(+Sink, :Goal)` | engine | Runs Goal once, capturing its output into the atom(A) or string(S) sink. |
+| `working_directory(-Old, +New)` | engine | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
+| `write(+Term)` | iso | Writes a term to the current output stream. |
+| `write(+Stream, +Term)` | iso | Writes a term to the given stream. |
+| `write_canonical(+Term)` | iso | Writes a term in a quoted, operator-free form that reads back. |
+| `write_canonical(+Stream, +Term)` | iso | Writes a term in canonical form to a stream (ISO §8.14.6). |
+| `write_term(+Term, +Options)` | iso | Writes a term honouring the given list of write options. |
+| `write_term(+Stream, +Term, +Options)` | iso | Writes a term to a stream honouring options (ISO §8.14.3). |
+| `write_term_to_chars(+Term, +Options, -Chars)` | engine | Writes a term to a character list with write_term/2's options. |
+| `writeln(+Term)` | engine | Writes a term followed by a newline. |
+| `writeq(+Term)` | iso | Writes a term in quoted (parseable) form (ISO §8.14.5). |
+| `writeq(+Stream, +Term)` | iso | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
 
 ## Flags, operators & reflection
 
-| Predicate | Description |
-| --- | --- |
-| `char_conversion(+InChar, +OutChar)` | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
-| `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
-| `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
-| `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
-| `is_stream(@Term)` | Succeeds if Term is a stream handle or a registered stream alias. |
-| `module_property(?Module, ?Property)` | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
-| `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
-| `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
-| `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
-| `statistics` | Writes a report of runtime, walltime, heap/trail/stack use, heap-GC collections with cells reclaimed, and atom-table occupancy with atom-GC sweeps, to the current output. |
-| `statistics(?Key, ?Value)` | Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]. Any other key raises domain_error(statistics_key, Key). |
-| `term_cells(@Term, -Cells)` | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `char_conversion(+InChar, +OutChar)` | iso | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
+| `current_char_conversion(?InChar, ?OutChar)` | iso | Enumerates the active char-conversion table (ISO §8.14.10). |
+| `current_op(?Priority, ?Type, ?Name)` | iso | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
+| `current_prolog_flag(?Flag, ?Value)` | iso | Reads the value of a Prolog flag. |
+| `is_stream(@Term)` | engine | Succeeds if Term is a stream handle or a registered stream alias. |
+| `module_property(?Module, ?Property)` | engine | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
+| `op(+Priority, +Type, +Name)` | iso | Declares an operator of the given priority and type. |
+| `predicate_property(+Head, ?Property)` | engine | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
+| `set_prolog_flag(+Flag, +Value)` | iso | Sets a Prolog flag. |
+| `statistics` | engine | Writes a report of runtime, walltime, heap/trail/stack use, heap-GC collections with cells reclaimed, and atom-table occupancy with atom-GC sweeps, to the current output. |
+| `statistics(?Key, ?Value)` | engine | Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]; inferences gives the goals the interpreter dispatched (only with Tier-1 off). Any other key raises domain_error(statistics_key, Key). |
+| `term_cells(@Term, -Cells)` | engine | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
 
 ## Grammar
 
-| Predicate | Description |
-| --- | --- |
-| `'...'(?S0, ?S)` | The nonterminal '...'//0: matches any sequence, shortest first. phrase((..., [1,2], ...), L) asks whether [1,2] occurs anywhere in L. |
-| `phrase(:Body, ?List)` | phrase(Body, List, []): succeeds when the DCG Body derives List. |
-| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal. |
-| `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
-| `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
-| `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
-| `phrase_from_stream(:Body, +Stream, +Kind)` | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
-| `seq(?Xs, ?S0, ?S)` | The nonterminal seq//1: describes exactly the sequence Xs. phrase((seq(A), seq(B)), L) splits L into A and B. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `'...'(?S0, ?S)` | engine | The nonterminal '...'//0: matches any sequence, shortest first. phrase((..., [1,2], ...), L) asks whether [1,2] occurs anywhere in L. |
+| `phrase(:Body, ?List)` | iso | phrase(Body, List, []): succeeds when the DCG Body derives List. |
+| `phrase(:Body, ?List, ?Rest)` | iso | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal. |
+| `phrase_from_file(:Body, +File)` | engine | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
+| `phrase_from_file(:Body, +File, +Options)` | engine | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
+| `phrase_from_stream(:Body, +Stream)` | engine | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
+| `phrase_from_stream(:Body, +Stream, +Kind)` | engine | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
+| `seq(?Xs, ?S0, ?S)` | engine | The nonterminal seq//1: describes exactly the sequence Xs. phrase((seq(A), seq(B)), L) splits L into A and B. |
 
 ## Global variables
 
-| Predicate | Description |
-| --- | --- |
-| `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
-| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. The value is the term itself rather than a copy, and the assignment does not outlive the query that made it. |
-| `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
-| `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
-| `bb_get(+Key, -Value)` | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws). |
-| `bb_put(+Key, +Value)` | Blackboard store: non-backtrackable global assignment. |
-| `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
-| `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
-| `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
-| `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
-| `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
-| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment: a copy of Value is stored, so it survives backtracking. The copy carries no attributes; bb_put/2 is the one that keeps a constrained value. |
-| `set_flag(+Key, +Value)` | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `b_getval(+Key, -Value)` | engine | Reads a backtrackable global variable; existence_error if unset. |
+| `b_setval(+Key, +Value)` | engine | Backtrackable global variable assignment: the previous value is restored on backtracking. The value is the term itself rather than a copy, and the assignment does not outlive the query that made it. |
+| `bb_b_put(+Key, +Value)` | engine | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
+| `bb_delete(+Key, -Value)` | engine | Unifies Value with the current value and removes the entry. |
+| `bb_get(+Key, -Value)` | engine | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws). |
+| `bb_put(+Key, +Value)` | engine | Blackboard store: non-backtrackable global assignment. |
+| `bb_update(+Key, ?Old, +New)` | engine | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
+| `flag(+Key, ?Old, +New)` | engine | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
+| `get_flag(+Key, -Value)` | engine | Reads a flag's value (0 if never set). |
+| `nb_current(?Key, ?Value)` | engine | Enumerates global variables; fails for an unset Key (no throw). |
+| `nb_getval(+Key, -Value)` | engine | Reads a non-backtrackable global variable; existence_error if unset. |
+| `nb_setval(+Key, +Value)` | engine | Non-backtrackable global variable assignment: a copy of Value is stored, so it survives backtracking. The copy carries no attributes; bb_put/2 is the one that keeps a constrained value. |
+| `set_flag(+Key, +Value)` | engine | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
 
 ## Messages
 
-| Predicate | Description |
-| --- | --- |
-| `print_message(+Kind, +Message)` | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `print_message(+Kind, +Message)` | engine | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
 
 ## Time
 
-| Predicate | Description |
-| --- | --- |
-| `get_time(-Time)` | Current wall-clock time in seconds since the Unix epoch (a float). |
-| `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `get_time(-Time)` | engine | Current wall-clock time in seconds since the Unix epoch (a float). |
+| `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | engine | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |
 
 ## Quad tests
 
 Load with `:- use_module(library(quads)).`
 
-| Predicate | Description |
-| --- | --- |
-| `clear_quads` | Forgets every loaded quad test; the next consult starts a fresh set. |
-| `quads_result(-Passed, -Total)` | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed". |
-| `run_quads` | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified. |
-| `run_quads(+Id)` | Runs the single quad test with the given id and reports it the same way. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `clear_quads` | library | Forgets every loaded quad test; the next consult starts a fresh set. |
+| `quads_result(-Passed, -Total)` | library | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed". |
+| `run_quads` | library | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified. |
+| `run_quads(+Id)` | library | Runs the single quad test with the given id and reports it the same way. |
 
 ## CLP(FD): domains
 
 Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
-| Predicate | Description |
-| --- | --- |
-| `in(?Var, +Domain)` | Constrains a variable to a finite domain (e.g. X in 1..9). |
-| `ins(?Vars, +Domain)` | Constrains every variable in a list to a finite domain. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `in(?Var, +Domain)` | library | Constrains a variable to a finite domain (e.g. X in 1..9). |
+| `ins(?Vars, +Domain)` | library | Constrains every variable in a list to a finite domain. |
 
 ## CLP(FD): arithmetic constraints
 
 Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
-| Predicate | Description |
-| --- | --- |
-| `#<(?Expr1, ?Expr2)` | The first integer expression is strictly less than the second. |
-| `#=(?Expr1, ?Expr2)` | The two integer expressions are equal. |
-| `#=<(?Expr1, ?Expr2)` | The first integer expression is at most the second. |
-| `#>(?Expr1, ?Expr2)` | The first integer expression is strictly greater than the second. |
-| `#>=(?Expr1, ?Expr2)` | The first integer expression is at least the second. |
-| `#\=(?Expr1, ?Expr2)` | The two integer expressions are different. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `#<(?Expr1, ?Expr2)` | library | The first integer expression is strictly less than the second. |
+| `#=(?Expr1, ?Expr2)` | library | The two integer expressions are equal. |
+| `#=<(?Expr1, ?Expr2)` | library | The first integer expression is at most the second. |
+| `#>(?Expr1, ?Expr2)` | library | The first integer expression is strictly greater than the second. |
+| `#>=(?Expr1, ?Expr2)` | library | The first integer expression is at least the second. |
+| `#\=(?Expr1, ?Expr2)` | library | The two integer expressions are different. |
 
 ## CLP(FD): global constraints
 
 Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
-| Predicate | Description |
-| --- | --- |
-| `all_different(?Vars)` | Every element of the list takes a distinct value (pairwise). |
-| `all_distinct(?Vars)` | Every element of the list takes a distinct value, with Hall-interval pruning. |
-| `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
-| `sum(+Vars, +Rel, ?Total)` | Total stands in relation Rel to the sum of the list of variables. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `all_different(?Vars)` | library | Every element of the list takes a distinct value (pairwise). |
+| `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, with Hall-interval pruning. |
+| `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
+| `sum(+Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the sum of the list of variables. |
 
 ## CLP(FD): labeling
 
 Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
-| Predicate | Description |
-| --- | --- |
-| `indomain(?Var)` | Binds one variable to each value of its domain in turn, on backtracking. |
-| `label(+Vars)` | Assigns each variable in the list a value from its domain, searching by backtracking. |
-| `labeling(+Options, +Vars)` | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `indomain(?Var)` | library | Binds one variable to each value of its domain in turn, on backtracking. |
+| `label(+Vars)` | library | Assigns each variable in the list a value from its domain, searching by backtracking. |
+| `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. |
 
 ## CLP(FD): reification
 
 Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
-| Predicate | Description |
-| --- | --- |
-| `#/\(+Constraint1, +Constraint2)` | Both constraints hold (conjunction). |
-| `#<==(+Constraint1, +Constraint2)` | Constraint2 implies Constraint1. |
-| `#<==>(?Constraint1, ?Constraint2)` | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one. |
-| `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
-| `#\(+Constraint)` | The constraint does not hold (negation). |
-| `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `#/\(+Constraint1, +Constraint2)` | library | Both constraints hold (conjunction). |
+| `#<==(+Constraint1, +Constraint2)` | library | Constraint2 implies Constraint1. |
+| `#<==>(?Constraint1, ?Constraint2)` | library | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one. |
+| `#==>(+Constraint1, +Constraint2)` | library | Constraint1 implies Constraint2. |
+| `#\(+Constraint)` | library | The constraint does not hold (negation). |
+| `#\/(+Constraint1, +Constraint2)` | library | At least one constraint holds (disjunction). |
 
 ## CLP(R)
 
 Load with `:- use_module(library(clpr)).` (embedding: `engine.UseClpr()`).
 
-| Predicate | Description |
-| --- | --- |
-| `bb_inf(+Ints, +Expr, -Inf)` | The infimum of Expr with the variables in Ints restricted to integers: branch and bound over the linear relaxation. Requires those variables to be bounded, as the search has nothing to close otherwise. |
-| `bb_inf(+Ints, +Expr, -Inf, -Vertex)` | As bb_inf/3, and Vertex comes back as the values the Ints take where that infimum is reached. |
-| `dump(+Vars, +Names, -Constraints)` | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it. |
-| `entailed(+Constraint)` | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was. |
-| `inf(+Expr, -Inf)` | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below. |
-| `maximize(+Expr)` | Pins Expr to its supremum, adding that equation to the store. Fails when Expr is unbounded above. |
-| `minimize(+Expr)` | Pins Expr to its infimum, adding that equation to the store. Fails when Expr is unbounded below. |
-| `sup(+Expr, -Sup)` | The supremum of Expr under the current store: the least upper bound the constraints imply. Fails when Expr is unbounded above. |
-| `{}(+Constraints)` | Posts equality, inequality, disequality and (delayed) non-linear constraints over the reals. |
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `bb_inf(+Ints, +Expr, -Inf)` | library | The infimum of Expr with the variables in Ints restricted to integers: branch and bound over the linear relaxation. Requires those variables to be bounded, as the search has nothing to close otherwise. |
+| `bb_inf(+Ints, +Expr, -Inf, -Vertex)` | library | As bb_inf/3, and Vertex comes back as the values the Ints take where that infimum is reached. |
+| `dump(+Vars, +Names, -Constraints)` | library | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it. |
+| `entailed(+Constraint)` | library | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was. |
+| `inf(+Expr, -Inf)` | library | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below. |
+| `maximize(+Expr)` | library | Pins Expr to its supremum, adding that equation to the store. Fails when Expr is unbounded above. |
+| `minimize(+Expr)` | library | Pins Expr to its infimum, adding that equation to the store. Fails when Expr is unbounded below. |
+| `sup(+Expr, -Sup)` | library | The supremum of Expr under the current store: the least upper bound the constraints imply. Fails when Expr is unbounded above. |
+| `{}(+Constraints)` | library | Posts equality, inequality, disequality and (delayed) non-linear constraints over the reals. |

@@ -144,10 +144,10 @@ public class WasmCutBuiltinTests
     [Fact]
     public void ACutAfterRecursionCutsOnlyItsOwnLevel()
     {
-        // w/2 leaves a d/1 choice point per level BEFORE tail-calling itself;
-        // the base case's ! must cut only ITS OWN clause selection, not the
+        // w/2 leaves a d/1 choice point per level before tail-calling itself;
+        // the base case's ! must cut only its own clause selection, not the
         // accumulated d CPs. The cut barrier (B0) must therefore be refreshed
-        // at EVERY dispatch -- the interpreter's SetB0(B) before call/execute,
+        // at every dispatch -- the interpreter's SetB0(B) before call/execute,
         // including the in-module self-tail. A stale barrier from the original
         // entry over-cuts and collapses 4 solutions to 1.
         using var h = Harness();

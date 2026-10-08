@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// The re-entrant host→Prolog solve (<see cref="PrologEngine.SolveOnce(Activation, Term, out Solution)"/>):
 /// a foreign predicate, running mid-query with the live activation in hand, calls a Prolog
-/// goal back on THAT activation — reusing the linked program instead of a fresh top-level
+/// goal back on that activation — reusing the linked program instead of a fresh top-level
 /// query. This is the C#→Prolog crossing of the C#→main→C#→predX embedding pattern.
 /// </summary>
 public partial class ReentrantSolveTests

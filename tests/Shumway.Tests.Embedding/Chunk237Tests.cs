@@ -164,7 +164,7 @@ public class Chunk237Tests
     public void Attribute_NameWithSlash_TakesLastSlash()
     {
         // Edge case: the name itself could contain '/' (operator-named
-        // predicates like '/'/2). Take the LAST slash as the arity
+        // predicates like '/'/2). Take the last slash as the arity
         // delimiter so '//2' parses as the predicate named '/' with
         // arity 2, not '' / arity 2 or '/' / arity 2 ambiguously.
         var attr = new PrologPredicateAttribute("//2");

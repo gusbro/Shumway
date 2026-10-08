@@ -41,7 +41,7 @@ public static class TermCodec
     private const byte TagCompound = 6;
     private const byte TagRational = 7;
 
-    /// <summary>Writes a term. ITERATIVE over an explicit stack: a stored
+    /// <summary>Writes a term. Iterative over an explicit stack: a stored
     /// clause can hold a list of any length, and a recursive walk overflowed
     /// the C# stack — killing the process, not the compile — on a source file
     /// carrying one. Arguments are pushed right to left so they are written
@@ -78,7 +78,7 @@ public static class TermCodec
                 WriteBigInteger(w, bi.Value);
                 break;
             // A rational never comes from source (ADR-039), but save/1
-            // writes the LIVE database, and that one holds whatever assert
+            // writes the live database, and that one holds whatever assert
             // put there.
             case RationalTerm rt:
                 w.Write(TagRational);
@@ -114,7 +114,7 @@ public static class TermCodec
         public int Index;
     }
 
-    /// <summary>Reads a term. ITERATIVE, for the same reason
+    /// <summary>Reads a term. Iterative, for the same reason
     /// <see cref="WriteTerm"/> is: a bundle can carry a clause holding a list
     /// of any length, and the decode runs at load time, where a process death
     /// is at its least diagnosable.</summary>

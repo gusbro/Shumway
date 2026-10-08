@@ -63,9 +63,9 @@ Shumway; only that one selector borrows SWI's name.
 
 - **Test suites**: the full 242-tester sweep of Logtalk 3.101.0's library
   collection, on a pristine tree, closes at **100% of the structurally
-  supported set: 204 suites all fully green, 11,417 tests, 0 failures**
-  (plus five compute-heavy ML suites that pass when run without machine
-  contention). The three libraries whose *operation* needs an OS capability
+  supported set: 214 suites all fully green, 11,634 tests, 0 failures**
+  (measured 2026-09; the compute-heavy ML suites may need a run without
+  machine contention). The three libraries whose *operation* needs an OS capability
   Shumway does not provide (`process` (OS processes), `redis` (sockets),
   `java` (a JVM)) are excluded as structurally N/A, documented rather than
   hidden. Details and reproduction in
@@ -86,46 +86,63 @@ Shumway; only that one selector borrows SWI's name.
   `format/2,3`, `predicate_property/2` and the full ISO surface Logtalk's
   compiler needs, is native.
 
-- **The `tests/prolog` ISO conformity battery** (192 testers, ~3,400
-  counted tests): **3,219 passed / 70 failed** after the 2026-08 campaign
-  (baseline before it: 2,096 / 933; 2,796 / 499 at the end of round two).
-  The five `unicode/` testers, formerly gated on the `encoding/1`
-  directive, now run: `directives/encoding_1` 3/3, `escape_sequences`
-  12/12, `case_variables` 12/12, `builtins` 131/6, `encodings` 41/8 with
-  no skips: above the SWI oracle on every tester (SWI: 2/1, 11/1, 12/12,
-  127/10, 25/5 with 19 skips). Every remaining failure is one accepted
-  divergence: those tests expect `stream_property/2` /
+- **The `tests/prolog` ISO conformity battery** (192 testers, 4,304
+  counted tests): **4,258 passed / 46 failed**, every tester reporting
+  (measured 2026-09; baseline before the 2026-08 campaign: 2,096 / 933).
+  The five `unicode/` testers run with no skips: `directives/encoding_1`
+  3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
+  `encodings` 41/8, above the SWI oracle on every tester (SWI: 2/1, 11/1,
+  12/12, 127/10, 25/5 with 19 skips). Those 14 failures are one accepted
+  divergence: the tests expect `stream_property/2` /
   `current_prolog_flag(encoding, _)` to answer in Logtalk's charset
   spellings (`'UTF-8'`); Shumway reports its own encoding names (`utf8`),
   exactly as SWI does, which fails the same tests.
-  Of what remains, 25 failures are the `portray/1` hook (see the engine
-  note below), 6 are the accepted float-conversion divergence, and the
-  rest are single-tester items tracked in the repository history.
 
-  Two divergences are deliberate and closed. The first: the battery's
-  `lgt_*` tests expect the strict-ISO reading of the
-  float-conversion functions: `ceiling(9)`, `floor(9)`, `round(9)`,
-  `truncate(9)`, `float_integer_part(9)`, `float_fractional_part(9)` →
-  `type_error(float, 9)`, which is what GNU Prolog does. Shumway stays in
-  the **lenient camp with SWI and Scryer** (integers accepted, identity
-  for the rounding functions): the SWI/Scryer library ecosystems this
-  engine certifies against rely on it, and Scryer (the strictest of the
-  modern systems) accepts it too. These six single-test failures in
-  `functions/` are accepted, not pending.
+  Two more divergences are deliberate and closed. The six single-test
+  failures in `functions/` are the float-conversion functions: the
+  battery's `lgt_*` tests expect the strict-ISO reading, `ceiling(9)`,
+  `floor(9)`, `round(9)`, `truncate(9)`, `float_integer_part(9)`,
+  `float_fractional_part(9)` → `type_error(float, 9)`, which is what GNU
+  Prolog does. Shumway stays in the **lenient camp with SWI and Scryer**
+  (integers accepted, identity for the rounding functions): the SWI/Scryer
+  library ecosystems this engine certifies against rely on it, and Scryer
+  (the strictest of the modern systems) accepts it too. The four
+  `unbounded` failures build terms of enormous arity with `functor/3`:
+  a term's arity has no limit of its own here (`max_arity` is
+  `unbounded`), so running into the memory it would take is
+  `resource_error(finite_memory)`.
 
-  The second: `\e`, `\s`, `\d` in quoted tokens and a lone `0''` are SWI
-  extensions, not ISO: GNU Prolog rejects them too, and Shumway's reader
-  accepts them only inside the swi dialect load scope, because the strict
-  reading is what the Neumerkel conformance suite pins. Four
-  `syntax/numbers` failures come from that and are accepted.
+  `\e`, `\s`, `\d` in quoted tokens and a lone `0''` are SWI extensions,
+  not ISO: GNU Prolog rejects them too, and Shumway's reader accepts them
+  only inside the swi dialect load scope, because the strict reading is
+  what the Neumerkel conformance suite pins.
 
-  Still open on the engine side: `write_term/2,3`'s `portrayed(true)` and
-  `print/1,2`'s `portray/1` hook are validated but do not call the hook. It
-  needs a re-entrant solve from inside a writer builtin, and that is unsound
-  today when the builtin runs under a nested sub-query: the caller's
-  continuation fails after the nested solve returns even when the hook
-  succeeded. It accounts for the `print_1`, `print_2`, `portray_1` and the
-  portray part of the `write_term_3` / `format_2` / `format_3` failures.
+  The rest follow the standard, or the conformance cases that read it,
+  where these `lgt_*` and `commons_*` tests record what several other
+  systems do:
+
+  - `length_2` (6): `length(a, N)` and other non-lists fail rather than
+    raise `type_error(list, ...)`, as Neumerkel's `length/2` cases have
+    it (`length(2, 0)` is false).
+  - `read_term_3` (6): `variables/1`, `variable_names/1` and
+    `singletons/1` are output options, so a value that cannot unify
+    (`variables(a)`) makes the read fail; it is not a
+    `domain_error(read_option, ...)` (Cor.3, Neumerkel's cases).
+  - `current_input_1`, `current_output_1`, `stream_property_2` (4) and
+    `at_end_of_stream_1` (2): asking about a closed stream, or asking
+    whether an output stream is at its end, fails; the error tables of
+    8.11 list no error for those cases.
+  - `atom_codes_2` (2) and `number_codes_2` (1): a list element that is
+    not a character code is `representation_error(character_code)`, the
+    error 8.16.5.3 and 8.16.8.3 name, whether or not the first argument
+    is bound. The tests expect `type_error(integer, E)`; the battery's
+    own note in `number_codes_2` says the standard specifies the
+    representation error, and its `lgt_number_codes_2_26` and `_28`
+    accept either.
+
+  The one `syntax/numbers` failure is the lone `0''` above
+  (`lgt_number_30`, which the battery itself marks de facto rather than
+  standard). No failure is left open.
 
 ## Notes
 

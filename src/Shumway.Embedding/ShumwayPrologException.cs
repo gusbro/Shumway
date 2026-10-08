@@ -27,7 +27,7 @@ public sealed class ShumwayPrologException : Exception
 
     /// <summary>True when the error was raised by host-side machinery
     /// between goals (the clause/goal-expansion processor), so whatever
-    /// frames sit on the engine stack are LEFTOVERS from unrelated earlier
+    /// frames sit on the engine stack are leftovers from unrelated earlier
     /// work, not this error's origin. The trace capture skips them rather
     /// than report a bogus culprit (issue #97: <c>at bb_delete/2</c> under a
     /// <c>resource_error(expansion_depth)</c>).</summary>

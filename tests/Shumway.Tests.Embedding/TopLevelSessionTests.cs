@@ -101,7 +101,7 @@ public class TopLevelSessionTests
     [Fact]
     public void ProjectsResidualConstraintsOfVariablesInsideATerm()
     {
-        // The queens shape: the constrained variables are ELEMENTS of a list the
+        // The queens shape: the constrained variables are elements of a list the
         // goal built, not query variables. Their domains must still be reported —
         // an answer of `Qs = [_G4, _G6, _G8]` alone says nothing true about Qs.
         var engine = new PrologEngine { Out = new StringWriter() };
@@ -182,7 +182,7 @@ public class TopLevelSessionTests
     }
 
     // ---- variables the user named with a leading underscore ----
-    // "_A" says the caller is not asking about that one, so its VALUE is not
+    // "_A" says the caller is not asking about that one, so its value is not
     // part of the answer. Every expectation here is SWI's, measured.
 
     [Fact]
@@ -205,7 +205,7 @@ public class TopLevelSessionTests
     public void ItIsTheSubjectThatDecidesNotTheValue()
     {
         // Naming the variable inside a value is what makes the answer readable,
-        // so an underscore name still PRINTS there — the asymmetry is SWI's:
+        // so an underscore name still prints there — the asymmetry is SWI's:
         // `X = _A` reports, `_A = X` does not.
         using var reported = NewSession().StartQuery("X = f(_A).");
         Assert.True(reported.MoveNext());
@@ -223,7 +223,7 @@ public class TopLevelSessionTests
     [Fact]
     public void ResidualsOfAnUnderscoreNamedVariableAreStillReported()
     {
-        // The point of the exercise: what such a variable is CONSTRAINED to is
+        // The point of the exercise: what such a variable is constrained to is
         // an answer even though what it is bound to is not.
         var engine = new PrologEngine { Out = new StringWriter() };
         engine.UseClpfd();
@@ -265,7 +265,7 @@ public class TopLevelSessionTests
     [Fact]
     public void FFillsOutTheCurrentGroupOfFiveRatherThanAlwaysFive()
     {
-        // Five is a BOUNDARY, so the blocks stay aligned however you got there:
+        // Five is a boundary, so the blocks stay aligned however you got there:
         // after one answer `f` brings four, after five it brings five.
         Assert.Equal(4, AnswerPrompt.ChunkAfter(1));
         Assert.Equal(3, AnswerPrompt.ChunkAfter(2));

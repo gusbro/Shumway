@@ -3,7 +3,7 @@ using Shumway.Embedding;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// An attributed variable IS an unbound variable: every builtin that
+/// An attributed variable is an unbound variable: every builtin that
 /// dispatches direction on "is this argument unbound?" must treat
 /// <c>Tag.AttVar</c> exactly like <c>Tag.Ref</c>, and bind it through the
 /// unify path (which queues the hook wakeups). The Trealla campaign found
@@ -41,7 +41,7 @@ public class AttvarBindingBuiltinsTests
     [Fact]
     public void ResidueVarsSeeAVariableReconstrainedAfterBacktracking()
     {
-        // The attribute table keeps ORPHAN rows for homes whose promotion was
+        // The attribute table keeps orphan rows for homes whose promotion was
         // backtracked; the call_residue_vars entry snapshot must skip them, or
         // a second findall iteration over goals sharing subterms reports [].
         var e = new PrologEngine();

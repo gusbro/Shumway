@@ -36,6 +36,7 @@ public class Chunk44Tests
         // The threshold-1 promotion should have fired on the first call.
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("pos", permanent: true).Id, 1);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(fid));
     }
 

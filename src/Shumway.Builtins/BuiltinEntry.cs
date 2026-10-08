@@ -30,6 +30,10 @@ public sealed class BuiltinEntry
     /// or null for an undocumented internal helper.</summary>
     public string? Summary { get; }
 
+    /// <summary>ADR-059: whether a program may define a predicate of this
+    /// name and arity, and where.</summary>
+    public PredicateKind Kind { get; }
+
     /// <summary>True for the <c>call/1..7</c> family. Precomputed so the
     /// dispatch hot paths test a bool instead of comparing
     /// <see cref="Name"/> against <c>"call"</c> per call.</summary>
@@ -39,11 +43,15 @@ public sealed class BuiltinEntry
     /// meta-call. Precomputed like <see cref="IsCall"/>.</summary>
     public bool IsDollarCall { get; }
 
+    /// <summary>True for <c>=/2</c>: a unification, which continues a stretch
+    /// of unifications (ADR-049 point 11), so no wake runs in front of it.</summary>
+    public bool IsUnification { get; }
+
     /// <summary>True for builtins that push a choice point and resume via
     /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
     ///
-    /// <para>DERIVED, not declared: <see cref="BacktrackableDetector"/> walks the
+    /// <para>Derived, not declared: <see cref="BacktrackableDetector"/> walks the
     /// implementation's IL for a transitive call to a CP-creating sink, so a new
     /// cursor builtin can't be silently forgotten (the old hand-maintained name
     /// list was exactly that footgun). Read only by the IL compiler — a non-AOT
@@ -52,9 +60,11 @@ public sealed class BuiltinEntry
     public bool IsBacktrackable => BacktrackableDetector.IsBacktrackable(Impl);
 
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
-        string? category = null, string? template = null, string? summary = null)
+        string? category = null, string? template = null, string? summary = null,
+        PredicateKind kind = PredicateKind.Engine)
     {
         Id = id;
+        Kind = kind;
         Name = name;
         Arity = arity;
         Impl = impl;
@@ -63,6 +73,7 @@ public sealed class BuiltinEntry
         Summary = summary;
         IsCall = name == "call";
         IsDollarCall = name == "$call";
+        IsUnification = name == "=" && arity == 2;
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

@@ -21,9 +21,9 @@ namespace Shumway.Embedding;
 ///     does — <c>copy_term/3</c> is the attribute-aware entry);</item>
 ///   <item>variable sharing is preserved (a source var maps to one fresh var
 ///     via <c>varMap</c>); structure sharing / cycles are preserved and made to
-///     terminate by registering a compound / list in <c>structMap</c> BEFORE
+///     terminate by registering a compound / list in <c>structMap</c> before
 ///     recursing into it;</item>
-///   <item>FLOAT / BIGINT / PSTR leaves — which live in per-engine side tables
+///   <item>float / bigint / PSTR leaves — which live in per-engine side tables
 ///     / buffers — delegate that single node to the proven AST path so a fresh
 ///     side-table entry is allocated with identical behaviour; they are ground,
 ///     so no cross-node variable sharing is lost.</item>
@@ -67,8 +67,8 @@ internal static class HeapTermCopy
         }
     }
 
-    /// <summary>C#-recursion depth past which a nested copy is put on a WORK
-    /// LIST instead of descending. How deep a term nests is the program's
+    /// <summary>C#-recursion depth past which a nested copy is put on a work
+    /// list instead of descending. How deep a term nests is the program's
     /// choice, and a .NET stack overflow cannot be caught: it takes the
     /// process down. Recursive while the depth is known to be safe, an
     /// explicit stack past that.</summary>
@@ -76,7 +76,7 @@ internal static class HeapTermCopy
 
     /// <summary>Copies the value at <paramref name="src"/> into the reserved
     /// slot <paramref name="dst"/>, now or later. Later is sound because every
-    /// destination is reserved BEFORE anything is copied into it and both
+    /// destination is reserved before anything is copied into it and both
     /// identity maps are registered before descending, so a cycle or a shared
     /// subterm resolves the same whichever order the pieces are filled
     /// in.</summary>
@@ -130,7 +130,7 @@ internal static class HeapTermCopy
             case Tag.Foreign:
                 return rc;
             default:
-                // A bare FLOAT/BIGINT/PSTR/ATTVAR register cell has no heap
+                // A bare float/bigint/PSTR/ATTVAR register cell has no heap
                 // address for the delegating / var branches to key off. In
                 // practice these reach a register as a REF to a heap slot (the
                 // cases above), so this is a defensive path: stage the cell into
@@ -162,7 +162,7 @@ internal static class HeapTermCopy
             case Tag.Foreign:
                 return c;
             case Tag.Pstr:
-                // A COMPLETE packed list holds no variables and is never mutated
+                // A complete packed list holds no variables and is never mutated
                 // in place, so the copy can be the cell itself — the same
                 // structure sharing an atom gets. That makes copy_term/2 and
                 // assertz of a megabyte of text cost one cell instead of a
@@ -189,7 +189,7 @@ internal static class HeapTermCopy
         }
     }
 
-    /// <summary><paramref name="fAddr"/> is the source FUNCTOR cell address
+    /// <summary><paramref name="fAddr"/> is the source functor cell address
     /// (functor at fAddr, args at fAddr+1..fAddr+arity).</summary>
     private static Cell CopyStr(Activation engine, int fAddr, int depth,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
@@ -203,7 +203,7 @@ internal static class HeapTermCopy
         // extend the heap) land at stable slots.
         int baseIdx = engine.AllocateHeap(2 + arity);
         Cell result = Cell.Ref(baseIdx);
-        structMap[fAddr] = result;   // register BEFORE recursing — cycle / DAG safety
+        structMap[fAddr] = result;   // register before recursing — cycle / DAG safety
         engine.SetHeap(baseIdx, Cell.Str(baseIdx + 1));
         engine.SetHeap(baseIdx + 1, Cell.Functor(fcell.AsFunctorId));
         for (int i = 0; i < arity; i++)
@@ -222,9 +222,9 @@ internal static class HeapTermCopy
         // Walk the spine iteratively, collecting each cons's head-cell address
         // and the final (non-LIS) tail slot.
         var srcHeads = new List<int>();
-        // walked: the spine cells of THIS walk. structMap only knows cells
+        // walked: the spine cells of this walk. structMap only knows cells
         // an outer copy registered — registration for this spine happens
-        // after the walk — so a spine that cycles back into ITSELF
+        // after the walk — so a spine that cycles back into itself
         // (L = [a|L]) revisited nothing in structMap and walked forever,
         // growing srcHeads to OOM.
         var walked = new HashSet<int>();

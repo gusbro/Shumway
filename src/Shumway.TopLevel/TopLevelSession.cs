@@ -15,7 +15,7 @@ namespace Shumway.TopLevel;
 public sealed class TopLevelSession
 {
     /// <summary>The engine this session drives. Callers configure it directly —
-    /// notably <see cref="PrologEngine.Out"/>, which must be set BEFORE the
+    /// notably <see cref="PrologEngine.Out"/>, which must be set before the
     /// first query: query setup builds the stream registry, and
     /// <c>user_output</c> keeps whatever writer it was handed then.</summary>
     public PrologEngine Engine { get; }
@@ -24,7 +24,7 @@ public sealed class TopLevelSession
     {
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
         // An answer here is shown, not returned, and it is elided before it is
-        // shown -- so it does not have to be BUILT in full first.
+        // shown -- so it does not have to be built in full first.
         Engine.ElideAnswersForDisplay = true;
     }
 
@@ -41,7 +41,7 @@ public sealed class TopLevelSession
     /// take each solution, and how many.
     ///
     /// <para>Text that does not parse is handed to the engine as raw text so the
-    /// engine reports the syntax error, which means this THROWS the parser's
+    /// engine reports the syntax error, which means this throws the parser's
     /// exception rather than returning: the string form of a query parses
     /// eagerly, before it yields anything. The caller renders that the way it
     /// renders any other engine error. (<see cref="QueryRun.Parsed"/> is false

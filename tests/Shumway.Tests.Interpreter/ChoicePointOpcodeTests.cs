@@ -222,7 +222,7 @@ public class ChoicePointOpcodeTests
         //
         //   0..8:   try_me_else 24, 1                ; next clause at 24, arity 1
         //   9..17:  get_atom 'a'=100, X[0]           ; binds X[0] := Atom(100)
-        //   18..22: get_atom 'b'=101, X[0]           ; FAILS (X[0] is now 100, not 101)
+        //   18..22: get_atom 'b'=101, X[0]           ; fails (X[0] is now 100, not 101)
         //                                            ; wait — get_atom is 9 bytes not 5
         // Let me recompute:
         //   0..8:   try_me_else 28, 1
@@ -235,7 +235,7 @@ public class ChoicePointOpcodeTests
         var code = BuildCode(
             Opcode.TryMeElse, 28, 1,      // 0..8
             Opcode.GetAtom, 100, 0,       // 9..17
-            Opcode.GetAtom, 101, 0,       // 18..26   FAILS
+            Opcode.GetAtom, 101, 0,       // 18..26   fails
             Opcode.Halt,                  // 27
             Opcode.RetryMeElse, 42,       // 28..32
             Opcode.GetAtom, 101, 0,       // 33..41

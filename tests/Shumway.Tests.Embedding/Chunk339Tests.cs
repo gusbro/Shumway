@@ -28,7 +28,7 @@ public class Chunk339Tests
     // Deep cut (get_level + cut): the `!` follows the body goal `X = V`, which
     // binds the clpfd attvar X. choose/2's first clause binds X to the list
     // head then cuts its recursive alternative. With X in 1..5 and head 9, the
-    // wakeup (9 not in 1..5) must flush+fail BEFORE the cut prunes the
+    // wakeup (9 not in 1..5) must flush+fail before the cut prunes the
     // recursive clause, so backtracking reaches V=3 → X=3.
     [Fact]
     public void IlDeepCut_FlushesFailingWakeup_BeforePruningAlternative()
@@ -49,6 +49,7 @@ public class Chunk339Tests
             Assert.Equal(new IntTerm(3), sol["X"]);
         }
 
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("choose", 2)));
     }
 
@@ -76,6 +77,7 @@ public class Chunk339Tests
             Assert.Equal(new AtomTerm("b"), sol["R"]);
         }
 
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("m", 2)));
     }
 }

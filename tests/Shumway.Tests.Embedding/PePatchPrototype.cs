@@ -29,8 +29,8 @@ public class PePatchPrototype
 
         // 1) Emit the assembly. Always use Emit(OpCodes.Ldc_I4, ...) (the
         //    long 5-byte form) so the patch site is always 4 bytes wide
-        //    regardless of the magnitude of the constant — Sigil-/JIT-
-        //    style compaction would pick ldc.i4.s for small values and
+        //    regardless of the magnitude of the constant — an emitter's
+        //    short forms would pick ldc.i4.s for small values and
         //    invalidate the offset math.
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName("PePatchProto"), typeof(object).Assembly);

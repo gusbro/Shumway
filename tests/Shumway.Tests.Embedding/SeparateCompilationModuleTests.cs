@@ -32,7 +32,7 @@ public sealed class SeparateCompilationModuleTests
         var obj = ShmoCompiler.CompileSource(GreetQ, "greetq");
         Assert.True(obj.IsExportQualified);
         Assert.Contains(new PredicateRef("hello", 1), obj.Exports);
-        // hello/1 and secret/1 are Local (mangled), NOT Public — an
+        // hello/1 and secret/1 are Local (mangled), not Public — an
         // export-qualified module contributes nothing bare-global.
         Assert.All(obj.Defined, d => Assert.Equal(PredicateVisibility.Local, d.Visibility));
     }
@@ -66,7 +66,7 @@ public sealed class SeparateCompilationModuleTests
     public void VariableMetaCall_ResolvesThroughLoadedBundleImportTable()
     {
         var greetq = ShmoCompiler.CompileSource(GreetQ, "greetq");
-        // The body is a VARIABLE meta-call, so resolution runs through the
+        // The body is a variable meta-call, so resolution runs through the
         // runtime $mqual import path — which needs the bundle to have carried the
         // import table into the reconstructed manifest (ADR-038 Component 3b).
         var main = ShmoCompiler.CompileSource(
@@ -90,7 +90,7 @@ public sealed class SeparateCompilationModuleTests
     [Fact]
     public void LinkerPullsLibraryDependencyFromSearchPath()
     {
-        // greetq is NOT passed to the linker; it is dropped as greetq.pl on a
+        // greetq is not passed to the linker; it is dropped as greetq.pl on a
         // library search dir and pulled in on demand (C-linker style).
         string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
             "shumway-linkpull-" + System.Guid.NewGuid().ToString("N"));
@@ -126,8 +126,8 @@ public sealed class SeparateCompilationModuleTests
     [Fact]
     public void ImportAll_ResolvedByTheLinker_NotTheCompiler()
     {
-        // /1 import-all: the COMPILER never reads the library — it records the
-        // dependency and leaves the calls bare (main.Imports empty). The LINKER,
+        // /1 import-all: the compiler never reads the library — it records the
+        // dependency and leaves the calls bare (main.Imports empty). The linker,
         // which has greetq's export surface, resolves the whole surface and
         // recompiles the importer so hello mangles to greetq$hello.
         var greetq = ShmoCompiler.CompileSource(GreetQ, "greetq");
@@ -151,7 +151,7 @@ public sealed class SeparateCompilationModuleTests
     public void ImportAll_LinkerPullsAndResolvesFromSearchPath()
     {
         // The user's real flow: compile with no library access, then link with
-        // just --library-dir — the linker pulls greetq.pl AND resolves the /1
+        // just --library-dir — the linker pulls greetq.pl and resolves the /1
         // import-all against its exports.
         string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
             "shumway-imp1-" + System.Guid.NewGuid().ToString("N"));
@@ -187,7 +187,7 @@ public sealed class SeparateCompilationModuleTests
     public void UnresolvedLibrary_ReportsTheLibraryNotEachPredicate()
     {
         // A program importing a library that is neither passed nor on any search
-        // path must fail naming the LIBRARY (the root cause), not degrade into a
+        // path must fail naming the library (the root cause), not degrade into a
         // confusing missing-predicate error for each imported predicate.
         var main = ShmoCompiler.CompileSource(
             ":- module(app).\n" +

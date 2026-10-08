@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// must re-read as the same term. Two defects surfaced by Logtalk's generated
 /// scratch files:
 /// <list type="bullet">
-/// <item>the solo atoms <c>','</c> and <c>'.'</c> were written UNQUOTED (a bare
+/// <item>the solo atoms <c>','</c> and <c>'.'</c> were written unquoted (a bare
 /// <c>,</c> is the argument separator, a bare <c>.</c> the end-of-clause token)
 /// — <c>is_punctuation(',')</c> became the unreadable <c>is_punctuation(,)</c>;</item>
 /// <item>small/large/whole-valued floats printed via .NET <c>"R"</c> as

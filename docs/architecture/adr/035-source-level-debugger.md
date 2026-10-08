@@ -303,6 +303,16 @@ that are not in the clause list but do carry the library's source positions.
 Compiling a module is what makes its predicates — if the module is not debuggable,
 neither is anything it made.
 
+A library imported from a compiled `.shum` is marked the same way. Its code is
+release, but the interpreter raises a port at every call whatever the callee was
+compiled from, so unmarked, a step stops inside it.
+
+**Debuggable code is never promoted.** A predicate compiled with debug frames stays
+on the interpreter, on the IL tier and on the wasm tier alike, because a breakpoint
+is a byte patched into its bytecode. The check is on the predicate, not left to the
+debug opcodes the tier compilers refuse: a fact, or a rule ending in a builtin,
+carries none.
+
 **The channel writes before it notifies.** Every stop is: serialise the whole stop
 into pinned memory; call `ShumwayDebugHelper.Notify` (where the debugger stops the
 process and reads that memory); drain the commands it wrote back. Nothing runs in

@@ -94,7 +94,7 @@ public class Adr036GotoTests
         using (server)
         using (var client = new DapTestClient(server.Port))
         {
-            // Stopped at line 4, BEFORE mark(a): jump to line 6 skips mark(a) and
+            // Stopped at line 4, before mark(a): jump to line 6 skips mark(a) and
             // mark(b) entirely.
             QueryRun query = StopAt(engine, client, 4, "run.");
 
@@ -127,7 +127,7 @@ public class Adr036GotoTests
         using (server)
         using (var client = new DapTestClient(server.Port))
         {
-            // Stopped at line 6: mark(a) and mark(b) have run. Jump BACK to line 5 —
+            // Stopped at line 6: mark(a) and mark(b) have run. Jump back to line 5 —
             // the trail rewinds to the recorded port mark — and continue: mark(b) runs
             // again (asserts are permanent, so log(b) ends up twice — the ADR-035
             // semantics, observable).
@@ -141,9 +141,9 @@ public class Adr036GotoTests
             client.WaitEvent("stopped");
 
             client.Request("continue", "{\"threadId\":1}");
-            // Re-running mark(b) arrives at line 6 again — where THIS test's breakpoint
+            // Re-running mark(b) arrives at line 6 again — where this test's breakpoint
             // is still armed. It fires again, correctly (the SNS one-shot suppression
-            // covers only the line moved TO).
+            // covers only the line moved to).
             client.WaitEvent("stopped");
             client.Request("continue", "{\"threadId\":1}");
             Assert.True(query.Join(20_000), "query must complete");
@@ -203,7 +203,7 @@ public class Adr036GotoTests
             client.Request("goto", "{\"threadId\":1,\"targetId\":" + id + "}");
             client.WaitEvent("stopped");
 
-            // The re-captured stack: inner is GONE, outer stands at line 6.
+            // The re-captured stack: inner is gone, outer stands at line 6.
             JsonElement after = client.Request("stackTrace", "{\"threadId\":1}");
             JsonElement top = after.GetProperty("body").GetProperty("stackFrames")[0];
             Assert.StartsWith("outer", top.GetProperty("name").GetString());
@@ -222,8 +222,8 @@ public class Adr036GotoTests
     [Fact]
     public void Logpoint_Prints_WithoutStopping()
     {
-        // ADR-036 V5 — a breakpoint with a logMessage stops the MACHINE but never the
-        // USER: an output event per hit, {Var} holes filled from the frame, and the
+        // ADR-036 V5 — a breakpoint with a logMessage stops the machine but never the
+        // user: an output event per hit, {Var} holes filled from the frame, and the
         // program runs to completion with no `stopped` event and no continue requests.
         var (engine, session, server) = StartDebuggee("""
             :- dynamic(log/1).

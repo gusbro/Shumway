@@ -28,6 +28,41 @@ internal static class ListCursor
     public static bool IsNil(Cell c)
         => c.Tag == Tag.Atom && c.AsAtomId == AtomTable.EmptyListId;
 
+    /// <summary>Walks the spine, heads not entered, and returns where it
+    /// stopped: <c>[]</c> for a proper list, the unbound tail of a partial
+    /// one, the non-list term ending an improper one, or a list cell inside
+    /// the cycle of a cyclic spine (the only end <see cref="TryUncons"/>
+    /// accepts). <paramref name="length"/> is the number of cells walked,
+    /// which for a cyclic spine is not a length.</summary>
+    public static Cell SkipSpine(Activation engine, Cell list, out long length)
+    {
+        Cell cur = Resolve(engine, list);
+        var guard = new SpineGuard(cur);
+        length = 0;
+        while (TryUncons(engine, cur, out _, out Cell tail))
+        {
+            cur = Resolve(engine, tail);
+            length++;
+            if (guard.Loops(cur)) return cur;
+        }
+        return cur;
+    }
+
+    /// <summary>The answer for a walk that would build or traverse an
+    /// infinite list to its end (reverse/2, last/2, append/3 with a cyclic
+    /// first list): the one length/2 gives, as Scryer does.</summary>
+    public static PrologRuntimeException InfiniteList()
+        => new("resource_error", "finite_memory");
+
+    /// <summary>The ISO answer for a list argument whose spine loops: it is
+    /// neither a list nor a partial list.</summary>
+    public static PrologRuntimeException CyclicList(Activation engine, Cell list)
+        => new("type_error", "list", engine, list);
+
+    /// <summary>True when the spine loops back on itself.</summary>
+    public static bool IsCyclic(Activation engine, Cell list)
+        => TryUncons(engine, SkipSpine(engine, list, out _), out _, out _);
+
     /// <summary>True unless the cell is a partial list — one whose spine or any
     /// element is still unbound. The text builtins use it to choose direction:
     /// a proper ground list is checked against the atom's text, anything else

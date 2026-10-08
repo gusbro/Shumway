@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// which this library did not have at all (existence_error). Its
 /// <c>variable_method</c> / <c>value_method</c> wrappers map onto the
 /// strategies this solver implements; a heuristic it does not implement is
-/// REFUSED rather than quietly replaced, since which solution comes first is
+/// refused rather than quietly replaced, since which solution comes first is
 /// exactly what a labeling option is chosen for.</summary>
 public class GnuLabelingOptionsTests
 {
@@ -97,7 +97,7 @@ public class GnuLabelingOptionsTests
     }
 
     [Theory]
-    // A value that is not a truth value is out of the DOMAIN of reifiable
+    // A value that is not a truth value is out of the domain of reifiable
     // expressions, not of the wrong type — both reference implementations
     // report it that way.
     [InlineData("2 #<==> (_X #= 1)", "2")]

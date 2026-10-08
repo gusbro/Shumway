@@ -58,7 +58,7 @@ public class GrammarRuleVisibilityTests
     [Fact]
     public void ListingShowsTheTranslatedClauses()
     {
-        // What the predicate RUNS is what listing shows — the translated
+        // What the predicate runs is what listing shows — the translated
         // clauses, as every other system does.
         var (e, w) = Loaded();
         Assert.True(e.Query("listing(greeting/2).").Success);

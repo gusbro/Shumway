@@ -42,7 +42,7 @@ public class Chunk236Tests
     public void ReconsultFile_LeavesUnmentionedPredicatesAlone()
     {
         // Two files defining two different predicates. Reconsulting
-        // the first file again must NOT touch the second predicate.
+        // the first file again must not touch the second predicate.
         var fileA = TempFile(".pl",
             ":- public foo/1.\n"
             + "foo(1).\n");

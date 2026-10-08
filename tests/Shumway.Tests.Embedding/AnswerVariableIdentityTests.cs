@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// Y = f(a)` rather than saying f(a) twice. What makes two values "the same"
 /// has to be the terms, not the text they print as. Two unrelated values can
 /// print alike, and chaining those states an equality that does not hold,
-/// which is a wrong ANSWER and not a formatting blemish.
+/// which is a wrong answer and not a formatting blemish.
 ///
 /// <para>Two ways they can print alike, both covered here: a query variable
 /// spelled like an engine one (`_G11` against the engine's name for heap cell
@@ -56,7 +56,7 @@ public sealed class AnswerVariableIdentityTests
         // trailing digit or underscore would fail).
         Assert.Matches(@"X = _G11(?![0-9_])", answer);
         // L's element is a different, anonymous variable: alphabetized, and
-        // NOT claiming the user's `_G11`.
+        // not claiming the user's `_G11`.
         Assert.DoesNotContain("[_G11]", answer);
         Assert.Matches(@"L = \[_[A-Z]\d*\]", answer);
     }
@@ -71,7 +71,7 @@ public sealed class AnswerVariableIdentityTests
         e.Flags.AnswerMaxDepth = 3;
         string answer = Answer(e, "X = [1,2,3,4,aaa], Y = [1,2,3,4,bbb].");
 
-        // ANTI-VACUITY: the cut has to have actually happened, or the two
+        // Anti-vacuity: the cut has to have actually happened, or the two
         // texts were never alike and this proves nothing.
         Assert.Contains("| ...", answer);
         Assert.DoesNotContain("X = Y", answer);
@@ -79,7 +79,7 @@ public sealed class AnswerVariableIdentityTests
         Assert.Contains("Y = [", answer);
     }
 
-    /// <summary>ANTI-VACUITY for the whole change: the chaining it guards is
+    /// <summary>Anti-vacuity for the whole change: the chaining it guards is
     /// the point of the feature and still happens.</summary>
     [Theory]
     [InlineData("X = Y.", "X = Y")]
@@ -93,7 +93,7 @@ public sealed class AnswerVariableIdentityTests
     }
 
     /// <summary>The discrimination the fix turns on: same shape, different
-    /// variables inside, so NOT the same value.</summary>
+    /// variables inside, so not the same value.</summary>
     [Fact]
     public void SameShapeOverDifferentVariables_IsNotChained()
     {

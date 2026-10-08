@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Consult-time routing of clauses into the dynamic store must see the same
-/// pipeline stages the static side gets: a grammar rule's REAL head is the
+/// pipeline stages the static side gets: a grammar rule's real head is the
 /// DCG-translated one, and in-file goal_expansion applies to the stored body.
 /// Before the fix, `f(b) --> [x]` under `:- dynamic f/3.` compiled into an
 /// invisible static twin, and a dynamic clause ran its body UNexpanded while
@@ -37,7 +37,7 @@ public class DynamicClauseRoutingTests
             + ":- dynamic t/0.\n"
             + "t :- foo.\n"
             + "s :- foo.");
-        // both run the EXPANDED body (foo/0 does not exist)
+        // both run the expanded body (foo/0 does not exist)
         Assert.True(e.Query("t.").Success);
         Assert.True(e.Query("s.").Success);
         // and the stored form is the expanded one (SWI/Trealla load semantics)

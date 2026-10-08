@@ -4,7 +4,7 @@ using Shumway.Embedding;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-047 decisions 3 and 4: <c>double_quotes</c> is a PARSE-TIME flag that
+/// ADR-047 decisions 3 and 4: <c>double_quotes</c> is a parse-time flag that
 /// decides only what the list's elements are, and the default is <c>chars</c>.
 /// Whatever it selects, the literal is stored packed — the flag stopped being a
 /// choice about cost when packing became available in every mode.
@@ -44,7 +44,7 @@ public class DoubleQuotesFlagTests
         Assert.True(e.Query("a(X), X == abc.").Success);
         // `string` is a compatibility alias for chars, not a separate type.
         Assert.True(e.Query("s(X), X == [a, b, c].").Success);
-        // …and the two list modes denote DIFFERENT lists (decision 2).
+        // …and the two list modes denote different lists (decision 2).
         Assert.False(e.Query("c(X), h(Y), X == Y.").Success);
     }
 

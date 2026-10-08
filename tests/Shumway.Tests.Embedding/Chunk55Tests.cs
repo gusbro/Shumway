@@ -27,7 +27,7 @@ public class Chunk55Tests
     public void StackFrame_UsesClauseSpecificPosition_NotFirstClause()
     {
         // Build a predicate with two clauses on different lines; force the
-        // SECOND clause to be the one that errors. The frame's position
+        // second clause to be the one that errors. The frame's position
         // should point at the second clause's line, not the first's.
         var engine = new PrologEngine();
         engine.Flags.EmitDebugInfo = true;   // clause-precise positions need compile_mode=debug
@@ -39,7 +39,7 @@ public class Chunk55Tests
             () => engine.Query("divider(nz, 0)."));
         var frames = engine.LastErrorStackTraceWithPositions;
         var dividerFrame = frames.First(f => f.Name == "divider");
-        // The clause that errored is the SECOND one — line 3.
+        // The clause that errored is the second one — line 3.
         Assert.Equal(3, dividerFrame.Position.Line);
     }
 
@@ -127,7 +127,7 @@ public class Chunk55Tests
     public void BundleCodec_V2_RoundTripsClausePositions() { }
 
     // ============================================================================
-    // Bundle blob skip-compile (chunk 55, PART 1)
+    // Bundle blob skip-compile (chunk 55, part 1)
     // ============================================================================
 
     [Fact(Skip = "Phase 14: LoadBundle no longer populates PrecompiledClauseCache. "

@@ -3,7 +3,7 @@ using Shumway.Embedding;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// A PSTR (packed string) IS the list it represents — the design says so
+/// A PSTR (packed string) is the list it represents — the design says so
 /// ("a PSTR whose tail is [] is a complete proper list") and unification has
 /// always agreed. These pin the places that had drifted away from it.
 /// </summary>
@@ -29,7 +29,7 @@ public class PstrListSemanticsTests
         var engine = new PrologEngine();
         Assert.False(engine.Query("X = \"abc\", X = [a, b].").Success);
         Assert.False(engine.Query("X = \"abc\", X = [a, b, c, d].").Success);
-        // …and a list of the same TEXT in the other presentation is a
+        // …and a list of the same text in the other presentation is a
         // different list (ADR-047 decision 2).
         Assert.False(engine.Query("X = \"abc\", X = [97, 98, 99].").Success);
         Assert.False(engine.Query("X = \"abc\", X = [].").Success);

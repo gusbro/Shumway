@@ -28,12 +28,12 @@ public static class ResidualProjection
         => Rebuild(term, node => node is VarTerm { IsCycleBack: true }
             ? new VarTerm("...") : null);
 
-    /// <summary>Replaces every compound BELOW the root whose
+    /// <summary>Replaces every compound below the root whose
     /// <c>CycleId</c> (TermReader's cycle-owner stamp) has a name in
     /// <paramref name="names"/> with a variable of that name. The root is
     /// left in place so a value whose own root is the owner still shows its
     /// structure (<c>L = ['1'|L]</c>), while occurrences inside other values
-    /// chain by name (<c>E = type_error(list, _S1)</c>). Run BEFORE
+    /// chain by name (<c>E = type_error(list, _S1)</c>). Run before
     /// <see cref="SubstituteVarNames"/>: its rebuilds drop the stamp.</summary>
     public static Term SubstituteCycleOwnersBelowRoot(
         Term term, IReadOnlyDictionary<string, string> names)
@@ -54,11 +54,11 @@ public static class ResidualProjection
             ? new VarTerm(owner) : null;
 
     /// <summary>Rebuilds a term with <paramref name="map"/> applied to every
-    /// node, on an EXPLICIT stack. How deep a term nests is the program's
+    /// node, on an explicit stack. How deep a term nests is the program's
     /// choice, so a recursive rebuild would spend a C# frame per level and a
     /// .NET stack overflow cannot be caught: it takes the process down. A node
     /// the map replaces is not descended into, and a subterm nothing touched
-    /// comes back BY REFERENCE, so an untouched term is not copied.
+    /// comes back by reference, so an untouched term is not copied.
     ///
     /// <para><paramref name="mapRoot"/> false leaves the root itself alone and
     /// maps only below it, which is what lets a value whose own root is a cycle
@@ -126,7 +126,7 @@ public static class ResidualProjection
                 case VarTerm v when owners.Contains(v.Name):
                     return v.Name;
                 case CompoundTerm c:
-                    // Pushed in reverse so the walk still finds the FIRST
+                    // Pushed in reverse so the walk still finds the first
                     // mentioned owner in argument order.
                     for (int i = c.Args.Length - 1; i >= 0; i--) pending.Push(c.Args[i]);
                     break;
@@ -139,7 +139,7 @@ public static class ResidualProjection
     /// by walking a copied value and the original it was copied from in step.
     ///
     /// <para>The residual goals a constraint library projects are expressed over the
-    /// COPY, so without this they mention variables that appear nowhere in the answer:
+    /// copy, so without this they mention variables that appear nowhere in the answer:
     /// <c>Qs = [_G6, _G8], _G43 in 1..10</c> reads as three unrelated things. The
     /// root's own name comes from <paramref name="rootName"/> — that is the name the
     /// user typed — and every variable below it takes the original's name, which is

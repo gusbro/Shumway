@@ -6,10 +6,10 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// A bundle linked from Arity-compiled modules must keep Arity CALL
 /// semantics at runtime: a call to an undefined (or abolished) predicate
-/// FAILS. The <c>.shmo</c> carries a per-module ArityCompat bit; the
+/// fails. The <c>.shmo</c> carries a per-module ArityCompat bit; the
 /// linker ORs it into <see cref="Bundle.ArityCompat"/>, both bundle
 /// writers persist it, and <see cref="PrologEngine.LoadBundle(Bundle)"/>
-/// sets <c>unknown=fail</c> — WITHOUT flipping the <c>arity_compat</c>
+/// sets <c>unknown=fail</c> — without flipping the <c>arity_compat</c>
 /// consult mode (that would leak Arity directive-skipping into
 /// unrelated files consulted after the bundle).
 /// </summary>
@@ -51,11 +51,11 @@ public class ArityBundleSemanticsTests
         var engine = new PrologEngine();
         engine.LoadBundle(LinkArityProgram());
         // unknown=fail came from the bundle; arity_compat consult mode
-        // did NOT (later consults stay standard).
+        // did not (later consults stay standard).
         Assert.True(engine.Query(
             "current_prolog_flag(unknown, fail), "
             + "current_prolog_flag(arity_compat, false).").Success);
-        // main asserts then abolishes f/1 — the subsequent call FAILS
+        // main asserts then abolishes f/1 — the subsequent call fails
         // (Arity semantics), and a plain undefined call fails too.
         Assert.True(engine.Query("main.").Success);
         Assert.False(engine.Query("f(_).").Success);

@@ -21,7 +21,7 @@ public sealed partial class IlPredicateCompiler
     /// <c>-1</c> means the predicate's shape isn't PGO-eligible — it
     /// was compiled normally and no phase-2 recompile should fire.</summary>
     public readonly record struct PgoCompileResult(
-        PredicateDelegate Delegate, int ProfileKey);
+        PredicateDelegate Delegate, int ProfileKey, CpsCode? Cps = null);
 
     /// <summary>Phase-1 PGO compile. For the indexed-atom shape this
     /// emits the <em>instrumented</em> form whose ground dispatch
@@ -33,6 +33,7 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        using var code = new CodeScope(predicate);
         if (predicate.ClauseCount > 1
             && TryDescribeIndexedAtomPredicate(predicate, out var info))
         {
@@ -60,6 +61,7 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        using var code = new CodeScope(predicate);
         if (profileKey < 0
             || !TryDescribeIndexedAtomPredicate(predicate, out var info))
         {
@@ -68,7 +70,7 @@ public sealed partial class IlPredicateCompiler
         long[]? counts = IlProfileCounters.Get(profileKey);
         int n = info!.Clauses.Count;
         var order = Enumerable.Range(0, n).ToArray();
-        // The counters were sized to the clause count at PROFILING time. A
+        // The counters were sized to the clause count at profiling time. A
         // predicate whose shape drifted to a different clause count (still
         // indexed-atom, but no longer the profiled one) would index past them
         // — reorder by the profile only when it still describes this shape,
@@ -147,8 +149,8 @@ public sealed partial class IlPredicateCompiler
                 // Fused deallocate+proceed — a body terminator. A
                 // single-clause body with a frame ending in a non-tail-call goal
                 // (a cut or a builtin) ends here; EmitClauseBody emits the
-                // deallocate then the proceed-return, so it IS compilable. Must be
-                // checked BEFORE IsSupportedOpcode (which also accepts it but does
+                // deallocate then the proceed-return, so it is compilable. Must be
+                // checked before IsSupportedOpcode (which also accepts it but does
                 // not record the terminator). Without this, e.g. `p(X):-a(X),!.`
                 // was wrongly rejected as cannot-compile.
                 sawTerminator = true;
@@ -260,9 +262,9 @@ public sealed partial class IlPredicateCompiler
         return sawProceed;
     }
 
-    /// <summary>Inline-rule case 2 (detector) — a single-clause RULE that can be
+    /// <summary>Inline-rule case 2 (detector) — a single-clause rule that can be
     /// inlined into a caller's IL method, generalising
-    /// <see cref="IsInlinableLeafRule"/> to a body that also makes USER calls and
+    /// <see cref="IsInlinableLeafRule"/> to a body that also makes user calls and
     /// uses an environment frame (permanents). Single clause; ends in
     /// proceed / deallocate_proceed (a trailing tail <c>Execute</c> is rejected —
     /// un-tailing it at a non-tail inline site, and telling a user predicate from
@@ -289,7 +291,7 @@ public sealed partial class IlPredicateCompiler
                 case Opcode.Proceed: endsTerminal = true; pc += 1; continue;
                 case Opcode.DeallocateProceed:
                     endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
-                // A trailing tail call to a USER predicate: the emit
+                // A trailing tail call to a user predicate: the emit
                 // un-tails it into a threaded non-tail call at a non-tail inline
                 // site. In linked runtime bytecode `Execute` always targets a user
                 // predicate (a tail-position builtin is ExecuteBuiltin, rejected
@@ -338,15 +340,15 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Inline-rule case 1 — gates the extension of the leaf inline
-    /// to single-clause RULES with a deterministic builtin/arith/unify body
-    /// (<see cref="IsInlinableLeafRule"/>). Default OFF; <c>SHUMWAY_INLINE_RULES=1</c>
+    /// to single-clause rules with a deterministic builtin/arith/unify body
+    /// (<see cref="IsInlinableLeafRule"/>). Default off; <c>SHUMWAY_INLINE_RULES=1</c>
     /// enables it while it is validated, before the default flips.</summary>
     internal static readonly bool InlineLeafRules =
         System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_RULES") == "1";
 
-    /// <summary>Inline-rule case 2 — gates inlining a single-clause RULE that makes
-    /// USER calls and/or cuts (<see cref="IsInlinableRule"/> with allowCut) into a
-    /// metaCp caller. Default OFF; <c>SHUMWAY_INLINE_RULES2=1</c> while validated.
+    /// <summary>Inline-rule case 2 — gates inlining a single-clause rule that makes
+    /// user calls and/or cuts (<see cref="IsInlinableRule"/> with allowCut) into a
+    /// metaCp caller. Default off; <c>SHUMWAY_INLINE_RULES2=1</c> while validated.
     /// Restricted to the metaCp caller path (where the forward-resume cursor count
     /// is extended to cover the inlined body's threaded calls).</summary>
     internal static readonly bool InlineRules2 =
@@ -395,7 +397,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>Extra forward-resume cursors the inlined rule bodies need — each
     /// body's own non-tail <c>Call</c> sites thread through the CALLER's cursor
-    /// space, PLUS a trailing tail <c>Execute</c>, which the emit
+    /// space, plus a trailing tail <c>Execute</c>, which the emit
     /// un-tails into a threaded non-tail call and so also takes a cursor. The
     /// caller's resume-label array must be sized to include all of them.</summary>
     private static int CountRuleInlineExtraCursors(

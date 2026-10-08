@@ -2,14 +2,17 @@
 
 ## Status
 
-Accepted, phases 0–2 shipped. The engine compiles a hot predicate to a
-WebAssembly module and runs it natively; phase 0 (the Go/No-Go spike) and
-phases 1–2 (the backend and the live-engine wiring, desktop and browser) are
-in the tree with measurements. Phase 3 (AOT bundles) and phase B (open-coded
-builtins, decided by the bail-frequency data) remain. The full design and the
-running record live in [`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md);
-this ADR records the decisions the policy calls major — a new backend and a
-new external dependency.
+Accepted and shipped. The engine compiles a hot predicate to a WebAssembly
+module and runs it natively. In the tree, with measurements: phase 0 (the
+Go/No-Go spike), phases 1 and 2 (the backend and the live-engine wiring,
+desktop and browser), phase B (open-coded builtins, its gate cleared at about
+50x), the direct call between compiled predicates, group modules, the
+relocatable module baked at build time (what phase 3 became), and the hop
+between the modules of one engine inside wasm. The cleanups of the
+many-modules arc remain open. The full design and the running record live in
+[`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md); this ADR
+records the decisions the policy calls major: a new backend and a new
+external dependency.
 
 ## Context
 
@@ -28,7 +31,7 @@ interpret bytecode with the interpreter that is itself interpreted.
 The consuming side is already backend-agnostic: `ITier1Dispatcher`, the
 `PredicateDelegate` contract, the phase-16 resume markers, and the ADR-014 IL
 choice points work for any producer of delegates. What was not abstracted is
-the producer (`Sigil.Emit<PredicateDelegate>`), so the wasm backend is a fork
+the producer (the IL emitter), so the wasm backend is a fork
 of the emitter, not a retrofit of the IL one. The heap is a managed `Cell[]`,
 which ADR-042 §2 named as the obstacle to a second module touching engine
 memory; the resolution is that a cell holds only indices, never addresses, so
@@ -78,6 +81,10 @@ cursors, so a call return and a backtrack land in the same dispatch. `try`/
 `retry`/`trust` are open-coded (the full choice point in wasm); the general
 unifier is a second wasm function over a worklist above the stack top; ADR-020
 reserved builds are the engine's write-frame cascade replayed at compile time.
+A failure resumes a choice point in-chain only above `Activation.BacktrackFloor`,
+staged in the mailbox: the rule ADR-057 sets for IL. At or below it the choice
+point belongs to the computation outside a nested driver's sub-goal (a wakeup
+drained before a cut), and the failure goes back to the host.
 
 **D5 — all encodings are interned resume markers.** In the live engine
 (`EngineWasmCompileEnv`) a call target is `marker(callee, 0)`, a choice
@@ -101,20 +108,40 @@ builds trim the whole `Shumway.Compiler.Wasm` subtree and the package, mirror
 of `Shumway.RuntimeCodegen`. Consult the property, never cache it, so the
 trimmer can fold it.
 
+**D8 — the tier's setting is a predicate, not a page command.**
+`jit_compile(off | all | N)` is a builtin of the engine, so a consulted file
+can set it with a directive and a harness written in Prolog can ask for a
+configuration without knowing which product it is running in: a build has
+exactly one Tier-1, the IL compiler in Shumway and this backend in
+WebShumway, and the same goal names whichever it is. The page's
+`wasm_compile/1` was renamed to it rather than kept as an alias: the tier
+had never shipped, so nothing was owed compatibility. `jit_compile(status)`
+stays page-side, being a report of this backend rather than a setting, and
+the top level answers it the way it answers `restart.`.
+
+`off` evicts what already promoted, deferred to the next query setup. It
+cannot happen where it is asked: a choice point created inside tier code has
+to be able to redo there, and query setup is the existing safe point for work
+of this shape (the dynamic-buffer compaction is deferred to the same place).
+So `off` governs the goals after it, not the one it appears in.
+
+The browser keeps the mode across `restart.`, which builds a fresh engine:
+the setting is what the session is working under, and clearing the database
+is not a reason to change it.
+
 ## Consequences
 
 The tier runs in the live engine, desktop and browser, measured
-([`docs/benchmarks/browser.md`](../../benchmarks/browser.md)). A tight
-self-tail arithmetic loop stays inside the module and wins ~100–220x over the
-interpreted Tier-0; call-and-allocate-heavy code (nrev) barely moves, and
-recursion-heavy code (tak) is dominated by the non-tail-call boundary — its
-arithmetic is open-coded, so the tax is the three non-tail self-calls per
-invocation round-tripping the interpreter, not builtins. Those last two are
-not correctness limits — deopt returns them to the tier they were on — and the
-measurement points the next work at the inter-predicate call boundary: a
-direct wasm-to-wasm call that resolves the callee's table index instead of
-returning to the interpreter. Open-coded wasm builtins help builtin-dense
-predicates too, but the data puts calls first.
+([`docs/benchmarks/browser.md`](../../benchmarks/browser.md)). The first
+measurement put the cost at the boundary between predicates: a tight
+self-tail arithmetic loop stayed inside the module and won 100 to 220x over
+the interpreted Tier-0, while `nrev` and `tak` paid a round trip through the
+interpreter for every non-tail call. That boundary is gone. A call between
+the members of a module is a jump inside it, and a call or a backtrack into
+another module of the engine is a tail call inside wasm, so in a headless
+browser `nrev`, `tak` and `queens` run 15 to 25x over Tier-0. What leaves the
+module now is a builtin it does not answer itself, and the open-coded
+builtins of phase B took the frequent ones.
 
 The new dependency is permissive (Apache-2.0), executes in-process for tests,
 and is trimmed out of every non-browser build. No invariant in

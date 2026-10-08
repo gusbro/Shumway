@@ -43,7 +43,7 @@ public class UndefinedPredicateTests
     [Fact]
     public void ProcedureIndicator_IsCompoundNotAtom()
     {
-        // ISO §7.12.2: the culprit is the COMPOUND '/'(Name, Arity), not an
+        // ISO §7.12.2: the culprit is the compound '/'(Name, Arity), not an
         // atom literally named "Name/Arity". A specific catcher must unify.
         var engine = new PrologEngine();
         var sol = engine.Query("catch(no_such_pred(1, 2), error(existence_error(procedure, PI), _), true).");
@@ -63,7 +63,7 @@ public class UndefinedPredicateTests
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(no_such_pred(1, 2, 3), error(existence_error(procedure, no_such_pred/3), _), true).").Success);
-        // And a DIFFERENT indicator does NOT match: the inner catch rethrows
+        // And a different indicator does not match: the inner catch rethrows
         // the ball, which the outer var catcher then intercepts.
         Assert.True(engine.Query(
             "catch( catch(no_such_pred(1, 2, 3), error(existence_error(procedure, other/9), _), fail), _, true ).").Success);

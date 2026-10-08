@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// <c>.shmo</c> objects always carry the module's raw static clauses
 /// (<see cref="ShmoObject.ClauseTerms"/>, the user's fat-object decision; IP
 /// stripping applies to the shipped <c>.shum</c>/exe, not the intermediate),
-/// and the linker's <c>CrossModuleUnfold</c> pass detects PUBLIC meta-wrapper
+/// and the linker's <c>CrossModuleUnfold</c> pass detects public meta-wrapper
 /// templates across modules, rewrites caller modules' call sites against
 /// (own locals ∪ global publics), and recompiles affected callers from their
 /// clause terms — covering the real multi-module case the chunk-407
@@ -17,7 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk411Tests
 {
-    // Module 'lib' exports the Arity-style (Blint-shaped) wrapif/2 wrapper (PUBLIC).
+    // Module 'lib' exports the Arity-style (Blint-shaped) wrapif/2 wrapper (public).
     private const string LibSource =
         ":- module(lib).\n"
         + ":- public wrapif/2.\n"
@@ -25,7 +25,7 @@ public class Chunk411Tests
         + "wrapif(_,_) :- !.\n";
 
     // Module 'app' calls it with statically-known goals — the cross-module
-    // unfold target. Note app has NO local wrapif.
+    // unfold target. Note app has no local wrapif.
     private const string AppSource =
         ":- module(app).\n"
         + ":- public run/2.\n"
@@ -107,8 +107,8 @@ public class Chunk411Tests
     [Fact]
     public void LocalWrapper_ShadowsPublicOne()
     {
-        // app2 defines its OWN local wrapif/2 with DIFFERENT semantics (always
-        // runs Y regardless of X — not a known template, so it is NOT unfolded
+        // app2 defines its own local wrapif/2 with different semantics (always
+        // runs Y regardless of X — not a known template, so it is not unfolded
         // and must keep shadowing the public wrapper for app2's own calls).
         var lib = ShmoCompiler.CompileSource(LibSource, "lib");
         var app2 = ShmoCompiler.CompileSource(
@@ -127,7 +127,7 @@ public class Chunk411Tests
         var engine = new PrologEngine();
         engine.LoadBundle(BundleReader.FromBytes(result.Bytes!));
         // With app2's local semantics, the action runs even though the
-        // condition fails — proving the public template was NOT applied.
+        // condition fails — proving the public template was not applied.
         Assert.True(engine.Query("go(7).").Success);
         Assert.True(engine.Query("mark(7).").Success);
     }

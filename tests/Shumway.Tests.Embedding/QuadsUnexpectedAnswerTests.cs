@@ -3,10 +3,10 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>An answer sequence ending <c>, unexpected</c> is a NEGATIVE
+/// <summary>An answer sequence ending <c>, unexpected</c> is a negative
 /// transcript: it documents the answers a buggy system gives — the ones
 /// before the marker in order, then the marked one — and holds of a system
-/// that does NOT reproduce it. The published suites use it to pin known-bad
+/// that does not reproduce it. The published suites use it to pin known-bad
 /// continuations (`X = a ; X = c, unexpected` after `member(X,"abc")`);
 /// these blocks used to be dropped as "not understood", so they checked
 /// nothing.</summary>
@@ -50,7 +50,7 @@ public sealed class QuadsUnexpectedAnswerTests
     [Fact]
     public void ReproducingTheDocumentedBug_Fails()
     {
-        // Our second answer IS b — the transcript `X = a ; X = b,
+        // Our second answer is b — the transcript `X = a ; X = b,
         // unexpected` is reproduced exactly, so the quad must fail and the
         // report must name the refuted claim.
         string report = RunQuads(

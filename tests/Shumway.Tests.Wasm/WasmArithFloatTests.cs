@@ -113,7 +113,7 @@ public class WasmArithFloatTests
     [Fact]
     public void NegativeZeroIsZero()
     {
-        // ISO has ONE zero: -0.0 is born as 0.0 (the MakeFloat funnel), so
+        // ISO has one zero: -0.0 is born as 0.0 (the MakeFloat funnel), so
         // the two literals unify.
         using var h = Harness();
         Assert.True(h.Solve("zneg"));

@@ -118,7 +118,7 @@ public class Adr035ChannelTests
         using (session)
             engine.QueryAll("top(one).").ToList();
 
-        // Two stops: the breakpoint, then where the step over landed — the NEXT GOAL of the
+        // Two stops: the breakpoint, then where the step over landed — the next goal of the
         // clause being stepped through. The command went in as bytes, through memory, and the
         // engine obeyed it.
         Assert.Equal(new[] { StopReason.Breakpoint, StopReason.Call },
@@ -131,8 +131,8 @@ public class Adr035ChannelTests
     {
         // The Blint bug, in one test. A real program's stack is 239 frames deep and its
         // variables hold the file it is reading, so the stop did not fit — and the writer
-        // wrote the TRUE frame count and then silently dropped what would not fit, leaving
-        // the tail of an OLDER stop in the buffer behind it. The reader walked 239 frames
+        // wrote the true frame count and then silently dropped what would not fit, leaving
+        // the tail of an older stop in the buffer behind it. The reader walked 239 frames
         // through bytes that were not frames, read an old string's bytes as a variable count,
         // and asked for a list of two billion. It died of an OutOfMemoryException inside the
         // stop handler, so the pause the user asked for was never completed and Visual Studio
@@ -144,14 +144,14 @@ public class Adr035ChannelTests
         {
             var variables = new List<(string, string)>();
             for (int v = 0; v < 8; v++)
-                // DISTINCT content per variable — equal strings would (rightly) share one
+                // Distinct content per variable — equal strings would (rightly) share one
                 // string-table entry and the whole stack would fit. Truncation is for the
                 // stack that genuinely does not.
                 variables.Add(($"V{v}", new string('x', 500) + i + "_" + v));
             big.Add(new PrologEngine.DebugFrame($"deep{i}", 1, "big.pl", i, i, variables));
         }
 
-        // Something WAS in the buffer before: the tail of a longer stop is exactly what the
+        // Something was in the buffer before: the tail of a longer stop is exactly what the
         // reader used to walk into.
         channel.WriteSnapshot(new DebugStopEvent(
             StopReason.Breakpoint, "old/0", "big.pl", 1, 1, big));
@@ -179,12 +179,12 @@ public class Adr035ChannelTests
         // The bag, observed from the outside. A call stack is mostly the same bindings seen
         // from different clauses -- a 200-frame recursion sharing one big term is the shape
         // Blint pauses in -- and per-frame serialization made the snapshot's size the value's
-        // size TIMES the depth: 200 x 5 KB would not fit in the 256 KB channel, and the stack
+        // size times the depth: 200 x 5 KB would not fit in the 256 KB channel, and the stack
         // would (honestly, but needlessly) truncate. With the string table it is the value's
-        // size PLUS the depth, so the whole stack fits with room to spare.
+        // size plus the depth, so the whole stack fits with room to spare.
         using var channel = new DebugChannel();
 
-        string shared = new string('d', 5000);   // ~5 KB, the same INSTANCE in every frame
+        string shared = new string('d', 5000);   // ~5 KB, the same instance in every frame
         var frames = new List<PrologEngine.DebugFrame>();
         for (int i = 0; i < 200; i++)
             frames.Add(new PrologEngine.DebugFrame("down", 1, "deep.pl", i, i,
@@ -198,7 +198,7 @@ public class Adr035ChannelTests
 
         // Nothing was dropped -- 200 x 5 KB never happened -- and every frame still answers
         // with the whole value. The instance is shared on the reading side too: that is what
-        // the indirection is FOR, and it is also the honest test that one entry backs them all.
+        // the indirection is for, and it is also the honest test that one entry backs them all.
         Assert.Equal(200, snapshot.Frames.Count);
         Assert.All(snapshot.Frames, f =>
             Assert.Equal(shared, f.Variables[0].Value));
@@ -237,7 +237,7 @@ public class Adr035ChannelTests
         Assert.Empty(snapshot!.Frames);
         Assert.Equal(StopReason.AsyncBreak, snapshot.Reason);
 
-        // And the same lie told about the STRING TABLE dies just as quietly.
+        // And the same lie told about the string table dies just as quietly.
         int back = at - 8;
         DebugWire.WriteInt(bytes, ref back, int.MaxValue);   // "two billion strings follow"
         snapshot = DebugChannel.ReadSnapshot(bytes);
@@ -248,16 +248,16 @@ public class Adr035ChannelTests
     [Fact]
     public void AStepTakenAtABreakAllStops_HoweverDeepThePauseLanded()
     {
-        // THE REPORT: Break All deep in a long program, the stack looks right, F10 -- and it
+        // The report: Break All deep in a long program, the stack looks right, F10 -- and it
         // runs to completion without ever stopping again.
         //
-        // A step is measured against the depth of the stop it was taken AT, and an
+        // A step is measured against the depth of the stop it was taken at, and an
         // asynchronous break did not record its depth: it comes through its own path (the
         // poll between goals), not through the service's Stop(). So the F10 was measured
-        // against whatever the last REAL stop left behind -- or zero, if there had never been
+        // against whatever the last real stop left behind -- or zero, if there had never been
         // one -- and paused 60 frames deep it waited for a port at depth <= 0. No port
         // qualifies; the program runs out; the step is abandoned. If the machine is shallower
-        // than where the step was taken, the step MUST stop.
+        // than where the step was taken, the step must stop.
         var engine = DebugEngine("""
             down(0) :- !.
             down(N) :-
@@ -286,7 +286,7 @@ public class Adr035ChannelTests
 
         _log.WriteLine(string.Join("\n", stops.Select(s => $"{s.Reason} {s.Goal} depth={s.Depth}")));
 
-        // The pause landed at a port, deep; the step taken there STOPPED -- at the next goal,
+        // The pause landed at a port, deep; the step taken there stopped -- at the next goal,
         // at or above the pause's depth -- instead of letting the program run to its end.
         Assert.Equal(StopReason.AsyncBreak, stops[0].Reason);
         Assert.True(stops[0].Depth > 10, $"the pause should land deep, landed at {stops[0].Depth}");
@@ -433,7 +433,7 @@ public class Adr035ChannelTests
     [Fact]
     public void AConditionErrorCrossesTheSnapshot()
     {
-        // The stop that reports a condition that could not run carries WHY — the debugger
+        // The stop that reports a condition that could not run carries why — the debugger
         // shows it, since silence would swallow the breakpoint undiagnosably.
         using var channel = new DebugChannel();
         channel.WriteSnapshot(new DebugStopEvent(
@@ -458,7 +458,7 @@ public class Adr035ChannelTests
     public void TheDebuggerCanTurnLastCallOptimisationOffMidQuery()
     {
         // What debug_lastcall being an opcode that reads a flag — rather than a decision
-        // baked in at compile time — is FOR. The debugger arrives, finds a flat stack,
+        // baked in at compile time — is for. The debugger arrives, finds a flat stack,
         // and asks for the frames back without recompiling or restarting anything.
         var engine = DebugEngine("""
             top(X) :-
@@ -493,16 +493,16 @@ public class Adr035ChannelTests
     [Fact]
     public void ADetachedDebuggerLeavesNoArmedBreakpointsBehind()
     {
-        // The user's report: stop at a breakpoint, DETACH (or close Visual Studio) — the
+        // The user's report: stop at a breakpoint, detach (or close Visual Studio) — the
         // program runs on, but every subsequent hit still ran the whole stop pipeline
         // (capture, snapshot, notify to nobody) and scrolled "breakpoint hit ... stop"
-        // forever. A stop on the REAL transport with no native debugger attached means the
-        // debugger LEFT: the session clears the armed breakpoints and the program runs
+        // forever. A stop on the real transport with no native debugger attached means the
+        // debugger left: the session clears the armed breakpoints and the program runs
         // free. (The breakpoints are Visual Studio's; a re-attach re-sends them all.)
         //
-        // This test IS the real-transport shape: a default-notify session in a test
+        // This test is the real-transport shape: a default-notify session in a test
         // process has no native debugger — exactly what a detached debuggee looks like —
-        // so the FIRST hit takes the detach path and disarms everything.
+        // so the first hit takes the detach path and disarms everything.
         //
         //  2: run :-
         //  3:     between(1, 50, X),
@@ -535,7 +535,7 @@ public class Adr035ChannelTests
     public void AConditionalBreakpointSetThroughTheChannel_StopsOnlyWhenItHolds()
     {
         // ADR-035 D5, end to end the way Visual Studio drives it: the debugger writes its
-        // commands while the engine is STOPPED (the engine drains them before resuming),
+        // commands while the engine is stopped (the engine drains them before resuming),
         // and the condition rides the AddBreakpoint command — the same-key rewrite is how a
         // condition is set, changed and cleared. The engine evaluates it at the Break, and
         // only the hits where it holds reach the notify afterwards.
@@ -554,7 +554,7 @@ public class Adr035ChannelTests
         session = new ChannelDebugSession(engine, notify: _ =>
         {
             stops.Add(ReadFromMemory(session!.Channel));
-            // At the FIRST stop the user opens the breakpoint's settings and types the
+            // At the first stop the user opens the breakpoint's settings and types the
             // condition: the debugger rewrites the breakpoint, condition attached.
             session!.Channel.WriteCommands(
                 stops.Count == 1
@@ -579,9 +579,9 @@ public class Adr035ChannelTests
     public void AFramedClauseShowsOneFrame_AfterAPredicateCallReturnedMidBody()
     {
         // The user's report (prueba.pl fuzzy/0): after stepping past member/2, the call
-        // stack showed fuzzy/0 TWICE — the current goal plus a ghost at the goal that had
-        // already returned. Root cause: the frame walk yielded the Cp REGISTER, which
-        // between two calls of a body still holds the PREVIOUS completed call's return
+        // stack showed fuzzy/0 twice — the current goal plus a ghost at the goal that had
+        // already returned. Root cause: the frame walk yielded the Cp register, which
+        // between two calls of a body still holds the previous completed call's return
         // address (a real predicate call sets Cp where a builtin does not — so it took a
         // two-clause helper exiting with its choice point alive to expose it). With the
         // fix, the live walk takes the environment chain's saved continuations only.
@@ -627,9 +627,9 @@ public class Adr035ChannelTests
     public void SteppingStopsAtACallToALibraryPredicate_OnTheUsersLine()
     {
         // The user's report (prueba.pl, F11): stopped at writeln(paso1), one step executed
-        // BOTH that goal and the member/2 after it — the member call port never stopped,
-        // because the gate asked whether the CALLEE was debuggable (member is prelude).
-        // The rule is the one builtins always had: where the call is WRITTEN decides.
+        // both that goal and the member/2 after it — the member call port never stopped,
+        // because the gate asked whether the callee was debuggable (member is prelude).
+        // The rule is the one builtins always had: where the call is written decides.
         // `member(X, L)` on the user's line is the user's goal; stepping stops there, and
         // the next step runs member as one unit (no ports inside the prelude).
         //
@@ -660,8 +660,8 @@ public class Adr035ChannelTests
             engine.QueryAll("run(X).").ToList();
 
         foreach (var s in stops) _log.WriteLine($"stop: {s.Goal} at line {s.Line}");
-        // bp at mark(a) (a breakpoint stop names the clause: run/1); F11 → member/2 AT ITS
-        // OWN LINE; F11 → mark(b) (member ran as one unit — no stops inside the prelude).
+        // bp at mark(a) (a breakpoint stop names the clause: run/1); F11 → member/2 at its
+        // own line; F11 → mark(b) (member ran as one unit — no stops inside the prelude).
         Assert.Equal(("run/1", 3), stops[0]);
         Assert.Equal(("member/2", 4), stops[1]);
         Assert.Equal(("mark/1", 5), stops[2]);
@@ -789,7 +789,7 @@ public class Adr035ChannelTests
         // Set Next Statement accepts. With the prepended compile_mode line the program's
         // own lines are: 4=run head, 5=one(A), 6=two(B), 7=three(C), 8=Out=t(...). Stopped
         // at line 7 (three's call, one+two already ran): forward = 8, backward = 5 and 6
-        // (their marks are live), the CURRENT line 7 is a no-op accept (as in C#), and the
+        // (their marks are live), the current line 7 is a no-op accept (as in C#), and the
         // head line 4 is offered because the first goal is reachable.
         var engine = DebugEngine("""
             :- dynamic(c/1).
@@ -827,7 +827,7 @@ public class Adr035ChannelTests
     [Fact]
     public void StoppedAtTheFirstGoal_TheHeadAndCurrentLineAreValidTargets()
     {
-        // The user's report (prueba.pl fuzzy/0): stopped at the FIRST body goal, Set Next
+        // The user's report (prueba.pl fuzzy/0): stopped at the first body goal, Set Next
         // Statement to the head line — or to the very line the arrow is on — was refused
         // ("valid targets: 18, 19, ...", forward only). Both are no-op moves and must be
         // offered, exactly as C# accepts a jump to the method's first line or the current
@@ -871,7 +871,7 @@ public class Adr035ChannelTests
     public void SetNextStatementThroughTheChannel_MovesThePointerOnResume()
     {
         // ADR-035 D5+, the way Ctrl+Shift+F10 actually drives it: while stopped the engine
-        // thread is parked in the notify, so the move CANNOT be a func-eval (a monitor-side
+        // thread is parked in the notify, so the move cannot be a func-eval (a monitor-side
         // one answers "not implemented" — the popup the user hit). It rides the command
         // channel like a step: written at the stop, applied by the engine the instant it
         // resumes, before the parked instruction runs.
@@ -901,7 +901,7 @@ public class Adr035ChannelTests
         session = new ChannelDebugSession(engine, notify: _ =>
         {
             stops++;
-            // FORWARD past two(B) to line 7 (Out = pair): two never runs, B stays free.
+            // Forward past two(B) to line 7 (Out = pair): two never runs, B stays free.
             session!.Channel.WriteCommands(
                 stops == 1
                     ? new[]

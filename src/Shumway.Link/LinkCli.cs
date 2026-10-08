@@ -45,9 +45,9 @@ internal static class LinkCli
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        // Inputs route by extension (C-toolchain style): .shum is a LIBRARY (its
-        // members are pulled on demand, FIFO), .pl is SOURCE (compiled on the fly
-        // to an object), anything else is an OBJECT (.shmo, always linked). A .shum
+        // Inputs route by extension (C-toolchain style): .shum is a library (its
+        // members are pulled on demand, FIFO), .pl is source (compiled on the fly
+        // to an object), anything else is an object (.shmo, always linked). A .shum
         // must be a shumway-lib librarian archive (it carries its objects); a
         // linked bundle has none and can't serve as a library.
         var objects = new List<ShmoObject>();
@@ -98,7 +98,7 @@ internal static class LinkCli
             var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
             if (opts.Consult)
             {
-                // Consult ALL sources into one engine (directives + expansion
+                // Consult all sources into one engine (directives + expansion
                 // hooks run, use_module dependencies load) and link every module
                 // the load brought in — the shumway-compile --consult pipeline.
                 var errors = new List<ShmoCompileError>();
@@ -145,6 +145,20 @@ internal static class LinkCli
                         RemoveStaleOutputs(opts);
                         return ExitLinkError;
                     }
+                    // The same refusal as shumway-compile's: a hook compiled
+                    // file-at-a-time never fires, and the program linked from
+                    // it would mean something else than the consulted one.
+                    if (ShmoCompiler.WhatFileAtATimeLoses(res.Object) is { } lost)
+                    {
+                        Console.Error.WriteLine(
+                            $"shumway-link: {path} {lost} File-at-a-time compilation "
+                            + "would produce a program that means something else than the "
+                            + "consulted one, so it is refused rather than linked. Link "
+                            + "it with:" + Environment.NewLine
+                            + $"  shumway-link --consult -L <libdir> ... {path}");
+                        RemoveStaleOutputs(opts);
+                        return ExitLinkError;
+                    }
                     MaybeHintConsult(path);
                     objects.Add(res.Object);
                 }
@@ -186,6 +200,7 @@ internal static class LinkCli
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
+            Library = opts.Library,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -196,6 +211,12 @@ internal static class LinkCli
             DumpIlPath = opts.DumpIlPath,
             ForeignAssemblies = opts.ForeignDlls,
             NativeLibraries = opts.NativeDlls,
+#if !NETFRAMEWORK
+            WasmBaker = opts.Wasm
+                ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
+                    msg => Console.Error.WriteLine("shumway-link: " + msg))
+                : null,
+#endif
         };
 
         LinkResult result;
@@ -302,11 +323,11 @@ internal static class LinkCli
                 + $"bytes={result.Bytes!.Length}).");
         }
 
-        // --exe / --dll target the RUNNING toolchain's framework: the net10
+        // --exe / --dll target the running toolchain's framework: the net10
         // build emits single-file .NET 10 apps; the net48 build emits
         // Framework folder apps (exe + engine DLLs + config). Both need the
-        // .NET SDK on the BUILD machine (the stub compiles via dotnet build);
-        // net48 TARGET machines only need .NET Framework 4.8.
+        // .NET SDK on the build machine (the stub compiles via dotnet build);
+        // net48 target machines only need .NET Framework 4.8.
         if (!string.IsNullOrEmpty(opts.ExePath))
         {
             var mode = opts.SelfContained
@@ -373,10 +394,12 @@ internal static class LinkCli
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
+        public bool Wasm { get; set; }
         public bool RegionPruneReport { get; set; }
         public bool RegionPrune { get; set; } = true;
         public bool BakePrelude { get; set; }
         public bool PrunePrelude { get; set; }
+        public bool Library { get; set; }
         public string? DumpWamPath { get; set; }
         public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
@@ -477,6 +500,21 @@ internal static class LinkCli
                     opts.StripWam = true;
                     break;
 
+                case "--library":
+                    opts.Library = true;
+                    break;
+
+                case "--wasm":
+#if NETFRAMEWORK
+                    Console.Error.WriteLine(
+                        "shumway-link: --wasm is not available in the .NET Framework build "
+                        + "of the toolchain.");
+                    return null;
+#else
+                    opts.Wasm = true;
+                    break;
+#endif
+
                 case "--prune-report":
                     opts.RegionPruneReport = true;
                     break;
@@ -491,7 +529,7 @@ internal static class LinkCli
                     Shumway.Embedding.BundleFormat.DisableCompression = true;
                     break;
 
-                // Bake only the REACHED prelude predicates
+                // Bake only the reached prelude predicates
                 // (closure over the prelude call graph). Opt-in: runtime-
                 // constructed goals naming unreached prelude predicates raise
                 // existence_error (declare them :- ensure_linked to keep them).
@@ -638,7 +676,7 @@ internal static class LinkCli
                 "shumway-link: at least one input is required (.shmo object or .shum library).");
             return null;
         }
-        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal))
+        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal) && !opts.Library)
         {
             Console.Error.WriteLine(
                 "shumway-link: at least one --entry pred/N or --goal Term is required "
@@ -678,6 +716,13 @@ internal static class LinkCli
                 "shumway-link: --debug is Tier-0 (interpreted) source-level debugging; it is "
                 + "incompatible with --with-compiled-il / --strip-wam (Tier-1 IL, which has no "
                 + "debug stop sites). Drop the IL flags for a debug build.");
+            return null;
+        }
+        if (opts.Wasm && opts.StripWam)
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --wasm and --strip-wam are contradictory: the wasm module "
+                + "resumes into the bytecode that --strip-wam drops.");
             return null;
         }
         if (!string.IsNullOrEmpty(opts.ExePath) && !string.IsNullOrEmpty(opts.DllPath))
@@ -790,7 +835,7 @@ internal static class LinkCli
     // The last two are what PrologEngine searches by default, and the linker
     // has to agree with it: a toolchain unpacked into one directory has lib/
     // sitting next to the executables, so a program the REPL runs and
-    // shumway-compile compiles must also LINK without being told where the
+    // shumway-compile compiles must also link without being told where the
     // libraries are. Lowest precedence, so an explicit -L still wins.
     private static List<string> CollectLibraryDirs(List<string> flagged)
     {
@@ -815,7 +860,7 @@ internal static class LinkCli
         if (System.IO.Directory.Exists(dir)) dirs.Add(dir);
     }
 
-    /// <summary>Every artifact this run was asked to produce. A failure ANYWHERE
+    /// <summary>Every artifact this run was asked to produce. A failure anywhere
     /// — reading an input, compiling a source, the link itself — must leave none
     /// of them behind: a stale bundle beside a failed build is the one a later
     /// run picks up, and it looks like a success.</summary>
@@ -889,10 +934,12 @@ internal static class LinkCli
             + "                           in error messages are unavailable. Use for smaller\n"
             + "                           bundles or to avoid shipping source code.\n"
             + "  -i, --with-compiled-il   Also precompile predicates to .NET IL and embed\n"
-            + "                           the resulting assembly in the bundle. The engine\n"
-            + "                           then runs them as compiled .NET code from the\n"
-            + "                           start, with no compilation pause at runtime.\n"
-            + "                           Bigger bundle, faster execution. Related\n"
+            + "                           the resulting assembly in the bundle. Each\n"
+            + "                           predicate starts on its bytecode and switches\n"
+            + "                           to the compiled code once it is hot; that code\n"
+            + "                           is prepared on a background thread, so a query\n"
+            + "                           never waits for it. Bigger bundle, faster\n"
+            + "                           execution of what runs long. Related\n"
             + "                           predicates are compiled together into shared\n"
             + "                           methods and redundant standalone copies are\n"
             + "                           pruned (see --no-region-prune to disable).\n"
@@ -901,6 +948,9 @@ internal static class LinkCli
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
+            + "      --library            Keep every predicate of every input: the bundle\n"
+            + "                           is a library loaded whole, so no --entry is\n"
+            + "                           needed and nothing is pruned.\n"
             + "      --stdlib             Embed the precompiled standard library (the\n"
             + "                           prelude) in the bundle so loading it skips\n"
             + "                           compiling the stdlib at startup (and, under\n"
@@ -921,9 +971,16 @@ internal static class LinkCli
             + "                           :- ensure_linked to keep them.\n"
             + "      --strip-wam          Implies --with-compiled-il, and additionally\n"
             + "                           drops the portable bytecode of every predicate\n"
-            + "                           that has compiled IL. Smaller bundles. The result\n"
-            + "                           requires the .NET JIT (it cannot run under\n"
-            + "                           Native AOT).\n"
+            + "                           that has compiled IL, except those whose bytecode\n"
+            + "                           the IL continues in when a delayed goal wakes\n"
+            + "                           (freeze/2, when/2, dif/2, constraints). Smaller\n"
+            + "                           bundles. The result requires the .NET JIT (it\n"
+            + "                           cannot run under Native AOT).\n"
+            + "      --wasm               Also compile the bundle's static predicates to a\n"
+            + "                           WebAssembly module stored in the bundle. A host\n"
+            + "                           with a wasm tier (the browser) runs them from it\n"
+            + "                           at load instead of compiling them itself; every\n"
+            + "                           other host ignores it. Not with --strip-wam.\n"
             + "  -f, --foreign-dll <path> A .NET assembly exposing predicates written in C#\n"
             + "                           ([PrologPredicate] static methods). They resolve\n"
             + "                           as foreign predicates during linking, and the\n"

@@ -32,7 +32,7 @@ public sealed partial class Activation
     /// environment frame (Allocate stores E and CP), and points execution at
     /// the wake driver with CP = <see cref="WakeReturnCp"/> and a fresh cut
     /// barrier. Returns false when there is nothing to run (hookless queue —
-    /// cleared) or nothing to run it WITH (no linked driver, unknowable
+    /// cleared) or nothing to run it with (no linked driver, unknowable
     /// arity) — the caller then keeps its pre-ADR-049 drain.</summary>
     public bool TryWakeInterrupt(int arity, int resumePc)
     {
@@ -105,7 +105,7 @@ public sealed partial class Activation
     /// what a later re-entry through a wake alternative needs.
     ///
     /// <para>A resume point that is a forward resume marker (cursor 0) is a
-    /// callee about to be (re-)entered: its cut barrier is B as of NOW —
+    /// callee about to be (re-)entered: its cut barrier is B as of now —
     /// including any choice points the wake left, so a cut in the callee can
     /// never prune the wake's alternatives. Tier-0 gets the same for free by
     /// re-executing the call instruction, whose SetB0 runs post-wake.</para>
@@ -136,6 +136,7 @@ public sealed partial class Activation
     /// caller's resume marker for a non-tail call; the region's inherited CP
     /// for a tail call): the wake frame captures it, and the resume is a
     /// forward marker that dispatches the callee.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int Tier1WakeBoundaryCall(int calleeFunctorId)
     {
         if (_pendingWakeups.Count == 0) return 0;
@@ -146,12 +147,25 @@ public sealed partial class Activation
     /// <summary>The wake boundary at a region proceed (after any deallocate):
     /// no argument registers are live, and the resume simply jumps to the
     /// continuation CP already holds.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int Tier1WakeBoundaryProceed()
     {
         if (_pendingWakeups.Count == 0) return 0;
         return WakeInterruptOrDrain(0, Cp);
     }
 
+    /// <summary>The wake boundary in front of a builtin or an inlined call in
+    /// compiled code: its <paramref name="arity"/> argument registers are the
+    /// live ones, and the resume re-enters the compiled code at
+    /// <paramref name="resumeMarker"/>, before the same boundary.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    public int Tier1WakeBoundaryAt(int arity, int resumeMarker)
+    {
+        if (_pendingWakeups.Count == 0) return 0;
+        return WakeInterruptOrDrain(arity, resumeMarker);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private int WakeInterruptOrDrain(int arity, int resumePc)
     {
         Profiler.Note("wakeup_flush");

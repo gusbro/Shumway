@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>A clause whose head is a control connective — `a,b.` reads as a
-/// clause FOR ','/2 — is undispatchable by construction: the compiler lowers
+/// clause for ','/2 — is undispatchable by construction: the compiler lowers
 /// those functors inline, so the stored clauses were dead weight listing/0
 /// showed and nothing could call. Consult now refuses them the way assertz/1
 /// always did (permission_error, §8.9.2.3), reporting and loading on.</summary>
@@ -26,8 +26,8 @@ public sealed class ControlConnectiveHeadTests
         Assert.True(e.Query("ok_after.").Success);
     }
 
-    // Edinburgh tradition (SWI/GNU/SICStus): `?- G.` in Prolog TEXT is a
-    // directive, same as `:- G.`. It used to read as a clause FOR '?-'/1 —
+    // Edinburgh tradition (SWI/GNU/SICStus): `?- G.` in Prolog text is a
+    // directive, same as `:- G.`. It used to read as a clause for '?-'/1 —
     // stored, listed, never run.
     [Fact]
     public void QuestionDash_InText_RunsAsADirective()

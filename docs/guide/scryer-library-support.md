@@ -195,7 +195,7 @@ chars`, **172 of 266 pass**; with the error-vocabulary difference factored
 out, **264 of 266**. The three deltas, none an ISO deviation on Shumway's
 side:
 
-- **93 tests assert Scryer's lexer-error vocabulary**: the culprit atoms
+- **92 tests assert Scryer's lexer-error vocabulary**: the culprit atoms
   its reader puts inside `syntax_error(...)` (`incomplete_reduction`,
   `invalid_single_quoted_character`, …). ISO makes that atom
   implementation-defined; Shumway's is a positional message. Every one of

@@ -6,18 +6,18 @@ namespace Shumway.Compiler.Il;
 
 /// <summary>
 /// Stage 9 (module-level dead-region elimination) reachability analysis —
-/// <c>docs/design/il-region-compilation.md</c> §9. For a module compiled in REGION
-/// mode, computes which predicates still need a STANDALONE (trampoline-callable) form,
-/// and conversely which are reached ONLY as absorbed <c>br</c>-members of some region
-/// and can therefore be PRUNED from the bundle.
+/// <c>docs/design/il-region-compilation.md</c> §9. For a module compiled in region
+/// mode, computes which predicates still need a standalone (trampoline-callable) form,
+/// and conversely which are reached only as absorbed <c>br</c>-members of some region
+/// and can therefore be pruned from the bundle.
 ///
 /// <para>The model: each region root is one IL method that absorbs a set of member
 /// predicates (its local closure, see <see cref="IlPredicateCompiler.RegionMemberFids"/>).
 /// A call from inside a region to an absorbed member is an intra-region <c>br</c> — it
-/// does NOT reach the member's standalone form. A call to a NON-absorbed predicate
+/// does not reach the member's standalone form. A call to a NON-absorbed predicate
 /// trampolines out, so that predicate needs a standalone (region-root) form. A
-/// predicate's standalone form is dead iff EVERY call that reaches it is an intra-region
-/// <c>br</c> (every caller absorbs it) AND it is not externally reachable
+/// predicate's standalone form is dead iff every call that reaches it is an intra-region
+/// <c>br</c> (every caller absorbs it) and it is not externally reachable
 /// (entry-point / public / dynamic).</para>
 ///
 /// <para>This is a forward reachability <b>fixpoint</b> over region roots: seed with the
@@ -36,7 +36,7 @@ public static class RegionReachability
     /// graph via <see cref="CompiledPredicate.CallSites"/>). A callee not in this map is
     /// a builtin / external / dynamic reference and is ignored (it is not a prunable
     /// member of this module).</param>
-    /// <param name="externallyReachable">Functor ids that MUST keep a standalone form
+    /// <param name="externallyReachable">Functor ids that must keep a standalone form
     /// regardless of absorption — entry points, public predicates, dynamic predicates.
     /// The reachability seeds.</param>
     /// <param name="regionMembers">root fid → the functor ids its region absorbs as
@@ -64,7 +64,7 @@ public static class RegionReachability
             var absorbed = regionMembers(root);
             var absorbedSet = absorbed as ISet<int> ?? new HashSet<int>(absorbed);
             // Every absorbed member's body is emitted inside this region method; its
-            // calls to predicates NOT in the absorbed set trampoline out and so reach
+            // calls to predicates not in the absorbed set trampoline out and so reach
             // those predicates' standalone forms (making them live roots in turn).
             foreach (int member in absorbed)
             {
@@ -81,7 +81,7 @@ public static class RegionReachability
         return reachable;
     }
 
-    /// <summary>The predicates whose standalone form is DEAD under region compilation —
+    /// <summary>The predicates whose standalone form is dead under region compilation —
     /// reached only as absorbed <c>br</c>-members and not externally reachable — so the
     /// linker can drop them from the bundle. The complement of
     /// <see cref="TrampolineReachable"/>.</summary>

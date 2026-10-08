@@ -8,14 +8,14 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary><c>time_out/3</c> — SICStus semantics: milliseconds,
 /// <c>success</c> / <c>time_out</c>, NON-deterministic, and the clock
-/// RESTARTS when the goal is re-entered on backtracking, so the limit bounds
+/// restarts when the goal is re-entered on backtracking, so the limit bounds
 /// each solution rather than the whole enumeration.
 ///
 /// <para>The limit is enforced at the engine's safe points (the same ones
 /// cancellation uses), which is what lets a failure-driven loop be
 /// interrupted even though it allocates nothing.</para></summary>
 // Exclusive for a different reason than the others: nothing here mutates
-// process state, but these tests pin WALL-CLOCK deadlines whose margins are
+// process state, but these tests pin wall-clock deadlines whose margins are
 // tight by design (per-solution restart needs each solution under the limit
 // and the whole enumeration over it). Under 4 processes × 3 threads on a
 // 4-core runner, scheduling stretched a 250 ms solution past its 400 ms
@@ -85,9 +85,9 @@ public sealed class TimeOutTests
     [Fact]
     public void TheClockRestartsOnBacktracking()
     {
-        // Three solutions, each costing more than HALF the limit: under a
+        // Three solutions, each costing more than half the limit: under a
         // whole-enumeration limit this could not complete, and under a
-        // per-solution one it comfortably does. That difference IS the
+        // per-solution one it comfortably does. That difference is the
         // SICStus semantics being pinned.
         var e = new PrologEngine();
         e.ConsultString("slow(X) :- member(X, [1,2,3]), sleep(0.25).");

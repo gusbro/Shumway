@@ -31,12 +31,14 @@ namespace Shumway.Embedding;
 public static class PredicateDoc
 {
     private sealed record Entry(
-        string Category, string Name, int Arity, string Template, string Summary);
+        string Category, string Name, int Arity, string Template, string Summary,
+        PredicateKind Kind);
 
     /// <summary>One documented predicate: what it is called, how it is called
     /// (a template naming each parameter and its mode) and what it does.</summary>
     public sealed record DocEntry(
-        string Category, string Name, int Arity, string Template, string Summary);
+        string Category, string Name, int Arity, string Template, string Summary,
+        PredicateKind Kind);
 
     /// <summary>Every documented predicate, in the order the reference presents
     /// them. The same metadata <see cref="Generate"/> renders as markdown, for a
@@ -50,17 +52,36 @@ public static class PredicateDoc
             .OrderBy(e => order.IndexOf(e.Category))
             .ThenBy(e => e.Name, StringComparer.Ordinal)
             .ThenBy(e => e.Arity)
-            .Select(e => new DocEntry(e.Category, e.Name, e.Arity, e.Template, e.Summary))
+            .Select(e => new DocEntry(e.Category, e.Name, e.Arity, e.Template, e.Summary, e.Kind))
             .ToList();
     }
 
-    /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.
-    /// The field separator is a pipe WITH surrounding whitespace, so a
+    /// <summary>Matches a <c>%! Template | Category | Kind | Summary</c>
+    /// comment; the Kind field (ADR-059: control, iso, engine or library) may be
+    /// left out: a prelude predicate is then engine, a loadable library's library.
+    /// The field separator is a pipe with surrounding whitespace, so a
     /// template may itself contain a bare cons pipe — <c>[+File|+Files]</c> —
     /// without splitting the line early.</summary>
     private static readonly Regex DocComment = new(
-        @"^\s*%!\s*(.+?)\s+\|\s+([^|]+?)\s+\|\s+(.+?)\s*$",
+        @"^\s*%!\s*(.+?)\s+\|\s+([^|]+?)\s+\|\s+(?:(control|iso|engine|library)\s+\|\s+)?(.+?)\s*$",
         RegexOptions.Compiled);
+
+    /// <summary>ADR-059 — the kind the prelude's documentation declares for a
+    /// predicate, or null for one it does not document. Only the prelude: the
+    /// loadable libraries live in an assembly a toolchain host may not
+    /// reference.</summary>
+    public static PredicateKind? KindOf(string name, int arity)
+        => _kinds.Value.TryGetValue((name, arity), out var k) ? k : null;
+
+    private static readonly Lazy<Dictionary<(string, int), PredicateKind>> _kinds = new(() =>
+    {
+        var map = new Dictionary<(string, int), PredicateKind>();
+        var entries = new List<Entry>();
+        CollectDocComments(Prelude.Source, entries, PredicateKind.Engine);
+        foreach (var e in entries)
+            map.TryAdd((e.Name, e.Arity), e.Kind);
+        return map;
+    });
 
     /// <summary>The complete section order — every category a predicate
     /// declares is expected to be listed here. One not listed still renders
@@ -137,16 +158,16 @@ public static class PredicateDoc
         foreach (var b in BuiltinsRegistry.AllEntries())
             if (b.Category is not null && b.Template is not null &&
                 b.Summary is not null && !b.Name.StartsWith('$'))
-                entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Template, b.Summary));
-        CollectDocComments(Prelude.Source, entries);
-        CollectDocComments(Clpfd.Source, entries);
-        CollectDocComments(Clpr.Source, entries);
-        CollectDocComments(Coroutining.Source, entries);
-        CollectDocComments(CompatLibraries.QuadsSource, entries);
+                entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Template, b.Summary, b.Kind));
+        CollectDocComments(Prelude.Source, entries, PredicateKind.Engine);
+        foreach (var lib in LibraryBundles.Names)
+            CollectDocComments(LibraryBundles.SourceOf(lib), entries, PredicateKind.Library);
+        CollectDocComments(CompatLibraries.QuadsSource, entries, PredicateKind.Library);
         return entries;
     }
 
-    private static void CollectDocComments(string source, List<Entry> into)
+    private static void CollectDocComments(string source, List<Entry> into,
+        PredicateKind defaultKind)
     {
         foreach (string line in source.Split('\n'))
         {
@@ -154,9 +175,17 @@ public static class PredicateDoc
             if (!m.Success) continue;
             string template = m.Groups[1].Value.Trim();
             (string name, int arity) = ParseTemplate(template);
+            var kind = m.Groups[3].Value switch
+            {
+                "control" => PredicateKind.Control,
+                "iso" => PredicateKind.Iso,
+                "engine" => PredicateKind.Engine,
+                "library" => PredicateKind.Library,
+                _ => defaultKind,
+            };
             into.Add(new Entry(
                 m.Groups[2].Value.Trim(), name, arity, template,
-                m.Groups[3].Value.Trim()));
+                m.Groups[4].Value.Trim(), kind));
         }
     }
 
@@ -188,9 +217,12 @@ public static class PredicateDoc
         sb.Append("available to any program; a section whose predicates come from a ");
         sb.Append("library says under its heading which one to load.\n\n");
         sb.Append("Each template names its parameters and their mode: `+` bound at call, ");
-        sb.Append("`-` an output, `?` either, `@` not modified, `:` a meta-called goal.\n");
+        sb.Append("`-` an output, `?` either, `@` not modified, `:` a meta-called goal.\n\n");
+        sb.Append("Kind says whether a program may define a predicate of the same name: ");
+        sb.Append("never for control and ISO, inside a module for engine, anywhere for ");
+        sb.Append("library. See [redefining-predicates.md](redefining-predicates.md).\n");
 
-        // Contents — this is a reference people land in looking for ONE
+        // Contents — this is a reference people land in looking for one
         // predicate; a section row beats scrolling 27 headings. Anchors follow
         // the GitHub slug rule: lowercase, spaces to hyphens, punctuation
         // dropped.
@@ -221,14 +253,15 @@ public static class PredicateDoc
                 sb.Append("\n\n");
                 break;
             }
-            sb.Append("| Predicate | Description |\n");
-            sb.Append("| --- | --- |\n");
+            sb.Append("| Predicate | Kind | Description |\n");
+            sb.Append("| --- | --- | --- |\n");
             IEnumerable<Entry> inCategory = entries
                 .Where(e => e.Category == category)
                 .OrderBy(e => e.Name, StringComparer.Ordinal)
                 .ThenBy(e => e.Arity);
             foreach (Entry e in inCategory)
                 sb.Append("| `").Append(e.Template.Replace("|", "\\|")).Append("` | ")
+                  .Append(e.Kind.ToString().ToLowerInvariant()).Append(" | ")
                   .Append(e.Summary.Replace("|", "\\|")).Append(" |\n");
         }
         return sb.ToString();

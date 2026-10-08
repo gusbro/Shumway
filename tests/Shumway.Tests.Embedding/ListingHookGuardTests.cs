@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A listing shows the program, not the loader's bookkeeping.
 ///
 /// <para>An in-file <c>term_expansion</c> / <c>goal_expansion</c> clause may
-/// only expand the clauses written AFTER it, and the loader enforces that by
+/// only expand the clauses written after it, and the loader enforces that by
 /// wrapping the hook's body with <c>'$te_after'(N)</c>. That guard is not
 /// something anyone wrote, and it was showing up in <c>listing/1</c> —
 /// especially visible after a load that failed part way, where a user
@@ -18,7 +18,7 @@ public class ListingHookGuardTests
     private static string Listing(string source)
     {
         var engine = new PrologEngine { Warnings = new StringWriter() };
-        // A load that RAISES still leaves what it loaded — which is the state
+        // A load that raises still leaves what it loaded — which is the state
         // being listed here.
         try { engine.ConsultString(source); }
         catch (ShumwayPrologException) { }

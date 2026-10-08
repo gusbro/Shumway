@@ -2,15 +2,15 @@ using Shumway.Compiler.Ast;
 
 namespace Shumway.Compiler;
 
-/// <summary>ADR-025 — shared eligibility test for the INLINE if-then-else /
-/// disjunction lowering. When enabled, <c>MetaTransform</c> LEAVES an eligible
+/// <summary>ADR-025 — shared eligibility test for the inline if-then-else /
+/// disjunction lowering. When enabled, <c>MetaTransform</c> leaves an eligible
 /// <c>(C -&gt; T ; E)</c> / <c>(A ; B)</c> intact (no <c>$disj_N</c> helper) and
 /// <c>ClauseCompiler</c> emits it in the host clause as
 /// <c>get_level; try_me_else ELSE; C; cut; T; jump END; ELSE: trust_me; E</c>.
-/// The two sides MUST agree, so the predicate lives here, in one place.
+/// The two sides must agree, so the predicate lives here, in one place.
 ///
 /// <para>First cut, deliberately conservative: every part must be a conjunction
-/// of PLAIN goals — no cuts (those need the MetaTransform barrier threading), no
+/// of plain goals — no cuts (those need the MetaTransform barrier threading), no
 /// nested control constructs (they keep the helper path, where MetaTransform's
 /// rewrites apply), no variables in goal position (runtime call/1 dispatch does
 /// the ISO error checks). Extending eligibility widens the win later without
@@ -48,7 +48,7 @@ public static class InlineIte
         && disj.Args[0] is CompoundTerm { Functor: "*->", Args.Length: 2 };
 
     /// <summary>A <c>*-&gt;</c> condition the inline lowering can emit: a
-    /// conjunction of goals each of which is plain OR a <c>call/N</c> (the
+    /// conjunction of goals each of which is plain or a <c>call/N</c> (the
     /// runtime meta-call <see cref="ClauseCompiler"/> already compiles, and which
     /// is opaque to cut — matching soft-cut condition semantics).</summary>
     private static bool IsInlineableCondition(Term t) => t switch
@@ -61,7 +61,7 @@ public static class InlineIte
 
     /// <summary>A conjunction tree of plain goals: atoms / compounds that are not
     /// control constructs, cuts, or meta-goals MetaTransform rewrites. A variable
-    /// in goal position is NOT plain (needs runtime call/1 error checks).</summary>
+    /// in goal position is not plain (needs runtime call/1 error checks).</summary>
     public static bool IsPlainConjunction(Term t) => t switch
     {
         CompoundTerm { Functor: ",", Args.Length: 2 } conj =>

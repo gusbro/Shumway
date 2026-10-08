@@ -51,7 +51,7 @@ public class SpikeCounterTests
         // entry possible at all (the plan's D2).
         using var h = Harness();
         h.SetSlot(WasmAbi.RegistersBase, WasmSpikeHarness.HeapAt);
-        h.SetRegister(0, Cell.Int(3));               // the OLD place, untouched
+        h.SetRegister(0, Cell.Int(3));               // the old place, untouched
 
         // X0 at the new base is whatever the memory held there: zero, which is
         // not an integer cell, so the predicate refuses it.

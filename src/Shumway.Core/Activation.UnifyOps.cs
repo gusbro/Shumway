@@ -6,7 +6,12 @@ public sealed partial class Activation
 {
     // ----- Registers -----
 
+    /// <summary>The register bank never holds fewer registers: compiled code
+    /// stores to a register below this without a capacity check.</summary>
+    public const int MinRegisterCount = 64;
+
     public Cell GetRegister(int idx) => _registers[idx];
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void SetRegister(int idx, Cell value)
     {
         if (idx >= _registers.Length) EnsureRegisterCapacity(idx + 1);
@@ -36,6 +41,10 @@ public sealed partial class Activation
     // if the cell already holds a REF we reuse its heap target directly; otherwise we
     // copy the atomic value into a freshly-allocated heap cell. This costs at most one
     // extra heap cell per atomic operand and keeps the unify implementation single-form.
+
+    /// <summary>Unifies two value cells, wherever they were read from: a
+    /// register, a heap slot, a choice point's saved register.</summary>
+    public bool UnifyValues(Cell a, Cell b) => UnifyCells(a, b);
 
     /// <summary>Unifies the cells held in <c>X[<paramref name="aRegIdx"/>]</c> and
     /// <c>X[<paramref name="bRegIdx"/>]</c>.</summary>
@@ -143,16 +152,16 @@ public sealed partial class Activation
         // BigInt / String / Pstr (table-id ≠ value), Float (two cells), or a
         // compound — takes the general alloc-then-Unify path unchanged.
         //
-        // NOTE (--alloc finding): on the Van Roy suite this saves
+        // Note (--alloc finding): on the Van Roy suite this saves
         // zero allocations — head-level literal args go through the already-
         // optimised UnifyRegisterWithCell (get_atom/get_nil/
         // get_integer), and these benchmarks have no literals nested inside
         // compound head args (the only shape that reaches here). Kept because
-        // it is correct, harmless, and a real win for programs that DO match
+        // it is correct, harmless, and a real win for programs that do match
         // nested literals (e.g. DCG / parser heads like foo([a|T], ...)).
         //
-        // The fast path applies ONLY when `value` is a genuine atomic literal
-        // (Atom / inline Int). It must NOT trigger for a `value` that is a
+        // The fast path applies only when `value` is a genuine atomic literal
+        // (Atom / inline Int). It must not trigger for a `value` that is a
         // REF — unify_float passes Cell.Ref(pairIdx) here (bug):
         // a Ref value against an unbound target needs Unify's young-to-old
         // BindVarToVar discipline, and against a bound value needs the full
@@ -172,24 +181,27 @@ public sealed partial class Activation
                 return c.Data == value.Data;
         }
 
-        int valueSlot = AllocateHeap(1);
-        _heap[valueSlot] = value;
-        return Unify(heapIdx, valueSlot);
+        // The cells unify as they are, as the interpreter's unify_value_x read
+        // arm does. Not a throwaway heap slot holding the value: Tier-1 reaches
+        // here for every unify_value in read mode, and the slot cost it 40% more
+        // heap than Tier-0 on list code.
+        return UnifyCells(value, Cell.Ref(heapIdx));
     }
 
     // ----- Compound / list construction (write-mode entry points) -----
 
     /// <summary>
-    /// Implements <c>put_structure</c>: allocates a FUNCTOR cell on the heap and stores an
+    /// Implements <c>put_structure</c>: allocates a functor cell on the heap and stores an
     /// inline STR cell pointing at it in <c>X[<paramref name="regIdx"/>]</c> (ADR-017: no
     /// separate on-heap STR header), then enters write mode with <see cref="UnifyPointer"/>
     /// at the position where the first argument will be written.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutStructure(int functorId, int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
         // ADR-017 phase 2: the STR tag rides inline in the register, pointing
-        // straight at the FUNCTOR cell; the args follow. A structure is
+        // straight at the functor cell; the args follow. A structure is
         // functor + n args, not STR-header + functor + n args. Whole-structure
         // unification no longer pays a materialise copy thanks to the
         // cell-based UnifyCells path.
@@ -206,6 +218,7 @@ public sealed partial class Activation
     /// mode with a fresh write-pointer stack, so a non-last nested compound arg
     /// can write its ref into a pre-reserved slot and resume the parent. The
     /// reserve size is baked by the compiler — no functor-table lookup.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutStructureReserved(int functorId, int regIdx, int argCount)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
@@ -234,6 +247,7 @@ public sealed partial class Activation
         PushWriteFrame(0, 2);
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void PushWriteFrame(int resume, int remaining)
     {
         if (_writeSp >= _writeResume.Length)
@@ -275,8 +289,7 @@ public sealed partial class Activation
     // slot, so no deref, no allocation — the common case when matching an
     // already-built compound), and a NoInlining cold body for everything
     // else (deref, var-binding write mode, attvar, fail).
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStructure(int functorId, int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved
@@ -327,7 +340,7 @@ public sealed partial class Activation
         if (finalCell.Tag == Tag.Ref)
         {
             // ADR-017 phase 2: bind the plain var directly to an inline STR
-            // cell pointing at the FUNCTOR cell; the args follow. No separate
+            // cell pointing at the functor cell; the args follow. No separate
             // on-heap STR header (functor + n args, not STR + functor + n).
             int f = AllocateHeap(1);
             _heap[f] = Cell.Functor(functorId);
@@ -360,8 +373,7 @@ public sealed partial class Activation
 
     /// <summary>Mode-aware <c>unify_*</c> for ground value cells
     /// (atom / int / nil / float-via-ref / etc.).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool UnifyArgCell(Cell value)
     {
         int ptr = _unifyPointer;
@@ -369,7 +381,7 @@ public sealed partial class Activation
         {
             // A bare ATTVAR goes in as a REF to its home, the mirror of
             // UnifyVariableX reading one out. Copying the cell would make a
-            // SECOND variable claiming the same attributes, and the attribute
+            // second variable claiming the same attributes, and the attribute
             // table keys on a cell's own address: the copy's lookup finds
             // nothing, which surfaced as KeyNotFoundException out of GetAttr.
             if (value.Tag == Tag.AttVar) value = Cell.Ref(value.AsHeapIndex);
@@ -409,8 +421,7 @@ public sealed partial class Activation
     // temp register, no heap allocation, no register grow) and a cold slow path
     // (write mode, or a slot beyond the register bank). Surfaced as ~13% of a
     // list-processing tight loop in a dotnet-trace profile.
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void UnifyVariableX(int slot)
     {
         if (!_writeMode && slot < _registers.Length)
@@ -472,30 +483,38 @@ public sealed partial class Activation
 
     /// <summary><c>unify_variable_y</c>: first occurrence of a
     /// permanent variable inside a compound.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public void UnifyVariableY(int slot)
     {
-        int ptr = _unifyPointer;
-        if (_writeMode)
-        {
-            if (_reservedWrite)
-            {
-                _heap[ptr] = Cell.UnboundVar(ptr);
-                SetY(slot, Cell.Ref(ptr));
-                _unifyPointer = ptr + 1;
-                OnReservedArgWritten();
-                return;
-            }
-            int idx = AllocateHeap(1);
-            _heap[idx] = Cell.UnboundVar(idx);
-            SetY(slot, Cell.Ref(idx));
-        }
-        else
+        if (!_writeMode)
         {
             // See UnifyVariableX: a bare ATTVAR is captured as a REF to
             // its home so its identity survives the copy.
-            Cell src = _heap[ptr];
-            SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
+            int rp = _unifyPointer;
+            Cell src = _heap[rp];
+            SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(rp) : src);
+            _unifyPointer = rp + 1;
+            return;
         }
+        UnifyVariableYWrite(slot);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void UnifyVariableYWrite(int slot)
+    {
+        int ptr = _unifyPointer;
+        if (_reservedWrite)
+        {
+            _heap[ptr] = Cell.UnboundVar(ptr);
+            SetY(slot, Cell.Ref(ptr));
+            _unifyPointer = ptr + 1;
+            OnReservedArgWritten();
+            return;
+        }
+        int idx = AllocateHeap(1);
+        _heap[idx] = Cell.UnboundVar(idx);
+        SetY(slot, Cell.Ref(idx));
         _unifyPointer = ptr + 1;
     }
 
@@ -541,6 +560,7 @@ public sealed partial class Activation
     /// stores a REF in <c>X[<paramref name="regIdx"/>]</c>, and enters write mode with
     /// <see cref="UnifyPointer"/> at the head position.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void PutList(int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
@@ -560,11 +580,11 @@ public sealed partial class Activation
     //
     // The IL tier's twin of the interpreter superinstructions: the
     // WAM window `get_list Ai; unify_* ; unify_*` — the complete match/build of
-    // one cons cell — becomes ONE call instead of three. The generic trio pays
+    // one cons cell — becomes one call instead of three. The generic trio pays
     // three call boundaries plus _writeMode/_unifyPointer field traffic between
-    // them, and the WRITE half (building a list) lived entirely in NoInlining
+    // them, and the write half (building a list) lived entirely in NoInlining
     // slow paths; here both halves are straight-line, and the write half does
-    // ONE two-cell bump instead of two single-cell allocations. Anything off
+    // one two-cell bump instead of two single-cell allocations. Anything off
     // the two fast shapes (attvar, PSTR, bound non-list, register growth)
     // delegates to the exact generic sequence, so semantics are preserved by
     // construction. Emitted by IlPredicateCompiler's peephole; the bytecode
@@ -573,8 +593,7 @@ public sealed partial class Activation
     /// <summary><c>get_list Ai; unify_variable_x H; unify_variable_x T</c> —
     /// destructure (read) or build (write) a cons whose head and tail are both
     /// fresh temp variables.</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetListVarXVarX(int reg, int h, int t)
     {
         Cell regCell = _registers[reg];
@@ -602,9 +621,20 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Lis)
+            {
+                // Read through a reference: an argument bound to a list, the
+                // usual register content. The fast path's read, one deref on.
+                int ptr = fc.AsHeapIndex;
+                Cell hc = _heap[ptr];
+                _registers[h] = hc.Tag == Tag.AttVar ? Cell.Ref(ptr) : hc;
+                Cell tc = _heap[ptr + 1];
+                _registers[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: one bump for the pair; bind the var to an inline LIS
+                // Write: one bump for the pair; bind the var to an inline LIS
                 // (ADR-017 — no on-heap header), exactly GetListSlow's layout.
                 int pair = AllocateHeap(2);
                 _heap[pair] = Cell.UnboundVar(pair);
@@ -626,8 +656,7 @@ public sealed partial class Activation
     /// the cons whose head is an already-seen value (the classic list-builder
     /// clause head <c>[H|R]</c> after <c>H</c> was extracted from another
     /// argument — nreverse's <c>conc</c>, partition outputs).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetListValXVarX(int reg, int v, int t)
     {
         Cell regCell = _registers[reg];
@@ -651,11 +680,20 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Lis)
+            {
+                // Read through a reference, as GetListVarXVarXSlow.
+                int ptr = fc.AsHeapIndex;
+                if (!UnifyHeapWithCell(ptr, _registers[v])) return false;
+                Cell tc = _heap[ptr + 1];
+                _registers[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: store the value cell verbatim (unify_value_x write
+                // Write: store the value cell verbatim (unify_value_x write
                 // semantics — UnifyArgCell's write arm), tail fresh.
-                // occurs_check (the FLAG): here the BIND comes after the
+                // occurs_check (the flag): here the bind comes after the
                 // store, so the pre-bind test is the classic one — does the
                 // variable about to be bound occur in the head value?
                 if (!OccursAllowsStore(home, _registers[v])) return false;
@@ -676,8 +714,7 @@ public sealed partial class Activation
     /// <summary><c>get_structure f/2 Ai; unify_variable_x A; unify_variable_x B</c> —
     /// the arity-2 twin of <see cref="GetListVarXVarX"/> (serialize's
     /// <c>pair(X,Y)</c> tree nodes and every binary-constructor head).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStruct2VarXVarX(int functorId, int reg, int a, int b)
     {
         Cell regCell = _registers[reg];
@@ -706,9 +743,20 @@ public sealed partial class Activation
         {
             int home = Deref(regCell.AsHeapIndex);
             Cell fc = _heap[home];
+            if (fc.Tag == Tag.Str)
+            {
+                // Read through a reference, as GetListVarXVarXSlow.
+                int f = fc.AsHeapIndex;
+                if (_heap[f].AsFunctorId != functorId) return false;
+                Cell ac = _heap[f + 1];
+                _registers[a] = ac.Tag == Tag.AttVar ? Cell.Ref(f + 1) : ac;
+                Cell bc = _heap[f + 2];
+                _registers[b] = bc.Tag == Tag.AttVar ? Cell.Ref(f + 2) : bc;
+                return true;
+            }
             if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
             {
-                // WRITE: functor + both args in ONE bump; inline STR bind
+                // Write: functor + both args in one bump; inline STR bind
                 // (ADR-017 phase 2 — no on-heap header).
                 int f = AllocateHeap(3);
                 _heap[f] = Cell.Functor(functorId);
@@ -728,8 +776,7 @@ public sealed partial class Activation
 
     /// <summary><c>get_structure f/2 Ai; unify_value_x A; unify_value_x B</c> —
     /// both args already-seen values (serialize's tree-rebuild heads).</summary>
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetStruct2ValXValX(int functorId, int reg, int a, int b)
     {
         Cell regCell = _registers[reg];
@@ -776,8 +823,7 @@ public sealed partial class Activation
     // allocation; the common case when consuming an existing list) and a cold
     // slow path (deref, var-binding write mode, attvar, fail). ~10% of a
     // list-processing tight loop in a dotnet-trace profile.
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     public bool GetList(int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved
@@ -846,7 +892,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Lazily unconses a non-empty PSTR into a heap <c>[Head|Tail]</c>
-    /// pair and returns the pair's index. A partial string IS the list it
+    /// pair and returns the pair's index. A partial string is the list it
     /// represents, so both list cursors — <see cref="GetListSlow"/> (a callee
     /// head matching <c>[H|T]</c>) and <see cref="UnifyList"/> (an inline list
     /// pattern, which compiles to a <c>unify_list</c> run) — need it. They had
@@ -891,12 +937,12 @@ public sealed partial class Activation
 
     /// <summary>ADR-019 <c>unify_structure</c>: build (write) or match (read) a
     /// nested compound at the parent's current argument and descend into its
-    /// args. Write mode allocates the nested FUNCTOR cell, writes an inline STR
+    /// args. Write mode allocates the nested functor cell, writes an inline STR
     /// ref to it into the parent's current arg slot, and moves
     /// <see cref="UnifyPointer"/> to the nested's first arg. Read mode derefs the
     /// parent's current arg and binds it (var → fresh structure, switch to write)
     /// or matches it (STR with the same functor, stay read), failing otherwise.
-    /// Emitted only for a nested compound in the LAST argument position, so the
+    /// Emitted only for a nested compound in the last argument position, so the
     /// parent is never resumed — the build stays linear, no write-pointer stack.</summary>
     public bool UnifyStructure(int functorId)
     {
@@ -921,7 +967,7 @@ public sealed partial class Activation
                 return true;
             }
             int slot = AllocateHeap(1);          // parent's current arg slot
-            int f = AllocateHeap(1);             // nested FUNCTOR cell (contiguous)
+            int f = AllocateHeap(1);             // nested functor cell (contiguous)
             _heap[f] = Cell.Functor(functorId);
             _heap[slot] = Cell.Str(f);
             _unifyPointer = f + 1;

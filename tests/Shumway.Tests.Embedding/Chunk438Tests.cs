@@ -43,7 +43,7 @@ public class Chunk438Tests
     public void EqualsDollarDollar_EmptyAtom_FlagOn()
     {
         var e = new PrologEngine();
-        // X=$$ — `=` followed by the EMPTY $-quoted atom (like '').
+        // X=$$ — `=` followed by the empty $-quoted atom (like '').
         // Pre-fix this munched `=$$` into one symbolic atom.
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).
@@ -69,7 +69,7 @@ public class Chunk438Tests
     public void EqDollar_StillOneSymbolAtom_FlagOff()
     {
         var e = new PrologEngine();
-        // ISO maximal munch: with the flag OFF, `=$` is a single
+        // ISO maximal munch: with the flag off, `=$` is a single
         // symbolic atom — usable as an operator once declared.
         e.ConsultString("""
             :- op(700, xfx, =$).
@@ -83,8 +83,8 @@ public class Chunk438Tests
     // ------------------------------------------------------------------
 
     // A native block the compiler cannot handle — a call to a function the interop
-    // class does not provide, C control flow, or un-parseable text — is a CONSULT
-    // ERROR, never a silent no-op (a no-op'd block would make the program misbehave
+    // class does not provide, C control flow, or un-parseable text — is a consult
+    // error, never a silent no-op (a no-op'd block would make the program misbehave
     // without the author noticing). The raw span is still captured
     // (NativeBlockCaptureTests); a handled block running end-to-end is in
     // NativeWiringTests.
@@ -134,7 +134,7 @@ public class Chunk438Tests
     {
         var e = new PrologEngine();
         // `-->` appears before the body `{`, so the brace is a real
-        // Prolog goal that must EXECUTE (Y is X * 2), not be skipped.
+        // Prolog goal that must execute (Y is X * 2), not be skipped.
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).
             double(X) --> [X], { Y is X * 2 }, [Y].
@@ -151,7 +151,7 @@ public class Chunk438Tests
     {
         var e = new PrologEngine();
         // The saw-arrow state is per clause: the DCG rule's braces are Prolog
-        // (Y is X+1 as an ordinary goal); the NEXT (non-DCG) clause's braces are
+        // (Y is X+1 as an ordinary goal); the next (non-DCG) clause's braces are
         // native — here a compilable native-arithmetic block (R is 1+1).
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).

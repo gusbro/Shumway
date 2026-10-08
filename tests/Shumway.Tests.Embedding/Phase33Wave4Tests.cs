@@ -18,7 +18,7 @@ public class Phase33Wave4Tests
     // ---- L2 sync default: promotion still deterministic (worker-backed) ----
 
     // NB: the promotable predicates below are 2-clause on purpose — a local
-    // single-clause pure rule gets UNFOLDED into its caller at query setup
+    // single-clause pure rule gets unfolded into its caller at query setup
     // (MetaWrapperUnfold), so no Call ever dispatches and nothing promotes.
 
     [Fact]
@@ -35,6 +35,7 @@ public class Phase33Wave4Tests
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("inc(1, Y), Y == 2.").Success);
         // Default mode: the threshold-crossing call waited for the compile.
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("inc(41, Y), Y == 42.").Success);
     }
@@ -72,7 +73,7 @@ public class Phase33Wave4Tests
     }
 
     // ---- L2 background + mutation while in flight: the stale dynamic snapshot
-    //      must NOT install over the logical-update view. ----
+    //      must not install over the logical-update view. ----
 
     [Fact]
     public void L2_Background_MutationInvalidatesInFlightSnapshot()
@@ -92,13 +93,13 @@ public class Phase33Wave4Tests
         Assert.True(e.IlPromotion.WaitForPendingPromotions());
         Assert.True(e.Query("d(2).").Success);
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2].").Success);
-        // And it can still re-promote with the CURRENT clauses afterwards.
+        // And it can still re-promote with the current clauses afterwards.
         for (int i = 0; i < 10; i++) Assert.True(e.Query("d(2).").Success);
         Assert.True(e.IlPromotion.WaitForPendingPromotions());
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2].").Success);
     }
 
-    // ---- L3: the 16KB Sigil size cap relaxes to 64KB under background
+    // ---- L3: the 16KB IL size cap relaxes to 64KB under background
     //      compilation (a long emit is latency off-thread, not a query stall). ----
 
     [Fact]
@@ -140,8 +141,7 @@ public class Phase33Wave4Tests
     {
         // ~4200 facts ≈ 100 KB bytecode — the corpus's worst real predicate
         // (pty_name_l/3, 101.6 KB) was above the old 64 KB background cap and
-        // stayed Tier-0. The re-measured LINEAR Sigil curve justified raising
-        // the default cap to 256 KB; this pins that a corpus-scale table
+        // stayed Tier-0. The default cap is 256 KB; this pins that a corpus-scale table
         // promotes out of the box (default engine, background default).
         var sb = new System.Text.StringBuilder(":- public big/1.\n");
         for (int i = 0; i < 4200; i++) sb.Append("big(a").Append(i).Append(").\n");
@@ -152,9 +152,9 @@ public class Phase33Wave4Tests
         Assert.True(e.Query("big(a5).").Success);
         Assert.True(e.Query("big(a6).").Success);
         // Settle like the sibling test above: IsPromoted's own wait gives up
-        // at 10 s, and under the parallel gate a 100 KB Sigil emit on a
+        // at 10 s, and under the parallel gate a 100 KB emit on a
         // saturated 4-core box legitimately takes longer — the pin is that
-        // promotion COMPLETES, not that it wins a load race.
+        // promotion completes, not that it wins a load race.
         Assert.True(e.IlPromotion.WaitForPendingPromotions(120_000),
             "background compile of the corpus-scale table timed out");
         Assert.True(e.IlPromotion.IsPromoted(fid),
@@ -163,7 +163,7 @@ public class Phase33Wave4Tests
         Assert.False(e.Query("big(zzz).").Success);
     }
 
-    // ---- L1 (Stage B.4): a promotion that happens MID-QUERY patches the
+    // ---- L1 (Stage B.4): a promotion that happens mid-query patches the
     //      remaining generic call sites; the rest of the query stays correct. ----
 
     [Fact]
@@ -178,11 +178,12 @@ public class Phase33Wave4Tests
             """);
         int fid = Fid("sumd", 3);
         Assert.False(e.IlPromotion.IsPromoted(fid));
-        // ONE query recursing 100 deep — the self-call dispatches per iteration,
-        // crosses the threshold MID-QUERY, promotes, and (Stage B.4) the
+        // One query recursing 100 deep — the self-call dispatches per iteration,
+        // crosses the threshold mid-query, promotes, and (Stage B.4) the
         // persistent-buffer self-call site is patched to ExecuteIl/CallIl for the
         // remaining recursion. sum(2*i, i=1..100) = 10100 must still come out.
         Assert.True(e.Query("sumd(100, 0, S), S == 10100.").Success);
+        e.IlPromotion.WaitForPendingPromotions();
         Assert.True(e.IlPromotion.IsPromoted(fid));
         // Subsequent queries keep working through the patched persistent code.
         Assert.True(e.Query("sumd(10, 0, S), S == 110.").Success);

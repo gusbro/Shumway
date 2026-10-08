@@ -6,9 +6,9 @@ namespace Shumway.Compiler.Parsing;
 ///
 /// <para>The convention: <c>x</c> means an argument must have a strictly lower
 /// precedence than the operator; <c>y</c> means it may have equal-or-lower
-/// precedence. So <c>yfx</c> (left-associative infix) lets the LEFT operand have
+/// precedence. So <c>yfx</c> (left-associative infix) lets the left operand have
 /// the same precedence as the operator (so chains group left-to-right), while
-/// requiring the RIGHT operand to be strictly lower.</para>
+/// requiring the right operand to be strictly lower.</para>
 /// </summary>
 public enum OperatorType
 {

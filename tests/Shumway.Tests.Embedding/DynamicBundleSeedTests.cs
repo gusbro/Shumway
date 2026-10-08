@@ -32,7 +32,7 @@ public class DynamicBundleSeedTests
     [Fact]
     public void DynamicPredicate_WithClauses_DispatchesFromBundle()
     {
-        // main is dynamic AND has a body — the Blint shape.
+        // main is dynamic and has a body — the Blint shape.
         var bundle = LinkSource(
             ":- dynamic main/0.\n"
             + "greeting(hello).\n"

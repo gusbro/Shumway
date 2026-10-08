@@ -6,7 +6,7 @@ namespace Shumway.Compiler.Parsing;
 /// <summary>
 /// The single canonical source-to-clauses transform pipeline applied before WAM
 /// compilation. Every consumer — the engine's consult / assert / query paths and
-/// the <see cref="Wam.PredicateDisassembler"/> — runs clauses through THIS method
+/// the <see cref="Wam.PredicateDisassembler"/> — runs clauses through this method
 /// so the compiled (and disassembled) code is identical to what executes.
 ///
 /// <para>Order matters: DCG rule expansion first (<c>--&gt;</c> → ordinary
@@ -22,14 +22,14 @@ public static class ClausePipeline
     /// pipeline. Pass the engine's live <see cref="ModeTable"/>; tooling that has
     /// no mode declarations passes a fresh empty one.
     /// <paramref name="inlineIte"/> (ADR-025) enables the inline if-then-else
-    /// lowering for eligible plain-goal constructs — STATIC compilation paths
+    /// lowering for eligible plain-goal constructs — static compilation paths
     /// only; the runtime assert path must pass false (the incremental clause
     /// append doesn't rebase intra-clause branch operands).</summary>
     /// <param name="helperIdProvider">Synthesized-helper id source.
     /// Activation consult/assert paths pass the ENGINE's monotonic sequence so two
     /// transforms into the same module never reuse a helper name; null keeps the
     /// per-Apply counter (standalone tooling, where module mangling isolates).</param>
-    /// <param name="helperPrefix">Reserved namespace for the QUERY
+    /// <param name="helperPrefix">Reserved namespace for the query
     /// stub's helpers (<c>$q</c>): names are reused query-to-query (bounded atom
     /// space) and can never collide with consult-time helper names.</param>
     /// <param name="dcgFailFast">Enables the DCG leading-terminal hoist. Debug

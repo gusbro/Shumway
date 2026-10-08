@@ -317,7 +317,7 @@ public class CoroutiningTests
         // Regression: dif re-suspended on every partial binding without
         // retiring the previous incarnation, so the residual repeated the
         // same constraint many times. Here A's two bindings drive two
-        // re-suspensions; the projection must still show exactly ONE dif.
+        // re-suspensions; the projection must still show exactly one dif.
         var sol = Co().Query(
             "dif(A, [C|B]), A = [[]|_], A = [B], "
             + "copy_term(C, _Cc, Gs), Gs = [G], length(Gs, 1).");
@@ -467,7 +467,7 @@ public class CoroutiningTests
     [Fact]
     public void When_Ground_WaitsForEverySubterm()
     {
-        // Must NOT fire until both X and Y are bound (the re-attach path).
+        // Must not fire until both X and Y are bound (the re-attach path).
         var sol = Co().Query(
             "when(ground(f(X, Y)), Z = g), X = 1, ( var(Z) -> Y = 2 ; throw(too_early) ).");
         Assert.True(sol.Success);
@@ -518,7 +518,7 @@ public class CoroutiningTests
         Assert.Contains("domain_error", ex.Message);
     }
 
-    // ===== when/2 and ?=, across an ALIASING =====
+    // ===== when/2 and ?=, across an aliasing =====
     // Binding one variable to another is not what releases a frozen goal, so
     // a condition over two variables needed its own look at the moment they
     // became one.
@@ -581,14 +581,14 @@ public class CoroutiningTests
         Assert.True(Co().Query("dif(A, B), A = 1, B = 2.").Success);
     }
 
-    // ===== dif/2 keeps ONE copy of a constraint it already has =====
+    // ===== dif/2 keeps one copy of a constraint it already has =====
     // The unifier of the two terms is what a dif really constrains, so terms
-    // that unify the same way ARE the same constraint. Storing that form makes
+    // that unify the same way are the same constraint. Storing that form makes
     // equivalent posts recognisable, and a redundant one is then not posted at
     // all: the store stays small (less to re-check on every later binding) and
     // the top level shows the constraint once.
 
-    /// <summary>An engine that can COUNT the live dif suspensions a variable
+    /// <summary>An engine that can count the live dif suspensions a variable
     /// carries: the store measured rather than described.</summary>
     private static PrologEngine CoCounting()
     {
@@ -633,9 +633,9 @@ public class CoroutiningTests
     [Fact]
     public void ADifOverOneArgumentReducesToThatArgument()
     {
-        // dif(-X, -Y) unifies by {X = Y} alone, so it IS dif(X, Y): one pair in
+        // dif(-X, -Y) unifies by {X = Y} alone, so it is dif(X, Y): one pair in
         // the unifier means the disjunction has a single disequality.
-        // ONE residual, and its arguments are the plain variables — before
+        // One residual, and its arguments are the plain variables — before
         // this it read back as dif(-X, -Y), the shape as posted.
         Assert.True(Co().Query(
             "dif(-X, -Y), copy_term(X-Y, _, Gs), "
@@ -655,7 +655,7 @@ public class CoroutiningTests
     [Fact]
     public void ADifOverTwoArgumentsDoesNotReduce()
     {
-        // f(X,Y) vs f(A,B) is X\=A OR Y\=B — a real disjunction, and not any
+        // f(X,Y) vs f(A,B) is X\=A or Y\=B — a real disjunction, and not any
         // one dif. It must be kept whole, or the constraint would be wrong.
         var e = Co();
         Assert.True(e.Query("dif(f(X,Y), f(A,B)), X = A, Y = 1, B = 2.").Success);
@@ -666,11 +666,11 @@ public class CoroutiningTests
     public void OneTrialAnswersBothQuestionsAboutADif()
     {
         // Whether to suspend, and what the constraint reduces to, come from the
-        // SAME trial unification: posting a dif never unifies twice. The pair
+        // same trial unification: posting a dif never unifies twice. The pair
         // names the caller's own variables — it is the cells, not a copy.
         // Which of the two the trial happened to bind decides the order here;
         // '$dif_canon' orients it afterwards. What matters is that both members
-        // ARE the caller's variables, not copies of them.
+        // are the caller's variables, not copies of them.
         var e = Co();
         Assert.True(e.Query(
             @"'$dif_check'(-X, -Y, Out, Canon), Out \== none, "
@@ -690,7 +690,7 @@ public class CoroutiningTests
     [Fact]
     public void ACopyCarriesNoConstraints()
     {
-        // A copy is a copy of the TERM: an attributed variable comes out
+        // A copy is a copy of the term: an attributed variable comes out
         // plain, so the copy of a constrained term is unconstrained. That is
         // the whole contract of copy_term/2 here, and copy_term/3 is what
         // exists for the other reading.
@@ -721,7 +721,7 @@ public class CoroutiningTests
     [Fact]
     public void TheCompatSpellingIsTheSamePredicate()
     {
-        // Libraries written for systems whose copy_term/2 DOES carry
+        // Libraries written for systems whose copy_term/2 does carry
         // attributes call copy_term_nat/2 to get the copy this engine's
         // copy_term/2 already gives. It stays callable, and it stays the
         // same behaviour: two names for one thing must not drift into a
@@ -749,7 +749,7 @@ public class CoroutiningTests
     [Fact]
     public void ACutStillCutsInsideItsOwnFrozenGoal()
     {
-        // The other half of the same rule: within ONE frozen goal the cut is
+        // The other half of the same rule: within one frozen goal the cut is
         // that goal's own, so it does commit to the first alternative.
         var e = Co();
         Assert.True(e.Query(

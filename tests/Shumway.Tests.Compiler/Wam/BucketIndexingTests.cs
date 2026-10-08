@@ -6,12 +6,12 @@ using Xunit;
 namespace Shumway.Tests.Compiler.Wam;
 
 /// <summary>
-/// ADR-028 — sibling-argument and structure-keyed indexing INSIDE a value bucket.
+/// ADR-028 — sibling-argument and structure-keyed indexing inside a value bucket.
 /// Where ADR-027 sub-indexes a list/struct value, ADR-028 replaces any
 /// ≥ 2-clause value bucket's linear chain with a nested switch on a sibling
 /// argument (reusing <c>switch_on_{atom,integer,structure}_arg</c>) or on a
 /// structure-functor sub-key (the new <c>switch_on_structure_sub</c>). These
-/// tests check the nested opcode is emitted (or correctly NOT emitted);
+/// tests check the nested opcode is emitted (or correctly not emitted);
 /// end-to-end correctness / determinism / the ADR-027 unbound-default soundness
 /// fix live in Shumway.Tests.Embedding.
 /// </summary>
@@ -40,7 +40,7 @@ public class BucketIndexingTests
     {
         // The arg0='a' bucket has 3 clauses distinguished by arg1 (x/y/z). Before
         // ADR-028 that bucket was a linear try/retry/trust; now it nests a
-        // switch_on_atom_arg on arg1. There are TWO: one on the var-arg0 cascade
+        // switch_on_atom_arg on arg1. There are two: one on the var-arg0 cascade
         // path (arg0 unbound) and one nested inside the 'a' value bucket.
         var cp = Compile("""
             h(a,x,1).
@@ -70,7 +70,7 @@ public class BucketIndexingTests
     [Fact]
     public void ListHeadFunctors_EmitStructureSub()
     {
-        // arg0 is a list in every clause; the heads are distinct FUNCTORS
+        // arg0 is a list in every clause; the heads are distinct functors
         // (parse/1, amp/1, lit/1) — not atoms/ints — so the new structure-keyed
         // sub fires (ADR-027 atom/int sub cannot key a functor).
         var cp = Compile("""
@@ -85,7 +85,7 @@ public class BucketIndexingTests
     [Fact]
     public void StructSiblingFunctors_NestSwitchOnStructureArg()
     {
-        // arg0='k' bucket (3 clauses) distinguished by the FUNCTOR of arg1.
+        // arg0='k' bucket (3 clauses) distinguished by the functor of arg1.
         var cp = Compile("""
             s(k,f(1),a).
             s(k,g(2),b).

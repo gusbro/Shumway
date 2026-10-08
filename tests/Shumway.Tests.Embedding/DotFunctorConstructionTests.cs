@@ -4,9 +4,9 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary><c>'.'/2</c> is the list constructor, so a term built with that
-/// name and two arguments IS a cons, however it was built. The reader has
+/// name and two arguments is a cons, however it was built. The reader has
 /// always known it: <c>X = '.'(1, [])</c> gives <c>[1]</c>. The two builtins
-/// that CONSTRUCT a term from a name and an arity did not, so
+/// that construct a term from a name and an arity did not, so
 /// <c>functor/3</c> and <c>=../2</c> produced a term that spelled a list,
 /// printed as <c>.(1,[])</c>, and compared different from the list it spells.
 /// The round trip <c>T =.. L, U =.. L</c> therefore did not give back the

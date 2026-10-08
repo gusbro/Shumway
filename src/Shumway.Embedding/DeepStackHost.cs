@@ -16,7 +16,7 @@ namespace Shumway.Embedding;
 /// never take the application down.</para></summary>
 public static class DeepStackHost
 {
-    /// <summary>The stack a tool's main thread gets. 64 MB of ADDRESS space —
+    /// <summary>The stack a tool's main thread gets. 64 MB of address space —
     /// reserved, not committed, so the pages a run never touches cost
     /// nothing.</summary>
     public const int DefaultStackBytes = 64 * 1024 * 1024;

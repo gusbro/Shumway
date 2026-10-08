@@ -39,13 +39,30 @@ internal static class CompatLibraries
             "quads"  => Quads,
             "$project_atts" => ProjectAtts,
             "atts" => Atts,
-            // Covered by Shumway's prelude / builtins — importing them is a
-            // no-op that just marks the module available. `loader` is Scryer's
-            // bootstrap module; the one predicate real libraries import from it
-            // (strip_module/3 — dcgs.pl) is already in the prelude.
+            // Scryer's bootstrap module. It used to be a no-op on the
+            // grounds that the one predicate real libraries import from it
+            // (strip_module/3) is already in the prelude — but dcgs.pl does
+            // not CALL it bare, it calls `loader:strip_module(...)`, and a
+            // qualified call needs a module of that name to have it. With
+            // the no-op there is no such module, so dcgs raised
+            // existence_error: loader/0, atts failed with it, the `attribute`
+            // operator was never declared, and Scryer's clpz.pl then failed
+            // to parse at its `:- attribute clpz/1, ...` line. A whole
+            // constraint library, lost to an empty shim.
+            "loader" =>
+                ":- module(loader, [strip_module/3]).\n"
+                // The prelude has strip_module/3, but a clause here that
+                // called it would call itself, so the definition is
+                // inlined. Same semantics, single level, which is all
+                // real code writes.
+                + "strip_module(MG, M, G) :-\n"
+                + "    ( nonvar(MG), MG = M0:G0 -> M = M0, G = G0\n"
+                + "    ; G = MG, ( var(M) -> M = user ; true ) ).\n",
+            // Covered by Shumway's prelude / builtins -- importing them
+            // is a no-op that just marks the module available.
             "lists" or "charsio" or "error" or "iso_ext" or "between"
               or "apply" or "pio" or "si" or "debug" or "pairs"
-              or "ordsets" or "assoc" or "dcg" or "dcg_basics" or "loader" => "",
+              or "ordsets" or "assoc" or "dcg" or "dcg_basics" => "",
             _ => null!,
         };
         return source is not null;
@@ -1400,9 +1417,9 @@ internal static class CompatLibraries
     // succeeds. The true dif/2 would delay; a program that later forces such a
     // pair equal would observe the difference. Sufficient for the common
     // "these are already bound / will never be unified" usage.
-    // The real, SUSPENDING dif/2 lives in the coroutining library. This
+    // The real, suspending dif/2 lives in the coroutining library. This
     // entry used to be a decide-once stub — ( X \= Y -> true ; ... ) —
-    // which silently FORGOT an undecided disequality: dif(A, B) with both
+    // which silently forgot an undecided disequality: dif(A, B) with both
     // unbound succeeded and never failed anything later (Trealla
     // test0400/0402/0210 caught it over rational trees, where the real
     // dif already behaves).
@@ -1415,7 +1432,7 @@ internal static class CompatLibraries
     // per-module attribute-list primitives ('$put_to_attr_list' & co, the
     // ones the Scryer clpz certification exercised). The module a
     // put_atts/get_atts call belongs to is the module of the clause being
-    // COMPILED — baked in by goal_expansion via prolog_load_context, which is
+    // compiled — baked in by goal_expansion via prolog_load_context, which is
     // how Scryer's own atts.pl does it. Client modules define their
     // verify_attributes/3 hook; the engine's per-module dispatch (ADR-040)
     // finds it without registration.
@@ -1502,7 +1519,7 @@ internal static class CompatLibraries
     // module project via the module's own attribute_goals//1 when it defines
     // one (the Scryer/SICStus convention — freeze, clpz), else fall back to
     // raw re-runnable put_atts/put_attr goals. A projection hook that
-    // CONSUMES attributes as it emits (freeze's `put_atts(V, -frozen(_))`)
+    // consumes attributes as it emits (freeze's `put_atts(V, -frozen(_))`)
     // is safe: callers run this inside findall/3, whose backtracking undoes
     // the trailed attribute mutations.
     private const string ProjectAtts = """

@@ -58,7 +58,7 @@ public class GlobalVarTrailTests
         // and the original variable is untouched.
         var e = new PrologEngine();
         e.Query("use_module(library(coroutining)).");
-        // frozen goal survives and fires when the RETRIEVED COPY is bound
+        // frozen goal survives and fires when the retrieved copy is bound
         // (observed by side effect: residualization copies the goal's outer
         // variables too, so a binding would land on the copy)
         Assert.True(e.Query(
@@ -80,10 +80,10 @@ public class GlobalVarTrailTests
 
     [Fact]
     public void BbGet_FailsCleanlyForUnsetKey()
-        // bb_get's body is an inline catch in the BAKED prelude: its recovery
+        // bb_get's body is an inline catch in the baked prelude: its recovery
         // is the bare '$catchrec_N' the catch frame stores, compiled as
         // '$prelude$$catchrec_N'. The bare alias must come from the '$$' seam --
-        // splitting the mangled name at the FIRST '$' sees no module and drops
+        // splitting the mangled name at the first '$' sees no module and drops
         // the alias, so the recovery dispatch had no address and this query
         // crashed the engine instead of failing (their clpz's bb_get-based
         // global state was the finder).

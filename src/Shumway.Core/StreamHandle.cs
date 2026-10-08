@@ -53,7 +53,7 @@ public sealed class StreamHandle
     /// alias atom anywhere a stream is required.</summary>
     public string? Alias { get; internal set; }
 
-    /// <summary>Engine encoding name of a TEXT stream (utf8, iso_latin_1,
+    /// <summary>Engine encoding name of a text stream (utf8, iso_latin_1,
     /// ascii, utf16le/be, utf32le/be) — what stream_property/2 reports.
     /// Null on binary streams.</summary>
     public string? EncodingName { get; set; }
@@ -65,7 +65,7 @@ public sealed class StreamHandle
 
     /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
     /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
-    /// <c>error</c> (a read PAST eof raises
+    /// <c>error</c> (a read past eof raises
     /// <c>permission_error(input, past_end_of_stream, S)</c>), or
     /// <c>reset</c>.</summary>
     public string EofAction { get; set; } = "eof_code";
@@ -83,7 +83,7 @@ public sealed class StreamHandle
     // ----- lazy text windows (ADR-047 phrase_from_stream) -----
     //
     // Reading is a side effect and backtracking cannot undo it, so a lazy
-    // window has to be IDEMPOTENT: waking the same cell twice — which happens
+    // window has to be idempotent: waking the same cell twice — which happens
     // whenever a grammar tries one clause, fails, and tries the next — must
     // hand back the same characters, not the ones after them. One window is
     // cached at a time, keyed by its character offset, which is all a re-run
@@ -160,7 +160,7 @@ public sealed class PositionTrackingReader : TextReader
     /// <summary>Characters produced ahead of their <see cref="Read"/>: the
     /// CR-translation path buffers one (see <see cref="BufferAcrossCr"/>) and
     /// <see cref="PeekCodePoint"/> pushes back a surrogate pair, so two slots.
-    /// End-of-input is deliberately NOT buffered, because a reader like the
+    /// End-of-input is deliberately not buffered, because a reader like the
     /// REPL's may answer -1 now and yield more once the user types.</summary>
     private int _buffered = Empty;
     private int _buffered2 = Empty;
@@ -181,7 +181,7 @@ public sealed class PositionTrackingReader : TextReader
     /// <summary>The platform default: on Windows a text stream's line
     /// terminator is CR-LF, and C stdio's text mode — hence GNU Prolog —
     /// presents it to the program as <c>\n</c>. Elsewhere the external form
-    /// already IS <c>\n</c> and nothing is translated.</summary>
+    /// already is <c>\n</c> and nothing is translated.</summary>
     public static bool TranslateNewlinesByDefault => OperatingSystem.IsWindows();
 
     public PositionTrackingReader(TextReader inner)
@@ -195,7 +195,7 @@ public sealed class PositionTrackingReader : TextReader
 
     /// <summary>Consumes the CR the caller has already peeked and returns the
     /// character it stands for: <c>\n</c> when an LF follows, the CR itself
-    /// otherwise. A LONE CR is data — only the pair is a line terminator,
+    /// otherwise. A lone CR is data — only the pair is a line terminator,
     /// matching C stdio (a classic-Mac file therefore reads unchanged).</summary>
     private int BufferAcrossCr()
     {
@@ -207,7 +207,7 @@ public sealed class PositionTrackingReader : TextReader
 
     /// <summary>The LF look-ahead behind a CR. An ill-formed sequence there
     /// (strict UTF-8 reader) must not lose the CR already in hand: answer
-    /// "not an LF" and let the error surface on the NEXT read, which is the
+    /// "not an LF" and let the error surface on the next read, which is the
     /// one positioned at the offending bytes.</summary>
     private int PeekAfterCr()
     {
@@ -268,14 +268,14 @@ public sealed class PositionTrackingReader : TextReader
 
     /// <summary>Buffer-aware peek that swallows a strict-decode error: the
     /// pushed-back half must not be lost, and the error re-surfaces on the
-    /// NEXT read, which is the one positioned at the offending bytes.</summary>
+    /// next read, which is the one positioned at the offending bytes.</summary>
     private int PeekChecked()
     {
         try { return Peek(); }
         catch (PrologRuntimeException) { return -1; }
     }
 
-    /// <summary>Reads one CODE POINT: a surrogate pair is joined into its
+    /// <summary>Reads one code point: a surrogate pair is joined into its
     /// astral value (the strict UTF-8 reader decodes full code points and
     /// presents them as pairs — this is where the char layer re-joins them).
     /// A lone surrogate reads unit-wise rather than throwing, matching
@@ -293,7 +293,7 @@ public sealed class PositionTrackingReader : TextReader
         return c;
     }
 
-    /// <summary>Peeks one CODE POINT without consuming it. Seeing an astral
+    /// <summary>Peeks one code point without consuming it. Seeing an astral
     /// character's low half forces consuming the high half; both units are
     /// pushed back and the consumed count restored, so the operation is a
     /// true peek.</summary>

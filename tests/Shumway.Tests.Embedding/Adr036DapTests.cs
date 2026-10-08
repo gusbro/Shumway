@@ -231,7 +231,7 @@ public class Adr036DapTests
     public void WaitForDapConfigured_Releases_OnConfigurationDone()
     {
         // The --dap-wait gate: the program's start blocks until the client's
-        // breakpoints are ARMED — the fix for the launch race where a goal typed in
+        // breakpoints are armed — the fix for the launch race where a goal typed in
         // the first second ran past every breakpoint.
         var (_, session, server) = StartDebuggee();
         using (session)

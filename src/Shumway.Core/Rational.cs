@@ -39,7 +39,7 @@ public readonly struct Rational : IEquatable<Rational>
     /// integer and should be represented as one, not as a rational cell.</summary>
     public bool IsInteger => Den.IsOne;
 
-    public double ToDouble() => (double)Num / (double)Den;
+    public double ToDouble() => DoubleConversion.FromRatio(Num, Den);
 
     public bool Equals(Rational other) => Num == other.Num && Den == other.Den;
     public override bool Equals(object? obj) => obj is Rational r && Equals(r);

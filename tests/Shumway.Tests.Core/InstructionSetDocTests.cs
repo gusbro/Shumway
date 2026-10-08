@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Core;
 
 /// <summary>
-/// The instruction-set reference documents each opcode's ENCODING, so a number
+/// The instruction-set reference documents each opcode's encoding, so a number
 /// in it that disagrees with the table is not a stale detail — it is wrong
 /// about the bytes on disk.
 ///

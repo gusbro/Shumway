@@ -75,7 +75,7 @@ public class LabelingHeuristicsTests
     }
 
     [Theory]
-    // Whatever the heuristic, the answer SET is the same: a heuristic
+    // Whatever the heuristic, the answer set is the same: a heuristic
     // reorders the search, it does not change what is true.
     [InlineData("variable_method(standard)")]
     [InlineData("variable_method(ff)")]

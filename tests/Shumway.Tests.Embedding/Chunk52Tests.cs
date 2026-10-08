@@ -109,6 +109,7 @@ public class Chunk52Tests
             """);
         // First query warms.
         Assert.True(engine.Query("ok.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("ok", 0)));
         // QueryAll should yield three solutions.
         Assert.Equal(3, engine.QueryAll("ok.").Count());
@@ -131,6 +132,7 @@ public class Chunk52Tests
         Assert.True(engine.Query("p(foo).").Success);
         Assert.True(engine.Query("p(42).").Success);
         Assert.False(engine.Query("p(3.14).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 1)));
     }
 

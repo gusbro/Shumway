@@ -7,12 +7,12 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// catch/throw interacting with the attributed-variable machinery — the two
 /// engine bugs clpz's <c>with_local_attributes</c> idiom surfaced (its
-/// all_distinct runs a matching algorithm on scratch attributes, then THROWS
+/// all_distinct runs a matching algorithm on scratch attributes, then throws
 /// to undo them, catching inside the propagation itself):
 ///
-/// <para>1. A throw caught by a catch/3 opened INSIDE a verify_attributes
+/// <para>1. A throw caught by a catch/3 opened inside a verify_attributes
 /// wakeup used to unwind the nested C# dispatch driver itself: the recovery
-/// resumed in the OUTER loop and the interrupted unification's continuation
+/// resumed in the outer loop and the interrupted unification's continuation
 /// was silently lost — the enclosing query "succeeded" having skipped every
 /// goal after the unification (Activation.NestedCatchResolver).</para>
 ///
@@ -62,7 +62,7 @@ public class NestedCatchWakeupTests
     [Fact]
     public void ThrowFromHook_WithPendingWakeups_CaughtOutside_EngineStaysSane()
     {
-        // f(V,W) = f(1,2) queues wakeups for BOTH attvars before the flush;
+        // f(V,W) = f(1,2) queues wakeups for both attvars before the flush;
         // V's hook throws (foo(7) → boom) and the catch frame's rollback
         // truncates the heap region W's queued entry points into — without
         // the queue truncation the next flush decoded garbage.
@@ -99,11 +99,11 @@ public class NestedCatchWakeupTests
     public void CutUnderActiveCatch_KeepsTheTrailForTheThrow()
     {
         // The clpz with_local_attributes idiom: mutate attributes inside a
-        // catch, then THROW to undo them wholesale. A cut between the
+        // catch, then throw to undo them wholesale. A cut between the
         // mutation and the throw (here once/1's commit; in clpz the wakeup
         // flusher's once-semantics cut) used to compact the trails against
-        // the parent CHOICE POINT only — with no parent CP that emptied
-        // them — even though the ACTIVE CATCH FRAME still needed every
+        // the parent choice point only — with no parent CP that emptied
+        // them — even though the active catch frame still needed every
         // entry for its unwind. The throw then had nothing to undo: the
         // attribute kept pointing at heap the unwind truncated (the
         // send_more_money phantom-functor crash), and plain bindings

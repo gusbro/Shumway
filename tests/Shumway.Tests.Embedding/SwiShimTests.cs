@@ -114,7 +114,7 @@ public sealed class SwiShimTests
         Assert.True(e.Query("code_type(0'5, digit(W)), W == 5.").Success);
         Assert.True(e.Query("code_type(0' , space).").Success);
         Assert.False(e.Query("code_type(0'a, digit(_)).").Success);
-        // Case conversions yield CODES (not chars, as char_type does).
+        // Case conversions yield codes (not chars, as char_type does).
         Assert.True(e.Query("code_type(0'A, to_lower(L)), L == 0'a.").Success);
         Assert.True(e.Query("code_type(0'A, upper(Lower)), Lower == 0'a.").Success);
         Assert.False(e.Query("code_type(0'A, lower(_)).").Success);

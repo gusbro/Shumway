@@ -5,13 +5,13 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// A partial string IS the code list it represents, so a callee that
+/// A partial string is the code list it represents, so a callee that
 /// head-matches <c>[H|T]</c> must accept a PSTR argument (GetListSlow's lazy
 /// uncons). Inline <c>=/2</c> always handled it (UnifyPstrLis); the head-match
 /// path returned false — which broke every Scryer-style string DCG
 /// (<c>phrase(nt(X), "text")</c>) and inline-ITE guards over string-bound
 /// variables. Also covers the compile-time <c>phrase(M:NT, L, R)</c>
-/// expansion: the two DCG arguments belong to the nonterminal INSIDE the
+/// expansion: the two DCG arguments belong to the nonterminal inside the
 /// qualification, not to <c>':'</c> itself.
 /// </summary>
 public class PstrHeadMatchTests

@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>An expected block may hold SEVERAL description sentences, and
+/// <summary>An expected block may hold several description sentences, and
 /// each is a claim of its own: they all describe the same goal, so they all
 /// have to hold. Read as one pool of alternatives instead, a transcript
 /// claiming three different answers for <c>X = 1</c> passed because the third

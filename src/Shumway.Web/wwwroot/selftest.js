@@ -124,6 +124,27 @@ export async function run(session, emit, out, editor, workspace) {
   await paint("p('unterminated");
   check('half-typed text still reproduces', editor.getText(), "p('unterminated");
 
+  // A file written on Windows ends its lines with CR LF. A carriage return in
+  // the element is a character of its line, and the caret could not climb
+  // past a blank line between two of them: the editor keeps line feeds only.
+  await paint('a.\r\n\r\nb.\r\n');
+  check('line ends arrive as line feeds', editor.getText(), 'a.\n\nb.\n');
+  {
+    program.focus();
+    const sel = getSelection();
+    sel.collapse(program, program.childNodes.length);
+    const caret = () => {
+      const r = document.createRange();
+      r.selectNodeContents(program);
+      r.setEnd(sel.focusNode, sel.focusOffset);
+      return r.toString().length;
+    };
+    const climbed = [caret()];
+    for (let i = 0; i < 3; i++) { sel.modify('move', 'backward', 'line'); climbed.push(caret()); }
+    // From the end: b., the blank line, a. -- one line per step.
+    check('the caret climbs a blank line', climbed.join(' '), '7 4 3 0');
+  }
+
   // A program-declared operator must colour as one once consulted — the payoff
   // of asking the live table instead of a fixed pattern list.
   await paint('X #= Y.');
@@ -734,19 +755,36 @@ export async function run(session, emit, out, editor, workspace) {
   // attach at threshold 1, run something hot, and the status must show it
   // promoted — and keep answering exactly what Tier-0 answered above.
   {
-    const on = await session.exports().WasmCompileControl('1');
-    const attached = on.includes('attached') || on.includes('threshold=1');
-    check('wasm_compile attaches', attached
+    const on = await session.exports().JitCompileControl('1');
+    // Threshold 1 is the batch mode, which answers "jit_compile: all -- ...".
+    const attached = on.includes('attached') || on.includes('threshold=1')
+                     || on.includes('jit_compile: all');
+    check('jit_compile attaches', attached
           || on.includes('capability is off'), true);
     if (attached) {
       await session.consult(
         'wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+      // Batch mode compiles at the boundary the page ticks after a consult.
+      await session.exports().JitCompileAllTick();
       check('promoted code still answers', await solutions('wloop(50000).'), 'true');
-      const status = await session.exports().WasmCompileControl('status');
-      check('wasm_compile status shows a promotion',
+      const status = await session.exports().JitCompileControl('status');
+      check('jit_compile status shows a promotion',
             /promoted \([1-9]/.test(status), true);
-      check('wasm_compile off answers',
-            (await session.exports().WasmCompileControl('off')).includes('off'), true);
+      // The first line of the page names the tier from the same place.
+      check('the tier is named Tier-1', await session.tierName(), 'Tier-1 WebAssembly');
+      // The form: the program is built again as continuation functions, and
+      // answers as before; nocps builds it back.
+      check('jit_compile(cps) answers',
+            (await session.exports().JitCompileControl('cps')).includes('continuation functions'), true);
+      check('the tier names the form', await session.tierName(),
+            'Tier-1 WebAssembly, continuation functions');
+      check('continuation functions still answer', await solutions('wloop(50000).'), 'true');
+      check('jit_compile(nocps) answers',
+            (await session.exports().JitCompileControl('nocps')).includes('partitions'), true);
+      check('the default form is named again', await session.tierName(), 'Tier-1 WebAssembly');
+      check('jit_compile off answers',
+            (await session.exports().JitCompileControl('off')).includes('off'), true);
+      check('off names the interpreter', await session.tierName(), 'Tier-0 interpreter');
     }
   }
 

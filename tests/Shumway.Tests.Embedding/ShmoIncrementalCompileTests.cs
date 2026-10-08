@@ -8,8 +8,8 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// The <c>--consult</c> separate-compilation invariant: every module's
 /// <c>.shmo</c> is a self-contained function of its own source. A dependency
-/// shared by several roots compiles to the SAME object whether the roots are
-/// compiled in one batch or separately, and each object carries its OWN
+/// shared by several roots compiles to the same object whether the roots are
+/// compiled in one batch or separately, and each object carries its own
 /// dynamic seeds and operators — so compiling <c>a.pl</c> then <c>b.pl</c>
 /// separately yields the same object set as one batch, with no double-seeding,
 /// and any reachability-complete subset links correctly.

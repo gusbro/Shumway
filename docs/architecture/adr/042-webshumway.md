@@ -5,7 +5,8 @@
 Shipped ([Phase 38](../../history/phase-38-closure.md), 2026-08-07).
 
 `src/Shumway.Web/`, a static site that runs the
-full engine (Tier-0), with an editor, workspaces, imported libraries and offline
+full engine (Tier-0, and Tier-1 in WebAssembly since
+[ADR-050](050-wasm-tier1-backend.md)), with an editor, workspaces, imported libraries and offline
 support. The user-facing guide is [`docs/guide/webshumway.md`](../../guide/webshumway.md).
 
 ## Context
@@ -33,9 +34,13 @@ when runtime codegen is unavailable, so the browser needed no new engine work of
 that kind. It did need the *gate* corrected: `RuntimeFeature.IsDynamicCodeSupported`
 is true under Mono-wasm interpretation, so `Shumway.Core.RuntimeCaps` is the
 capability test, and it is a `[FeatureSwitchDefinition]` the trimmer folds — the
-IL compiler and Sigil leave the payload entirely.
+IL compiler leaves the payload entirely.
 
 ### 2. Tier-0 only, and why that is not a compromise
+
+> **Superseded in part.** [ADR-050](050-wasm-tier1-backend.md) gives the
+> browser a Tier-1 that compiles to WebAssembly instead of IL, on by default in
+> WebShumway. What follows still explains why the IL compiler cannot run here.
 
 A browser does not allow runtime code generation, so Tier-1 is off. **Programs
 behave identically; only speed differs** — which is the same invariant the

@@ -2,7 +2,7 @@ using Shumway.Compiler.Ast;
 
 namespace Shumway.Embedding;
 
-/// <summary>ADR-024 — a reftype/preftype as a zero-copy CURSOR over a Prolog term,
+/// <summary>ADR-024 — a reftype/preftype as a zero-copy cursor over a Prolog term,
 /// not a copied C struct. A slot holds either a finalized term value (read from
 /// Prolog by <c>fill_par</c>, or built scalar) or a compound under construction
 /// (functor name + a sub-slot per argument). The .NET interop side reads its shape
@@ -92,7 +92,7 @@ public sealed class TermSlot
             null or VarTerm => Undef,
             IntTerm or BigIntTerm => Integer,
             FloatTerm => Floating,
-            // a Shumway atom reads back as STRING (4) — Arity uses "string"
+            // a Shumway atom reads back as string (4) — Arity uses "string"
             // for nearly everything; both atom and string map to an atom.
             AtomTerm or StringTerm => String,
             CompoundTerm => Functor,

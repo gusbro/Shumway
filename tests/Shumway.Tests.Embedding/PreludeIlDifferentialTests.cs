@@ -7,14 +7,14 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Differential harness for baking the prelude as Tier-1 IL. Every public
-/// prelude predicate is exercised with the SAME query two ways — Tier-0 WAM
+/// prelude predicate is exercised with the same query two ways — Tier-0 WAM
 /// (promotion off) and Tier-1 IL (promotion forced on the first call) — and
-/// BOTH the full solution set AND any captured output must be byte-identical.
+/// both the full solution set and any captured output must be byte-identical.
 ///
 /// <para>Crucially, each case also asserts the predicate-under-test actually
-/// PROMOTED to IL (<see cref="IlPromotionStore.IsPromoted"/>), so a silent
+/// promoted to IL (<see cref="IlPromotionStore.IsPromoted"/>), so a silent
 /// WAM-only run can never mask a divergence — the whole point is to catch a
-/// sub_atom-class latent IL miscompile BEFORE <c>--strip-wam</c> drops the WAM
+/// sub_atom-class latent IL miscompile before <c>--strip-wam</c> drops the WAM
 /// fallback. A predicate that legitimately cannot be IL (none of the public
 /// surface today) would be listed in <see cref="WamOnly"/> with a reason.</para>
 ///
@@ -91,14 +91,14 @@ public sealed class PreludeIlDifferentialTests
         new("char_type/2", "char_type(a, alnum)"),
 
         // ---- control ----
-        // Variable goal so the Phase-33 W1 MetaTransform rewrite does NOT apply —
+        // Variable goal so the Phase-33 W1 MetaTransform rewrite does not apply —
         // exercises the prelude once/1 / ignore/1 (the runtime fallback path).
         // (A literal once(G)/ignore(G) is compiled inline via the '$once_N'
         // helper and never reaches the prelude predicate.)
         new("once/1", "G = member(X, [a, b, c]), once(G)"),
         new("ignore/1", "G = fail, ignore(G)"),
         new("apply/2", "apply(inc, [5, X])"),
-        // Variable goal so MetaTransform does NOT rewrite inline — exercises
+        // Variable goal so MetaTransform does not rewrite inline — exercises
         // the prelude forall/2 + catch/3 predicates (the runtime fallback path).
         new("forall/2", "C = member(X, [2, 4, 6]), forall(C, even(X))"),
         new("forall/2", "C = member(X, [2, 3, 4]), forall(C, even(X))"),   // false case
@@ -126,11 +126,11 @@ public sealed class PreludeIlDifferentialTests
     // here means: still assert WAM==IL, but don't require promotion.
     private static readonly System.Collections.Generic.HashSet<string> WamOnly = new();
 
-    // Predicates with a KNOWN, tracked Tier-1 IL divergence not yet fixed. Each
-    // is verified to STILL diverge (a tripwire — when the underlying bug is
+    // Predicates with a known, tracked Tier-1 IL divergence not yet fixed. Each
+    // is verified to still diverge (a tripwire — when the underlying bug is
     // fixed the case here fails, prompting removal from this set). Empty now: the
-    // one entry (retractall/1) turned out NOT to be an IL bug — its warm-up
-    // retractall-on-an-undefined-predicate threw permission_error in BOTH tiers
+    // one entry (retractall/1) turned out not to be an IL bug — its warm-up
+    // retractall-on-an-undefined-predicate threw permission_error in both tiers
     // (a tier-independent retractall leniency bug, since fixed).
     private static readonly System.Collections.Generic.Dictionary<string, string> KnownIlUnsafe = new();
 
@@ -175,7 +175,7 @@ public sealed class PreludeIlDifferentialTests
     private static (System.Collections.Generic.List<string> sols, string output, bool promoted)
         Run(Case c, int ilThreshold)
     {
-        // Set the output sink ONCE before any query — write/tab/format resolve
+        // Set the output sink once before any query — write/tab/format resolve
         // through the stream registry, which syncs to engine.Out at query time,
         // so reassigning Out mid-life would silently misroute output.
         var sw = new StringWriter();

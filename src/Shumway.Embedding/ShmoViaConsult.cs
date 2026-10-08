@@ -5,10 +5,10 @@ using Shumway.Core;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Separate compilation THROUGH the consult pipeline: an ephemeral engine
+/// Separate compilation through the consult pipeline: an ephemeral engine
 /// consults the root file(s) (resolving each <c>use_module</c> chain over the
 /// given library directories), so in-file <c>term_expansion</c> /
-/// <c>goal_expansion</c> hooks actually RUN — a library that generates
+/// <c>goal_expansion</c> hooks actually run — a library that generates
 /// clauses by executing Prolog (Scryer's atts emits each module's
 /// get_atts/put_atts, clpz builds its cis* arithmetic) compiles complete,
 /// which the file-at-a-time <see cref="ShmoCompiler"/> cannot do.
@@ -17,7 +17,7 @@ namespace Shumway.Embedding;
 /// <see cref="ShmoObject"/>, and each object is <b>self-contained</b>: it
 /// carries its own clauses, the operators its consult defined, and the
 /// dynamic seeds of the predicates it declares. So a dependency (say
-/// <c>clpz</c>) compiles to the SAME <c>.shmo</c> regardless of which root
+/// <c>clpz</c>) compiles to the same <c>.shmo</c> regardless of which root
 /// pulled it in — separate compilations and a single batch produce the same
 /// object set, and any reachability-complete subset links correctly.</para>
 /// </summary>
@@ -41,9 +41,9 @@ public static class ShmoViaConsult
         return outp;
     }
 
-    /// <summary>Consults every path in <paramref name="rootPaths"/> into ONE
+    /// <summary>Consults every path in <paramref name="rootPaths"/> into one
     /// ephemeral engine (so a module shared by several roots — a library, its
-    /// dependencies — loads and compiles ONCE), and returns one object per
+    /// dependencies — loads and compiles once), and returns one object per
     /// module the consult loaded. Each result carries the module's source
     /// timestamp (the <c>.pl</c> it came from, or the runtime assembly for a
     /// baked-in library) and whether it is one of the passed roots — the
@@ -65,7 +65,7 @@ public static class ShmoViaConsult
         string? dialect = null,
         System.IO.TextWriter? warnings = null)
     {
-        // Strict: consult mode is how the TOOLCHAIN compiles sources, so a
+        // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
         // land in is what everything downstream links), where the same file
         // loaded into a live engine reports it and carries on.
@@ -95,26 +95,39 @@ public static class ShmoViaConsult
         var rootModuleSet = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (string rp in rootPaths)
         {
+            // ADR-040: a root is a library of its collection's dialect as much
+            // as the dependencies it pulls in, so it is read the way
+            // use_module would load it (the dialect's flags, operators and
+            // shim) and its module records the dialect. Read plainly, a Scryer
+            // library failed on an operator only Scryer's VM declares.
+            string? rootDialect = dialect is { Length: > 0 }
+                ? dialect
+                : e.DialectForResolvedPath(System.IO.Path.GetFullPath(rp));
             string text = Shumway.Core.TextFile.ReadAllText(rp);
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);
             string name;
-            if (m.Success) { name = m.Groups[1].Value; e.ConsultFile(rp); }
+            if (m.Success)
+            {
+                name = m.Groups[1].Value;
+                e.WithLibraryDialect(rootDialect, () => { e.ConsultFile(rp); return 0; });
+            }
             else
             {
                 name = System.IO.Path.GetFileNameWithoutExtension(rp);
                 // ConsultString has no path — record the root's source file so
                 // its timestamp is right (roots regenerate anyway, but keep it honest).
                 e._moduleSourceFile[name] = System.IO.Path.GetFullPath(rp);
-                e.ConsultString($":- module('{name}').\n" + text);
+                e.WithLibraryDialect(rootDialect,
+                    () => { e.ConsultString($":- module('{name}').\n" + text); return 0; });
             }
             if (rootModuleSet.Add(name)) rootModules.Add(name);
         }
         string? primaryRoot = rootModules.Count > 0 ? rootModules[0] : null;
 
         // Assign each dynamic functor to exactly one owning module, so its
-        // clauses are seeded ONCE across the object set. The owner is the
+        // clauses are seeded once across the object set. The owner is the
         // module whose consult declared it `:- dynamic`; a functor whose
         // declarer is not emitted (auto-promoted, or declared by the baked
         // prelude) goes to the primary root.
@@ -145,11 +158,20 @@ public static class ShmoViaConsult
             foreach (var (fid, src) in manifest.Imports)
                 imports.Add(new ShmoImportEntry(RefOf(fid), src));
 
-            // This module's OWN dynamic declarations, and the seeds of the
-            // functors it OWNS (each functor seeded by exactly one module).
+            // This module's own dynamic declarations, and the seeds of the
+            // functors it owns (each functor seeded by exactly one module).
             var dynamicSet = new HashSet<PredicateRef>();
             foreach (int fid in manifest.DynamicFunctors) dynamicSet.Add(RefOf(fid));
             var raw = new List<Clause>(manifest.Clauses);
+            // ADR-055: what this module gave user (user:Head) is, in a linked
+            // program, a public of this module: global, its body still run
+            // here, where the module's own qualification is redundant.
+            foreach (var (fsrc, ftgt, fclause) in e._foreignClauses)
+                if (ftgt == PrologEngine.DefaultModuleName && fsrc == "module:" + name)
+                {
+                    raw.Add(WithoutOwnQualification(fclause, name));
+                    publicSet.Add(RefOf(ConsultPipeline.HeadFunctorIdOf(fclause)));
+                }
             foreach (int fid in e._dynStore.Functors)
                 if (dynOwner.TryGetValue(fid, out var owner) && owner == name)
                 {
@@ -157,7 +179,7 @@ public static class ShmoViaConsult
                     if (e._dynStore.TryGetClauses(fid, out var dcls)) raw.AddRange(dcls);
                 }
 
-            // This module's OWN operators (a `:- op` under its consult).
+            // This module's own operators (a `:- op` under its consult).
             // ADR-046 — the ones in its export list persist with a '*'
             // type suffix so a load re-advertises them to importers.
             var ops = new List<ShmoOperatorDef>();
@@ -186,7 +208,13 @@ public static class ShmoViaConsult
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,
-                dialect: manifest.Dialect);
+                dialect: manifest.Dialect,
+                metaArgSpec: e.MetaArgSpec,
+                // A Module:Goal resolves as the consult that loaded this module
+                // resolves it, against the same modules: compiled to ':'/2 it
+                // is a meta-call, and on the wasm tier an exit to the host
+                // (atts generates one per clause of a module's get_atts).
+                qualifiedResolver: e.ResolveQualifiedStatic);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)
@@ -220,6 +248,25 @@ public static class ShmoViaConsult
     /// baked-in libraries' source, so a dependency with no <c>.pl</c> is dated
     /// against the runtime that produced it. <see cref="System.DateTime.UtcNow"/>
     /// as a last resort forces regeneration.</summary>
+    /// <summary><paramref name="clause"/> with each body goal written
+    /// <c>module:Goal</c> back to <c>Goal</c>, through the control
+    /// constructs: the consult qualified it for running outside the
+    /// module.</summary>
+    private static Clause WithoutOwnQualification(Clause clause, string module)
+    {
+        if (clause.Term is not CompoundTerm { Functor: ":-", Args: [var head, var body] } rule)
+            return clause;
+        Term stripped = Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(body,
+            c => c.Args.Length == 2 && c.Functor is "," or ";" or "->" or "*->",
+            g => g is CompoundTerm { Functor: ":", Args: [AtomTerm m, var inner] } && m.Name == module
+                ? inner : g);
+        return ReferenceEquals(stripped, body)
+            ? clause
+            : new Clause(clause.Kind,
+                new CompoundTerm(":-", new[] { head, stripped }) { Position = rule.Position },
+                clause.Position);
+    }
+
     private static System.DateTime BakedSourceTimeUtc()
     {
         try

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>shumway-compile --consult: compilation THROUGH the consult
+/// <summary>shumway-compile --consult: compilation through the consult
 /// pipeline (ShmoViaConsult) so load-time computation runs — in-file
 /// term_expansion generating clauses, operators defined by a dependency,
 /// sibling-directory library resolution — and every module in the chain
@@ -37,7 +37,7 @@ public sealed class ViaConsultCompileTests
     [Fact]
     public void TermExpansionGeneratedClauses_EndUpInTheObject()
     {
-        // The clpz shape: a marker term expands — by EXECUTING a predicate
+        // The clpz shape: a marker term expands — by executing a predicate
         // defined earlier in the same file — into generated clauses. A
         // file-at-a-time compile cannot produce gen_fact/1; via-consult can.
         using var t = new TempDir();
@@ -66,12 +66,45 @@ public sealed class ViaConsultCompileTests
     }
 
     [Fact]
+    public void WhatAModuleGivesUser_IsAPublicOfItsObject()
+    {
+        // ADR-055: user:Head in module src means "visible to the whole
+        // program" once linked, with the body still run in src.
+        using var t = new TempDir();
+        string root = t.Add("givesrc.pl",
+            ":- module(givesrc, [touch/0]).\n" +
+            "user:given(X) :- own_helper(X).\n" +
+            "own_helper(from_givesrc).\n" +
+            "touch.\n");
+        t.Add("usesit.pl",
+            ":- module(usesit, [use_given/1]).\n" +
+            "use_given(X) :- given(X).\n");
+        var errors = new System.Collections.Generic.List<ShmoCompileError>();
+        var objects = ShmoViaConsult.CompileMany(
+            new[] { root, Path.Combine(t.Dir, "usesit.pl") },
+            System.Array.Empty<string>(), ShmoBuildMode.Release, errors);
+        Assert.Empty(errors);
+
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = objects.Select(o => o.Object).ToArray(),
+            EntryPoints = new[] { new PredicateRef("use_given", 1) },
+        });
+        Assert.True(link.Success, string.Join("; ", link.Diagnostics.Select(d => d.Message)));
+        var e = new PrologEngine();
+        e.LoadBundle(link.Bundle!);
+        var sol = e.Query("use_given(X).");
+        Assert.True(sol.Success);
+        Assert.Equal("from_givesrc", sol["X"]!.ToString());
+    }
+
+    [Fact]
     public void SiblingLibraryWithOperators_ResolvesWithNoFlags()
     {
-        // The dependency defines an operator the root's clauses NEED to
+        // The dependency defines an operator the root's clauses need to
         // parse — only a load (with the sibling dir on the search path,
         // added implicitly) makes the root compilable. ADR-046: module
-        // operators are scoped, so the dependency EXPORTS the op (how real
+        // operators are scoped, so the dependency exports the op (how real
         // SWI/Scryer libraries hand their syntax to importers).
         using var t = new TempDir();
         t.Add("opsdep.pl",

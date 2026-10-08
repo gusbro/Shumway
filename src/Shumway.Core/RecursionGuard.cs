@@ -3,7 +3,7 @@ namespace Shumway.Core;
 /// <summary>The backstop for the walks over user data that are still
 /// recursive. A .NET stack overflow cannot be caught: it kills the process,
 /// with no goal to unwind and nothing to report — so a term nested deeper
-/// than the C# stack can hold has to be refused BEFORE the stack runs out.
+/// than the C# stack can hold has to be refused before the stack runs out.
 ///
 /// <para>Deep nesting that the engine can handle iteratively is handled
 /// iteratively (a clause body's conjunction spine, a list's elements); this

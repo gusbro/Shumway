@@ -43,7 +43,7 @@ public class Chunk350Tests
     {
         // path/2: first arg is a var in both clauses, so no first-arg indexing
         // — a try-me-else / switched chain. The recursive path/2 in clause 2 is
-        // a self tail call. If the cursor were NOT reset, the recursive call
+        // a self tail call. If the cursor were not reset, the recursive call
         // would re-enter clause 2 (skip the direct edge in clause 1) and miss
         // solutions; resetting to 0 restarts at clause 1.
         var e = LoadIl(

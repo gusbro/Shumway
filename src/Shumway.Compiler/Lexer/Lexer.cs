@@ -75,7 +75,7 @@ public sealed class Lexer
     /// floats is still open there, and we accept it (<c>1_1.25</c>,
     /// <c>11.2_5</c>, <c>1.0e1_0</c>) rather than turn a plainly intended
     /// number into a syntax error. Off by default here; the flag that turns
-    /// it on is <c>PrologFlags.DigitSeparators</c>, which defaults ON.
+    /// it on is <c>PrologFlags.DigitSeparators</c>, which defaults on.
     /// </summary>
     public bool DigitSeparators { get; set; }
 
@@ -121,7 +121,7 @@ public sealed class Lexer
     /// <summary>End offset (into the source string) of the last non-EOF token
     /// produced — where the token's own text stops, before any layout or
     /// comment that follows it. Lets number_chars/number_codes require that
-    /// NOTHING follows the number: parser lookahead lexes past trailing
+    /// nothing follows the number: parser lookahead lexes past trailing
     /// layout to find EOF, so the parser's own position cannot tell
     /// <c>"0"</c> from <c>"0%junk"</c>.</summary>
     public int LastTokenEndOffset { get; private set; }
@@ -155,7 +155,7 @@ public sealed class Lexer
         if (c == '_' || (c >= 'A' && c <= 'Z')) return ParseVariable(pos);
         if (c >= 'a' && c <= 'z') return ParseUnquotedAtom(pos);
         // Extended identifier characters (every neighbouring engine accepts
-        // them): a non-ASCII LETTER starts an atom or — when upper/title
+        // them): a non-ASCII letter starts an atom or — when upper/title
         // case — a variable. An astral letter arrives as a surrogate pair;
         // GetUnicodeCategory(string, i) classifies the whole pair.
         if (c > 0x7F && char.IsLetter(c))
@@ -231,7 +231,7 @@ public sealed class Lexer
     /// <summary>Arity <c>:- c.</c> native-code
     /// sections. Called by the ClauseReader right after it consumed a
     /// <c>:- c.</c> directive (arity_compat only): the text that
-    /// follows is C source, not Prolog, so it must be skipped RAW —
+    /// follows is C source, not Prolog, so it must be skipped raw —
     /// it would otherwise hit the tokenizer. Scans physical lines for
     /// one whose start (after optional blanks) is the directive
     /// <c>:- prolog.</c> (blanks allowed between <c>:-</c> and
@@ -240,11 +240,11 @@ public sealed class Lexer
     /// after it. EOF inside the section ends the source normally.
     /// Line/column tracking is maintained (every character goes
     /// through <see cref="Advance"/>); <c>#line</c> markers inside the
-    /// C text are deliberately NOT interpreted — positions continue
+    /// C text are deliberately not interpreted — positions continue
     /// the current numbering, which stays monotonic and sane.</summary>
     public string SkipNativeCodeSection()
     {
-        // ADR-022 — return the RAW C declaration text of the
+        // ADR-022 — return the raw C declaration text of the
         // region (everything between `:- c.` and the terminating `:- prolog.`,
         // including C on the `:- c.` line itself), so a later stage can hand it
         // to the C-subset parser instead of discarding it. The `:- prolog.`
@@ -271,10 +271,10 @@ public sealed class Lexer
     /// parser calls this immediately after it consumed the opening
     /// <c>{</c> token (with no further token prefetched — see the
     /// lookahead invariant documented at the call site), and the brace
-    /// content is skipped RAW: it is C, not Prolog, so it must never
+    /// content is skipped raw: it is C, not Prolog, so it must never
     /// reach the tokenizer. Skipping uses naive brace counting so
     /// nested native blocks (<c>{ if (x) { y(); } }</c>) balance;
-    /// braces inside C string literals or comments are NOT understood
+    /// braces inside C string literals or comments are not understood
     /// and could unbalance the count — acceptable for now, the corpus
     /// doesn't exhibit it. Stops with the cursor just past the matching
     /// <c>}</c>. EOF before balance throws (an error diagnostic in the
@@ -282,7 +282,7 @@ public sealed class Lexer
     /// maintained (every character goes through <see cref="Advance"/>).</summary>
     public string SkipNativeGoalBlock(SourcePosition openBracePos)
     {
-        // ADR-022 — return the RAW C statement text BETWEEN the
+        // ADR-022 — return the raw C statement text between the
         // braces (the parser already consumed the opening `{`; the closing `}` is
         // excluded), so a later stage can hand it to the C-subset parser instead
         // of substituting a no-op.
@@ -397,7 +397,7 @@ public sealed class Lexer
             {
                 // A byte-order mark. Not whitespace as far as char.IsWhiteSpace is
                 // concerned, and not anything else either — so it used to be a syntax error
-                // on the FIRST character of the file, which is the only place it appears:
+                // on the first character of the file, which is the only place it appears:
                 // a .pl saved as UTF-8-with-BOM (the default in more than one Windows
                 // editor) would not consult, and a goal piped in from a shell that writes
                 // one would not parse. Skipped, like the nothing it is.
@@ -432,7 +432,7 @@ public sealed class Lexer
                      && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
             {
                 // C-preprocessor line marker: `#line N "file"`.
-                // Consume the whole line; adopt N as the NEXT line's number
+                // Consume the whole line; adopt N as the next line's number
                 // so token positions (and therefore parse-error positions)
                 // track the preprocessor's original source rather than the
                 // expanded .i file.
@@ -527,7 +527,7 @@ public sealed class Lexer
         // arity_compat: `$` terminates a symbol-atom
         // run instead of joining it, so `X=$texto$` lexes as `=` followed
         // by the $-quoted atom `texto` rather than the maximal-munch atom
-        // `=$`. A LEADING `$` never reaches here under the flag — the
+        // `=$`. A leading `$` never reaches here under the flag — the
         // dispatcher routes it to ParseDollarAtom — so this only affects
         // `$` appearing mid-run. None of Shumway's own vocabulary forms a
         // symbolic atom containing `$`: internal names like '$call' are
@@ -590,7 +590,7 @@ public sealed class Lexer
         if (c == '0')
         {
             // ISO §6.4.4: radix markers are lowercase only. `0X` / `0B` / `0O`
-            // are NOT radix literals (0 followed by an uppercase token).
+            // are not radix literals (0 followed by an uppercase token).
             int radix = Peek(1) switch
             {
                 'x' => 16,
@@ -652,7 +652,7 @@ public sealed class Lexer
                 if (_offset < _source.Length && (_source[_offset] == '+' || _source[_offset] == '-'))
                     Advance();
                 int expStart = _offset;
-                // The exponent starts with a DIGIT — a separator may only sit
+                // The exponent starts with a digit — a separator may only sit
                 // between two of them, so `1.0e_5` has no exponent at all.
                 if (_offset < _source.Length && IsDecimalDigit(_source[_offset]))
                     ScanDecimalDigits(ref cuts);
@@ -668,7 +668,7 @@ public sealed class Lexer
             }
 
             string floatSource = Splice(start, _offset, cuts);
-            // .NET Framework's double.Parse THROWS OverflowException for a
+            // .NET Framework's double.Parse throws OverflowException for a
             // syntactically valid literal beyond double range ("9.9e999")
             // where .NET Core returns Infinity — go through TryParse and
             // supply the Core value so both frameworks lex identically (the
@@ -725,7 +725,7 @@ public sealed class Lexer
     /// separator when another digit follows, possibly across a layout text
     /// sequence (§6.4.1) — which is what lets a large integer span lines.
     /// WG17 accepted this shape on 2025-06-02: <c>1_000</c>, <c>1_ 000</c>
-    /// and <c>1_ /*c*/ 000</c> are all one number. The digit is REQUIRED:
+    /// and <c>1_ /*c*/ 000</c> are all one number. The digit is required:
     /// without it nothing is consumed and the <c>_</c> opens the next token,
     /// so `foo(1,_)` and `X = 1_` keep reading as they always did.</summary>
     /// <param name="radix">0 for a decimal run, else the constant's radix.</param>
@@ -760,10 +760,10 @@ public sealed class Lexer
     /// literal (<c>`x</c>), arity_compat only. Arity writes character
     /// codes as a backquote followed by one character; the corpus uses
     /// them in list and argument positions (<c>[_, `x|_]</c>). Tokenizes
-    /// to the same INTEGER token the ISO <c>0'x</c> form produces — but
-    /// unlike <c>0'</c>, Arity does NOT process escape sequences after
+    /// to the same integer token the ISO <c>0'x</c> form produces — but
+    /// unlike <c>0'</c>, Arity does not process escape sequences after
     /// the backquote (consistent with the
-    /// literal-backslash rule for <c>'...'</c> under the flag): the NEXT
+    /// literal-backslash rule for <c>'...'</c> under the flag): the next
     /// character is taken literally, whatever it is — <c>`\</c> is 92,
     /// <c>`)</c> is 41, <c>`'</c> is 39, a backquote followed by a
     /// space is 32. A backquote at end of input or immediately followed
@@ -797,7 +797,7 @@ public sealed class Lexer
             Advance();
             int code = ReadEscapeSequence(pos);
             if (code == EscapeContinuation)
-                // A continuation stands for NO character, so `0'\<NL>` is not
+                // A continuation stands for no character, so `0'\<NL>` is not
                 // a char literal — fall back to the integer 0 (the caller
                 // rewinds; `0'\<NL>+'` reads as `0` + the atom '+').
                 return NotACharCode;
@@ -810,7 +810,7 @@ public sealed class Lexer
             // valid single-quoted character — `0''` is `0` followed by the
             // empty atom `''` (the caller rewinds).
             if (Peek(1) == '\'') { Advance(); Advance(); return '\''; }
-            // SWI leniency (swi dialect loads only): `0''` NOT followed by a
+            // SWI leniency (swi dialect loads only): `0''` not followed by a
             // third quote is the quote character itself — url.pl's
             // `sub_delim(0'').` — where ISO requires 0''' or 0'\'.
             if (LenientQuoteCharLiteral) { Advance(); return '\''; }
@@ -841,7 +841,7 @@ public sealed class Lexer
 
     /// <summary>The sentinel <see cref="ReadEscapeSequence"/> returns for a
     /// line-continuation escape (<c>\</c> immediately before a newline): it
-    /// stands for NO character. Callers building a string skip it.</summary>
+    /// stands for no character. Callers building a string skip it.</summary>
     internal const int EscapeContinuation = -1;
 
     /// <summary>The sentinel <see cref="ReadCharCodeLiteral"/> returns when
@@ -865,7 +865,7 @@ public sealed class Lexer
             return EscapeContinuation;
         }
 
-        // SWI `\c` — line continuation that removes ALL following layout (spaces,
+        // SWI `\c` — line continuation that removes all following layout (spaces,
         // tabs, newlines) up to the next non-layout character. Not ISO — strict
         // reading rejects it as an unknown escape (the conformance suite
         // checks) — so it is gated on the swi dialect scope, which is where
@@ -888,14 +888,14 @@ public sealed class Lexer
             return ReadNumericEscape(pos, radix: 16, name: "hexadecimal");
         }
         // \uXXXX (4 hex) / \UXXXXXXXX (8 hex) — a Unicode code point, SWI/Java
-        // style: a FIXED-width hex escape with NO terminating backslash. Not
+        // style: a FIXED-width hex escape with no terminating backslash. Not
         // ISO — strict reading rejects it (the conformance suite checks) — so
         // it is gated on the swi dialect scope, where the `\u`-using library
         // sources live (ADR-040).
         if (c == 'u' && LenientEscapes) { Advance(); return ReadFixedHexEscape(pos, 4); }
         if (c == 'U' && LenientEscapes) { Advance(); return ReadFixedHexEscape(pos, 8); }
         // Octal escape (ISO): `\` followed by octal digits and a terminating
-        // backslash, e.g. `\33\` or `\0\`. There is NO bare-`\0` NUL
+        // backslash, e.g. `\33\` or `\0\`. There is no bare-`\0` NUL
         // shorthand — ISO requires the terminator (Neumerkel #300/#301
         // `'\0\'`, #18 `'\33\'`).
         if (c >= '0' && c <= '7')
@@ -1010,7 +1010,7 @@ public sealed class Lexer
             }
             else if (c == '\\' && !ArityCompat)
             {
-                // Arity does NOT interpret backslash escapes
+                // Arity does not interpret backslash escapes
                 // inside '...' quoted atoms — '\' is the one-character
                 // backslash atom (Arity-era sources put Windows paths in
                 // quoted atoms). Under arity_compat the backslash falls
@@ -1019,7 +1019,7 @@ public sealed class Lexer
                 Advance();
                 int e = ReadEscapeSequence(pos);
                 // An astral escape builds its surrogate pair — appending
-                // (char)e would TRUNCATE it to 16 bits, silently
+                // (char)e would truncate it to 16 bits, silently
                 // manufacturing a different character (0x1F600 became
                 // U+F600). A surrogate value names no character at all.
                 if (e != EscapeContinuation && !Utf16Text.IsScalarValue(e))
@@ -1050,7 +1050,7 @@ public sealed class Lexer
     /// <see cref="ParseQuotedAtom"/> with the delimiter swapped: a
     /// <c>$</c> inside is escaped by doubling (<c>$$</c>), so the
     /// standalone token <c>$$</c> is the empty atom (like <c>''</c>).
-    /// Unlike <c>'...'</c> there are NO backslash escapes — Arity-era
+    /// Unlike <c>'...'</c> there are no backslash escapes — Arity-era
     /// sources put Windows paths inside <c>$...$</c>, so every
     /// non-delimiter character is literal.</summary>
     private Token ParseDollarAtom(SourcePosition pos)
@@ -1113,7 +1113,7 @@ public sealed class Lexer
                 Advance();
                 int e = ReadEscapeSequence(pos);
                 // An astral escape builds its surrogate pair — appending
-                // (char)e would TRUNCATE it to 16 bits, silently
+                // (char)e would truncate it to 16 bits, silently
                 // manufacturing a different character (0x1F600 became
                 // U+F600). A surrogate value names no character at all.
                 if (e != EscapeContinuation && !Utf16Text.IsScalarValue(e))
@@ -1124,7 +1124,7 @@ public sealed class Lexer
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {
-                // §6.4.2.1: same rule as a quoted ATOM — a raw control
+                // §6.4.2.1: same rule as a quoted atom — a raw control
                 // character is not a valid double-quoted-token char; it has to
                 // be an escape (\\t, \\n, …) or, for a newline, the
                 // \\<newline> continuation. Arity-era sources are exempt.

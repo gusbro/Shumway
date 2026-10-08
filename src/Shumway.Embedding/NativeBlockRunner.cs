@@ -25,7 +25,7 @@ public sealed class NativeBlockEntry
     internal bool CompileTried;
 
     // the block-invariant lookup maps the interpreter fallback used
-    // to rebuild on EVERY call (three dictionaries + fill loops per dispatch).
+    // to rebuild on every call (three dictionaries + fill loops per dispatch).
     // Built once, lazily, on first interpreted run.
     internal Dictionary<string, int>? IndexMap;
     internal Dictionary<string, NativeKind>? KindMap;
@@ -58,7 +58,7 @@ public sealed class NativeBlockEntry
 /// the inputs Prolog→.NET, runs the statement sequence (the <c>MakeCString</c> /
 /// <c>MakePrologString</c> string intrinsics inline, every other call dispatched
 /// to a <c>Shumway.Native.Interop</c> static method via the supplied resolver),
-/// and unifies the outputs back. This first cut INTERPRETS the (small, linear)
+/// and unifies the outputs back. This first cut interprets the (small, linear)
 /// statement list; the IL form is a later refinement. Only the int/float/string
 /// tier is handled — the term/reftype tier is deferred.</summary>
 public static class NativeBlockRunner
@@ -173,7 +173,7 @@ public static class NativeBlockRunner
         {
             NativeKind.Int or NativeKind.Long => host.ToTerm<long>(System.Convert.ToInt64(value)),
             NativeKind.Float or NativeKind.Double => host.ToTerm<double>(System.Convert.ToDouble(value)),
-            // Arity "string" is an ATOM — emit an AtomTerm so it unifies with an
+            // Arity "string" is an atom — emit an AtomTerm so it unifies with an
             // atom literal (and round-trips with the FromTerm<string> input read).
             NativeKind.String => new Shumway.Compiler.Ast.AtomTerm((string)value!),
             _ => throw new System.NotSupportedException($"native output kind {kind}"),
@@ -197,7 +197,7 @@ public static class NativeBlockRunner
                     host.GetOrCreateReftypeSlot(g.Name);
                 break;
             case CBindStmt b:
-                // `Var is e` binds an OUTPUT Prolog variable (goes to `outputs`,
+                // `Var is e` binds an output Prolog variable (goes to `outputs`,
                 // unified at the end) — but the same `is` form also binds a
                 // block-local intermediate (e.g. `T is sum(A,B)` where T is read
                 // by a later statement); that goes to the local environment.
@@ -306,7 +306,7 @@ public static class NativeBlockRunner
         }
         var ps = m.GetParameters();
         var args = new object?[c.Args.Count];
-        // A Reftype parameter receives a MANAGED SNAPSHOT of the reftype global's
+        // A Reftype parameter receives a managed snapshot of the reftype global's
         // term (materialized); the (possibly mutated) snapshot is written back to the
         // slot after the call.
         System.Collections.Generic.List<(TermSlot Slot, Reftype Snapshot)>? writebacks = null;
@@ -362,13 +362,13 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
         // OutString: a `char**` cell the native function writes a (borrowed) char* into.
         System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
-        // EVERY call-scoped native buffer (out cells, char*
+        // Every call-scoped native buffer (out cells, char*
         // inputs, and the whole t_reftype graph) bump-allocates from the
         // engine's chunked native arena; the finally releases them all with
         // one mark restore. No AllocHGlobal, no graph-walking free — measured
         // 96% of the reftype marshal cost. Safety unchanged from the
         // recorded-allocations mode this replaces: the restore frees exactly
-        // OUR blocks; a foreign pointer the native fn linked in is untouched.
+        // our blocks; a foreign pointer the native fn linked in is untouched.
         long scratchMark = host.NativeScratchMark;
         // All native memory is released in the finally: an exception anywhere in
         // marshalling, the native invoke, or the read-back must not leak buffers.
@@ -593,7 +593,7 @@ public static class NativeBlockRunner
     /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>
     /// (or a bare <c>id</c>); null if the argument is not a plain local reference.
     /// The bare-ident form is deliberate: this helper only runs for a parameter the
-    /// `:- c` prototype already types as a POINTER (out-scalar / out-string), where
+    /// `:- c` prototype already types as a pointer (out-scalar / out-string), where
     /// a by-value reading of the same local is meaningless — corpus blocks pass
     /// pointer-typed locals (e.g. a `pshort` declared local) without `&amp;`.</summary>
     private static string? AddrOfLocal(CExpr e) => e switch
@@ -615,7 +615,7 @@ public static class NativeBlockRunner
         else System.Runtime.InteropServices.Marshal.WriteInt64(p, BitConverter.DoubleToInt64Bits(v is null ? 0.0 : System.Convert.ToDouble(v)));
     }
 
-    // If/return on purpose: a single ?:-chain here types the WHOLE expression as
+    // If/return on purpose: a single ?:-chain here types the whole expression as
     // double (the branches' best common type — long converts to double, never
     // back), so every integer read was silently boxed as a Double and the emitted
     // IL's unbox-to-long threw InvalidCastException. Each return boxes its own type.

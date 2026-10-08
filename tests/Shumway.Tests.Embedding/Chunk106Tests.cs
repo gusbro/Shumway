@@ -53,7 +53,7 @@ public class Chunk106Tests
     [Fact]
     public void DoublingClosure_TwoTabledLiterals()
     {
-        // path(X,Y) :- path(X,Z), path(Z,Y) has TWO tabled body literals,
+        // path(X,Y) :- path(X,Z), path(Z,Y) has two tabled body literals,
         // so it is a "complex" clause: re-run every round undifferentiated.
         // The answer must still be the full transitive closure.
         var engine = WithProgram("""

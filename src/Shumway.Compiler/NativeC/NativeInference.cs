@@ -13,7 +13,7 @@ public enum NativeMode { Input, Output }
 /// <summary>An inferred binding for one Prolog variable named in a native block.</summary>
 public sealed record NativeVar(string Name, NativeKind Kind, NativeMode Mode);
 
-/// <summary>ADR-022 — a SCALAR <c>:- c</c> global referenced by a block (a plain
+/// <summary>ADR-022 — a scalar <c>:- c</c> global referenced by a block (a plain
 /// <c>int</c> / <c>long</c> / <c>float</c> / <c>double</c> global, as opposed to a
 /// <c>char*</c>/<c>reftype</c> holder). It maps to per-engine persistent storage
 /// (Arity static-storage semantics) — the block seeds its value on entry and writes
@@ -72,7 +72,7 @@ public static class NativeInference
             }
         }
         // ADR-024 — global C buffers (a `char*` / `char[]` or a reftype global) are
-        // reusable HOLDERS (slots): a variable assigned from one (`Par1 is par1str`)
+        // reusable holders (slots): a variable assigned from one (`Par1 is par1str`)
         // is a holder cursor, not a string value. (Resolved through typedefs, so
         // `pchar par1str` counts.)
         var holderGlobals = new HashSet<string>();
@@ -179,7 +179,7 @@ public static class NativeInference
             if (holderVars.Contains(name)) kind = NativeKind.Reftype;
             if (kind is null && declHint.TryGetValue(name, out var dh)) kind = MapType(dh, typedefs);
             if (kind is null && rhsKind.TryGetValue(name, out var rk)) kind = rk;
-            // A `Var: type` declaration in ANOTHER block of the same clause: a
+            // A `Var: type` declaration in another block of the same clause: a
             // variable declared in one block (e.g. `Par1: pchar`) and used in
             // another keeps that type.
             if (kind is null && clauseDeclHints is not null
@@ -213,7 +213,7 @@ public static class NativeInference
                 diags.Add($"references undeclared native global '{name}' — declare it in a "
                     + "':- c' region (or as 'extern' if it is defined in another module)");
 
-        // Scalar globals: a referenced `:- c` global that is NOT a holder
+        // Scalar globals: a referenced `:- c` global that is not a holder
         // (char*/char[]/reftype) — a plain int/float scalar. Mapped to persistent
         // per-engine storage with Arity static-storage semantics.
         var scalarGlobals = new List<NativeScalarGlobal>();
@@ -264,8 +264,8 @@ public static class NativeInference
                     // A string intrinsic marshals exactly its `&Var` argument (the
                     // Prolog string). Its other args — the C buffer and, for
                     // MakeCString, the length — are consumed/discarded in the .NET
-                    // lowering (an atom IS a .NET string, there is no buffer), so
-                    // they are NOT generic-walked: a length that happens to be a
+                    // lowering (an atom is a .NET string, there is no buffer), so
+                    // they are not generic-walked: a length that happens to be a
                     // Prolog variable must not become a marshalled input.
                     foreach (var arg in c.Args)
                     {

@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Bug class root-caused while linting Blint.pl: a <c>retract/1</c>
-/// followed by an immediate cut inside an inner predicate is NOT
+/// followed by an immediate cut inside an inner predicate is not
 /// properly committed when an outer predicate sibling subsequently
 /// fails. On the failure-driven backtrack, retract re-enters and
 /// enumerates *more* clauses — every matching clause gets retracted
@@ -89,7 +89,7 @@ sibling_that_fails :- Y = 1, Y = 2.
 ");
         var sol = e.Query("test(Keys).");
         Assert.True(sol.Success);
-        // Whatever the retract semantics, findall MUST return a proper
+        // Whatever the retract semantics, findall must return a proper
         // list — a chain of `./2` cells ending in `[]`. Pre-fix it
         // returned the single atom `q(b)` (the head of the second-
         // retracted clause leaked through the resume).

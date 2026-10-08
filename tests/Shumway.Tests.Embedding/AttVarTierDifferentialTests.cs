@@ -7,9 +7,9 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Tier-0 is the oracle: every attributed-variable shape below must
-/// answer the same with the IL tier promoted, and must leave no ORPHAN attvar
+/// answer the same with the IL tier promoted, and must leave no orphan attvar
 /// behind — a cell tagged AttVar with no attr-table record, which is what a
-/// tier that COPIES an attvar cell produces (Deref does not follow AttVar, so
+/// tier that copies an attvar cell produces (Deref does not follow AttVar, so
 /// a copy elsewhere is a variable the attribute machinery cannot see).
 ///
 /// <para>The corpus walks the instructions an attvar can reach a tier
@@ -131,12 +131,14 @@ public sealed class AttVarTierDifferentialTests(ITestOutputHelper o)
         var il = Il();
 
         // Warm the IL engine so the predicates the goal touches are promoted,
-        // then run the comparison on a promoted tier.
+        // then run the comparison on a promoted tier. A promotion compiles on
+        // a worker: under load the warm run can end before it lands.
         _ = Run(il, goal);
+        Assert.True(il.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         var a = Run(t0, goal);
         var b = Run(il, goal);
 
-        // ANTI-VACUITY: without a promotion this compares Tier-0 with
+        // Anti-vacuity: without a promotion this compares Tier-0 with
         // Tier-0 and proves nothing. Every goal here calls one of the
         // corpus predicates, so at least one must have promoted.
         var promoted = new List<string>();
@@ -153,7 +155,7 @@ public sealed class AttVarTierDifferentialTests(ITestOutputHelper o)
         if (callsCorpus)
             Assert.True(promoted.Count > 0,
                 "nothing promoted: this compares Tier-0 with Tier-0");
-        // A goal that RAISES on both tiers agrees vacuously — the corpus is
+        // A goal that raises on both tiers agrees vacuously — the corpus is
         // meant to run, so an error is a broken shape, not a result.
         Assert.False(a.Detail.Contains("Exception"), $"tier0 raised: {a.Detail}");
         o.WriteLine($"{what}\n  tier0: {a.Ok} {a.Detail}\n  il   : {b.Ok} {b.Detail}");

@@ -7,9 +7,9 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 390 (Phase 29, Stage 9b-2 — the fid bridge): mapping the linker's
 /// <c>(module, PredicateRef)</c> seeds to the functor ids the compiled bytecode uses
-/// (<see cref="ShmoLinker.ResolveSeedFids"/>). A predicate's functor name is MANGLED
-/// (<c>module$name</c>, local) or BARE (<c>name</c>, public / dynamic / promoted entry);
-/// resolving BOTH forms that exist is a sound over-keep (a seed's true fid is always one
+/// (<see cref="ShmoLinker.ResolveSeedFids"/>). A predicate's functor name is mangled
+/// (<c>module$name</c>, local) or bare (<c>name</c>, public / dynamic / promoted entry);
+/// resolving both forms that exist is a sound over-keep (a seed's true fid is always one
 /// of them). A seed that names no decoded predicate (e.g. a dynamic predicate, whose
 /// clauses live in the DynamicSeeds trailer, not the static bytecode) resolves to nothing
 /// — correctly, since it is never region-compiled and so never prunable.
@@ -37,7 +37,7 @@ public class Chunk390Tests
     [Fact]
     public void BothFormsPresent_AddsBoth_SoundOverKeep()
     {
-        // A local m$foo AND an unrelated bare foo both exist; we keep both (the seed's
+        // A local m$foo and an unrelated bare foo both exist; we keep both (the seed's
         // true fid is included whichever form it is — over-keep is sound for a seed).
         var byName = new Dictionary<(string, int), int>
         {

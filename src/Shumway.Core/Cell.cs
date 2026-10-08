@@ -35,7 +35,7 @@ public readonly struct Cell : IEquatable<Cell>
 
     public long Payload => Data & PayloadMask;
 
-    // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do NOT
+    // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do not
     // verify the tag; the caller is responsible for dispatching on Tag first.
     public int AsHeapIndex => (int)Data;
     public int AsAtomId => (int)Data;
@@ -48,15 +48,13 @@ public readonly struct Cell : IEquatable<Cell>
     /// Decodes the inline 60-bit signed integer, sign-extending into the upper 4 bits.
     /// Only meaningful for cells with <see cref="Tag.Int"/>.
     /// </summary>
+    // Branchless, and marked for inlining: compiled regions reach it inside
+    // helpers the JIT inlines, and a large region runs out of inlining budget
+    // for anything that is not (ADR-060).
     public long AsInt
     {
-        get
-        {
-            long p = Payload;
-            if ((p & (1L << 59)) != 0)
-                p |= unchecked((long)0xF000_0000_0000_0000UL);
-            return p;
-        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Data << 4) >> 4;
     }
 
     // ---------- Factories ----------
@@ -93,7 +91,7 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Atom(int atomId)
         => new(((long)Tag.Atom << TagShift) | (uint)atomId);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(HelperImpl.FixedInline)]
     public static Cell Int(long value)
     {
         if (value < MinInt60 || value > MaxInt60)
@@ -101,9 +99,10 @@ public readonly struct Cell : IEquatable<Cell>
         return new Cell(((long)Tag.Int << TagShift) | (value & PayloadMask));
     }
 
-    // Out-of-line so the JIT inlines Cell.Int's fast path; the throw
-    // call site is small and stays after the inline.
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    // Out-of-line so the JIT inlines Cell.Int's fast path. Not NoInlining: the
+    // JIT sees that it always throws, keeps it out of line and treats the call
+    // as not returning.
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void ThrowIntOutOfRange(long value) =>
         throw new ArgumentOutOfRangeException(nameof(value),
             $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");
@@ -146,14 +145,14 @@ public readonly struct Cell : IEquatable<Cell>
     // ---------- Float (spans two cells) ----------
 
     /// <summary>
-    /// Encodes a double across two cells: a FLOAT header carrying the 4 high bits + the heap
+    /// Encodes a double across two cells: a float header carrying the 4 high bits + the heap
     /// index of the paired cell, and an INT-tagged paired cell carrying the 60 low bits.
     /// The paired cell is structurally a valid INT but its numeric int value is meaningless
     /// — only <see cref="DecodeFloat"/> can reconstruct the original double.
     /// </summary>
     public static (Cell Header, Cell Paired) MakeFloat(double value, int pairedHeapIdx)
     {
-        // ISO's float value set has ONE zero: negative zero is unrepresentable
+        // ISO's float value set has one zero: negative zero is unrepresentable
         // as a term, so -0.0 reads, prints and sorts as 0.0 (syntax conformity
         // #364). ==/2 and compare/3 already equate the two; this single funnel
         // (every float cell is born here) makes writeq agree with them. The

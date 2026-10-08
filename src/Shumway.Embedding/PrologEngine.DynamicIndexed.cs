@@ -38,6 +38,8 @@ public sealed partial class PrologEngine
         => ChainPatcher.TryAppendToIndexedDynamic(engine, functorId, clause);
     internal bool TryPrependToIndexedDynamic(Activation engine, int functorId, Clause clause)
         => ChainPatcher.TryPrependToIndexedDynamic(engine, functorId, clause);
+    internal long IndexedSweeps => ChainPatcher.IndexedSweeps;
+    internal long IndexedRetracts => ChainPatcher.IndexedRetracts;
     internal bool TryPatchDiedInAllIndexedChains(Activation engine, int functorId, int bodyAddr)
         => ChainPatcher.TryPatchDiedInAllIndexedChains(engine, functorId, bodyAddr);
     internal int FindBodyAddrForClauseIndex(Activation engine, int functorId, int clauseIndex)
@@ -47,7 +49,7 @@ public sealed partial class PrologEngine
     internal int? PeekDiedAddr(int functorId, int clauseIndex) => ChainPatcher.PeekDiedAddr(functorId, clauseIndex);
     internal int? PeekNextAddr(int functorId, int clauseIndex) => ChainPatcher.PeekNextAddr(functorId, clauseIndex);
 
-    /// <summary>The chain table for the CURRENT persistent buffer (owned by
+    /// <summary>The chain table for the current persistent buffer (owned by
     /// the patcher component).</summary>
     internal DynChainTable DynChains => ChainPatcher.Chains;
     internal void ResetDynChains() => ChainPatcher.ResetChains();

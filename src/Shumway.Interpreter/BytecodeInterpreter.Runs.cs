@@ -13,11 +13,11 @@ public sealed partial class BytecodeInterpreter
     /// shape every dynamic-predicate chain entry has, since the chain
     /// emit always writes dispatch + check_visible — decode it inline
     /// and either advance past it (visible) or signal backtrack
-    /// (invisible). Returns false ONLY when the caller must backtrack;
+    /// (invisible). Returns false only when the caller must backtrack;
     /// in every other case (no CheckVisible at <paramref name="afterPc"/>,
     /// or visible), it updates PC and returns true.</para>
     ///
-    /// <para>This is purely an interpreter speedup — it does NOT change
+    /// <para>This is purely an interpreter speedup — it does not change
     /// any bytecode layout, emit-site, or opcode encoding. Skipping
     /// one switch trip + opcode-table lookup + profiler bump per
     /// chain step adds up on dynamic-predicate-heavy workloads
@@ -25,13 +25,13 @@ public sealed partial class BytecodeInterpreter
     /// </summary>
     /// <param name="deadSkipTo">the dispatch opcode's own <c>next</c>
     /// operand (the following chain entry), or -1 (trust_me, no next). When the
-    /// visibility check fails and this is >= 0, jump STRAIGHT to the next entry
-    /// instead of failing into a full backtrack: the check is the FIRST thing after
+    /// visibility check fails and this is >= 0, jump straight to the next entry
+    /// instead of failing into a full backtrack: the check is the first thing after
     /// the dispatch opcode, so nothing has mutated since the choice point's state
     /// was pushed/restored — the backtrack would restore registers/trail to values
     /// they already hold. The CP's next-clause slot was already advanced by the
     /// dispatch opcode, so the direct jump leaves identical machine state, minus
-    /// the redundant restore. On Blint this removes one full backtrack per DEAD
+    /// the redundant restore. On Blint this removes one full backtrack per dead
     /// chain entry (a retract-heavy dynamic predicate accumulates thousands —
     /// 1.56M of the 3.38M backtracks in a self-lint were exactly this).</param>
     [System.Runtime.CompilerServices.MethodImpl(
@@ -53,7 +53,7 @@ public sealed partial class BytecodeInterpreter
         {
             if (deadSkipTo < 0) return false;        // trust_me: genuine fail
             // (An in-place tombstone unlink used to run here; it was
-            // REVERTED — it corrupted dynamic unget-buffer tokenization
+            // reverted — it corrupted dynamic unget-buffer tokenization
             // and its wall-clock win was neutral. The direct dead-entry
             // jump below is kept — bisected clean.)
             _engine.SetPc(deadSkipTo);
@@ -63,9 +63,9 @@ public sealed partial class BytecodeInterpreter
         // fail-stub, so its chain instruction is `retry_me_else <fail-stub>`
         // (never `trust_me`). A bare push/retry therefore leaves a choice
         // point whose only alternative is `call_builtin fail/0` — harmless on
-        // backtracking, but it makes EVERY deterministic dynamic call report
+        // backtracking, but it makes every deterministic dynamic call report
         // as non-deterministic (a single dynamic fact `c(x)` called `c(x)`
-        // left a CP). Once this clause is confirmed visible AND it is the last
+        // left a CP). Once this clause is confirmed visible and it is the last
         // one (its chain-next is the fail-stub), discard that dead choice
         // point with trust semantics — the choice point governing this clause
         // is the one try_me_else/retry_me_else just pushed/updated (nothing
@@ -85,12 +85,12 @@ public sealed partial class BytecodeInterpreter
     }
 
     /// <summary>unify-run fusion. After a unify-family opcode
-    /// succeeds, the head/argument-matching code is almost always a RUN of more
+    /// succeeds, the head/argument-matching code is almost always a run of more
     /// unify-family opcodes (Blint pairs: unify_list→unify_atom 945K,
     /// unify_atom→unify_list 782K, get_list→unify_value_x 666K, …): consume the
     /// whole run here in a tight loop with a small switch instead of going back
     /// around the main dispatch loop (marker check + bounds check + split-view
-    /// branch + the big switch) once per opcode. Bodies are EXACT MIRRORS of the
+    /// branch + the big switch) once per opcode. Bodies are exact mirrors of the
     /// main-loop cases — keep them in sync when touching either.
     /// <c>unify_variable_y</c>,
     /// <c>unify_value_y</c> and <c>unify_structure</c> are in the run switch too
@@ -98,9 +98,9 @@ public sealed partial class BytecodeInterpreter
     /// branches and UnifyVariableY's AttVar capture), and their main-loop cases
     /// chain into this run like the X-forms always did. Profiler counts stay
     /// truthful: each opcode consumed here is recorded. On failure returns false
-    /// WITHOUT touching Pc — the caller backtracks, which restores Pc from the
+    /// without touching Pc — the caller backtracks, which restores Pc from the
     /// choice point, exactly as the individual cases behave. On success Pc is
-    /// written ONCE, at run exit.</summary>
+    /// written once, at run exit.</summary>
     private bool RunUnifySequence(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
     {
         while (pc < codeLen)
@@ -179,7 +179,7 @@ public sealed partial class BytecodeInterpreter
                         Cell v = _engine.GetRegister(src);
                         // A bare ATTVAR goes in as a REF to its home, the
                         // mirror of UnifyVariableX reading one out. Copying
-                        // the cell would make a SECOND variable claiming the
+                        // the cell would make a second variable claiming the
                         // same attributes, and the attribute table keys on a
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
@@ -213,7 +213,7 @@ public sealed partial class BytecodeInterpreter
                         Cell v = _engine.GetY(src);
                         // A bare ATTVAR goes in as a REF to its home, the
                         // mirror of UnifyVariableX reading one out. Copying
-                        // the cell would make a SECOND variable claiming the
+                        // the cell would make a second variable claiming the
                         // same attributes, and the attribute table keys on a
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
@@ -380,11 +380,54 @@ public sealed partial class BytecodeInterpreter
         _engine.SetPc(pc);
     }
 
+    /// <summary>The compiled code a resume marker names: the link-time table
+    /// first, then the dispatcher for a delegate promoted mid-query, then, for
+    /// a resume (cursor &gt; 0) into a call that began before its predicate was
+    /// evicted, the code it began with (ADR-054).</summary>
+    private Func<Activation, int, bool>? ResolveMarkerDelegate(int functorId, int cursor)
+    {
+        var ilTable = IlByFunctorId;
+        var del = ilTable is not null && (uint)functorId < (uint)ilTable.Length
+            ? ilTable[functorId] : null;
+        del ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+        if (del is null && cursor > 0)
+            del = Tier1Dispatcher?.ResolveRetiredResume(functorId);
+        return del;
+    }
+
+    /// <summary><see cref="ContinueIlTailCall"/> for an alternative that
+    /// TryBacktrack resumed: a predicate entry reached by address is
+    /// dispatched like any call, and its failure is one more failure of the
+    /// backtrack in progress. False means keep backtracking; true, run from
+    /// Pc (the continuation already set, or bytecode). Under a debug session
+    /// Pc runs as bytecode, as before: debuggable code is Tier-0.</summary>
+    private bool ContinueIlTailCallOnRedo()
+    {
+        while (true)
+        {
+            _engine.IlTailCallPending = false;
+            if (_engine.TakeIlDeopt()) return true;
+            int p = _engine.P;
+            if (Activation.IsResumeMarker(p) || _engine.Debug is not null
+                || Tier1Dispatcher is not { } t || !t.IsPredicateEntry(p))
+                return true;
+            _engine.MaybeCollectHeapAtDispatch(p);
+            var fn = t.OnDispatch(p);
+            if (fn is null) return true;
+            if (!fn(_engine)) return false;
+            if (!_engine.IlTailCallPending)
+            {
+                _engine.SetPc(_engine.Cp);
+                return true;
+            }
+        }
+    }
+
     private bool TryBacktrack()
     {
         Shumway.Core.Profiler.Backtrack();
-        // NOT cleared here: a queued wakeup may belong to a binding that
-        // SURVIVES this backtrack (bound, then a younger choice point
+        // Not cleared here: a queued wakeup may belong to a binding that
+        // survives this backtrack (bound, then a younger choice point
         // failed — promoted IL keeps such wakes pending across its internal
         // retries). TakePendingWakeups drops the dead ones by checking each
         // entry's attvar home: unwound bindings leave an attvar cell again.
@@ -394,7 +437,7 @@ public sealed partial class BytecodeInterpreter
         // through to the next choice point without burning stack. The
         // floor keeps an in-engine sub-goal's backtracking
         // from unwinding choice points the outer computation owns.
-        while (_engine.B > _backtrackFloor)
+        while (_engine.B > _engine.BacktrackFloor)
         {
             if (_engine.TopChoicePointIsIl)
             {
@@ -414,7 +457,7 @@ public sealed partial class BytecodeInterpreter
                 // what the session needs is the reconciliation point, and B
                 // still names the CP being resumed here.
                 _engine.Debug?.OnRedo(_engine, -1);
-                var (del, cursor) = _engine.PopIlChoicePointAndRestore();
+                var (del, cursor) = _engine.RetryOrPopIlChoicePoint();
                 if (del(_engine, cursor))
                 {
                     // Success: if the IL signalled a tail-call,
@@ -423,10 +466,10 @@ public sealed partial class BytecodeInterpreter
                     // continuation, just like bytecode proceed would.
                     if (_engine.IlTailCallPending)
                     {
-                        _engine.IlTailCallPending = false;
                         if (Activation.CpPushRing is { } r1)
                             r1[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
                                 = ((long)-3 << 32) | (uint)_engine.P;
+                        if (!ContinueIlTailCallOnRedo()) continue;
                     }
                     else
                     {
@@ -446,14 +489,50 @@ public sealed partial class BytecodeInterpreter
             int bp = (int)_engine.GetStack(_engine.B + Activation.CpBpOffset(arity)).Data;
             if (bp == Activation.SoftCutDeadBp)
             {
-                // ADR-037 — this ELSE choice point was neutralised by soft_cut
+                // ADR-037 — this else choice point was neutralised by soft_cut
                 // once the condition succeeded. Restore its snapshot and pop it
                 // (TrustMe), then keep backtracking: Else never runs, control
                 // falls through to the choice point that preceded the *-> .
                 _engine.TrustMe();
                 continue;
             }
-            // ADR-035 redo port. Raised BEFORE the jump, while B still names
+            if (Activation.IsResumeMarker(bp))
+            {
+                // ADR-058: a plain choice point whose alternative is compiled
+                // code (a region's, a wasm module's), which restores the state
+                // itself. Invoked here rather than by setting the pc: the
+                // dispatch loop's marker path is the RETURN path, and its
+                // collection and wakeup checks would run before the restore,
+                // firing a wake whose binding is about to be undone.
+                var (fid, cursor) = Activation.DecodeResumeMarker(bp);
+                var resume = ResolveMarkerDelegate(fid, cursor);
+                if (resume is not null)
+                {
+                    // The cancellation and deadline safe point the IL branch
+                    // above takes: a failure-driven loop whose retries all
+                    // come through here (length(L, N), fail under time_out/3)
+                    // reaches no other one.
+                    _engine.BacktrackSafePoint();
+                    _engine.Debug?.OnRedo(_engine, -1);
+                    if (Activation.CpPushRing is { } r4)
+                        r4[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                            = ((long)-7 << 32) | (uint)bp;
+                    if (resume(_engine, cursor))
+                    {
+                        if (_engine.IlTailCallPending)
+                        {
+                            if (!ContinueIlTailCallOnRedo()) continue;
+                        }
+                        else
+                        {
+                            _engine.SetPc(_engine.Cp);
+                        }
+                        return true;
+                    }
+                    continue;
+                }
+            }
+            // ADR-035 redo port. Raised before the jump, while B still names
             // the choice point being resumed — the session identifies which
             // goals died (those called after this CP was pushed) from it.
             _engine.Debug?.OnRedo(_engine, bp);
@@ -518,7 +597,7 @@ public sealed partial class BytecodeInterpreter
             return true;
         }
         // A non-empty packed list is a cons: head/tail are computed cell
-        // VALUES (no heap write) so the sub-path can key through it.
+        // values (no heap write) so the sub-path can key through it.
         if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
         {
             if ((uint)idx > 1u) return false;

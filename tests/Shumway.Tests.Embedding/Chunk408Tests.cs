@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 408 (Phase 29) — ISO 7.8.8 cut transparency in lowered control
 /// constructs. A <c>!</c> inside a <c>;</c> branch or an if-then-else
-/// then/else must commit the HOST clause; MetaTransform lowers those branches
+/// then/else must commit the host clause; MetaTransform lowers those branches
 /// to synthesised <c>$disj</c> helpers, and the <c>!</c> used to cut only the
 /// HELPER's clause dispatch — leaving the host's later clauses reachable
 /// (extra backtracking = a soundness bug: their side effects ran). Found
@@ -71,7 +71,7 @@ public class Chunk408Tests
     [Fact]
     public void BranchCut_AlsoCutsGoalsToTheLeft()
     {
-        // The host barrier commits the WHOLE clause: a generator to the LEFT
+        // The host barrier commits the whole clause: a generator to the left
         // of the branch is cut too — p(X) yields only its first solution.
         var e = Make(
             "pick(1).\npick(2).\npick(3).\n"
@@ -84,7 +84,7 @@ public class Chunk408Tests
     [Fact]
     public void CutInCondition_StaysLocalToHelper()
     {
-        // Cut-OPAQUE position: a ! in the if-then-else CONDITION must NOT
+        // Cut-OPAQUE position: a ! in the if-then-else condition must not
         // commit the host clause — h's second clause stays reachable when the
         // condition path ultimately fails the first clause.
         var e = Make(
@@ -111,7 +111,7 @@ public class Chunk408Tests
     [Fact]
     public void NestedBranchCut_ThreadsThroughInnerHelper()
     {
-        // The cut sits in a branch of a DISJUNCTION nested inside the then of
+        // The cut sits in a branch of a disjunction nested inside the then of
         // an outer if-then-else — the barrier threads through both helper
         // levels and still commits the host.
         var e = Make(

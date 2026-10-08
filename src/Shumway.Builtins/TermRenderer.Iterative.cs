@@ -5,7 +5,7 @@ using Shumway.Core;
 
 namespace Shumway.Builtins;
 
-/// <summary>The renderer's descent, on an EXPLICIT stack.
+/// <summary>The renderer's descent, on an explicit stack.
 ///
 /// <para>How deeply a term nests is the program's choice, so a recursive
 /// renderer spends a C# frame per level, and a .NET stack overflow cannot be
@@ -15,13 +15,13 @@ namespace Shumway.Builtins;
 ///
 /// <para>Two things had to be preserved exactly, and both are why this is a
 /// job machine rather than a loop. First, the fuse-aware spacing needs the
-/// TEXT of an operand before it can decide (`X = -1` must not come back as
+/// text of an operand before it can decide (`X = -1` must not come back as
 /// `X=-1`, which lexes `=-` as one token), so those operands still render into
 /// their own buffer and a join step assembles from it -- the same buffering,
 /// in the same places, so nothing that streamed before stops streaming.
 /// Second, the cycle bookkeeping is enter/exit: a node joins the path, its
 /// subtree renders, it leaves. A `finally` did that before; here an exit job
-/// pushed UNDER a node's children runs when they are done. The list spine
+/// pushed under a node's children runs when they are done. The list spine
 /// interleaves the two, joining the path one cons at a time as it goes, and an
 /// element sees exactly the partial path it saw before.</para></summary>
 public static partial class TermRenderer
@@ -30,7 +30,7 @@ public static partial class TermRenderer
     {
         /// <summary>Render a cell at a priority into a writer.</summary>
         Node,
-        /// <summary>The same, in OPERATOR-OPERAND position.</summary>
+        /// <summary>The same, in operator-operand position.</summary>
         Operand,
         /// <summary>Write literal text.</summary>
         Text,
@@ -52,7 +52,7 @@ public static partial class TermRenderer
     }
 
     /// <summary>One queued job. Every field is copied on each push and pop, so
-    /// the fields OVERLAP where no single job kind uses both: a job carries at
+    /// the fields overlap where no single job kind uses both: a job carries at
     /// most one number, at most two references beyond its writer, and its
     /// booleans live in one byte. Named accessors keep the planners reading as
     /// if the fields were separate. Widening this struct is the easiest way to
@@ -147,7 +147,7 @@ public static partial class TermRenderer
             // The exit jobs that would have undone the bookkeeping are still
             // on the stack and will never run. A `finally` per level did this
             // before; the options object outlives the call, so leaving a cell
-            // on the path would make the NEXT render elide a term that is not
+            // on the path would make the next render elide a term that is not
             // cyclic at all.
             options.CurrentDepth = depthOnEntry;
             options.OnPath?.Clear();
@@ -167,7 +167,7 @@ public static partial class TermRenderer
         int derefAddr = Resolve(engine, ref cell);
 
         // portrayed(true): the user's portray/1 gets first shot at every
-        // subterm; on success its output IS the rendering.
+        // subterm; on success its output is the rendering.
         if (options.Portray is { } portray
             && cell.Tag is not (Tag.Ref or Tag.AttVar)
             && portray(engine, cell, output))
@@ -222,7 +222,7 @@ public static partial class TermRenderer
             case Tag.Str:
             {
                 // With max_depth set the depth limit already terminates a
-                // rational tree -- and it decides HOW MUCH of the cycle shows
+                // rational tree -- and it decides how much of the cycle shows
                 // (max_depth(3) on X=f(X) is f(f(f(...)))), so the cycle gate
                 // must not cut first.
                 bool added = false, unrolling = false;
@@ -291,9 +291,9 @@ public static partial class TermRenderer
         }
     }
 
-    /// <summary>An operator's OPERAND. Parenthesises a bare operator-atom --
+    /// <summary>An operator's operand. Parenthesises a bare operator-atom --
     /// `-(-,-)` writes as `(-)-(-)`, not `- - -`, which the reader rejects
-    /// (ISO 6.3.1.3) -- and is a max_depth LEVEL in its own right, unlike the
+    /// (ISO 6.3.1.3) -- and is a max_depth level in its own right, unlike the
     /// argument of a canonical compound or an element of a list, where an atom
     /// at the limit still prints.</summary>
     private static void PlanOperand(
@@ -335,9 +335,9 @@ public static partial class TermRenderer
         string prefixText = job.Text!;
         TextWriter output = job.Out;
         // Space only where the tokens would otherwise fuse -- `fy 1` but
-        // `--a` / `' op'[]` / `-A` (Neumerkel #274/#133/#279) -- plus ALWAYS
+        // `--a` / `' op'[]` / `-A` (Neumerkel #274/#133/#279) -- plus always
         // before a parenthesised operand: `fy(...)` would re-read as
-        // FUNCTIONAL notation, a different term (`fy (fy 1)yf` vs
+        // functional notation, a different term (`fy (fy 1)yf` vs
         // `fy(fy 1)yf`, #319; `- (1)`, `- (X^2)`).
         if (os.Length > 0
             && ((!job.VarLeft && CharsFuse(prefixText[^1], os[0])) || os[0] == '('))

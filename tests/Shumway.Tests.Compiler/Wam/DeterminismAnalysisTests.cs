@@ -11,7 +11,7 @@ namespace Shumway.Tests.Compiler.Wam;
 /// ADR-030 — the intra-module determinism fixpoint and the redundant-trailing-cut
 /// rewrite. These pin the *analysis* (which clauses are rewritten and which are
 /// left alone); the engine-level soundness proof (identical solution counts with
-/// the pass ON) lives in the Embedding suite.
+/// the pass on) lives in the Embedding suite.
 /// </summary>
 public class DeterminismAnalysisTests
 {
@@ -81,7 +81,7 @@ public class DeterminismAnalysisTests
     public void NondetCallPrefix_CutIsKept()
     {
         // `member/2` backtracks → the cut is load-bearing (commits to the first
-        // solution). Dropping it would be UNSOUND. Must be kept.
+        // solution). Dropping it would be unsound. Must be kept.
         var outp = Elide("p(X,L):-member(X,L),!.");
         Assert.True(EndsInCut(outp[^1]));
     }
@@ -108,8 +108,8 @@ public class DeterminismAnalysisTests
     [Fact]
     public void NonLastClause_CutIsKept()
     {
-        // Only the LAST clause is reached with no clause-alternative CP. Clause 1's
-        // cut prunes the CP pointing at clause 2, so it must NOT be elided.
+        // Only the last clause is reached with no clause-alternative CP. Clause 1's
+        // cut prunes the CP pointing at clause 2, so it must not be elided.
         var outp = Elide("q(1). p(X):-q(X),!. p(_):-fail.");
         Clause first = outp.First(c => c.Term is CompoundTerm { Functor: ":-" } ct
             && ((CompoundTerm)ct.Args[0]).Functor == "p"
@@ -150,7 +150,7 @@ public class DeterminismAnalysisTests
     [Fact]
     public void GuardedClausesPlusCatchAll_IsDet()
     {
-        // `p(a):-q(b),!. p(b):-q(a),!. p(_).` — every clause but the LAST commits
+        // `p(a):-q(b),!. p(b):-q(a),!. p(_).` — every clause but the last commits
         // via a cut; the last (a catch-all fact) needs none (reached via trust).
         // p/1 is deterministic, and the pass proves it.
         var analysis = DeterminismAnalysis.Build(
@@ -161,7 +161,7 @@ public class DeterminismAnalysisTests
     [Fact]
     public void GuardedClausesPlusCatchAllRule_IsDet()
     {
-        // Like the catch-all fact, but the last clause is a cut-free RULE whose
+        // Like the catch-all fact, but the last clause is a cut-free rule whose
         // body is det → still det (last clause needs no cut; its body-det is
         // checked).
         var analysis = DeterminismAnalysis.Build(
@@ -172,7 +172,7 @@ public class DeterminismAnalysisTests
     [Fact]
     public void SelfRecursiveLastClause_IsDet_ViaGreatestFixpoint()
     {
-        // p(c):-q(a),p(a). The last clause's body contains a RECURSIVE call.
+        // p(c):-q(a),p(a). The last clause's body contains a recursive call.
         // p is det because clauses 1-2 commit and clause 3's body is det *given
         // p is det* — the greatest-fixpoint proves it (a least-fixpoint from
         // empty cannot bootstrap the self-reference).
@@ -195,7 +195,7 @@ public class DeterminismAnalysisTests
     [Fact]
     public void RecursiveButNondetDispatch_IsNotDet()
     {
-        // A recursive predicate whose dispatch is NOT det (an earlier clause does
+        // A recursive predicate whose dispatch is not det (an earlier clause does
         // not commit) must stay non-det — the greatest-fixpoint removes it. Here
         // clause 1 leaves a CP to clause 2, so `p(X)` is genuinely non-det.
         var analysis = DeterminismAnalysis.Build(
@@ -207,7 +207,7 @@ public class DeterminismAnalysisTests
     public void FailingNonLastClause_IsDet_EvenWithNondetCallee()
     {
         // p(X):-q(X),fail. p(X):-q(X),!.  Clause 1 always fails (never yields),
-        // so it needs no cut and its body-det is irrelevant; clause 2's TRAILING
+        // so it needs no cut and its body-det is irrelevant; clause 2's trailing
         // cut commits everything. Det even when q is non-det.
         var analysis = DeterminismAnalysis.Build(
             Parse("q(1). q(2). p(X):-q(X),fail. p(X):-q(X),!."));
@@ -219,7 +219,7 @@ public class DeterminismAnalysisTests
     public void CutBeforeNondetGoal_InLastClause_IsNotDet()
     {
         // q/1 is non-det over a,b. p(a):-q(b),!. p(b):-q(a),!. p(X):-!,q(X).
-        // The last clause's cut is at the FRONT, so q(X) runs AFTER it and its
+        // The last clause's cut is at the front, so q(X) runs after it and its
         // choice points survive → non-det. Contrast with the trailing-cut case
         // above.
         var analysis = DeterminismAnalysis.Build(
@@ -231,7 +231,7 @@ public class DeterminismAnalysisTests
     [Fact]
     public void CatchAllNotLast_IsNotDet()
     {
-        // If the cut-free catch-all is NOT last, an earlier non-committing clause
+        // If the cut-free catch-all is not last, an earlier non-committing clause
         // can leave a CP → not det (and the sound rule rejects it).
         var analysis = DeterminismAnalysis.Build(
             Parse("q(_). p(_). p(a):-q(b),!."));

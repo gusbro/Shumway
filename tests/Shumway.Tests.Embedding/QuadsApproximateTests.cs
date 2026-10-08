@@ -79,7 +79,7 @@ public sealed class QuadsApproximateTests
     [Fact]
     public void TheEndsAreTheDECIMALEnds()
     {
-        // 14.19995 as a double is a hair BELOW the decimal 14.19995, so it
+        // 14.19995 as a double is a hair below the decimal 14.19995, so it
         // is outside an interval that includes its ends -- which is why the
         // comparison is made against the exact decimal and not against what
         // the bound turns into as a float. Just inside is inside.

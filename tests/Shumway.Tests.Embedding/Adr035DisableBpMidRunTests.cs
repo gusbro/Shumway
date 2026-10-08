@@ -10,10 +10,10 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-035 — the disable-mid-run desync. The original report came
 /// from a real-program session: breakpoint on the head of a predicate the
-/// run calls hundreds of times, F5, and at the stop DISABLE the breakpoint
+/// run calls hundreds of times, F5, and at the stop disable the breakpoint
 /// and F5 again → "break opcode at PC=0x… with no breakpoint recorded". The
 /// synthetic program reproduces the shape self-contained: a debug-compiled
-/// predicate driven in a loop, the breakpoint removed INSIDE its first stop,
+/// predicate driven in a loop, the breakpoint removed inside its first stop,
 /// and the loop then re-entering the (formerly) patched code many times.</summary>
 [Collection("debugger")]
 public class Adr035DisableBpMidRunTests
@@ -88,7 +88,7 @@ public class Adr035DisableBpMidRunTests
             _log.WriteLine($"total stops = {stops}");
             Assert.Null(failed);        // no "out of step" / stray break opcode
             Assert.True(stops >= 1, "the breakpoint must have been hit at least once");
-            // The 199 calls AFTER the removal ran the formerly-patched code:
+            // The 199 calls after the removal ran the formerly-patched code:
             // exactly one stop means the removal really unpatched it.
             Assert.Equal(1, stops);
         }

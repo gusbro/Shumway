@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Arity <c>save/0</c>, <c>save/1</c>, <c>restore/0</c>, <c>restore/1</c> —
-/// dynamic-database snapshots with destructive REPLACE semantics: restore
+/// dynamic-database snapshots with destructive replace semantics: restore
 /// wipes every user dynamic predicate's clauses and re-installs the
 /// snapshot (in-memory for /0, from a file for /1). Declarations survive;
 /// static predicates and engine-internal ($-prefixed) dynamics are never
@@ -63,7 +63,7 @@ public class SaveRestoreTests
     public void Restore_MidQuery_LogicalUpdateView()
     {
         var e = Activation(Program);
-        // One query: snapshot, mutate, restore, and the SAME query's later
+        // One query: snapshot, mutate, restore, and the same query's later
         // goals see the restored state.
         Assert.True(e.Query(
             "save, assertz(f(99)), retract(f(1)), restore, "
@@ -84,7 +84,7 @@ public class SaveRestoreTests
     {
         var e = Activation(Program);
         // A $-prefixed dynamic is engine/library-internal by convention:
-        // excluded from BOTH the snapshot and the restore wipe.
+        // excluded from both the snapshot and the restore wipe.
         Assert.True(e.Query("assertz('$mine'(1)).").Success);
         Assert.True(e.Query("save.").Success);
         Assert.True(e.Query("assertz('$mine'(2)).").Success);
@@ -108,7 +108,7 @@ public class SaveRestoreTests
             Assert.True(e.Query("findall(X, f(X), L), L == [1, 2].").Success);
             Assert.True(e.Query("g(x, 5).").Success);
 
-            // A FRESH engine (same static program) restores the same file.
+            // A fresh engine (same static program) restores the same file.
             var e2 = Activation(Program);
             Assert.True(e2.Query("assertz(f(777)).").Success);
             Assert.True(e2.Query($"restore('{path.Replace("\\", "\\\\")}').").Success);
@@ -128,7 +128,7 @@ public class SaveRestoreTests
         var e = Activation(Program);
         Assert.True(e.Query(
             "catch(restore(no_such_snapshot_file_xyz), _, true).").Success);
-        // And the database was NOT wiped by the failed restore.
+        // And the database was not wiped by the failed restore.
         Assert.True(e.Query("f(1).").Success);
     }
 
@@ -136,7 +136,7 @@ public class SaveRestoreTests
     public void Restore_ModuleLocalDynamic_RestoresToMangledSlot()
     {
         // A module-local dynamic's storage name is mangled (m$p) — the
-        // snapshot must restore into the SAME slot, reachable through the
+        // snapshot must restore into the same slot, reachable through the
         // module's public accessor.
         var e = new PrologEngine();
         e.ConsultString("""

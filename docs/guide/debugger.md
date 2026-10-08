@@ -454,8 +454,8 @@ guards) and appears in the call stack as a single opaque frame: the Prolog equiv
 "Just My Code". Breakpoints inside it do not bind, and stepping into it behaves as
 stepping over.
 
-The prelude and the bundled libraries are implicitly `disable_debug`: you step through
-your program, not through `maplist/3`.
+The prelude, the engine's libraries and any library imported from a compiled `.shum`
+are implicitly `disable_debug`: you step through your program, not through `maplist/3`.
 
 ## Stopping from the program: `debugger_break/0`
 

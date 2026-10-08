@@ -61,7 +61,7 @@ public class PstrConsumerTests
 
         // '$is_partial_string'/1 is the fast path of must_be(chars, X) in the
         // Scryer-dialect libraries. Testing the tag made it true for a packed
-        // list of CODES, so that fast path accepted a code list as chars.
+        // list of codes, so that fast path accepted a code list as chars.
         Holds("'$is_partial_string'(\"abc\").");
         Fails("'$is_partial_string'(\"abc\" = _).");
         Holds("'$is_partial_string'([a, b, c]).");

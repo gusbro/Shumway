@@ -29,7 +29,7 @@ public enum ClauseKind
     DcgRule,
 
     /// <summary>A single-sided-unification rule, encoded as <c>=&gt;/2</c>: a
-    /// committed, pattern-matching clause. Grouped by its ACTUAL head (the left of
+    /// committed, pattern-matching clause. Grouped by its actual head (the left of
     /// <c>=&gt;</c>, minus any leading guard), and rewritten to a normal rule with
     /// a neck cut by <see cref="Shumway.Compiler.Parsing.SsuTransform"/>; carried
     /// as a separate kind until then.</summary>
@@ -84,8 +84,8 @@ public sealed class Clause
                 (":-", 2) => ClauseKind.Rule,
                 (":-", 1) => ClauseKind.Directive,
                 // Edinburgh tradition, kept by SWI/GNU/SICStus: `?- G.` in
-                // Prolog TEXT is a directive, same as `:- G.`. Without this it
-                // read as a clause FOR '?-'/1 — stored, listed, never run.
+                // Prolog text is a directive, same as `:- G.`. Without this it
+                // read as a clause for '?-'/1 — stored, listed, never run.
                 ("?-", 1) => ClauseKind.Directive,
                 ("-->", 2) => ClauseKind.DcgRule,
                 ("=>", 2) => ClauseKind.SsuRule,

@@ -91,13 +91,14 @@ public class LinkGoalRefsTests
     [Fact]
     public void Link_LocalPredicateInsideGoal_LinksAndRuns()
     {
+        // mi_local is m's private: the goal names it qualified (ADR-056).
         var result = LinkWithGoal(
-            ":- module(m).\nmi_local :- writeln(chau).\n", "time(mi_local)");
+            ":- module(m).\nmi_local :- writeln(chau).\n", "time(m:mi_local)");
         Assert.True(result.Success,
             string.Join("; ", result.Diagnostics.Select(d => d.Message)));
         var engine = new PrologEngine();
         engine.LoadBundle(result.Bundle!);
-        var solutions = engine.QueryAll("time(mi_local).").ToList();
+        var solutions = engine.QueryAll("time(m:mi_local).").ToList();
         Assert.Single(solutions);
     }
 

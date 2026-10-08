@@ -194,7 +194,7 @@ public class TermIoConformance : IDisposable
         Assert.True(e.Query(
             "atom_codes(A, [0''', 0'\\\\, 0'\\n, 0'a, 0''']), "   // source '\<nl>a'
             + "read_term_from_atom(A, T, []), T == a.").Success);
-        // A continuation in the MIDDLE elides only the newline: 'a\<nl>b' = ab.
+        // A continuation in the middle elides only the newline: 'a\<nl>b' = ab.
         Assert.True(e.Query(
             "atom_codes(A, [0''', 0'a, 0'\\\\, 0'\\n, 0'b, 0''']), "
             + "read_term_from_atom(A, T, []), T == ab.").Success);
@@ -237,8 +237,8 @@ public class TermIoConformance : IDisposable
     [Fact]
     public void Writeq_OperatorAtomsAreLegalArgumentsBare()
     {
-        // ISO §6.3.3: an atom that is an operator is a legal ARGUMENT as it
-        // stands — list elements and compound args print bare; only OPERAND
+        // ISO §6.3.3: an atom that is an operator is a legal argument as it
+        // stands — list elements and compound args print bare; only operand
         // positions of another operator parenthesise
         // (Scryer conformity tests 28/29/185).
         var e = new PrologEngine();
@@ -250,7 +250,7 @@ public class TermIoConformance : IDisposable
     [Fact]
     public void Writeq_CurlyNotation()
     {
-        // '{}'(Body) is {Body}. UNLIKE list notation it does NOT survive
+        // '{}'(Body) is {Body}. Unlike list notation it does not survive
         // ignore_ops(true): write_canonical prints the functional {}(Body)
         // (SWI and Scryer agree; Scryer conformity test 96).
         var e = new PrologEngine();

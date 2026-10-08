@@ -95,7 +95,7 @@ public class PrologFlagsExpandedTests
     {
         // Issue #106 (Neumerkel): a term's arity has no limit of its own,
         // only address-space capacity, so the flag says so -- as SICStus
-        // does. The old numeric value (2^29-1) also INVITED the freeze: a
+        // does. The old numeric value (2^29-1) also invited the freeze: a
         // probe of the number it reported tried to allocate the 4 GiB term
         // before any check could refuse it.
         var e = new PrologEngine();
@@ -123,7 +123,7 @@ public class PrologFlagsExpandedTests
     {
         // With the flag unbounded there is no flag-derived
         // representation_error; running into what the address space can
-        // represent is a RESOURCE answer -- checked before any allocation,
+        // represent is a resource answer -- checked before any allocation,
         // so the query returns instead of thrashing (the reporter's laptop
         // froze probing one past the old flag value).
         var e = new PrologEngine();
@@ -137,7 +137,7 @@ public class PrologFlagsExpandedTests
     public void ProceduresAreCappedAtDefinitionTime()
     {
         // stc#70's own example: build a functor one past the procedure cap
-        // and try to assert it. Terms of that width are fine; DEFINING one
+        // and try to assert it. Terms of that width are fine; defining one
         // is refused. 1023 itself defines and runs.
         var e = new PrologEngine();
         Assert.True(e.Query(

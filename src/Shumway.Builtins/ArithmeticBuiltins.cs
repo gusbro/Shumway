@@ -78,7 +78,7 @@ public static class ArithmeticBuiltins
     }
 
     // Compiled arithmetic uses the a_eval_* instruction set (ADR-018); this
-    // builtin path is only reached when arithmetic is NOT compiled — a runtime
+    // builtin path is only reached when arithmetic is not compiled — a runtime
     // meta-call such as `call(X is Y)`, or a variable goal — hence the fast
     // path below still matters.
 
@@ -174,7 +174,7 @@ public static class ArithmeticBuiltins
             throw new PrologRuntimeException(
                 "instantiation_error",
                 "between/3 requires Low and High to be ground integers");
-        // A BIGINT bound (either side) takes the BigInteger path — the
+        // A bigint bound (either side) takes the BigInteger path — the
         // common all-fixnum call stays on the long fast path below.
         if (lo.Tag == Tag.BigInt || hi.Tag == Tag.BigInt)
             return BetweenBig(engine, lo, hi, x);
@@ -192,7 +192,7 @@ public static class ArithmeticBuiltins
             // An ATTVAR is an unbound variable: enumerate into it too — the
             // unify below queues its wakeups, so freeze(X, Filter),
             // between(L, H, X) filters instead of failing outright.
-            // Enumerate loVal..hiVal. The resume state lives in ONE per-CALL
+            // Enumerate loVal..hiVal. The resume state lives in one per-CALL
             // cursor object + a cached delegate re-pushed unchanged on every
             // backtrack — a long range costs O(1) managed allocation, not one
             // closure per value (which made failure-driven loops churn Gen0).
@@ -204,7 +204,7 @@ public static class ArithmeticBuiltins
                 // a following body goal whose builtin call takes >= 3 args
                 // clobbers X2; without restoring it the resume's
                 // UnifyRegisterWithCell(2, ...) would corrupt the enumeration.
-                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+                engine.ArmBuiltinChoicePoint(cursor.Resume, arity: 3, more: true, isResume: false);
             }
             return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
         }
@@ -231,7 +231,7 @@ public static class ArithmeticBuiltins
             if (loB < hiB)
             {
                 var cursor = new BetweenBigCursor(loB, hiB, engine.BuiltinReturnPc);
-                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+                engine.ArmBuiltinChoicePoint(cursor.Resume, arity: 3, more: true, isResume: false);
             }
             return engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, loB));
         }
@@ -239,7 +239,7 @@ public static class ArithmeticBuiltins
     }
 
     private static Cell BigOrIntCell(Activation engine, System.Numerics.BigInteger v)
-        => v >= Cell.MinInt60 && v <= Cell.MaxInt60   // the INLINE range (ADR-002), not long's
+        => v >= Cell.MinInt60 && v <= Cell.MaxInt60   // the inline range (ADR-002), not long's
             ? Cell.Int((long)v) : engine.MakeBigInt(v);
 
     private sealed class BetweenBigCursor
@@ -261,8 +261,7 @@ public static class ArithmeticBuiltins
         private bool Step(Activation engine, int _)
         {
             _current += 1;   // this backtrack yields the next value
-            if (_current < _hi)
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: _current < _hi, isResume: true);
             if (!engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, _current)))
                 return false;
             engine.ResumeAtReturnPc(_returnPc);
@@ -271,9 +270,9 @@ public static class ArithmeticBuiltins
     }
 
     /// <summary>Resume state for a non-deterministic <c>between/3</c>
-    /// enumeration: the running position plus a cached resume delegate,
-    /// re-pushed unchanged on each backtrack so advancing allocates nothing
-    /// per step.</summary>
+    /// enumeration: the running position plus a cached resume delegate; the
+    /// choice point is retried in place, so advancing allocates nothing per
+    /// step.</summary>
     private sealed class BetweenCursor
     {
         private long _current;
@@ -292,8 +291,7 @@ public static class ArithmeticBuiltins
         private bool Step(Activation engine, int _)
         {
             long next = ++_current;   // this backtrack yields the next value
-            if (next < _hi)
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: next < _hi, isResume: true);
             if (!engine.UnifyRegisterWithCell(2, Cell.Int(next))) return false;
             engine.ResumeAtReturnPc(_returnPc);
             return true;
@@ -314,7 +312,7 @@ public static class ArithmeticBuiltins
         Cell xc = Resolve(engine, engine.GetRegister(0));
         Cell yc = Resolve(engine, engine.GetRegister(1));
 
-        // Type/domain checks run on EVERY bound argument before either
+        // Type/domain checks run on every bound argument before either
         // direction is attempted, and carry the offending value.
         // Unbounded integers count: succ/2 relates bignums too.
         static System.Numerics.BigInteger? CheckArg(Activation e, Cell c)
@@ -351,7 +349,7 @@ public static class ArithmeticBuiltins
         Cell yc = Resolve(engine, engine.GetRegister(1));
         Cell zc = Resolve(engine, engine.GetRegister(2));
 
-        // A BOUND non-integer is a type error regardless of how many
+        // A bound non-integer is a type error regardless of how many
         // arguments are known — the type check precedes the mode check.
         // Bignums are integers here: plus/3 relates unbounded values.
         static System.Numerics.BigInteger? Read(Activation e, Cell c)

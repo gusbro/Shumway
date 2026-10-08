@@ -55,6 +55,25 @@ public class ArithmeticConformance
         Assert.Equal(Int(7), engine.Query("X is max(3, 7).")["X"]);
     }
 
+    [Fact]
+    public void Float_OfAnExactNumber_IsTheNearestDouble()
+    {
+        // Past 60 bits an integer is a bignum; it converts as a 60-bit one
+        // does, to the nearest double, ties to even. Doubles there are 512 apart.
+        var engine = new PrologEngine();
+        foreach (string goal in new[] {
+            "X is float(2^61 + 257), X =:= 2305843009213694464.0.",
+            "X is 2^61 + 257 + 0.0, X =:= 2305843009213694464.0.",
+            "X is float(2^61 + 256), X =:= 2305843009213693952.0.",
+            "X is float(2^61 + 768), X =:= 2305843009213694976.0.",
+            "X is float(-(2^61) - 257), X =:= -2305843009213694464.0.",
+            "2^61 + 257 =:= 2305843009213694464.0.",
+            "X is float(1 rdiv 3), X =:= 1 / 3.0.",
+            // Numerator and denominator past the double range, quotient not.
+            "X is float((10^400 + 1) rdiv (3 * 10^400)), X =:= 1 / 3.0." })
+            Assert.True(engine.Query(goal).Success, goal);
+    }
+
     // ---------- Arithmetic comparison ----------
 
     [Fact]
@@ -137,7 +156,7 @@ public class ArithmeticConformance
     [Fact]
     public void Error_UnknownEvaluable_ReportsIndicator()
     {
-        // The culprit is the procedure INDICATOR Name/Arity, not the term.
+        // The culprit is the procedure indicator Name/Arity, not the term.
         AssertSucceeds("catch(_ is foo, error(type_error(evaluable, V), _), true), V == foo/0.");
         AssertSucceeds("catch(_ is foo(1,2,3), error(type_error(evaluable, V), _), true), V == foo/3.");
     }
@@ -241,7 +260,7 @@ public class ArithmeticConformance
         AssertSucceeds("catch(_ is 2^2147483646, error(resource_error(memory), _), true).");
         AssertSucceeds("catch(_ is 2^2147483647, error(resource_error(memory), _), true).");
         AssertSucceeds("catch(_ is 2^2147483648, error(resource_error(memory), _), true).");
-        // A trivial base stays exact at ANY exponent.
+        // A trivial base stays exact at any exponent.
         AssertBinding("X is 1^2147483648.", "X", Int(1));
         AssertBinding("X is (-1)^2147483649.", "X", Int(-1));
         AssertBinding("X is 0^2147483648.", "X", Int(0));

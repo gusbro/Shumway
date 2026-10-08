@@ -11,11 +11,11 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 366 (Phase 29, case 2 — detector + sizing): the
 /// <see cref="IlPredicateCompiler.IsInlinableRule"/> detector — a single-clause
-/// RULE inlinable into a caller's IL method, generalising the case-1 leaf-rule
-/// detector to a body that also makes USER calls and uses an environment frame
+/// rule inlinable into a caller's IL method, generalising the case-1 leaf-rule
+/// detector to a body that also makes user calls and uses an environment frame
 /// (permanents). It is cut-free for now: pruning the caller's choice points
 /// across an inline boundary needs scoped-barrier handling (deferred), and the
-/// Blint sizing showed that is THE prerequisite — only 10/108 single-clause-rule
+/// Blint sizing showed that is the prerequisite — only 10/108 single-clause-rule
 /// call sites are cut-free, vs 89/108 once a (mid-body) cut is handled. So this
 /// chunk is the detector + the finding; the cut-scoping emit is the real case-2
 /// work.
@@ -47,9 +47,9 @@ public class Chunk366Tests
     public void CutOrMultiClause_IsNotInlinableRule(string src)
         => Assert.False(IlPredicateCompiler.IsInlinableRule(CompileOne(src)));
 
-    // NOTE on builtins: a tail-position builtin (between/3, atom/1, …) is rejected
-    // because the LINKER rewrites it Execute -> ExecuteBuiltin (chunk 248), which
-    // the detector rejects. An ISOLATED PredicateCompiler compile (no link) leaves
+    // Note on builtins: a tail-position builtin (between/3, atom/1, …) is rejected
+    // because the linker rewrites it Execute -> ExecuteBuiltin (chunk 248), which
+    // the detector rejects. An isolated PredicateCompiler compile (no link) leaves
     // it a generic Execute, so its classification is not asserted here. The rule
     // inliner runs on the linked runtime bytecode, where the distinction holds.
 }

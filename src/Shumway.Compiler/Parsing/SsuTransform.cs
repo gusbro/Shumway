@@ -10,13 +10,13 @@ namespace Shumway.Compiler.Parsing;
 /// implements <c>=&gt;</c>, so its behaviour is the reference:
 ///
 /// <list type="bullet">
-///   <item>The head is a PATTERN, matched single-sidedly: bindings flow from
+///   <item>The head is a pattern, matched single-sidedly: bindings flow from
 ///   the goal into the head's variables only — a match that would have to
 ///   bind a variable of the CALLER's goal does not apply, and the next rule
 ///   is tried.</item>
 ///   <item>Once a head matches (and its guard, if any, succeeds) the rule
 ///   commits: no other clause is tried.</item>
-///   <item>When NO rule matches, the call raises
+///   <item>When no rule matches, the call raises
 ///   <c>existence_error(matching_rule, Goal)</c> instead of failing.</item>
 /// </list>
 ///

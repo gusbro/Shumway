@@ -88,7 +88,7 @@ public class ErrorContextConformance
     [Fact]
     public void AProgramsOwnBallKeepsItsVariables()
     {
-        // The catcher unifies with a COPY of the ball (7.8.10), so its
+        // The catcher unifies with a copy of the ball (7.8.10), so its
         // variable is fresh; the point is that it stays a variable.
         Succeeds("catch(throw(error(foo, _)), error(foo, C), true), var(C).");
         Succeeds("catch(throw(error(foo, bar)), error(foo, C), true), C == bar.");

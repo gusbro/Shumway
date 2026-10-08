@@ -45,9 +45,13 @@ public static class BuiltinsRegistry
     /// for user-facing predicates so the predicate-reference generator picks
     /// them up. <paramref name="template"/> is the moded call template, e.g.
     /// <c>between(+Low, +High, ?X)</c>. Leave them null for internal
-    /// <c>$</c>-named helpers.</para></summary>
+    /// <c>$</c>-named helpers.</para>
+    ///
+    /// <para><paramref name="kind"/> is ADR-059's category: engine unless the
+    /// predicate is ISO, a control construct or a library predicate.</para></summary>
     public static int Register(string name, int arity, BuiltinImpl impl,
-        string? category = null, string? template = null, string? summary = null)
+        string? category = null, string? template = null, string? summary = null,
+        PredicateKind kind = PredicateKind.Engine)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(impl);
@@ -80,7 +84,7 @@ public static class BuiltinsRegistry
                 arr = newArr;
             }
             arr[id] = new BuiltinEntry(
-                id, name, arity, impl, category, template, summary);
+                id, name, arity, impl, category, template, summary, kind);
             _entries = arr;
             return id;
         }

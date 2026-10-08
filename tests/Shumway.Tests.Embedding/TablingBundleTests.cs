@@ -8,9 +8,9 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Tabling through the compile → link → load pipeline. The
-/// <c>:- table</c> semi-naive transform now runs at COMPILE time
+/// <c>:- table</c> semi-naive transform now runs at compile time
 /// (ShmoCompiler), so the transformed predicates are baked into the .shmo
-/// bytecode — which makes tabling work in a SOURCE-STRIPPED (release) bundle
+/// bytecode — which makes tabling work in a source-stripped (release) bundle
 /// and under <c>--with-compiled-il</c>, where it previously looped or failed
 /// (the transform used to run only at load time off the entry's source).
 ///
@@ -19,7 +19,7 @@ namespace Shumway.Tests.Embedding;
 /// under plain SLD the second clause loops.</para></summary>
 public sealed class TablingBundleTests
 {
-    // CYCLIC graph (a -> b -> c -> a, plus c -> d): reach(a, Y) must detect the
+    // Cyclic graph (a -> b -> c -> a, plus c -> d): reach(a, Y) must detect the
     // tabled subgoal recurring in-progress or it loops. reach(a, _) = {a,b,c,d}.
     private const string Program =
         ":- public ans/1.\n" +
@@ -32,9 +32,9 @@ public sealed class TablingBundleTests
         "reach(X, Y) :- edge(X, Z), reach(Z, Y).\n" +
         "ans(L) :- findall(Y, reach(a, Y), L0), sort(L0, L).\n";
 
-    // Tabled NEGATION (well-founded semantics). `\+ win(Y)` over the tabled
+    // Tabled negation (well-founded semantics). `\+ win(Y)` over the tabled
     // win/1 is rewritten to '$tbl_negate'; the transform adds a '$wfs_mode'
-    // marker so a DIRECT top-level tabled call (game/1 -> win/1, routed through
+    // marker so a direct top-level tabled call (game/1 -> win/1, routed through
     // '$tbl_dispatch') runs the alternating fixpoint. c wins (moves to dead-end
     // d), d loses, a<->b is a draw (undefined -> a direct call fails, since
     // undefined is not true). game/1 calls win/1 directly — exercising the
@@ -130,7 +130,7 @@ public sealed class TablingBundleTests
         }
     }
 
-    // MUTUAL recursion through a p<->q cycle (two tabled predicates). p(a) is
+    // Mutual recursion through a p<->q cycle (two tabled predicates). p(a) is
     // the only fact; p(b) terminates only via in-progress detection across both
     // subgoals. who(L) = sorted truths reachable as p — just [a].
     private const string MutualProgram =

@@ -4,8 +4,8 @@ namespace Shumway.Core;
 /// WAM bytecode opcodes. The encoding framework (fixed-size instructions, operand
 /// layout) is defined by docs/design/wam-instruction-set.md and ADR-006.
 ///
-/// <para>values are assigned CONTIGUOUSLY (0x00..0x65, no gaps) so the
-/// interpreter's dispatch <c>switch</c> compiles to ONE dense jump table. The old
+/// <para>values are assigned contiguously (0x00..0x65, no gaps) so the
+/// interpreter's dispatch <c>switch</c> compiles to one dense jump table. The old
 /// per-category reserved ranges (get 0x01.., put 0x20.., unify 0x40.., …) left the
 /// ~90 cases scattered across 11 disjoint clusters, which made Roslyn emit a chain
 /// of cluster-selection compares in front of several smaller tables — measurable on
@@ -108,7 +108,7 @@ public enum Opcode : byte
 
     // Fast-path Call for predicates known to be
     // permanently bytecode-only (dynamic predicates,
-    // layout-excluded statics, OR any callee when the engine's IL
+    // layout-excluded statics, or any callee when the engine's IL
     // promotion is disabled — Threshold==0 — so no functor will ever
     // earn an IL delegate). Same byte width (9) and operand layout as
     // Call ([target:4][numLivePerms:4]). The linker's post-link
@@ -174,7 +174,7 @@ public enum Opcode : byte
     Cut = 0x46,
 
     // Builtin call (the reserved specialised-builtin opcodes — never
-    // emitted, no interpreter dispatch case — live at the END of the
+    // emitted, no interpreter dispatch case — live at the end of the
     // enum, after ReservedExtension, so they don't punch holes in the
     // dense jump-table block).
     CallBuiltin = 0x47,
@@ -190,7 +190,7 @@ public enum Opcode : byte
     // opcode fusion. Profiled pairs in Blint workload:
     //   Allocate (5) + GetLevel (5)  : 14.0M pairs / run — clause prologue with deep cut.
     //   Deallocate (1) + Proceed (1) :  6.7M pairs / run — clause epilogue.
-    // Fused opcodes use the SAME total byte width as the two they replace,
+    // Fused opcodes use the same total byte width as the two they replace,
     // with the second opcode's byte slot overwritten with Nop so no
     // operand-address shifts cascade through try_me_else / switch tables.
     AllocateGetLevel = 0x4E,   // 10 bytes: op + count(4) + Nop + slot(4)
@@ -239,7 +239,7 @@ public enum Opcode : byte
     //   Jump <target:int32>
     Jump = 0x59,        // 5 bytes
 
-    // ADR-025 — Y[slot] := RawInt(B): capture the CURRENT choice-point top as
+    // ADR-025 — Y[slot] := RawInt(B): capture the current choice-point top as
     // the inline-ITE commit barrier. Distinct from get_level, which captures
     // B0 (the procedure-entry snapshot a pre-ITE body call resets — using it
     // over-cut a preceding generator's choice points; the helper form never
@@ -262,14 +262,14 @@ public enum Opcode : byte
     SwitchOnIntegerSub = 0x5C,
 
     // ADR-028 — structure-keyed sub-argument indexing. Same bounded 2-hop walk
-    // as the atom/integer subs, but the terminal is keyed by FUNCTOR id (the
+    // as the atom/integer subs, but the terminal is keyed by functor id (the
     // switch_on_structure table format): a Str terminal (a list keys as './2')
     // indexes the table, anything else / a missed hop takes the default.
     //   switch_on_structure_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>  (17 bytes)
     SwitchOnStructureSub = 0x5D,
 
     // ADR-029 — clause-epilogue peephole fusion. Each fused opcode keeps the
-    // SAME total byte width as the two straight-line opcodes it replaces (the
+    // same total byte width as the two straight-line opcodes it replaces (the
     // spare byte slot(s) become Nop), so no operand-address shifts cascade
     // through try_me_else / switch tables. Each carries its single operand at
     // offset +1 (natural sequential read); Nop padding at the tail. Tier-0
@@ -293,20 +293,20 @@ public enum Opcode : byte
     // it shares Call's width, so the linker's in-place Call → CallBuiltin
     // rewrite still fits when the last goal turns out to be a builtin.
     //
-    // Which of the two it behaves as is decided at RUNTIME, per activation:
+    // Which of the two it behaves as is decided at runtime, per activation:
     //   LCO on  → deallocate, then jump with Cp untouched  (= execute)
     //   LCO off → Cp = the stub, jump with the frame retained  (= call)
     // Keeping the frame is what gives every predicate a real exit port and a
     // real stack frame to show variables from; see Activation.LastCallOptimisation.
     DebugLastCall = 0x62,
 
-    // ADR-035 — an ARMED breakpoint. Never emitted by the compiler: the debugger
+    // ADR-035 — an armed breakpoint. Never emitted by the compiler: the debugger
     // patches this single byte over the opcode of the instruction it wants to stop
     // before, and the engine remembers what was there. Debug code that nobody is
     // stopping in therefore costs nothing at all — the same trade every real VM
     // makes (the JVM's `breakpoint` bytecode, gdb's INT3).
     //
-    // On dispatch the interpreter reports the stop and then executes the ORIGINAL
+    // On dispatch the interpreter reports the stop and then executes the original
     // opcode at the same pc, read from the engine's breakpoint table. It never
     // restores the byte: a restore-step-repatch sequence would be a window in
     // which another activation over the same shared code runs the un-patched
@@ -315,7 +315,7 @@ public enum Opcode : byte
     // them.
     Break = 0x63,
 
-    // ADR-035 — a step's landing at a goal that compiles INLINE. A `!`, an
+    // ADR-035 — a step's landing at a goal that compiles inline. A `!`, an
     // `is/2`, an `=/2` or a comparison emits no call, so it raises no port —
     // and a step walked straight over all of them, which is precisely where a
     // user wants to stand and look at the variables before the `!` commits or
@@ -325,10 +325,10 @@ public enum Opcode : byte
     DebugPort = 0x64,
 
     // ADR-037 — soft cut. Commits the inline ( Cond *-> Then ; Else ) once Cond
-    // succeeds by NEUTRALISING only the ELSE choice point (captured into Y[slot]
-    // by a get_level_b emitted AFTER the try_me_else, so the slot names the ELSE
+    // succeeds by neutralising only the else choice point (captured into Y[slot]
+    // by a get_level_b emitted after the try_me_else, so the slot names the else
     // CP itself, not the parent as `cut` does). Cond's choice points, pushed
-    // above the ELSE CP, survive — its non-determinism is preserved. Mirrors GNU
+    // above the else CP, survive — its non-determinism is preserved. Mirrors GNU
     // Prolog's soft_cut(y(0)). 5 bytes: op + slot(4). See Activation.SoftCut.
     //   soft_cut <slot:int32>
     SoftCut = 0x65,
@@ -338,8 +338,8 @@ public enum Opcode : byte
 
     // ---------- Rational literal opcodes (ADR-039) ----------
     // A rational reaches a clause only through assert/1 of a computed value:
-    // there is no source literal for one. Each instruction carries TWO ids
-    // into the BIGINT literal pool, the numerator's and the denominator's --
+    // there is no source literal for one. Each instruction carries two ids
+    // into the bigint literal pool, the numerator's and the denominator's --
     // a rational is a pair of integers, so its parts intern where integers
     // already do, and no fourth pool (nor a bundle table) is needed.
     //   get_rational   <numLit:int32> <denLit:int32> <reg:int32>   13 bytes

@@ -55,7 +55,7 @@ public class WasmReservedUnifyTests
     [Fact]
     public void TwoIndependentGroundListsUnify()
     {
-        // app builds a THIRD list; same/2's get_value then walks two
+        // app builds a third list; same/2's get_value then walks two
         // independently-built cons chains through the general unifier.
         using var h = Harness();
         Assert.True(h.Solve("glue"));
@@ -89,7 +89,7 @@ public class WasmReservedUnifyTests
     [Fact]
     public void UnifierBindingsUndoOnBacktracking()
     {
-        // pick/1 leaves a choice point BELOW the q(X) cell; same/2 binds X
+        // pick/1 leaves a choice point below the q(X) cell; same/2 binds X
         // to 1 through the unifier, keep(1, W) fails, and the retry must
         // find X unbound again -- the unifier's trail entry undone.
         using var h = Harness();

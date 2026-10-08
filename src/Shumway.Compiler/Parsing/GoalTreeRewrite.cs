@@ -2,7 +2,7 @@ using Shumway.Compiler.Ast;
 
 namespace Shumway.Compiler.Parsing;
 
-/// <summary>Bottom-up rewrite of a goal's CONTROL-FLOW skeleton without the C#
+/// <summary>Bottom-up rewrite of a goal's control-flow skeleton without the C#
 /// stack. A clause body is a right-nested run of <c>,</c>/2, so one frame per
 /// conjunct puts a wall around a thousand goals — and a stack overflow kills
 /// the process rather than raising something a program could catch. Every

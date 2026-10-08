@@ -63,7 +63,7 @@ public class Chunk155dTests
     {
         // The matched clause appears in (at least) the var
         // fallthrough chain and its specific bucket chain. The
-        // retract must patch BOTH entries so both dispatch paths
+        // retract must patch both entries so both dispatch paths
         // skip the clause.
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;

@@ -5,7 +5,7 @@ using SourceLexer = Shumway.Compiler.Lexer.Lexer;
 
 namespace Shumway.Tests.Compiler.Parsing;
 
-/// <summary>The RIGHT operand of an <c>xfy</c> operator sits in a y position:
+/// <summary>The right operand of an <c>xfy</c> operator sits in a y position:
 /// it may reach the operator's own priority. The chain reader read every
 /// operand one below that — right for the ones that are the left operand of
 /// the next nesting, wrong for the last — so a prefix operator of exactly
@@ -40,7 +40,7 @@ public class XfyRightOperandTests
     }
 
     /// <summary>The chain reader exists so a long xfy chain — a clause body's
-    /// commas — costs no recursion per element. That is the OTHER half of the
+    /// commas — costs no recursion per element. That is the other half of the
     /// contract, and a rewrite that restores the y position by going back to
     /// the recursive reader would break it silently, so both halves are
     /// pinned together: a thousand-goal conjunction reads, and reads as the

@@ -65,12 +65,12 @@ public static class MetaTransform
                 Term head = ruleTerm.Args[0];
                 Term body = ruleTerm.Args[1];
                 // ISO 7.8.8 cut transparency. A `!` inside a
-                // `;` / `->` then/else BRANCH must commit the HOST clause, but
+                // `;` / `->` then/else branch must commit the host clause, but
                 // the branch lowers to a synthesised helper whose own clause
                 // dispatch the `!` would otherwise cut instead (the bug: d(X)
                 // :- X -> !, true. left d's second clause reachable). When the
                 // body has such a branch cut, capture the host's barrier into
-                // a fresh variable as the FIRST body goal (CallBuiltin doesn't
+                // a fresh variable as the first body goal (CallBuiltin doesn't
                 // touch B0, so it still holds the caller's Call-site value =
                 // the neck barrier) and thread it into the helpers, where the
                 // branch `!` becomes '$call'(!, K) — the barrier cut.
@@ -128,7 +128,7 @@ public static class MetaTransform
     /// each replace a body goal with a call to a freshly synthesised helper — and a fresh
     /// <see cref="CompoundTerm"/> / <see cref="AtomTerm"/> has no source position. Spliced into
     /// the caller's body that way, the helper call had no debug site of its own and the debug
-    /// compiler mapped it to the PREVIOUS goal's line: stepping onto the construct left the
+    /// compiler mapped it to the previous goal's line: stepping onto the construct left the
     /// caret where it was, so the step looked like it had done nothing (ADR-035). The
     /// replacement must carry the position of the goal it replaces.</para></summary>
     private static Term WithPosition(Term term, SourcePosition position) => term switch
@@ -148,14 +148,14 @@ public static class MetaTransform
         Shumway.Core.RecursionGuard.EnsureRoom();
         // ISO §7.6.2: converting a control construct to a body fails when any
         // goal position inside it holds a number, and the conversion happens
-        // BEFORE the body runs — `\+ (fail,1)` raises, it does not succeed on
+        // before the body runs — `\+ (fail,1)` raises, it does not succeed on
         // `fail`. Emitted as a runtime throw/1 (not a compile-time C# throw)
         // so the error stays inside whatever catch/3 region encloses it, and
-        // done HERE so the culprit is the construct as WRITTEN, before cut
+        // done here so the culprit is the construct as written, before cut
         // barriers and catch markers are spliced in.
         if (IsControlConstruct(goal) && HasNumberInGoalPosition(goal))
         {
-            // For \+/not the CONVERSION applies to the argument, so the
+            // For \+/not the conversion applies to the argument, so the
             // culprit is the inner construct — \+ (true;1) raises
             // type_error(callable, (true;1)), the ISO (and Scryer) shape.
             Term culprit = goal is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } neg
@@ -163,7 +163,7 @@ public static class MetaTransform
             return WithPosition(BodyConversionThrow(culprit), goal.Position);
         }
 
-        // Conjunction: transform every conjunct. Along the RIGHT spine — which
+        // Conjunction: transform every conjunct. Along the right spine — which
         // is the shape a body is written in, and can be as long as the program
         // likes — iteratively; a frame per conjunct overflowed the C# stack,
         // taking the process with it. Conjuncts are still transformed left to
@@ -345,7 +345,7 @@ public static class MetaTransform
             {
                 Position = goal.Position,
             };
-            // ADR-035 — the outer '\+' IS the forall/2 goal (its inner '\+ Action'
+            // ADR-035 — the outer '\+' is the forall/2 goal (its inner '\+ Action'
             // stays a plain $neg). Name it so the debugger shows/stops on forall/2.
             _nextHelperKind = "forall";
             return TransformGoal(rewritten, ref counter, helpers);
@@ -369,7 +369,7 @@ public static class MetaTransform
         // where Goal is an atom or a non-control-construct compound rewrites
         // to a direct goal with the extra args appended. The compiler then
         // emits a Call / Execute to the resolved functor instead of
-        // `CallBuiltin call/N`, dropping the dispatcher overhead AND making
+        // `CallBuiltin call/N`, dropping the dispatcher overhead and making
         // the predicate Tier-1 IL eligible (the call/$call gate
         // skips it).
         //
@@ -420,15 +420,15 @@ public static class MetaTransform
         if (goal is CompoundTerm disj && disj.Functor == ";" && disj.Args.Length == 2)
         {
             // ADR-025 — when the inline lowering is enabled and every part is a
-            // plain conjunction (no cuts / nested control / meta-goals), LEAVE
+            // plain conjunction (no cuts / nested control / meta-goals), leave
             // the construct intact: ClauseCompiler emits it in the host clause
-            // (get_level; try_me_else ELSE; C; cut; T; jump END; ELSE: trust_me;
+            // (get_level; try_me_else else; C; cut; T; jump end; else: trust_me;
             // E) instead of a synthesized 2-clause helper reached by a Call.
             // Parts are plain by eligibility, so there is nothing to transform
             // inside them.
-            // ADR-037: a soft-cut disjunction ALWAYS takes the inline path when
+            // ADR-037: a soft-cut disjunction always takes the inline path when
             // eligible — soft cut has no synthesized-helper form, its lowering
-            // IS the inline get_level_b/soft_cut. So it inlines regardless of the
+            // is the inline get_level_b/soft_cut. So it inlines regardless of the
             // general (default-OFF) inline-ITE flag.
             if ((InlineIteEnabled || Shumway.Compiler.InlineIte.IsSoftCut(disj))
                 && Shumway.Compiler.InlineIte.IsEligible(disj))
@@ -449,16 +449,16 @@ public static class MetaTransform
         return goal;
     }
 
-    /// <summary>Synthesized-helper NAMING context. The old per-Apply
-    /// counter restarted at zero on every transform run, so a QUERY stub's
+    /// <summary>Synthesized-helper naming context. The old per-Apply
+    /// counter restarted at zero on every transform run, so a query stub's
     /// synthesized <c>$disj_1</c> (e.g. a findall collect loop) could collide —
-    /// same module mangling, same arity — with a CONSULTED clause's
+    /// same module mangling, same arity — with a consulted clause's
     /// <c>$disj_1</c>: the query-region definition shadowed the consulted helper
-    /// and the caller executed the WRONG body (surfaced as an
+    /// and the caller executed the wrong body (surfaced as an
     /// instantiation_error inside <c>findall</c> over an if-then-else predicate;
     /// latent for a long time).
     ///
-    /// <para>The fix is SCOPED naming, not a process-global sequence (that was
+    /// <para>The fix is scoped naming, not a process-global sequence (that was
     /// tried first and mints unbounded fresh atoms — one per helper per query —
     /// growing the functor table past the resume-marker fid cap mid-suite):
     /// <list type="bullet">
@@ -468,7 +468,7 @@ public static class MetaTransform
     /// separate), keeping the atom space bounded.</item>
     /// <item><see cref="HelperPrefix"/> — the query-stub path passes a reserved
     /// <c>$q</c> prefix with the per-Apply counter: query helper names are
-    /// REUSED query-to-query (bounded atoms) and can never collide with
+    /// reused query-to-query (bounded atoms) and can never collide with
     /// consult-time names.</item>
     /// </list>
     /// Both default to the old per-Apply behavior for standalone tooling
@@ -487,15 +487,15 @@ public static class MetaTransform
     }
 
     /// <summary>ADR-035 (Camino B) — the meta-predicate a synthesised
-    /// disjunction / negation helper actually STANDS FOR. findall/bagof/setof
+    /// disjunction / negation helper actually stands for. findall/bagof/setof
     /// lower to a <c>;</c> collect loop and forall to a <c>\+</c>, all of which
     /// otherwise become an indistinguishable <c>$disj_N</c> / <c>$neg_N</c> —
     /// the same helpers a user-written <c>;</c> / <c>\+</c> produces. For the
-    /// debugger those user constructs are TRANSPARENT control flow, but a
-    /// findall IS a goal the user wrote and must stop / show as <c>findall/3</c>.
+    /// debugger those user constructs are transparent control flow, but a
+    /// findall is a goal the user wrote and must stop / show as <c>findall/3</c>.
     /// So the rewrite sets this to the meta-predicate's kind right before it
     /// TransformGoal's the construct, and <see cref="HelperName"/> stamps it onto
-    /// the OUTERMOST synthesised helper (the first one built — its HelperName runs
+    /// the outermost synthesised helper (the first one built — its HelperName runs
     /// before the recursion into the goal), then clears it so nested user
     /// constructs keep their plain <c>disj</c>/<c>neg</c> kind. Debug-recognised
     /// via <see cref="PrologEngine.DebugConstructName"/>; codegen-neutral bar the
@@ -509,7 +509,7 @@ public static class MetaTransform
 
     private static string HelperName(string kind, ref int counter)
     {
-        // The aggregation rewrites tag only their OUTER ;/\+ — consumed once, so
+        // The aggregation rewrites tag only their outer ;/\+ — consumed once, so
         // the disjunction/negation helper that carries the meta-predicate's line
         // is named for it, and everything synthesised afterwards is plain again.
         if ((kind == "disj" || kind == "neg") && _nextHelperKind is { } k)
@@ -575,7 +575,7 @@ public static class MetaTransform
             }
             return false;
         }
-        // At the TOP level of the body we are not inside a branch yet: descend
+        // At the top level of the body we are not inside a branch yet: descend
         // through conjunction; a ;/->/*-> here means its branches are branch
         // positions (handled by InsideBranch).
         var top = new List<Term>(32) { body };
@@ -606,13 +606,13 @@ public static class MetaTransform
     }
 
     /// <summary>Rewrites every cut-transparent <c>!</c> in a branch term into
-    /// <c>'$call'(!, K)</c> (the barrier cut). Traverses the SAME transparent
+    /// <c>'$call'(!, K)</c> (the barrier cut). Traverses the same transparent
     /// positions as <see cref="HasTransparentBranchCut"/>: conjunction, both arms
-    /// of a nested <c>;</c>, and the then of a nested <c>-&gt;</c> — but NOT a
+    /// of a nested <c>;</c>, and the then of a nested <c>-&gt;</c> — but not a
     /// condition, <c>\+</c>, or meta-goal argument (cut-opaque, left untouched).
     ///
     /// <para>Descending into nested <c>;</c>/<c>-&gt;</c> is required for the
-    /// barrier variable K to appear in the ENCLOSING helper's free variables (a
+    /// barrier variable K to appear in the enclosing helper's free variables (a
     /// nested <c>!</c> left as a bare <c>!</c> would be invisible to that helper's
     /// free-var collection, so K would not thread down and the inner helper would
     /// read a garbage barrier). The recursive transform of the rewritten term sees
@@ -679,7 +679,7 @@ public static class MetaTransform
     /// silently change the cut scope. The exclude set is the same one
     /// <c>DispatchCall</c> intercepts after functor lookup.</summary>
     /// <summary><c>'$mqual'(Module, Goal)</c> — a runtime-variable meta-goal
-    /// tagged with its meta-caller's module by ModuleRewrite. It is an OPAQUE
+    /// tagged with its meta-caller's module by ModuleRewrite. It is an opaque
     /// runtime marker: this transform must never inline it (unwrapping /
     /// module-relative resolution happens at the live-engine dispatch). Re-running
     /// the pipeline over an already-tagged clause (the prelude bake, --exe) would
@@ -688,10 +688,10 @@ public static class MetaTransform
     private static bool IsMqualGoal(Term t) =>
         t is CompoundTerm c && c.Functor == "$mqual" && c.Args.Length == 2;
 
-    /// <summary>A goal this transform may inline: syntactically callable AND not
+    /// <summary>A goal this transform may inline: syntactically callable and not
     /// the opaque <c>$mqual</c> marker.</summary>
     /// <summary>A <c>!</c> anywhere cut-transparent in a findall/bagof
-    /// GOAL argument (top level, <c>,</c>-chain, <c>;</c> arms, <c>-&gt;</c>
+    /// goal argument (top level, <c>,</c>-chain, <c>;</c> arms, <c>-&gt;</c>
     /// thens). Splicing such a goal into the collect loop would let the cut
     /// reach the DRIVER's disjunction and kill the collect alternative —
     /// wrap it in call/1 instead so the cut stays local (§7.8.3).</summary>
@@ -710,7 +710,7 @@ public static class MetaTransform
 
     /// <summary>The closure of a <c>call/N</c> is checked for extendability
     /// as given, so <c>call(',', A, B)</c> passes as the atom <c>','</c>/0
-    /// and the BUILT goal is a control construct. Inlining that skips the
+    /// and the built goal is a control construct. Inlining that skips the
     /// ISO §7.6.2 body conversion, so <c>call(',', fail, X)</c> with X = 3
     /// would fail on <c>fail</c> instead of raising
     /// <c>type_error(callable, (fail,3))</c>.
@@ -720,7 +720,7 @@ public static class MetaTransform
     /// and the one that gives a metacalled <c>!</c> its own cut barrier.</para>
     /// </summary>
     /// <summary>§8.10: the collected-solutions argument of findall/bagof/setof
-    /// has to be a partial list, checked BEFORE the goal runs — the inline
+    /// has to be a partial list, checked before the goal runs — the inline
     /// rewrites bypass the prelude clause that would otherwise do it.</summary>
     private static Term WithResultListCheck(
         Term resultArg, Term body, string callerName,
@@ -837,7 +837,7 @@ public static class MetaTransform
     {
         string helperName = HelperName("disj", ref counter);
 
-        // Branch cuts become '$call'(!, K) BEFORE free-variable
+        // Branch cuts become '$call'(!, K) before free-variable
         // collection, so the captured-barrier variable K rides into the
         // helper's head like any other free variable. Branch positions only;
         // an if-then-else condition stays opaque (its cuts keep helper scope).
@@ -894,9 +894,9 @@ public static class MetaTransform
 
         // ADR-037 — soft cut: ( A *-> B ; C ) with A/B/C too rich for the inline
         // form (a cut in B/C, nested control, …). Two clauses, but the commit is a
-        // SOFT cut: clause 1 captures the helper's Else-alternative CP with
+        // soft cut: clause 1 captures the helper's Else-alternative CP with
         // '$choice_level'(K) at entry, runs A, then '$soft_cut'(K) neutralises that
-        // ONE choice point — so C is pruned once A succeeds while A's own choice
+        // one choice point — so C is pruned once A succeeds while A's own choice
         // points survive (B runs per solution of A). A cut in B/C stays transparent
         // to the host via the threaded cutK, exactly as in the -> case.
         if (branchLeft is CompoundTerm sc && sc.Functor == "*->" && sc.Args.Length == 2)
@@ -998,7 +998,7 @@ public static class MetaTransform
         CollectNamedVars(innerGoal, freeVars, seen);
 
         // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so a cut inside G is
-        // LOCAL to it. Spliced bare into the helper's first clause it would
+        // local to it. Spliced bare into the helper's first clause it would
         // cut the helper itself and take the second clause — the one that
         // makes the negation succeed — with it, so `\+ ((!, fail))` failed.
         if (GoalHasLocalCut(innerGoal))
@@ -1126,7 +1126,7 @@ public static class MetaTransform
 
         // ( collectLoop ; true ), '$bagof_next'(Kind, Wt-B)
         //
-        // The enumerator is LAZY: it groups the recorded pairs once (linear)
+        // The enumerator is lazy: it groups the recorded pairs once (linear)
         // and materialises each Witness-Bag only when backtracking demands
         // it — a caller that cuts after the first group does not pay for the
         // rest (the eager collector built every group up front, and
@@ -1243,7 +1243,7 @@ public static class MetaTransform
     /// <summary>The named variables of a term, in first-appearance order.
     /// Iterative: this walks whole clause bodies, whose spine is as long as
     /// the program wrote it (arguments pushed right to left, so the visit
-    /// order — which IS the result order — is unchanged).</summary>
+    /// order — which is the result order — is unchanged).</summary>
     private static void CollectNamedVars(Term t, List<string> order, HashSet<string> seen)
     {
         var work = new List<Term>(32) { t };

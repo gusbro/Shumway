@@ -12,10 +12,10 @@ namespace Shumway.TopLevel;
 /// </summary>
 public static class SolutionFormatter
 {
-    /// <summary>Shortens a term for DISPLAY, the way a top level does: a list
+    /// <summary>Shortens a term for display, the way a top level does: a list
     /// keeps <paramref name="limit"/> elements and ends in <c>|...</c>, a
     /// subterm nested deeper than that shows as <c>...</c>, and the answer as
-    /// a WHOLE shows at most <paramref name="limit"/> items. A limit of zero
+    /// a whole shows at most <paramref name="limit"/> items. A limit of zero
     /// leaves the term alone.
     ///
     /// <para>That last cap is the one that makes the promise hold. Per-list is
@@ -27,7 +27,7 @@ public static class SolutionFormatter
     ///
     /// <para>Elision belongs here and not in the writer: <c>write/1</c> prints
     /// what it is given, because a program's output is not a summary of itself.
-    /// An ANSWER is read by a person, and <c>numlist(1, 10000000, X)</c> has one
+    /// An answer is read by a person, and <c>numlist(1, 10000000, X)</c> has one
     /// nobody wants in full.</para></summary>
     public static Term Elide(Term term, int limit)
     {
@@ -126,14 +126,22 @@ public static class SolutionFormatter
         }
 
         // An unbound user variable's value is an engine variable `_Gn`; wherever
-        // that same `_Gn` turns up inside ANOTHER variable's value, it is the
+        // that same `_Gn` turns up inside another variable's value, it is the
         // variable the user named. Rendering it as its name is what makes
         // `Y = f(X)` read as f of X rather than f of something anonymous.
+        // Several user variables can be that one variable (X = Y). It takes
+        // the first name in the query that the answer shows: a `_` name's
+        // binding is not shown, and the residual goals and the other
+        // variables' values would then name a variable the answer never
+        // relates to anything.
+        var namesInOrder = new List<int>(userVars.Count);
+        for (int i = 0; i < userVars.Count; i++) if (!IsHidden(userVars[i])) namesInOrder.Add(i);
+        for (int i = 0; i < userVars.Count; i++) if (IsHidden(userVars[i])) namesInOrder.Add(i);
         var displayName = new Dictionary<string, string>();
-        foreach (string name in userVars)
-            if (solution[name] is VarTerm ov) displayName.TryAdd(ov.Name, name);
+        foreach (int i in namesInOrder)
+            if (solution[userVars[i]] is VarTerm ov) displayName.TryAdd(ov.Name, userVars[i]);
 
-        // A query variable can be SPELLED like an engine one: `_G11` typed by
+        // A query variable can be spelled like an engine one: `_G11` typed by
         // the user, and the engine's name for heap cell 11, are two different
         // variables that would print alike. The engine's gives way to a fresh
         // alphabetical name in the pass below (it renames every engine
@@ -147,11 +155,12 @@ public static class SolutionFormatter
         var copyToOriginal = new Dictionary<string, string>();
         var copies = ResidualProjection.ListElements(
             solution[QueryWrapper.CopiesVarName]).ToList();
-        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
-            if (copies[i] is VarTerm cv) copyToOriginal.TryAdd(cv.Name, userVars[i]);
-        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
-            ResidualProjection.MapCopyNames(
-                copies[i], solution[userVars[i]], userVars[i], copyToOriginal);
+        foreach (int i in namesInOrder)
+            if (i < copies.Count && copies[i] is VarTerm cv) copyToOriginal.TryAdd(cv.Name, userVars[i]);
+        foreach (int i in namesInOrder)
+            if (i < copies.Count)
+                ResidualProjection.MapCopyNames(
+                    copies[i], solution[userVars[i]], userVars[i], copyToOriginal);
         // A copy that landed on an engine variable the user did name shows the name.
         foreach (string key in copyToOriginal.Keys.ToList())
             if (displayName.TryGetValue(copyToOriginal[key], out string? shown))
@@ -202,7 +211,7 @@ public static class SolutionFormatter
                     (cycleNames ??= new Dictionary<string, string>())
                         .TryAdd($"_C{addr}", name);
 
-        // An INTERIOR cycle — one whose owner is not the root of any user
+        // An interior cycle — one whose owner is not the root of any user
         // variable's value, e.g. the culprit inside a caught
         // `type_error(list, …)` — has no name to re-enter by. Give the owner
         // a synthetic one and report it as its own line, the idiom a root
@@ -270,17 +279,20 @@ public static class SolutionFormatter
         }
 
         // SWI-style binding display: user vars whose values are identical are
-        // CHAINED — `A = B, B = algo` instead of `A = algo, B = algo` — and
+        // chained — `A = B, B = algo` instead of `A = algo, B = algo` — and
         // two vars sharing one still-unbound variable show their aliasing
         // (`A = B.`) instead of nothing. A lone unbound var stays omitted.
+        // A constrained variable is grouped too: its residual goals name one
+        // of the group, and without the chain the others vanish from the
+        // answer (`X in 0..9, Y = X` answered `X in 0..9`).
         //
-        // A group is the variables whose values are the SAME TERM, and the
+        // A group is the variables whose values are the same term, and the
         // rendered text cannot be what decides that. Two unrelated values can
         // print alike: a user variable spelled like an engine one (`_G11`
         // against the engine's name for heap cell 11), or elision cutting two
         // long terms at the same place. Chaining those answers `X = Y` about
         // terms that are not equal, which is a wrong answer and not a
-        // formatting blemish. So the text only BUCKETS the candidates and the
+        // formatting blemish. So the text only buckets the candidates and the
         // term the engine produced, before any display renaming, decides.
         var renderedValue = new Dictionary<string, string>();
         var groupOf = new Dictionary<string, int>();
@@ -290,7 +302,7 @@ public static class SolutionFormatter
         foreach (string name in userVars)
         {
             Term? val = solution[name];
-            if (val is null || residualsByVar.ContainsKey(name)) continue;
+            if (val is null) continue;
             Term raw = val;
             if (cycleNames is not null)
             {
@@ -328,10 +340,10 @@ public static class SolutionFormatter
         // hold the very term a binding line already shows, and for a rational
         // tree that reads as two ways of saying one thing: `X = - X` above and
         // `dif(Y, - X)` below. A cyclic subterm that comes out looking exactly
-        // like some variable's value IS that variable, so it says the name.
+        // like some variable's value is that variable, so it says the name.
         // Only a rational tree is a candidate: it is the one kind of term with
         // more than one way to spell itself, and restricting the comparison to
-        // those means two DIFFERENT terms cut short by the display limit can
+        // those means two different terms cut short by the display limit can
         // never come out looking alike and take each other's name.
         Dictionary<string, string>? nameByValue = null;
         foreach (var kv in renderedValue)
@@ -340,27 +352,43 @@ public static class SolutionFormatter
 
         var lines = new List<string>();
         var groupEmitted = new HashSet<int>();
+        var shownMembers = new List<string>();
         foreach (string name in userVars)
         {
+            if (groupOf.TryGetValue(name, out int grp) && groupEmitted.Add(grp))
+            {
+                // The chain runs through the names the answer shows. Through a
+                // hidden `_` name it printed `X = _T` and nothing after it:
+                // `X = _T, Z = _T` lost X = Z, and `X = f(a), _T = f(a)` lost
+                // what X is.
+                shownMembers.Clear();
+                foreach (string m in groupMembers[grp])
+                    if (!IsHidden(m)) shownMembers.Add(m);
+                for (int i = 0; i + 1 < shownMembers.Count; i++)
+                    AddBinding(lines, shownMembers[i], shownMembers[i + 1]);
+                // The last member carries the value — unless the shared value
+                // is itself an unbound variable (the chain alone says it all).
+                if (shownMembers.Count > 0 && solution[shownMembers[^1]] is not VarTerm)
+                    AddBinding(lines, shownMembers[^1], renderedValue[shownMembers[^1]]);
+                // One shown name aliased to a hidden one named after it:
+                // `X = _A` reports the alias, `_A = X` does not (SWI's rule).
+                // A constrained one says what it is in its residual goals.
+                else if (shownMembers.Count == 1 && !residualsByVar.ContainsKey(shownMembers[0]))
+                {
+                    var all = groupMembers[grp];
+                    int at = all.IndexOf(shownMembers[0]);
+                    if (at + 1 < all.Count) lines.Add($"{shownMembers[0]} = {all[at + 1]}");
+                }
+            }
             if (residualsByVar.TryGetValue(name, out var rs))
             {
                 // Residuals are reported whatever the variable is called: what
-                // a `_`-named variable is still CONSTRAINED to is an answer,
+                // a `_`-named variable is still constrained to is an answer,
                 // even though what it was bound to is not.
                 foreach (Term g in rs)
                     lines.Add(RenderResidual(g, residualSource, copyToOriginal, cycleNames,
                                              displayName, nameByValue, elide, ops));
-                continue;
             }
-            if (!groupOf.TryGetValue(name, out int grp) || !groupEmitted.Add(grp))
-                continue;   // no value, or its group was already emitted
-            var members = groupMembers[grp];
-            for (int i = 0; i + 1 < members.Count; i++)
-                AddBinding(lines, members[i], members[i + 1]);
-            // The last member carries the value — unless the shared value is
-            // itself an unbound variable (the chain alone says it all).
-            if (solution[members[^1]] is not VarTerm)
-                AddBinding(lines, members[^1], renderedValue[members[^1]]);
         }
         if (interiorCycles is not null)
             foreach (var (sname, owner) in interiorCycles)
@@ -397,7 +425,7 @@ public static class SolutionFormatter
     /// first appearance across <paramref name="shown"/>. Skips any name a user
     /// variable or cycle name already holds (<paramref name="reserved"/>) and
     /// any engine variable a user name already owns
-    /// (<paramref name="alreadyMapped"/>). Walks the ELIDED terms — an answer is
+    /// (<paramref name="alreadyMapped"/>). Walks the elided terms — an answer is
     /// user data of any depth and a StackOverflow is uncatchable — so it names
     /// exactly what the display shows. No bare <c>_</c>: a variable shown once
     /// is still named.</summary>
@@ -439,12 +467,12 @@ public static class SolutionFormatter
         return map;
     }
 
-    /// <summary>Structural equality of two answer values, on an EXPLICIT
+    /// <summary>Structural equality of two answer values, on an explicit
     /// stack. An answer is user data and nests as deep as the program made it,
     /// so a recursive comparison would spend one C# frame per level and a
     /// StackOverflow cannot be caught. Mirrors what Term.Equals means, and is
     /// applied to the terms the engine produced rather than to their rendered
-    /// form, which is the whole point: two values that merely PRINT alike are
+    /// form, which is the whole point: two values that merely print alike are
     /// not the same answer.</summary>
     private static bool SameTerm(Term a, Term b)
     {
@@ -472,7 +500,7 @@ public static class SolutionFormatter
     }
 
     /// <summary>One residual constraint, named the way the bindings beside it
-    /// are. A residual and a binding can hold the SAME term, and until this
+    /// are. A residual and a binding can hold the same term, and until this
     /// they said so differently: `X = - X` on one line and
     /// `dif(Y, - _C156)` on the next, where the `_C156` is the cycle marker
     /// for the very term the line above calls X. One answer, two names for
@@ -508,7 +536,7 @@ public static class SolutionFormatter
     /// <summary>Replaces a cyclic subterm that looks exactly like a shown
     /// value by the name of the variable it belongs to: `X = - X` and
     /// `dif(Y, - X)` become `X = - X` and `dif(Y, X)`, which is the same
-    /// constraint said once. Only a cycle OWNER is a candidate, since only a
+    /// constraint said once. Only a cycle owner is a candidate, since only a
     /// rational tree has more than one way to spell itself; depth is bounded
     /// because this is a display and the answer beside it is the long
     /// form.</summary>
@@ -553,12 +581,12 @@ public static class SolutionFormatter
     /// line reads back as the one goal it claims to be.</summary>
     private const int BindingValuePriority = 699;
 
-    /// <summary>Adds <c>Name = Value</c> unless the variable being reported ON
+    /// <summary>Adds <c>Name = Value</c> unless the variable being reported on
     /// is one the user named with a leading underscore.
     ///
     /// <para>Such a name says "I am not asking about this one", so its value is
     /// not part of the answer — <c>?- _A = 5.</c> answers <c>true</c>. It is the
-    /// SUBJECT that decides, not the value: <c>?- X = f(_A).</c> still answers
+    /// subject that decides, not the value: <c>?- X = f(_A).</c> still answers
     /// <c>X = f(_A)</c>, because the question was about X and naming the
     /// variable inside its value is what makes the answer readable. Residual
     /// goals are not bindings and are never dropped — see the caller. SWI
@@ -566,7 +594,10 @@ public static class SolutionFormatter
     /// while <c>?- X = _A.</c> is <c>X = _A</c>.</para></summary>
     private static void AddBinding(List<string> lines, string name, string value)
     {
-        if (name.Length > 0 && name[0] == '_') return;
+        if (IsHidden(name)) return;
         lines.Add($"{name} = {value}");
     }
+
+    // A `_` variable's binding is not part of the answer.
+    private static bool IsHidden(string name) => name.Length > 0 && name[0] == '_';
 }

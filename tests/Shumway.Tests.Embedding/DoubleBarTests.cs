@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// <c>[a,b,c|T]</c>, both to read and to write.
 ///
 /// <para>A grammar's answer is a difference list, and there was no way to say
-/// one: the text notation only ever meant a CLOSED list, so an answer holding
+/// one: the text notation only ever meant a closed list, so an answer holding
 /// a long text with an open tail had to spell out every character, one line
 /// per element, burying the one thing the reader is after, which is where the
 /// text ends and the tail begins.</para></summary>
@@ -120,7 +120,7 @@ public sealed class DoubleBarTests
     public void TheOptionIsItsOwn()
     {
         // portray_text says a list is text; the bars are the separate
-        // question of how an OPEN one is written.
+        // question of how an open one is written.
         Assert.Matches(@"^\[a,b\|_", Written("write_term([a,b|_T], [portray_text(true)])"));
         Assert.Matches(@"^""ab""\|\|_",
                        Written("write_term([a,b|_T], [portray_text(true), double_bar(true)])"));

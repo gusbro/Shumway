@@ -149,6 +149,6 @@ only ever be correct-for-its-snapshot or absent.
   the read-hot, mutation-cold case — the exact case IL helps most — on the
   interpreter, for a restriction that the mutation signal makes unnecessary.
 - **Recompile-in-place on mutation instead of evicting.** Rejected: re-emitting
-  a Sigil method on every `assert`/`retract` is far costlier than dropping a
+  an IL method on every `assert`/`retract` is far costlier than dropping a
   cache entry, and would stall the mutating call; eviction + lazy re-promotion
   pays only when the predicate is both hot and stable.

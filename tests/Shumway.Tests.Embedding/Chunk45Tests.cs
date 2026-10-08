@@ -52,6 +52,7 @@ public class Chunk45Tests
         engine.WarmAllCompilable();
 
         int fid = FunctorId("color", 1);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(fid),
             "color/1 should be IL-promoted after an explicit compile_all.");
     }
@@ -123,9 +124,10 @@ public class Chunk45Tests
         // Pre-warm is opt-in now (compile_all / WarmAllCompilable), not at load.
         engine.WarmAllCompilable();
 
-        // bar/0 IS promotable (single-clause fact, no body).
+        // bar/0 is promotable (single-clause fact, no body).
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("bar", 0)));
-        // foo/0 is NOT promotable (its body has a non-tail Call to
+        // foo/0 is not promotable (its body has a non-tail Call to
         // bar/0 before the tail-call to baz/0).
         Assert.True(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
         // Both still work via the consulted source.
@@ -151,6 +153,7 @@ public class Chunk45Tests
             engine.LoadBundle(path);
             // Pre-warm is opt-in now (compile_all / WarmAllCompilable).
             engine.WarmAllCompilable();
+            engine.IlPromotion.WaitForPendingPromotions();
             Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
             Assert.True(engine.Query("greet(world).").Success);
             Assert.True(engine.Query("greet(prolog).").Success);

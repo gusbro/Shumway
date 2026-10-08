@@ -25,9 +25,9 @@ public enum IlPatchKind : byte
 
     /// <summary>Builtin registry id — emitted by the <c>CallBuiltin</c> /
     /// <c>ExecuteBuiltin</c> dispatch (<c>GetById(id).Impl</c>). Registry
-    /// ids are assigned in REGISTRATION ORDER, which concurrent engine
+    /// ids are assigned in registration order, which concurrent engine
     /// construction in the building process can shuffle — a baked absolute
-    /// id then dispatches a DIFFERENT builtin in the loading process (the
+    /// id then dispatches a different builtin in the loading process (the
     /// cross-process bundle flake: type_error(evaluable)/fd_bound/
     /// '$native_run' zoo). Resolved by (Name, Arity) through
     /// <c>BuiltinsRegistry.TryGetByFunctor</c>, exactly like the bytecode
@@ -97,15 +97,27 @@ public sealed class IlPersistedEntry
     /// predicate dispatches without a WAM body.</summary>
     public byte[]? IndexGraph { get; init; }
 
-    /// <summary>For a REGION method, the non-root members' external-entry
+    /// <summary>For a region method, the non-root members' external-entry
     /// cursor table: <c>(memberFunctorName, arity, entryCursor)</c> per absorbed member
     /// (the <c>RegionCursorKind.MemberEntry</c> cursors in the method's dispatch
     /// switch). Name-relative like <see cref="Name"/>. LoadBundle uses it to alias a
     /// member with no standalone form (no own IL, WAM stripped) to
     /// <c>EncodeResumeMarker(thisEntry'sRuntimeFid, entryCursor)</c> in
-    /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches INTO the region at
+    /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches into the region at
     /// that member. Null/empty for a non-region method.</summary>
     public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
+
+    /// <summary>ADR-061: the predicate's continuation methods in the assembly,
+    /// which the loader binds under the runtime functor id; null for none.</summary>
+    public IlPredicateCompiler.CpsLayout? Cps { get; init; }
+
+    /// <summary>ADR-049: the method wakes where Tier-0 does; else the engine
+    /// wakes at its returns.</summary>
+    public bool Wakes { get; init; }
+
+    /// <summary>ADR-061: what compiling the predicate's code costs: the IL
+    /// bytes of its methods. The loader weighs it against the predicate's calls.</summary>
+    public int Cost { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -143,6 +155,21 @@ public static class IlPersistedEntryCodec
                     bw.Write(mArity);
                     bw.Write(mCursor);
                 }
+            bw.Write(e.Wakes);
+            bw.Write(e.Cost);
+            var cps = e.Cps;
+            bw.Write((uint)(cps?.Methods.Length ?? 0));
+            if (cps is not null)
+            {
+                bw.Write(cps.AltField);
+                foreach (var (cursor, method) in cps.Methods)
+                {
+                    bw.Write(cursor);
+                    bw.Write(method);
+                }
+                bw.Write((uint)cps.Alternatives.Length);
+                foreach (int c in cps.Alternatives) bw.Write(c);
+            }
         }
         bw.Flush();
         return ms.ToArray();
@@ -184,6 +211,23 @@ public static class IlPersistedEntryCodec
                     members.Add((mName, mArity, mCursor));
                 }
             }
+            bool wakes = br.ReadBoolean();
+            int cost = br.ReadInt32();
+            IlPredicateCompiler.CpsLayout? cps = null;
+            uint cpsMethods = br.ReadUInt32();
+            if (cpsMethods > 0)
+            {
+                string altField = br.ReadString();
+                var methods = new (int, string)[cpsMethods];
+                for (int m = 0; m < methods.Length; m++)
+                    methods[m] = (br.ReadInt32(), br.ReadString());
+                var alternatives = new int[br.ReadUInt32()];
+                for (int a = 0; a < alternatives.Length; a++) alternatives[a] = br.ReadInt32();
+                cps = new IlPredicateCompiler.CpsLayout
+                {
+                    Methods = methods, Alternatives = alternatives, AltField = altField,
+                };
+            }
             result.Add(new IlPersistedEntry
             {
                 Slot = slot,
@@ -192,6 +236,9 @@ public static class IlPersistedEntryCodec
                 MethodName = methodName,
                 IndexGraph = graph,
                 RegionMembers = members,
+                Wakes = wakes,
+                Cost = cost,
+                Cps = cps,
             });
         }
         return result;
@@ -223,7 +270,7 @@ public static class IlPatchSiteCodec
     /// <summary>Sentinel range used by the emit pipeline. Sentinels are
     /// assigned sequentially starting at <see cref="SentinelBase"/>; any
     /// value &gt;= base and &lt; base+0x10_0000 may be a patch sentinel.
-    /// The range is chosen to be a large positive int (so Sigil emits the
+    /// The range is chosen to be a large positive int (so the emitter uses the
     /// 5-byte long form of <c>ldc.i4</c>) and well outside the typical
     /// atom-id / functor-id range an unpatched bundle would naturally use.</summary>
     public const int SentinelBase = 0x7E000000;

@@ -173,7 +173,14 @@ async function collect(dir, prefix, into) {
   }
 }
 
-export const compile = (name, library) => engine.LibraryCompile(name, library);
+// Without force, a library that has a bundle already is left as it is: the
+// batch queued it before a consult compiled it on demand.
+export const compile = (name, library, force = false) =>
+  engine.LibraryCompile(name, library, force);
+
+/** Whether a consult or a query compiled a library it needed since the last
+ *  ask (the engine compiles an uncompiled one on first use). */
+export const takeCompiledOnDemand = () => engine.LibraryTakeCompiledOnDemand();
 
 /** Everything the last compile of one library had to say. */
 export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, library);
@@ -182,7 +189,8 @@ export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, libr
  * What a collection provides: `[{name, state, note}]`, one per importable
  * library. Scryer's lib/ is one folder and forty-six of these.
  *
- * `state` is 'compiled', 'source' or 'failed', and `note` is the headline of
+ * `state` is 'compiled', 'source', 'failed' or 'native' (the engine has its
+ * own version, so there is nothing to build), and `note` is the headline of
  * the last compile's diagnostic when there was one — a library that failed, or
  * one that compiled while every one of its directives raised, which comes to
  * the same thing for whoever tries to call it.

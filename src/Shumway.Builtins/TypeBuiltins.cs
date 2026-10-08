@@ -66,11 +66,11 @@ public static class TypeBuiltins
     /// <summary><c>string(X)</c> (SWI) — X is a non-empty proper list of
     /// characters or of character codes.
     ///
-    /// <para>There is no string TYPE to test (ADR-047 decision 5): what
+    /// <para>There is no string type to test (ADR-047 decision 5): what
     /// <c>double_quotes=string</c> produces is a text list. Testing the tag
     /// instead would answer differently for a packed list and the cons list it
     /// denotes, which are the same term — the representation probe decision 1
-    /// exists to prevent. So this asks about CONTENT.</para>
+    /// exists to prevent. So this asks about content.</para>
     ///
     /// <para>Divergence from SWI, deliberately: <c>string([a,b,c])</c> is true
     /// here and false there. Here it is the same term as <c>"abc"</c>, so no
@@ -107,8 +107,8 @@ public static class TypeBuiltins
     /// atoms, complete or with an open tail. It is the fast path of
     /// <c>must_be(chars, X)</c> in the Scryer-dialect libraries.
     ///
-    /// <para>It asks about the list's CONTENTS, not its storage (ADR-047):
-    /// testing the tag instead made it true for a packed list of CODES, so
+    /// <para>It asks about the list's contents, not its storage (ADR-047):
+    /// testing the tag instead made it true for a packed list of codes, so
     /// <c>must_be(chars, "abc")</c> took the fast path and accepted a code
     /// list.</para></summary>
     public static bool IsPartialString(Activation engine)
@@ -135,7 +135,7 @@ public static class TypeBuiltins
 
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
     /// (atom, integer, bigint, rational, float, string). A packed list is a
-    /// list (ADR-047), so it is NOT atomic; an empty one is the atom <c>[]</c>,
+    /// list (ADR-047), so it is not atomic; an empty one is the atom <c>[]</c>,
     /// which is, and <see cref="Tag0"/> has already collapsed it.</summary>
     public static bool IsAtomic(Activation engine)
     {
@@ -144,7 +144,7 @@ public static class TypeBuiltins
     }
 
     /// <summary><c>compound(X)</c> — X is a compound term: a structure or a
-    /// non-empty list, packed or not. An empty list (the atom <c>[]</c>) is NOT
+    /// non-empty list, packed or not. An empty list (the atom <c>[]</c>) is not
     /// compound.</summary>
     public static bool IsCompound(Activation engine)
     {
@@ -163,22 +163,10 @@ public static class TypeBuiltins
 
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
     /// terminated by the empty-list atom. An unbound tail makes it a partial
-    /// list — fails. An atom other than <c>[]</c> at the tail — fails. The
-    /// walk is bounded by the heap: a proper list has no more conses than
-    /// cells, so running out means a cyclic spine — fails, never hangs.</summary>
+    /// list — fails. An atom other than <c>[]</c> at the tail — fails. A
+    /// cyclic spine fails too: the walk detects the cycle.</summary>
     public static bool IsList(Activation engine)
-    {
-        Cell cell = engine.GetRegister(0);
-        int guard = engine.HeapTop + 2;
-        while (guard-- > 0)
-        {
-            cell = ListCursor.Resolve(engine, cell);
-            if (ListCursor.IsNil(cell)) return true;
-            if (!engine.TryUnconsListLike(cell, out _, out Cell tail)) return false;
-            cell = tail;
-        }
-        return false;
-    }
+        => ListCursor.IsNil(ListCursor.SkipSpine(engine, engine.GetRegister(0), out _));
 
     /// <summary><c>ground(X)</c> — X contains no unbound variables. Walks
     /// the heap representation recursively; on the first dereferenced
@@ -189,7 +177,7 @@ public static class TypeBuiltins
     private static bool IsGroundCell(Activation engine, Cell cell)
     {
         // Iterative, cycle-safe walk: ground(F1) with F1=f(1,F2), F2=f(1,F1)
-        // must terminate (a rational tree with no variables IS ground), and a
+        // must terminate (a rational tree with no variables is ground), and a
         // 200k-deep list must not overflow the C# stack. The containers are
         // lazy — a leaf argument allocates nothing.
         List<Cell>? work = null;
@@ -204,7 +192,7 @@ public static class TypeBuiltins
             }
             switch (cell.Tag)
             {
-                // An attributed variable is an UNBOUND variable (freeze/dif/
+                // An attributed variable is an unbound variable (freeze/dif/
                 // clpfd attach attributes to it) — a term holding one is not
                 // ground.
                 case Tag.AttVar:
@@ -287,28 +275,23 @@ public static class TypeBuiltins
     public static bool IsCodeList(Activation engine) => IsTypedList(engine, chars: false);
 
     /// <summary><c>'$skip_list'(-Length, ?List, -Tail)</c> — SWI's robust
-    /// list-length primitive: counts the cons cells of List (a proper OR partial
-    /// list), unifying Length with the count and Tail with the remainder — <c>[]</c>
-    /// for a proper list, or the unbound variable / non-list atom that terminates
-    /// a partial / improper one. Never fails on a bad list (unlike length/2).</summary>
+    /// list-length primitive: counts the cells of List's spine, unifying Length
+    /// with the count and Tail with where the spine ends — <c>[]</c> for a
+    /// proper list, the unbound variable or non-list term that terminates a
+    /// partial or improper one, and a list cell of the cycle for a cyclic
+    /// spine (Length is then the cells walked, not a length). Never fails on a
+    /// bad list (unlike length/2) and always terminates.</summary>
     public static bool SkipList(Activation engine)
     {
-        Cell cell = engine.GetRegister(1);
-        long len = 0;
-        while (true)
-        {
-            cell = Resolve(engine, cell);
-            if (cell.Tag != Tag.Lis) break;
-            len++;
-            cell = engine.GetHeap(cell.AsHeapIndex + 1);
-        }
+        Cell end = ListCursor.SkipSpine(engine, engine.GetRegister(1), out long len);
         if (!engine.UnifyRegisterWithCell(0, Cell.Int(len))) return false;
-        return engine.UnifyRegisterWithCell(2, cell);
+        return engine.UnifyRegisterWithCell(2, end);
     }
 
     private static bool IsTypedList(Activation engine, bool chars)
     {
-        Cell cell = engine.GetRegister(0);
+        Cell cell = engine.NormalizeListCell(Resolve(engine, engine.GetRegister(0)));
+        var guard = new SpineGuard(cell);
         long len = 0;
         while (true)
         {
@@ -323,7 +306,8 @@ public static class TypeBuiltins
                 : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
             if (!ok) return false;
             len++;
-            cell = tail;
+            cell = engine.NormalizeListCell(Resolve(engine, tail));
+            if (guard.Loops(cell)) return false;   // a cyclic list is no list
         }
         return engine.UnifyRegisterWithCell(1, Cell.Int(len));
     }

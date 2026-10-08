@@ -99,8 +99,8 @@ public class LogicalUpdateViewTests
     [Fact]
     public void OuterChoicePoint_DoesNotResurrectRetractedClause()
     {
-        // A choice point in an UNRELATED predicate that backtracks and
-        // re-calls the dynamic predicate must see the CURRENT clause set
+        // A choice point in an unrelated predicate that backtracks and
+        // re-calls the dynamic predicate must see the current clause set
         // (a fresh call samples the current generation), not a stale one.
         var engine = new PrologEngine();
         engine.ConsultString(

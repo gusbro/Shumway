@@ -4,12 +4,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// An export-qualified module imported from a BUNDLE, not from source.
+/// An export-qualified module imported from a bundle, not from source.
 ///
 /// <para>Compiling a library to a <c>.shum</c> is what makes a slow one
 /// usable — Scryer's clpz loads about five times faster that way. It did not
 /// work: the module loaded (its operators even arrived, so the program
-/// PARSED) but its predicates resolved to nothing, because two things only
+/// parsed) but its predicates resolved to nothing, because two things only
 /// the source path did were missing. The importer learns which module it
 /// imported from "the module this consult declared", which a bundle never
 /// sets; and a module's exports are matched against the clauses it defines,

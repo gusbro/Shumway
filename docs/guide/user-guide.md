@@ -50,33 +50,6 @@ Shumway ships as several .NET projects, each with a clear role:
 You typically need only `Shumway.Embedding` plus one or more of the
 CLI tools.
 
-### Inspecting compiled bytecode (`shumway-disasm`)
-
-`shumway-disasm` compiles the static predicates in a source file (with
-first-/multi-argument indexing) and prints the WAM bytecode the Tier-0
-interpreter runs: the `switch_on_term` / `try` / `retry` / `trust`
-dispatch plus each clause body. It is a diagnostic aid for understanding
-or optimising code generation, not part of the build pipeline.
-
-```bash
-shumway-disasm benchmarks/vanroy/nreverse.pl      # every predicate
-shumway-disasm -p conc/3 benchmarks/vanroy/nreverse.pl   # one predicate
-shumway-disasm -e "p(X) :- X > 0."                # inline source
-```
-
-`-p Name/Arity` restricts the output (repeatable / comma-separated);
-`-e <source>` disassembles inline source instead of a file. By default
-it shows **release** bytecode (what the engine runs under
-`compile_mode=release`: no `meta dbg_info` markers); pass `--debug` to
-include the per-clause source-position markers. DCG rules are expanded;
-directives are skipped. The same functionality is available in-process
-via `Shumway.Compiler.Wam.PredicateDisassembler`.
-
-For the **Tier-1 IL** counterpart (what the IL compiler emits for a
-module, including region methods) use
-[`shumway-compile --dump-il`](#dumping-generated-wam-and-il-for-analysis)
-(and `--dump-wam` for a whole-module, dump-to-file WAM disassembly).
-
 ---
 
 ## Building from source
@@ -302,6 +275,22 @@ on the same variable are not supported. From Prolog source, the same
 libraries load with `:- use_module(library(clpfd))` /
 `library(clpr)` / `library(coroutining))`.
 
+The integers of `clpfd` are those from -576460752303423488 to
+576460752303423487, and `inf` and `sup` stand for a side with no bound. An
+integer outside that range in a constraint or a domain raises
+`representation_error(max_clpfd_integer)` or
+`representation_error(min_clpfd_integer)`, and so does a constraint whose
+solutions all lie outside it. A bound that a propagation computes outside
+the range leaves its side of the domain open:
+
+```prolog
+?- X #= 576460752303423487 + 1.
+% error: representation_error(max_clpfd_integer)
+
+?- X in 1..1000000000, Y in 1..1000000000000, Z #= X * Y.
+Z in 1..sup, ...
+```
+
 The coroutining library provides `freeze/2` (delay a goal until a
 variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 `nonvar/1`, `ground/1`, `?=/2`, and their `(,)`/`(;)` combinations), and
@@ -309,6 +298,13 @@ variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
+
+A goal woken by a binding runs at the end of the stretch of unifications
+that made the binding: a clause's head unification, the `=/2` goals after
+it and arithmetic on bound values, also past the end of the clause, up to
+the next other goal (a call, a builtin, a cut, or arithmetic that reads an
+unbound variable). The woken goal sees every binding of the stretch, and
+when the stretch fails it does not run at all.
 
 A copy does not carry constraints. `copy_term/2` copies an attributed
 variable as a plain one, so the copy of a constrained term is an
@@ -466,15 +462,26 @@ engine.LoadBundle("app.shum");
 var sol = engine.Query("main(Arg).");
 ```
 
-`LoadBundle` consults every module in the bundle. A **persisted** Tier-1 IL
-assembly (`shumway-link --with-compiled-il`) is bound at load, so those
-predicates run as compiled IL from the first query. Predicates that ship as
-WAM bytecode (a plain bundle) are **not** compiled at load: that would Sigil-
-compile the whole program up front (~1.5 s on a large one) for code that may
-never run hot. Instead each promotes to Tier-1 IL lazily once its call counter
-crosses the threshold. To front-load the whole set anyway (a server that will
-serve many queries and wants steady-state speed from the first) call
-`compile_all/0` (or `compile_all(-Count)` for how many it compiled), or the C#
+`LoadBundle` consults every module in the bundle and compiles nothing. A
+predicate starts on its WAM bytecode and switches to Tier-1 IL once it is
+hot, and the compiling happens on a background thread: the query never waits
+for it.
+
+- In a plain bundle the IL is generated then, once the predicate's call
+  counter crosses the threshold.
+- A **persisted** Tier-1 IL assembly (`shumway-link --with-compiled-il`)
+  already holds the IL. A predicate takes it after 32 calls, as at run time,
+  while the code taken stays within a budget, which a small program never
+  leaves. Past the budget a predicate takes its code when its calls have
+  paid for compiling it, so a short run of a large program does not spend
+  its time compiling code it barely uses. `SHUMWAY_IL_BUNDLE_PROMOTE` tunes
+  this (see [configuration](configuration.md)).
+- With `--strip-wam` there is no bytecode to start on: each predicate
+  compiles at its first call, on the thread that runs the query.
+
+To front-load the whole set anyway (a server that will serve many queries
+and wants steady-state speed from the first) call `compile_all/0` (or
+`compile_all(-Count)` for how many it compiled), or the C#
 `engine.WarmAllCompilable()`.
 
 ---
@@ -569,7 +576,7 @@ shumway-compile --dump-wam prog.wam.txt --dump-il prog.il.txt --regions \
   `switch_on_term` / `try` / `retry` / `trust` dispatch and clause bodies
   the Tier-0 interpreter runs. (For ad-hoc, stdout-only WAM inspection of
   a single predicate, [`shumway-disasm`](#inspecting-compiled-bytecode-shumway-disasm)
-  is often handier; `--dump-wam` is the whole-module, dump-to-file form
+  (next) is often handier; `--dump-wam` is the whole-module, dump-to-file form
   that pairs with `--dump-il`.)
 
 - **`--dump-il <file>`** runs the Tier-1 IL compiler over each predicate
@@ -594,6 +601,33 @@ members of another region).
 > `.RegionCompile`) before compiling, or use the `SHUMWAY_IL_DUMP` /
 > `SHUMWAY_REGION` environment variables when running the REPL.
 
+#### Inspecting compiled bytecode (`shumway-disasm`)
+
+`shumway-disasm` compiles the static predicates in a source file (with
+first-/multi-argument indexing) and prints the WAM bytecode the Tier-0
+interpreter runs: the `switch_on_term` / `try` / `retry` / `trust`
+dispatch plus each clause body. It is a diagnostic aid for understanding
+or optimising code generation, not part of the build pipeline.
+
+```bash
+shumway-disasm benchmarks/vanroy/nreverse.pl      # every predicate
+shumway-disasm -p conc/3 benchmarks/vanroy/nreverse.pl   # one predicate
+shumway-disasm -e "p(X) :- X > 0."                # inline source
+```
+
+`-p Name/Arity` restricts the output (repeatable / comma-separated);
+`-e <source>` disassembles inline source instead of a file. By default
+it shows **release** bytecode (what the engine runs under
+`compile_mode=release`: no `meta dbg_info` markers); pass `--debug` to
+include the per-clause source-position markers. DCG rules are expanded;
+directives are skipped. The same functionality is available in-process
+via `Shumway.Compiler.Wam.PredicateDisassembler`.
+
+For the **Tier-1 IL** counterpart (what the IL compiler emits for a
+module, including region methods) use `--dump-il`
+[above](#dumping-generated-wam-and-il-for-analysis), and `--dump-wam` for
+a whole-module, dump-to-file WAM disassembly.
+
 #### Packaging a third-party library into a bundle (`--consult`)
 
 The per-file compile above reads each `.pl` **without running it**. That is
@@ -616,6 +650,12 @@ execute, hooks run, `use_module` dependencies are pulled in) and then writes
 **one `.shmo` per module** the load brought into memory. This is how you take
 a library written for another engine (SICStus, Scryer, SWI) and turn it into a
 Shumway bundle *without editing its source*.
+
+A library whose job is to install `term_expansion` / `goal_expansion` hooks for
+the programs that import it keeps them in its bundle: loading the bundle makes
+them live for whatever is consulted afterwards, as consulting its source does.
+Scryer's `atts` is one: its hooks are what turn `:- attribute color/1.` and
+`get_atts/2` in your program into working code.
 
 **Worked recipe: a program using Scryer's `clpz`, from an unpatched
 checkout.** Point Shumway at your own copy of the library (nothing
@@ -671,7 +711,11 @@ Two things to know going in:
   program you trust.
 - **You do not have to know the flag in advance.** `shumway-compile` prints a
   hint pointing at `--consult` whenever a file compiled the ordinary way
-  relies on load-time hooks or dependency-defined operators.
+  relies on load-time hooks or dependency-defined operators. A file that
+  defines `term_expansion/2`, `goal_expansion/2` or a clause for another
+  module (`M:Head :- Body`) is refused instead, by `shumway-compile` and
+  `shumway-link` alike: compiled one file at a time, the hook would never
+  run and the clause would define a predicate named `:`.
 
 ### Step 2: `shumway-link` (linker)
 
@@ -699,12 +743,12 @@ shumway-link -o app.shum \
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
-| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here. |
-| `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. (Stripped bundles dispatch correctly via the source-less load path.) Note: a `.shmo` always carries the module's clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). IP stripping is about what ships: the `.shum` / executable, which never carry clause terms. |
+| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here; one that defines an expansion hook or a clause for another module is refused. |
+| `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
-| `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
+| `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle: each predicate switches from its bytecode to that IL once it is hot, with no IL generation at run time. By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
 | `--no-region-prune` | With `--with-compiled-il`: emit one standalone IL method per predicate instead of the default pruned region layout. Mainly for inspecting the generated code; bundles are larger and typically slower. |
-| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL: standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM. JIT-only (the IL must load, not for Native AOT). |
+| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL: standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM, except for those whose bytecode the IL continues in when a delayed goal wakes (`freeze/2`, `when/2`, `dif/2`, constraints). JIT-only (the IL must load, not for Native AOT). |
 | `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |
 | `--dump-wam <path>` | Append a disassembly of the WAM the bundle **ships** (each entry's final bytecode, after `--strip-wam` / region prune) to `<path>`. See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |
@@ -1195,17 +1239,20 @@ executable (bundles carry every module's import table):
    non-exported locals: `call(mymod:internal(X))` works, SWI-style) →
    **M's import table** → fall through.
 4. The **C# builtin** registry.
-5. The **global namespace**: bare names of `user` and legacy-module
-   predicates, publics, dynamics, the prelude.
+5. The **global namespace**: `user`'s predicates, publics, dynamics, the
+   prelude.
 6. Still nothing → the `unknown` flag, as above.
 
-One asymmetry to be aware of: a *runtime* `M:Goal` reaches `M`'s
-non-exported locals, while a `Module:goal(...)` written *statically* in a
-compiled module is checked by the linker against the target module's
-public surface.
+An `M:Goal`, written in the code or built at run time, reaches `M`'s
+predicates whether `M` exports them or not, in the REPL and in a linked
+program alike: qualifying is how code outside `M` calls one of its private
+predicates.
 
 **Rules of thumb.** Nearest context wins: own module > imports > global.
-Dynamics are always global. Builtins are shadowed only by a module that
+A module's predicate that it does not export or declare public is private:
+from outside the module it is reached only as `m:p(X)`. A goal or closure a
+module passes to a meta-predicate (`maplist(check, L)`, `freeze(X, G)`)
+still runs in that module. Dynamics are always global. Builtins are shadowed only by a module that
 *defines* the name itself. The prelude is always visible without imports.
 Consulting a `:- module/2` file directly auto-imports its exports into
 `user`; loading it as a `use_module` dependency does not.

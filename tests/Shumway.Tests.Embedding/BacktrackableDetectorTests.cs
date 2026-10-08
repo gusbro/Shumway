@@ -11,9 +11,9 @@ namespace Shumway.Tests.Embedding;
 /// for a transitive call to a CP-creating sink (PushBuiltinChoicePoint /
 /// PushIlChoicePoint / IndexEnumCursor.Start).
 ///
-/// <para>Checks both directions: no false NEGATIVE on a known backtrackable
+/// <para>Checks both directions: no false negative on a known backtrackable
 /// builtin (the dangerous case — a miss is a silent Tier-1 IL solution-loss
-/// bug), and no false POSITIVE on common deterministic builtins. We can't assert
+/// bug), and no false positive on common deterministic builtins. We can't assert
 /// "exactly this set" because BuiltinsRegistry is process-global: other tests
 /// register extra backtrackable builtins (non-det [PrologPredicate] foreigns,
 /// CLP), which the detector also — correctly — flags.</para></summary>
@@ -31,7 +31,7 @@ public sealed class BacktrackableDetectorTests
         "arg",
     };
 
-    // A representative sample of deterministic builtins (must NOT be flagged).
+    // A representative sample of deterministic builtins (must not be flagged).
     private static readonly string[] Deterministic =
     {
         "is", "=", "==", "atom_length", "functor", "copy_term", "msort",

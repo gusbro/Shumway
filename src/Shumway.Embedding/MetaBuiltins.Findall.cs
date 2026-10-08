@@ -13,8 +13,8 @@ public static partial class MetaBuiltins
     /// <summary><c>'$check_partial_list'(L, Name, Arity)</c> — succeeds when
     /// L is a partial list (a variable, or a list ending in [] or a variable)
     /// and raises <c>type_error(list, L)</c> otherwise. The solutions argument
-    /// of findall/bagof/setof is checked with it BEFORE the goal runs.
-    /// Name/Arity is the PUBLIC caller (<c>findall/3</c>, <c>bagof/3</c>, …):
+    /// of findall/bagof/setof is checked with it before the goal runs.
+    /// Name/Arity is the public caller (<c>findall/3</c>, <c>bagof/3</c>, …):
     /// it is pre-stamped as the error's context indicator so the internal
     /// helper's own name never leaks into the ball.</summary>
     public static bool CheckPartialList(Activation engine)
@@ -78,7 +78,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$bagof_record'(Witness-Template)</c> — the bagof/setof
-    /// record step. Walks the WITNESS on the live heap to build its
+    /// record step. Walks the witness on the live heap to build its
     /// canonical grouping key (variable identity by deref address in
     /// first-occurrence order, so variant witnesses key identically), then
     /// snapshots the whole pair the same way findall/3 snapshots a solution
@@ -112,7 +112,7 @@ public static partial class MetaBuiltins
     /// revisited struct address keys as a back-reference (rational trees
     /// must not loop the walk).
     ///
-    /// <para>ITERATIVE, with an explicit work stack: a witness is user data
+    /// <para>Iterative, with an explicit work stack: a witness is user data
     /// of any depth, and a ten-thousand-element list — perfectly ordinary —
     /// overflows the C# stack in a recursive walk, which kills the process
     /// instead of raising anything catchable.</para></summary>
@@ -120,7 +120,7 @@ public static partial class MetaBuiltins
         Activation engine, Cell root, Dictionary<int, int> varSlots,
         HashSet<int> onPath, System.Text.StringBuilder sb)
     {
-        // A step either KEYS a cell (close == none) or closes the compound
+        // A step either keys a cell (close == none) or closes the compound
         // it belongs to, lifting that address back off the cycle path.
         const char none = '\0';
         var work = new List<(Cell Cell, char Close, int PathAddr)>(32)
@@ -227,13 +227,13 @@ public static partial class MetaBuiltins
     /// <summary><c>'$bagof_next'(Kind, Witness-Bag)</c> — closes the open
     /// solution buffer, splits the recorded pairs into witness groups by the
     /// keys '$bagof_record' computed (linear — a hash probe per solution),
-    /// and enumerates the groups on BACKTRACKING in standard order of the
+    /// and enumerates the groups on backtracking in standard order of the
     /// witness. Each group is materialised only when demanded: its pair
-    /// images are emitted onto the heap and every pair's witness is UNIFIED
+    /// images are emitted onto the heap and every pair's witness is unified
     /// with the group representative's — which is exactly the
     /// bind-bagof-keys step, aliasing witness variables shared with the
     /// templates — so a caller that cuts after the first group never pays
-    /// for the rest. The cursor holds IMAGES (managed data), never heap
+    /// for the rest. The cursor holds images (managed data), never heap
     /// addresses, so a heap collection between two groups moves nothing it
     /// relies on. Kind <c>setof</c> sorts and de-duplicates each bag;
     /// <c>bagof</c> keeps generation order. Fails when the goal produced no
@@ -299,7 +299,7 @@ public static partial class MetaBuiltins
         return d.Tag == Tag.Str ? engine.GetHeap(d.AsHeapIndex + 2) : d;
     }
 
-    /// <summary>Materialises ONE witness group and unifies register 1 with
+    /// <summary>Materialises one witness group and unifies register 1 with
     /// its <c>Witness-Bag</c> pair.</summary>
     private static bool UnifyGroup(Activation engine, List<object> group, bool sortBags)
     {

@@ -7,7 +7,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>The astral-unicode arc: character-level operations answer in
-/// CODE POINTS, not UTF-16 units. BMP atoms keep their exact unit-based
+/// code points, not UTF-16 units. BMP atoms keep their exact unit-based
 /// fast paths (Atom.Shape == Bmp); only astral-bearing text takes the
 /// code-point walk.</summary>
 public sealed class AstralTextTests
@@ -27,7 +27,7 @@ public sealed class AstralTextTests
     public void SubAtom_SlicesOnCodePointBoundaries()
     {
         var e = new PrologEngine();
-        // The 1-code-point prefix is the WHOLE emoji, not half a pair.
+        // The 1-code-point prefix is the whole emoji, not half a pair.
         var sol = e.Query($"sub_atom('{Emoji}x', 0, 1, A, S).");
         Assert.True(sol.Success);
         Assert.Equal(Emoji, ((AtomTerm)sol["S"]!).Name);
@@ -48,7 +48,7 @@ public sealed class AstralTextTests
     [Fact]
     public void PackedText_PresentsCodePoints()
     {
-        // The PSTR packs UTF-16 units; its chars/codes PRESENTATION joins
+        // The PSTR packs UTF-16 units; its chars/codes presentation joins
         // surrogate pairs — one element per character, end to end.
         var e = new PrologEngine();
         Assert.True(e.Query(
@@ -78,7 +78,7 @@ public sealed class AstralTextTests
     public void StandardOrder_SortsAtomsByCodePoint()
     {
         // Unit-wise UTF-16 order puts an astral atom (high surrogates
-        // D800–DBFF) BELOW U+E000–U+FFFF atoms; the standard order is by
+        // D800–DBFF) below U+E000–U+FFFF atoms; the standard order is by
         // code point, so the astral atom sorts above.
         var e = new PrologEngine();
         Assert.True(e.Query(
@@ -96,7 +96,7 @@ public sealed class AstralTextTests
         var e = new PrologEngine();
         Assert.True(e.Query("X = 𝒶𝒶, atom(X), atom_length(X, 2).").Success);
         Assert.True(e.Query("X = öko, atom_length(X, 3).").Success);
-        var sol = e.Query("𝒜V = 1.");   // astral-capital starts a VARIABLE
+        var sol = e.Query("𝒜V = 1.");   // astral-capital starts a variable
         Assert.True(sol.Success);
         Assert.Equal(1L, ((IntTerm)sol["𝒜V"]!).Value);
         var w = e.Query("with_output_to(atom(A), writeq(𝒶𝒶)).");

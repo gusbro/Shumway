@@ -18,7 +18,7 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class StringBuiltins
 {
-    // The SWI `string_*` family produces text as a SEQUENCE, and
+    // The SWI `string_*` family produces text as a sequence, and
     // double_quotes=string is a compatibility alias for chars (ADR-047
     // decision 5) — so what it builds is a list of chars.
     private const TextKind StringKind = TextKind.Chars;
@@ -129,12 +129,11 @@ public static class StringBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
+            bool more = splitIdx < _ab.Length;
+            if (more) _splitIdx = splitIdx + 1;
+            // arity 3: the retry restores string_concat/3's args.
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more, isResume);
             if (splitIdx > _ab.Length) return false;
-            if (splitIdx < _ab.Length)
-            {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore string_concat/3 args
-            }
             int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx), StringKind);
             int bPstr = engine.MakePstr(_ab.Substring(splitIdx), StringKind);
             if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
@@ -268,7 +267,7 @@ public static class StringBuiltins
     private static string ReadStringOrAtom(Activation engine, int regIdx, string builtinName)
     {
         Cell c = engine.NormalizeListCell(Resolve(engine, engine.GetRegister(regIdx)));
-        // `[]` is the empty TEXT here, not the two-character atom name: a
+        // `[]` is the empty text here, not the two-character atom name: a
         // zero-length literal denotes the empty list (ADR-047), and
         // string_concat("", X, X) has to keep holding.
         if (c.Tag == Tag.Atom)
@@ -283,6 +282,7 @@ public static class StringBuiltins
             // has to read the same (ADR-047 decision 1).
             var sb = new System.Text.StringBuilder();
             Cell cur = c;
+            var guard = new SpineGuard(cur);
             while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
             {
                 Cell h = Resolve(engine, rawHead);
@@ -295,6 +295,7 @@ public static class StringBuiltins
                     throw new PrologRuntimeException(
                         "type_error", $"{builtinName}: string or atom");
                 cur = ListCursor.Resolve(engine, tail);
+                if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, c);
             }
             if (!ListCursor.IsNil(cur))
                 throw new PrologRuntimeException(
@@ -357,10 +358,14 @@ public static class StringBuiltins
     private static string ReadCharAtomsToString(Activation engine, Cell charsCell, string builtinName)
     {
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, charsCell);
-        while (cursor.Tag == Tag.Lis)
+        // The cursor, not Tag.Lis: a packed list is a list (ADR-047), and
+        // string_chars(S, "ab") read none of its elements.
+        Cell cursor = ListCursor.Resolve(engine, charsCell);
+        Cell listStart = cursor;
+        var guard = new SpineGuard(cursor);
+        while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell tail))
         {
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag != Tag.Atom)
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be a single-character atom");
@@ -369,7 +374,8 @@ public static class StringBuiltins
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be exactly one character");
             sb.Append(name[0]);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, tail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             throw new PrologRuntimeException("type_error",
@@ -380,10 +386,12 @@ public static class StringBuiltins
     private static string ReadCodesToString(Activation engine, Cell codesCell, string builtinName)
     {
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, codesCell);
-        while (cursor.Tag == Tag.Lis)
+        Cell cursor = ListCursor.Resolve(engine, codesCell);
+        Cell listStart = cursor;
+        var guard = new SpineGuard(cursor);
+        while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell tail))
         {
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be a character code");
@@ -392,7 +400,8 @@ public static class StringBuiltins
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, tail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             throw new PrologRuntimeException("type_error",

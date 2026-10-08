@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// <c>bb_inf/3,4</c>: the infimum with some variables restricted to integers.
 ///
-/// <para>This is what the simplex bought. Branch and bound has to know WHICH
+/// <para>This is what the simplex bought. Branch and bound has to know which
 /// integer variable came out fractional and where to split it, which means
 /// reading the values at the relaxed optimum; Fourier-Motzkin gives bounds and
 /// no point, so the predicate could not be written over it at all.</para>
@@ -43,7 +43,7 @@ public class ClprBranchAndBoundTests
     public void TheVertexNamesWhereItHappens()
     {
         var e = Clpr();
-        // Checked as VALUES, not as rendered text: how a list of floats
+        // Checked as values, not as rendered text: how a list of floats
         // prints is a different subject from where the optimum sits.
         var sol = e.Query(
             "{X + Y =:= 5, X >= 0, Y >= 0}, bb_inf([X, Y], X, V, Vertex), "

@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>The scryer-dialect definition replacement: Scryer's iso_ext.pl
 /// implements setup_call_cleanup/3 over its VM's choice-point natives
 /// ('$get_b_value', the scc cleaner and ball stacks) that no emulation can
-/// honor — the consult pipeline DROPS those definitions at load, so every
+/// honor — the consult pipeline drops those definitions at load, so every
 /// resolution falls through to Shumway's own builtin of the same ISO
 /// contract: the importer's call, the module's internal callers, and
 /// call_cleanup/2 (whose one clause rides setup_call_cleanup).</summary>
@@ -22,7 +22,7 @@ public sealed class ScryerIsoExtReplacementTests : IDisposable
         _dir = Path.Combine(Path.GetTempPath(),
             "shumway-isoext-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
-        // A stand-in with the REAL library's shape: the exports, the
+        // A stand-in with the real library's shape: the exports, the
         // native-riding definitions (which must be dropped), and an internal
         // caller of setup_call_cleanup.
         File.WriteAllText(Path.Combine(_dir, "iso_ext.pl"), """
@@ -66,7 +66,7 @@ public sealed class ScryerIsoExtReplacementTests : IDisposable
     [Fact]
     public void TheModulesInternalCallers_FallThroughToo()
     {
-        // with_note/2 calls setup_call_cleanup from INSIDE iso_ext: with the
+        // with_note/2 calls setup_call_cleanup from inside iso_ext: with the
         // definition dropped before locals are computed, that body call
         // compiles bare and reaches the builtin.
         Assert.True(_e.Query("with_note(Y = 3, done), Y == 3, note(done).").Success);

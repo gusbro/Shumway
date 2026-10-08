@@ -13,6 +13,7 @@
 # Usage:
 #   powershell -File tests/test-embedding-parallel.ps1            # routine gate (Category!=Slow)
 #   powershell -File tests/test-embedding-parallel.ps1 -Full      # pre-phase-close (includes Slow)
+#   powershell -File tests/test-embedding-parallel.ps1 -MaxParallel 3   # at most 3 at once
 #
 # The partitions are class-name-prefix buckets, hand-balanced from the
 # per-class timing analysis (2026-07-27). Rebalance by moving prefixes if a
@@ -31,6 +32,9 @@ param(
     # compiler emits DIFFERENT code in the two (the DbgCheck_* markers live
     # under `#if DEBUG`), so a Debug-only gate never sees the IL that runs.
     [string] $Configuration = 'Debug',
+    # At most this many test processes at once, 0 for all of them: a machine
+    # short of memory runs the buckets in waves.
+    [int] $MaxParallel = 0,
     # Collect a crash dump when a test HOST dies (as opposed to a test
     # failing). The net48 lanes have done this intermittently and the logs say
     # only that the process went away — a dump is the one artifact that says
@@ -53,11 +57,24 @@ Remove-Item (Join-Path $logDir '*.log') -Force -ErrorAction SilentlyContinue
 # rides alone; the engine ADRs and chunk families pad the lighter buckets.
 # Each partition expression is fully parenthesized BEFORE the Slow exclusion
 # is AND-ed on ('&' binds tighter than '|' in vstest filters).
+# Everything the named buckets leave, split by the first letter of the class
+# (2026-09-30 timing: one bucket of it ran 9-10 minutes while the others
+# finished in under two). A letter matches the class right after the
+# namespace, never a method.
+$rest = "(FullyQualifiedName!~.Adr0)&(FullyQualifiedName!~.Chunk1)&(FullyQualifiedName!~.Chunk2)&(FullyQualifiedName!~.Chunk3)&(FullyQualifiedName!~.Phase)"
+function Letters([string] $l) {
+    ($l.ToCharArray() | ForEach-Object { "(FullyQualifiedName~Embedding.$_)" }) -join '|'
+}
 $parts = @(
     @{ Name = 'dbg35';   Expr = "(FullyQualifiedName~.Adr035)" },
     @{ Name = 'dbg36+';  Expr = "(FullyQualifiedName~.Adr036)|((FullyQualifiedName~.Adr0)&(FullyQualifiedName!~.Adr035))|(FullyQualifiedName~.Chunk1)" },
     @{ Name = 'ch23-ph'; Expr = "(FullyQualifiedName~.Chunk2)|(FullyQualifiedName~.Chunk3)|(FullyQualifiedName~.Phase)" },
-    @{ Name = 'rest';    Expr = "(FullyQualifiedName!~.Adr0)&(FullyQualifiedName!~.Chunk1)&(FullyQualifiedName!~.Chunk2)&(FullyQualifiedName!~.Chunk3)&(FullyQualifiedName!~.Phase)" }
+    @{ Name = 'rest-ac'; Expr = "$rest&($(Letters 'ABC'))" },
+    @{ Name = 'rest-di'; Expr = "$rest&($(Letters 'DEFGHI'))" },
+    @{ Name = 'rest-jp'; Expr = "$rest&($(Letters 'JKLMNOP'))" },
+    # The complement of the other three: Q to Z, and a class outside the
+    # namespace, so every test still runs exactly once.
+    @{ Name = 'rest-qz'; Expr = "$rest&(FullyQualifiedName!~Embedding.A)&(FullyQualifiedName!~Embedding.B)&(FullyQualifiedName!~Embedding.C)&(FullyQualifiedName!~Embedding.D)&(FullyQualifiedName!~Embedding.E)&(FullyQualifiedName!~Embedding.F)&(FullyQualifiedName!~Embedding.G)&(FullyQualifiedName!~Embedding.H)&(FullyQualifiedName!~Embedding.I)&(FullyQualifiedName!~Embedding.J)&(FullyQualifiedName!~Embedding.K)&(FullyQualifiedName!~Embedding.L)&(FullyQualifiedName!~Embedding.M)&(FullyQualifiedName!~Embedding.N)&(FullyQualifiedName!~Embedding.O)&(FullyQualifiedName!~Embedding.P)" }
 )
 # Two phases. The buckets run the PARALLEL population — in-process xUnit
 # parallelism is on (AssemblyInfo: MaxParallelThreads=3), so each bucket
@@ -91,6 +108,10 @@ $crashArgs = if ($CrashDumps) { @('--blame-crash', '--blame-crash-dump-type', 'f
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
 $procs = @()
 foreach ($b in $buckets) {
+    while ($MaxParallel -gt 0 -and
+           @($procs | Where-Object { -not $_.Proc.HasExited }).Count -ge $MaxParallel) {
+        Start-Sleep -Seconds 2
+    }
     $log = Join-Path $logDir "$($b.Name).log"
     # STDERR too, and per bucket. Unredirected it lands in the caller's own
     # output with nothing to say which bucket it came from — and stderr is
@@ -146,13 +167,19 @@ foreach ($e in $procs) {
 # Phase 2: the exclusive population, alone in the process, serially (they all
 # share one xUnit collection). Runs only after every parallel bucket is done.
 $exLog = Join-Path $logDir 'exclusive.log'
+# A failing test writes to stderr, and under 'Stop' the redirect turns that
+# line into a terminating error: the script ended here, with no summary and
+# no name of the test that failed.
+$ErrorActionPreference = 'Continue'
 dotnet test $proj -c $Configuration -f $Framework --no-build --nologo @fxProps `
     --filter $exclusiveFilter --blame-hang-timeout 300s @crashArgs `
     @(if ($Platform -ne '') { @('--', "RunConfiguration.TargetPlatform=$Platform") }) *> $exLog
+$exExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
 $exTail = (Get-Content $exLog | Select-String -Pattern 'Passed!|Failed!' | Select-Object -Last 1)
 if ($null -eq $exTail) { $exTail = "(no summary - see $exLog)" }
 Write-Host ("[parallel] {0,-8} {1}" -f 'excl', $exTail)
-if (($LASTEXITCODE -ne 0) -or ("$exTail" -notmatch 'Passed!')) {
+if (($exExit -ne 0) -or ("$exTail" -notmatch 'Passed!')) {
     $failed = $true
     Get-Content $exLog | Select-String -Pattern '^\s*Failed ' |
         ForEach-Object { Write-Host ("[parallel]   {0}" -f $_.Line.Trim()) }

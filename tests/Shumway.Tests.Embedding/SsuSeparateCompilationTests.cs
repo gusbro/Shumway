@@ -5,10 +5,10 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-037 single-sided unification (<c>Head =&gt; Body</c>) through the
-/// SEPARATE-COMPILATION path. The consult path lowers <c>SsuRule</c> clauses in
+/// separate-compilation path. The consult path lowers <c>SsuRule</c> clauses in
 /// <c>ClausePipeline</c>, but <c>ShmoCompiler.CompileFromParts</c> (used by both
 /// <c>shumway-compile</c> and <c>ShmoViaConsult</c>) has its own hand-rolled
-/// clause sub-pipeline that must ALSO run <c>SsuTransform</c> — otherwise a raw
+/// clause sub-pipeline that must also run <c>SsuTransform</c> — otherwise a raw
 /// <c>SsuRule</c> reaches <c>ClauseCompiler</c> and throws
 /// <c>Unknown clause kind: SsuRule</c>. Regression for that gap.</summary>
 public sealed class SsuSeparateCompilationTests
@@ -30,7 +30,7 @@ public sealed class SsuSeparateCompilationTests
     public void SsuRule_CompilesAndRuns_ThroughSeparateCompilation()
     {
         // p/1 defined with `=>`; the head commits before the body, and a
-        // non-matching head fails (does NOT fall through to a later clause).
+        // non-matching head fails (does not fall through to a later clause).
         var e = LinkAndLoad("m",
             ":- public classify/2.\n"
             + "classify(0, R) => R = zero.\n"
@@ -47,7 +47,7 @@ public sealed class SsuSeparateCompilationTests
     [Fact]
     public void SsuRule_WithGuard_CommitsAfterGuard()
     {
-        // `(Head, Guard) => Body` — SWI style: the OUTPUT binding lives in
+        // `(Head, Guard) => Body` — SWI style: the output binding lives in
         // the body (a pattern in an output position would not match the
         // caller's unbound variable under single-sided unification).
         var e = LinkAndLoad("g",

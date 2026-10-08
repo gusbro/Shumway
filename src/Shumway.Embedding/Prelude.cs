@@ -218,11 +218,13 @@ internal static class Prelude
         :- public strip_module/3.
         :- public '$skip_max_list'/4.
         :- public '$absent_attr'/3.
+        :- public '$unattributed_var'/1.
+        :- public '$det_length_rundown'/2.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
         :- public well_founded/2.
 
-        %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
+        %! member(?Elem, ?List) | Lists | library | Succeeds when Elem is a member of List; enumerates members on backtracking.
         % First-argument-indexed "look-ahead" form (the GNU Prolog
         % library shape). '$member3' dispatches on its first argument —
         % the list tail — so when the tail is [] only the var-headed
@@ -288,14 +290,19 @@ internal static class Prelude
         % twice. The GOALS it returned run free: they are where a frozen
         % user goal lives, and their alternatives are the point of ADR-049.
         '$wake_one'('$wake'(M, AttrVal, Other)) :-
-            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals) ->
+            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals, Proxy) ->
                 '$wake_call'(HookGoal), !,
-                '$wake_goals'(Goals)
+                '$wake_settle'(Proxy, Other),
+                '$wake_goals'(Goals, M)
             ; true ).   % hookless module: the bind already happened
         % A hook's Goals may come back unbound (none) or as a proper list.
-        '$wake_goals'(Gs) :- var(Gs), !.
-        '$wake_goals'([]).
-        '$wake_goals'([G|Gs]) :- '$wake_call'(G), '$wake_goals'(Gs).
+        % They run in the attribute's module, which may name its own
+        % private predicates in them (ADR-056). Tagged '$mqual', not M:G:
+        % the wasm tier resolves the tag in place, and a ':'/2 goal leaves
+        % the module on every wakeup.
+        '$wake_goals'(Gs, _) :- var(Gs), !.
+        '$wake_goals'([], _).
+        '$wake_goals'([G|Gs], M) :- '$wake_call'('$mqual'(M, G)), '$wake_goals'(Gs, M).
 
         %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
         % \+ (Condition, \+ Action). Condition and Action run in the LIVE engine
@@ -382,7 +389,7 @@ internal static class Prelude
         '$fill_number_args'(I, T) :-
             arg(I, T, number), I1 is I - 1, '$fill_number_args'(I1, T).
 
-        %! findall(?Template, :Goal, -List) | Findall & aggregation | Collects an instance of Template for every solution of Goal into a list.
+        %! findall(?Template, :Goal, -List) | Findall & aggregation | iso | Collects an instance of Template for every solution of Goal into a list.
         % Runs Goal in the LIVE engine via call/1 and the in-engine collect
         % primitives ('$findall_push' opens a solution frame, '$findall_record_s'
         % snapshots Template at each solution, '$findall_collect' closes the frame
@@ -395,8 +402,8 @@ internal static class Prelude
             ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
             ; '$findall_collect'(List) ).
 
-        %! bagof(?Template, :Goal, -List) | Findall & aggregation | Collects Goal's solutions; fails when there are none.
-        %! setof(?Template, :Goal, -List) | Findall & aggregation | Like bagof/3 but the result list is sorted and duplicate-free.
+        %! bagof(?Template, :Goal, -List) | Findall & aggregation | iso | Collects Goal's solutions; fails when there are none.
+        %! setof(?Template, :Goal, -List) | Findall & aggregation | iso | Like bagof/3 but the result list is sorted and duplicate-free.
         % Runtime (variable-goal) fallback for bagof/3 and setof/3, in the LIVE
         % engine with FULL WITNESS GROUPING — the free variables of Goal (not in
         % Template, not ^-quantified) partition the solutions; each distinct
@@ -436,6 +443,8 @@ internal static class Prelude
                 '$bagof_next'(Kind, Witness-Bag)
             ).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
+        % A caller's Vs^G arrives module-qualified (ADR-056): the ^ is inside.
+        '$bagof_parts'(M:G, '$mqual'(M, S), Q) :- atom(M), !, '$bagof_strip'(G, S, Q).
         '$bagof_parts'(G, S, Q) :- '$bagof_strip'(G, S, Q).
         '$bagof_strip'(V, S, Q) :- nonvar(V), V = Vs ^ G, !, Q = [Vs|Q1], '$bagof_strip'(G, S, Q1).
         '$bagof_strip'(G, G, []).
@@ -446,7 +455,7 @@ internal static class Prelude
             ).
         '$var_memberchk'(V, [X|Xs]) :- ( V == X -> true ; '$var_memberchk'(V, Xs) ).
 
-        %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
+        %! catch(:Goal, ?Catcher, :Recovery) | Control | control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
         % Runs in the LIVE engine using the catch-frame machinery
         % ('$catch_begin' pushes a frame carrying Catcher + a recovery goal;
         % the engine's throw handler unwinds to it and dispatches the recovery).
@@ -461,7 +470,7 @@ internal static class Prelude
             '$catch_end'.
         '$catch_run'(Recovery) :- call(Recovery).
 
-        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint.
+        %! clause(+Head, ?Body) | Database | iso | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint.
         % '$clause_enum' yields matching clauses lazily (a backtrackable
         % builtin): only the candidate being tried is materialised on the heap,
         % instead of building the whole O(#clauses) Head-Body pair list up front
@@ -497,7 +506,7 @@ internal static class Prelude
             ),
             '$clause_enum'(H, H-B).
 
-        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own.
+        %! current_predicate(?PredicateIndicator) | Database | iso | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own.
         % '$current_predicate_enum' yields indicators lazily (a backtrackable
         % builtin), so the full O(n) indicator list is no longer built on the
         % heap before member/2 walks it. The qualified form M:PI answers for
@@ -572,7 +581,7 @@ internal static class Prelude
         '$check_qualified_indicator'(_, Spec) :-
             throw(error(type_error(predicate_indicator, Spec), _)).
 
-        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails.
+        %! length(?List, ?Length) | Lists | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails.
         % Proper lists take the native '$list_length' fast path (cycle-safe:
         % it fails a looping spine rather than spinning). A cyclic list has no
         % finite length; what that MEANS depends on the second argument
@@ -637,7 +646,7 @@ internal static class Prelude
                 length(T, M), N is Acc1 + M
             ).
 
-        %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
+        %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | iso | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
         % '$sub_atom_enum' yields each decomposition lazily (a backtrackable
         % builtin), so a long atom no longer materialises all O(n^2)
         % decompositions onto the heap before member/2 walks them. (The earlier
@@ -656,7 +665,7 @@ internal static class Prelude
             sub_atom(A, Before, Length, After, SubA),
             atom_string(SubA, Sub).
 
-        %! subsumes_term(@General, @Specific) | Term inspection & construction | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term.
+        %! subsumes_term(@General, @Specific) | Term inspection & construction | iso | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term.
         % ISO §8.2.4. A pure test: the double negation undoes the trial
         % unification's bindings. After General = Specific, Specific's
         % variables must be unchanged (still the same distinct unbound vars),
@@ -684,10 +693,12 @@ internal static class Prelude
             ( B1 > B0 -> Deterministic = false ; Deterministic = true ),
             !.
 
-        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown.
+        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. An exception Cleanup raises propagates, unless another one is already in flight, which wins.
         % Cleanup runs with once/1 semantics — its choice points are destroyed and
         % its success/failure ignored, but an exception it raises propagates (that
-        % is exactly ignore/1). It fires exactly once, guarded by the retract of
+        % is exactly ignore/1), unless a ball is already in flight, which wins
+        % (SWI's rule; SICStus lets the cleanup's replace it). It fires exactly
+        % once, guarded by the retract of
         % the '$cleanup_pending'/2 fact that stably stores the goal:
         %   - deterministic success: fired synchronously, then the cut keeps the
         %     call deterministic (determinism sampled via '$choice_level', as
@@ -711,16 +722,21 @@ internal static class Prelude
             % Cleanup must be callable NOW (WG17): an unbound Cleanup is an
             % instantiation_error even if Goal would bind it later; the check
             % runs after Setup so setup_call_cleanup(X=true, true, X) is fine.
-            (   var(Cleanup) ->
+            % Judged without its module: a caller's X arrives as M:X (ADR-056).
+            '$scc_cleanup_body'(Cleanup, Body),
+            (   var(Body) ->
                 throw(error(instantiation_error, setup_call_cleanup/3))
-            ;   callable(Cleanup) -> true
-            ;   throw(error(type_error(callable, Cleanup), setup_call_cleanup/3))
+            ;   callable(Body) -> true
+            ;   throw(error(type_error(callable, Body), setup_call_cleanup/3))
             ),
             '$scc_register'(Ref, Cleanup),
             assertz('$cleanup_pending'(Ref, Cleanup)),
             '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
             '$scc'(Goal, Ref, Cleanup),
             '$catch_end'.
+        '$scc_cleanup_body'(C, B) :-
+            nonvar(C), C = M:C1, atom(M), !, '$scc_cleanup_body'(C1, B).
+        '$scc_cleanup_body'(C, C).
 
         '$scc'(Goal, Ref, Cleanup) :-
             '$choice_level'(B0),
@@ -734,8 +750,12 @@ internal static class Prelude
         % Public so the catch-frame recovery dispatch ('$catch_begin') can
         % resolve its address by functor, as '$catch_run'/1 is.
         :- public '$scc_recover'/2.
+        % The ball in flight wins: a cleanup that throws as well does not
+        % replace it. The catch goal is a variable for the reason given at
+        % '$drain_cleanups'.
         '$scc_recover'(Ref, Error) :-
-            '$scc_fire'(Ref),
+            F = '$scc_fire'(Ref),
+            catch(F, _, true),
             throw(Error).
 
         % Exactly-once: the retract is the atomic guard. Forget the handler first
@@ -759,36 +779,38 @@ internal static class Prelude
             ( retract('$cleanup_pending'(Ref, _)) -> ignore(Cleanup) ; true ).
 
         % Run by the interpreter at a safe point when the engine enqueued cleanups
-        % from a teardown path. A Cleanup exception propagates out of the drain as
-        % a normal exception.
+        % from a teardown path.
         :- public '$drain_cleanups'/0.
         % A drained handler fired ASYNCHRONOUSLY (exception unwind, external
-        % cut, teardown). An exception the Cleanup itself throws here is
-        % DROPPED: when the trigger was an error unwind the original ball
-        % has already won (SWI/WG17 first-exception-wins — a late throw
-        % would surface as a phantom second error after the catch ran).
-        % Async fire runs the LIVE Cleanup term (handler slot) — its
-        % bindings reach the caller (scc(true, scc(...), Y=3), ! leaves
-        % Y=3). The retract stays the exactly-once guard. The catch goal is
-        % built at runtime so MetaTransform takes the runtime catch/3
-        % clause (see '$module_attr_goals' — an inlined static catch has no
-        % baked '$catchrec' address and silently fails); its ball is
-        % DROPPED: on an error unwind the original ball already won
-        % (first-exception-wins), a late throw would surface as a phantom
-        % second error after the catch ran.
-        % Live is the handler's live cell for a CUT fire (heap intact,
-        % bindings reach the caller) or the '$scc_use_copy' sentinel for an
-        % EXCEPTION/teardown fire (heap truncated below the catcher — the
-        % live cell may point at reclaimed memory; run the stable copy).
+        % cut, teardown). Live is the handler's live cell for a CUT fire (heap
+        % intact, bindings reach the caller: scc(true, scc(...), Y=3), !
+        % leaves Y=3) or the '$scc_use_copy' sentinel for an
+        % EXCEPTION/teardown fire (heap truncated below the catcher, the live
+        % cell may point at reclaimed memory: run the stable copy). The
+        % retract stays the exactly-once guard.
+        % A ball a cut fire throws propagates from the drain, after every
+        % pending cleanup has run, the first one winning. On an exception
+        % fire the ball in flight wins and the cleanup's is dropped (a late
+        % throw would surface as a phantom second error after the catch
+        % ran); on teardown there is nobody left to catch it.
+        % The catch goal is built at runtime so MetaTransform takes the
+        % runtime catch/3 clause (see '$module_attr_goals': an inlined static
+        % catch has no baked '$catchrec' address and silently fails).
         '$drain_cleanups' :-
+            '$drain_cleanups'(none, Ball),
+            ( Ball = ball(E) -> throw(E) ; true ).
+        '$drain_cleanups'(Ball0, Ball) :-
             ( '$pop_pending_cleanup'(Ref, Live)
             -> '$scc_forget'(Ref),
                ( retract('$cleanup_pending'(Ref, Copy))
-               -> ( Live == '$scc_use_copy' -> F = ignore(Copy) ; F = ignore(Live) ),
-                  catch(F, _, true)
-               ; true ),
-               '$drain_cleanups'
-            ; true ).
+               -> ( Live == '$scc_use_copy'
+                  -> F = ignore(Copy), catch(F, _, true), Ball1 = Ball0
+                  ;  F = ignore(Live), catch(F, E, true),
+                     ( Ball0 == none, nonvar(E) -> Ball1 = ball(E) ; Ball1 = Ball0 )
+                  )
+               ; Ball1 = Ball0 ),
+               '$drain_cleanups'(Ball1, Ball)
+            ; Ball = Ball0 ).
 
         %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
         :- public call_cleanup/2.
@@ -818,53 +840,53 @@ internal static class Prelude
         :- public reset_gensym/1.
         reset_gensym(Base) :- set_flag('$gensym'(Base), 0).
 
-        %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
+        %! maplist(:Goal, ?List) | Lists | library | Succeeds if Goal holds for every element of List.
         maplist(_, []).
         maplist(G, [X|Xs]) :- call(G, X), maplist(G, Xs).
 
-        %! maplist(:Goal, ?List1, ?List2) | Lists | Succeeds if Goal holds for corresponding elements of two lists.
+        %! maplist(:Goal, ?List1, ?List2) | Lists | library | Succeeds if Goal holds for corresponding elements of two lists.
         maplist(_, [], []).
         maplist(G, [X|Xs], [Y|Ys]) :- call(G, X, Y), maplist(G, Xs, Ys).
 
-        %! maplist(:Goal, ?List1, ?List2, ?List3) | Lists | Succeeds if Goal holds for corresponding elements of three lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3) | Lists | library | Succeeds if Goal holds for corresponding elements of three lists.
         maplist(_, [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs]) :-
             call(G, X, Y, Z), maplist(G, Xs, Ys, Zs).
 
-        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4) | Lists | Succeeds if Goal holds for corresponding elements of four lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4) | Lists | library | Succeeds if Goal holds for corresponding elements of four lists.
         maplist(_, [], [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws]) :-
             call(G, X, Y, Z, W), maplist(G, Xs, Ys, Zs, Ws).
 
-        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5) | Lists | Succeeds if Goal holds for corresponding elements of five lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5) | Lists | library | Succeeds if Goal holds for corresponding elements of five lists.
         maplist(_, [], [], [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs]) :-
             call(G, X, Y, Z, W, V), maplist(G, Xs, Ys, Zs, Ws, Vs).
 
-        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6) | Lists | Succeeds if Goal holds for corresponding elements of six lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6) | Lists | library | Succeeds if Goal holds for corresponding elements of six lists.
         maplist(_, [], [], [], [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us]) :-
             call(G, X, Y, Z, W, V, U), maplist(G, Xs, Ys, Zs, Ws, Vs, Us).
 
-        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7) | Lists | Succeeds if Goal holds for corresponding elements of seven lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7) | Lists | library | Succeeds if Goal holds for corresponding elements of seven lists.
         maplist(_, [], [], [], [], [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us], [T|Ts]) :-
             call(G, X, Y, Z, W, V, U, T),
             maplist(G, Xs, Ys, Zs, Ws, Vs, Us, Ts).
 
-        %! foldl(:Goal, ?List, +V0, -V) | Lists | Folds Goal over a list, threading an accumulator from V0 to V.
+        %! foldl(:Goal, ?List, +V0, -V) | Lists | library | Folds Goal over a list, threading an accumulator from V0 to V.
         foldl(_, [], Acc, Acc).
         foldl(G, [X|Xs], Acc, Out) :-
             call(G, X, Acc, Acc1),
             foldl(G, Xs, Acc1, Out).
 
-        %! foldl(:Goal, ?List1, ?List2, +V0, -V) | Lists | Folds Goal over two lists, threading an accumulator from V0 to V.
+        %! foldl(:Goal, ?List1, ?List2, +V0, -V) | Lists | library | Folds Goal over two lists, threading an accumulator from V0 to V.
         foldl(_, [], [], Acc, Acc).
         foldl(G, [X|Xs], [Y|Ys], Acc, Out) :-
             call(G, X, Y, Acc, Acc1),
             foldl(G, Xs, Ys, Acc1, Out).
 
-        %! foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V) | Lists | Folds Goal over three lists, threading an accumulator from V0 to V.
+        %! foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V) | Lists | library | Folds Goal over three lists, threading an accumulator from V0 to V.
         foldl(_, [], [], [], Acc, Acc).
         foldl(G, [X|Xs], [Y|Ys], [Z|Zs], Acc, Out) :-
             call(G, X, Y, Z, Acc, Acc1),
@@ -874,14 +896,14 @@ internal static class Prelude
         % plus the list WITHOUT that occurrence. Eager argument checks:
         % a bound non-integer N is a type error, a negative one a domain
         % error, both before any list walk.
-        %! nth0(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 0-based index, the element there, and the list without that occurrence.
+        %! nth0(?Index, ?List, ?Elem, ?Rest) | Lists | library | Relates a 0-based index, the element there, and the list without that occurrence.
         nth0(N, Es0, E, Es) :-
             '$nth_index_check'(N, nth0/4),
             (   integer(N) -> '$nth0_at'(N, Es0, E, Es)
             ;   '$nth0_enum'(Es0, E, Es, 0, N)
             ).
 
-        %! nth1(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 1-based index, the element there, and the list without that occurrence.
+        %! nth1(?Index, ?List, ?Elem, ?Rest) | Lists | library | Relates a 1-based index, the element there, and the list without that occurrence.
         nth1(N, Es0, E, Es) :-
             '$nth_index_check'(N, nth1/4),
             (   integer(N) -> N >= 1, N0 is N - 1, '$nth0_at'(N0, Es0, E, Es)
@@ -1047,7 +1069,7 @@ internal static class Prelude
 
         % ===== \= over the three-state trial core =====
         :- public (\=)/2.
-        %! \=(?Term1, ?Term2) | Unification & comparison | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it.
+        %! \=(?Term1, ?Term2) | Unification & comparison | iso | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it.
         % The native core only TRIAL-unifies (rollback, hooks never run). When
         % the trial bound an attvar the verdict is unreliable — a hook could
         % veto the unification (dif) or must observably fire (freeze) — so the
@@ -1312,100 +1334,100 @@ internal static class Prelude
 
         % ===== common list-library predicates =====
 
-        %! select(?Elem, ?List, ?Rest) | Lists | Rest is List with one occurrence of Elem removed; backtracks over occurrences.
+        %! select(?Elem, ?List, ?Rest) | Lists | library | Rest is List with one occurrence of Elem removed; backtracks over occurrences.
         select(X, [X|T], T).
         select(X, [H|T], [H|R]) :- select(X, T, R).
 
-        %! permutation(?List, ?Permutation) | Lists | True when the two lists are permutations of each other; enumerates permutations.
+        %! permutation(?List, ?Permutation) | Lists | library | True when the two lists are permutations of each other; enumerates permutations.
         permutation([], []).
         permutation(L, [X|P]) :- select(X, L, R), permutation(R, P).
 
-        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once, with no backtracking over further matches.
+        %! memberchk(?Elem, +List) | Lists | library | Like member/2 but succeeds at most once, with no backtracking over further matches.
         memberchk(X, [Y|T]) :- ( X = Y -> true ; memberchk(X, T) ).
 
-        %! nonmember(?Elem, +List) | Lists | True when Elem does not unify with any element of List.
+        %! nonmember(?Elem, +List) | Lists | library | True when Elem does not unify with any element of List.
         nonmember(X, L) :- \+ member(X, L).
 
-        %! subtract(+Set, +Delete, -Rest) | Lists | Rest is Set without the elements that also occur in Delete.
+        %! subtract(+Set, +Delete, -Rest) | Lists | library | Rest is Set without the elements that also occur in Delete.
         subtract([], _, []).
         subtract([H|T], D, R) :-
             ( memberchk(H, D) -> R = R1 ; R = [H|R1] ),
             subtract(T, D, R1).
 
-        %! intersection(+Set1, +Set2, -Intersection) | Lists | Intersection holds the elements of Set1 that also occur in Set2.
+        %! intersection(+Set1, +Set2, -Intersection) | Lists | library | Intersection holds the elements of Set1 that also occur in Set2.
         intersection([], _, []).
         intersection([H|T], S2, R) :-
             ( memberchk(H, S2) -> R = [H|R1] ; R = R1 ),
             intersection(T, S2, R1).
 
-        %! union(+Set1, +Set2, -Union) | Lists | Union holds the elements of Set1 not in Set2, followed by all of Set2.
+        %! union(+Set1, +Set2, -Union) | Lists | library | Union holds the elements of Set1 not in Set2, followed by all of Set2.
         union([], S2, S2).
         union([H|T], S2, R) :-
             ( memberchk(H, S2) -> R = R1 ; R = [H|R1] ),
             union(T, S2, R1).
 
-        %! delete(+List, +Elem, -Rest) | Lists | Rest is List with every element that unifies with Elem removed.
+        %! delete(+List, +Elem, -Rest) | Lists | library | Rest is List with every element that unifies with Elem removed.
         delete([], _, []).
         delete([H|T], X, R) :-
             ( H \= X -> R = [H|R1] ; R = R1 ),
             delete(T, X, R1).
 
-        %! numlist(+Low, +High, -List) | Lists | List is the consecutive integers from Low to High inclusive.
+        %! numlist(+Low, +High, -List) | Lists | library | List is the consecutive integers from Low to High inclusive.
         numlist(L, H, List) :-
             ( L =< H -> L1 is L + 1, List = [L|Rest], numlist(L1, H, Rest)
             ; List = []
             ).
 
-        %! sum_list(+List, -Sum) | Lists | Sum is the sum of the numbers in List.
+        %! sum_list(+List, -Sum) | Lists | library | Sum is the sum of the numbers in List.
         sum_list(L, S) :- '$sum_list'(L, 0, S).
 
-        %! sumlist(+List, -Sum) | Lists | Sum is the sum of the numbers in List (alias of sum_list/2).
+        %! sumlist(+List, -Sum) | Lists | library | Sum is the sum of the numbers in List (alias of sum_list/2).
         sumlist(L, S) :- '$sum_list'(L, 0, S).
 
-        %! max_list(+List, -Max) | Lists | Max is the largest number in the non-empty list.
+        %! max_list(+List, -Max) | Lists | library | Max is the largest number in the non-empty list.
         max_list([H|T], M) :- '$maxlist'(T, H, M).
         '$maxlist'([], M, M).
         '$maxlist'([H|T], A, M) :- ( H > A -> A1 = H ; A1 = A ), '$maxlist'(T, A1, M).
 
-        %! min_list(+List, -Min) | Lists | Min is the smallest number in the non-empty list.
+        %! min_list(+List, -Min) | Lists | library | Min is the smallest number in the non-empty list.
         min_list([H|T], M) :- '$minlist'(T, H, M).
         '$minlist'([], M, M).
         '$minlist'([H|T], A, M) :- ( H < A -> A1 = H ; A1 = A ), '$minlist'(T, A1, M).
 
-        %! max_member(?Max, +List) | Lists | Max is the largest element of List in the standard order of terms.
+        %! max_member(?Max, +List) | Lists | library | Max is the largest element of List in the standard order of terms.
         max_member(Max, [H|T]) :- '$maxmember'(T, H, Max).
         '$maxmember'([], M, M).
         '$maxmember'([H|T], A, M) :- ( H @> A -> A1 = H ; A1 = A ), '$maxmember'(T, A1, M).
 
-        %! min_member(?Min, +List) | Lists | Min is the smallest element of List in the standard order of terms.
+        %! min_member(?Min, +List) | Lists | library | Min is the smallest element of List in the standard order of terms.
         min_member(Min, [H|T]) :- '$minmember'(T, H, Min).
         '$minmember'([], M, M).
         '$minmember'([H|T], A, M) :- ( H @< A -> A1 = H ; A1 = A ), '$minmember'(T, A1, M).
 
-        %! include(:Goal, +List, -Included) | Lists | Included holds the elements of List for which Goal succeeds.
+        %! include(:Goal, +List, -Included) | Lists | library | Included holds the elements of List for which Goal succeeds.
         include(_, [], []).
         include(G, [H|T], R) :-
             ( call(G, H) -> R = [H|R1] ; R = R1 ),
             include(G, T, R1).
 
-        %! exclude(:Goal, +List, -Excluded) | Lists | Excluded holds the elements of List for which Goal fails.
+        %! exclude(:Goal, +List, -Excluded) | Lists | library | Excluded holds the elements of List for which Goal fails.
         exclude(_, [], []).
         exclude(G, [H|T], R) :-
             ( call(G, H) -> R = R1 ; R = [H|R1] ),
             exclude(G, T, R1).
 
-        %! partition(:Goal, +List, -Included, -Excluded) | Lists | Splits List by whether Goal succeeds on each element.
+        %! partition(:Goal, +List, -Included, -Excluded) | Lists | library | Splits List by whether Goal succeeds on each element.
         partition(_, [], [], []).
         partition(G, [H|T], I, E) :-
             ( call(G, H) -> I = [H|I1], E = E1 ; I = I1, E = [H|E1] ),
             partition(G, T, I1, E1).
 
-        %! pairs_keys_values(?Pairs, ?Keys, ?Values) | Lists | Relates a list of Key-Value pairs to its lists of keys and values.
+        %! pairs_keys_values(?Pairs, ?Keys, ?Values) | Lists | library | Relates a list of Key-Value pairs to its lists of keys and values.
         pairs_keys_values([], [], []).
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
 
-        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key.
+        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | library | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key.
         map_list_to_pairs(_, [], []).
         map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
             call(F, X, K),
@@ -1436,16 +1458,18 @@ internal static class Prelude
         '$chars_si'([C|T], W) :- !, character_si(C), '$chars_si'(T, W).
         '$chars_si'(_, W) :- throw(error(type_error(list, W), chars_si/1)).
 
-        %! pairs_keys(+Pairs, -Keys) | Lists | The keys of a list of Key-Value pairs.
+        %! pairs_keys(+Pairs, -Keys) | Lists | library | The keys of a list of Key-Value pairs.
         :- public pairs_keys/2.
         pairs_keys(Pairs, Keys) :- pairs_keys_values(Pairs, Keys, _).
 
-        %! pairs_values(+Pairs, -Values) | Lists | The values of a list of Key-Value pairs.
+        %! pairs_values(+Pairs, -Values) | Lists | library | The values of a list of Key-Value pairs.
         :- public pairs_values/2.
         pairs_values(Pairs, Values) :- pairs_keys_values(Pairs, _, Values).
 
-        %! predsort(:Pred, +List, -Sorted) | Lists | Sorts List by a three-way comparison predicate, dropping elements compared equal.
-        predsort(P, List, Sorted) :- '$predsort_all'(List, P, [], Sorted).
+        %! predsort(:Pred, +List, -Sorted) | Lists | library | Sorts List by a three-way comparison predicate, dropping elements compared equal.
+        predsort(P, List, Sorted) :-
+            '$not_cyclic_list'(List, predsort/3),
+            '$predsort_all'(List, P, [], Sorted).
         '$predsort_all'([], _, Acc, Acc).
         '$predsort_all'([H|T], P, Acc, Sorted) :-
             '$predsort_ins'(Acc, P, H, Acc1),
@@ -1458,8 +1482,9 @@ internal static class Prelude
             ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
             ).
 
-        %! sort(+Key, +Order, +List, -Sorted) | Lists | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
+        %! sort(+Key, +Order, +List, -Sorted) | Lists | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
         sort(Key, Order, List, Sorted) :-
+            '$not_cyclic_list'(List, sort/4),
             '$sort4_tag'(List, Key, 0, Tagged),
             msort(Tagged, Asc),
             ( ( Order == ('@<') ; Order == ('@>') ) -> '$sort4_dedup'(Asc, Uniq)
@@ -1469,6 +1494,12 @@ internal static class Prelude
             ; Ordered = Uniq
             ),
             '$sort4_elems'(Ordered, Sorted).
+        % A cyclic list is not a list: the walks below would build forever.
+        '$not_cyclic_list'(List, Context) :-
+            (   '$cyclic_spine'(List)
+            ->  throw(error(type_error(list, List), Context))
+            ;   true
+            ).
         '$sort4_tag'([], _, _, []).
         '$sort4_tag'([E|Es], Key, I, [k(K, I, E)|Ps]) :-
             ( Key =:= 0 -> K = E ; arg(Key, E, K) ),
@@ -1619,10 +1650,10 @@ internal static class Prelude
 
         % ===== control, database & inspection =====
 
-        %! false | Control | Always fails; the ISO synonym of fail/0.
+        %! false | Control | iso | Always fails; the ISO synonym of fail/0.
         false :- fail.
 
-        %! once(:Goal) | Control | Succeeds at most once, committing to the first solution of Goal.
+        %! once(:Goal) | Control | iso | Succeeds at most once, committing to the first solution of Goal.
         once(Goal) :- call(Goal), !.
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
@@ -1676,7 +1707,7 @@ internal static class Prelude
             call(Goal),
             '$attv_new_since'(S, Vars).
 
-        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing.
         time(Goal) :-
             '$time_start'(Mark),
             (   call(Goal) *->
@@ -1689,11 +1720,11 @@ internal static class Prelude
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
         chdir(Path) :- working_directory(_, Path).
 
-        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists.
+        %! append(+ListOfLists, -List) | Lists | library | Concatenates a list of lists.
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
-        %! flatten(+Nested, -Flat) | Lists | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat.
+        %! flatten(+Nested, -Flat) | Lists | library | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat.
         flatten(Nested, Flat) :- '$flatten'(Nested, [], Flat0), !, Flat = Flat0.
         '$flatten'(V, T, [V|T]) :- var(V), !.
         '$flatten'([], T, T) :- !.
@@ -1832,7 +1863,7 @@ internal static class Prelude
         %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches.
         ':'(Module, Goal) :- call(Module:Goal).
 
-        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
+        %! phrase(:Body, ?List) | Grammar | iso | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
 
         % The classic sequence nonterminals, written pre-translated (their
@@ -1843,7 +1874,7 @@ internal static class Prelude
         %! seq(?Xs, ?S0, ?S) | Grammar | The nonterminal seq//1: describes exactly the sequence Xs. phrase((seq(A), seq(B)), L) splits L into A and B.
         seq([], S, S).
         seq([X|Xs], [X|S0], S) :- seq(Xs, S0, S).
-        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal.
+        %! phrase(:Body, ?List, ?Rest) | Grammar | iso | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal.
         % The TS 13211-3 model, faithfully: the WHOLE body becomes one goal
         % first — validating as it goes — and runs as a single call. Two
         % consequences the old step-by-step interpreter got wrong:
@@ -1866,6 +1897,10 @@ internal static class Prelude
             '$dcg_terminal_check'(T, [H|T]),
             '$dcg_terminal_concat'([H|T], S, List).
         '$dcg_translate'(!, S0, S, (!, S0 = S)) :- !.
+        % M:Body: the body's nonterminals are M's, so the translated goal
+        % runs in M (ADR-056).
+        '$dcg_translate'(M:B, S0, S, M:G) :- !,
+            '$dcg_translate'(B, S0, S, G).
         '$dcg_translate'((A, B), S0, S, (GA, GB)) :- !,
             '$dcg_translate'(A, S0, S1, GA),
             '$dcg_translate'(B, S1, S, GB).
@@ -1993,7 +2028,7 @@ internal static class Prelude
             append(List0, Tail, List).
 
 
-        %! retractall(+Head) | Database | Removes every clause whose head unifies with Head.
+        %! retractall(+Head) | Database | iso | Removes every clause whose head unifies with Head.
         % retract/1 is re-satisfiable, so a failure-driven loop retracts
         % every match; the `fail` undoes each solution's bindings, keeping
         % Head general. Facts are retracted by the head form, rules by the
@@ -2394,6 +2429,24 @@ internal static class Prelude
         % C# builtins (AttvarBuiltins) — the Prolog walks were the hottest
         % predicates of a clpz solve.
         '$term_attributed_variables'(T, Vs) :- term_attvars(T, Vs).
+
+        % '$unattributed_var'(?V): V is an unbound variable carrying NO
+        % attributes. A Scryer engine primitive its library(lists) uses to
+        % pick the fast path in length/2 -- without it `length(L, 3)` with L
+        % unbound raises existence_error the moment a program imports their
+        % lists.pl, which every clpz program does. Their semantics exactly:
+        % a non-var fails, a plain var succeeds, and an attributed variable
+        % succeeds only when its attribute list is empty.
+        '$unattributed_var'(V) :- var(V), term_attvars(V, []).
+
+        % '$det_length_rundown'(-Vs, +N): Vs is a fresh list of N variables.
+        % The companion primitive: Scryer's length/2 commits to it once
+        % '$unattributed_var'/1 says the list is an unconstrained variable.
+        % Its own recursion rather than length/2, so which length/2 is in
+        % scope cannot matter.
+        '$det_length_rundown'(Vs, N) :- '$dlr_fresh'(N, Vs).
+        '$dlr_fresh'(0, []) :- !.
+        '$dlr_fresh'(N, [_|T]) :- N1 is N - 1, '$dlr_fresh'(N1, T).
         '$get_attr_list'(V, Ls) :- '$attr_modules'(V, Ms), '$attr_collect'(Ms, V, Ls).
         '$attr_collect'([], _, []).
         '$attr_collect'([M|Ms], V, Ls) :-
@@ -2444,4 +2497,28 @@ internal static class Prelude
             !, N1 is N0 + 1, '$skip_max_list_'(T, Max, N1, N, Tail).
         '$skip_max_list_'(List, _, N, N, List).
         """;
+
+    /// <summary>The predicates the prelude declares <c>:- dynamic</c>. A
+    /// clause for one of them in any other source (a library's
+    /// <c>attribute_goals/4</c> hook, a program's <c>portray/1</c>) is a
+    /// dynamic clause: the consult path routes it to the store because the
+    /// declaration is already live, and the object compiler has to reach
+    /// the same verdict without an engine. Scanned like
+    /// <c>SeedMetaTemplatesFromSource</c>: one directive per line.</summary>
+    public static HashSet<PredicateRef> DynamicDeclarations => _dynamicDeclarations.Value;
+
+    private static readonly Lazy<HashSet<PredicateRef>> _dynamicDeclarations = new(() =>
+    {
+        var set = new HashSet<PredicateRef>();
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(Source,
+                @"^\s*:-\s*dynamic\(?\s*('[^']*'|[a-z][A-Za-z0-9_]*)\s*/\s*(\d+)\s*\)?\s*\.\s*$",
+                System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            string name = m.Groups[1].Value;
+            if (name[0] == '\'') name = name.Substring(1, name.Length - 2);
+            set.Add(new PredicateRef(name, int.Parse(m.Groups[2].Value)));
+        }
+        return set;
+    });
 }

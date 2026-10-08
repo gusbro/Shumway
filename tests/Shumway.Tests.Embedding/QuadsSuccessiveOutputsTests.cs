@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Successive <c>outputs/1</c> claims continue one another: a goal
 /// that writes "hello " twice may be transcribed either as one claim or as
-/// two, and both say the same thing. The second used to OVERWRITE the first,
+/// two, and both say the same thing. The second used to overwrite the first,
 /// so the two-claim form ran the goal to its limit and then failed while the
 /// one-claim form passed.
 ///
@@ -58,8 +58,8 @@ public sealed class QuadsSuccessiveOutputsTests
     [Fact]
     public void SeveralClaimsBesideSeveralAnswersAreCutAtTheAnswers()
     {
-        // WHEN the goal answers more than once, a claim per answer is a
-        // claim ABOUT that answer: the run is cut where the answers arrived
+        // When the goal answers more than once, a claim per answer is a
+        // claim about that answer: the run is cut where the answers arrived
         // and claim i is matched against the piece answer i wrote. Both
         // goals here write "12" over the whole run — a1 a piece per answer,
         // a2 all of it before the first — and the description says the

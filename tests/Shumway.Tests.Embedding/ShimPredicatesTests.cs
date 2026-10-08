@@ -268,7 +268,7 @@ public sealed class ShimPredicatesTests
     [Fact]
     public void MustBe_VarWantedGetsUninstantiationError()
     {
-        // "Shall be a variable" has its own error term: no term IS the type
+        // "Shall be a variable" has its own error term: no term is the type
         // "variable", so type_error(var, foo) misdescribes the failure.
         var e = new PrologEngine();
         Assert.True(e.Query(

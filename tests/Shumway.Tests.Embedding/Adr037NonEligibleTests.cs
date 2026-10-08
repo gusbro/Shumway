@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-037 — a <c>( Cond *-> Then ; Else )</c> that is NOT inline-eligible (a cut
+/// ADR-037 — a <c>( Cond *-> Then ; Else )</c> that is not inline-eligible (a cut
 /// in a branch, nested control in a part, or a standalone <c>*-></c> with no else)
 /// lowers to a synthesized soft-cut helper: clause 1 = <c>'$choice_level'(K), Cond,
 /// '$soft_cut'(K), Then</c> and clause 2 = <c>Else</c>, so <c>Else</c> is pruned
@@ -23,7 +23,7 @@ public class Adr037NonEligibleTests
     [Fact]
     public void CutInThen_IsTransparentToHostClause()
     {
-        // The ! in Then commits the HOST: it prunes member's remaining choice
+        // The ! in Then commits the host: it prunes member's remaining choice
         // points, so only the first solution survives.
         var e = Load("p(R) :- ( member(X, [1,2,3]) *-> R = X, ! ; R = none ).");
         Assert.True(e.Query("findall(R, p(R), L), L == [1].").Success);
@@ -98,9 +98,9 @@ public class Adr037NonEligibleTests
     [Fact]
     public void RuntimeBuilt_Arrow_CommitsFirstSolution()
     {
-        // Regression: a runtime-built ( C -> T ; E ) used to run BOTH branches when
+        // Regression: a runtime-built ( C -> T ; E ) used to run both branches when
         // C succeeded (the $mqual module distribution hid the -> from $call_disj's
-        // if-then-else clause). WrapGoal distributes INTO the ->, so it commits.
+        // if-then-else clause). WrapGoal distributes into the ->, so it commits.
         var e = new PrologEngine();
         Assert.True(e.Query(
             "findall(R, ( G = ( true -> R = then ; R = else ), call(G) ), L), L == [then].").Success);
@@ -111,7 +111,7 @@ public class Adr037NonEligibleTests
     [Fact]
     public void NonEligible_DeterministicCond_LeavesNoChoicePoint()
     {
-        // A cut in Then makes it non-eligible (helper path) AND deterministic: the
+        // A cut in Then makes it non-eligible (helper path) and deterministic: the
         // deterministic condition plus the commit leave no choice point.
         var e = new PrologEngine();
         Assert.True(e.Query(

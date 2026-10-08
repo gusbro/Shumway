@@ -20,7 +20,7 @@ public static partial class MetaBuiltins
         var streams = engine.Streams!;
         // real Edinburgh see/1 semantics:
         // several input files may be open at once, and see/1 on a file that
-        // is ALREADY open makes it current again, RESUMING at its position
+        // is already open makes it current again, resuming at its position
         // (only seen/0 closes). The previous behaviour (close the old file,
         // reopen from scratch) broke the classic nested-include idiom —
         // `seeing(F) … see(Inner) … seen, see(F)` restarted F from the top,
@@ -84,7 +84,7 @@ public static partial class MetaBuiltins
         var streams = engine.Streams!;
         // Edinburgh tell/1 mirrors see/1 (see See1's note): several
         // output files may be open at once; tell/1 on an already-open file
-        // makes it current again, APPENDING where it left off. Only told/0
+        // makes it current again, appending where it left off. Only told/0
         // closes. The classic multi-output juggle depends on this:
         // `tell(a), telling(SP), tell(b), … tell(SP), told`.
         string full = System.IO.Path.GetFullPath(path);
@@ -152,7 +152,7 @@ public static partial class MetaBuiltins
     public static bool Skip1(Activation engine) => SkipImpl(engine, useStreamReg: false);
     public static bool Skip2(Activation engine) => SkipImpl(engine, useStreamReg: true);
 
-    // Both resolvers delegate to the ONE canonical stream-arg resolver:
+    // Both resolvers delegate to the one canonical stream-arg resolver:
     // a stream-term is `'$stream'(Id)` looked up in the registry, and there
     // must not be a second place that decides what a stream argument is.
     private static StreamHandle ResolveInputStream(Activation engine, bool fromStreamArg)
@@ -260,7 +260,7 @@ public static partial class MetaBuiltins
             string text = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             string source = text.TrimEnd().EndsWith(".", StringComparison.Ordinal)
                 ? text : text + ".";
-            // Parse with the engine's LIVE operator table so `:- op/3`-defined
+            // Parse with the engine's live operator table so `:- op/3`-defined
             // operators read back exactly as the term->atom direction writes them
             // (parsing with the default table made string_term/2 not an inverse).
             var ops = (engine.Host as PrologEngine)?.Operators
@@ -305,7 +305,7 @@ public static partial class MetaBuiltins
 
     /// <summary>Arity <c>string_search(+Case, +SubString, +String, -Location)</c>:
     /// Case = 0 → case-sensitive, Case = 1 → case-insensitive. Locations are
-    /// 0-based (per ARITY.HLP) and enumerate on backtracking.</summary>
+    /// 0-based (per arity.HLP) and enumerate on backtracking.</summary>
     public static bool StringSearch4(Activation engine)
     {
         Cell caseCell = MaterializeRegisterAsCell(engine, 0);

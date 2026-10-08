@@ -30,7 +30,7 @@ public static class GlobalVarsBuiltins
         // defined to survive, so what is stored cannot be a heap address:
         // once the heap unwinds past the write, that address holds whatever
         // came after it, and the read handed back another term's cells.
-        // Only a cell that IS its value (an integer, an atom) can be kept as
+        // Only a cell that is its value (an integer, an atom) can be kept as
         // it stands -- which is the accumulator this predicate is for, and it
         // allocates nothing. Everything else is copied off the heap.
         //
@@ -59,7 +59,7 @@ public static class GlobalVarsBuiltins
         return engine.UnifyRegisterWithCell(1, stored);
     }
 
-    /// <summary>The value as a cell of the CURRENT heap: a stored payload is
+    /// <summary>The value as a cell of the current heap: a stored payload is
     /// re-emitted, one fresh term per read, which is what makes each read
     /// independent of the last.</summary>
     private static bool TryRead(Activation engine, int nameId, out Cell value)
@@ -113,10 +113,14 @@ public static class GlobalVarsBuiltins
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
         var store = Globals(engine);
-        // Trail the previous value FIRST so unwinding past this write puts it
+        // Trail the previous value first so unwinding past this write puts it
         // back (Scryer's bb_b_put contract — clpz rewinds its propagation
-        // state through exactly this on labeling backtracks).
-        bool had = store.TryGet(nameId, out Cell old);
+        // state through exactly this on labeling backtracks). A previous
+        // value another activation wrote is not one to put back: the read
+        // side already treats it as unset, and trailing it here resurrected
+        // a dead query's value on the unwind.
+        Cell old = default;
+        bool had = store.IsLiveFor(nameId, engine.InstanceId) && store.TryGet(nameId, out old);
         engine.TrailExternal(store, nameId, old, had);
         store.Set(nameId, value, backtrackable: true, ownerId: engine.InstanceId);
         return true;
@@ -131,7 +135,7 @@ public static class GlobalVarsBuiltins
     }
 
     /// <summary><c>'$fetch_global_var'(+Key, -Value)</c> — Scryer's global-var
-    /// read primitive (iso_ext's <c>bb_get/2</c> lowers to it): FAILS for an
+    /// read primitive (iso_ext's <c>bb_get/2</c> lowers to it): Fails for an
     /// unset key instead of throwing — clpz probes
     /// <c>( bb_get(K, C), C == S -&gt; ... ; ... )</c> and relies on the clean
     /// failure branch.</summary>
@@ -178,7 +182,14 @@ public static class GlobalVarsBuiltins
     private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
-        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        int home = engine.Deref(c.AsHeapIndex);
+        Cell d = engine.GetHeap(home);
+        // A variable is a reference to its home, never the cell found there:
+        // an AttVar cell exists only at its home, and storing it would hand
+        // the read back an orphan copy -- a different variable, with no
+        // attributes the table knows of. clp(Z) keeps its current propagator
+        // state this way and asks `C == State` on the way back.
+        return d.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(home) : d;
     }
 }
 
@@ -195,6 +206,6 @@ public interface IGlobalVarHost
     /// heap it was taken from. Attributes do not travel with it.</summary>
     object SnapshotValue(Activation engine, int registerIndex);
 
-    /// <summary>The image as a term of the CURRENT heap.</summary>
+    /// <summary>The image as a term of the current heap.</summary>
     Cell EmitValue(Activation engine, object payload);
 }

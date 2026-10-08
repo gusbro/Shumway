@@ -17,7 +17,7 @@ public sealed class HttpDownloadTests
     [Fact]
     public async Task HttpDownload_WritesTheResponseBytesToTheFile()
     {
-        // Body includes a non-ASCII byte to pin the RAW-BYTES contract (the
+        // Body includes a non-ASCII byte to pin the raw-bytes contract (the
         // Neumerkel pages are ISO-8859-1; text decoding would corrupt them).
         byte[] body = Encoding.Latin1.GetBytes("<html>café & <tr>!</html>");
         var listener = new TcpListener(IPAddress.Loopback, 0);

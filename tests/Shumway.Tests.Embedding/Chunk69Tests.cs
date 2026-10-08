@@ -41,6 +41,7 @@ public class Chunk69Tests
             foo :- q.
             """);
         Assert.True(engine.Query("foo.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
 
@@ -59,6 +60,7 @@ public class Chunk69Tests
             foo :- q, r.
             """);
         Assert.True(engine.Query("foo.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
 
@@ -78,6 +80,7 @@ public class Chunk69Tests
             """);
         Assert.True(engine.Query("foo(ok).").Success);
         Assert.False(engine.Query("foo(nope).").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 1)));
     }
 
@@ -128,7 +131,7 @@ public class Chunk69Tests
     public void NonLeafCallee_NotInlined_StillWorksViaSubcall()
     {
         // foo :- m. where m :- a, b. — m has a non-tail Call inside,
-        // so it's NOT a leaf. The caller's Call must NOT inline; it
+        // so it's not a leaf. The caller's Call must not inline; it
         // falls back to the IlCallHelper thunk so m's choice points
         // and continuation get the standard sub-call treatment.
         var engine = new PrologEngine();
@@ -199,6 +202,7 @@ public class Chunk69Tests
             chain :- a, b, c.
             """);
         Assert.True(engine.Query("chain.").Success);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(Fid("chain", 0)));
     }
 

@@ -8,9 +8,9 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-035 D5+ — the Watch-window EDIT of a frame variable
-/// (<see cref="DebugService.SetFrameVariable"/>), DESTRUCTIVE by design: a bound
-/// variable's value is REPLACED (the old binding trailed away, so backtracking restores
+/// <summary>ADR-035 D5+ — the Watch-window edit of a frame variable
+/// (<see cref="DebugService.SetFrameVariable"/>), destructive by design: a bound
+/// variable's value is replaced (the old binding trailed away, so backtracking restores
 /// it), and assigning <c>_</c> UN-instantiates. The Immediate window deliberately keeps
 /// pure unification — this surface is the edit gesture only.</summary>
 [Collection("debugger")]
@@ -27,7 +27,7 @@ public class Adr035WatchEditTests
         return engine;
     }
 
-    // The proof-by-success program: bindit/1 accepts ONLY 7, and the clause binds X to 1
+    // The proof-by-success program: bindit/1 accepts only 7, and the clause binds X to 1
     // first — so the query can only succeed if the edit at the breakpoint really changed
     // the machine.
     //  2: run(Out) :-
@@ -58,7 +58,7 @@ public class Adr035WatchEditTests
     [Fact]
     public void EditingABoundVariable_ReplacesItsValue()
     {
-        // X is BOUND to 1 at the stop; the edit replaces it with 7 — pure unification
+        // X is bound to 1 at the stop; the edit replaces it with 7 — pure unification
         // could never do this — and bindit(7) then succeeds.
         var engine = DebugEngine(BinditProgram);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
@@ -74,7 +74,7 @@ public class Adr035WatchEditTests
     public void AssigningUnderscore_Uninstantiates()
     {
         // The user's spec: `_` in the Watch un-binds. X = 1 at the stop; after the edit
-        // X is FREE, so bindit(X) binds it to 7 the ordinary way.
+        // X is free, so bindit(X) binds it to 7 the ordinary way.
         var engine = DebugEngine(BinditProgram);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
@@ -88,9 +88,9 @@ public class Adr035WatchEditTests
     [Fact]
     public void TheNewValue_MayAliasSiblingFrameVariables()
     {
-        // X := f(Y) where Y is the frame's own Y: the built term references the REAL
+        // X := f(Y) where Y is the frame's own Y: the built term references the real
         // cell, so when mid/2 binds through the structure, both views agree — the answer
-        // shows ONE shared variable in both positions.
+        // shows one shared variable in both positions.
         //  2: run(Out) :-
         //  3:     X = 1,
         //  4:     mid(X, Y),
@@ -111,7 +111,7 @@ public class Adr035WatchEditTests
         Assert.Single(sols);
         string outText = sols[0]["Out"]!.ToString()!.Replace(" ", "");
         _log.WriteLine("Out = " + outText);
-        // pair(f(V), V) — the SAME variable name twice = real aliasing.
+        // pair(f(V), V) — the same variable name twice = real aliasing.
         var m = System.Text.RegularExpressions.Regex.Match(
             outText, @"^pair\(f\((_\w+)\),(_\w+)\)$");
         Assert.True(m.Success, "unexpected shape: " + outText);
@@ -123,7 +123,7 @@ public class Adr035WatchEditTests
     {
         // The edit is trailed as-if-the-machine-did-it: backtracking past the edited
         // goal unwinds it. First pass: X = 1 edited to 9 → note(9), answer 9. The redo
-        // then unwinds EVERYTHING (edit included) and pick/1's second clause gives the
+        // then unwinds everything (edit included) and pick/1's second clause gives the
         // untouched X = 2.
         //  2: :- dynamic(log/1).
         //  3: run(Out) :-
@@ -158,7 +158,7 @@ public class Adr035WatchEditTests
     public void LocalsRenderWriteqStyle_SoTheDisplayRoundTripsThroughTheEdit()
     {
         // The user's report: hola('1234') displayed as hola(1234) — write-style, no
-        // quotes — so re-typing the displayed value handed the parser an INTEGER
+        // quotes — so re-typing the displayed value handed the parser an integer
         // argument. The debugger's displays are writeq-style now: the atom is shown
         // quoted, and pasting the shown text back through the edit preserves the term.
         //  2: run(Out) :-
@@ -183,7 +183,7 @@ public class Adr035WatchEditTests
             if (stops++ == 0)
             {
                 shown = e.Frames[0].Variables.First(v => v.Name == "X").Value;
-                // Round-trip: feed the DISPLAYED text back through the edit.
+                // Round-trip: feed the displayed text back through the edit.
                 results.Add(s.SetFrameVariable(0, "X", shown!));
             }
             s.Resume(StepMode.Continue);
@@ -195,7 +195,7 @@ public class Adr035WatchEditTests
         _log.WriteLine("Locals showed: " + shown);
         Assert.Equal("hola('1234')", shown);   // writeq-style: the atom is quoted
         Assert.Equal(new[] { "" }, results);
-        // check/1 demands atom(A): only succeeds because the round-trip kept the ATOM.
+        // check/1 demands atom(A): only succeeds because the round-trip kept the atom.
         Assert.Single(sols);
     }
 

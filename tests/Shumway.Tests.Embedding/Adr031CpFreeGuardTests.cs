@@ -19,7 +19,7 @@ public class Adr031CpFreeGuardTests
 {
     private const string Program =
         ":- public loop/1, cls/2, gsum/2, mixed/2.\n"
-        // The canonical hot shape: guard FAILS every recursive iteration,
+        // The canonical hot shape: guard fails every recursive iteration,
         // succeeds once at the end.
         + "loop(N) :- N =< 0, !.\n"
         + "loop(N) :- M is N - 1, loop(M).\n"
@@ -32,7 +32,7 @@ public class Adr031CpFreeGuardTests
         + "gsum(N, R) :- N =< 1, !, base(N, R).\n"
         + "gsum(N, R) :- M is N - 1, gsum(M, S), R is S + N.\n"
         + "base(N, N).\n"
-        // Guard-fail into a NONDET second clause: backtracking through the
+        // Guard-fail into a nondet second clause: backtracking through the
         // directly-branched-to clause must still enumerate.
         + "mixed(N, guarded) :- N > 100, !.\n"
         + "mixed(_, a).\n"
@@ -130,7 +130,7 @@ public class Adr031CpFreeGuardTests
     {
         // ADR-032 sizing counters — deterministic direct-recogniser smoke
         // (static counters are shared with concurrently-running tests, so
-        // assert MOVEMENT, not exact values; promotion is background, so the
+        // assert movement, not exact values; promotion is background, so the
         // engine path can't be asserted synchronously).
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
 
@@ -143,7 +143,7 @@ public class Adr031CpFreeGuardTests
             calleeMap: null, cpA.CallSites, out _));
         Assert.True(IlPredicateCompiler.CpFreeGuardStats.AcceptTotal > a0);
 
-        // Reject: multi-clause fail-direct callee NOT immediately before the
+        // Reject: multi-clause fail-direct callee not immediately before the
         // cut (the multi-solution soundness rule).
         long r0 = IlPredicateCompiler.CpFreeGuardStats.RejectTotal;
         var nd = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
@@ -177,7 +177,7 @@ public class Adr031CpFreeGuardTests
         Assert.False(gA.NeedsRegSave);
         Assert.False(gA.Framed);
 
-        // Tier B: a binding guard (get_value_x) — accepted WITH snapshot.
+        // Tier B: a binding guard (get_value_x) — accepted with snapshot.
         var cp2 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "max(X,Y,X):-X>=Y,!. max(X,Y,Y).").ReadAll().ToList());
         Assert.True(IlPredicateCompiler.TryGetCpFreeGuard(
@@ -218,7 +218,7 @@ public class Adr031CpFreeGuardTests
 /// (head unification / <c>=/2</c>) before failing, so the CP-free fail path
 /// must restore exactly what the skipped choice point's pop would have:
 /// bindings untrailed, heap reset, HB restored, queued wakeups cleared. The
-/// canary throughout: after a guard binds-then-fails, the NEXT clause must see
+/// canary throughout: after a guard binds-then-fails, the next clause must see
 /// the arguments exactly as they were at entry.
 /// </summary>
 public class Adr031BindingGuardTests
@@ -229,8 +229,8 @@ public class Adr031BindingGuardTests
         // is unbound, then the comparison decides.
         + "umax(X,Y,X) :- X >= Y, !.\n"
         + "umax(_,Y,Y).\n"
-        // Bind-then-fail: R=big binds FIRST, then X>5 fails → the restore must
-        // UNBIND R or clause 2's R=small can never succeed.
+        // Bind-then-fail: R=big binds first, then X>5 fails → the restore must
+        // unbind R or clause 2's R=small can never succeed.
         + "pick(X,R) :- R = big, X > 5, !.\n"
         + "pick(_,R) :- R = small.\n"
         // Structure guard (get_structure + unify_void).
@@ -296,7 +296,7 @@ public class Adr031BindingGuardTests
     public void BindThenFail_NextClauseSeesUnboundArg(Adr031CpFreeGuardTests.Mode m)
     {
         var e = Activation(m);
-        // Guard binds R=big then X>5 FAILS → R must be UNBOUND again for
+        // Guard binds R=big then X>5 fails → R must be unbound again for
         // clause 2 to bind R=small. A broken restore leaves R=big and the
         // query fails entirely.
         Assert.True(e.Query("pick(3, R), R == small.").Success);
@@ -313,7 +313,7 @@ public class Adr031BindingGuardTests
         var e = Activation(m);
         Assert.True(e.Query("sh(k(1), R), R == yes.").Success);
         Assert.True(e.Query("sh(other, R), R == no.").Success);
-        // Unbound arg: the guard BINDS X to k(_) and commits — ISO chain
+        // Unbound arg: the guard binds X to k(_) and commits — ISO chain
         // semantics (clause 1 unifies) must be preserved, one solution.
         Assert.Single(e.QueryAll("sh(X, R)."));
         Assert.True(e.Query("sh(X, R), R == yes.").Success);
@@ -369,7 +369,7 @@ public class Adr031BindingGuardTests
     public void GuardCall_CalleeBindsThenLaterGoalFails_Restored(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The callee BINDS an output (W = w(X)) and a LATER guard goal fails →
+        // The callee binds an output (W = w(X)) and a later guard goal fails →
         // the restore stub must undo the callee's binding for clause 2.
         var e = TierGEngine(m,
             ":- public q/2.\n"
@@ -431,12 +431,12 @@ public class Adr031BindingGuardTests
     public void MultiSolutionCallee_LaterGuardGoalRetries_NotCpFree(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // SOUNDNESS REGRESSION — pick/2 has TWO solutions for the same input
+        // Soundness regression — pick/2 has two solutions for the same input
         // (overlapping clauses binding B differently). The guard's later goal
-        // B > 1 fails for B=1 and must RETRY pick to get B=2 — a sequential
-        // chain (no CP) could never do that, so the recogniser must REJECT this
+        // B > 1 fails for B=1 and must retry pick to get B=2 — a sequential
+        // chain (no CP) could never do that, so the recogniser must reject this
         // shape (multi-clause callee not immediately before the cut) and keep
-        // the clause CP. Expected: t(5,R) → big via pick's SECOND solution.
+        // the clause CP. Expected: t(5,R) → big via pick's second solution.
         var e = TierGEngine(m,
             ":- public t/2.\n"
             + "pick(X, 1) :- X > 0.\n"
@@ -453,14 +453,14 @@ public class Adr031BindingGuardTests
     public void GuardCallStaging_FreshVarCompoundAndList_Widened(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The corpus-ranked staging widenings: put_variable_y (a fresh OUTPUT
+        // The corpus-ranked staging widenings: put_variable_y (a fresh output
         // argument for the guard call, read post-cut), put_structure and
         // put_list (compound/list arguments built for the call). Each shape
         // must commit correctly and — the canary — fully undo on guard failure.
         var e = TierGEngine(m,
             ":- public p/2, q/2, r/3.\n"
             // Fresh-var output arg (put_variable_y), used both in a later
-            // guard goal AND post-cut.
+            // guard goal and post-cut.
             + "dbl(X, Y) :- Y is X * 2.\n"
             + "p(X, R) :- dbl(X, D), D > 5, !, R = big(D).\n"
             + "p(_, R) :- R = small.\n"
@@ -501,13 +501,13 @@ public class Adr031BindingGuardTests
             + "p(X, R) :- cls(X, C), !, R = C.\n"
             + "p(_, R) :- R = none.\n"
             // POST-cut failure exits the callee (no later alternatives tried):
-            // cc(5): clause 1 commits, then 5 > 100 fails → cc FAILS (clause 2
-            // must NOT run) → outer clause 2.
+            // cc(5): clause 1 commits, then 5 > 100 fails → cc fails (clause 2
+            // must not run) → outer clause 2.
             + "cc(X) :- X > 0, !, X > 100.\n"
             + "cc(X) :- X < -1000.\n"
             + "w(X, R) :- cc(X), !, R = big.\n"
             + "w(_, R) :- R = small.\n"
-            // A DET callee may sit MID-guard (a later fallible goal is fine:
+            // A det callee may sit MID-guard (a later fallible goal is fine:
             // det ⇒ no second solution to retry).
             + "d(X, R) :- cls(X, C), C == neg, !, R = yes.\n"
             + "d(_, R) :- R = no.\n");
@@ -534,9 +534,9 @@ public class Adr031BindingGuardTests
     public void CalleeAltRestore_HeadBindingUndone_BetweenAlternatives(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // SOUNDNESS REGRESSION (the missing per-alternative untrail): clause 1
-        // BINDS the unbound argument (Y := a) in its head, then its body fails —
-        // clause 2 must see Y UNBOUND again to bind Y := b. Without the
+        // Soundness regression (the missing per-alternative untrail): clause 1
+        // binds the unbound argument (Y := a) in its head, then its body fails —
+        // clause 2 must see Y unbound again to bind Y := b. Without the
         // callee-entry-marks untrail, Y stays a and cb fails entirely.
         var e = TierGEngine(m,
             ":- public p/2.\n"
@@ -554,11 +554,11 @@ public class Adr031BindingGuardTests
     public void NonLastRecursiveClause_WithoutCut_KeepsCp(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // SOUNDNESS REGRESSION (self-tail in a non-last clause): when a deeper
-        // iteration fails, real backtracking returns to THIS iteration's later
+        // Soundness regression (self-tail in a non-last clause): when a deeper
+        // iteration fails, real backtracking returns to this iteration's later
         // alternatives — the in-place loop can't, so the shape must keep its
         // CP. f([9,-1]): clause 1 recurses into [-1] which fails both clauses;
-        // real backtracking then tries clause 2 on [9,-1] → SUCCEEDS.
+        // real backtracking then tries clause 2 on [9,-1] → succeeds.
         var e = TierGEngine(m,
             ":- public p/2.\n"
             + "f([H|T]) :- H > 0, f(T).\n"           // recursive, NON-last, no cut
@@ -568,7 +568,7 @@ public class Adr031BindingGuardTests
         Assert.True(e.Query("p([9,-1], R), R == yes.").Success);
         Assert.Single(e.QueryAll("p([9,-1], R)."));
         Assert.True(e.Query("p([1,-1], R), R == no.").Success);
-        // With a committing cut the loop IS sound (clause 2 pruned).
+        // With a committing cut the loop is sound (clause 2 pruned).
         var e2 = TierGEngine(m,
             ":- public q/2.\n"
             + "g([H|T]) :- H > 0, !, g(T).\n"
@@ -592,7 +592,7 @@ public class Adr031BindingGuardTests
             + "val(X) :- h1(X), X < 100.\n"
             + "p(X, R) :- val(X), !, R = inr.\n"
             + "p(_, R) :- R = outr.\n"
-            // wrap/2 calls a DET multi-clause inner (cls2, all-but-last-cut)
+            // wrap/2 calls a det multi-clause inner (cls2, all-but-last-cut)
             // mid-body — allowed by the nested det rule.
             + "cls2(X, neg) :- X < 0, !.\n"
             + "cls2(_, pos).\n"
@@ -616,8 +616,8 @@ public class Adr031BindingGuardTests
     public void G3_DeepCutCallee_CallThenCut_Inlines(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The has_loadevent shape: each callee clause CALLS an (inlinable)
-        // inner then commits with a DEEP cut (AllocateGetLevel + Cut slot +
+        // The has_loadevent shape: each callee clause calls an (inlinable)
+        // inner then commits with a deep cut (AllocateGetLevel + Cut slot +
         // the fused cut_deallocate_proceed epilogue). The inline emission
         // treats the deep cut as the same flush-only split as a neck cut —
         // the inlined inner pushed no choice points.
@@ -641,9 +641,9 @@ public class Adr031BindingGuardTests
     public void Adr033_ContinuationStack_SharedCopies_SameAnswers(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // ADR-033 — the continuation-stack mechanism (ONE shared copy per
+        // ADR-033 — the continuation-stack mechanism (one shared copy per
         // callee + push/pop routing) must be observationally identical to the
-        // per-site duplication. Two guards call the SAME fail-direct callee
+        // per-site duplication. Two guards call the same fail-direct callee
         // (the sharing case), plus a self-tail-recursive callee (the loop
         // inside the shared copy), plus deep-fail undo.
         bool old = IlPredicateCompiler.CpFreeGuardContinuations;
@@ -655,7 +655,7 @@ public class Adr031BindingGuardTests
                 + "cls(X, neg) :- X < 0, !.\n"
                 + "cls(X, zero) :- X =:= 0, !.\n"
                 + "cls(_, pos).\n"
-                // TWO sites calling cls/2 → one shared copy, two continuations.
+                // Two sites calling cls/2 → one shared copy, two continuations.
                 + "p(X, R) :- cls(X, C), !, R = a(C).\n"
                 + "p(_, R) :- R = none.\n"
                 + "q(X, R) :- cls(X, C), C == neg, !, R = b.\n"
@@ -687,7 +687,7 @@ public class Adr031BindingGuardTests
     public void Adr033_ThrowMidCopy_CatchRebalancesStack(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // Exception safety: the guard callee THROWS mid-copy (arith on an
+        // Exception safety: the guard callee throws mid-copy (arith on an
         // atom) with a continuation entry pushed; catch/3 must truncate the
         // stack (SnapGuardContTop) so subsequent guard calls stay balanced.
         bool old = IlPredicateCompiler.CpFreeGuardContinuations;
@@ -701,7 +701,7 @@ public class Adr031BindingGuardTests
                 + "s(X, R) :- chk(X, C), !, R = C.\n"
                 + "s(_, R) :- R = err.\n"
                 + "driver(X, R) :- catch(s(X, R), _, R = caught).\n");
-            // The throw: X = an atom → chk's X < 10 raises type_error INSIDE
+            // The throw: X = an atom → chk's X < 10 raises type_error inside
             // the shared copy (entry pushed, never popped) → catch truncates.
             Assert.True(e.Query("driver(banana, R), R == caught.").Success);
             // The stack is balanced again: further guard calls behave.
@@ -723,7 +723,7 @@ public class Adr031BindingGuardTests
     {
         // ADR-033 cross-tail — the Arity helper-chain idiom: valid/1 tail-calls
         // range/1 (LCO). Under continuations the tail is a `br` to range's
-        // shared copy, INHERITING the guard's continuations: range's success
+        // shared copy, inheriting the guard's continuations: range's success
         // returns to the guard, its failure lands in the guard's restore stub.
         bool old = IlPredicateCompiler.CpFreeGuardContinuations;
         IlPredicateCompiler.CpFreeGuardContinuations = true;
@@ -735,12 +735,12 @@ public class Adr031BindingGuardTests
                 + "valid(X) :- integer(X), range(X).\n"    // cross-tail (last clause)
                 + "p(X, R) :- valid(X), !, R = ok.\n"
                 + "p(_, R) :- R = bad.\n"
-                // Cross-tail in a CUT-COMMITTED non-last clause.
+                // Cross-tail in a cut-committed non-last clause.
                 + "cls2(X, low) :- X < 50, !, range(X).\n"
                 + "cls2(_, hi).\n"
                 + "q(X, R) :- cls2(X, C), !, R = C.\n"
                 + "q(_, R) :- R = none.\n"
-                // Det target chain → the CALLER stays det → allowed MID-guard.
+                // Det target chain → the caller stays det → allowed MID-guard.
                 + "w(X, R) :- valid(X), X > 10, !, R = big.\n"
                 + "w(_, R) :- R = small.\n");
             Assert.True(e.Query("p(5, R), R == ok.").Success);
@@ -752,7 +752,7 @@ public class Adr031BindingGuardTests
             Assert.True(e.Query("q(5, R), R == low.").Success);
             Assert.True(e.Query("q(80, R), R == hi.").Success);
             // Committed clause 1, then range(-5) fails in the tail → cls2
-            // FAILS (clause 2 must NOT run — selection was committed) → outer.
+            // fails (clause 2 must not run — selection was committed) → outer.
             Assert.True(e.Query("q(-5, R), R == none.").Success);
             Assert.Single(e.QueryAll("q(5, R)."));
             Assert.Single(e.QueryAll("q(-5, R)."));
@@ -770,32 +770,41 @@ public class Adr031BindingGuardTests
     [Fact]
     public void G3_MutualRecursion_Rejected_ByDescribe()
     {
-        // DUPLICATION mode: mutual recursion cannot be statically inlined —
+        // Duplication mode: mutual recursion cannot be statically inlined —
         // the visiting set rejects the cycle (describe-level check; running
-        // it would loop). Under CONTINUATIONS the same TAIL cycle is accepted
+        // it would loop). Under continuations the same tail cycle is accepted
         // (see Adr033_TailCycle_AcceptedByDescribe_UnderContinuations).
-        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
-        var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
-            "ma(X):-mb(X).").ReadAll().ToList());
-        var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
-            "mb(X):-ma(X).").ReadAll().ToList());
-        var map = new System.Collections.Generic.Dictionary<
-            int, Shumway.Compiler.Wam.CompiledPredicate>
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = false;
+        try
         {
-            [ma.FunctorId] = ma,
-            [mb.FunctorId] = mb,
-        };
-        Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
-            ma, map, out _, out var rej));
-        Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+            var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+            var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+                "ma(X):-mb(X).").ReadAll().ToList());
+            var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+                "mb(X):-ma(X).").ReadAll().ToList());
+            var map = new System.Collections.Generic.Dictionary<
+                int, Shumway.Compiler.Wam.CompiledPredicate>
+            {
+                [ma.FunctorId] = ma,
+                [mb.FunctorId] = mb,
+            };
+            Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                ma, map, out _, out var rej));
+            Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
     }
 
     [Fact]
     public void Adr033_TailCycle_AcceptedByDescribe_UnderContinuations()
     {
-        // Deep G3 v1 — a TAIL cycle (mutual tail recursion) composes through
+        // Deep G3 v1 — a tail cycle (mutual tail recursion) composes through
         // the shared copies: `br` into the in-flight participant's copy, LCO.
-        // The cycle edge's det is conservatively FALSE.
+        // The cycle edge's det is conservatively false.
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
         var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "ma(X):-mb(X).").ReadAll().ToList());
@@ -859,7 +868,7 @@ public class Adr031BindingGuardTests
     [Fact]
     public void Adr033_DeepChain_FreshBudgetPerCopy_UnderContinuations()
     {
-        // Deep G3 v1 — a 4-level chain whose CUMULATIVE size exceeds
+        // Deep G3 v1 — a 4-level chain whose cumulative size exceeds
         // FailDirectMaxTotalBytes while every level fits the per-callee caps:
         // duplication rejects (the budget bounds per-site growth); the
         // continuation mechanism accepts (one shared copy per callee — no
@@ -918,7 +927,7 @@ public class Adr031BindingGuardTests
     public void Adr033_MutualTailRecursion_RunsThroughSharedCopies(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // The even/odd idiom — mutual TAIL recursion as a guard callee. Under
+        // The even/odd idiom — mutual tail recursion as a guard callee. Under
         // continuations the copies compose by `br` (LCO): O(1) continuation
         // stack regardless of depth. All-var heads keep the chains unindexed.
         bool old = IlPredicateCompiler.CpFreeGuardContinuations;
@@ -953,7 +962,7 @@ public class Adr031BindingGuardTests
     public void Adr033_SingleClauseWrapper_InheritsCrossTailMultiplicity(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // MULTIPLICITY REGRESSION — c/2 is a SINGLE-clause wrapper that
+        // Multiplicity regression — c/2 is a SINGLE-clause wrapper that
         // cross-tails a MULTI-solution target. A ClauseCount==1 "trivially
         // det" shortcut would let c sit mid-guard, committing to m's first
         // solution (B=1) — B > 1 then fails and the correct second solution
@@ -986,7 +995,7 @@ public class Adr031BindingGuardTests
         Adr031CpFreeGuardTests.Mode m)
     {
         // G2 — the canonical shape: a self-tail-recursive det validator as the
-        // guard. Failure DEEP in the walk must reach the guard's restore stub
+        // guard. Failure deep in the walk must reach the guard's restore stub
         // (a direct branch chain), not the engine's backtracking.
         var e = TierGEngine(m,
             ":- public p/2, q/2.\n"
@@ -994,7 +1003,7 @@ public class Adr031BindingGuardTests
             + "allpos([H|T]) :- H > 0, allpos(T).\n"
             + "p(L, ok) :- allpos(L), !.\n"
             + "p(_, bad).\n"
-            // Mixed tier-B + G2 guard: R=yes binds BEFORE the walk; a deep
+            // Mixed tier-B + G2 guard: R=yes binds before the walk; a deep
             // failure must unbind it for clause 2.
             + "q(L, R) :- R = yes, allpos(L), !.\n"
             + "q(_, R) :- R = no.\n");
@@ -1017,7 +1026,7 @@ public class Adr031BindingGuardTests
     public void FailDirect_MultiClauseCallee_AltRestoresArgs(
         Adr031CpFreeGuardTests.Mode m)
     {
-        // G2 — a 3-clause callee where a PARTIAL match in clause 2 clobbers the
+        // G2 — a 3-clause callee where a partial match in clause 2 clobbers the
         // argument register (unify_variable_x writes A0) before failing; clause
         // 3 must see the original argument (the alt-entry register restore).
         var e = TierGEngine(m,
@@ -1054,8 +1063,8 @@ public class Adr031BindingGuardTests
             g(_, miss).
             """);
         // X in 1..3: the guard's X=5 queues the clpfd verify_attributes wakeup;
-        // the CP-free commit sees pending wakeups → pushes the LAZY CP with the
-        // clause-entry marks → the hook FAILS (5 ∉ 1..3) → backtrack into the
+        // the CP-free commit sees pending wakeups → pushes the lazy CP with the
+        // clause-entry marks → the hook fails (5 ∉ 1..3) → backtrack into the
         // lazy CP restores the entry state → clause 2 → miss, X's domain alive.
         var sol = e.Query("X in 1..3, g(X, R), R == miss, X = 2.");
         Assert.True(sol.Success);

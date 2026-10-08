@@ -114,11 +114,11 @@ public class Phase33I9CyclicCompareTests
     [Fact]
     public void UnifyingDistinctlyShapedRationalTreesTerminates()
     {
-        // Unification's depth guard used to escalate IN PLACE: the pair set
+        // Unification's depth guard used to escalate in place: the pair set
         // covered only the subtree that crossed the limit, the recursion
         // unwound below it, dove into the cycle again with a fresh empty set,
         // and the walk cycled forever with bounded depth (Trealla test0406).
-        // The guard now escalates by RESTART from the root.
+        // The guard now escalates by restart from the root.
         var e = new PrologEngine();
         Assert.True(e.Query("A=A*B, B=C*A*C, A=B, A==B.").Success);
         Assert.True(e.Query("X=f(X), Y=f(f(Y)), X=Y, X==Y.").Success);
@@ -130,8 +130,8 @@ public class Phase33I9CyclicCompareTests
     public void CyclicWritesFollowThePositionPolicy()
     {
         // Position-based cycle elision (the Trealla-printer policy): a
-        // revisited list TAIL or ELEMENT elides immediately; a revisited
-        // STRUCT ARGUMENT unrolls once per cell.
+        // revisited list tail or element elides immediately; a revisited
+        // struct argument unrolls once per cell.
         var e = new PrologEngine();
         Assert.True(e.Query("""
             L1 = [a|L1], with_output_to(atom(A1), write(L1)), A1 == '[a|...]',

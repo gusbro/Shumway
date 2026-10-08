@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Phase 30 chunk 441 — Arity implicit-dynamic semantics for META-CALLED
+/// Phase 30 chunk 441 — Arity implicit-dynamic semantics for meta-called
 /// undeclared predicates at link time.
 ///
 /// <para>Under Arity Prolog a meta-call to an undeclared fact predicate is
@@ -13,14 +13,14 @@ namespace Shumway.Tests.Embedding;
 /// <c>assertz</c>. Pre-441 the linker errored
 /// (<c>missing_predicate</c>) on <c>call(und_fact(X))</c> when no
 /// <c>:- dynamic und_fact/N</c> existed anywhere. Now: every call-graph
-/// edge carries a DIRECT/META marker (<see cref="ShmoCallEdge"/>,
+/// edge carries a direct/meta marker (<see cref="ShmoCallEdge"/>,
 /// computed module-wide per target on the PRE-MetaTransform bodies —
-/// the transform erases the meta wrappers); when EVERY unresolved
-/// reference to a target is a META edge from an arity-compiled module,
-/// the linker registers the target as an implicit EMPTY DYNAMIC
+/// the transform erases the meta wrappers); when every unresolved
+/// reference to a target is a meta edge from an arity-compiled module,
+/// the linker registers the target as an implicit empty dynamic
 /// predicate (exactly as a clauseless <c>:- dynamic</c> declaration
 /// would) and emits an <c>arity_implicit_dynamic</c> INFO diagnostic. A
-/// DIRECT body goal to an undefined predicate stays a hard linker error
+/// direct body goal to an undefined predicate stays a hard linker error
 /// — arity mode or not.</para>
 /// </summary>
 public class Chunk441Tests
@@ -36,7 +36,7 @@ public class Chunk441Tests
 
     // ------------------------------------------------------------------
     // (a) The repro: meta-call to an undeclared fact predicate in an
-    //     arity module links WITHOUT --allow-undefined, fails cleanly at
+    //     arity module links without --allow-undefined, fails cleanly at
     //     runtime, and works after assertz.
     // ------------------------------------------------------------------
     private const string MetaSource =
@@ -55,7 +55,7 @@ public class Chunk441Tests
         {
             Objects = new[] { obj },
             EntryPoints = new[] { new PredicateRef("go", 1), new PredicateRef("go2", 0) },
-            // NO AllowUndefined — the link must succeed on its own.
+            // No AllowUndefined — the link must succeed on its own.
         });
         Assert.True(result.Success, string.Join("; ",
             result.Diagnostics.Select(d => d.Message)));
@@ -78,8 +78,8 @@ public class Chunk441Tests
     }
 
     // ------------------------------------------------------------------
-    // (b) A DIRECT body goal to an undefined predicate stays a linker
-    //     ERROR even in an arity module.
+    // (b) A direct body goal to an undefined predicate stays a linker
+    //     error even in an arity module.
     // ------------------------------------------------------------------
     [Fact]
     public void ArityModule_DirectCallToUndefined_StillLinkerError()
@@ -101,7 +101,7 @@ public class Chunk441Tests
     }
 
     // ------------------------------------------------------------------
-    // (b2) Mixed: the same target referenced BOTH meta and direct inside
+    // (b2) Mixed: the same target referenced both meta and direct inside
     //      an arity module — one direct reference anywhere poisons the
     //      implicit-dynamic treatment (module-wide marking).
     // ------------------------------------------------------------------
@@ -148,7 +148,7 @@ public class Chunk441Tests
     }
 
     // ------------------------------------------------------------------
-    // (d) Two arity modules meta-calling the SAME undeclared target:
+    // (d) Two arity modules meta-calling the same undeclared target:
     //     links, exactly one registration.
     // ------------------------------------------------------------------
     [Fact]
@@ -171,7 +171,7 @@ public class Chunk441Tests
         });
         Assert.True(result.Success, string.Join("; ",
             result.Diagnostics.Select(d => d.Message)));
-        // Exactly ONE implicit-dynamic registration for shared_und/1.
+        // Exactly one implicit-dynamic registration for shared_und/1.
         Assert.Single(result.Diagnostics, d => d.Code == "arity_implicit_dynamic");
 
         var engine = new PrologEngine();
@@ -184,7 +184,7 @@ public class Chunk441Tests
     }
 
     // ------------------------------------------------------------------
-    // Declared dynamic in ANOTHER module + meta-referenced in an arity
+    // Declared dynamic in another module + meta-referenced in an arity
     // module: normal resolution, no implicit registration.
     // ------------------------------------------------------------------
     [Fact]
@@ -245,7 +245,7 @@ public class Chunk441Tests
     }
 
     // ------------------------------------------------------------------
-    // Format plumbing: ArityCompat + the per-edge META marker survive the
+    // Format plumbing: ArityCompat + the per-edge meta marker survive the
     // .shmo write/read round trip.
     // ------------------------------------------------------------------
     [Fact]

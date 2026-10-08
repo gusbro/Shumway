@@ -52,7 +52,7 @@ public sealed class DebugTracer : IDebugSession
     /// <summary>Goals whose name starts with <c>$</c> are engine-internal
     /// (the lowered control constructs, tabling plumbing, the query wrapper); a
     /// trace that showed them would bury the user's program. The test is on the
-    /// DEMANGLED name — a module-local helper reaches us as <c>user$$disj_1</c>,
+    /// demangled name — a module-local helper reaches us as <c>user$$disj_1</c>,
     /// and it is the part after the module prefix that says what it is.</summary>
     private static bool IsInternal(string demangled) =>
         demangled.Length > 0 && (demangled[0] == '$' || demangled == "__query__");
@@ -129,7 +129,7 @@ public sealed class DebugTracer : IDebugSession
 
         if (_stack.Count == 0) return;
         var e = _stack[^1];
-        // Only a goal that had already succeeded is being REDONE. If the goal
+        // Only a goal that had already succeeded is being redone. If the goal
         // on top is still running, this backtrack is the machine picking the
         // next clause after a head-unification failure — internal to the call,
         // and not a port: the goal has neither succeeded nor failed yet.
@@ -243,7 +243,7 @@ public sealed class DebugTracer : IDebugSession
         };
         if (arity > 0)
         {
-            // Copy the argument CELLS (not materialized terms) so an unbound
+            // Copy the argument cells (not materialized terms) so an unbound
             // argument stays shared with the caller's variable and the exit
             // port sees what the goal bound.
             int b = engine.AllocateHeap(arity);
@@ -253,7 +253,7 @@ public sealed class DebugTracer : IDebugSession
         }
 
         // The displaced caller of a tail call has no exit port of its own left
-        // to report — the callee returns straight to ITS caller — but it may
+        // to report — the callee returns straight to its caller — but it may
         // still own choice points, so it stays on the stack (marked exited) to
         // be found again on a redo, and is pruned like any other exited goal
         // once the machine shows it is deterministic.

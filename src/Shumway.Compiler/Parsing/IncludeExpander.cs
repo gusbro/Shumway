@@ -13,11 +13,11 @@ namespace Shumway.Compiler.Parsing;
 /// compiler (<c>ShmoCompiler</c>).
 ///
 /// <para>Expansion is depth-first in source order, and each included file is
-/// parsed AT EXPANSION TIME against the caller's live operator table — so an
+/// parsed at expansion time against the caller's live operator table — so an
 /// <c>:- op/3</c> executed by an earlier include is in force when a later
 /// sibling parses (the SWI loader-file pattern: a first include defines
 /// operators, subsequent includes use them). Approximation vs. strict ISO
-/// streaming: the INCLUDING file is parsed in full before expansion, so its
+/// streaming: the including file is parsed in full before expansion, so its
 /// own text cannot use operators an included file defines — loader files
 /// (only directives) are unaffected.</para>
 ///
@@ -34,7 +34,7 @@ public static class IncludeExpander
         => clauses.Any(c => TryReadIncludeDirective(c, out _));
 
     /// <summary>Expands every <c>:- include/1</c> in <paramref name="clauses"/>
-    /// (recursively). Returns the SAME list instance when there is nothing to
+    /// (recursively). Returns the same list instance when there is nothing to
     /// expand, so callers sharing a cached parse are unaffected.</summary>
     public static List<Clause> Expand(List<Clause> clauses, string? baseDir,
         OperatorTable operators, PrologFlags flags)
@@ -78,7 +78,7 @@ public static class IncludeExpander
             catch (ParseException pe)
             {
                 // Re-frame so the caller's file:line diagnostics aren't
-                // silently attributed to the INCLUDING file.
+                // silently attributed to the including file.
                 throw new ParseException(
                     $"in included file '{full}': {pe.Message}", pe.Position)
                     { RepresentationFlaw = pe.RepresentationFlaw };

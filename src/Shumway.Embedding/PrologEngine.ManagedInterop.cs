@@ -110,9 +110,9 @@ public sealed partial class PrologEngine
         [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type type,
         object? value)
     {
-        // the cached delegate is now COMPILED (engine.ToTerm<T>((T)v))
+        // the cached delegate is now compiled (engine.ToTerm<T>((T)v))
         // instead of a wrapper that re-ran MethodInfo.Invoke + a fresh object[] per
-        // ELEMENT of every converted collection. Expression.Compile interprets
+        // element of every converted collection. Expression.Compile interprets
         // under Native AOT, so this stays AOT-correct.
         // Built through an annotated helper rather than GetOrAdd's factory lambda,
         // whose Type parameter carries no annotation and would lose the trimmer's
@@ -424,7 +424,7 @@ public sealed partial class PrologEngine
     /// predicate rather than an implementation of ours. Global, like the registry itself.
     ///
     /// <para>ADR-035 reads it: a foreign call is the one place a debugger can end up stopped
-    /// in code the ENGINE is not standing in, and the Prolog stack under that C# is what
+    /// in code the engine is not standing in, and the Prolog stack under that C# is what
     /// makes the stack mixed rather than merely managed. The engine cannot be asked for it
     /// then — it is frozen inside the call — so it publishes it on the way in.</para></summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>

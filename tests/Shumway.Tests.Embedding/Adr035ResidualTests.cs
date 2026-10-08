@@ -16,7 +16,7 @@ namespace Shumway.Tests.Embedding;
 /// debug service transplants the suspended activation's attributed variables into a
 /// nested evaluation and runs the standard <c>attribute_goals</c> projection there, so a
 /// stop's frames carry per-variable residual rows, and an Immediate-window goal sees the
-/// frame variables WITH their constraints.</para>
+/// frame variables with their constraints.</para>
 /// </summary>
 [Collection("debugger")]
 public class Adr035ResidualTests
@@ -83,7 +83,7 @@ public class Adr035ResidualTests
         Assert.Contains("in", x);
         Assert.Contains("X", x);
         // The cross-variable propagator is shown once, under its first variable, and it
-        // names the SIBLING by the frame's own name — the transplant carried Y's
+        // names the sibling by the frame's own name — the transplant carried Y's
         // attributes along with X's.
         Assert.Contains("#<", x);
         Assert.Contains("Y", x);
@@ -169,7 +169,7 @@ public class Adr035ResidualTests
             getAttr = s.EvaluateGoal(0, "get_attr(X, clpfd, A)");
             // copy_term/3 projects the frame variable's constraints.
             projected = s.EvaluateGoal(0, "copy_term(X, _C, G)");
-            // Posting a NEW constraint narrows the transplanted copy (eval-local).
+            // Posting a new constraint narrows the transplanted copy (eval-local).
             // Trailing dot on purpose: the user types it that way.
             posted = s.EvaluateGoal(0, "X #> 5.");
             s.Resume(StepMode.Continue);
@@ -181,7 +181,7 @@ public class Adr035ResidualTests
         _log.WriteLine("get_attr -> " + getAttr);
         _log.WriteLine("copy_term/3 -> " + projected);
         _log.WriteLine("post -> " + posted);
-        // "error:" excluded EVERYWHERE: these three once "passed" while every
+        // "error:" excluded everywhere: these three once "passed" while every
         // eval was broken (nested residual capture clearing the transplant
         // source), because the old asserts only looked for specific words the
         // error strings happened not to contain.
@@ -214,9 +214,9 @@ public class Adr035ResidualTests
         string posted = "", dryRun = "", probeLow = "", probeHigh = "";
         var svc = new DebugService(engine, (s, e) =>
         {
-            // '!' = the REAL frame: the post narrows X itself (0..9 -> 6..9).
+            // '!' = the real frame: the post narrows X itself (0..9 -> 6..9).
             posted = s.EvaluateGoal(0, "!X #> 5.");
-            // A failing on-frame goal leaves NO trace — the user's dry-run idiom.
+            // A failing on-frame goal leaves no trace — the user's dry-run idiom.
             dryRun = s.EvaluateGoal(0, "!(X #> 7, fail).");
             // Sandbox probes against the (now narrowed) real attribute:
             // 3 is outside 6..9; 8 is inside (proving the dry-run rolled back).
@@ -238,10 +238,10 @@ public class Adr035ResidualTests
         Assert.Contains("X in 6..9", posted);
         Assert.StartsWith("false", dryRun);
         Assert.Contains("[frame unchanged]", dryRun);
-        Assert.Contains("false", probeLow);          // 3 excluded: the post REALLY narrowed X
+        Assert.Contains("false", probeLow);          // 3 excluded: the post really narrowed X
         Assert.DoesNotContain("error", probeHigh);
         Assert.DoesNotContain("false", probeHigh);   // 8 still in: the dry-run left no trace
-        // The program CONTINUED with the posted constraint: labeling starts at 6.
+        // The program continued with the posted constraint: labeling starts at 6.
         Assert.Single(solutions);
         Assert.Equal(6L, solutions[0].Get<long>("V"));
     }
@@ -289,7 +289,7 @@ public class Adr035ResidualTests
     public void OnFrameGoals_SurviveTier1Promotion()
     {
         // The user's session shape: REPL --debug arms IlPromotion (threshold 32);
-        // repeated evals promote clpfd internals mid-stop, and the SECOND
+        // repeated evals promote clpfd internals mid-stop, and the second
         // on-frame post once died with "CallIl: no IL delegate for functor id N".
         // Threshold 1 makes every eval a promotion trigger.
         var engine = DebugEngine("""
@@ -308,7 +308,7 @@ public class Adr035ResidualTests
         {
             outputs.Add(s.EvaluateGoal(0, "X #> 8, X #< 5."));   // sandbox: false
             outputs.Add(s.EvaluateGoal(0, "!X in 1..9."));
-            // Sandbox evals BETWEEN the posts: each runs the residual
+            // Sandbox evals between the posts: each runs the residual
             // re-capture + transplant, the way a front end refreshes after
             // FrameStateChanged — the mix that broke the user's session.
             outputs.Add(s.EvaluateGoal(0, "X #= 7"));
@@ -362,7 +362,7 @@ public class Adr035ResidualTests
     public void SetNextStatementBackward_UnpostsAndTheRerunRepostsWithoutDuplication()
     {
         // Stop at mark/2 with the constraints posted, rewind to `X in 1..9`, run to the
-        // breakpoint again. The rewind must UNWIND the attribute mutations (they are
+        // breakpoint again. The rewind must unwind the attribute mutations (they are
         // trailed) — a rewind that left them behind would re-post on top of the old
         // store and the second stop's residuals would show doubled propagators.
         var engine = DebugEngine(SnsProgram);

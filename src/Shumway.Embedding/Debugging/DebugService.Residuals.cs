@@ -17,10 +17,10 @@ public sealed partial class DebugService
     /// attributed variables — the debugger's counterpart of the REPL's
     /// <c>A in 6..9</c> answer display.
     ///
-    /// <para>The projection has to RUN the per-module attribute hooks
+    /// <para>The projection has to run the per-module attribute hooks
     /// (<c>attribute_goals/4</c> / <c>attribute_goals//1</c> — Prolog), and it must not
     /// touch the suspended activation, whose attribute table an evaluation activation
-    /// cannot see either. So the suspended variables are TRANSPLANTED: their attribute
+    /// cannot see either. So the suspended variables are transplanted: their attribute
     /// graph is read (pure) off the suspended activation and rebuilt as
     /// <c>ag(M, A, V)</c> triples over fresh variables inside a nested evaluation, where
     /// the prelude's <c>'$dbg_residuals'/2</c> reattaches and projects — the exact
@@ -49,7 +49,7 @@ public sealed partial class DebugService
         {
             if (f.AttVarSlots.Count == 0) { result.Add(f); continue; }
 
-            // Rename the projection's copy variables to THIS frame's names where the
+            // Rename the projection's copy variables to this frame's names where the
             // frame sees the cell, and to the stable _G<addr> of the suspended cell
             // otherwise — so `X in 6..9, X #< Y` reads in the user's own vocabulary.
             var renames = new Dictionary<string, string>();
@@ -112,7 +112,7 @@ public sealed partial class DebugService
         var savedCurrent = Current;
         _mode = StepMode.Continue;
         _conditionEval = true;
-        // SAVE/RESTORE, never clear-to-null: this projection nests inside
+        // Save/restore, never clear-to-null: this projection nests inside
         // EvaluateGoal, which has already set the source for the USER's goal —
         // clearing here left that goal's '$dbg_fix_foreign' a silent no-op, so a
         // native-clpfd attribute reattached as its '$foreign'(N) marker and the

@@ -78,7 +78,7 @@ public sealed class WakeBacktrackingTests
         Assert.True(e.Query("assertz((p(V, W) :- V == bound, W == kept)).").Success);
         // The wake fires when p's first argument binds mid-head; a
         // nondeterministic wake ran a full goal over every register, and
-        // p must still see BOTH its arguments on resume.
+        // p must still see both its arguments on resume.
         Assert.True(e.Query(
             "freeze(F, member(_, [a,b,c])), F = bound, p(F, kept).").Success);
     }
@@ -97,7 +97,7 @@ public sealed class WakeBacktrackingTests
     {
         Assert.True(Co().Query(
             "catch((freeze(X, throw(boom)), X = 1), boom, true).").Success);
-        // A catch INSIDE the woken goal recovers and the binding proceeds.
+        // A catch inside the woken goal recovers and the binding proceeds.
         Assert.True(Co().Query(
             "freeze(X, catch(throw(t), t, true)), X = 1.").Success);
     }
@@ -106,7 +106,7 @@ public sealed class WakeBacktrackingTests
     public void NondeterministicWake_InterleavesWithLaterFailure()
     {
         // The classic shape the once-drain could never do: a later goal
-        // fails, the search comes BACK through the woken goal's choice
+        // fails, the search comes back through the woken goal's choice
         // points, and a different alternative satisfies it.
         Assert.True(Co().Query(
             "freeze(X, member(Y, [1,2,3])), X = go, member(Y, [2]), Y == 2.").Success);
@@ -131,14 +131,14 @@ public sealed class WakeBacktrackingTests
     public void BacktrackingPastTheBinding_RestoresTheSuspension()
     {
         // Leaving the wake's own alternatives is one thing; undoing the
-        // BINDING must restore the suspension, and a second binding fires
+        // binding must restore the suspension, and a second binding fires
         // the goal again.
         Assert.True(Co().Query(
             "freeze(X, member(Y, [1,2])), ( X = a, Y = 9 ; X = b, Y = 2 ).").Success);
     }
 
     // ===== ADR-049 stage 2: the interrupt at Tier-1 region boundaries =====
-    // The predicate that BINDS the frozen variable is promoted to IL, so the
+    // The predicate that binds the frozen variable is promoted to IL, so the
     // wake fires from an emitted region boundary (the flush the drain used
     // to own), suspends the IL body via the tail-call bail, runs the driver
     // in the dispatch loop, and resumes by forward marker.
@@ -189,7 +189,7 @@ public sealed class WakeBacktrackingTests
             "freeze(X, ((!, fail) ; true)), bindit(X, _).").Success);
         Assert.True(e.Query(
             "( freeze(X, !), bindit(X, _), fail ; true ).").Success);
-        // A cut in the CALLEE dispatched after the wake must not prune the
+        // A cut in the callee dispatched after the wake must not prune the
         // wake's alternatives (the resume re-establishes its barrier).
         Assert.True(e.Query(
             "findall(Y, (freeze(X, member(Y, [1,2])), bindit(X, _)), L), "
@@ -245,7 +245,7 @@ public sealed class WakeBacktrackingTests
     [Fact]
     public void AWakeThatEvaluatesArithmeticDoesNotClobberTheEvalStack()
     {
-        // The drain during operand read runs a wake goal that ITSELF does
+        // The drain during operand read runs a wake goal that itself does
         // arithmetic on the same static eval stack. A later operand of the
         // outer expression, already pushed, must survive: nested evaluation
         // is balanced (pushes above, pops back). Second operand unbound so
@@ -285,6 +285,40 @@ public sealed class WakeBacktrackingTests
             Assert.True(s.Success);
             Assert.Equal("6", s["Z"]!.ToString());
         }
+    }
+
+    [Fact]
+    public void ACaughtArithmeticErrorLeavesNoOperandBehind()
+    {
+        // bad/1 raises after pushing two operands. An operand left on the
+        // shared eval stack made every later expression start look
+        // mid-expression, so the wake check before sq/3's arithmetic was
+        // skipped and Y read as unbound.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        e.IlPromotion.Threshold = 3;
+        e.ConsultString("""
+            :- public bad/1.
+            :- public sq/3.
+            bad(A) :- _ is 1 + 2 * A.
+            sq(X, Y, Z) :- X = 1, Z is Y * Y + 1.
+            """);
+        const string goal = "catch(bad(foo), _, true), freeze(X, Y = 2), sq(X, Y, Z).";
+        void Holds()
+        {
+            var s = e.Query(goal);
+            Assert.True(s.Success);
+            Assert.Equal("5", s["Z"]!.ToString());
+        }
+        Holds();   // Tier-0
+        for (int i = 0; i < 8; i++)
+            Assert.True(e.Query("catch(bad(foo), _, true), sq(1, 2, 5).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        // ANTI-VACUITY: both run compiled from here on.
+        foreach (var (n, a) in new[] { ("bad", 1), ("sq", 3) })
+            Assert.True(e.IlPromotion.IsPromoted(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(n, permanent: true).Id, a)), $"{n}/{a} was not promoted");
+        for (int i = 0; i < 3; i++) Holds();
     }
 
     [Fact]

@@ -4,12 +4,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>Coroutine wakeups must survive Tier-1 promotion. The lost-wake
-/// matrix this pins: a predicate whose PROMOTED body re-binds an attributed
+/// matrix this pins: a predicate whose promoted body re-binds an attributed
 /// variable (length/2's enumeration decomposing a frozen list) ran its
 /// self-recursion as an in-method loop with no goal boundary, so the wake a
 /// head-match queued never fired — freeze/2 went silently unhooked and
 /// unsound answers were delivered. Fixed at four layers: the queue carries
-/// each wake's attvar home so dead wakes are dropped by MARK instead of
+/// each wake's attvar home so dead wakes are dropped by mark instead of
 /// blanket-cleared on backtrack (TryBacktrack / FailIlGuard kept eating
 /// wakes of surviving bindings), the IL self-tail back-edge fires the same
 /// wake boundary the dispatch loop it bypasses would have fired, and the
@@ -51,7 +51,7 @@ public sealed class PromotedWakeSoundnessTests
     {
         // The original discovery recipe: a timed-out length grind (promoting
         // mid-enumeration, unwound by the timeout ball), then the freeze test
-        // in a LATER query on the same engine. The grind is the open
+        // in a later query on the same engine. The grind is the open
         // enumeration driven by failure, since length(L, L) is refused at once
         // now and grinds nothing.
         var e = new PrologEngine { Out = new System.IO.StringWriter() };

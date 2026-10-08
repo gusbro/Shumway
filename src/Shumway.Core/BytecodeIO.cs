@@ -6,7 +6,7 @@ namespace Shumway.Core;
 /// Little-endian read/write helpers for bytecode operands. Using
 /// <see cref="BinaryPrimitives"/> guarantees little-endian on every platform regardless
 /// of CPU endianness, which keeps serialized bytecode (notably bundles) portable across
-/// x86, x64, and ARM (ADR-006).
+/// x86, x64, and arm (ADR-006).
 /// </summary>
 public static class BytecodeIO
 {

@@ -9,11 +9,11 @@ namespace Shumway.Tests.Embedding;
 /// surfaced by the Blint <c>--exe</c> chain (ShumBlintILO mass parse
 /// failures / ShumBlint infinite loop).
 ///
-/// The persisted-bundle prune runs per ENTRY over the bundle-wide call
+/// The persisted-bundle prune runs per entry over the bundle-wide call
 /// graph. Region membership is scoped to the entry being emitted
-/// (<c>RegionMemberScopeFids</c>), but the ANALYSIS used to let a root
-/// emitted by ANOTHER entry (the user module's <c>main/0</c> during the
-/// baked $prelude entry's prune) absorb THIS entry's predicates —
+/// (<c>RegionMemberScopeFids</c>), but the analysis used to let a root
+/// emitted by another entry (the user module's <c>main/0</c> during the
+/// baked $prelude entry's prune) absorb this entry's predicates —
 /// classifying a prelude predicate reached only from user code
 /// (<c>sum_list/2</c>, <c>atomic_list_concat/2</c>) as an absorbed-only
 /// region member. Its standalone IL was skipped, its WAM stripped, and no

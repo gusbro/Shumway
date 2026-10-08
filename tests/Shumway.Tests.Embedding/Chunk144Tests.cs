@@ -26,7 +26,7 @@ public class Chunk144Tests
     public void TypeError_Evaluable_BindsValueSlot()
     {
         // `X is foo` — an unknown evaluable reports the procedure
-        // INDICATOR foo/0 in the value slot (ISO §9), not the bare atom;
+        // indicator foo/0 in the value slot (ISO §9), not the bare atom;
         // the catcher binds V to the `/`-compound.
         var e = new PrologEngine();
         var sol = e.Query(
@@ -55,12 +55,12 @@ public class Chunk144Tests
         // The PrologRuntimeException(string, string) constructor — the
         // shape used by throw sites with no Cell to capture — still
         // produces an anonymous-var value slot. (rational/1 on a
-        // non-rational is one such site; succ/2 now DOES report its
+        // non-rational is one such site; succ/2 now does report its
         // culprit, so it no longer exercises this path.)
         var e = new PrologEngine();
         Assert.True(e.Query(
             "catch(_ is numerator(1.5), error(type_error(_, V), _), var(V)).").Success);
-        // …while a site that DOES capture reports the offending value.
+        // …while a site that does capture reports the offending value.
         Assert.True(e.Query(
             "catch(succ(foo, _), error(type_error(integer, V), _), V == foo).").Success);
     }

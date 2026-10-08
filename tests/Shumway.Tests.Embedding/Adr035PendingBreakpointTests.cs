@@ -8,12 +8,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-035 D4 — a breakpoint set BEFORE the program is loaded.
+/// ADR-035 D4 — a breakpoint set before the program is loaded.
 ///
 /// <para>This is the ordinary case under a launch, and the only one: the user draws the red
 /// dot, then presses the button. The file is consulted afterwards. Until D4 the engine bound
 /// a breakpoint only against code that already existed, so one asked for against an empty
-/// program bound nothing and was FORGOTTEN — and the program then ran to completion through
+/// program bound nothing and was forgotten — and the program then ran to completion through
 /// every breakpoint in it, with no error anywhere to say so.</para>
 /// </summary>
 [Collection("debugger")]

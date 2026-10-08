@@ -74,6 +74,10 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   qualification** — all its predicates mangle `Name$x`; resolution is
   local → imports → bare-global, identically at compile time and runtime.
   (ADR-038.)
+- **A module's private predicate is reached only by qualifying** (`m:p(X)`)
+  from outside the module: the top level, another module and a file without
+  a module directive all get `existence_error` for the bare name, as the
+  linker does. (ADR-056.)
 - **Static predicates are immutable once compiled.** `assertz`/`retract` on a
   static predicate is an error.
 - **Dynamic predicates** are declared with `:- dynamic foo/N` or auto-promoted
@@ -108,6 +112,16 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   effects.
 - **Trail compaction must preserve live `AttrModify`/`BigIntAlloc` entries**
   (a dropped attribute-restore entry corrupts constraint stores on backtrack).
+- **A cut that discards a `setup_call_cleanup/3` scope runs the cleanup
+  before the goal after the cut, in every tier**: the interpreter after each
+  cut instruction, Tier-1 IL inside `NeckCut` and `CutToLevel`, a wasm
+  module by stepping aside to the interpreter's cut (`WasmAbi.CleanupReach`).
+- **A cut lowers B without `Cut` only where `Cut` would do nothing else but
+  compact the trails**: no side-stack entry above the barrier and no cleanup
+  handler at or above it (`_cutQuickFloor`), and the trails within the
+  compaction budget (`_cutCompactAt`). A floor too high costs a transfer to
+  the cold method; one too low skips a prune hook or a cleanup. (ADR-061, "A
+  cut that only lowers B".)
 
 ## Logical update view
 
@@ -116,6 +130,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   generations checked per clause (`check_visible`). Mid-query
   `assertz`/`retract` is visible to LATER goals of the same query, never to
   the in-flight call. (ADR-015.)
+- **A dead chain entry is unlinked only while no goal is walking its
+  predicate**: no choice point of any open activation on the buffer resumes
+  at one of the predicate's entries. A goal that began before a retract sees
+  the clause until it ends, and a query nested in another shares its
+  buffer. (ADR-015, addendum on unlinking dead entries.)
 
 ## Compilation tiers
 
@@ -126,10 +145,11 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   a cached IL delegate. Enforced at promotion: a predicate whose bytecode
   opens with `enter_dynamic` is permanently excluded
   (`IlPromotionStore.IsExcludedByLayout`). The ONE sanctioned exception is
-  ADR-023's snapshot model: a STATIC-style IL snapshot of a dynamic predicate
-  may run only under eviction-on-mutation plus clause-entry staleness tests
-  (ADR-034); anything else must decline to Tier 0. (Historically "the
-  chunk-159 invariant".)
+  the snapshot model: a STATIC-style snapshot of a dynamic predicate may run
+  in IL only under eviction-on-mutation plus clause-entry staleness tests
+  (ADR-023, ADR-034), and in the wasm tier only as a shadow region retired on
+  the first mutation, with no direct jump to it (ADR-054); anything else must
+  decline to Tier 0. (Historically "the chunk-159 invariant".)
 - **Compiled IL is engine-agnostic**: it takes the activation as a parameter;
   the code cache is shared across engines. Persisted IL is name-relative
   (sentinel ids patched at load). (ADR-011, Phase 17.)
@@ -158,6 +178,22 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
+- **Every side table is a WEAK holder** — foreign, BigInteger and
+  rational: an entry lives only while a
+  FOREIGN cell naming it is reachable. Dead entries are NULLED (surviving
+  ids stay positional, so no id is reused under a live reference) and only
+  the tail is removed, while its last entry is provably dead. Judged by
+  liveness, never by the stored value: null and zero are things a program
+  can store on purpose. The BigIntAlloc/RationalAlloc trail entries reclaim
+  a slot only when BACKTRACKING unwinds past the allocation, which does
+  nothing in the deterministic loop an embedded system lives in; the sweep
+  is what covers that. (ADR-053.)
+- **The attribute table is a WEAK root** — a row does not keep its variable
+  alive. The attribute value is reached from the live variable, never the
+  variable from its row, and rows the trace disproves are swept before
+  relocation. Adding the table back as a root reintroduces a leak that
+  retained 54,570 of 54,574 live cells, and makes `call_residue_vars/2`
+  report variables the program cannot reach. (ADR-052.)
 
 ## Debugger
 

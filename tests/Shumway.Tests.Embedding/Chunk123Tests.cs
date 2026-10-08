@@ -76,7 +76,7 @@ public class Chunk123Tests
     [Fact]
     public void SameQueryRetract_StillWorks_WithBytecodePatchPathLive()
     {
-        // The Chunk118 scenario re-verified: chunk-C redirect AND the new
+        // The Chunk118 scenario re-verified: chunk-C redirect and the new
         // bytecode patch are both active. End behaviour must match.
         var e = new PrologEngine();
         e.ConsultString(":- dynamic d/1.");

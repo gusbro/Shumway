@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// ADR-030 linker closure — the whole-program determinism fixpoint at link
-/// time, over a LAST clause ending in a trailing top-level <c>!</c> whose
-/// prefix calls a CROSS-MODULE callee. A call can bind an attributed variable
+/// time, over a last clause ending in a trailing top-level <c>!</c> whose
+/// prefix calls a cross-module callee. A call can bind an attributed variable
 /// passed to it, so the cut stays even when the callee is det (ADR-030,
 /// Attributed variables); every test checks the observable behaviour of the
 /// linked program.
@@ -35,8 +35,8 @@ public class Adr030LinkerClosureTests
     [Fact]
     public void CrossModuleDetCallee_TrailingCutKept_SemanticsIntact()
     {
-        // a:main/2's LAST clause ends `check(X), R = pos, !.` — check/1 is
-        // module b's PUBLIC single-clause det predicate, and the cut stays.
+        // a:main/2's last clause ends `check(X), R = pos, !.` — check/1 is
+        // module b's public single-clause det predicate, and the cut stays.
         var r = Link(
             ("a", ":- public main/2.\n"
                 + "main(X, R) :- X < 0, !, R = neg.\n"
@@ -55,7 +55,7 @@ public class Adr030LinkerClosureTests
     [Fact]
     public void CrossModuleNondetCallee_TrailingCutKept()
     {
-        // b:pick/1 is NONDET — the fixpoint must NOT prove it det: the last
+        // b:pick/1 is nondet — the fixpoint must not prove it det: the last
         // clause's trailing cut commits to pick's first solution and must stay
         // (eliding it would leak a second answer for a free X).
         var r = Link(

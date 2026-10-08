@@ -3,11 +3,6 @@
 Shumway is licensed under the [MIT License](LICENSE). The following components
 have their own terms.
 
-## Binary dependencies (NuGet; not vendored in this repository)
-
-- **Sigil** — IL emission helper used by the Tier-1 runtime compiler.
-  Microsoft Public License (MS-PL).
-
 ## The `vs/` Visual Studio debugger projects (opt-in build)
 
 - Shumway's own code under `vs/` is MIT like the rest of the repository.

@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A float literal whose syntax is perfect but whose value exceeds
 /// double range (issue #42, Neumerkel number_chars #82 / stc #74): the text
 /// names a value outside the float range — an implementation limit, so the
-/// report is representation_error(max_float), or min_float when a UNARY
+/// report is representation_error(max_float), or min_float when a unary
 /// minus makes the literal itself negative (issue #42 follow-up: the sign
 /// follows the syntax, so `0-9.9e999` stays max_float — the minus there is
 /// binary and the overflowing literal is positive). Never
@@ -57,10 +57,10 @@ public sealed class FloatOverflowErrorTests
     [Fact]
     public void TheQuotedMinusFallbackReader()
     {
-        // `'-' 9.9e999` is not a number TOKEN sequence — it reaches the
+        // `'-' 9.9e999` is not a number token sequence — it reaches the
         // full-term-reader fallback, which must surface the same error, not
         // swallow it into "not a number" → syntax_error. The quoted minus
-        // is still a UNARY minus, so the flaw is min_float.
+        // is still a unary minus, so the flaw is min_float.
         var e = new PrologEngine();
         Assert.True(e.Query(
             "atom_chars('\\'-\\' 9.9e999', Cs), "
@@ -104,7 +104,7 @@ public sealed class FloatOverflowErrorTests
     [Fact]
     public void UnaryMinusIsMinFloat_BinaryMinusIsMaxFloat()
     {
-        // The sign of the flaw follows the SYNTAX: `-999.0e999` is one
+        // The sign of the flaw follows the syntax: `-999.0e999` is one
         // negative literal (below min_float); in `0-999.0e999` the minus is
         // binary and the positive literal overflows first, at read time —
         // which is also why these route through atom_to_term: a query

@@ -7,7 +7,7 @@ namespace Shumway.Builtins;
 /// read-modify-write. <c>flag(Key, Old, New)</c> unifies <c>Old</c> with the
 /// current value (0 if never set), then stores <c>New</c> (an arithmetic
 /// expression is evaluated — <c>flag(c, X, X+1)</c> — so <c>Old</c> must bind
-/// before <c>New</c> is read). Changes are NOT backtracked, so a flag survives
+/// before <c>New</c> is read). Changes are not backtracked, so a flag survives
 /// as a counter across a failure-driven loop (which is exactly how
 /// <c>library(gensym)</c> generates fresh atoms).</summary>
 public static class FlagBuiltins
@@ -18,7 +18,7 @@ public static class FlagBuiltins
         string key = KeyString(engine, engine.GetRegister(0));
         var store = Flags(engine);
         FlagValue current = store.Get(key);
-        // Bind Old to the current value BEFORE evaluating New, so an expression
+        // Bind Old to the current value before evaluating New, so an expression
         // over Old (`flag(K, X, X+1)`) sees the bound value.
         if (!engine.UnifyRegisterWithCell(1, current.ToCell(engine))) return false;
         store.Set(key, EvalNewValue(engine, engine.GetRegister(2)));

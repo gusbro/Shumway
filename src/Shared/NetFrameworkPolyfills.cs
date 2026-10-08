@@ -2,7 +2,7 @@
 // Types the C# compiler expects to find but .NET Framework does not ship.
 //
 // None of these carry behaviour: `init` accessors and `[DoesNotReturn]` are
-// compiler-only, and the compiler only needs the type to EXIST to emit or read
+// compiler-only, and the compiler only needs the type to exist to emit or read
 // the metadata. Declaring them here is the standard way to use those features on
 // a runtime that predates them, and costs nothing at run time.
 //
@@ -18,7 +18,7 @@ namespace System.Runtime.CompilerServices
 
 namespace System.Runtime.CompilerServices
 {
-    /// <summary>Lets a parameter default to the SOURCE TEXT of another argument,
+    /// <summary>Lets a parameter default to the source text of another argument,
     /// which is how ThrowIfNull below knows the name to blame.</summary>
     [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
     internal sealed class CallerArgumentExpressionAttribute : Attribute
@@ -33,7 +33,7 @@ namespace System.Runtime.CompilerServices
 namespace System
 {
     /// <summary>Statics .NET Framework's own types lack, added back where they
-    /// belong as C# 14 STATIC EXTENSION MEMBERS — extending a type rather than
+    /// belong as C# 14 static extension members — extending a type rather than
     /// an instance, which older C# could not do. That is what lets every call
     /// site stay exactly as it is, on both targets, with no conditional
     /// compilation anywhere but here.
@@ -279,7 +279,7 @@ namespace System
     }
 
     /// <summary><c>System.HashCode</c>, reduced to the static Combine shapes
-    /// this codebase calls. The same KIND of mix, not the same numbers — nothing
+    /// this codebase calls. The same kind of mix, not the same numbers — nothing
     /// here persists a hash, so only the distribution matters.</summary>
     internal static class HashCode
     {
@@ -404,7 +404,7 @@ namespace System.Reflection
 namespace System.Runtime.InteropServices
 {
     /// <summary>The .NET Core native-library loader, backed by the Win32 API —
-    /// which is the only platform .NET Framework runs on, so LoadLibrary IS the
+    /// which is the only platform .NET Framework runs on, so LoadLibrary is the
     /// general case here rather than the Windows special case.</summary>
     internal static class NativeLibrary
     {

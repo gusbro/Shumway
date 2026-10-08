@@ -103,9 +103,9 @@ public static partial class MetaBuiltins
             Term arityTerm = MaterializeRegister(engine, 2);
             if (a.Tag == Tag.BigInt)
             {
-                // A bignum IS an integer: negative is a domain error;
+                // A bignum is an integer: negative is a domain error;
                 // positive is past what the address space can represent —
-                // with max_arity unbounded that is a RESOURCE answer
+                // with max_arity unbounded that is a resource answer
                 // (issue #106), not a flag-derived representation error.
                 throw new ShumwayPrologException(
                     engine.AsBigInt(a).Sign < 0
@@ -119,7 +119,7 @@ public static partial class MetaBuiltins
             if (arity < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arityTerm));
-            // Checked BEFORE any allocation: the probe one past capacity
+            // Checked before any allocation: the probe one past capacity
             // must error, not thrash 4 GiB of heap into being (issue #106).
             if (arity > MaxArity)
                 throw new ShumwayPrologException(
@@ -136,7 +136,7 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(IsoError.TypeError("atom", nameTerm));
             if (n.Tag != Tag.Atom)
                 throw new ShumwayPrologException(IsoError.TypeError("atomic", nameTerm));
-            // '.'/2 IS the list constructor, and a cons lives in a Lis cell
+            // '.'/2 is the list constructor, and a cons lives in a Lis cell
             // everywhere else in the engine (ADR-017). Building a Str here
             // spelled a list that compared unequal to the list it spells:
             // functor(T, '.', 2) has to give a partial list.
@@ -219,7 +219,7 @@ public static partial class MetaBuiltins
     {
         Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell tCell = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(1)));
-        // §8.5.2.3 order: the TERM is checked first — an unbound term is
+        // §8.5.2.3 order: the term is checked first — an unbound term is
         // an instantiation_error and a non-compound is
         // type_error(compound, T), whatever N looks like.
         if (tCell.Tag is Tag.Ref or Tag.AttVar)
@@ -229,7 +229,7 @@ public static partial class MetaBuiltins
                 IsoError.TypeError("compound", MaterializeRegister(engine, 1)));
         if (nCell.Tag is Tag.Ref or Tag.AttVar)
         {
-            // SWI's arg/3 ENUMERATES the arguments when N is unbound
+            // SWI's arg/3 enumerates the arguments when N is unbound
             // (occurs.pl's contains_term walks subterms with arg(_, T, A));
             // ISO wants an instantiation_error there. Gated on the caller
             // living in an SWI-dialect module.
@@ -243,7 +243,7 @@ public static partial class MetaBuiltins
                 "not_less_than_zero", MaterializeRegister(engine, 0)));
         if (nCell.Tag == Tag.BigInt)
         {
-            // A bignum index IS an integer: negative is still a domain
+            // A bignum index is an integer: negative is still a domain
             // error, positive is simply past every argument.
             if (engine.AsBigInt(nCell).Sign < 0)
                 throw new ShumwayPrologException(IsoError.DomainError(
@@ -252,7 +252,7 @@ public static partial class MetaBuiltins
         }
         if (nCell.Tag != Tag.Int)
         {
-            // SWI's arg/3 ENUMERATES the arguments when N is unbound
+            // SWI's arg/3 enumerates the arguments when N is unbound
             // (occurs.pl's contains_term walks subterms with arg(_, T, A));
             // ISO wants an error there. Gated on the caller living in an
             // SWI-dialect module, so strict programs keep ISO behaviour.
@@ -286,7 +286,7 @@ public static partial class MetaBuiltins
     /// which can name the wrong neighbour.</summary>
     public static bool CpOwners(Activation engine)
     {
-        // Address→functor from the LIVE map (covers live-linked predicates the
+        // Address→functor from the live map (covers live-linked predicates the
         // per-query PredicatesByAddress snapshot cannot see).
         var byAddr = new System.Collections.Generic.SortedDictionary<int, int>();
         if (engine.CurrentFunctorAddresses is { } famap)
@@ -357,7 +357,7 @@ public static partial class MetaBuiltins
         }
     }
 
-    /// <summary>The largest arity a compound term can be REPRESENTED with —
+    /// <summary>The largest arity a compound term can be represented with —
     /// address-space capacity, not the <c>max_arity</c> flag (which reports
     /// <c>unbounded</c>; hitting this capacity answers
     /// <c>resource_error(finite_memory)</c> — issue #106).
@@ -366,7 +366,7 @@ public static partial class MetaBuiltins
     /// one: a heap reference is a 32-bit index, the functor table keeps the
     /// arity in an int, bytecode operands are ints, and the argument
     /// registers grow by doubling with no cap. What bounds a term is what a
-    /// term COSTS, which is N+1 cells of eight bytes, against the address
+    /// term costs, which is N+1 cells of eight bytes, against the address
     /// space the host has -- so the number comes from
     /// <see cref="RuntimeCaps.MaxArity"/> and is smaller in a browser.</para>
     ///
@@ -381,6 +381,31 @@ public static partial class MetaBuiltins
     public static bool Univ(Activation engine)
     {
         Cell t = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(0)));
+
+        // What the walk is being handed, when someone is recording. A tally
+        // cannot tell a bigger term from the same term over and over; the
+        // functor can.
+        if (Shumway.Core.Diagnostics.CallShapeTrace.Wants)
+        {
+            if (t.Tag == Tag.Str)
+            {
+                var (nameId, ar) = FunctorTable.Lookup(
+                    engine.GetHeap(t.AsHeapIndex).AsFunctorId);
+                Shumway.Core.Diagnostics.CallShapeTrace.Note(
+                    engine.CellsAllocated, nameId, ar);
+            }
+            else
+            {
+                Shumway.Core.Diagnostics.CallShapeTrace.Note(
+                    engine.CellsAllocated, 0, -((int)t.Tag + 2));
+            }
+        }
+
+        // Which mode reached the host: composing is a different predicate
+        // that reads the list, and a decompose that got here was declined
+        // for a shape. Only the split says which is worth the work.
+        Shumway.Core.Diagnostics.CompactCensus.NoteUniv(
+            t.Tag is Tag.Ref or Tag.AttVar, (int)t.Tag);
 
         // Decompose modes — build the list directly in the heap with
         // a single allocation, no intermediate Cell[] buffer.
@@ -442,7 +467,7 @@ public static partial class MetaBuiltins
             // pointer chase, no allocation.
             Cell listC = ResolveLocal(engine, engine.GetRegister(1));
             Term listTerm = MaterializeRegister(engine, 1);
-            // §8.5.3.3 order: an UNBOUND list (or tail) is an
+            // §8.5.3.3 order: an unbound list (or tail) is an
             // instantiation_error; an improper one is type_error(list, L)
             // with the whole list as culprit.
             if (listC.Tag is Tag.Ref or Tag.AttVar)
@@ -463,7 +488,7 @@ public static partial class MetaBuiltins
                     IsoError.DomainError("non_empty_list", listTerm));
 
             // Fetch the functor cell (the first element) — through the
-            // list-like cursor: a packed list IS a list (ADR-047), and
+            // list-like cursor: a packed list is a list (ADR-047), and
             // reading AsHeapIndex as a cons head slot misreads a PSTR.
             engine.TryUnconsListLike(engine.NormalizeListCell(listC),
                 out Cell firstRaw, out Cell restAfterFirst);
@@ -636,7 +661,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$nb_setarg'(+Arg, +Term, +Value)</c> — the C# helper behind
     /// the SWI shim's <c>nb_setarg/3</c> / <c>nb_linkarg/3</c>: destructively
-    /// links Term's Arg-th argument to Value, NOT trailed (survives
+    /// links Term's Arg-th argument to Value, not trailed (survives
     /// backtracking). An atomic Value (the common mutable-counter case) is
     /// self-contained; a compound Value is linked as-is (it must outlive any
     /// backtrack that would reclaim it — the caller's responsibility, as in SWI's
@@ -674,9 +699,9 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$same_term'(@A, @B)</c> — the C# helper behind the SWI shim's
-    /// <c>same_term/2</c>: A and B are the SAME term — the identical variable, the
+    /// <c>same_term/2</c>: A and B are the same term — the identical variable, the
     /// identical compound (same heap storage), or equal atomics. Distinct
-    /// compounds with equal structure are NOT the same term.</summary>
+    /// compounds with equal structure are not the same term.</summary>
     public static bool SameTerm(Activation engine)
     {
         Cell a = ResolveLocal(engine, engine.GetRegister(0));
@@ -732,7 +757,7 @@ public static partial class MetaBuiltins
                 "type_error", "integer", engine, startDeref);
         long start = startDeref.AsInt;
 
-        // The End argument is an output, but a BOUND non-integer is still
+        // The End argument is an output, but a bound non-integer is still
         // type_error(integer, End) — it can never be the next free number.
         Cell endC = ResolveLocal(engine, engine.GetRegister(2));
         if (endC.Tag is not (Tag.Ref or Tag.AttVar or Tag.Int or Tag.BigInt))
@@ -810,7 +835,7 @@ public static partial class MetaBuiltins
         }
     }
 
-    // Both walks below are ITERATIVE over an explicit work list. A term is
+    // Both walks below are iterative over an explicit work list. A term is
     // user data of any depth, and recursion overflowed the C# stack — which
     // kills the process, not the query — at some ten thousand list elements.
     // Walking a list spine costs O(1) of that list: the tail replaces the
@@ -827,7 +852,7 @@ public static partial class MetaBuiltins
             int addr = engine.Deref(heapIdx);
             if (!visited.Add(addr)) continue;
             Cell cell = engine.GetHeap(addr);
-            // an attributed variable IS a variable (ISO/SWI); atoms, numbers
+            // an attributed variable is a variable (ISO/SWI); atoms, numbers
             // and packed strings are leaves with no variables.
             if (cell.Tag is Tag.Ref or Tag.AttVar) vars.Add(addr);
             else PushArgsInOrder(engine, cell, work);
@@ -917,7 +942,7 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, listCell);
     }
 
-    /// <summary><c>'$clause_enum'(Head, Head-Body)</c> — the LAZY backing for
+    /// <summary><c>'$clause_enum'(Head, Head-Body)</c> — the lazy backing for
     /// <c>clause/2</c>. The prelude passes the query's <c>Head-Body</c> pair as
     /// the second argument (built Prolog-side, so its variables are the user's),
     /// and this yields each matching clause one at a time on backtracking:
@@ -941,7 +966,7 @@ public static partial class MetaBuiltins
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
         var statics = new List<Clause>(host.StaticClausesFor(fid));
-        // ISO §8.8.1.3: clause/2 reads PUBLIC procedures only — dynamic, or
+        // ISO §8.8.1.3: clause/2 reads public procedures only — dynamic, or
         // static and declared `:- public` (the ISO public-procedure notion);
         // any other static user predicate is private — permission_error,
         // like GNU and Scryer. SWI lets programs inspect their own static
@@ -965,8 +990,8 @@ public static partial class MetaBuiltins
         var candidates = new List<Clause>();
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(statics);
-        // Drop the clauses whose head DEFINITELY cannot match the pattern, so
-        // the cursor enumerates SOLUTIONS rather than the whole predicate —
+        // Drop the clauses whose head definitely cannot match the pattern, so
+        // the cursor enumerates solutions rather than the whole predicate —
         // first-argument indexing's answer to the same question, at the AST
         // level. `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
         candidates.RemoveAll(c => !HeadCanMatch(headPattern, ClauseHead(c)));
@@ -981,7 +1006,7 @@ public static partial class MetaBuiltins
         ? ((CompoundTerm)c.Term).Args[0]
         : c.Term;
 
-    /// <summary>Conservative head prefilter: false only on a DEFINITE
+    /// <summary>Conservative head prefilter: false only on a definite
     /// mismatch (both sides non-variable with different shapes). Anything it
     /// cannot rule out stays a candidate for the real unification.</summary>
     private static bool HeadCanMatch(Term pattern, Term head)
@@ -1008,7 +1033,7 @@ public static partial class MetaBuiltins
         (FloatTerm x, FloatTerm y) => x.Value.Equals(y.Value),
         (CompoundTerm x, CompoundTerm y) =>
             x.Functor == y.Functor && x.Args.Length == y.Args.Length,
-        // Different leaf KINDS never unify; anything else stays a candidate.
+        // Different leaf kinds never unify; anything else stays a candidate.
         (AtomTerm, IntTerm) or (IntTerm, AtomTerm) => false,
         (AtomTerm or IntTerm or FloatTerm, CompoundTerm) => false,
         (CompoundTerm, AtomTerm or IntTerm or FloatTerm) => false,
@@ -1057,7 +1082,7 @@ public static partial class MetaBuiltins
                 new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }
 
-        // §8.8.2: current_predicate/1 enumerates USER-DEFINED procedures.
+        // §8.8.2: current_predicate/1 enumerates user-defined procedures.
         // Builtins (and the prelude's library predicates, which are
         // built_in to a program) are excluded — GNU-verified:
         // current_predicate(atom/1) fails there too. predicate_property/2
@@ -1076,7 +1101,7 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, listCell);
     }
 
-    /// <summary><c>'$current_predicate_enum'(?PI)</c> — the LAZY backing for
+    /// <summary><c>'$current_predicate_enum'(?PI)</c> — the lazy backing for
     /// <c>current_predicate/1</c>. Yields each known predicate's
     /// <c>Name/Arity</c> indicator one at a time on backtracking (a cursor
     /// over the snapshot), instead of building the whole O(n) indicator list
@@ -1088,8 +1113,8 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "'$current_predicate_enum'/1 requires a PrologEngine host.");
 
-        // A BOUND Name or Arity in the PI narrows the candidate set here, so
-        // the cursor enumerates SOLUTIONS rather than every user predicate:
+        // A bound Name or Arity in the PI narrows the candidate set here, so
+        // the cursor enumerates solutions rather than every user predicate:
         // `current_predicate(foo/1)` is then deterministic instead of leaving
         // a choice point over the rest of the database.
         string? wantName = null;
@@ -1128,7 +1153,7 @@ public static partial class MetaBuiltins
             indicators.Add(new CompoundTerm("/",
                 new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }
-        // §8.8.2: current_predicate/1 enumerates USER-DEFINED procedures.
+        // §8.8.2: current_predicate/1 enumerates user-defined procedures.
         // Builtins (and the prelude's library predicates, which are
         // built_in to a program) are excluded — GNU-verified:
         // current_predicate(atom/1) fails there too. predicate_property/2
@@ -1147,7 +1172,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$module_clause_enum'(+Module, +Head, ?Head-Body)</c> —
     /// the qualified <c>clause(M:H, B)</c>: the head resolved from M's
-    /// VIEWPOINT. A dynamic is flat-global (the qualifier peels to the shared
+    /// viewpoint. A dynamic is flat-global (the qualifier peels to the shared
     /// store); M's own definition reads M's clauses only; an import reads its
     /// source module's; anything else fails.</summary>
     public static bool ModuleClauseEnum(Activation engine)
@@ -1175,7 +1200,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module
     /// view behind the context-injected <c>current_predicate/1</c>: the
-    /// module's OWN definitions united with the global view, deduplicated.
+    /// module's own definitions united with the global view, deduplicated.
     /// (The qualified form stays strictly per-module — SICStus doctrine;
     /// this union is only what an UNqualified call inside the module
     /// sees.)</summary>
@@ -1217,7 +1242,7 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$module_predicate_enum'(?Module, ?PI)</c> — the backing
     /// for the qualified <c>current_predicate(M:PI)</c>. Enumerates
-    /// (module, Name/Arity) over what each explicit module DEFINES (see
+    /// (module, Name/Arity) over what each explicit module defines (see
     /// <see cref="PrologEngine.DefinedModulePredicates"/>); a bound Module
     /// filters to that module (an unknown one just fails), an unbound one
     /// backtracks over the modules, SWI-style. Both positions unify per
@@ -1416,7 +1441,7 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.InstantiationError());
         if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2)
         {
-            // ISO §8.9.4.3 judges the halves IN TURN, name first, rather than
+            // ISO §8.9.4.3 judges the halves in turn, name first, rather than
             // taking every variable ahead of every type. The two orders differ
             // for 1/_ : a name that is already wrong is reported even while
             // the arity is unbound, because no arity could rescue it and an
@@ -1439,7 +1464,7 @@ public static partial class MetaBuiltins
             if (arity.Value < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arity));
-            // An indicator past the PROCEDURE cap names nothing definable
+            // An indicator past the procedure cap names nothing definable
             // (stc#70): terms are unbounded, predicates are not.
             if (arity.Value > Shumway.Core.RuntimeCaps.MaxProcedureArity)
                 throw new ShumwayPrologException(

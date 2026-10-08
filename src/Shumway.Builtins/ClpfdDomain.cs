@@ -1,4 +1,5 @@
 using System;
+using Shumway.Core;
 
 namespace Shumway.Builtins;
 
@@ -25,6 +26,18 @@ public sealed class ClpfdDomain
     private readonly long[] _iv;
 
     private ClpfdDomain(long[] iv) => _iv = iv;
+
+    /// <summary>The flattened bounds, for the code that reads and writes the
+    /// heap form of a domain (ADR-051). Not to be mutated: a domain is
+    /// immutable and shared, and the array is the domain.</summary>
+    internal long[] Bounds => _iv;
+
+    /// <summary>A domain from bounds that already hold the invariant: sorted,
+    /// disjoint, non-adjacent, even length. For reading back a domain this
+    /// code wrote. Going through Interval and Union instead would re-derive
+    /// what is already known and merge what is already merged.</summary>
+    internal static ClpfdDomain FromBounds(long[] iv) =>
+        iv.Length == 0 ? Empty : new ClpfdDomain(iv);
 
     public static readonly ClpfdDomain Empty = new(Array.Empty<long>());
     public static readonly ClpfdDomain Universal = new(new[] { Inf, Sup });
@@ -108,7 +121,11 @@ public sealed class ClpfdDomain
         return Make(w, n);
     }
 
-    /// <summary>Remove the single value V (splitting an interval if interior).</summary>
+    /// <summary>Remove the single value V (splitting an interval if interior).
+    /// The least and the greatest inline integer stay in an interval that is
+    /// unbounded on their side: what would be left there starts one past
+    /// them, which no bound can say, and a domain may hold more than the
+    /// constraints allow but never less.</summary>
     public ClpfdDomain Without(long v)
     {
         if (!Contains(v)) return this;
@@ -118,6 +135,7 @@ public sealed class ClpfdDomain
         {
             long lo = _iv[i], hi = _iv[i + 1];
             if (v < lo || v > hi) { w[n++] = lo; w[n++] = hi; continue; }
+            if ((v == Cell.MinInt60 && lo == Inf) || (v == Cell.MaxInt60 && hi == Sup)) return this;
             if (lo < v) { w[n++] = lo; w[n++] = v - 1; }   // safe: lo<v so v-1≥lo, no underflow at inf
             if (v < hi) { w[n++] = v + 1; w[n++] = hi; }   // safe: v<hi so v+1≤hi, no overflow at sup
         }
@@ -164,11 +182,64 @@ public sealed class ClpfdDomain
         return Make(w, n);
     }
 
-    /// <summary>This domain with the finite integer interval [lo, hi] removed.</summary>
-    public ClpfdDomain RemoveInterval(long lo, long hi) => Above(lo - 1).Union(Below(hi + 1));
+    /// <summary>This domain with the finite integer interval [lo, hi] removed.
+    /// At an end of the inline range the part left on an unbounded side keeps
+    /// the end value, for <see cref="Without"/>'s reason.</summary>
+    public ClpfdDomain RemoveInterval(long lo, long hi)
+    {
+        if (IsEmpty) return this;
+        ClpfdDomain left = lo != Cell.MinInt60 ? Above(lo - 1) : Min == Inf ? Above(lo) : Empty;
+        ClpfdDomain right = hi != Cell.MaxInt60 ? Below(hi + 1) : Max == Sup ? Below(hi) : Empty;
+        return left.Union(right);
+    }
 
     /// <summary>True when every value lies in [lo, hi] (the domain is a subset).</summary>
     public bool Within(long lo, long hi) => !IsEmpty && Min >= lo && Max <= hi;
+
+    /// <summary>The least value greater than <paramref name="v"/>, or false
+    /// when there is none. Labeling steps with it, so that a domain is never
+    /// written out whole: one of a billion values is tried as cheaply as one
+    /// of ten.</summary>
+    public bool TryNext(long v, out long next)
+    {
+        for (int i = 0; i < _iv.Length; i += 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (v < lo) { next = lo; return true; }
+            if (v < hi) { next = v + 1; return true; }
+        }
+        next = 0;
+        return false;
+    }
+
+    /// <summary>The greatest value less than <paramref name="v"/>, or false
+    /// when there is none.</summary>
+    public bool TryPrevious(long v, out long previous)
+    {
+        for (int i = _iv.Length - 2; i >= 0; i -= 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (v > hi) { previous = hi; return true; }
+            if (v > lo) { previous = v - 1; return true; }
+        }
+        previous = 0;
+        return false;
+    }
+
+    /// <summary>The value at zero-based position <paramref name="index"/> in
+    /// ascending order, or false past the last one.</summary>
+    public bool TryNth(long index, out long value)
+    {
+        for (int i = 0; i < _iv.Length; i += 2)
+        {
+            long lo = _iv[i], hi = _iv[i + 1];
+            if (lo == Inf || hi == Sup) break;
+            if (index <= hi - lo) { value = lo + index; return true; }
+            index -= hi - lo + 1;
+        }
+        value = 0;
+        return false;
+    }
 
     /// <summary>Enumerate every value (finite domains only). Used by labeling.</summary>
     public System.Collections.Generic.IEnumerable<long> Values()

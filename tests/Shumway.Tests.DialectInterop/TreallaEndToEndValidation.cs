@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.DialectInterop;
 
 /// <summary>End-to-end validation of real Trealla libraries: load each (under
-/// the trealla dialect) and EXERCISE a representative predicate — not just
+/// the trealla dialect) and exercise a representative predicate — not just
 /// load. Records load + smoke outcomes and writes a report to
 /// SHUMWAY_TRIAGE_OUT. Opt-in (SHUMWAY_TREALLA_LIB, e.g.
 /// C:/Prolog/Trealla/library). Mirrors <see cref="ScryerEndToEndValidation"/>.</summary>
@@ -68,7 +68,7 @@ public sealed class TreallaEndToEndValidation
         ("yall",        "maplist([X,Y]>>(Y is X + 1), [1], [2])."),
     };
 
-    /// <summary>Libraries whose LOAD is known to fail (see the per-case
+    /// <summary>Libraries whose load is known to fail (see the per-case
     /// notes) — tolerated by the hard assertion below.</summary>
     private static readonly HashSet<string> ExpectedLoadFail = new() { "rbtrees" };
 
@@ -141,7 +141,7 @@ public sealed class TreallaEndToEndValidation
         if (!string.IsNullOrWhiteSpace(outFile)) File.WriteAllText(outFile, report);
 
         // The load sweep is the hard assertion: every Trealla library except
-        // the documented exception must at least LOAD on Shumway.
+        // the documented exception must at least load on Shumway.
         Assert.Equal(0, loadFail);
     }
 

@@ -1,0 +1,7 @@
+# The wasm Tier-1 is on for WebShumway. A global property rather than a
+# default in the project: the web build reaches Shumway.Libraries through its
+# own reference and through the stdlib bakers, and both must bake the same
+# flavour (one property set per project, or two builds race on one obj).
+# Read when the build starts from this directory; -p:ShumwayWasmTier=false on
+# the command line wins and leaves the tier out.
+-p:ShumwayWasmTier=true

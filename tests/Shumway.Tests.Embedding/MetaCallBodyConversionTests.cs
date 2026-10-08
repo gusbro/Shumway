@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// SS7.6.2 body conversion at a runtime call/N boundary (MetaBodyConvert):
 /// a variable in goal position inside a metacalled body converts to
-/// <c>call(V)</c> UP FRONT, so a <c>!</c> the variable is later bound to
+/// <c>call(V)</c> up front, so a <c>!</c> the variable is later bound to
 /// cuts only within its own metacall. The conversion must not re-run at the
 /// <c>'$call'/2</c> sub-dispatches — by then the variable's home cell holds
 /// a plain <c>!</c>, indistinguishable from a literal one.
@@ -63,7 +63,7 @@ public class MetaCallBodyConversionTests
     public void ANumberInARuntimeBodyRaisesBeforeAnythingRuns(string wrap)
     {
         // GNU raises type_error(callable, (fail,3)) for all four, with the
-        // WHOLE construct as culprit and `fail` never executing.
+        // whole construct as culprit and `fail` never executing.
         var e = new PrologEngine();
         var r = e.Query(
             $"X = (fail, 3), catch({wrap}, error(type_error(callable, C), _), true), C == (fail, 3).");

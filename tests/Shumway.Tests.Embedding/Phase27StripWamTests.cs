@@ -25,10 +25,17 @@ public class Phase27StripWamTests
     [Fact]
     public void StrippedBundle_IsSmaller()
     {
-        int full = Build(stripWam: false).Length;
-        int stripped = Build(stripWam: true).Length;
-        Assert.True(stripped < full,
-            $"stripped bundle ({stripped}) should be smaller than full ({full})");
+        byte[] full = Build(stripWam: false), stripped = Build(stripWam: true);
+        static int Wam(byte[] bundle) =>
+            BundleReader.FromBytes(bundle).Entries.Sum(e => e.CompiledBytecode?.Length ?? 0);
+        Assert.True(Wam(stripped) < Wam(full),
+            $"stripped bytecode ({Wam(stripped)}) should be smaller than full ({Wam(full)})");
+        // ADR-061: with continuation methods a predicate with no bytecode
+        // keeps a method of its own beside them, which the full bundle's
+        // predicate does not have.
+        if (!Shumway.Compiler.Il.IlPredicateCompiler.CpsMode)
+            Assert.True(stripped.Length < full.Length,
+                $"stripped bundle ({stripped.Length}) should be smaller than full ({full.Length})");
     }
 
     [Fact]

@@ -10,8 +10,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Chunk 365 (Phase 29, case 1): the <see cref="IlPredicateCompiler.IsInlinableLeafRule"/>
-/// detector — a single-clause RULE whose body is deterministic builtins /
-/// arithmetic / unification only, so it can be inlined FLAT into a caller's IL
+/// detector — a single-clause rule whose body is deterministic builtins /
+/// arithmetic / unification only, so it can be inlined flat into a caller's IL
 /// method by the existing chunk-69 leaf-inline emit (no env frame, no choice
 /// point, no cut, no user call). Generalises <see cref="IlPredicateCompiler.IsLeafPredicate"/>
 /// (head-match-only) to a builtin body. The emit wiring is gated behind
@@ -49,7 +49,7 @@ public class Chunk365Tests
     public void NotFlatInlinable_IsNotInlinableLeafRule(string src)
         => Assert.False(IlPredicateCompiler.IsInlinableLeafRule(CompileOne(src)));
 
-    // NOTE: a rule whose body is a single builtin in TAIL position (e.g.
+    // Note: a rule whose body is a single builtin in tail position (e.g.
     // `is_int(X) :- integer(X).`) compiles to either a tail call (Execute, →
     // not inlinable) or `CallBuiltin builtin/N; proceed` (→ inlinable, and the
     // inline is sound — a deterministic builtin) depending on whether the builtin

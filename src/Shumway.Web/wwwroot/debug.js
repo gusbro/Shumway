@@ -327,7 +327,7 @@ export async function toggle() {
   persist();                               // the INTENT survives an instant reload
   const err = await session.debugEnable();
   if (err) { emit(err + '\n', 'error'); return exit(); }
-  emit('% debug mode: engine restarted debug-compiled\n', 'note');
+  emit(`% debug mode: engine restarted debug-compiled (${await session.tierName()})\n`, 'note');
   persist();
   $('immediate-log').replaceChildren();   // a fresh session, a fresh conversation
   // The program must be IN the debug engine before anything can stop in it.
@@ -350,7 +350,7 @@ async function exit() {
   await session.cancel();
   const err = await session.resetEngine();
   if (err) emit(err + '\n', 'error');
-  emit('% debug mode off: engine restarted\n', 'note');
+  emit(`% debug mode off: engine restarted (${await session.tierName()})\n`, 'note');
   persist();
   if (getText().trim()) await consultBuffer('% consulted.\n');
   // The dots are KEPT (they come back with the mode) but must not be drawn

@@ -7,8 +7,8 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The two-phase PGO recompile reorders an indexed-atom predicate's
 /// ground dispatch by measured hit counts. Phase 1 allocates a profile key on
-/// the shape it PROMOTED; phase 2 recompiles the predicate the query's program
-/// holds for that functor id. For a DYNAMIC predicate those differ: phase 1
+/// the shape it promoted; phase 2 recompiles the predicate the query's program
+/// holds for that functor id. For a dynamic predicate those differ: phase 1
 /// profiled the ADR-023 static snapshot, but the program's entry is the
 /// dynamic-dispatch form (enter_dynamic + check_visible), which is not
 /// IL-compilable -- so phase 2 threw NotSupportedException on the compile
@@ -67,7 +67,7 @@ public sealed class PgoDynamicShapeDriftTests
             Assert.True(e.Query("nth(50).").Success);
     }
 
-    /// <summary>ANTI-VACUITY: a STATIC indexed-atom predicate must still take
+    /// <summary>Anti-vacuity: a static indexed-atom predicate must still take
     /// the optimized recompile -- the fix declines only the shapes that cannot
     /// compile, not every recompile. This one compiles and PGO-optimizes, and
     /// keeps answering correctly through both phases.</summary>
@@ -85,7 +85,7 @@ public sealed class PgoDynamicShapeDriftTests
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("col").Id, 1);
         // Ground queries drive the profile; the phase-2 recompile fires once
-        // the sample count crosses the threshold. The guard must NOT decline
+        // the sample count crosses the threshold. The guard must not decline
         // this -- it is a static, IL-compilable indexed-atom predicate.
         for (int i = 0; i < 12; i++) Assert.True(e.Query("col(blue).").Success);
         Assert.True(e.IlPromotion.IsPgoOptimized(fid),

@@ -31,7 +31,7 @@ public class Chunk131cTests
     public void Append_AllUnbound_EnumeratesLikePureAppend()
     {
         // Phase 33 (PrologToC corpus) — the chunk-131c instantiation_error
-        // here was WRONG: pure append/3 never raises. All-unbound append
+        // here was wrong: pure append/3 never raises. All-unbound append
         // enumerates k-element splits (first solution L1 = [], L2 = L3),
         // and the open-list "hole closing" idiom append(Open, [], Open)
         // must succeed binding the tail hole to [] — the DEC-10 rdtok

@@ -13,11 +13,11 @@ public sealed partial class IlPredicateCompiler
     /// <paramref name="emitSelf"/>; callers pick the holder-based or
     /// field-based variant.</summary>
     /// <summary>ADR-032 sizing — promotion/link-time counters for the CP-free
-    /// guard recogniser: which tier each accepted clause took, and WHY each
+    /// guard recogniser: which tier each accepted clause took, and why each
     /// cut-shaped clause was rejected. The reject reasons map 1:1 to the
     /// ADR-032 static-widening alternatives (Caps → raise the fail-direct
     /// caps; CalleeCut → callee-internal cuts; CalleeCalls → true-G3 nested
-    /// inlining), so running a real program with these counters IS the impact
+    /// inlining), so running a real program with these counters is the impact
     /// estimate for each widening. Surfaced by <c>shumway-link --verbose</c>
     /// (persisted IL build) and <c>SHUMWAY_CPFREE_STATS=1</c> in the REPL
     /// (runtime promotion). Counts are per-emission (a PGO
@@ -33,7 +33,7 @@ public sealed partial class IlPredicateCompiler
         public static long RejectCalleeShape;      // other callee shape
 
         /// <summary>Per-opcode breakdown of <see cref="RejectGuardShape"/> —
-        /// WHICH non-whitelist opcode rejected the cut-shaped guard, so the
+        /// which non-whitelist opcode rejected the cut-shaped guard, so the
         /// whitelist-widening candidates rank by real frequency. Indexed by the
         /// opcode byte.</summary>
         public static readonly long[] RejectGuardOpByOpcode = new long[256];
@@ -49,7 +49,7 @@ public sealed partial class IlPredicateCompiler
             => RejectShapeDetail.AddOrUpdate(detail, 1, static (_, v) => v + 1);
 
         /// <summary>Stable-dynamic census — functor ids of dynamic predicates
-        /// whose clause store contains RULE clauses (bodies). Populated by the
+        /// whose clause store contains rule clauses (bodies). Populated by the
         /// link-time IL build from the warm engine's rehydrated seeds (the
         /// link calleeMap only sees hollow trampolines); the rules/facts
         /// shape-detail split consults this before falling back to the
@@ -64,15 +64,15 @@ public sealed partial class IlPredicateCompiler
         public static long DynPoolRules, DynPoolFacts;
 
         /// <summary>ADR-034 — accepted CP-free guard clauses whose guard
-        /// inlines one or more dynamic SNAPSHOTS (each such clause carries the
+        /// inlines one or more dynamic snapshots (each such clause carries the
         /// clause-entry staleness test + fallback).</summary>
         public static long AcceptWithDynSnapshot;
 
         /// <summary>ADR-031 indexed-bucket sizing (census-only, gated
-        /// <see cref="CpFreeIndexedCensus"/>) — chain nodes inside INDEXED
+        /// <see cref="CpFreeIndexedCensus"/>) — chain nodes inside indexed
         /// dispatch that push a bucket choice point (NextCursor ≥ 0), how
         /// many of them run a cut-shaped clause, and how many of those the
-        /// CP-free recognizer would accept. The emission does NOT act on
+        /// CP-free recognizer would accept. The emission does not act on
         /// this — it sizes the deferred "indexed buckets" extension.</summary>
         public static long IndexedBucketCpNodes, IndexedBucketCandidates, IndexedBucketAccept;
 
@@ -118,26 +118,26 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
-    /// <summary>ADR-033 — gates the guard CONTINUATION-STACK mechanism: a
+    /// <summary>ADR-033 — gates the guard continuation-stack mechanism: a
     /// CP-free guard's call to a (non-leaf) fail-direct callee pushes its
-    /// ok/fail continuation cursors and branches to ONE shared per-method copy
+    /// ok/fail continuation cursors and branches to one shared per-method copy
     /// of the callee, instead of duplicating the callee's code at every call
     /// site. Prototype opt-in (<c>SHUMWAY_CPFREE_CONT=1</c>); the duplication
     /// path remains the default.</summary>
     public static bool CpFreeGuardContinuations { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_CONT") == "1";
 
-    /// <summary>ADR-031 indexed buckets — CP-free guard commit inside INDEXED
-    /// dispatch (default ON; <c>SHUMWAY_CPFREE_IDXBUCKET=0</c> disables). A
+    /// <summary>ADR-031 indexed buckets — CP-free guard commit inside indexed
+    /// dispatch (default on; <c>SHUMWAY_CPFREE_IDXBUCKET=0</c> disables). A
     /// chain node whose clause is an accepted CP-free guard skips its bucket
     /// choice-point push: the node stores the next node's cursor in a
     /// per-member IL local (<c>-1</c> for a chain tail) and branches to the
-    /// clause's SHARED guard block; guard failure restores and dispatches on
+    /// clause's shared guard block; guard failure restores and dispatches on
     /// the local (an IL <c>switch</c> — out-of-range <c>-1</c> falls through
     /// to the method fail), replacing the push + engine-backtrack round trip.
     /// The rare paths (pending-wakeup lazy CP, ADR-034 stale-snapshot
-    /// fallback) materialize the skipped CP FROM the local, skipping the push
-    /// on the tail sentinel. ONE local per indexed member suffices: its live
+    /// fallback) materialize the skipped CP from the local, skipping the push
+    /// on the tail sentinel. One local per indexed member suffices: its live
     /// range is [node entry → guard resolution], and fail-direct guards never
     /// re-enter a node (an indexed callee is not fail-direct-describable), so
     /// the windows cannot nest — if guards ever accept indexed callees, this
@@ -148,7 +148,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>ADR-031 indexed-bucket sizing census, opt-in
     /// (<c>SHUMWAY_CPFREE_IDXCENSUS=1</c>): at the two indexed emit sites,
     /// replay the CP-free recognizer over every bucket chain node that
-    /// pushes a choice point, WITHOUT changing emission — the main
+    /// pushes a choice point, without changing emission — the main
     /// accept/reject counters stay clean (the census calls suppress them);
     /// only the <c>indexed-bucket census</c> summary line and (unavoidably)
     /// the describe-level shape-detail labels reflect the census.</summary>
@@ -178,7 +178,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>ADR-031 indexed buckets — the per-predicate guard plan: which
-    /// clauses are accepted CP-free guards (recognised ONCE per clause; every
+    /// clauses are accepted CP-free guards (recognised once per clause; every
     /// node referencing the clause routes through its shared guard block),
     /// and the extra forward-resume cursors the ADR-034 fallbacks need
     /// (standalone sizing).</summary>
@@ -232,15 +232,15 @@ public sealed partial class IlPredicateCompiler
         return any ? plan : null;
     }
 
-    // Empty-dynamic-as-fail: MEASURED AND REJECTED (2026-07-10). Inlining a
+    // Empty-dynamic-as-fail: Measured and rejected (2026-07-10). Inlining a
     // guard call to a link-time-empty dynamic as FAIL (under the ADR-034
-    // staleness test) converted +69/+111% of the corpus guards STATICALLY —
-    // but in any reasonable program the assert DOES happen, so the steady
-    // state is the fallback (the plain pre-feature path) PLUS a per-entry
+    // staleness test) converted +69/+111% of the corpus guards statically —
+    // but in any reasonable program the assert does happen, so the steady
+    // state is the fallback (the plain pre-feature path) plus a per-entry
     // membership probe: a net runtime cost for the dominant
     // assert-before-call idiom. The corpus counts were also inflated by
     // host-interface placeholders (i_*) that production links declare as
-    // FOREIGN predicates — whose det-ness the guard machinery already derives
+    // foreign predicates — whose det-ness the guard machinery already derives
     // from the implementation (BacktrackableDetector), needing no dynamic
     // modelling at all.
 
@@ -249,26 +249,34 @@ public sealed partial class IlPredicateCompiler
     /// entry labels, and the lazily-created pop/dispatch epilogues.</summary>
     internal sealed class GuardContEmitContext
     {
-        public readonly List<Sigil.Label> ContLabels = new();
-        public readonly Dictionary<int, Sigil.Label> CalleeEntry = new();
+        public readonly List<IlLabel> ContLabels = new();
+        public readonly Dictionary<int, IlLabel> CalleeEntry = new();
         public readonly List<CompiledPredicate> PendingCallees = new();
-        public Sigil.Label? FailEpilogue;
-        public Sigil.Label? OkEpilogue;
-        public int AllocCursor(Sigil.Label label)
+        public IlLabel? FailEpilogue;
+        public IlLabel? OkEpilogue;
+        /// <summary>ADR-049: the sites that push a pair, by OK cursor; the
+        /// routine a wake inside a copy branches to, with what it returns by;
+        /// and why a site makes such a wake uncompilable, if one does.</summary>
+        public readonly Dictionary<int, ContSite> Sites = new();
+        public IlLabel? WakeLevels;
+        public IlLocal? WakeFrame, WakeReturn;
+        public readonly List<IlLabel> WakeReturns = new();
+        public string? Unusable;
+        public int AllocCursor(IlLabel label)
         {
             ContLabels.Add(label);
             return ContLabels.Count - 1;
         }
     }
 
-    /// <summary>ADR-033 — the method-end epilogues: each pending callee's ONE
+    /// <summary>ADR-033 — the method-end epilogues: each pending callee's one
     /// shared copy (entered by <c>br</c> from its call sites), then the ok /
     /// fail pop-and-dispatch blocks switching over the continuation label
     /// table. No-op when no site used the mechanism.</summary>
     /// <summary>ADR-033 — the shared-copy entry label for <paramref name="fid"/>,
     /// registering the callee for method-end emission on first request.</summary>
-    private static Sigil.Label GetOrAddGuardContCopy(
-        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+    private static IlLabel GetOrAddGuardContCopy(
+        IlEmit emit, GuardContEmitContext ctx,
         int fid, CompiledPredicate callee)
     {
         if (!ctx.CalleeEntry.TryGetValue(fid, out var entryLbl))
@@ -281,14 +289,14 @@ public sealed partial class IlPredicateCompiler
     }
 
     private static void EmitGuardContEpilogues(
-        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+        IlEmit emit, GuardContEmitContext ctx,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        Sigil.Label methodFail)
+        IlLabel methodFail)
     {
         if (ctx.PendingCallees.Count == 0) return;
         ctx.FailEpilogue ??= emit.DefineLabel("gc_fail_epi");
         ctx.OkEpilogue ??= emit.DefineLabel("gc_ok_epi");
-        // Index loop: emitting a copy may register FURTHER pending callees
+        // Index loop: emitting a copy may register further pending callees
         // (cross-tail targets, shared inners).
         for (int ci = 0; ci < ctx.PendingCallees.Count; ci++)
         {
@@ -297,18 +305,19 @@ public sealed partial class IlPredicateCompiler
             // Deterministic re-describe (the call site already validated it).
             TryDescribeFailDirectCallee(callee, calleeMap, out var cls, out _);
             EmitFailDirectCalleeInline(emit, callee, cls!, ctx.FailEpilogue,
-                calleeMap, $"_gcc{callee.FunctorId}", ctx);
+                calleeMap, $"_gcc{callee.FunctorId}", ctx, sharedCopy: true);
             emit.Branch(ctx.OkEpilogue);
         }
+        EmitWakeLevels(emit, ctx);   // ADR-049
         var targets = ctx.ContLabels.ToArray();
         emit.MarkLabel(ctx.OkEpilogue);
         emit.LoadArgument(0);
-        emit.Call(EnginePopGuardContOkMethod);
+        EmitHelperCall(emit, EnginePopGuardContOkMethod);
         emit.Switch(targets);
         emit.Branch(methodFail);                 // out of range — unreachable
         emit.MarkLabel(ctx.FailEpilogue);
         emit.LoadArgument(0);
-        emit.Call(EnginePopGuardContFailMethod);
+        EmitHelperCall(emit, EnginePopGuardContFailMethod);
         emit.Switch(targets);
         emit.Branch(methodFail);
     }
@@ -333,7 +342,7 @@ public sealed partial class IlPredicateCompiler
         /// <summary>The clause allocated an environment frame before the cut —
         /// the fail path must <c>Deallocate</c> before branching on.</summary>
         public bool Framed { get; init; }
-        /// <summary>ADR-034 — functor ids of the dynamic SNAPSHOTS this
+        /// <summary>ADR-034 — functor ids of the dynamic snapshots this
         /// clause's guard (transitively, through fail-direct callees and
         /// shared copies) inlines. Non-null → the emit prefixes the clause
         /// with a staleness test per fid (<c>Activation.IsDynMutated</c>) and an
@@ -345,7 +354,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>ADR-034 — side-channel collected by the fail-direct describe
     /// walk: the dynamic-snapshot fids a guard would inline (transitively) and
     /// whether any walked code calls a database-mutation builtin. A guard that
-    /// embeds a snapshot AND can mutate the database is rejected — the
+    /// embeds a snapshot and can mutate the database is rejected — the
     /// clause-entry staleness test would be stale by the time the inlined
     /// snapshot runs.</summary>
     internal sealed class FailDirectExtras
@@ -372,18 +381,18 @@ public sealed partial class IlPredicateCompiler
     /// CP-free guard committing via a cut. Three tiers share one walk:
     ///
     /// <para><b>Tier A</b> — only <c>a_int_cmp</c> comparisons: non-binding,
-    /// non-allocating, register-preserving. Guard failure branches DIRECTLY to
-    /// the next clause with NO restore.</para>
+    /// non-allocating, register-preserving. Guard failure branches directly to
+    /// the next clause with no restore.</para>
     ///
     /// <para><b>Tier B</b> — additionally the head-unification / <c>=/2</c> op
-    /// family: these can BIND and allocate → entry snapshot + restoring fail
+    /// family: these can bind and allocate → entry snapshot + restoring fail
     /// path (<see cref="CpFreeGuardInfo.NeedsSnapshot"/>).</para>
     ///
-    /// <para><b>Tier G (guard calls)</b> — a FRAMED clause
+    /// <para><b>Tier G (guard calls)</b> — a framed clause
     /// (<c>allocate_get_level; get_variable_y*; staging; call; cut slot</c>)
-    /// whose every <c>Call</c> targets an INLINABLE single-clause leaf
+    /// whose every <c>Call</c> targets an inlinable single-clause leaf
     /// (<see cref="IsLeafPredicate"/> / <see cref="IsInlinableLeafRule"/>): the
-    /// call is emitted INLINE (path, forced), so callee failure is a
+    /// call is emitted inline (path, forced), so callee failure is a
     /// direct branch to the guard's fail label — fail-direct, no CP machinery.
     /// Call staging and the callee's body temps may write argument registers,
     /// so the clause saves/restores A0..arity-1
@@ -412,7 +421,7 @@ public sealed partial class IlPredicateCompiler
             if (suppressStats || !HasCutAhead(code, fromPc, end)) return;
             System.Threading.Interlocked.Increment(ref counter);
         }
-        // The guard-op variant additionally records WHICH opcode rejected.
+        // The guard-op variant additionally records which opcode rejected.
         void CountGuardOpReject(Opcode rejectedOp, int fromPc)
         {
             if (suppressStats || !HasCutAhead(code, fromPc, end)) return;
@@ -434,11 +443,18 @@ public sealed partial class IlPredicateCompiler
                 System.Threading.Interlocked.Increment(ref CpFreeGuardStats.AcceptWithDynSnapshot);
         }
         // ADR-034 — a guard that inlines a dynamic snapshot must not also be
-        // able to MUTATE the database (the clause-entry staleness test would
+        // able to mutate the database (the clause-entry staleness test would
         // be stale by the time the inlined code runs). Checked at the accept
         // point so both orders (mutate-then-call, call-then-mutate) reject.
         bool AcceptEmbeddedDynamics()
         {
+            // ADR-049: a woken goal can mutate what the guard inlines, and a
+            // wake hands the rest to bytecode that a snapshot does not have.
+            if (WakePoints && extras.DynFids is { Count: > 0 })
+            {
+                CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
+                return false;
+            }
             if (extras.DynFids is not { Count: > 0 } || !extras.DbMutation) return true;
             if (!suppressStats) CpFreeGuardStats.BumpShapeDetail("dyn+mutation");
             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
@@ -511,7 +527,7 @@ public sealed partial class IlPredicateCompiler
                     if (!framed) return false;
                     snapshot = true;
                     break;
-                case Opcode.PutVariableY:              // fresh var → Yn AND Ai (call staging)
+                case Opcode.PutVariableY:              // fresh var → Yn and Ai (call staging)
                     if (!framed) return false;
                     snapshot = true;                   // allocates the fresh heap var
                     regSave = true;                    // writes the argument register
@@ -553,12 +569,12 @@ public sealed partial class IlPredicateCompiler
                         return false;
                     }
                     int fid = FindCallSiteFunctorId(callSites, pc);
-                    // ANALYSIS-ONLY: a Call whose target is a registered
-                    // BUILTIN — in LINKED bytecode this is already a
+                    // Analysis-only: a Call whose target is a registered
+                    // builtin — in linked bytecode this is already a
                     // CallBuiltin (the linker rewrite), so the
                     // emit sites never see it; the --cpfree sweep analyses
-                    // UNLINKED bytecode, where the classification must match
-                    // what the linked form would get. NOT enabled for emission:
+                    // unlinked bytecode, where the classification must match
+                    // what the linked form would get. Not enabled for emission:
                     // emitting an unlinked builtin Call as a guard would take
                     // the threaded-call path whose failure bypasses the stub.
                     if (analysisOnly && fid >= 0
@@ -579,7 +595,7 @@ public sealed partial class IlPredicateCompiler
                         CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
                         return false;
                     }
-                    // ADR-034 — a dynamic SNAPSHOT callee (ADR-023 bake): its
+                    // ADR-034 — a dynamic snapshot callee (ADR-023 bake): its
                     // truth can change at runtime, so inlining is allowed only
                     // for dynamics with rules (mutation-cold), and only with
                     // the clause-entry staleness test the collected fid
@@ -602,15 +618,15 @@ public sealed partial class IlPredicateCompiler
                     }
                     else if (TryDescribeFailDirectCallee(callee, calleeMap, out var fdCls, out var fdReject, extras))
                     {
-                        // SOUNDNESS — a MULTI-solution callee (overlapping
+                        // Soundness — a MULTI-solution callee (overlapping
                         // clauses binding differently, or a cross-tail into a
                         // nondet target — even from a single clause): the
                         // sequential-chain inline commits to the first
-                        // solution, so a fallible guard goal AFTER the call
+                        // solution, so a fallible guard goal after the call
                         // could never retry it. Sound when the callee is
-                        // DETERMINISTIC (FailDirectCalleeIsDet — every
-                        // non-last clause cut-commits AND every cross-tail
-                        // target det) OR the call is IMMEDIATELY followed by
+                        // deterministic (FailDirectCalleeIsDet — every
+                        // non-last clause cut-commits and every cross-tail
+                        // target det) or the call is immediately followed by
                         // the commit cut (nothing can fail back into it). No
                         // ClauseCount==1 shortcut: a single clause inherits a
                         // nondet cross-tail target's multiplicity.
@@ -694,7 +710,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Stats classifier — does a dynamic predicate's compiled chain
-    /// contain RULE bodies (vs. facts only)? The practical Arity model: a
+    /// contain rule bodies (vs. facts only)? The practical Arity model: a
     /// dynamic that already has rules with bodies (`:- visible` for
     /// findall/setof meta-call visibility) is never mutated at runtime, so it
     /// is a stable-dynamic inline candidate; fact-only dynamics are the real
@@ -789,9 +805,9 @@ public sealed partial class IlPredicateCompiler
         /// <summary>Terminator is the fused <c>deallocate_proceed</c> — the
         /// emit deallocates then joins.</summary>
         public bool DeallocProceed { get; init; }
-        /// <summary>pc of the clause's FIRST top-level <c>neck_cut</c>, or -1.
-        /// The cut commits the callee's clause selection: failures BEFORE it
-        /// go to the next alternative, failures AFTER it exit the callee
+        /// <summary>pc of the clause's first top-level <c>neck_cut</c>, or -1.
+        /// The cut commits the callee's clause selection: failures before it
+        /// go to the next alternative, failures after it exit the callee
         /// entirely. (In a fail-direct callee every cut is a neck cut — a deep
         /// cut implies a preceding call, which the shape excludes.)</summary>
         public int CutPc { get; init; }
@@ -803,18 +819,18 @@ public sealed partial class IlPredicateCompiler
         /// cut-committed — the same position rule as self-tail).</summary>
         public int CrossTailFid { get; init; }
         /// <summary>Whether the cross-tail target is itself deterministic —
-        /// the target's multiplicity IS this clause's multiplicity, so the
+        /// the target's multiplicity is this clause's multiplicity, so the
         /// caller's det classification must fold it in (a committed clause
-        /// selection does NOT commit the target's alternatives).</summary>
+        /// selection does not commit the target's alternatives).</summary>
         public bool CrossTailDet { get; init; }
     }
 
-    /// <summary>True when the described callee is DETERMINISTIC (at most one
+    /// <summary>True when the described callee is deterministic (at most one
     /// solution): every clause except the last carries a top-level cut, so
     /// whichever clause yields commits (the bytecode analogue of ADR-030's
     /// all-but-last-commit dispatch rule; the last clause's whitelist body
-    /// yields at most once) — AND every cross-tail target is det (its
-    /// solutions are the clause's solutions). A det callee may sit ANYWHERE in
+    /// yields at most once) — and every cross-tail target is det (its
+    /// solutions are the clause's solutions). A det callee may sit anywhere in
     /// the guard — the multi-solution retry hazard needs a second solution to
     /// exist.</summary>
     internal static bool FailDirectCalleeIsDet(List<FailDirectClause> clauses)
@@ -856,7 +872,7 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>ADR-032 sizing — true when a top-level commit cut
     /// (<c>neck_cut</c> / <c>cut</c>) appears ahead in the clause range: the
-    /// clause IS the guard-commit shape, so a recogniser rejection is a real
+    /// clause is the guard-commit shape, so a recogniser rejection is a real
     /// missed CP-free opportunity worth counting (an ordinary cut-less clause
     /// is not).</summary>
     private static bool HasCutAhead(byte[] code, int pc, int end)
@@ -892,18 +908,18 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>ADR-031 G2 — true when <paramref name="callee"/> is a
-    /// FAIL-DIRECT predicate: its whole execution provably creates NO engine
+    /// fail-direct predicate: its whole execution provably creates no engine
     /// choice point and every failure path is (in the inlined emission) a
     /// direct IL branch. Requirements per clause: frameless, or a frame whose
     /// <c>allocate</c> is the first real op and whose <c>deallocate</c>
     /// immediately precedes the terminator; body ops restricted to the
     /// non-CP whitelist (head unification / <c>=/2</c> family, integer
-    /// arithmetic, register moves, deterministic non-meta builtins — NO user
-    /// calls, NO cuts, NO control constructs); terminator <c>proceed</c> /
+    /// arithmetic, register moves, deterministic non-meta builtins — no user
+    /// calls, no cuts, no control constructs); terminator <c>proceed</c> /
     /// <c>deallocate_proceed</c> / a self-tail <c>execute</c> (det tail
     /// recursion — the canonical list-walking validator). Clause dispatch is
-    /// IGNORED (the inline emission is a sequential alternative chain, so the
-    /// callee's own try/switch machinery — which WOULD push CPs — never runs).
+    /// ignored (the inline emission is a sequential alternative chain, so the
+    /// callee's own try/switch machinery — which would push CPs — never runs).
     /// This is the bytecode-level counterpart of ADR-030's determinism proof,
     /// strengthened to "emits zero choice points". Capped (clauses ≤ 4, code ≤
     /// 512 bytes) to bound inline growth.</summary>
@@ -918,16 +934,16 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>ADR-031 G2 fail-direct caps — a callee over these bounds keeps
     /// its choice point. Prudence bounds (per-site inline growth + the linear
-    /// alternative chain replacing indexed dispatch), NOT soundness bounds:
+    /// alternative chain replacing indexed dispatch), not soundness bounds:
     /// raising them is safe, it just inlines more code and scans more
     /// alternatives per call. <see cref="CpFreeGuardStats.RejectCalleeCaps"/>
-    /// counts the population a raise would admit. NOTE (user directive,
+    /// counts the population a raise would admit. Note (user directive,
     /// recorded in ADR-031): raising <see cref="FailDirectMaxClauses"/> must
     /// come with a proper IL switch emission, never a wider linear chain.</summary>
     internal static int FailDirectMaxClauses { get; set; } = 4;
     internal static int FailDirectMaxBytes { get; set; } = 512;
 
-    /// <summary>ADR-031 G3 — the TOTAL bytecode budget across a nested
+    /// <summary>ADR-031 G3 — the total bytecode budget across a nested
     /// fail-direct inline (the guard callee plus every transitively inlined
     /// inner callee, per site). Bounds the compounding code growth of the
     /// nesting; the per-callee caps above still apply at every level.</summary>
@@ -936,7 +952,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>G3 entry — with a <paramref name="calleeMap"/>, callee bodies
     /// may CALL other predicates when each inner callee is itself
     /// leaf-inlinable or fail-direct (recursively; DAG only — a visited set
-    /// rejects mutual recursion) AND deterministic or immediately followed by
+    /// rejects mutual recursion) and deterministic or immediately followed by
     /// the clause's commit cut (the nested multi-solution rule).</summary>
     internal static bool TryDescribeFailDirectCallee(
         CompiledPredicate callee,
@@ -945,10 +961,10 @@ public sealed partial class IlPredicateCompiler
         out FailDirectReject reject,
         FailDirectExtras? extras = null)
     {
-        // visiting maps each on-path fid to the number of NON-TAIL edges on
+        // visiting maps each on-path fid to the number of non-tail edges on
         // the path when it was entered — a tail-cycle back-edge is sound only
         // when the whole cycle segment is tail edges (counts equal), which
-        // also makes the describe ENTRY-POINT-INDEPENDENT for cyclic SCCs
+        // also makes the describe entry-point-independent for cyclic SCCs
         // (a mixed cycle rejects from every entry; the emit re-describes from
         // a different node than the recognizer validated).
         var visiting = new Dictionary<int, int> { [callee.FunctorId] = 0 };
@@ -975,7 +991,7 @@ public sealed partial class IlPredicateCompiler
             return false;
         }
 
-        // Clause byte ranges, dispatch-skeleton-free. STRUCTURAL chain describe
+        // Clause byte ranges, dispatch-skeleton-free. Structural chain describe
         // (not the memoized calleeMap-resolving one): a chain with Call sites
         // fails the memo's resolve against a null/partial map, which would
         // misclassify chains-with-calls as "ranges" — this walk validates every
@@ -1034,7 +1050,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         termPc = pc; selfTail = true; break;
                     }
-                    // ADR-033 — a CROSS tail: acceptable under the continuation
+                    // ADR-033 — a cross tail: acceptable under the continuation
                     // mechanism when the target is itself leaf/fail-direct
                     // (recursive describe). The target's det-ness is recorded
                     // for the caller's multiplicity (FailDirectCalleeIsDet).
@@ -1053,22 +1069,22 @@ public sealed partial class IlPredicateCompiler
                         reject = FailDirectReject.HasCalls;
                         return false;
                     }
-                    // ADR-033 deep G3 — a TAIL CYCLE (mutual tail recursion,
+                    // ADR-033 deep G3 — a tail cycle (mutual tail recursion,
                     // the even/odd idiom): the target is already on the
                     // describe path, so it has (or will have) its own shared
                     // copy — the emit is a plain `br` into it, inheriting the
                     // continuations (LCO; nothing pushed, O(1) stack). Sound
-                    // with per-copy IL locals ONLY when the WHOLE cycle
+                    // with per-copy IL locals only when the whole cycle
                     // segment is tail edges (no non-tail edge since the
                     // target was entered — counts equal): the position rule
                     // (last-clause-or-cut-committed) then forfeits every
                     // abandoned activation's alternatives, so its entry marks
                     // are dead when the next activation of the same copy
-                    // overwrites them. A MIXED cycle (a non-tail edge inside,
+                    // overwrites them. A mixed cycle (a non-tail edge inside,
                     // e.g. A -Call-> B -Execute-> A) nests activations of the
                     // same copy → IL-local clobber → rejected (the case-3
                     // frame machinery would be needed). Det is unknown at the
-                    // cycle edge → conservative FALSE.
+                    // cycle edge → conservative false.
                     if (visiting.TryGetValue(fid, out int tgtEntryNt))
                     {
                         if (tgtEntryNt != nonTailCount)
@@ -1086,9 +1102,9 @@ public sealed partial class IlPredicateCompiler
                     bool tgtOk, tgtDet = false;
                     try
                     {
-                        // Det via FailDirectCalleeIsDet in BOTH branches — no
+                        // Det via FailDirectCalleeIsDet in both branches — no
                         // ClauseCount==1 shortcut: a single-clause target whose
-                        // body itself cross-tails a NONDET target inherits that
+                        // body itself cross-tails a nondet target inherits that
                         // multiplicity (the det check follows CrossTailDet).
                         if (IsLeafPredicate(tailTgt) || IsInlinableLeafRule(tailTgt))
                         {
@@ -1102,7 +1118,7 @@ public sealed partial class IlPredicateCompiler
                         }
                         else
                         {
-                            // ADR-033 deep G3 — FRESH budget: the target is ONE
+                            // ADR-033 deep G3 — fresh budget: the target is one
                             // shared copy per method, not per-site duplication,
                             // so the cumulative budget does not apply (the
                             // per-callee caps inside the describe still bound
@@ -1139,10 +1155,10 @@ public sealed partial class IlPredicateCompiler
                 {
                     case Opcode.Call:
                     {
-                        // G3 — a non-tail call to ANOTHER predicate is
+                        // G3 — a non-tail call to another predicate is
                         // acceptable when the inner callee is itself
                         // leaf-inlinable or fail-direct (recursive describe;
-                        // the visiting set rejects mutual recursion) AND
+                        // the visiting set rejects mutual recursion) and
                         // deterministic or immediately followed by this
                         // clause's commit cut (nested multi-solution rule),
                         // within the total inline budget.
@@ -1203,8 +1219,8 @@ public sealed partial class IlPredicateCompiler
                                 // (:- visible for findall/setof visibility, the
                                 // Arity idiom) is mutation-cold in practice —
                                 // the stable-dynamic fast-path candidate pool.
-                                // (Inlining an EMPTY dynamic as fail was
-                                // measured and REJECTED — see the note at
+                                // (Inlining an empty dynamic as fail was
+                                // measured and rejected — see the note at
                                 // CpFreeGuardContinuations.)
                                 innerOk = false;
                                 g3Detail = DynamicHasRuleBodies(inner)
@@ -1215,9 +1231,9 @@ public sealed partial class IlPredicateCompiler
                             {
                                 int innerLen = inner.BytecodeUnfused.Length;
                                 // ADR-033 deep G3 — under continuations the
-                                // inner is ONE shared copy per method, not a
+                                // inner is one shared copy per method, not a
                                 // per-site duplication: the cumulative budget
-                                // does not apply — each copy gets a FRESH one
+                                // does not apply — each copy gets a fresh one
                                 // (the per-callee caps inside the describe
                                 // still bound every copy individually). The
                                 // duplication path keeps the shared budget.
@@ -1244,7 +1260,7 @@ public sealed partial class IlPredicateCompiler
                                     };
                                 }
                                 // No ClauseCount==1 shortcut: a single-clause
-                                // inner cross-tailing a NONDET target inherits
+                                // inner cross-tailing a nondet target inherits
                                 // its multiplicity (FailDirectCalleeIsDet
                                 // follows CrossTailDet).
                                 else if (!(FailDirectCalleeIsDet(innerCls!)
@@ -1283,9 +1299,9 @@ public sealed partial class IlPredicateCompiler
                         return false;
                     case Opcode.NeckCut:
                     case Opcode.Cut:
-                        // The callee-internal commit — record the FIRST one
+                        // The callee-internal commit — record the first one
                         // (selection is committed from there on; later cuts are
-                        // flush-only no-ops the emit handles inline). A DEEP
+                        // flush-only no-ops the emit handles inline). A deep
                         // cut (after inlined calls) gets the same flush-only
                         // split: the inlined inner callees push no choice
                         // points, so there is nothing for an engine cut to
@@ -1396,9 +1412,9 @@ public sealed partial class IlPredicateCompiler
                 CrossTailFid = crossTailFid, CrossTailDet = crossTailDet,
             });
         }
-        // SOUNDNESS — a tail transfer (self-recursion OR a cross-tail) in a
-        // NON-LAST clause without a preceding cut: if the transferred-to code
-        // fails, real backtracking returns to THIS clause's remaining
+        // Soundness — a tail transfer (self-recursion or a cross-tail) in a
+        // non-last clause without a preceding cut: if the transferred-to code
+        // fails, real backtracking returns to this clause's remaining
         // alternatives, which neither the in-place loop nor the inherited
         // continuation can do. Sound only when the tail clause is the last
         // (no alternatives after it) or its cut committed the selection first.
@@ -1417,7 +1433,7 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>ADR-031 G2 — inlines a fail-direct callee at a CP-free guard
-    /// call site as a SEQUENTIAL alternative chain with an in-place self-tail
+    /// call site as a sequential alternative chain with an in-place self-tail
     /// loop. Clause i's failure branches to clause i+1 (restoring the callee's
     /// entry argument registers first — a partially-matched clause may have
     /// clobbered them via <c>unify_variable_x</c>/staging); the last clause's
@@ -1425,34 +1441,35 @@ public sealed partial class IlPredicateCompiler
     /// stub). A framed clause's mid-body failure detours through a
     /// deallocate-then-fail stub. A self-tail <c>execute</c> becomes a branch
     /// back to the inlined entry (its staging + deallocate already ran inside
-    /// the slice) with a throttled cancellation poll — but NO heap-GC safe
+    /// the slice) with a throttled cancellation poll — but no heap-GC safe
     /// point: a collection would move the heap under the enclosing guard's
     /// snapshot locals, so allocation during the walk grows the heap until the
     /// guard exits (same acceptance as tier B).</summary>
     private static void EmitFailDirectCalleeInline(
-        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate callee,
-        List<FailDirectClause> fdClauses, Sigil.Label outerFail,
+        IlEmit emit, CompiledPredicate callee,
+        List<FailDirectClause> fdClauses, IlLabel outerFail,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt,
-        GuardContEmitContext? gcCtx = null)
+        GuardContEmitContext? gcCtx = null, int callerPcAfter = -1, bool sharedCopy = false)
     {
+        using var cpsOpaque = CpsOpaque();   // ADR-061: state in IL locals
         int arity = callee.Arity;
         var join = emit.DefineLabel($"fd_join{salt}");
         var entry = emit.DefineLabel($"fd_entry{salt}");
-        var argSaves = new Sigil.Local[arity];
+        var argSaves = new IlLocal[arity];
         for (int r = 0; r < arity; r++)
             argSaves[r] = emit.DeclareLocal<Cell>($"fd_a{r}{salt}");
         // Callee-entry trail/heap marks: a partially-matched clause may have
-        // BOUND caller-visible terms (head unification with unbound arguments)
+        // bound caller-visible terms (head unification with unbound arguments)
         // before failing — the next alternative must see them undone, exactly
         // as the clause choice point's restore would have done. (The enclosing
         // guard's snapshot covers the whole clause; these marks cover just the
-        // callee, so guard bindings made BEFORE the call survive.)
+        // callee, so guard bindings made before the call survive.)
         var mBt = emit.DeclareLocal<int>($"fd_bt{salt}");
         var mXt = emit.DeclareLocal<int>($"fd_xt{salt}");
         var mH = emit.DeclareLocal<int>($"fd_h{salt}");
         var mHb = emit.DeclareLocal<int>($"fd_hb{salt}");
         int k = fdClauses.Count;
-        var altLabels = new Sigil.Label[k + 1];
+        var altLabels = new IlLabel[k + 1];
         for (int i = 0; i < k; i++)
             altLabels[i] = emit.DefineLabel($"fd_alt{i}{salt}");
         altLabels[k] = outerFail;
@@ -1463,29 +1480,47 @@ public sealed partial class IlPredicateCompiler
         {
             // Cancellation poll at the loop head (throttled field read).
             emit.LoadArgument(0);
-            emit.Call(EngineBacktrackSafePointMethod);
+            EmitHelperCall(emit, EngineBacktrackSafePointMethod);
         }
         for (int r = 0; r < arity; r++)
         {
             emit.LoadArgument(0);
             emit.LoadConstant(r);
-            emit.Call(EngineGetRegisterMethod);
+            EmitHelperCall(emit, EngineGetRegisterMethod);
             emit.StoreLocal(argSaves[r]);
         }
-        emit.LoadArgument(0); emit.Call(EngineBindingTrailTopGetter); emit.StoreLocal(mBt);
-        emit.LoadArgument(0); emit.Call(EngineExtraTrailTopGetter); emit.StoreLocal(mXt);
-        emit.LoadArgument(0); emit.Call(EngineHeapTopGetter); emit.StoreLocal(mH);
-        // NESTED HB raise: the guard's own staging creates fresh vars AFTER the
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineBindingTrailTopGetter); emit.StoreLocal(mBt);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineExtraTrailTopGetter); emit.StoreLocal(mXt);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(mH);
+        // Nested HB raise: the guard's own staging creates fresh vars after the
         // guard-level raise (put_variable_y outputs) — young w.r.t. the guard's
-        // HB, so a callee binding them would go UNTRAILED and survive the
+        // HB, so a callee binding them would go untrailed and survive the
         // per-alternative untrail. Raising HB again to the CALLEE-entry heap
         // top makes every pre-callee term old; restored at the join.
-        emit.LoadArgument(0); emit.Call(EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
+        emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
+        // ADR-049: a wake inside pushes the choice point this chain skips.
+        ChainScope? chainScope = null;
+        if (WakePoints && (callerPcAfter >= 0 || sharedCopy))
+        {
+            var mE = emit.DeclareLocal<int>($"fd_e{salt}");
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(mE);
+            chainScope = PushScope(new ChainScope
+            {
+                Callee = callee, Clauses = fdClauses,
+                ArgSaves = argSaves, Bt = mBt, Xt = mXt, H = mH, E = mE,
+                CallerPcAfter = callerPcAfter, Shared = sharedCopy ? gcCtx : null,
+            });
+        }
 
         byte[] code = callee.BytecodeUnfused;
         for (int i = 0; i < k; i++)
         {
             var c = fdClauses[i];
+            if (chainScope is not null)
+            {
+                chainScope.Clause = i;
+                chainScope.PreCut = true;
+            }
             emit.MarkLabel(altLabels[i]);
             if (i > 0)
             {
@@ -1493,25 +1528,25 @@ public sealed partial class IlPredicateCompiler
                 // callee-entry marks (head-unify bindings!), reset the heap,
                 // clear wakeups its bindings queued, then restore the entry
                 // argument registers it may have clobbered. HB stays at the
-                // RAISED callee boundary (mH) — the next alternative's bindings
+                // raised callee boundary (mH) — the next alternative's bindings
                 // must trail too.
                 emit.LoadArgument(0);
                 emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mH); emit.LoadLocal(mH);
-                emit.Call(EngineFailIlGuardMethod);
+                EmitHelperCall(emit, EngineFailIlGuardMethod);
                 for (int r = 0; r < arity; r++)
                 {
                     emit.LoadArgument(0);
                     emit.LoadConstant(r);
                     emit.LoadLocal(argSaves[r]);
-                    emit.Call(EngineSetRegisterMethod);
+                    EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
 
             // Fail routing. Pre-cut: the next alternative (via a deallocating
-            // stub when framed). Post-cut: clause selection is COMMITTED — the
+            // stub when framed). Post-cut: clause selection is committed — the
             // callee fails outright (via its own deallocating stub when framed).
-            Sigil.Label preCutFail = altLabels[i + 1];
-            Sigil.Label? deallocFail = null;
+            IlLabel preCutFail = altLabels[i + 1];
+            IlLabel? deallocFail = null;
             if (c.Framed)
             {
                 deallocFail = emit.DefineLabel($"fd_df{i}{salt}");
@@ -1526,12 +1561,13 @@ public sealed partial class IlPredicateCompiler
                     suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a", guardContCtx: gcCtx);
                 // The cut: a goal boundary (flush pending wakeups; a failing
                 // hook backtracks into the next alternative, pre-commit) — but
-                // NO engine Cut call: a fail-direct callee pushed nothing.
+                // no engine Cut call: a fail-direct callee pushed nothing.
                 emit.LoadArgument(0);
-                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(preCutFail);
+                if (chainScope is not null) chainScope.PreCut = false;
                 // Slice 2 — post-commit: failures exit the callee.
-                Sigil.Label committedFail = outerFail;
+                IlLabel committedFail = outerFail;
                 if (c.Framed)
                 {
                     var df2 = emit.DefineLabel($"fd_dfc{i}{salt}");
@@ -1542,7 +1578,7 @@ public sealed partial class IlPredicateCompiler
                     EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
                     emit.MarkLabel(df2);
                     emit.LoadArgument(0);
-                    emit.Call(EngineDeallocateMethod);
+                    EmitHelperCall(emit, EngineDeallocateMethod);
                     emit.Branch(outerFail);
                 }
                 else
@@ -1558,6 +1594,9 @@ public sealed partial class IlPredicateCompiler
                 EmitClauseBody(emit, code, c.Start, c.TermPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
                     suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}", guardContCtx: gcCtx);
+                // ADR-049: the callee's proceed, with alternatives left: a wake
+                // failing after it backtracks into them, as in Tier-0.
+                if (chainScope is not null && i < k - 1) EmitScopedWakePoint(emit, c.TermPc);
                 EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
             }
 
@@ -1565,17 +1604,18 @@ public sealed partial class IlPredicateCompiler
             {
                 emit.MarkLabel(deallocFail);
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
                 emit.Branch(altLabels[i + 1]);
             }
         }
+        if (chainScope is not null) PopScope(chainScope);
         emit.MarkLabel(join);
         // Success: drop the nested HB raise back to the guard-level boundary.
         // (The failure exits skip this — the outer restore stub reinstates the
         // clause-entry HB itself.)
         emit.LoadArgument(0);
         emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mHb);
-        emit.Call(EngineCommitIlGuardMethod);
+        EmitHelperCall(emit, EngineCommitIlGuardMethod);
     }
 
     /// <summary>The terminator of one inlined fail-direct clause: rejoin the
@@ -1583,15 +1623,15 @@ public sealed partial class IlPredicateCompiler
     /// or — ADR-033 — branch to a cross-tail target's shared copy, inheriting
     /// the continuations on the stack (tail-call composition).</summary>
     private static void EmitFailDirectTerminator(
-        Sigil.Emit<PredicateDelegate> emit, FailDirectClause c,
-        Sigil.Label entry, Sigil.Label join,
+        IlEmit emit, FailDirectClause c,
+        IlLabel entry, IlLabel join,
         GuardContEmitContext? gcCtx = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (c.DeallocProceed)
         {
             emit.LoadArgument(0);
-            emit.Call(EngineDeallocateMethod);
+            EmitHelperCall(emit, EngineDeallocateMethod);
             emit.Branch(join);
         }
         else if (c.SelfTail)
@@ -1621,7 +1661,7 @@ public sealed partial class IlPredicateCompiler
     /// range <c>[start, end)</c> with the given fail label.
     ///
     /// <para><b>Tier A</b> (<paramref name="needsSnapshot"/> = false — pure
-    /// comparisons): guard failure branches DIRECTLY to
+    /// comparisons): guard failure branches directly to
     /// <paramref name="nextClauseLabel"/>; nothing to restore. <b>Tier B</b>
     /// (binding guard): clause entry snapshots the two trail tops + heap top in
     /// IL locals and <see cref="Activation.BeginIlGuard"/> raises HB so every guard
@@ -1634,59 +1674,177 @@ public sealed partial class IlPredicateCompiler
     /// runtime no-op unless self-tail-loop body CPs exist (where it must prune
     /// exactly as today), plus the HB restore for tier B. Rare path: wakeups
     /// pend at the cut and a failing hook must have a clause choice point to
-    /// backtrack into — the SKIPPED CP is materialised lazily here (tier B via
-    /// <see cref="Activation.PushIlChoicePointWithMarks"/> carrying the CLAUSE-ENTRY
+    /// backtrack into — the skipped CP is materialised lazily here (tier B via
+    /// <see cref="Activation.PushIlChoicePointWithMarks"/> carrying the clause-entry
     /// marks, so backtracking into it undoes the guard's bindings), then flush
     /// + cut run exactly as the standard emit.</para></summary>
     private static void EmitCpFreeGuardClause(
-        Sigil.Emit<PredicateDelegate> emit,
-        Action<int, int, Sigil.Label> emitSlice,
+        IlEmit emit,
+        Action<int, int, IlLabel> emitSlice,
         byte[] code, int clauseStart, int clauseEnd, CpFreeGuardInfo g,
-        Sigil.Label nextClauseLabel, Sigil.Label failLabel,
+        IlLabel nextClauseLabel, IlLabel failLabel,
         SelfDelegateEmitter self, int lazyCpCursor, int arity, string salt,
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
-        Action<Sigil.Emit<PredicateDelegate>>? dynamicCursor = null)
+        Action<IlEmit>? dynamicCursor = null,
+        bool? wakeDeopt = null)
     {
+        // ADR-061: in a continuation method the guard's marks live in the
+        // activation (the indexed buckets' next node too), so the cold method
+        // can resume inside it; a guard that saves argument registers keeps
+        // them in IL locals and stays opaque up to its commit.
+        bool cpsFields = CpsEmitting && !g.NeedsRegSave;
+        var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
         // guard-fail branch (the stub ends with a switch over the per-member
         // next-node local instead of `br nextClauseLabel`), and dynamicCursor
         // replaces the constant lazy-CP cursor with a load of that local
-        // (value -1 = chain tail → the rare paths SKIP the CP push).
-        Sigil.Local? bt = null, xt = null, h = null, hb = null, ee = null;
-        Sigil.Local[]? regs = null;
-        Sigil.Label guardFail = nextClauseLabel;
+        // (value -1 = chain tail → the rare paths skip the CP push).
+        IlLocal? bt = null, xt = null, h = null, hb = null, ee = null;
+        IlLocal[]? regs = null;
+        IlLabel guardFail = nextClauseLabel;
         bool needsStub = g.NeedsSnapshot || g.NeedsRegSave || g.Framed
             || dynamicFailDispatch is not null;
         if (g.NeedsRegSave && arity > 0)
         {
-            regs = new Sigil.Local[arity];
+            regs = new IlLocal[arity];
             for (int r = 0; r < arity; r++)
             {
                 regs[r] = emit.DeclareLocal<Cell>($"cf_r{r}{salt}");
                 emit.LoadArgument(0);
                 emit.LoadConstant(r);
-                emit.Call(EngineGetRegisterMethod);
+                EmitHelperCall(emit, EngineGetRegisterMethod);
                 emit.StoreLocal(regs[r]);
             }
         }
-        if (g.NeedsSnapshot)
+        if (g.NeedsSnapshot && cpsFields)
+        {
+            void Mark(MethodInfo getter, FieldInfo field)
+            {
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, getter);
+                emit.StoreField(field);
+            }
+            Mark(EngineBindingTrailTopGetter, CpsGuardBtField);
+            Mark(EngineExtraTrailTopGetter, CpsGuardXtField);
+            Mark(EngineHeapTopGetter, CpsGuardHField);
+            Mark(EngineEGetter, CpsGuardEField);
+            Mark(EngineBeginIlGuardMethod, CpsGuardHbField);
+        }
+        else if (g.NeedsSnapshot)
         {
             bt = emit.DeclareLocal<int>($"cf_bt{salt}");
             xt = emit.DeclareLocal<int>($"cf_xt{salt}");
             h = emit.DeclareLocal<int>($"cf_h{salt}");
             hb = emit.DeclareLocal<int>($"cf_hb{salt}");
             ee = emit.DeclareLocal<int>($"cf_e{salt}");
-            emit.LoadArgument(0); emit.Call(EngineBindingTrailTopGetter); emit.StoreLocal(bt);
-            emit.LoadArgument(0); emit.Call(EngineExtraTrailTopGetter); emit.StoreLocal(xt);
-            emit.LoadArgument(0); emit.Call(EngineHeapTopGetter); emit.StoreLocal(h);
-            emit.LoadArgument(0); emit.Call(EngineEGetter); emit.StoreLocal(ee);
-            emit.LoadArgument(0); emit.Call(EngineBeginIlGuardMethod); emit.StoreLocal(hb);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineBindingTrailTopGetter); emit.StoreLocal(bt);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineExtraTrailTopGetter); emit.StoreLocal(xt);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(h);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineEGetter); emit.StoreLocal(ee);
+            emit.LoadArgument(0); EmitHelperCall(emit, EngineBeginIlGuardMethod); emit.StoreLocal(hb);
+        }
+        // A mark: the IL local, or the activation's field under ADR-061.
+        void LoadMark(IlLocal? local, FieldInfo field)
+        {
+            if (cpsFields)
+            {
+                emit.LoadArgument(0);
+                emit.LoadField(field);
+            }
+            else emit.LoadLocal(local!);
         }
         if (needsStub)
             guardFail = emit.DefineLabel($"cf_restore{salt}");
+        var after = emit.DefineLabel($"cf_after{salt}");
 
+        // The clause choice point the guard skipped, pushed late: at the commit
+        // when a wake is pending, or at a wake point inside the prefix.
+        void EmitMaterializeCp()
+        {
+            IlLabel? noCp = null;
+            if (dynamicCursor is not null)
+            {
+                // Chain-tail sentinel (-1): no CP existed to materialize — the
+                // wakeup flush + cut still run (a goal boundary), CP-less.
+                noCp = emit.DefineLabel($"cf_rarenocp{salt}_{NextLabelSeq()}");
+                dynamicCursor(emit);
+                emit.LoadConstant(-1);
+                emit.BranchIfEqual(noCp);
+            }
+            if (WamCps)
+            {
+                // ADR-061: a WAM choice point, its BP the next alternative's marker.
+                emit.LoadArgument(0);
+                emit.LoadConstant(arity);
+                if (dynamicCursor is not null)
+                {
+                    EmitFunctorId(emit, _emitOwnerFid);
+                    dynamicCursor(emit);
+                    EmitHelperCall(emit, EngineResumeMarkerOfMethod);
+                }
+                else EmitResumeMarker(emit, _emitOwnerFid, lazyCpCursor);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushCpWithMarksMethod);
+                }
+                else EmitHelperCall(emit, EnginePushChoicePointMethod);
+                if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+            }
+            else
+            {
+                emit.LoadArgument(0);
+                self(emit);
+                if (dynamicCursor is not null) dynamicCursor(emit);
+                else emit.LoadConstant(lazyCpCursor);
+                emit.LoadConstant(arity);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushIlCpWithMarksMethod);
+                }
+                else
+                {
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
+                }
+                if (dynamicCursor is null) CpsRecordAlternative(lazyCpCursor);
+                EmitCpsTagChoicePoint(emit);
+            }
+            // The push saved the current registers — but the guard may have
+            // clobbered argument registers with call staging (regSave). Patch the
+            // CP's saved args back to the clause-entry values so a failing wakeup
+            // hook backtracks the next clause/bucket-node into entry state, not
+            // the guard's staging.
+            if (regs is not null)
+            {
+                for (int r = 0; r < arity; r++)
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(r);
+                    emit.LoadLocal(regs[r]);
+                    EmitHelperCall(emit, EngineSetTopCpArgRegisterMethod);
+                }
+            }
+            if (noCp is not null) emit.MarkLabel(noCp);
+        }
+
+        // ADR-049: a wake point in the prefix pushes the skipped choice point
+        // and hands the activation to the interpreter (EmitScopedWakePoint).
+        // wakeDeopt: whether the predicate runs from its bytecode's address.
+        GuardScope? guardScope = WakePoints && wakeDeopt is { } hasBytecode
+            ? PushScope(new GuardScope
+            {
+                MaterializeCp = EmitMaterializeCp,
+                Opaque = !cpsFields,
+                HasBytecode = hasBytecode,
+            })
+            : null;
         emitSlice(clauseStart, g.CutPc, guardFail);         // head/guard prefix
+        if (guardScope is not null) PopScope(guardScope);
 
         // The commit's cut: neck_cut, or the framed deep cut to Y[slot].
         void EmitTheCut()
@@ -1696,78 +1854,67 @@ public sealed partial class IlPredicateCompiler
                 int slot = BytecodeIO.ReadInt32(code, g.CutPc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
-                emit.Call(EngineCutToLevelMethod);
+                EmitHelperCall(emit, EngineCutToLevelMethod);
             }
             else
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineNeckCutMethod);
+                EmitHelperCall(emit, EngineNeckCutMethod);
             }
         }
 
         // ---- Commit (replaces the cut opcode). ----
+        // ADR-061: a point to resume at; its slow paths leave from here.
+        if (cpsFields) CpsInstructionBoundary(emit, false);
         var rare = emit.DefineLabel($"cf_rare{salt}");
-        var after = emit.DefineLabel($"cf_after{salt}");
         emit.LoadArgument(0);
-        emit.Call(EngineHasPendingWakeupsGetter);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        {
+            emit.LoadArgument(0);
+            LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(hb, CpsGuardHbField);
+            EmitHelperCall(emit, EngineCommitIlGuardMethod);
+        }
         emit.Branch(after);
         emit.MarkLabel(rare);
-        Sigil.Label? rareNoCp = null;
-        if (dynamicCursor is not null)
+        bool rareLeft = cpsFields && EmitColdExit(emit);
+        if (!rareLeft)
         {
-            // Chain-tail sentinel (-1): no CP existed to materialize — the
-            // wakeup flush + cut still run (a goal boundary), CP-less.
-            rareNoCp = emit.DefineLabel($"cf_rarenocp{salt}");
-            dynamicCursor(emit);
-            emit.LoadConstant(-1);
-            emit.BranchIfEqual(rareNoCp);
+        EmitMaterializeCp();
+        // The flush runs Prolog code, which may run other guards: the marks the
+        // commit needs are kept across it in locals.
+        IlLocal? rareBt = null, rareXt = null, rareHb = null;
+        if (g.NeedsSnapshot && cpsFields)
+        {
+            rareBt = emit.DeclareLocal<int>($"cf_rarebt{salt}");
+            LoadMark(bt, CpsGuardBtField);
+            emit.StoreLocal(rareBt);
+            rareXt = emit.DeclareLocal<int>($"cf_rarext{salt}");
+            LoadMark(xt, CpsGuardXtField);
+            emit.StoreLocal(rareXt);
+            rareHb = emit.DeclareLocal<int>($"cf_rarehb{salt}");
+            LoadMark(hb, CpsGuardHbField);
+            emit.StoreLocal(rareHb);
         }
         emit.LoadArgument(0);
-        self(emit);
-        if (dynamicCursor is not null) dynamicCursor(emit);
-        else emit.LoadConstant(lazyCpCursor);
-        emit.LoadConstant(arity);
-        if (g.NeedsSnapshot)
-        {
-            emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!);
-            emit.LoadLocal(hb!); emit.LoadLocal(ee!);
-            emit.Call(EnginePushIlCpWithMarksMethod);
-        }
-        else
-        {
-            emit.Call(EnginePushIlCpMethod);
-        }
-        // The push saved the CURRENT registers — but the guard may have
-        // clobbered argument registers with call staging (regSave). Patch the
-        // CP's saved args back to the clause-ENTRY values so a failing wakeup
-        // hook backtracks the next clause/bucket-node into entry state, not
-        // the guard's staging. (Latent since case B shipped; exposed by the
-        // indexed-bucket extension on `choose(X,[V|_]) :- X = V, !.` — the
-        // guard's unify_variable_x clobbers A1 with the list head, and the
-        // clpfd wakeup's failure then re-entered the sibling node with
-        // A1 = 9 instead of the list.)
-        if (regs is not null)
-        {
-            for (int r = 0; r < arity; r++)
-            {
-                emit.LoadArgument(0);
-                emit.LoadConstant(r);
-                emit.LoadLocal(regs[r]);
-                emit.Call(EngineSetTopCpArgRegisterMethod);
-            }
-        }
-        if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
-        emit.LoadArgument(0);
-        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
         EmitTheCut();
         if (g.NeedsSnapshot)
-        { emit.LoadArgument(0); emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
+        {
+            emit.LoadArgument(0);
+            if (rareHb is not null)
+            { emit.LoadLocal(rareBt!); emit.LoadLocal(rareXt!); emit.LoadLocal(rareHb); }
+            else
+            { emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(hb!); }
+            EmitHelperCall(emit, EngineCommitIlGuardMethod);
+        }
+        }
         emit.MarkLabel(after);
+        // Committed: the guard's locals are dead, its body has boundaries.
+        cpsOpaque.Dispose();
 
         emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
             clauseEnd, failLabel);                          // post-commit body
@@ -1777,6 +1924,7 @@ public sealed partial class IlPredicateCompiler
         // resume marker is ever set for an inlined call).
         markDeadCursors?.Invoke();
 
+        using var stubOpaque = cpsFields ? default : CpsOpaque();
         if (needsStub)
         {
             // Guard-fail restore stub: undo the guard, then fall to the next
@@ -1785,13 +1933,28 @@ public sealed partial class IlPredicateCompiler
             if (g.Framed)
             {
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
             }
-            if (g.NeedsSnapshot)
+            // ADR-061: a point to resume at; the undo leaves from here. After
+            // the deallocate: the cold method runs from the boundary, and
+            // would pop the frame a second time.
+            if (cpsFields) CpsInstructionBoundary(emit, false);
+            if (g.NeedsSnapshot && cpsFields && CpsHotExit)
+            {
+                // Nothing bound: the undo is three stores. Else the cold method's.
+                var undone = emit.DefineLabel($"cf_undone{salt}");
+                emit.LoadArgument(0);
+                emit.Call(EngineTryFailIlGuardQuickMethod);
+                emit.BranchIfTrue(undone);
+                EmitColdExit(emit);
+                emit.MarkLabel(undone);
+            }
+            else if (g.NeedsSnapshot)
             {
                 emit.LoadArgument(0);
-                emit.LoadLocal(bt!); emit.LoadLocal(xt!); emit.LoadLocal(h!); emit.LoadLocal(hb!);
-                emit.Call(EngineFailIlGuardMethod);
+                LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField);
+                LoadMark(h, CpsGuardHField); LoadMark(hb, CpsGuardHbField);
+                EmitHelperCall(emit, EngineFailIlGuardMethod);
             }
             if (regs is not null)
             {
@@ -1800,7 +1963,7 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadArgument(0);
                     emit.LoadConstant(r);
                     emit.LoadLocal(regs[r]);
-                    emit.Call(EngineSetRegisterMethod);
+                    EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
             if (dynamicFailDispatch is not null) dynamicFailDispatch();

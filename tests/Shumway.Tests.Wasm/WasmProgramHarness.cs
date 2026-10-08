@@ -8,7 +8,7 @@ using WebAssembly.Runtime;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>Runs a whole compiled PROGRAM -- several predicates, calling and
+/// <summary>Runs a whole compiled program -- several predicates, calling and
 /// backtracking into each other -- on the desktop, with no engine and no
 /// browser. The predicates are compiled by <see cref="WasmPredicateCompiler"/>
 /// and executed by the emitter library's wasm-to-IL engine against one linear
@@ -18,7 +18,7 @@ namespace Shumway.Tests.Wasm;
 /// <para>The driver here is the interpreter's skeleton reduced to the verdict
 /// protocol: Success consults CP (a harness-encoded marker, or the top
 /// sentinel), SuccessTailCall dispatches Pc, Fail reads the top choice point
-/// OUT OF THE MEMORY IMAGE -- its BP names the module and cursor whose
+/// out of the memory image -- its BP names the module and cursor whose
 /// retry/trust does the restore -- and Deopt is an error, because nothing in
 /// a test corpus is supposed to step aside.</para></summary>
 public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
@@ -41,6 +41,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     private const int MarkerTag = 0x20000000;
     private const int TopSentinel = -1;
 
+    private readonly FunctionTable _functions = new(16, null);
     private readonly UnmanagedMemory _memory;
     private readonly List<(int FunctorId, Instance<WasmPredicateExports> Instance,
         IReadOnlyDictionary<int, int> CursorByAddress)> _preds = new();
@@ -72,6 +73,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             var instance = creator(new ImportDictionary
             {
                 { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
+            // Every module imports the thread's function table now: it is how
+            // one reaches another without going out to the host.
+            { WasmAbi.TableModule, WasmAbi.TableField, _functions },
             });
             _preds.Add((p.FunctorId, instance, entry.CursorByAddress));
         }
@@ -88,7 +92,28 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             ? idx
             : throw new InvalidOperationException(
                   $"the corpus calls functor {calleeFunctorId}, which it does not define");
-    int IWasmCompileEnv.EncodeDeoptPc(int bytecodePc) => bytecodePc;
+    int IWasmCompileEnv.EncodeAddress(int address) => address;
+
+    // The real id: the harness runs in this process, so nothing is relocated.
+    int IWasmCompileEnv.MqualFunctorId { get; } = Shumway.Core.FunctorTable.Intern(
+        Shumway.Core.AtomTable.Intern("$mqual", permanent: true).Id, 2);
+
+    int IWasmCompileEnv.ColonFunctorId { get; } = Shumway.Core.FunctorTable.Intern(
+        Shumway.Core.AtomTable.Intern(":", permanent: true).Id, 2);
+
+    // The harness open-codes only =/2, so that is the one goal form it
+    // offers; anything else it meets as a goal takes its own slow path.
+    IReadOnlyList<(int FunctorId, int BuiltinId)> IWasmCompileEnv.MetaCallableBuiltins
+    {
+        get
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern("=", permanent: true).Id, 2);
+            return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int bid)
+                ? new[] { (fid, bid) }
+                : System.Array.Empty<(int, int)>();
+        }
+    }
 
     bool IWasmCompileEnv.TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
@@ -347,7 +372,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     // ---- the driver ----
 
     /// <summary>The heap home of the fresh variable passed as argument
-    /// <paramref name="i"/> -- captured at Solve time, because the REGISTERS
+    /// <paramref name="i"/> -- captured at Solve time, because the registers
     /// are working state: choice-point restores overwrite them, so reading a
     /// register after the run tells you about the last restore, not about the
     /// answer.</summary>
@@ -439,7 +464,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
                         cursor = CursorOfAddress(predIndex, cp & 0xFFFF);
                         break;
                     }
-                    // same predicate, resumed at the request's ADDRESS
+                    // same predicate, resumed at the request's address
                     cursor = CursorOfAddress(predIndex, retCursor);
                     break;
                 }
@@ -455,11 +480,11 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
 
     /// <summary>The driver's half of backtracking: the failing module already
     /// handled its own choice points; what reaches here is a CP belonging to
-    /// ANOTHER module (or none). The CP's BP names it.</summary>
+    /// another module (or none). The CP's BP names it.</summary>
     private bool Backtrack() => TryPopForeign(out int p, out int c) && Drive(p, c);
 
     /// <summary>A handful of builtins, emulated over the image: enough for
-    /// the corpus (type tests and =/2). The REAL integration runs the real
+    /// the corpus (type tests and =/2). The real integration runs the real
     /// registry against the real engine; what this exercises is the wasm side
     /// of the request protocol, which is identical.</summary>
     private bool RunBuiltin(int builtinId)
@@ -521,7 +546,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         return true;
     }
 
-    /// <summary>Marker payloads carry biased bytecode ADDRESSES (stable
+    /// <summary>Marker payloads carry biased bytecode addresses (stable
     /// across group rebuilds in the engine); the module runs on cursors, so
     /// every re-entry translates through the predicate's map. Address 0 is
     /// the fresh-entry convention.</summary>

@@ -32,7 +32,7 @@ public class Chunk76Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        // Phase 33 L2 — these tests pin the PGO PHASE MECHANICS, whose sample
+        // Phase 33 L2 — these tests pin the PGO phase mechanics, whose sample
         // counts are only query-count-deterministic under synchronous
         // promotion (background promotion leaves early queries on Tier-0,
         // where no instrumentation samples accumulate).
@@ -54,6 +54,7 @@ public class Chunk76Tests
         var engine = NewColorEngine(pgoThreshold: 100);
         engine.Query("color(red).");   // crosses promotion threshold
         int fid = Fid("color", 1);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(fid));
         // Indexed-atom shape → it carries a profile, phase 1.
         Assert.True(engine.IlPromotion.IsPgoInstrumented(fid));
@@ -147,6 +148,7 @@ public class Chunk76Tests
             """);
         engine.Query("greet.");
         int fid = Fid("greet", 0);
+        engine.IlPromotion.WaitForPendingPromotions();
         Assert.True(engine.IlPromotion.IsPromoted(fid));
         Assert.False(engine.IlPromotion.IsPgoInstrumented(fid));
         Assert.False(engine.IlPromotion.IsPgoOptimized(fid));

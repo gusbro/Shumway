@@ -54,6 +54,41 @@ build-time diagnostic constants (`-p:ShumwayDiag=true` and friends) are
 catalogued in [`docs/guide/configuration.md`](docs/guide/configuration.md) —
 the trace/dump/profile switches live there.
 
+### Measuring the WebAssembly tier
+
+The wasm tier exists for the browser, so **its performance is measured in a
+headless browser and nowhere else**. The desktop harness
+(`DesktopWasmWorld`) is for CORRECTNESS: it runs the same modules against
+the same engine, and a differential or a counter taken there is as good as
+any. A TIME taken there is not comparable, because the two worlds stage the
+engine's memory differently — the desktop world copies the live heap, stack
+and trail into linear memory on every chain entry, and the browser pins the
+engine's own arrays and copies nothing.
+
+That difference is structural rather than a choice. In the browser the
+.NET runtime is itself compiled to wasm, so the engine's arrays already
+live inside the linear memory the module imports: pinning one and handing
+over its address gives the module the real array, and there is nothing to
+copy because there is one memory. On the desktop the module runs against a
+private memory block while the arrays are managed objects in the CLR heap,
+two address spaces, and wasm code can only address offsets into its own
+memory. Pinning there would stop the GC moving an array; it would not move
+the array inside the block, so it buys nothing. Closing the gap would mean
+allocating the engine's areas in unmanaged memory inside that block, which
+is surgery on the interpreter and the heap GC for a harness's benefit.
+
+The gap is not a constant factor, which is why this is a rule and not a
+caveat. Measured on clpr, whose heap grows as it runs: on the desktop the
+per-crossing cost grew with the problem (35, 52, 91 us as the work doubled
+twice), making the tier look 5x SLOWER than Tier-0 and getting worse; in
+the browser the same program and the same counts came out 1.1-2.2x FASTER.
+The desktop number was not pessimistic, it was measuring the harness.
+
+Browser measurements go through the page's probes (`#wasmbench`,
+`#wasmgrain`), driven headless; see `docs/benchmarks/browser.md`. The
+counters (chains, deopts, builtin exits, hops) ARE comparable between the
+two worlds — they are counts, not times, and they come out identical.
+
 Guidelines for tests:
 
 - **Every WAM instruction and every builtin** carries tests for its semantics;

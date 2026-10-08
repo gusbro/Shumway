@@ -9,6 +9,10 @@ flushes became suspend/resume points over the phase-16 resume markers.
 Refines the deferred-wakeup design that has carried attributed variables
 since phase 4. Supersedes the once-semantics drain for the non-cut goal
 boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
+Amended 2026-10-03: compiled code wakes in front of builtins and inlined
+calls, and inside CP-free guards (points 9 and 10), with continuation methods
+(ADR-061) and in regions; a stretch of unifications is atomic, as SICStus
+documents (point 11).
 
 ## Context
 
@@ -145,6 +149,79 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    only at the next goal boundary. The wasm tier hands that restore to the
    interpreter while a wake is pending.
 
+9. **Compiled code wakes where Tier-0 does.** Tier-0 wakes in front of
+   every builtin and every call. Compiled code that runs a builtin, or
+   inlines a callee, checks the queue at the same point: one predicted
+   branch when it is empty. `=/2` is a unification and does not wake. With
+   continuation methods (ADR-061), a delegate arms the interrupt with a
+   marker that re-enters it at a wake cursor (from 2^18) placed before the
+   point; a continuation method leaves for its cold method at the
+   instruction's boundary, and the cold method arms it with a marker that
+   re-enters the cold method there (from 2^20). The interrupt saves the
+   builtin's or the callee's argument registers: at a `call_builtin` no
+   other register is live, since every goal ends a chunk. Without
+   continuation methods (regions, and the delegates of that mode) a point
+   resumes at the continuation of the call before it when only argument
+   staging lies between them (no argument register is live there, and the
+   staging binds nothing); any other point hands the activation to the
+   interpreter (point 10). The wasm tier hands its points to the
+   interpreter too. A predicate with no bytecode of its own keeps the
+   first form in every mode, and is not a region: a dynamic predicate's
+   snapshot (ADR-023), whose functor runs the live clause chain, and in a
+   bundle any predicate whose bytecode the bundle does not carry under its
+   functor.
+
+10. **A wake inside a construct that skipped a choice point hands the
+    activation to the interpreter.** A CP-free guard (ADR-031), and a
+    fail-direct callee inlined in one as a chain of clauses, keep in IL
+    locals what their choice point would hold (the argument registers, the
+    trail and heap marks) and raise HB at their entry, so every binding they
+    make is trailed. A wake point inside one makes the machine Tier-0's
+    there: it pushes the skipped choice points, outermost first; each
+    inlined callee's frame returns after its call site, and the cut level
+    its clause took becomes the choice point below its own. Then the
+    interpreter runs the rest of the activation from that point of the
+    bytecode and wakes there, as the wasm tier does when it steps aside; its
+    next call enters compiled code again. A failure backtracks into the
+    alternatives the woken goal left, then into the callee's next clause,
+    then into the guard's next clause, as in Tier-0. A chain's later clauses
+    are alternatives that enter the callee's bytecode. The callee's proceed
+    is such a point when the callee has clauses left
+    (`p(X, L) :- member(X, L), !.`). With ADR-033's shared copies the levels
+    outside a copy are known at run time only: the continuation stack names
+    the call site of each active copy, down to the guard's. The handover
+    needs the predicate's bytecode: a dynamic predicate's snapshot (ADR-023)
+    with such a point stays on Tier-0, and a guard that inlines a dynamic
+    snapshot (ADR-034) is not CP-free, since the woken goal could change
+    what it inlined. A bundle's persisted IL has these points too, into the
+    bytecode the bundle carries: each module's code is compiled from the
+    bytecode that module ships (the baked prelude's from the baked prelude,
+    whose helper predicates are numbered by the compile that made them), and
+    under `--strip-wam` the bundle keeps the bytecode of every predicate a
+    handover enters, its own or an inlined callee's. A persisted method whose
+    emission fails ends in a throw and is left out of the bundle's table, so
+    nothing binds it.
+
+11. **A stretch of unifications is atomic with respect to woken goals**, as
+    SICStus documents. The stretch is a clause's head unification and the
+    `=/2` goals of its body, and it continues across the clause's exit; any
+    other goal (a call, a builtin, a cut) ends it, and the woken goals run
+    in front of that goal. So `=/2` does not wake, and a return does not
+    wake unless it leaves a scope (the answer, a sub-run, the wake driver's
+    return) or enters compiled code that wakes at its own returns rather
+    than in front of every goal (code compiled for the debugger, which has
+    no wake points; the wasm tier hands such points to the interpreter). A
+    return into other compiled code, regions and bundles included, or into
+    bytecode continues the stretch. An arithmetic goal whose operands are
+    bound is part of the stretch, as in SICStus; one that reads an unbound
+    operand ends it, by an interrupt that saves its operand registers and
+    re-runs it from its first operand, so a woken goal that binds the operand
+    is backtracked into when the goal fails. One difference from SICStus 4.8
+    stays: it also wakes where a clause with a frame exits inside the
+    stretch, which it does not document and which would tie the rule to our
+    frames (lazy Y-slots, regions, CP-free guards). Here the stretch
+    continues into the caller.
+
 ### Staging
 
 Tier-1's flush sites are goal boundaries too (region `Call`/`Execute`/
@@ -169,6 +246,17 @@ canaries (`PreludeIlBakeTests`).
   once-drain per Decision §5, as do non-region IL bodies, which have never
   flushed at their call sites — their wakes surface at the surrounding
   region or interpreter boundaries, unchanged.
+- **Stage 2b: continuation methods.** Points 9 and 10, for the delegates
+  and the methods of ADR-061 (2026-10-03). A predicate with continuation
+  methods is entered at a wake's re-entry by its cold method; the
+  interpreter's table routes cursors from 2^20 there.
+- **Stage 2c: the stretch of unifications.** Point 11, in the interpreter
+  and the continuation methods (2026-10-03).
+- **Stage 2d: regions.** Points 9 to 11 in regions and the delegates
+  without continuation methods (2026-10-03): their points hand the
+  activation to the interpreter or resume at a call's continuation, and a
+  region's return no longer wakes. A bundle's persisted IL keeps the stage 2
+  points.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).
@@ -194,6 +282,12 @@ canaries (`PreludeIlBakeTests`).
   (`ResolveNestedCatch`) stops being involved on this path.
 - The debugger gains frames it never showed; the VSIX/DAP snapshot tests
   that count frames may need their expectations refreshed.
+- Points 9 and 10 cost one predicted branch per builtin and per inlined
+  call: under continuation methods the Van Roy set and Blint measured 0.99
+  to 1.00 against the code without them (one process, ABBA, minimum over
+  eight rounds). The handover is a rare path behind that branch, and the
+  alternatives it pushes are stubs after the code of the cold method and of
+  the delegates.
 
 ## Future (explicitly out of scope here)
 

@@ -32,7 +32,7 @@ public static class ShmoWriter
         bw.Write(ShmoFormat.Magic);
         bw.Write((uint)ShmoFormat.CurrentVersion);
         // First field of the body: the Shumway that wrote this file. The
-        // FORMAT version above says whether this reader can read it; this
+        // format version above says whether this reader can read it; this
         // says which build produced it — the thing a future format change
         // needs in order to diagnose an old file rather than just reject it.
         var gen = ShumwayVersion.Current;

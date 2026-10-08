@@ -123,8 +123,8 @@ public class ControlAndListsConformance
     {
         // length(L, L) itself is refused with a resource_error (the ISO
         // outcome -- pinned in ConformanceArcRegressionTests).
-        // What this pin holds: the aliased shape's NEIGHBOURS — a var
-        // length that is an ELEMENT is fine, and a nonvar non-integer
+        // What this pin holds: the aliased shape's neighbours — a var
+        // length that is an element is fine, and a nonvar non-integer
         // length still errors.
         var engine = new PrologEngine();
         Assert.True(engine.Query("length([N|T], N), N == 1, T == [].").Success);
@@ -144,8 +144,8 @@ public class ControlAndListsConformance
     [Fact]
     public void Findall_CutInGoal_StaysLocal()
     {
-        // §7.8.3: a cut in the GOAL argument of findall/bagof is local to
-        // the goal — it must stop the enumeration WITHOUT killing the
+        // §7.8.3: a cut in the goal argument of findall/bagof is local to
+        // the goal — it must stop the enumeration without killing the
         // driver's collect alternative. The static collect-loop rewrite
         // once spliced the goal bare and the cut escaped into the driver.
         var engine = new PrologEngine();
@@ -174,7 +174,7 @@ public class ControlAndListsConformance
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(length(_, a), error(type_error(integer, a), _), true).").Success);
-        // A non-list first argument FAILS rather than raising
+        // A non-list first argument fails rather than raising
         // type_error(list, _) — the de-facto standard (Neumerkel's length
         // case 4: length(2,0) is false); see LengthConformance.
         Assert.False(engine.Query("length(a, _).").Success);
@@ -184,9 +184,9 @@ public class ControlAndListsConformance
     public void NonCallableGoal_RaisesAtRuntime()
     {
         // A non-callable spliced into goal position (`{1^true}`-style
-        // sources) must be a CATCHABLE runtime type_error(callable, _),
+        // sources) must be a catchable runtime type_error(callable, _),
         // never a compile-time crash that kills the load. §7.6.2 converts
-        // the WHOLE construct, so the culprit is `(true,4)` — GNU agrees,
+        // the whole construct, so the culprit is `(true,4)` — GNU agrees,
         // and the conversion fires before `true` runs.
         var engine = new PrologEngine();
         Assert.True(engine.Query(
@@ -196,7 +196,7 @@ public class ControlAndListsConformance
     [Fact]
     public void SoftCutIf3_RunsEveryConditionSolution()
     {
-        // SICStus if/3: Then for EVERY solution of Cond; Else only when
+        // SICStus if/3: Then for every solution of Cond; Else only when
         // Cond never succeeded. predicate_property reports it built_in
         // (the Logtalk conformity testers gate on that).
         var engine = new PrologEngine();

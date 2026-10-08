@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>The fused cons helpers for the Tier-1 IL emit (GetListVarXVarX /
 /// GetListValXVarX + the IlPredicateCompiler peephole): the `get_list; unify_*_x;
-/// unify_variable_x` window becomes one call. Every test runs the SAME program at
+/// unify_variable_x` window becomes one call. Every test runs the same program at
 /// Tier-0 and as a persisted region-IL bundle and demands identical answers — the
 /// fused path must be semantics-invisible, including on the shapes that take the
 /// generic fallback (attvars, PSTR, bound non-list, failure + backtracking).</summary>
@@ -93,7 +93,7 @@ public class FusedConsIlTests
     [Fact]
     public void WriteMode_Build_ProducesTheSameList()
     {
-        // Splitting an unbound: arg2 bound, arg0/arg1 built in WRITE mode.
+        // Splitting an unbound: arg2 bound, arg0/arg1 built in write mode.
         var t0 = RunT0(Conc, "conc(A, B, [1,2,3]).")
             .Select(s => s["A"] + "/" + s["B"]).ToList();
         var t1 = RunT1(Conc, "conc(A, B, [1,2,3]).")
@@ -105,7 +105,7 @@ public class FusedConsIlTests
     [Fact]
     public void Failure_MidList_BacktracksCleanly()
     {
-        // The head value unify FAILS mid-cons on the second element; the trail
+        // The head value unify fails mid-cons on the second element; the trail
         // must restore, and the enumeration must keep yielding the later answers.
         AssertSameAnswers(
             Conc + "pick([1,2], x).\npick([1,3], y).\n",
@@ -182,9 +182,9 @@ public class FusedConsIlTests
     public void Struct2_ReadAndWrite_BothDirections()
     {
         // swap's head is get_structure pair/2 with VarVar (arg0 read) and the
-        // second arg builds in WRITE mode (ValVal or Var depending on codegen).
+        // second arg builds in write mode (ValVal or Var depending on codegen).
         AssertSameAnswers(Pairs, "swap(pair(1, dos), S).", "S");
-        // Reverse mode: destructure the OUTPUT, build the input.
+        // Reverse mode: destructure the output, build the input.
         AssertSameAnswers(Pairs, "swap(P, pair(x, y)).", "P");
     }
 

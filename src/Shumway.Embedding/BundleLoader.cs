@@ -48,6 +48,11 @@ internal sealed class BundleLoader
     /// can skip the WAM compile for those clauses.</summary>
     public void LoadBundle(Bundle bundle) => LoadBundleCore(bundle, bundleDir: null);
 
+    /// <summary>The modules the last bundle load brought in. Set as the load
+    /// finishes, so a nested load (an entry importing another bundle) has
+    /// already set and spent its own.</summary>
+    internal IReadOnlyList<string> LastLoadedModules { get; private set; } = Array.Empty<string>();
+
     /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
     /// debugger can open, and return its full path. Named for the module so
     /// <see cref="Shumway.Core.DebugSiteTable"/>'s base-name file identity matches the
@@ -55,27 +60,27 @@ internal sealed class BundleLoader
     /// which is the whole point of preferring it to a same-named <c>.pl</c> on disk that may
     /// have drifted.
     ///
-    /// <para>All of a program's modules share ONE directory, keyed by the EXECUTABLE (not the
-    /// process id): re-running the same binary materialises to the SAME paths, so the debugger
+    /// <para>All of a program's modules share one directory, keyed by the executable (not the
+    /// process id): re-running the same binary materialises to the same paths, so the debugger
     /// reuses its source windows and the breakpoints bound to those paths survive the new run —
     /// instead of opening a second identical window per module and orphaning every breakpoint
     /// (which is what a per-process directory did). One directory per program, N files for N
     /// modules — not N directories.</para>
     ///
-    /// <para>The file is made READ-ONLY. There is no hot relinking — an edit here could not
+    /// <para>The file is made read-only. There is no hot relinking — an edit here could not
     /// reach the running code, so it would only diverge silently from what executes. (The day
     /// we can reload edited source, drop the read-only flag.) If the module's source changed
     /// since a prior run (a recompile), the file is rewritten in place at the same path.</para></summary>
     private static string MaterialiseDebugSource(string moduleName, string source)
     {
-        // ADR-035 — write CONSISTENT line endings. The embedded source can carry mixed
+        // ADR-035 — write consistent line endings. The embedded source can carry mixed
         // CRLF/LF (a file edited on more than one platform), and the debugger's editor flags
         // that on open. Normalising CRLF -> LF -> CRLF removes the mix without moving any line:
         // every `\n` boundary the compiler counted the stop-site lines against is preserved, so
         // breakpoints and the entry stop still land where they should.
         string normalised = source.Replace("\r\n", "\n").Replace("\n", "\r\n");
 
-        // One directory for the whole program, keyed by the executable path; the FILE keeps its
+        // One directory for the whole program, keyed by the executable path; the file keeps its
         // clean "<module>.pl" name — the window title, and the base name the DebugSiteTable
         // matches stop sites against.
         string dir = Path.Combine(Path.GetTempPath(), "shumway-debug", ProgramKey());
@@ -113,7 +118,7 @@ internal sealed class BundleLoader
         return path;
     }
 
-    /// <summary>A short, STABLE (cross-process) key for the program, so all of its modules share
+    /// <summary>A short, stable (cross-process) key for the program, so all of its modules share
     /// one materialised-source directory that re-runs of the same binary reuse. The executable
     /// path (SHA-256, not <see cref="string.GetHashCode"/> — that is randomised per process, so
     /// it would give a different directory every run and defeat the whole point).</summary>
@@ -150,7 +155,7 @@ internal sealed class BundleLoader
     /// nothing defined or asserted just fails). Applied when a loaded
     /// bundle carries the Arity bit — separate compilation must not lose
     /// the CALL semantics the sources were written against. Deliberately
-    /// does NOT flip arity_compat itself: that is a consult/parse mode,
+    /// does not flip arity_compat itself: that is a consult/parse mode,
     /// and it would leak into unrelated files consulted after the bundle
     /// (their goal directives would be skipped as Arity annotations).</summary>
     private void ApplyArityRuntimeFlags()
@@ -159,7 +164,7 @@ internal sealed class BundleLoader
     }
 
     // The RequiresUnreferencedCode call below (RegisterForeignAssembly) is reached
-    // only for a bundle that DECLARES foreign assemblies — a deployment that must
+    // only for a bundle that declares foreign assemblies — a deployment that must
     // ship those DLLs beside the bundle anyway, and therefore cannot rely on
     // trimming to reason about them. Propagating the attribute instead would brand
     // every LoadBundle trim-unsafe, including the overwhelming majority of bundles
@@ -172,7 +177,7 @@ internal sealed class BundleLoader
     {
         ArgumentNullException.ThrowIfNull(bundle);
         // A bundle linked from Arity modules expects Arity call semantics:
-        // a call to an undefined (or abolished) predicate FAILS. Set the
+        // a call to an undefined (or abolished) predicate fails. Set the
         // flags before any entry loads; an explicit later
         // set_prolog_flag(unknown, _) still overrides.
         if (bundle.ArityCompat) ApplyArityRuntimeFlags();
@@ -234,13 +239,14 @@ internal sealed class BundleLoader
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
                     imports: shmo.Imports,
-                    dialect: shmo.Dialect));
+                    dialect: shmo.Dialect,
+                    clauseTerms: shmo.ClauseTerms));
             }
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link
         // --exe / --stdlib) so a bare engine (FromBundle / the generated
-        // --exe) gets the prelude without compiling it. A NORMAL engine
+        // --exe) gets the prelude without compiling it. A normal engine
         // already consulted the prelude in its constructor, so that entry is
         // redundant here — drop it to avoid a double install.
         if (E._modules.ContainsKey(Prelude.ModuleName)
@@ -251,10 +257,10 @@ internal sealed class BundleLoader
         }
         foreach (var entry in effectiveEntries)
         {
-            // replay the entry's `:- op/3` definitions BEFORE loading it.
-            // ADR-046 — into the MODULE'S OWN LAYER, not the global table
+            // replay the entry's `:- op/3` definitions before loading it.
+            // ADR-046 — into the MODULE'S own layer, not the global table
             // (a bundle module's private syntax must not change how later
-            // user text parses). A '*'-suffixed type marks an EXPORTED op:
+            // user text parses). A '*'-suffixed type marks an exported op:
             // it is also re-advertised so a post-load use_module of this
             // module installs it in the importer, and — bare-global modules
             // aside — a directly-usable module's exports reach user via the
@@ -275,7 +281,7 @@ internal sealed class BundleLoader
                     _ => (Shumway.Compiler.Parsing.OperatorType?)null,
                 } ;
                 if (opType is not { } t) continue;
-                // Bare-global text (no :- module/2) defined its ops in USER
+                // Bare-global text (no :- module/2) defined its ops in user
                 // at consult time — replay matches; only an export-qualified
                 // module's ops are scoped to its layer.
                 var opTarget = entry.IsExportQualified
@@ -310,7 +316,7 @@ internal sealed class BundleLoader
             }
             // ADR-035 — a Debuggable bundle bakes the debug-shape WAM (frames, Y-slots, no
             // trimming/LCO, stop sites + frame/variable maps) straight into its bytecode. Under
-            // a debug session we run THAT directly — no re-consult, zero recompile at load — and
+            // a debug session we run that directly — no re-consult, zero recompile at load — and
             // materialise the embedded source only for the debugger to open. The baked stop
             // sites already reference "<module>.pl" (by base name), and the materialised file
             // has that base name, so interning its full path upgrades the site's file to an
@@ -328,12 +334,12 @@ internal sealed class BundleLoader
             }
 
             // Otherwise (a non-Debuggable source-carrying entry): when debugging, show the code
-            // FROM that source. The source-stripped entry took the bytecode branch above; there
+            // from that source. The source-stripped entry took the bytecode branch above; there
             // is nothing to show but the module name, and the debugger resolves it the ordinary
             // way (by module name to a `<module>.pl` on disk). But here the exact text the
             // module was compiled from is in hand, so materialise it to a file the debugger can
             // open and stamp this consult's stop sites with that path — a breakpoint in the
-            // .shum's code then resolves to the code that is IN the .shum, not a possibly-
+            // .shum's code then resolves to the code that is in the .shum, not a possibly-
             // different .pl someone happens to have on disk. (This re-consult path is the
             // fallback for a Debug — not Debuggable — bundle loaded under a debug session.)
             int prevDebugFile = E._debugFileId;
@@ -360,10 +366,10 @@ internal sealed class BundleLoader
         }
 
         // Bind persisted Tier-1 IL. RegisterBoundDelegate is first-wins, so this
-        // must precede any Sigil warm — else warm compiles a region root
+        // must precede any IL warm — else warm compiles a region root
         // standalone and blocks the persisted delegate. A source-STRIPPED entry
         // warms inside LoadEntryFromBytecode (the entry loop above), which is why
-        // that path binds its OWN persisted IL first (BindPersistedIlForEntry at
+        // that path binds its own persisted IL first (BindPersistedIlForEntry at
         // the top of LoadEntryFromBytecode); this loop is the idempotent
         // whole-bundle pass (cached, first-wins) that also covers source-carrying
         // entries, whose warm runs in the loop below.
@@ -390,6 +396,15 @@ internal sealed class BundleLoader
         // ADR-015 cached static linked region so the next query rebuilds it.
         E._staticLink = null;
         E.InvalidatePersistent();
+        // The bundle's wasm modules wait for that link: a wasm tier installs
+        // them when the next query setup links (or on its own tick). Queued
+        // whether or not a tier is attached yet -- the web boot attaches its
+        // tier after loading the stdlib bundle.
+        foreach (var module in bundle.WasmModules)
+            E.IlPromotion.PendingWasmModules.Add(module);
+        LastLoadedModules = effectiveEntries
+            .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
+            .Distinct().ToList();
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
@@ -416,7 +431,7 @@ internal sealed class BundleLoader
     /// compute the runtime id (or recompute the resume marker via
     /// <see cref="Shumway.Core.Activation.EncodeResumeMarker"/>), and write
     /// the four little-endian bytes back into <paramref name="ilBytes"/>
-    /// at that offset. Runs BEFORE <c>Assembly.Load</c> so the JIT sees
+    /// at that offset. Runs before <c>Assembly.Load</c> so the JIT sees
     /// runtime values as inline IL constants — zero per-dispatch
     /// overhead.</summary>
     /// <summary>Stage B.1 — populate the interpreter's
@@ -430,20 +445,29 @@ internal sealed class BundleLoader
     /// (skips sites whose opcode is no longer <c>Call</c>, e.g. when
     /// a re-link revisits a previously-rewritten persistent buffer).</summary>
     private int _diagCallIlCount;
+
+    /// <summary>ADR-061: every promoted predicate's continuation methods, into
+    /// this query's activation.</summary>
+    private void InstallCpsTables(Shumway.Interpreter.BytecodeInterpreter interp)
+    {
+        foreach (var (fid, cps) in E.IlPromotion.CpsEntries())
+            interp.Activation.InstallCps(fid, cps.Entry, cps.Resumes, cps.AltEntry);
+    }
     // Per-program-state cache for InstallCallIlRewrites. The persistent
-    // buffer's call-site rewrites are IN-PLACE and idempotent — once walked,
+    // buffer's call-site rewrites are in-place and idempotent — once walked,
     // re-walking every predicate's sites per query is a pure no-op that
     // dominated warm query setup (~2.7 ms per QueryAll on a clpz-sized
     // program). Valid while the persistent buffer, the promotion set (installs
-    // via PromotedCount, evicts via EvictionStamp) and the program stamp are
-    // unchanged; a warm hit reuses the pending-site map, the fid-keyed
+    // via PromotedCount, evicts via EvictionStamp), the continuation methods
+    // (CpsCodeCount) and the program stamp are unchanged; a warm hit reuses the pending-site map, the fid-keyed
     // predicate view and the IL dispatch-table template, and walks only the
-    // QUERY overlay's few predicates.
+    // query overlay's few predicates.
     private sealed class CallSiteRewriteCache
     {
         public required byte[]? PersistentRef;
         public required int EvictionStamp;
         public required int PromotedCount;
+        public required int CpsCodeCount;
         public required int ProgramStamp;
         public required Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? PromotableCallSites;
         public required Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PredicateByFid;
@@ -460,7 +484,7 @@ internal sealed class BundleLoader
         _diagCallIlCount = 0;
         _rewriteInterp = interp;
         // ADR-034 cross-activation variant: mutation-time IlByFunctorId slot
-        // clearing must reach EVERY live interpreter, not just the current one
+        // clearing must reach every live interpreter, not just the current one
         // (a suspended outer activation's table otherwise keeps dispatching an
         // evicted dynamic snapshot — the Logtalk-under-promotion silent
         // failure: '$lgt_current_object_'/11 served pre-assert answers).
@@ -474,6 +498,7 @@ internal sealed class BundleLoader
             && ReferenceEquals(cache.PersistentRef, E._persistentProgram)
             && cache.EvictionStamp == E.IlPromotion.EvictionStamp
             && cache.PromotedCount == E.IlPromotion.PromotedCount
+            && cache.CpsCodeCount == E.IlPromotion.CpsCodeCount
             && cache.ProgramStamp == E._programStamp;
 
         Func<Shumway.Core.Activation, int, bool>?[]? ilTable;
@@ -488,6 +513,7 @@ internal sealed class BundleLoader
             predicateByFid = cache.PredicateByFid;
             _promotableCallSites = cache.PromotableCallSites;
             interp.IlByFunctorId = ilTable;
+            InstallCpsTables(interp);
             DiagIlTable(ilTable);
             // Only the query overlay's predicates need their sites classified —
             // the persistent buffer's were rewritten in place on the cold walk.
@@ -514,12 +540,13 @@ internal sealed class BundleLoader
                 if (del is null) continue;
                 // Method-group conversion: del.Invoke creates a
                 // Func<Activation,int,bool> that calls through to del.
-                ilTable[fid] = del.Invoke;
+                ilTable[fid] = E.IlPromotion.TableEntry(fid, del);
             }
         }
         // The interp gets its own copy; the pristine array is the template.
         interp.IlByFunctorId = ilTable is null
             ? null : (Func<Shumway.Core.Activation, int, bool>?[])ilTable.Clone();
+        InstallCpsTables(interp);
         DiagIlTable(interp.IlByFunctorId);
 
         // Stage B.2 — build a fid-keyed view of
@@ -540,6 +567,7 @@ internal sealed class BundleLoader
             PersistentRef = E._persistentProgram,
             EvictionStamp = E.IlPromotion.EvictionStamp,
             PromotedCount = E.IlPromotion.PromotedCount,
+            CpsCodeCount = E.IlPromotion.CpsCodeCount,
             ProgramStamp = E._programStamp,
             PromotableCallSites = _promotableCallSites,
             PredicateByFid = predicateByFid,
@@ -594,15 +622,15 @@ internal sealed class BundleLoader
                 if (buf[bufOffset] != expected) continue;
 
                 // Prefer the IL variant when IL is available.
-                // ADR-023/034 — but never for a DYNAMIC callee: its delegate
-                // (the bundle-baked or runtime-promoted snapshot) is EVICTED
+                // ADR-023/034 — but never for a dynamic callee: its delegate
+                // (the bundle-baked or runtime-promoted snapshot) is evicted
                 // on the first assert/retract, while a CallIl/ExecuteIl
                 // rewrite persists in the buffer across queries — the
                 // hardened site would run the stale snapshot (or crash on
                 // the cleared table slot). Dynamic callees stay on the
                 // generic Call/Execute path, whose OnDispatch resolves per
                 // call and sees the eviction. (The pre-fix symptom:
-                // `assertz(f(7)), f(7)` FALSE through a baked-snapshot
+                // `assertz(f(7)), f(7)` false through a baked-snapshot
                 // bundle — the ISO logical update view broken.)
                 bool hasIl = !E._dynStore.IsDynamic(calleeFid)
                     && ilTable is not null
@@ -626,7 +654,7 @@ internal sealed class BundleLoader
                 //   - the callee is unresolved (no CompiledPredicate at
                 //     link time — e.g., an assertz-auto-promoted
                 //     functor materialised after the linker ran)
-                //   - the callee MAY still be promotable
+                //   - the callee may still be promotable
                 //   - the callee is a dynamic predicate. Dynamic
                 //     dispatch goes through the JitIndexProfile (chunk
                 //     75) counter inside OnDispatch — rewriting to
@@ -666,7 +694,7 @@ internal sealed class BundleLoader
     }
 
     // generic Call/Execute sites whose callee may promote later,
-    // indexed by callee fid, in the PERSISTENT buffer. Rebuilt every query setup
+    // indexed by callee fid, in the persistent buffer. Rebuilt every query setup
     // (see InstallCallIlRewrites); consumed by OnCalleePromoted.
     private Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? _promotableCallSites;
     private Shumway.Interpreter.BytecodeInterpreter? _rewriteInterp;
@@ -691,7 +719,9 @@ internal sealed class BundleLoader
             table?.CopyTo(grown, 0);
             interp.IlByFunctorId = table = grown;
         }
-        table[calleeFid] = del.Invoke;
+        table[calleeFid] = E.IlPromotion.TableEntry(calleeFid, del);
+        if (E.IlPromotion.TryGetCps(calleeFid) is { } cps)   // ADR-061
+            interp.Activation.InstallCps(calleeFid, cps.Entry, cps.Resumes, cps.AltEntry);
         // 2. Patch the recorded persistent-buffer sites.
         if (_promotableCallSites is null
             || !_promotableCallSites.TryGetValue(calleeFid, out var sites)) return;
@@ -756,8 +786,8 @@ internal sealed class BundleLoader
     // parameter (the ADR-011 invariant), functor ids come from the process-
     // global atom/functor tables, and resume markers are process-global dense
     // ids — and the patch application itself is deterministic within a process
-    // (each sentinel resolves by NAME through the global tables). So the load
-    // is done ONCE per IL content for the process lifetime and shared across
+    // (each sentinel resolves by name through the global tables). So the load
+    // is done once per IL content for the process lifetime and shared across
     // engines, mirroring the _loadedNativeLibraries table. Without this, an
     // EnginePool loading the same bundle N times paid N Assembly.Loads and N
     // JITs of identical code. Entries never evict — like a loaded native
@@ -765,11 +795,77 @@ internal sealed class BundleLoader
     // AssemblyLoadContext here by design: the delegates are cached globally).
     private sealed class PersistedIlModule
     {
-        public required List<(int Slot, int FunctorId,
-            Shumway.Compiler.Il.PredicateDelegate Delegate)> Bound;
+        public required List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
+            bool Wakes)> Bound;
+        public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
+        public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
+
+        private Dictionary<int, Shumway.Compiler.Il.PredicateDelegate>? _byFunctor;
+
+        public Shumway.Compiler.Il.PredicateDelegate? DelegateOf(int functorId)
+        {
+            if (_byFunctor is null)
+            {
+                var map = new Dictionary<int, Shumway.Compiler.Il.PredicateDelegate>(Bound.Count);
+                foreach (var (_, fid, del, _) in Bound) map[fid] = del;
+                _byFunctor = map;
+            }
+            return _byFunctor.TryGetValue(functorId, out var d) ? d : null;
+        }
+
+        // ADR-061: where each predicate's continuation methods are in Type.
+        // Bound and compiled when the predicate is hot, once per process.
+        public required Type Type;
+        public Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? CpsLayouts;
+        private readonly Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode> _cps = new();
+
+        /// <summary>The predicate's continuation methods, compiled on the
+        /// caller's thread (the compile worker's).</summary>
+        public Shumway.Compiler.Il.IlPredicateCompiler.CpsCode BindCps(int functorId)
+        {
+            lock (_cps)
+            {
+                if (!_cps.TryGetValue(functorId, out var code))
+                    _cps[functorId] = code = Shumway.Compiler.Il.IlPredicateCompiler.BindCps(
+                        Type, CpsLayouts![functorId], functorId);
+                return code;
+            }
+        }
+    }
+
+    /// <summary>What an entry's compiled code holds, by predicate, read from its
+    /// table: the image is not touched. Functor ids are this process's.</summary>
+    private sealed class PersistedIlIndex
+    {
+        public required List<(int FunctorId, bool Wakes, bool HasCps, int Cost)> Predicates;
         public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
         public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
     }
+
+    // By the table's own bytes: engines that load one bundle share the index.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], PersistedIlIndex>
+        _persistedIndexes = new();
+
+    private static PersistedIlIndex ReadPersistedIndex(byte[] table) =>
+        _persistedIndexes.GetValue(table, static bytes =>
+        {
+            var index = new PersistedIlIndex { Predicates = new() };
+            foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name).Id, pe.Arity);
+                index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost));
+                if (pe.IndexGraph is { Length: > 0 } graph)
+                    (index.IndexGraphs ??= new())[fid] = graph;
+                if (pe.RegionMembers is { Count: > 0 } members)
+                    foreach (var (name, arity, cursor) in members)
+                    {
+                        int member = Shumway.Core.FunctorTable.Intern(
+                            Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+                        (index.RegionAliases ??= new())[member] = Activation.EncodeResumeMarker(fid, cursor);
+                    }
+            }
+            return index;
+        });
 
     private static readonly Dictionary<string, PersistedIlModule?> _loadedPersistedIl = new();
     private static readonly object _loadedPersistedIlLock = new();
@@ -824,7 +920,7 @@ internal sealed class BundleLoader
     }
 
     /// <summary>SHUMWAY_BUNDLE_DIAG=1 — cross-process bundle forensics: a child
-    /// prints what it actually LOADED (hashes of the blobs, patch counts) to
+    /// prints what it actually loaded (hashes of the blobs, patch counts) to
     /// stderr, so a failing spawner's captured transcript can be lined up
     /// against the same hashes computed on the bytes it wrote. Matching hashes
     /// clear the file transfer and indict patch/execution in the child.</summary>
@@ -838,7 +934,7 @@ internal sealed class BundleLoader
     private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
     {
         // overwrite each baked build-time atom/functor/builtin id sentinel
-        // with the runtime-process id BEFORE handing the bytes to
+        // with the runtime-process id before handing the bytes to
         // Assembly.Load. Once the assembly is loaded its IL is read-only
         // mapped, so the patch must happen on the byte buffer (a copy so we
         // don't mutate the caller's reusable BundleEntry).
@@ -861,9 +957,9 @@ internal sealed class BundleLoader
                 + $"bytecode={DiagHash(entry.CompiledBytecode)} "
                 + $"ilEntries={DiagHash(entry.CompiledIlEntries)} "
                 + $"{IlCompileWorker.Describe()}");
-            // Re-verify every patch site against a FRESH intern of its name:
+            // Re-verify every patch site against a fresh intern of its name:
             // a mismatch here means the id the patch wrote and the id the
-            // table answers NOW disagree — the torn-intern signature the
+            // table answers now disagree — the torn-intern signature the
             // cross-process flake evidence points at (bytes verified good,
             // values wrong at runtime).
             if (entry.CompiledIlPatches is { Length: > 0 })
@@ -876,8 +972,10 @@ internal sealed class BundleLoader
 
         // Method-name layout from PersistedIlBuilder:
         //   P_{slot}_{functorId}_{sanitisedName}
+        // or, for a predicate with continuation methods, its cold method's
+        // name (ADR-061), which only the table gives.
         // when CompiledIlEntries is present (V3+ bundles), use the
-        // per-method (name, arity) table to intern the name in THIS process
+        // per-method (name, arity) table to intern the name in this process
         // and bind the delegate under the runtime functor id. Falls back to
         // parsing the build-time functor id from the method name only for
         // pre-V3 bundles (which never run cross-process correctly anyway).
@@ -885,6 +983,8 @@ internal sealed class BundleLoader
         Dictionary<string, byte[]>? graphByMethod = null;
         Dictionary<string, IReadOnlyList<(string Name, int Arity, int Cursor)>>?
             regionMembersByMethod = null;
+        Dictionary<string, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? cpsByMethod = null;
+        HashSet<string>? wakingMethods = null;
         if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
         {
             methodInfo = new Dictionary<string, (string, int, int)>();
@@ -896,16 +996,18 @@ internal sealed class BundleLoader
                     (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
                 if (pe.RegionMembers is { Count: > 0 } rm)
                     (regionMembersByMethod ??= new())[pe.MethodName] = rm;
+                if (pe.Cps is { } layout) (cpsByMethod ??= new())[pe.MethodName] = layout;
+                if (pe.Wakes) (wakingMethods ??= new()).Add(pe.MethodName);
             }
         }
-        var bound = new List<(int Slot, int FunctorId,
-            Shumway.Compiler.Il.PredicateDelegate Delegate)>();
+        var bound = new List<(int Slot, int FunctorId, Shumway.Compiler.Il.PredicateDelegate Delegate,
+            bool Wakes)>();
+        Dictionary<int, Shumway.Compiler.Il.IlPredicateCompiler.CpsLayout>? cpsLayouts = null;
         Dictionary<int, byte[]>? indexGraphs = null;
         Dictionary<int, int>? regionAliases = null;
         foreach (var method in type.GetMethods(
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
         {
-            if (!method.Name.StartsWith("P_")) continue;
             int slot;
             int functorId;
             if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
@@ -914,6 +1016,14 @@ internal sealed class BundleLoader
                 functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
                 slot = info.Slot;
             }
+            else if (methodInfo is not null)
+            {
+                // The table names every predicate's method: one outside it is
+                // a continuation method, a stub, or a method whose emission
+                // failed, a body that only throws.
+                continue;
+            }
+            else if (!method.Name.StartsWith("P_")) continue;
             else
             {
                 int u1 = method.Name.IndexOf('_');
@@ -928,7 +1038,9 @@ internal sealed class BundleLoader
             // blocks extension-method fallback for the generic call shape.
             var del = (Shumway.Compiler.Il.PredicateDelegate)method.CreateDelegate(
                 typeof(Shumway.Compiler.Il.PredicateDelegate));
-            bound.Add((slot, functorId, del));
+            if (cpsByMethod is not null && cpsByMethod.TryGetValue(method.Name, out var cpsLayout))
+                (cpsLayouts ??= new())[functorId] = cpsLayout;
+            bound.Add((slot, functorId, del, wakingMethods?.Contains(method.Name) == true));
             if (graphByMethod is not null
                 && graphByMethod.TryGetValue(method.Name, out var graphBytes))
                 (indexGraphs ??= new())[functorId] = graphBytes;
@@ -957,7 +1069,7 @@ internal sealed class BundleLoader
         {
             int size = bound.Max(b => b.Slot) + 1;
             var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
-            foreach (var (slot, _, del) in bound) arr[slot] = del;
+            foreach (var (slot, _, del, _) in bound) arr[slot] = del;
             dF.SetValue(null, arr);
         }
         return new PersistedIlModule
@@ -965,11 +1077,13 @@ internal sealed class BundleLoader
             Bound = bound,
             IndexGraphs = indexGraphs,
             RegionAliases = regionAliases,
+            Type = type,
+            CpsLayouts = cpsLayouts,
         };
     }
 
     // ---- process-wide static-region link cache ---------------
-    // The static region links once per ENGINE (caches it in
+    // The static region links once per engine (caches it in
     // E._staticLink), but an EnginePool loading the same bundle N times still
     // ran N identical full-program links on each engine's first query. The
     // link is a pure function of the ordered predicate list (bytecode +
@@ -978,14 +1092,14 @@ internal sealed class BundleLoader
     // covers the post-literal-remap bytecode bytes, so an engine whose
     // literal pools were populated in a different order simply misses and
     // links fresh — never a wrong hit. LinkResult is read-only downstream:
-    // its bytecode is COPIED into each engine's persistent buffer (per-engine
+    // its bytecode is copied into each engine's persistent buffer (per-engine
     // Call→CallIl patches land in the copy), and static switch tables are
     // never mutated (in-place mutation applies to dynamics only).
     private static readonly Dictionary<string, Shumway.Compiler.Wam.Linker.LinkResult>
         _sharedStaticLinks = new();
     private static readonly object _sharedStaticLinksLock = new();
 
-    // Crude growth bound: a long-lived process churning DISTINCT static
+    // Crude growth bound: a long-lived process churning distinct static
     // programs (a test suite, a REPL consulting repeatedly) would otherwise
     // accumulate full program images forever. The pool scenario this cache
     // exists for uses a handful of distinct programs, so wholesale reset on
@@ -1030,7 +1144,7 @@ internal sealed class BundleLoader
 
     /// <summary>Content fingerprint of the static link inputs: load offset
     /// plus, per predicate in order, functor id, bytecode bytes, and the
-    /// switch-table content (keys/values/default live OUTSIDE the bytecode)
+    /// switch-table content (keys/values/default live outside the bytecode)
     /// and call-site table (drives the linker's resolution).</summary>
     private static string StaticLinkKey(
         List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
@@ -1066,7 +1180,7 @@ internal sealed class BundleLoader
             }
             // ADR-035 — the debug metadata is part of the identity, even though it is
             // not part of the bytecode. Two programs can compile to byte-identical code
-            // and be written on entirely different LINES: the stop sites and the frame
+            // and be written on entirely different lines: the stop sites and the frame
             // maps are what tell them apart. Leaving them out of the key let one
             // program's link be handed to another, which then reported its neighbour's
             // source positions — a debugger showing the wrong file, with no error
@@ -1097,7 +1211,7 @@ internal sealed class BundleLoader
     }
 
     /// <summary>SHUMWAY_BUNDLE_DIAG audit: recompute every patch site's
-    /// runtime value from its NAME and compare with the four bytes the
+    /// runtime value from its name and compare with the four bytes the
     /// patch pass wrote moments ago. Agreement proves the id tables were
     /// stable across the application; a mismatch names the exact site,
     /// what was written, and what the table answers now.</summary>
@@ -1152,7 +1266,7 @@ internal sealed class BundleLoader
     }
 
     /// <summary>Resolves a <see cref="Shumway.Compiler.Il.IlPatchKind.Builtin"/>
-    /// patch to THIS process's registry id. Builtin ids are assigned in
+    /// patch to this process's registry id. Builtin ids are assigned in
     /// registration order, which is not process-portable — the name/arity
     /// pair is. A missing builtin fails loudly with its name: a silent 0
     /// would dispatch builtin #0 and reproduce the misdispatch this patch
@@ -1248,12 +1362,12 @@ internal sealed class BundleLoader
     /// <see cref="LoadBundleCore"/> loop.
     ///
     /// <para><paramref name="registerStaticPredicates"/> — true only for the
-    /// source-less path: there the bytecode IS the definition, so each predicate
+    /// source-less path: there the bytecode is the definition, so each predicate
     /// goes into <see cref="E._precompiledStaticPredicates"/>. For a source-carrying
     /// entry the source consult is the truth and the bytecode is only an IL-warm /
-    /// skip-compile cache, so it is NOT registered there.</para></summary>
+    /// skip-compile cache, so it is not registered there.</para></summary>
     /// <summary>Binds one entry's persisted Tier-1 IL into this engine — clone +
-    /// patch + Assembly.Load + delegate binding, done ONCE per IL content for the
+    /// patch + Assembly.Load + delegate binding, done once per IL content for the
     /// whole process (GetOrLoadPersistedIl, cached like the native libraries); a
     /// second call replays only the per-engine registrations. First-wins, so it
     /// is idempotent and safe to call both from LoadEntryFromBytecode (before its
@@ -1264,55 +1378,139 @@ internal sealed class BundleLoader
         if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
             || !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return;
-        var module = GetOrLoadPersistedIl(entry);
-        if (module is null)
+        if (entry.CompiledIlEntries is not { Length: > 0 } table)
         {
-            // The image loaded but its type could not surface — on .NET
-            // Framework this is a bundle whose IL was emitted by the .NET 10
-            // toolchain (System.Private.CoreLib refs Framework cannot
-            // resolve). Correctness survives on the bytecode, but silently
-            // losing the persisted tier hides a real deployment mistake.
-            if (!E._warnedIlUnbindable.Add(entry.ModuleName)) return;
-            E.Warn($"bundle entry '{entry.ModuleName}': persisted IL could not "
-                + "be bound on this runtime; using bytecode."
-#if NETFRAMEWORK
-                + " A bundle for a .NET Framework host must be linked with the"
-                + " net48 build of shumway-link."
-#endif
-                );
+            // No table (an old or a hand-built bundle): nothing says which
+            // predicate is which before the image loads, so all bind now.
+            if (LoadedModule(entry) is { } untabled)
+                foreach (var (_, functorId, del, wakes) in untabled.Bound)
+                    E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes);
             return;
         }
-        foreach (var (_, functorId, del) in module.Bound)
-            E.IlPromotion.RegisterBoundDelegate(functorId, del);
+        var index = ReadPersistedIndex(table);
+        // Nothing is compiled at load, nor is the image loaded when no
+        // predicate needs it yet. A predicate whose bytecode the engine has
+        // runs on it until it has earned its code (ADR-061), and the compile
+        // worker loads and binds it then; one with no bytecode (--strip-wam)
+        // has its delegate bound now, and so does a region's root that a
+        // member with no bytecode enters through its alias. With a threshold
+        // of zero every delegate is bound now.
+        bool atLoad = E.IlPromotion.PersistedThreshold <= 0;
+        HashSet<int>? withBytecode = null;
+        if (string.IsNullOrEmpty(entry.Source)
+            && E._precompiledModules.TryGetValue(entry.ModuleName, out var precompiled))
+        {
+            withBytecode = new HashSet<int>();
+            foreach (var pred in precompiled.Predicates)
+                if (pred.Bytecode.Length > 0) withBytecode.Add(pred.FunctorId);
+        }
+        HashSet<int>? aliasRoots = null;
+        if (index.RegionAliases is not null && withBytecode is not null)
+            foreach (var (member, marker) in index.RegionAliases)
+                if (!withBytecode.Contains(member))
+                    (aliasRoots ??= new()).Add(Activation.DecodeResumeMarker(marker).FunctorId);
+        PersistedIlModule? module = null;
+        bool unbindable = false;
+        foreach (var (functorId, wakes, hasCps, cost) in index.Predicates)
+        {
+            int fid = functorId;
+            if (!atLoad && withBytecode?.Contains(fid) != false && aliasRoots?.Contains(fid) != true)
+            {
+                E.IlPromotion.OfferPersisted(fid, wakes, E._dynStore.IsDynamic(fid),
+                    () => BindOffered(entry, fid), _ => WarnUnbindable(entry), cost);
+                continue;
+            }
+            if (unbindable) continue;
+            module ??= LoadedModule(entry);
+            if (module is null)
+            {
+                unbindable = true;
+                continue;
+            }
+            if (module.DelegateOf(fid) is not { } del) continue;
+            E.IlPromotion.RegisterBoundDelegate(fid, del, wakes);
+            var bound = module;
+            if (hasCps) E.IlPromotion.OfferBoundCps(fid, del, () => bound.BindCps(fid), cost);
+        }
         // A stripped indexed predicate carries its dispatch graph in the bundle.
         // Stash it by runtime functor id; each query's fresh engine gets it
         // registered at setup. Without a WAM body the delegate would otherwise
         // have nothing to rebuild the switch model from.
-        if (module.IndexGraphs is not null)
-            foreach (var kv in module.IndexGraphs)
+        if (index.IndexGraphs is not null)
+            foreach (var kv in index.IndexGraphs)
                 E._persistedIndexGraphs[kv.Key] = kv.Value;
         // A region method publishes its members' entry cursors; the alias marker
-        // dispatches the region delegate at the member's entry. Consulted by the
-        // warm below to skip a member the region already covers.
-        if (module.RegionAliases is not null)
-            foreach (var kv in module.RegionAliases)
+        // dispatches the region delegate at the member's entry.
+        if (index.RegionAliases is not null)
+            foreach (var kv in index.RegionAliases)
                 E._regionMemberAliases[kv.Key] = kv.Value;
+    }
+
+    // The entry's image, loaded now, on the caller's thread; null (after a
+    // warning) when this runtime cannot bind it.
+    private PersistedIlModule? LoadedModule(BundleEntry entry)
+    {
+        var module = GetOrLoadPersistedIl(entry);
+        if (module is null) WarnUnbindable(entry);
+        return module;
+    }
+
+    // The image loaded but its type could not surface — on .NET Framework
+    // this is a bundle whose IL was emitted by the .NET 10 toolchain
+    // (System.Private.CoreLib refs Framework cannot resolve). Correctness
+    // survives on the bytecode, but silently losing the persisted tier hides a
+    // real deployment mistake. Engine thread only.
+    private void WarnUnbindable(BundleEntry entry)
+    {
+        if (!E._warnedIlUnbindable.Add(entry.ModuleName)) return;
+        E.Warn($"bundle entry '{entry.ModuleName}': persisted IL could not "
+            + "be bound on this runtime; using bytecode."
+#if NETFRAMEWORK
+            + " A bundle for a .NET Framework host must be linked with the"
+            + " net48 build of shumway-link."
+#endif
+            );
+    }
+
+    // On the compile worker: the entry's image loaded (once per process), and
+    // the predicate's method and continuation methods compiled.
+    private static (Shumway.Compiler.Il.PredicateDelegate, Shumway.Compiler.Il.IlPredicateCompiler.CpsCode?)
+        BindOffered(BundleEntry entry, int functorId)
+    {
+        var module = GetOrLoadPersistedIl(entry)
+            ?? throw new InvalidOperationException(
+                $"bundle entry '{entry.ModuleName}': its persisted IL cannot be bound on this runtime.");
+        var del = module.DelegateOf(functorId)
+            ?? throw new InvalidOperationException(
+                $"bundle entry '{entry.ModuleName}': no compiled method for functor {functorId}.");
+        System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(del.Method.MethodHandle);
+        Shumway.Compiler.Il.IlPredicateCompiler.CpsCode? cps = null;
+        if (module.CpsLayouts?.ContainsKey(functorId) == true)
+        {
+            // Without them the predicate runs on its delegate.
+            try { cps = module.BindCps(functorId); }
+            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
+                                           or MissingMethodException)
+            {
+            }
+        }
+        return (del, cps);
     }
 
     private Shumway.Compiler.Wam.CompiledModule DecodeAndRegisterPrecompiledModule(
         BundleEntry entry, bool registerStaticPredicates)
     {
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode!);
-        // Remap COMPILE-TIME, module-local float/string/bigint literal ids into the
-        // engine's ONE shared E._literalPools (mutating the freshly-decoded bytecode in
+        // Remap compile-time, module-local float/string/bigint literal ids into the
+        // engine's one shared E._literalPools (mutating the freshly-decoded bytecode in
         // place) — else a static literal reads whatever value sits at that id in the
         // merged pool (the two-float bug). Afterward every id indexes the live pool,
         // so IL float value-baking reads E._literalPools.Floats directly.
         E.RemapPrecompiledLiterals(module);
         E._precompiledModules[entry.ModuleName] = module;
-        // Register the predicates but do NOT eagerly Sigil-compile them here.
+        // Register the predicates but do not eagerly IL-compile them here.
         // A t0 bundle (no persisted IL) has nothing bound, so a load-time
-        // warm-all would Sigil-compile every static predicate — ~900 on a clpz
+        // warm-all would IL-compile every static predicate — ~900 on a clpz
         // bundle, ~1.5 s of load — most of which never run hot. Lazy is the
         // default: a predicate promotes at runtime once its invocation counter
         // crosses the threshold (background compile). A program that wants the
@@ -1372,7 +1570,7 @@ internal sealed class BundleLoader
                 Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
                 imp.Pred.Arity)] = imp.Source;
 
-        // A BAKED prelude is still the prelude: its predicates are library
+        // A baked prelude is still the prelude: its predicates are library
         // predicates, and predicate_property/2 must report them built_in,
         // current_predicate/1 must skip them and listing/1 must not show
         // them — exactly as the live consult records (ConsultPipeline's
@@ -1386,7 +1584,7 @@ internal sealed class BundleLoader
             int fid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
                 d.Indicator.Arity);
-            // Statics only: the live consult records CLAUSE heads, so a
+            // Statics only: the live consult records clause heads, so a
             // clauseless `:- dynamic` prelude predicate stays out — the
             // seeds loop below adds the ones that ship initial clauses.
             if (isPrelude && d.Visibility != PredicateVisibility.Dynamic)
@@ -1400,6 +1598,9 @@ internal sealed class BundleLoader
                 if (!E._dynStore.HasClauses(fid))
                     E._dynStore[fid] = new List<Clause>();
             }
+            // An expansion hook is global, as the consult that compiled this
+            // module made it (see the shipped clauses below).
+            else if (PrologEngine.IsGlobalHookFunctor(fid)) { }
             else // Local — record the bare fid so query setup can fold
                  // it into the module's locals.
             {
@@ -1410,6 +1611,35 @@ internal sealed class BundleLoader
                 }
                 localSet.Add(fid);
             }
+        }
+
+        // The raw static clauses back clause/2 and listing/1 exactly as
+        // the consult of the same source would (privacy is judged at
+        // clause/2 time). Shipped, not compiled: the entry's bytecode is
+        // what runs. Never for the prelude: its predicates are builtins.
+        // An expansion hook's clauses are the exception: compiled from source,
+        // as the consult that built this module left them, they join the one
+        // global hook that every later consult runs, each body resolved in its
+        // module. The entry's bytecode holds them as a local of the module,
+        // which expands nothing: a library that exists to install a hook
+        // (Scryer's atts) did nothing for a program loaded after it.
+        bool joinedHook = false;
+        if (!isPrelude)
+            foreach (var encoded in entry.ClauseTerms)
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                if (ConsultPipeline.IsHookClauseHead(clause))
+                {
+                    manifest.Clauses.Add(clause);
+                    joinedHook = true;
+                }
+                else manifest.ShippedClauses.Add(clause);
+            }
+        if (joinedHook)
+        {
+            E._hookIndexValid = false;
+            foreach (int hookFid in PrologEngine.GlobalHookFunctors)
+                E.InvalidateIlForFunctor(hookFid);
         }
 
         // seed _dynamicClauses with the source-declared
@@ -1427,27 +1657,45 @@ internal sealed class BundleLoader
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
             // Mirror the live consult exactly: it records the heads of
-            // CLAUSES in the source, so a `:- dynamic` prelude predicate
+            // clauses in the source, so a `:- dynamic` prelude predicate
             // joins only when it ships initial clauses. '$wfs_active' (no
-            // clauses, asserted by the WFS driver) must NOT join — marked
+            // clauses, asserted by the WFS driver) must not join — marked
             // built_in it would trip the prelude clause/2 privacy guard the
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
+            bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
+                && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
                 E._dynStore.AppendClause(fid, TermCodec.DecodeClause(encoded));
-            // ADR-023 priming — a bundle's `:- dynamic`/`:- visible` predicate
-            // shipped WITH clauses runs as its Tier-1 IL snapshot from the first
-            // call (evictable on the first mutation).
             if (seed.EncodedClauses.Count > 0)
-                E.IlPromotion.MarkPrime(fid);
+            {
+                // Every dynamic-store mutation funnels through
+                // InvalidateDynamicCache — the ADR-015 generation, the
+                // compiled-form drop, the ADR-023 eviction. This append is a
+                // mutation like any other, and skipping the funnel left the
+                // compiled trampoline's first-argument switch without the new
+                // clauses' keys: with two libraries seeding one hook
+                // (verify_attributes/4), a bound-module call missed the
+                // second library's clause and failed while clause/2 saw it —
+                // freeze/2 broke if coroutining loaded after clpfd.
+                E.InvalidateDynamicCache(fid);
+                // ADR-023 priming — a bundle's `:- dynamic`/`:- visible`
+                // predicate shipped with clauses runs as its Tier-1 IL
+                // snapshot from the first call (evictable on the first
+                // mutation). Only when this entry is the slot's sole
+                // contributor: the snapshot holds this entry's clauses, and
+                // over a shared slot it would run a subset.
+                if (!hadClauses)
+                    E.IlPromotion.MarkPrime(fid);
+            }
             // remember which module these clauses came from.
             // The entry's static bytecode was mangled by ShmoCompiler
             // under entry.ModuleName, so the query-setup rewrite of these
-            // rehydrated clauses must run under the SAME module context
+            // rehydrated clauses must run under the same module context
             // (module name + that module's locals) or a body call to a
             // module-local predicate stays bare while its target is
-            // `module$name`-mangled. NOT for multifile seeds: their clauses
+            // `module$name`-mangled. Not for multifile seeds: their clauses
             // were pre-mangled at compile time under their origin module,
             // and one fid holds several modules' contributions — a single
             // seed module would rewrite the other contributors' clauses
@@ -1480,17 +1728,12 @@ internal sealed class BundleLoader
             E.RegisterNativePrototypes(
                 Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls!));
 
-        // Bind this entry's persisted Tier-1 IL BEFORE the warm below. A
-        // source-stripped IL bundle warms here, and RegisterBoundDelegate is
-        // first-wins: if warm ran first it would Sigil-compile the region roots
-        // standalone and block the persisted delegates (measured: 692 of 1644
-        // persisted delegates lost on a clpz bundle at threshold 32). Binding
-        // here also publishes _regionMemberAliases so the warm skips region
-        // members. Idempotent — the whole-bundle pass re-runs it (cached).
-        BindPersistedIlForEntry(entry);
-        // Decode + literal-remap + record + warm IL (the bytecode IS the definition
-        // here, so register the static predicates).
+        // Decode + literal-remap + record (the bytecode is the definition here,
+        // so register the static predicates), then offer the entry's persisted
+        // Tier-1 IL: which predicates have bytecode decides what is bound now.
+        // Idempotent — the whole-bundle pass re-runs it (cached).
         DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: true);
+        BindPersistedIlForEntry(entry);
 
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the

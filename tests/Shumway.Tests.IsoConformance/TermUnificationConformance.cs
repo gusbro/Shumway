@@ -181,7 +181,7 @@ public class TermUnificationConformance
     }
 
     // An ALREADY-cyclic input (built by plain =/2) is a legal rational
-    // tree in this engine: the occurs check bars only the creation of NEW
+    // tree in this engine: the occurs check bars only the creation of new
     // cycles, so a fresh variable binds to it and two cyclic operands
     // unify coinductively (Trealla agrees; these used to loop forever in
     // the occurs-check walk, then to fail under the pre-rational policy).
@@ -292,7 +292,7 @@ public class TermUnificationConformance
     [Fact]
     public void NotUnifiable_DoesNotBind()
     {
-        // ISO §8.2.3.2: \= does NOT keep the bindings of its trial
+        // ISO §8.2.3.2: \= does not keep the bindings of its trial
         // unification. After \=(X, foo) succeeds (which it won't for
         // a var), X must still be free.
         // Pin the not-bound aspect with: \=(X, foo) fails for var X;
@@ -305,8 +305,8 @@ public class TermUnificationConformance
     }
     // ===== occurs check over rational trees =====
     // The engine's terms are rational trees, so unify_with_occurs_check's
-    // check guards only the creation of NEW cycles (a variable binding into
-    // a term it occurs in). Already-cyclic INPUTS unify coinductively and a
+    // check guards only the creation of new cycles (a variable binding into
+    // a term it occurs in). Already-cyclic inputs unify coinductively and a
     // fresh variable may bind to one (Trealla agrees; their test0518).
 
     [Fact]
@@ -329,7 +329,7 @@ public class TermUnificationConformance
     {
         var e = new PrologEngine();
         Assert.False(e.Query("unify_with_occurs_check(X, f(X)).").Success);
-        // ...including one reached DEEP in a cyclic-vs-cyclic walk: the
+        // ...including one reached deep in a cyclic-vs-cyclic walk: the
         // coinductive pair success must not leak past the fresh X4 = s(X4)
         // bind attempt.
         Assert.True(e.Query(

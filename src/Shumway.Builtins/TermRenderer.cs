@@ -32,7 +32,7 @@ public static partial class TermRenderer
     }
 
 
-    /// <summary>Cycle gate for a compound reached in ARGUMENT position:
+    /// <summary>Cycle gate for a compound reached in argument position:
     /// true = proceed; <paramref name="added"/> / <paramref name="unrolling"/>
     /// say what this frame owns (path entry / the cell's one permitted
     /// unroll) and must remove on the way out. False = on the path and
@@ -94,7 +94,7 @@ public static partial class TermRenderer
 
     /// <summary>Reads a list's elements as text, one-char atoms or codes but
     /// never both, and hands back what it ended on. The verdict is on the
-    /// CONTENT (ADR-047 decision 7), so a packed list and the cons list it
+    /// content (ADR-047 decision 7), so a packed list and the cons list it
     /// denotes are read alike.</summary>
     private static bool TryCollectText(
         Activation engine, Cell lisCell, out string text, out Cell tail)
@@ -152,7 +152,7 @@ public static partial class TermRenderer
         {
             if (c == '"') { output.Write("\\\""); continue; }
             string? esc = EscapeQuotedChar(c);
-            // EscapeQuotedChar escapes the SINGLE quote for atoms; inside
+            // EscapeQuotedChar escapes the single quote for atoms; inside
             // double quotes that character is literal.
             if (esc is not null && c != '\'') output.Write(esc);
             else output.Write(c);
@@ -208,8 +208,8 @@ public static partial class TermRenderer
     /// <summary>The writeq-style form of an atom name: single-quoted (with
     /// <c>'</c> and <c>\</c> escaped) unless it needs no quoting. Shared with the
     /// debugger's AST renderer (ADR-035), whose Locals display must round-trip
-    /// through the Watch-window EDIT: showing the atom <c>'1234'</c> as bare
-    /// <c>1234</c> would make the user's re-typed value an INTEGER.</summary>
+    /// through the Watch-window edit: showing the atom <c>'1234'</c> as bare
+    /// <c>1234</c> would make the user's re-typed value an integer.</summary>
     public static string QuotedAtomName(string name)
     {
         if (NeedsNoQuoting(name)) return name;
@@ -228,7 +228,7 @@ public static partial class TermRenderer
     /// <summary>A name needs no quoting if it's a non-empty sequence of
     /// alphanumeric / underscore characters starting with a lowercase
     /// letter, a solo punctuation atom (<c>[]</c> / <c>{}</c> / <c>,</c>
-    /// / <c>!</c> / <c>;</c>), OR an all-symbolic atom — a non-empty run
+    /// / <c>!</c> / <c>;</c>), or an all-symbolic atom — a non-empty run
     /// of the ISO "graphic" characters (<c>+ - * / \ ^ &lt; &gt; = ~ :
     /// . ? @ # &amp; $</c>). The last case is what lets symbolic
     /// operators like <c>/</c> and <c>+</c> print unquoted under
@@ -283,7 +283,7 @@ public static partial class TermRenderer
     private static bool NeedsNoQuoting(string name)
     {
         if (name.Length == 0) return false;
-        // ',' and '.' as solo atoms MUST be quoted by writeq / write_canonical:
+        // ',' and '.' as solo atoms must be quoted by writeq / write_canonical:
         // a bare ',' is the argument/list separator and a bare '.' is the
         // end-of-clause token, so neither round-trips unquoted (SWI / GProlog:
         // writeq(',') => ','  and  writeq('.') => '.').
@@ -303,7 +303,7 @@ public static partial class TermRenderer
         // All-symbolic atom: every character is an ISO graphic char.
         if (IsSymbolChar(first))
         {
-            // …but a name that OPENS a block comment (`/*`) is consumed as a
+            // …but a name that opens a block comment (`/*`) is consumed as a
             // comment when written bare, so it must be quoted to round-trip.
             // (`*/`, `//*` etc. do not open a comment and stay bare.)
             if (name.StartsWith("/*", System.StringComparison.Ordinal)) return false;
@@ -362,7 +362,7 @@ public static partial class TermRenderer
                 int fIdx = cell.AsHeapIndex;
                 var (atomId, ar) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
                 string fname = AtomTable.GetById(atomId)?.Name ?? "";
-                // Under numbervars a '$VAR'(N≥0) renders as a LETTER, not the
+                // Under numbervars a '$VAR'(N≥0) renders as a letter, not the
                 // digit payload — `- '$VAR'(0)` is `-A` (Neumerkel #279), even
                 // when '$VAR' is also a registered operator.
                 if (options.Numbervars && ar == 1 && fname == "$VAR")
@@ -407,7 +407,7 @@ public static partial class TermRenderer
     private static bool CharsFuse(char a, char b)
         => (IsSymbolChar(a) && IsSymbolChar(b))
         || ((char.IsLetterOrDigit(a) || a == '_') && (char.IsLetterOrDigit(b) || b == '_'))
-        // A closing quote met by an opening quote reads as a DOUBLED quote
+        // A closing quote met by an opening quote reads as a doubled quote
         // inside one token — `'.'' '` is the single atom `.' ` — so quoted
         // tokens never touch (Neumerkel #333 `'.' ' '`).
         || (a == '\'' && b == '\'')
@@ -437,8 +437,8 @@ public static partial class TermRenderer
         int fidx = cell.AsHeapIndex;
         var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fidx).AsFunctorId);
         string nm = NameOfAtom(atomId);
-        // At EQUAL priority a fy operand needs parens only when it is
-        // LEFT-CLOSED (its left position is x): `- (X^2)` (vn #43, ^ xfy),
+        // At equal priority a fy operand needs parens only when it is
+        // left-closed (its left position is x): `- (X^2)` (vn #43, ^ xfy),
         // but `fy 1 yf` / `fy 1 yfx 2` stay bare (Neumerkel #149/#152 —
         // yf/yfx have a y left position, so the reader rebuilds them).
         if (arity == 2 && options.Operators.TryGetInfix(nm, out int ip, out OperatorShape ish))
@@ -452,10 +452,10 @@ public static partial class TermRenderer
     }
 
     /// <summary>True when <paramref name="cell"/> is an operator term of
-    /// priority exactly <paramref name="prec"/> that is OPEN ON THE RIGHT at
+    /// priority exactly <paramref name="prec"/> that is open on the right at
     /// that priority — a prefix fy term or an infix xfy term. Rendered bare in
     /// a y-LEFT operand position, the following operator token would bind
-    /// INSIDE it on re-read: `fy 1 yf` reads as fy(yf(1)), so yf(fy(1)) must
+    /// inside it on re-read: `fy 1 yf` reads as fy(yf(1)), so yf(fy(1)) must
     /// print `(fy 1)yf` (Neumerkel #150/#153/#156/#319).</summary>
     private static bool OperandOpenRightAt(
         Activation engine, Cell cell, int prec, TermRenderOptions options)

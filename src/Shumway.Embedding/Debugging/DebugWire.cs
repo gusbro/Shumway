@@ -24,8 +24,8 @@ public enum StopReason
 
     /// <summary>A step was in flight and control left Prolog: the query produced its
     /// answer, or ran out of answers. No port can satisfy the step now, so it is over.
-    /// This is NOT a stop to show the user — there is nothing to show, the machine is not
-    /// in the program — it is the engine telling the debugger to CANCEL the step it is
+    /// This is not a stop to show the user — there is nothing to show, the machine is not
+    /// in the program — it is the engine telling the debugger to cancel the step it is
     /// waiting on. The debugger cancels and lets the program run on.
     ///
     /// <para>Without it: F10 past the last goal of a query left Visual Studio waiting
@@ -38,7 +38,7 @@ public enum StopReason
     ///
     /// <para>Not a stop to show — the engine resumes the instant the debugger has read it, and
     /// the user never sees it. It exists because everything the debugger does with a file
-    /// (bind a breakpoint, colour a frame, open it when clicked) goes through a MODULE; a
+    /// (bind a breakpoint, colour a frame, open it when clicked) goes through a module; a
     /// module can only be created from inside a real stop event; and which files a program is
     /// made of is not settled when it starts, because a top level consults on demand. Without
     /// it the debugger learned the file at the next stop the user made — so their first break
@@ -68,13 +68,13 @@ public enum DebugCommandKind
     /// it, and lets the program run on.</summary>
     Hello = 9,
 
-    /// <summary>"Pause." — and pause means STOP AT THE NEXT PORT, not freeze wherever the
+    /// <summary>"Pause." — and pause means stop at the next port, not freeze wherever the
     /// process happens to be.
     ///
     /// <para>A Prolog machine frozen mid-instruction has no call stack to show: it is
     /// halfway through a unification, in the middle of a builtin, between two frames. The
     /// only way to answer honestly is to let it reach the next goal — a point where the
-    /// stack MEANS something — and stop it there. That is microseconds away in any running
+    /// stack means something — and stop it there. That is microseconds away in any running
     /// program, and it is what every interpreter's debugger does with a pause.</para>
     ///
     /// <para>The engine reads this while running (the poll between goals) and turns it into
@@ -83,7 +83,7 @@ public enum DebugCommandKind
     BreakNow = 10,
 
     /// <summary>ADR-035 D5+ — Set Next Statement. <see cref="DebugWireCommand.Line"/> is the
-    /// target source line for the TOP frame. A COMMAND, not a func-eval: while stopped the
+    /// target source line for the top frame. A command, not a func-eval: while stopped the
     /// engine thread is parked in the notify and only a func-eval could run its code — but a
     /// func-eval from the monitor answers "not implemented" (a self-created inspection
     /// session cannot make a call). So the move rides the channel like a step: written while
@@ -120,11 +120,11 @@ public sealed class DebugSnapshot
 {
     public int Sequence { get; set; }
 
-    /// <summary>Whether the engine is RUNNING — in which case everything else here is
+    /// <summary>Whether the engine is running — in which case everything else here is
     /// history, the record of the last stop, and there is no current Prolog stack at all.
     ///
-    /// <para>Without this the debugger cannot tell a stack that is TRUE from one that
-    /// merely WAS: it reads the same buffer either way. A frozen process (the CLR's raw
+    /// <para>Without this the debugger cannot tell a stack that is true from one that
+    /// merely was: it reads the same buffer either way. A frozen process (the CLR's raw
     /// Break All, or a stop in C# or native code) must not be shown Prolog frames from the
     /// last breakpoint — that is not a slightly stale stack, it is a stack the program is
     /// not standing in. When this is set, the debugger shows no Prolog frames; the C# it is
@@ -135,17 +135,17 @@ public sealed class DebugSnapshot
     public bool Running { get; set; }
 
     /// <summary>Rises as the engine passes goals. Nothing reads its value — only whether it
-    /// CHANGED between two looks, which is how a debugger tells a running Prolog machine
+    /// changed between two looks, which is how a debugger tells a running Prolog machine
     /// (pause it at the next port) from one that will never reach another port because it is
     /// blocked, or finished, or standing in C#.</summary>
     public int Heartbeat { get; set; }
 
     /// <summary>How many foreign predicates — the user's own C# — the engine is currently
     /// inside. The one case where <see cref="Running"/> is set and the stack in this buffer
-    /// is nonetheless TRUE: the engine published it on its way into the call it is now
+    /// is nonetheless true: the engine published it on its way into the call it is now
     /// blocked in, and cannot have moved since without coming back out.
     ///
-    /// <para>This is what makes a stopped-in-C# stack MIXED: Visual Studio shows the managed
+    /// <para>This is what makes a stopped-in-C# stack mixed: Visual Studio shows the managed
     /// frames, and these are the Prolog frames underneath them. Without it the debugger has
     /// to refuse (the buffer holds the last stop, which is not where the program is) and the
     /// user sees their C# standing on nothing.</para></summary>
@@ -157,10 +157,10 @@ public sealed class DebugSnapshot
     public int Line { get; set; }
     public int Depth { get; set; }
 
-    /// <summary>The breakpoint that fired, AS THE USER SET IT — which is not always where
+    /// <summary>The breakpoint that fired, as the user set it — which is not always where
     /// the code turned out to be (a breakpoint on a rule's head binds at its first goal).
     /// A debugger has to match a hit against the line it drew the red dot on, and
-    /// <see cref="Line"/> cannot answer that: it says where the machine IS. Empty unless
+    /// <see cref="Line"/> cannot answer that: it says where the machine is. Empty unless
     /// <see cref="Reason"/> is <see cref="StopReason.Breakpoint"/>.</summary>
     public string BreakFile { get; set; } = "";
     public int BreakLine { get; set; }
@@ -197,7 +197,7 @@ public sealed class DebugSnapshotFrame
     /// when unknown.</summary>
     public int ClauseNumber { get; set; }
 
-    /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts ON THIS FRAME
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts on this frame
     /// (a move on a lower frame rewinds the frames above it first).</summary>
     public IReadOnlyList<int> SetNextLines { get; set; } = Array.Empty<int>();
 
@@ -222,7 +222,7 @@ public sealed class DebugVariableView
 }
 
 /// <summary>
-/// ADR-035 — the wire format of the debug channel, and the ONE place it is defined.
+/// ADR-035 — the wire format of the debug channel, and the one place it is defined.
 ///
 /// <para>This file is compiled into the engine <b>and linked into the Concord
 /// components</b> (which target netstandard2.0 and cannot reference the engine at all).
@@ -248,7 +248,7 @@ public static class DebugWire
 {
     /// <summary>Bumped whenever the layout changes, so a debugger built against an older
     /// engine says so instead of reading nonsense. v4: the string table — every string of
-    /// the snapshot (names, files, variable names, variable VALUES) written once, frames
+    /// the snapshot (names, files, variable names, variable values) written once, frames
     /// carrying indices; the level of indirection that lets a hundred frames sharing a
     /// binding share its bytes. v5: conditional breakpoints — a condition string on the
     /// AddBreakpoint command, a conditionError string on the snapshot. v6: Set Next
@@ -258,7 +258,7 @@ public static class DebugWire
     /// variables.</summary>
     public const int FormatVersion = 8;
 
-    /// <summary>The size of the snapshot region — declared HERE, with the format, because the
+    /// <summary>The size of the snapshot region — declared here, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
     /// snapshot), and it is the other side of the writer's truncation rule.</summary>
     public const int SnapshotCapacity = 256 * 1024;
@@ -271,7 +271,7 @@ public static class DebugWire
 
     /// <summary>Where the <see cref="DebugSnapshot.Heartbeat"/> word sits, right after it.
     /// The engine bumps it as it passes goals; a debugger reads it twice to find out
-    /// whether Prolog is actually MOVING — which is the difference between a pause it can
+    /// whether Prolog is actually moving — which is the difference between a pause it can
     /// honour (stop at the next port) and one it cannot (the engine is blocked in a read,
     /// or sitting at the top-level prompt, and no port will ever come).</summary>
     public const int HeartbeatOffset = 12;
@@ -364,7 +364,7 @@ public static class DebugWire
             setNext.Add(ReadInt(buffer, ref at));
         snapshot.SetNextLines = setNext;
 
-        // A COUNT READ OUT OF A BUFFER IS NOT A PROMISE. It is four bytes that came from
+        // A count read out of A buffer is not A promise. It is four bytes that came from
         // another process, and if the writer truncated, or the buffer holds the tail of an
         // older stop, or a debugger of one version is reading an engine of another, then it is
         // whatever those bytes happen to say. Sizing a list from it is how the debugger died
@@ -409,7 +409,7 @@ public static class DebugWire
             for (int v = 0; v < varCount; v++)
             {
                 // The indirection survives decoding: two variables that shared an id come
-                // back sharing the very string instance, which is what the table is FOR.
+                // back sharing the very string instance, which is what the table is for.
                 variables.Add(new DebugVariableView
                 {
                     Name = At(ReadInt(buffer, ref at)),
@@ -436,10 +436,10 @@ public static class DebugWire
         return snapshot;
     }
 
-    /// <summary>ADR-035 D5+ — rewrite the stop's line AND its top frame's line IN PLACE, so
+    /// <summary>ADR-035 D5+ — rewrite the stop's line and its top frame's line in place, so
     /// a Set Next Statement moves Visual Studio's instruction-pointer arrow the instant the
     /// user presses Ctrl+Shift+F10 — the debugger re-walks the stack off this buffer, and
-    /// the leaf frame's line is where the arrow lands. The engine's ACTUAL move is deferred
+    /// the leaf frame's line is where the arrow lands. The engine's actual move is deferred
     /// to the resume (it cannot run while stopped); this makes the display agree with where
     /// the program will continue from. Parses to the two int fields (both sit after
     /// variable-length strings, so their offsets are not fixed) and overwrites them. A
@@ -466,7 +466,7 @@ public static class DebugWire
         for (int i = 0; i < stringCount; i++) SkipString(buffer, ref at);
         int frameCount = ReadInt(buffer, ref at);
         if (frameCount <= 0) { PatchInt(buffer, stopLineAt, newLine); return true; }
-        // frame 0: nameId, arity, fileId, LINE, ...
+        // frame 0: nameId, arity, fileId, line, ...
         SkipInt(ref at, 3);
         int frameLineAt = at;
 
@@ -476,7 +476,7 @@ public static class DebugWire
     }
 
     /// <summary>ADR-035 D5+ — the target (line, display frame) of a Set Next Statement
-    /// command sitting UNDRAINED in the command-region bytes; line -1 when none. The IDE
+    /// command sitting undrained in the command-region bytes; line -1 when none. The IDE
     /// side reads this to know a move is queued but not yet applied (the engine only
     /// drains at resume), so the Locals refresh can apply it eagerly via func-eval and
     /// show the post-move state.</summary>
@@ -506,11 +506,11 @@ public static class DebugWire
         return pending;
     }
 
-    /// <summary>ADR-035 D5+ cross-frame — rewrite the snapshot IN PLACE as the stack a
-    /// Set Next Statement on a lower frame produces: the frames ABOVE the target are
+    /// <summary>ADR-035 D5+ cross-frame — rewrite the snapshot in place as the stack a
+    /// Set Next Statement on a lower frame produces: the frames above the target are
     /// dropped (the rewind pops them), the target becomes the top frame, and its line —
     /// and the stop's — becomes the move's target line. Visual Studio re-walks the stack
-    /// off this buffer the instant the SNS returns, BEFORE the engine can apply the real
+    /// off this buffer the instant the SNS returns, before the engine can apply the real
     /// move (that lands at the Locals refresh, or on resume) — without this surgery the
     /// Call Stack kept showing the popped frames and the arrow sat in the wrong clause.
     /// The string table is untouched (ids stay valid); the surviving frames' bytes slide
@@ -566,7 +566,7 @@ public static class DebugWire
         int blockLen = framesEnd - survivorStart;
         System.Buffer.BlockCopy(buffer, survivorStart, buffer, framesStart, blockLen);
         PatchInt(buffer, frameCountAt, frameCount - dropCount);
-        // The new top frame's LINE (nameId, arity, fileId, LINE at offset 12) and the
+        // The new top frame's line (nameId, arity, fileId, line at offset 12) and the
         // stop's: the move's target.
         PatchInt(buffer, framesStart + 12, newTopLine);
         PatchInt(buffer, stopLineAt, newTopLine);
@@ -595,11 +595,11 @@ public static class DebugWire
     // ----- the commands -----
 
     /// <summary>Encodes the command region. The debugger writes the result with
-    /// <c>WriteMemory</c>, in ONE call: the engine drains the region between goals while
+    /// <c>WriteMemory</c>, in one call: the engine drains the region between goals while
     /// it is running (so a breakpoint set on a running process takes effect), and a
     /// command list written in pieces could be read half-formed.
     ///
-    /// <para>The debugger writes the WHOLE desired state each time — clear, then every
+    /// <para>The debugger writes the whole desired state each time — clear, then every
     /// armed breakpoint — rather than an incremental edit. There is no acknowledgement in
     /// this channel and none is wanted: a full state is idempotent, so it does not matter
     /// whether the engine drained the last one.</para></summary>

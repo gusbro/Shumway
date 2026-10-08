@@ -216,7 +216,7 @@ public static partial class ExecutableEmitter
             File.Copy(producedPath, finalPath, overwrite: true);
             string sideTargetDir = string.IsNullOrEmpty(outputDir)
                 ? Directory.GetCurrentDirectory() : outputDir!;
-            // Framework deployment is a FOLDER: the engine DLLs and the
+            // Framework deployment is a folder: the engine DLLs and the
             // app config travel next to the exe (no single-file publish on
             // net48). The config is renamed to match the final exe name.
             foreach (string dll in Directory.GetFiles(publishDir, "*.dll"))
@@ -341,7 +341,7 @@ public static partial class ExecutableEmitter
                 System.Console.Error.WriteLine(""shumway: debug mode active."");";
         // ADR-036 — a baked DAP port: the executable listens for VS Code on
         // 127.0.0.1:<port> whenever it runs. The SHUMWAY_DAP_PORT environment variable
-        // has PRECEDENCE over the bake (DebugOptions' own default reads it: any set
+        // has precedence over the bake (DebugOptions' own default reads it: any set
         // value decides, 0/unparseable = off), so the bake fills in only when the
         // environment says nothing.
         string dapBake = dapPort is int p
@@ -507,7 +507,7 @@ internal static class Program
 
     internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
     {
-        // Every Shumway.*.dll and Sigil.dll alongside the linker is a
+        // Every Shumway.*.dll alongside the linker is a
         // candidate engine dependency. The publish step's reference
         // resolution prunes anything actually unused. On net48 the linker's
         // own directory holds the net48 flavors plus the compatibility
@@ -515,8 +515,6 @@ internal static class Program
         // Framework stub has no NuGet restore to bring them in.
         foreach (string file in Directory.GetFiles(dir, "Shumway.*.dll"))
             yield return file;
-        string sigil = Path.Combine(dir, "Sigil.dll");
-        if (File.Exists(sigil)) yield return sigil;
 #if NETFRAMEWORK
         foreach (string file in Directory.GetFiles(dir, "System.*.dll"))
             yield return file;

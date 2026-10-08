@@ -20,11 +20,14 @@ public sealed partial class IlPredicateCompiler
     /// <item>Persisted assembly: a static array field on the emitted type,
     /// resolved at load time.</item>
     /// </list></summary>
-    internal delegate void SelfDelegateEmitter(Sigil.Emit<PredicateDelegate> emit);
+    internal delegate void SelfDelegateEmitter(IlEmit emit);
 
     internal static SelfDelegateEmitter SelfFromHolder(int holderKey) =>
         e =>
         {
+            // The key is this process's: a persisted method cannot carry it.
+            if (_persistPatches is not null)
+                throw new NotSupportedException("Persisted IL cannot reference the runtime delegate holder.");
             e.LoadField(IndexedDelegateHolder.SlotsField);
             e.LoadConstant(holderKey);
             e.LoadElement<Func<Activation, int, bool>>();
@@ -47,7 +50,7 @@ public sealed partial class IlPredicateCompiler
     /// table is process-wide but write-once-per-key.</summary>
     internal static class IndexedDelegateHolder
     {
-        // The store is a plain slot ARRAY indexed by
+        // The store is a plain slot array indexed by
         // the (sequential, RegistrationLock-serialised) holder key, and
         // SelfFromHolder emits a direct `ldsfld / ldc / ldelem.ref` instead
         // of a call — the Tier-1 profile showed the previous
@@ -55,7 +58,7 @@ public sealed partial class IlPredicateCompiler
         // hash+bucket probe per multi-clause region invocation; the
         // direct slot load removes the probe altogether. Publication safety: Register runs under
         // RegistrationLock; a grow copies the old entries and stores the
-        // new delegate into the NEW array BEFORE Volatile.Write publishes
+        // new delegate into the new array before Volatile.Write publishes
         // it, so any array version a reader can observe after delegate X
         // escaped (always through a fenced channel — the compile-result
         // queue or the promotion tables) already contains X's slot.
@@ -112,7 +115,7 @@ public sealed partial class IlPredicateCompiler
             // The address may be a CallTarget.ForUndefined
             // sentinel left by the linker (the IL caller's static
             // rewrite baked a direct Call/Execute against an
-            // unresolved functor) AND the implicit_dynamic auto-
+            // unresolved functor) and the implicit_dynamic auto-
             // promote may since have materialised a trampoline.
             // Re-look-up the live entry; if it's still unresolved,
             // raise existence_error.
@@ -258,11 +261,14 @@ public sealed partial class IlPredicateCompiler
                 engine.SetRegister(i, engine.GetHeap(argBase + i));
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
+            if (resolutionModule >= 0)
+                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // §7.8.3 — a control construct's arguments must convert
-            // BEFORE any of it runs. Same spot as the bytecode twin:
-            // ahead of the route cache, so the cached path is covered.
-            if (totalArity == 2 && AtomTable.GetById(atomId)?.Name
+            // before any of it runs. Same spot as the bytecode twin:
+            // ahead of the route cache, so the cached path is covered;
+            // and, as there, only at the boundary.
+            if (convertBody && totalArity == 2 && AtomTable.GetById(atomId)?.Name
                     is "," or ";" or "->" or "*->")
                 MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
 
@@ -370,15 +376,15 @@ public sealed partial class IlPredicateCompiler
                 return SyncFail;
             }
 
-            // Module-relative resolution FIRST — before the builtin check (the
+            // Module-relative resolution first — before the builtin check (the
             // interpreter's DispatchCall mirrors this): an export-qualified
-            // module may define its OWN version of a builtin-named predicate
+            // module may define its own version of a builtin-named predicate
             // (Scryer's iso_ext defines copy_term/3, forall/2) — `M:goal` must
             // run M$goal, not the engine builtin. A module with no such local
             // (nor import) falls through to the builtin.
             if (resolutionModule >= 0 && addresses is not null)
             {
-                int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+                int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 {
                     engine.SetB0(cutBarrier);
@@ -432,17 +438,11 @@ public sealed partial class IlPredicateCompiler
                 || !addresses.TryGetValue(functorId, out int address))
             {
                 // Last chance: a runtime-assert MetaTransform helper linked by a
-                // DIFFERENT activation — materialize it here (the Logtalk
+                // different activation — materialize it here (the Logtalk
                 // suspended-outer-query shape; see ResolveLateHelper).
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
                 {
-                    // The consult-direct fallback: a directly consulted
-                    // module's local. Returned UNCACHED — an assertz later in
-                    // the query may create the bare dynamic, which must win.
-                    int consultLocal =
-                        engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
-                    if (consultLocal >= 0) return consultLocal;
                     // honour the `unknown` flag (throws on error).
                     if (UnknownProcedure.Fails(engine, functorId))
                         return SyncFail;
@@ -486,7 +486,7 @@ public sealed partial class IlPredicateCompiler
                 int fid = engine.GetHeap(fidx).AsFunctorId;
                 // Both $mqual(Module, Goal) and the ISO Module:Goal qualifier share
                 // the (Module, Goal) layout. A `M:G` with a bad module slot is
-                // the ISO error HERE — falling through used to dispatch ':'/2 as
+                // the ISO error here — falling through used to dispatch ':'/2 as
                 // a predicate, whose prelude clause is call(M:G): an infinite
                 // loop, not an error.
                 if (fid == MqualFid) { }
@@ -510,69 +510,21 @@ public sealed partial class IlPredicateCompiler
                 int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
                 if (fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid)
                 {
-                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: true);
+                    goal = MetaBodyConvert.DistributeModule(
+                        engine, goal, module, arg0Goal: true, arg1Goal: true);
                     engine.SetRegister(0, goal);
                     return -1;
                 }
                 if (fid == NegFid || fid == NotFid)
                 {
-                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: false);
+                    goal = MetaBodyConvert.DistributeModule(
+                        engine, goal, module, arg0Goal: true, arg1Goal: false);
                     engine.SetRegister(0, goal);
                     return -1;
                 }
             }
             engine.SetRegister(0, goal);
             return module;
-        }
-
-        private static Cell BuildMqual(Activation engine, int moduleAtomId, Cell goalCell)
-        {
-            int f = engine.AllocateHeap(3);
-            engine.SetHeap(f, Cell.Functor(MqualFid));
-            engine.SetHeap(f + 1, Cell.Atom(moduleAtomId));
-            engine.SetHeap(f + 2, goalCell);
-            return Cell.Str(f);
-        }
-
-        /// <summary>Mirror of BytecodeInterpreter.WrapGoal (ADR-037): distributes
-        /// the module INTO an if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) rather than
-        /// wrapping it whole, so the enclosing <c>;</c>'s structural if-then-else /
-        /// soft-cut match still fires.</summary>
-        private static Cell WrapGoal(Activation engine, int module, Cell goalCell)
-        {
-            Cell d = DerefCell(engine, goalCell);
-            if (d.Tag == Tag.Str)
-            {
-                int f = engine.GetHeap(d.AsHeapIndex).AsFunctorId;
-                if (f == ArrowFid || f == SoftArrowFid)
-                    return DistributeMqual(engine, d, module, arg0Goal: true, arg1Goal: true);
-            }
-            return BuildMqual(engine, module, goalCell);
-        }
-
-        private static Cell DistributeMqual(
-            Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal)
-        {
-            int src = ctor.AsHeapIndex;
-            int fid = engine.GetHeap(src).AsFunctorId;
-            var (_, arity) = FunctorTable.Lookup(fid);
-            Cell a0 = arity > 0 ? engine.GetHeap(src + 1) : default;
-            Cell a1 = arity > 1 ? engine.GetHeap(src + 2) : default;
-            Cell w0 = arg0Goal && arity > 0 ? WrapGoal(engine, module, a0) : a0;
-            Cell w1 = arg1Goal && arity > 1 ? WrapGoal(engine, module, a1) : a1;
-            int f = engine.AllocateHeap(arity + 1);
-            engine.SetHeap(f, Cell.Functor(fid));
-            if (arity > 0) engine.SetHeap(f + 1, w0);
-            if (arity > 1) engine.SetHeap(f + 2, w1);
-            return Cell.Str(f);
-        }
-
-        private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
-        {
-            string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
-            string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
-            int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
-            return FunctorTable.Intern(mangledAtom, arity);
         }
 
         private static Cell DerefCell(Activation engine, Cell c) =>
@@ -594,17 +546,17 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Emits IL that loads <c>engine.GetRegister(0)</c>, derefs
     /// it if it's a REF, and leaves the resulting <see cref="Cell"/> on
     /// the evaluation stack.</summary>
-    private static void EmitDerefA0(Sigil.Emit<PredicateDelegate> emit)
+    private static void EmitDerefA0(IlEmit emit)
     {
         var a1Tmp = emit.DeclareLocal<Cell>("a1Tmp");
         var notRef = emit.DefineLabel("a1_not_ref");
         emit.LoadArgument(0);
         emit.LoadConstant(0);
-        emit.Call(EngineGetRegisterMethod);
+        EmitHelperCall(emit, EngineGetRegisterMethod);
         emit.StoreLocal(a1Tmp);
 
         emit.LoadLocalAddress(a1Tmp);
-        emit.Call(CellTagGetter);
+        EmitHelperCall(emit, CellTagGetter);
         emit.LoadConstant((int)Tag.Ref);
         emit.UnsignedBranchIfNotEqual(notRef);
 
@@ -612,9 +564,9 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         emit.LoadArgument(0);
         emit.LoadLocalAddress(a1Tmp);
-        emit.Call(CellAsHeapIndexGetter);
-        emit.Call(EngineDerefMethod);
-        emit.Call(EngineGetHeapMethod);
+        EmitHelperCall(emit, CellAsHeapIndexGetter);
+        EmitHelperCall(emit, EngineDerefMethod);
+        EmitHelperCall(emit, EngineGetHeapMethod);
         emit.StoreLocal(a1Tmp);
 
         emit.MarkLabel(notRef);

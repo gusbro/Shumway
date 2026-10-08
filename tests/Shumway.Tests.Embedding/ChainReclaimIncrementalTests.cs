@@ -12,13 +12,15 @@ namespace Shumway.Tests.Embedding;
 /// retract loop, and together they were what was left of one.
 ///
 /// <para>None of them needed the walk. The died slot is found by a position
-/// hint, trusted only when the chain holds exactly ONE entry for that clause,
+/// hint, trusted only when the chain holds exactly one entry for that clause,
 /// so there is provably nothing else to find. Validation is remembered per
 /// buffer: an entry's offsets cannot move while the buffer is the same array
 /// object, so only entries added since the last check need looking at.
 /// Re-threading follows the range of positions whose links a removal actually
 /// dirtied, and anything the tracking does not model widens that range to
 /// everything, which is the old full pass.</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class ChainReclaimIncrementalTests
 {
     private const string Program = """
@@ -36,7 +38,7 @@ public sealed class ChainReclaimIncrementalTests
         return e;
     }
 
-    /// <summary>COUNTED, not timed, and all three at once: over a drain of n
+    /// <summary>Counted, not timed, and all three at once: over a drain of n
     /// clauses each of the three is linear in n. The walks they replace were
     /// n per retract — about n²/4 once the sweep threshold is folded in, which
     /// is 4 million link writes over 4,000 clauses against the 5,000 here.</summary>
@@ -58,7 +60,7 @@ public sealed class ChainReclaimIncrementalTests
             // re-arm the verification and cost a full pass -- observed up to
             // ~16n, varying with what earlier tests left in the process's
             // pools -- so a tight constant here flakes. What this must catch
-            // is the QUADRATIC: n(n-1)/8 is 500n at 4,000, ten times this.
+            // is the quadratic: n(n-1)/8 is 500n at 4,000, ten times this.
             if (n >= 4_000)
                 Assert.True(PrologEngine.ChainEntriesVerified < 50L * n,
                     $"{PrologEngine.ChainEntriesVerified} entries verified over {n}");
@@ -66,7 +68,7 @@ public sealed class ChainReclaimIncrementalTests
         }
     }
 
-    /// <summary>ANTI-VACUITY, and the thing a wrong re-thread breaks: after
+    /// <summary>Anti-vacuity, and the thing a wrong re-thread breaks: after
     /// reclamation has run many times, dispatch still finds every live clause
     /// and no dead one, whether the retracts came off the front, the back or
     /// the middle. A link left pointing at a dead entry shows up as a clause
@@ -130,7 +132,7 @@ public sealed class ChainReclaimIncrementalTests
         Assert.Equal(expected, got);
     }
 
-    /// <summary>The hint is only trusted when the chain holds ONE entry for
+    /// <summary>The hint is only trusted when the chain holds one entry for
     /// the clause. A predicate carrying the same clause twice must still have
     /// both marked dead, in order, by the walk.</summary>
     [Fact]

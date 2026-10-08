@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 // ADR-022 item 1 — embedded native blocks survive the separate-compilation /
-// bundle pipeline. A DEBUG bundle keeps source and re-consults at load; a RELEASE
+// bundle pipeline. A debug bundle keeps source and re-consults at load; a release
 // (source-stripped) bundle runs the baked `'$native_run'('$nb$…', Vars)` dispatch
 // against the engine's native-block table, repopulated from the bundle.
 public sealed class NativeBundleTests
@@ -36,7 +36,7 @@ public sealed class NativeBundleTests
     {
         var bytes = LinkBundle(CmpProgram, ShmoBuildMode.Debug, strip: false);
         var e = new PrologEngine();
-        e.UseNativeInterop(typeof(Interop));      // BEFORE load — the re-consult uses it
+        e.UseNativeInterop(typeof(Interop));      // Before load — the re-consult uses it
         e.LoadBundle(BundleReader.FromBytes(bytes));
         Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
     }
@@ -160,7 +160,7 @@ public sealed class NativeBundleTests
     public void BuildTimeInline_PersistedIlBundle_InlinesAndRuns()
     {
         // Item 2 stage C: a --with-compiled-il bundle inlines the native block at
-        // BUILD time (the build engine auto-discovers Shumway.Native.Interop, so
+        // build time (the build engine auto-discovers Shumway.Native.Interop, so
         // the persisted IL emits a direct cross-assembly call). The block runs with
         // no $native_run dispatch; the load engine needs no UseNativeInterop because
         // the interop call was bound at build.
@@ -264,7 +264,7 @@ public sealed class NativeBundleTests
     {
         // The bundle compiles (interop is not resolved at compile time), but a
         // block calling a function the running engine's interop class does not
-        // provide must raise a HARD error when it runs — never silently no-op.
+        // provide must raise a hard error when it runs — never silently no-op.
         var bytes = LinkBundle(CmpProgram, ShmoBuildMode.Release, strip: true);
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(EmptyInterop));   // no strcmp

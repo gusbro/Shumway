@@ -89,18 +89,29 @@ public sealed partial class PrologEngine
     /// <see cref="InvalidateDynamicCache"/>).</summary>
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildDynamicSnapshot(int fid)
     {
-        if (!_dynStore.TryGetClauses(fid, out var raw) || raw.Count == 0) return null;
-        if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)) return null;
-        var own = new List<Clause>(entry.Clauses.Count);
-        for (int i = 0; i < entry.Clauses.Count; i++)
-            if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
+        // Mutated since the last setup: the sources below may not show it.
+        if (_snapshotStaleFids.Contains(fid)) return null;
+        // The clauses the setup compiled the predicate from, in its order: a
+        // predicate declared dynamic in a module keeps its source clauses in
+        // the module (the static rewrite), and what was asserted since is in
+        // the store (the dynamic rewrite), after them.
+        var own = new List<Clause>();
+        if (_staticRewriteClauses is { } sources
+            && _staticRewriteHeadFids is { } sourceHeads && sourceHeads.Contains(fid))
+            foreach (var c in sources)
+                if (HeadFunctorIdOf(c) == fid) own.Add(c);
+        if (_dynamicRewriteCache.TryGetValue(fid, out var entry))
+            for (int i = 0; i < entry.Clauses.Count; i++)
+                if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
         if (own.Count == 0) return null;
+        var raw = new List<Clause>(DynamicClausesFor(fid));
+        raw.AddRange(StaticClausesFor(fid));
         var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
                 enableIndexing: true, isDynamic: false, failStubAddr: 0);
         // ADR-034 — mark the snapshot so caller-side inlining knows this
         // "static-looking" predicate is really a dynamic whose truth can
-        // change; having rules (per the RAW source clauses — the transformed
+        // change; having rules (per the raw source clauses — the transformed
         // ones may have been rewritten) gates checked caller-inlining.
         snap.IsDynamicSnapshot = true;
         foreach (var c in raw)
@@ -112,14 +123,71 @@ public sealed partial class PrologEngine
         return snap;
     }
 
+    /// <summary>ADR-054: the snapshot of a dynamic predicate linked into
+    /// <paramref name="engine"/>'s code space as a shadow region, for the wasm
+    /// tier. A module can hand any instruction back to the interpreter, which
+    /// then needs the bytecode it came from at a real address; the shadow is
+    /// that bytecode, appended the way a mid-query assert appends, and never
+    /// moved until the code space is built again.
+    ///
+    /// <para>The shadow is linked under a functor of its own, so a call inside
+    /// it to the predicate itself resolves to the predicate's live
+    /// enter_dynamic chain, not to the shadow: a recursive call that starts
+    /// after a mutation reaches the predicate as it is then. No name maps to
+    /// the shadow's address. The snapshot returned keeps the predicate's own
+    /// functor, which is what the module is installed under.</para></summary>
+    /// <summary>Dynamic functors mutated since the last query setup rebuilt
+    /// the rewrite caches: until then those caches may not reflect the
+    /// mutation, so no snapshot is taken from them. Cleared by the setup.
+    /// </summary>
+    internal readonly HashSet<int> _snapshotStaleFids = new();
+
+    internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid)
+    {
+        // Its float literals would be read from the bundle's pool, and the
+        // snapshot is compiled against the engine's.
+        if (_precompiledFloatPool.ContainsKey(fid))
+            return new DynamicShadow(null, 0, "dynamic with a precompiled float pool");
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
+            || engine.SwitchTables is not { } switchTables)
+            return new DynamicShadow(null, 0);
+        var snap = BuildDynamicSnapshot(fid);
+        if (snap is null) return new DynamicShadow(null, 0);
+
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        int shadowFid = FunctorTable.Intern(
+            AtomTable.Intern("$snapshot$" + name, permanent: true).Id, arity);
+        var clone = new Shumway.Compiler.Wam.CompiledPredicate(
+            snap.Bytecode, shadowFid, snap.Arity, snap.ClauseCount, snap.CallSites,
+            snap.DispatchSites, snap.SwitchTables, snap.SwitchTableIdSites,
+            snap.SourcePosition, snap.ClauseSourcePositions)
+        { PoolsRef = snap.PoolsRef };
+
+        ResyncOwnerAppendPosition(engine);
+        bool ownsHost = EngineOwnsHostBuffer(engine);
+        int loadOffset = engine.ProgramLength;
+        var link = new Shumway.Compiler.Wam.Linker().Link(
+            new[] { clone }, loadOffset,
+            externalSymbols: addrMap,
+            switchTableIdBase: switchTables.Count);
+        int at = engine.AppendCode(link.Bytecode);
+        switchTables.AddRange(link.SwitchTables);
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
+        RefreshLiteralPoolsIfGrown(engine);
+        engine.BumpProgramGeneration();
+        return new DynamicShadow(snap, at);
+    }
+
     /// <summary>ADR-023 build-time persist (for <c>--with-compiled-il</c> / <c>--exe</c>
     /// bundles) — like <see cref="BuildDynamicSnapshot"/>, but returns null when the
-    /// snapshot references a string / float / bigint literal that is NOT already in
+    /// snapshot references a string / float / bigint literal that is not already in
     /// this engine's (bundle-loaded) literal pools. Those literals are referenced by
-    /// pool INDEX, and the persisted IL bakes the index. A runtime process that loads
+    /// pool index, and the persisted IL bakes the index. A runtime process that loads
     /// the bundle populates its pools from the bundle bytecode only — it never compiles
     /// the snapshot — so a snapshot-only literal would not be present at that index and
-    /// the baked IL would read the wrong value. Atoms and functors are patched by NAME
+    /// the baked IL would read the wrong value. Atoms and functors are patched by name
     /// at load (<see cref="IlPatchKind"/>), so they are always safe; only the three
     /// index-addressed pools constrain persistability. A predicate that fails this test
     /// is simply not baked — it stays Tier-0 and (in a JIT process) runtime-promotes
@@ -187,6 +255,12 @@ public sealed partial class PrologEngine
 
     /// <summary>Clauses copied out of live lists by retract enumerations —
     /// the window's exact cost measure.</summary>
+    /// <summary>The most text <c>with_output_to/2</c> captures before it
+    /// refuses with <c>resource_error(text_length)</c>: what a term can hold.
+    /// Lower only for tests, which reach the refusal without writing tens of
+    /// millions of characters first.</summary>
+    internal int CaptureCeiling { get; set; } = Shumway.Core.Cell.MaxPstrLength;
+
     internal long ClausesCopiedOut
     {
         get => _dynStore.ClausesCopiedOut;
@@ -201,7 +275,7 @@ public sealed partial class PrologEngine
     /// whether the index is working.</summary>
     internal long RetractCandidatesTried;
 
-    /// <summary>The PHYSICAL clause list, tombstones included — the retract
+    /// <summary>The physical clause list, tombstones included — the retract
     /// path only. Everything else reads through the dense accessors, which
     /// compact first, so a tombstone cannot reach anything that shows a
     /// clause to a program.</summary>
@@ -218,7 +292,7 @@ public sealed partial class PrologEngine
     internal long ClauseSlotCompactions => _dynStore.Compactions;
 
     internal DynamicClauseIndex? ClauseIndexFor(int fid)
-        // Over the PHYSICAL list: the index's positions are slot positions,
+        // Over the physical list: the index's positions are slot positions,
         // and the dense accessor would compact once per retract.
         => _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
             ? _dynStore.IndexFor(fid, _dynStore.PhysicalClauses(fid))
@@ -245,7 +319,7 @@ public sealed partial class PrologEngine
     /// already-compiled dispatch's <c>check_visible</c> filters it out
     /// from now on.</summary>
     // ---- clause references (asserta/2, clause/3, erase/1) ----
-    // Opaque ids handed out lazily per Clause OBJECT (the dynamic store
+    // Opaque ids handed out lazily per Clause object (the dynamic store
     // keeps the identical instance from assert to retract, so identity is
     // the stable key; clause_3_02 requires the same clause to yield the
     // same reference on every lookup). Stale entries after erase/abolish
@@ -282,7 +356,7 @@ public sealed partial class PrologEngine
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
         if (!_dynStore.HasClauses(functorId)) return false;
-        // PHYSICAL, tombstones included: knownIndex is a slot position from
+        // Physical, tombstones included: knownIndex is a slot position from
         // the retract scan, and asking for the dense view here would compact
         // once per retract — the very shift the tombstones defer.
         var list = _dynStore.PhysicalClauses(functorId);
@@ -297,14 +371,14 @@ public sealed partial class PrologEngine
             : list.IndexOf(clause);
         if (idx < 0) return false;
         // for a indexed predicate, capture the
-        // matched clause's body address from the var chain BEFORE
+        // matched clause's body address from the var chain before
         // removing the clause from _dynamicClauses (the var-chain
         // walk reads idx-indexed entries in their pre-removal order).
         bool isIndexed = IsExtensibleIndexedLayout(engine, functorId);
         int retiredBodyAddr = -1;
         if (isIndexed)
         {
-            // The var-chain walk counts entries the way a DENSE list is
+            // The var-chain walk counts entries the way a dense list is
             // numbered, so the slot has to be dense before idx can address
             // it. Rare layout; the compaction resets the debt it spends.
             if (_dynStore.TombstoneCount(functorId) > 0)
@@ -327,19 +401,19 @@ public sealed partial class PrologEngine
         // the predicate's single chain and patches entry[idx]'s
         // died slot. For the indexed layout, the chain
         // state populated by PopulateDynChainFor lists every chain
-        // entry from every bucket + the var chain in CONTIGUOUS
+        // entry from every bucket + the var chain in contiguous
         // bytecode order (PopulateDynChainFor does a linear walk),
         // so entry[idx] maps to an unrelated bucket's died slot
         // — skip the plain-chain path here and let
         // the multi-chain patching below handle it.
         if (!isIndexed)
         {
-            // patch by CLAUSE IDENTITY, not by store index. The
+            // patch by clause identity, not by store index. The
             // index-based patch was sound when the single chain mirrored
             // _dynamicClauses 1:1; with per-engine chain tables an engine's
             // chain can lag the store (a broadcast skipped by a guard, or
             // entries added while this engine didn't exist), so the store
-            // index lands on the WRONG entry — killing a live clause in
+            // index lands on the wrong entry — killing a live clause in
             // this engine's own view while the retracted one stays visible
             // (observed as Logtalk's loading-stack "ghost" entries).
             PatchDiedFromChainByClause(engine, functorId, clause);
@@ -370,7 +444,13 @@ public sealed partial class PrologEngine
             }
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
+        {
+            ChainPatcher.NoteIndexedRetract(engine, functorId);
+            if (ChainAudit)
+                IndexedDeadLinkedMax = Math.Max(IndexedDeadLinkedMax,
+                    ChainPatcher.IndexedDeadLinked(engine, functorId));
             return true;
+        }
         // Fallback: hot indexed predicate that we couldn't retract in
         // place → rebuild via persistent invalidation.
         if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
@@ -380,18 +460,42 @@ public sealed partial class PrologEngine
 
     /// <summary>Minimum number of dead (retracted-but-still-linked)
     /// clauses in a dynamic chain before reclamation kicks in.
-    /// Re-threading costs O(live) pointer patches (it does NOT recompile
+    /// Re-threading costs O(live) pointer patches (it does not recompile
     /// anything — see <see cref="GarbageCollectClauses"/>), so this only
     /// amortises the choice-point scan and the patch writes. Every
     /// dispatch between reclaims walks up to this many tombstones — the
     /// real cost for read-heavy churn idioms (Blint's <c>next_char_i</c>
-    /// unget buffer is READ via <c>call/1</c> dispatch ~105K times per
+    /// unget buffer is read via <c>call/1</c> dispatch ~105K times per
     /// lint, each walking the tombstones the threshold lets linger).
     /// swept the value on Blint's deterministic opcode count:
     /// 32→29.21M, 16→28.40M, 8→28.02M, 4→27.78M, 2→27.69M. 4 is the
     /// knee — below it the per-fire fixed costs (the CP-stack scan and
     /// the chainAddrs set) buy almost nothing.</summary>
     private const int ReclaimDeadThreshold = 4;
+
+    /// <summary>For a test: after each sweep, the chunks the chain's links
+    /// still pass through that hold no live clause, and the most seen. A
+    /// retired head stays where the trampoline points, so one is normal.</summary>
+    internal bool ChainAudit;
+    internal int ChainDeadLinkedMax;
+
+    /// <summary>For a test: after each retract from an indexed predicate, the
+    /// dead entries its chain of all clauses still links, and the most seen.</summary>
+    internal int IndexedDeadLinkedMax;
+
+    private static int DeadChunksLinked(byte[] program, DynChainState chain, int failStub)
+    {
+        var live = new HashSet<int>();
+        for (var e = chain.FirstLive; e is not null; e = e.NextLive) live.Add(e.ChunkAddr);
+        int dead = 0, addr = chain.HeadClauseAddr;
+        for (int steps = 0; addr >= 0 && addr != failStub && steps < 1_000_000; steps++)
+        {
+            if (!IsChainInstructionAt(program, addr)) break;
+            if (!live.Contains(addr)) dead++;
+            addr = Shumway.Core.BytecodeIO.ReadInt32(program, addr + 1);
+        }
+        return dead;
+    }
 
     /// <summary>number of times the automatic dead-chain
     /// reclamation actually fired across this engine's lifetime.
@@ -401,7 +505,7 @@ public sealed partial class PrologEngine
 
     /// <summary>physically drops retracted-but-still-linked
     /// clauses from a dynamic predicate's chain by rebuilding
-    /// it from the live clauses, but ONLY when no in-progress enumeration
+    /// it from the live clauses, but only when no in-progress enumeration
     /// could still need them (ISO logical update view). A clause
     /// retracted while a call is enumerating the predicate must stay
     /// visible to that call; such a call has a choice point whose resume
@@ -413,7 +517,7 @@ public sealed partial class PrologEngine
     /// <para>dropped the old <c>dead &lt; Entries.Count</c>
     /// gate (a leftover from when reclamation recompiled
     /// the live clauses): it made the steady-state tombstone load scale
-    /// with the LIVE clause count, so a busy predicate with ~125 live
+    /// with the live clause count, so a busy predicate with ~125 live
     /// entries (Blint's <c>saved_cur_line_i/2</c> save-stack) sat
     /// permanently at ~100 tombstones that every read walked — 1.55M
     /// retry dispatches per lint. The re-thread is O(live) pointer
@@ -432,6 +536,22 @@ public sealed partial class PrologEngine
         foreach (var (a, _) in chain.DeadChunks) set.Add(a);
         set.Add(chain.HeadClauseAddr);
         return set;
+    }
+
+    private bool ChoicePointInChain(Activation activation, DynChainState chain,
+        int lo, int hi, ref HashSet<int>? chainAddrs)
+    {
+        foreach (var (_, savedBp, _) in activation.EnumerateChoicePoints())
+        {
+            if (savedBp < lo || savedBp > hi) continue;
+            if (chainAddrs is null)
+            {
+                ChainAddressSetsBuilt++;
+                chainAddrs = BuildChainAddressSet(chain);
+            }
+            if (chainAddrs.Contains(savedBp)) return true;
+        }
+        return false;
     }
 
     private void TryReclaimDeadDynamicChain(Activation engine, int functorId)
@@ -455,7 +575,7 @@ public sealed partial class PrologEngine
         // entries + dead chunks + the head). A choice point enumerating
         // the predicate has SavedBp at one of these. If any active CP
         // does, an enumeration is in progress — keep the dead clauses.
-        // Reject by the chain's ADDRESS ENVELOPE first: that is one compare
+        // Reject by the chain's address envelope first: that is one compare
         // per choice point and no allocation. Building the exact set of chunk
         // addresses costs O(clauses) per fire, and the answer is almost always
         // "no choice point is in this chain" -- which was the single biggest
@@ -466,16 +586,12 @@ public sealed partial class PrologEngine
         if (chain.HeadClauseAddr < lo) lo = chain.HeadClauseAddr;
         if (chain.HeadClauseAddr > hi) hi = chain.HeadClauseAddr;
         HashSet<int>? chainAddrs = null;
-        foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
-        {
-            if (savedBp < lo || savedBp > hi) continue;
-            if (chainAddrs is null)
-            {
-                ChainAddressSetsBuilt++;
-                chainAddrs = BuildChainAddressSet(chain);
-            }
-            if (chainAddrs.Contains(savedBp)) return;
-        }
+        if (ChoicePointInChain(engine, chain, lo, hi, ref chainAddrs)) return;
+        // The goal walking the chain may be a suspended activation's: a
+        // query nested in another runs on the same buffer.
+        if (ChainPatcher.OthersOnBuffer(engine) is { } others)
+            foreach (var other in others)
+                if (ChoicePointInChain(other, chain, lo, hi, ref chainAddrs)) return;
         ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
@@ -546,11 +662,11 @@ public sealed partial class PrologEngine
 
     /// <summary>The in-memory <c>save/0</c> snapshot: functor id → a copy of
     /// its clause list at save time. Null = no <c>save/0</c> yet — restore
-    /// treats that as the EMPTY snapshot (wipes every user dynamic).
+    /// treats that as the empty snapshot (wipes every user dynamic).
     /// Clause objects are immutable ASTs, so sharing them is safe.</summary>
     private Dictionary<int, List<Clause>>? _dbSnapshot;
 
-    /// <summary>Arity save/restore operate on USER dynamics only: engine /
+    /// <summary>Arity save/restore operate on user dynamics only: engine /
     /// library internals (tabling's <c>$tbl_*</c>, <c>$wfs_mode</c>, the
     /// prelude's <c>$prelude$…</c> locals) are excluded from both the
     /// snapshot and the restore wipe — wiping them mid-session would corrupt
@@ -563,7 +679,7 @@ public sealed partial class PrologEngine
         return !string.IsNullOrEmpty(name) && name![0] != '$';
     }
 
-    /// <summary>Removes every clause of a dynamic functor while KEEPING its
+    /// <summary>Removes every clause of a dynamic functor while keeping its
     /// <c>:- dynamic</c> declaration (unlike <see cref="AbolishDynamic(int)"/>):
     /// calls fail instead of raising, and a later assert works normally.
     /// Mid-query correct — patches the live chains' <c>died</c> slots (this
@@ -591,7 +707,7 @@ public sealed partial class PrologEngine
         _dbSnapshot = snap;
     }
 
-    /// <summary><c>restore/0</c> — destructive REPLACE: wipes every user
+    /// <summary><c>restore/0</c> — destructive replace: wipes every user
     /// dynamic predicate's clauses (declarations survive) and re-installs the
     /// last <c>save/0</c> snapshot. No snapshot = the empty snapshot: the
     /// wipe alone. Statics are never touched.</summary>
@@ -610,7 +726,7 @@ public sealed partial class PrologEngine
         if (snapshot is null) return;
         // Re-install through the canonical mutation path: the store gets the
         // clause, and the incremental chain append makes the restored state
-        // visible to the RUNNING query's dispatch (ADR-015 logical update
+        // visible to the running query's dispatch (ADR-015 logical update
         // view), exactly as a sequence of assertz would. The snapshot is
         // keyed by fid (not re-derived from the head term) so module-local
         // dynamics whose storage name is mangled restore to the right slot.
@@ -719,7 +835,7 @@ public sealed partial class PrologEngine
         int failStub = engine.DynamicFailStubAddr;
 
         // skip the reclaim when the chain's cached offsets are
-        // stale relative to the live buffer (bounds OR structural: re-threading
+        // stale relative to the live buffer (bounds or structural: re-threading
         // through them would write past the array, or splice a wrong <next>
         // into an unrelated instruction → heap corruption surfacing later as an
         // out-of-range cell in a thrown ball). Dead-chunk reclamation is
@@ -752,22 +868,25 @@ public sealed partial class PrologEngine
 
         // Replay the recorded bypasses, in retirement order: each writes
         // the retired entry's nearest live predecessor's <next> to whatever
-        // the retired entry's own <next> HOLDS RIGHT NOW. Reading at replay
+        // the retired entry's own <next> holds right now. Reading at replay
         // time rather than capture time is what keeps later mutations
         // coherent -- a chunk appended after the retirement patched exactly
         // that slot, and a bypass replayed earlier in this same loop did
         // too. O(retirements since the last sweep), where the full pass was
         // O(live) to fix a handful.
-        foreach (var (prevAddr, entry) in chain.PendingBypass)
+        foreach (var (prevAddr, nextAddr) in chain.PendingBypass)
         {
-            if (prevAddr <= 0 || entry.NextOperandAddr <= 0) continue;
+            if (prevAddr <= 0 || nextAddr <= 0) continue;
             if (prevAddr + sizeof(int) > program.Length
-                || entry.NextOperandAddr + sizeof(int) > program.Length) continue;
+                || nextAddr + sizeof(int) > program.Length) continue;
             Shumway.Core.BytecodeIO.WriteInt32(program, prevAddr,
-                Shumway.Core.BytecodeIO.ReadInt32(program, entry.NextOperandAddr));
+                Shumway.Core.BytecodeIO.ReadInt32(program, nextAddr));
         }
         ChainRethreadLinks += chain.PendingBypass.Count;
         chain.PendingBypass.Clear();
+        if (ChainAudit)
+            ChainDeadLinkedMax = Math.Max(ChainDeadLinkedMax,
+                DeadChunksLinked(program, chain, engine.DynamicFailStubAddr));
         // The bytecode tail is now the live tail; appends patch through this.
         if (chain.LastLive is { } lastLive && lastLive.NextOperandAddr > 0)
             chain.TailNextAddr = lastLive.NextOperandAddr;
@@ -817,9 +936,9 @@ public sealed partial class PrologEngine
     {
         foreach (var manifest in _modules.Values)
         {
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
-                // A grammar rule defines its TRANSLATED head, and that is the
+                // A grammar rule defines its translated head, and that is the
                 // clause it contributes: clause/2 on a non-terminal reads the
                 // same body the predicate runs.
                 if (TryExtractDefinedHead(c, out string n, out int a))
@@ -875,7 +994,7 @@ public sealed partial class PrologEngine
     /// into a call to a fresh helper predicate — <c>catch/3</c> becomes <c>'$catchgoal_N'</c>,
     /// <c>\+</c> becomes <c>'$neg_N'</c>, <c>once/1</c> / <c>ignore/1</c> become
     /// <c>'$once_N'</c> / <c>'$ign_N'</c>, a disjunction becomes <c>'$disj_N'</c>. A debugger
-    /// stopped on (or showing a frame for) one of these should name the construct the USER
+    /// stopped on (or showing a frame for) one of these should name the construct the user
     /// wrote, not the internal helper it was lowered to. Given the demangled helper name (and
     /// its helper arity), returns the construct's <c>(Name, Arity)</c>; anything unrecognised is
     /// returned unchanged.</para></summary>
@@ -928,7 +1047,7 @@ public sealed partial class PrologEngine
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {
@@ -948,7 +1067,7 @@ public sealed partial class PrologEngine
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
@@ -957,13 +1076,13 @@ public sealed partial class PrologEngine
                     // filter above cannot catch its predicates — the
                     // functor-level prelude set (librarySource consults)
                     // does. They are library surface, not the program's.
-                    if (seen.Add(fid) && !_preludeFunctors.Contains(fid))
+                    if (seen.Add(fid) && !IsPreludeFunctor(fid))
                         yield return (fid, false);
                 }
         }
         foreach (var (fid, clauses) in _dynStore.Slots)
             if (clauses.Count > 0 && seen.Add(fid)
-                && !_preludeFunctors.Contains(fid))
+                && !IsPreludeFunctor(fid))
                 yield return (fid, true);
         // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
@@ -990,7 +1109,7 @@ public sealed partial class PrologEngine
     /// builtins.</summary>
     private static readonly string[] LibraryModules =
     {
-        Prelude.ModuleName, Clpfd.ModuleName, Clpr.ModuleName, Coroutining.ModuleName,
+        Prelude.ModuleName, LibraryBundles.Clpfd, LibraryBundles.Clpr, LibraryBundles.Coroutining,
     };
 
     internal static bool IsLibraryModule(string moduleName)
@@ -998,7 +1117,7 @@ public sealed partial class PrologEngine
 
     /// <summary>True when some module declared the functor <c>:- public</c>
     /// (or exports it, the module-scoped spelling of the same intent). ISO's
-    /// notion of a PUBLIC procedure: clause/2 may read its clauses even
+    /// notion of a public procedure: clause/2 may read its clauses even
     /// though it is static.</summary>
     internal bool IsDeclaredPublic(int fid)
     {
@@ -1011,7 +1130,7 @@ public sealed partial class PrologEngine
     /// <summary>true when the functor belongs to one of those libraries.
     ///
     /// <para>The name test is not redundant with the public-functor test: a
-    /// library's LOCAL predicates are mangled <c>&lt;module&gt;$&lt;name&gt;</c>
+    /// library's local predicates are mangled <c>&lt;module&gt;$&lt;name&gt;</c>
     /// and appear in no PublicFunctors set, so an engine booted from a bundle
     /// with a baked prelude — precompiled records rather than manifest clauses —
     /// would otherwise list every one of them
@@ -1098,7 +1217,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Functors a `:- discontiguous` / `:- multifile` directive
-    /// declared, host-lifetime. The activation holds this INSTANCE, not a
+    /// declared, host-lifetime. The activation holds this instance, not a
     /// copy: Logtalk consults its compiled objects from inside a live query,
     /// so a declaration seen mid-query has to take effect immediately.</summary>
     private readonly HashSet<int> _declaredEmptyFids = new();
@@ -1151,9 +1270,11 @@ public sealed partial class PrologEngine
         if (!HasPredicate(functorId) && !IsControlConstructFid(functorId))
             return props;
         int kind;
-        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
-            || IsControlConstructFid(functorId)
-            || _preludeFunctors.Contains(functorId))
+        bool redefined = _redefinedFunctors.Contains(functorId);
+        if (!redefined
+            && (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
+                || IsControlConstructFid(functorId)
+                || _preludeFunctors.Contains(functorId)))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
         else if (_dynStore.IsDynamic(functorId))
             kind = AtomTable.Intern("dynamic", permanent: true).Id;
@@ -1161,6 +1282,10 @@ public sealed partial class PrologEngine
             kind = AtomTable.Intern("static", permanent: true).Id;
         props.Add(kind);
         props.Add(AtomTable.Intern("defined", permanent: true).Id);
+        if (redefined) props.Add(AtomTable.Intern("redefined", permanent: true).Id);
+        else if (SystemKindOf(functorId) is Shumway.Builtins.PredicateKind.Iso
+                 or Shumway.Builtins.PredicateKind.Control)
+            props.Add(AtomTable.Intern("iso", permanent: true).Id);
         return props;
     }
 
@@ -1168,7 +1293,7 @@ public sealed partial class PrologEngine
 
     /// <summary>retractall/1 modifiability check (SWI / SICStus semantics):
     /// returns <c>true</c> when the predicate is dynamic (so the retract loop
-    /// should run), <c>false</c> when it is UNDEFINED (retractall is then a
+    /// should run), <c>false</c> when it is undefined (retractall is then a
     /// silent no-op — the predicate is left undefined, no dispatch trampoline is
     /// fabricated), and throws <c>permission_error(modify, static_procedure)</c>
     /// for a static procedure or a builtin (you can't retractall those).</summary>
@@ -1219,7 +1344,7 @@ public sealed partial class PrologEngine
     {
         if (_dynStore.IsDynamic(fid))
         {
-            // An asserted clause makes it a REAL dynamic: the implicit_dynamic
+            // An asserted clause makes it a real dynamic: the implicit_dynamic
             // scan's provisional mark (linker-only) is now backed by the
             // database, so it enumerates and its empty chain fails like any
             // declared dynamic.
@@ -1242,7 +1367,7 @@ public sealed partial class PrologEngine
             _dynStore.MarkDynamic(fid);
             if (!_dynStore.HasClauses(fid))
                 _dynStore[fid] = new List<Clause>();
-            // NO derivation bump. Auto-promotion cannot change any static
+            // No derivation bump. Auto-promotion cannot change any static
             // rewrite: the promoted functor has no static clauses, so it was
             // never module-local, and MangleIfLocal leaves its callers bare
             // both before and after (rewrite contexts read the live
@@ -1277,7 +1402,7 @@ public sealed partial class PrologEngine
     /// buffer mid-query and registers it in
     /// <see cref="Activation.CurrentFunctorAddresses"/>. Called by the
     /// asserta/assertz incremental paths when the
-    /// <c>implicit_dynamic</c> flag auto-promoted the predicate AFTER
+    /// <c>implicit_dynamic</c> flag auto-promoted the predicate after
     /// <see cref="SetupQueryFromTerm"/> ran (so the trampoline that
     /// SetupQueryFromTerm normally builds for every declared dynamic
     /// was never built for this one).
@@ -1331,7 +1456,7 @@ public sealed partial class PrologEngine
 
         // Compile-pipeline parity with the setup path: same transforms
         // (DCG / Meta / Phrase / mode-spec), same ModuleRewrite, same
-        // PredicateCompiler with isDynamic=true so the result IS a
+        // PredicateCompiler with isDynamic=true so the result is a
         // trampoline.
         var transformed = ClausePipeline.Apply(new[] { stubClause }, Modes, helperPrefix: "$q");
         var dynCtx = new ModuleRewrite.Context(
@@ -1357,7 +1482,7 @@ public sealed partial class PrologEngine
         ChainPatcher.GetOrCreateChainTable(engine).TrampolineFids[trampolineAddr] = fid;
 
         // PredicateCompiler emits the trampoline's execute opcode with
-        // a PREDICATE-LOCAL target (6); the module-compile path patches
+        // a predicate-local target (6); the module-compile path patches
         // that operand to an absolute address during link. The mid-
         // query materialise bypasses ModuleCompiler so we do the same
         // relocation here — every DispatchSite address operand needs
@@ -1417,7 +1542,7 @@ public sealed partial class PrologEngine
             HeadClauseAddr = trampolineAddr + 6,
             TailNextAddr = trampolineAddr + 7,
         };
-        // record into THIS engine's chain table: the
+        // record into this engine's chain table: the
         // trampoline lives in this engine's buffer.
         GetOrCreateChainTable(engine).Chains[fid] = chain;
 
@@ -1430,18 +1555,18 @@ public sealed partial class PrologEngine
 
     /// <summary>
     /// live-links a batch of newly consulted
-    /// STATIC predicates into the running query's code space so a later
-    /// goal in the SAME query can reach them. The static counterpart of
+    /// static predicates into the running query's code space so a later
+    /// goal in the same query can reach them. The static counterpart of
     /// <see cref="AppendDynamicClauseIncremental"/>: a <c>consult/1</c>
     /// issued from inside a live query (Logtalk's
     /// <c>'$lgt_load_prolog_code'</c> during <c>'$lgt_runtime_initialization'</c>)
     /// must make its predicates callable immediately, not only at the next
     /// top-level query.
     ///
-    /// <para>Crucially this reuses the SAME compilation pipeline as
+    /// <para>Crucially this reuses the same compilation pipeline as
     /// <see cref="SetupQueryFromTerm"/>'s static branch —
     /// <c>MetaWrapperUnfold → ClausePipeline → ModuleRewrite →
-    /// ModuleCompiler → Linker</c> — so there is ONE compilation scheme.
+    /// ModuleCompiler → Linker</c> — so there is one compilation scheme.
     /// The persistent program is always rebuilt statically at the next
     /// setup; this only appends a transient live-linked copy for the
     /// current query. No second code path.</para>
@@ -1483,7 +1608,7 @@ public sealed partial class PrologEngine
         // capture buffer ownership before AppendCode below.
         bool ownsHost = EngineOwnsHostBuffer(engine);
 
-        // --- SAME transform pipeline as the setup static branch --------
+        // --- same transform pipeline as the setup static branch --------
         // ADR-035 — keep the wrapper a real predicate for a debuggable module
         // (see the setup branch: the unfold would erase its stop sites and
         // scatter anonymous control frames over the caller).
@@ -1501,12 +1626,13 @@ public sealed partial class PrologEngine
         var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
-        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports);
+        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports)
+        { MetaArgSpec = MetaArgSpec };
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));
 
-        // --- SAME ModuleCompiler + Linker as setup ---------------------
+        // --- same ModuleCompiler + Linker as setup ---------------------
         int failStubAddr =
             OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
         int loadOffset = engine.ProgramLength;
@@ -1548,8 +1674,8 @@ public sealed partial class PrologEngine
         var visible = engine.LiveConsultVisibleFids ??= new HashSet<int>();
         foreach (var (fid, a) in link.Addresses)
         {
-            // A RELOAD redefines a predicate an earlier batch already linked
-            // — and earlier batches may have BAKED the old entry address into
+            // A reload redefines a predicate an earlier batch already linked
+            // — and earlier batches may have baked the old entry address into
             // their call sites (the forward-reference re-patch below resolves
             // sites to a concrete address, not through the map). Redirect the
             // old entry with `execute <new>` so stale baked sites flow to the
@@ -1580,7 +1706,7 @@ public sealed partial class PrologEngine
         // site whose callee is now linked. Absolute operand position =
         // loadOffset + Offset + 1 (skip the Call opcode byte).
         // The list lives on the per-buffer chain table — its positions are
-        // offsets into THIS engine's buffer.
+        // offsets into this engine's buffer.
         var unresolved = GetOrCreateChainTable(engine).LiveConsultUnresolved
             ??= new List<(int, int)>();
         foreach (var (off, fid) in link.UnresolvedSites)
@@ -1694,7 +1820,7 @@ public sealed partial class PrologEngine
                 break;
             case "arity_compat":
                 // consult-time directive form. The ClauseReader's
-                // pre-pass already flipped the live lexer for THIS file; this
+                // pre-pass already flipped the live lexer for this file; this
                 // records it for subsequent consults. Arity call semantics
                 // ride along: undefined predicates FAIL (a later explicit
                 // set_prolog_flag(unknown, _) overrides).
@@ -1752,7 +1878,7 @@ public sealed partial class PrologEngine
             if (publicsInSameConsult.Contains(fid)) continue;
             if (ClausesDefineFunctor(clauses, fid)) continue;
             _dynStore.MarkDynamic(fid);
-            // …but only the LINKER needs to know yet. The predicate is not in
+            // …but only the linker needs to know yet. The predicate is not in
             // the database until something declares or asserts it, so it stays
             // out of current_predicate/1 and calling it goes through the
             // `unknown` flag (§8.8.2.1; GNU, SWI and Scryer all agree).
@@ -1810,7 +1936,7 @@ public sealed partial class PrologEngine
         return false;
     }
 
-    /// <summary>Whether <paramref name="fid"/> has a STATIC definition the
+    /// <summary>Whether <paramref name="fid"/> has a static definition the
     /// modify guards must protect: a registered builtin, clauses in a module
     /// manifest (live consult), or a bundle's bytecode-only Defined entry —
     /// the case the clause scan cannot see (a linked bundle carries no
@@ -1825,7 +1951,7 @@ public sealed partial class PrologEngine
     {
         foreach (var manifest in _modules.Values)
         {
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {
@@ -1886,7 +2012,7 @@ public sealed partial class PrologEngine
     /// <c>DcgRule</c> clauses, MetaTransform and PhraseTransform rewrite
     /// only <c>Rule</c> bodies, and ModuleRewrite's dynamic context carries
     /// an empty local-functor set so a fact head never mangles. The one
-    /// pass that CAN touch a fact is mode specialization (<c>H.</c> →
+    /// pass that can touch a fact is mode specialization (<c>H.</c> →
     /// <c>H :- !.</c> when every declared mode is deterministic), so the
     /// fast path is gated on <c>!Modes.AllModesDeterministic</c>. Returns
     /// <c>null</c> when the transform produced nothing (the pre-427
@@ -1912,10 +2038,10 @@ public sealed partial class PrologEngine
             _assertDynCtx ??= new ModuleRewrite.Context(
                 DefaultModuleName, new HashSet<int>(), _dynStore.Functors);
             toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
-            // the helpers used to be DROPPED here, leaving the
+            // the helpers used to be dropped here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing
             // defines until the next query setup regenerates it from the
-            // store — an existence_error when the clause runs in the SAME
+            // store — an existence_error when the clause runs in the same
             // query it was asserted in (Logtalk's hooked test-file aux
             // registration). Link each helper into the live engine as a
             // single-clause static predicate before the caller patches the
@@ -1932,15 +2058,15 @@ public sealed partial class PrologEngine
     /// <summary>compiles and live-links the MetaTransform helper
     /// clauses generated while incrementally compiling a runtime-asserted
     /// clause (<paramref name="transformed"/>[1..]). Helpers are grouped by
-    /// head functor and each group compiled as ONE multi-clause static
+    /// head functor and each group compiled as one multi-clause static
     /// predicate via <see cref="Shumway.Compiler.Wam.PredicateCompiler"/> —
-    /// an if-then-else '$disj_N' has TWO clauses (the guarded then-branch
+    /// an if-then-else '$disj_N' has two clauses (the guarded then-branch
     /// and the else-branch) and per-clause compilation registered only the
-    /// LAST one, so `(C -&gt; T ; E)` in a runtime-asserted clause ran the
+    /// last one, so `(C -&gt; T ; E)` in a runtime-asserted clause ran the
     /// else unconditionally (Logtalk's type::check "callable(X) failing on
     /// an atom" mystery). Addresses are registered first, call sites
     /// patched in a second pass (a helper may call a later helper from the
-    /// same transform). Helpers are deliberately NOT added to the store —
+    /// same transform). Helpers are deliberately not added to the store —
     /// the next query setup regenerates them from the original clause,
     /// exactly like the setup path always has.</summary>
     private void LinkRuntimeAssertHelpers(
@@ -1994,9 +2120,9 @@ public sealed partial class PrologEngine
             }
             addrMap[fid] = addr;
             linked.Add((pred, addr));
-            // The compiled helper is kept host-side so ANOTHER live activation
+            // The compiled helper is kept host-side so another live activation
             // can materialize it on demand (see TryMaterializeAssertHelper):
-            // the asserted CLAUSE is visible to every activation through the
+            // the asserted clause is visible to every activation through the
             // shared ADR-015 chains, so its helper must be reachable from
             // every activation too — this map + only this activation's map
             // was the Logtalk-under-promotion existence_error. (Registered via
@@ -2017,7 +2143,7 @@ public sealed partial class PrologEngine
 
     /// <summary>MetaTransform helper predicates by head fid — compiled at assert
     /// time (<see cref="LinkRuntimeAssertHelpers"/>) or at a query setup's module
-    /// compile — kept so any LIVE activation can link one on demand
+    /// compile — kept so any live activation can link one on demand
     /// (<see cref="TryMaterializeAssertHelper"/>). Grows monotonically (helper ids
     /// are never reused); each entry is a small one-or-two-clause predicate.</summary>
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
@@ -2032,23 +2158,23 @@ public sealed partial class PrologEngine
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
         if (name is null) return false;
         // MetaTransform helper names are '{prefix}${kind}_{id}' — after any
-        // module mangling, the segment following the LAST '$' is
+        // module mangling, the segment following the last '$' is
         // '<letters>_<digits>' (disj_12, catchrec_7, bagof_1739, …). Match the
         // shape rather than an enumerated kind list, so a new helper kind can
         // never silently fall outside the late-materialization registry.
         int last = name.LastIndexOf('$');
         if (last < 0 || last + 2 >= name.Length) return false;
-        // The helper's own name STARTS with '$' — bare it is '$disj_12',
-        // module-mangled 'mod$$disj_12' (a DOUBLE dollar). A single-dollar
-        // name is a mangled USER local, and a user predicate named like
+        // The helper's own name starts with '$' — bare it is '$disj_12',
+        // module-mangled 'mod$$disj_12' (a double dollar). A single-dollar
+        // name is a mangled user local, and a user predicate named like
         // 'mod$test_326' fits the letters_digits shape by accident: register
         // it (under its bare name, first-compile-wins) and the module wall
-        // leaks — a bare test_326 resolved cross-module, preempting both the
-        // existence_error and the consult-direct fallback's ambiguity check.
+        // leaks: a bare test_326 resolved cross-module instead of raising
+        // existence_error (ADR-056).
         if (last > 0 && name[last - 1] != '$') return false;
-        // NEVER register the query-stub's own '$q…' helpers: their ids are
-        // deliberately REUSED query-to-query (MetaTransform.HelperPrefix "$q"),
-        // so a first-compile-wins registry would materialize a PREVIOUS query's
+        // Never register the query-stub's own '$q…' helpers: their ids are
+        // deliberately reused query-to-query (MetaTransform.HelperPrefix "$q"),
+        // so a first-compile-wins registry would materialize a previous query's
         // body under the next query's name — silent wrong execution.
         if (name[last + 1] == 'q') return false;
         int i = last + 1;
@@ -2063,8 +2189,8 @@ public sealed partial class PrologEngine
 
     /// <summary>Registers every helper-shaped compiled predicate for on-demand
     /// cross-activation materialization. First compile wins (ids are minted once,
-    /// so a fid's bytecode never legitimately changes). Each helper is ALSO
-    /// registered under its BARE (unmangled) functor: goal-as-data references —
+    /// so a fid's bytecode never legitimately changes). Each helper is also
+    /// registered under its bare (unmangled) functor: goal-as-data references —
     /// the '$catchrec_N'(RecVars) recovery term '$catch_begin' stores, a
     /// meta-called collect-loop goal — carry the bare name, which normally
     /// resolves through the map's bare aliases but must resolve here too when
@@ -2081,7 +2207,7 @@ public sealed partial class PrologEngine
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
             string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
             // The mangled form is '<module>$' + the helper's own '$'-leading
-            // name, so the split is the DOUBLE dollar — found from the END.
+            // name, so the split is the double dollar — found from the end.
             // Splitting at the first '$' misses every module whose own name
             // starts with '$' ('$prelude'): its inline-catch recovery terms
             // then have no bare alias and recovery setup has no address.
@@ -2097,10 +2223,10 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>The on-demand half of the ADR-015 visibility story for
-    /// runtime-assert helpers. An asserted clause is visible to EVERY live
+    /// runtime-assert helpers. An asserted clause is visible to every live
     /// activation through the shared dynamic chains — but its MetaTransform
     /// helpers (<c>'$disj_N'</c>, <c>'$catchgoal_N'</c>, …) were linked only into
-    /// the ASSERTING activation's transient region and address map. A different
+    /// the asserting activation's transient region and address map. A different
     /// activation (the outer query suspended around a nested
     /// consult-with-initialization — the Logtalk load shape) then runs the clause
     /// and calls — or meta-calls, via a findall collect-loop goal term — a helper
@@ -2115,8 +2241,8 @@ public sealed partial class PrologEngine
         if (!_runtimeAssertHelperPreds.TryGetValue(fid, out var pred))
         {
             // Not an assert-time helper: a SETUP-minted one (the derivation of a
-            // NESTED query recompiled a mutated dynamic — or regenerated the
-            // statics — while THIS activation was suspended; its helpers were
+            // nested query recompiled a mutated dynamic — or regenerated the
+            // statics — while this activation was suspended; its helpers were
             // linked into that setup's regions only). Their ASTs are in the
             // rewrite caches; compile the requested one on demand and memoize.
             List<Clause>? clauses = null;
@@ -2216,8 +2342,8 @@ public sealed partial class PrologEngine
     /// chain isn't in the new structure (paso-3 trust_me tail or indexed
     /// dispatch); in those cases the chunk-C redirect handles the update.
     ///
-    /// <para>BROADCAST entry point: applies the extension to the
-    /// mutating engine AND to every other live engine's buffer (each via
+    /// <para>Broadcast entry point: applies the extension to the
+    /// mutating engine and to every other live engine's buffer (each via
     /// its own chain table), so suspended outer/nested queries observe the
     /// assert when they resume — the single-code-space semantics SWI /
     /// GProlog give natively. Single-engine callers pay nothing (the
@@ -2236,7 +2362,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>reconciles <paramref name="engine"/>'s dynamic
-    /// dispatch view with the authoritative store at a RESUME boundary
+    /// dispatch view with the authoritative store at a resume boundary
     /// (a mid-query consult returning to its suspended caller). The
     /// mutation broadcast keeps live views coherent when every in-place
     /// patch lands, but a single silently-skipped patch (a guard bail, a
@@ -2244,7 +2370,7 @@ public sealed partial class PrologEngine
     /// a clause visible in one engine's dispatch that the store no longer
     /// holds (Logtalk's loading-stack "file is already loading" error) or
     /// vice versa. Instead of trusting N incremental patches, diff each
-    /// chain against the store BY CLAUSE IDENTITY: dead entries get their
+    /// chain against the store by clause identity: dead entries get their
     /// died slot patched in this engine's buffer; store clauses missing
     /// from the chain are appended through the normal incremental path.
     /// (Appended late-arrivals land at the chain tail regardless of their
@@ -2276,7 +2402,7 @@ public sealed partial class PrologEngine
             // Any divergence → rebuild wholesale. A fine-grained diff-append
             // is unsound for a view whose real layout the chain table
             // doesn't describe (indexed buckets — the appends would land in
-            // the buckets a SECOND time), and the rebuild is O(store)
+            // the buckets a second time), and the rebuild is O(store)
             // anyway. It also realigns the table so the next reconcile
             // compares equal.
             RebuildEngineFidChainView(engine, fid);
@@ -2287,12 +2413,12 @@ public sealed partial class PrologEngine
     /// <paramref name="target"/>'s buffer from the authoritative store.
     /// Needed when the in-place mutation paths can't keep that view
     /// coherent — the archetype: the target's buffer compiled the dynamic
-    /// predicate with the INDEXED layout (it went hot), whose
+    /// predicate with the indexed layout (it went hot), whose
     /// bucket entries the chain-table-based retract broadcast cannot
     /// patch, leaving retracted clauses visible forever in that engine
     /// (Logtalk's loading-stack ghosts). Strategy: materialize a fresh
     /// chain-layout trampoline, re-link every store clause behind it, and
-    /// overwrite the OLD entry point's first bytes with
+    /// overwrite the old entry point's first bytes with
     /// <c>execute &lt;new&gt;</c> so already-baked call sites reach the
     /// rebuilt view. The old layout's interior is left intact — a
     /// suspended choice point resuming into it still finds its code
@@ -2377,16 +2503,28 @@ public sealed partial class PrologEngine
         Activation engine, int functorId, Clause newClause)
     {
         // Root fix: a suspended owner resuming after a sibling extended the
-        // shared buffer must append AFTER that content, not over it.
+        // shared buffer must append after that content, not over it.
         ResyncOwnerAppendPosition(engine);
         // try the new extensible-indexed in-place
         // extension first. If the predicate uses the extensible-indexed
         // layout (enter_dynamic + switch_on_term + try_me_else
-        // bucket chains) AND the new clause's arg-0 key matches an
+        // bucket chains) and the new clause's arg-0 key matches an
         // existing bucket, we extend each affected chain in place
         // — no rebuild needed. Returns true if handled here.
         if (TryAppendToIndexedDynamic(engine, functorId, newClause))
             return;
+        // An indexed predicate that cannot take the clause in place (a key
+        // of a kind it has no switch for) is rebuilt from the store. The
+        // chain extension below is not for it: the table's tail is one
+        // chain's as it stood at setup, so a patch there unlinks what was
+        // appended since, and the chunk it links has its body inline, which
+        // the indexed layout's retract does not find.
+        if (IsExtensibleIndexedLayout(engine, functorId))
+        {
+            if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+            RebuildEngineFidChainView(engine, functorId);
+            return;
+        }
         // Fall back to the chain layout or, for cases
         // can't yet handle (new key, var-arg, multi-arg
         // indexed), to the persistent-buffer rebuild.
@@ -2396,7 +2534,7 @@ public sealed partial class PrologEngine
         // form of indexed dispatch that didn't handle
         // — for a hot predicate, request a persistent rebuild so the
         // next query sees the new clause through a fresh compile.
-        // resolve chain state through THIS engine's table (the
+        // resolve chain state through this engine's table (the
         // one describing its buffer; see DynChainTable) and capture buffer
         // ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
@@ -2426,7 +2564,7 @@ public sealed partial class PrologEngine
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
             // an unextendable chain record (a trust_me tail, or
-            // a contiguous walk over an indexed layout) means THIS engine's
+            // a contiguous walk over an indexed layout) means this engine's
             // live view can't take the clause in place — without repair its
             // dispatch silently diverges from the store forever (the
             // '$lgt_current_object_' stuck-entries signature). Rebuild the
@@ -2447,7 +2585,7 @@ public sealed partial class PrologEngine
         // .Length (capacity) — a chain reaching past this activation's
         // believed content end means its append position is stale and an
         // in-place extend would overwrite live entries.
-        // Incremental, not the full walk: validating every entry HERE made
+        // Incremental, not the full walk: validating every entry here made
         // each assertz O(chain), so growing a predicate was quadratic in its
         // own size. Entries already validated against this buffer stay valid
         // -- content never shrinks on the same array -- and only the ones
@@ -2542,7 +2680,7 @@ public sealed partial class PrologEngine
         // refresh PrologEngine's reference so the next query sees the
         // live buffer (owner engine) — or, when this engine's buffer is
         // no longer the host's (a nested query rebuilt it), mark the
-        // host buffer for rebuild: the newer buffer did NOT get this
+        // host buffer for rebuild: the newer buffer did not get this
         // in-place extension and would otherwise miss the clause on
         // cross-query reuse.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
@@ -2581,7 +2719,7 @@ public sealed partial class PrologEngine
     /// silently when the chain doesn't have a trampoline (paso-3
     /// emission or indexed dispatch).
     ///
-    /// <para>BROADCAST entry point (see
+    /// <para>Broadcast entry point (see
     /// <see cref="AppendDynamicClauseIncremental"/>).</para></summary>
     internal void PrependDynamicClauseIncremental(
         Activation engine, int functorId, Clause newClause)
@@ -2600,7 +2738,7 @@ public sealed partial class PrologEngine
         Activation engine, int functorId, Clause newClause)
     {
         // Root fix: a suspended owner resuming after a sibling extended the
-        // shared buffer must append AFTER that content, not over it.
+        // shared buffer must append after that content, not over it.
         ResyncOwnerAppendPosition(engine);
         // try in-place asserta for layout.
         if (TryPrependToIndexedDynamic(engine, functorId, newClause))
@@ -2609,7 +2747,7 @@ public sealed partial class PrologEngine
         // auto-promoted mid-query (no trampoline ever built), build
         // one now so the chain prepend below has a chain to prepend
         // to.
-        // resolve chain state through THIS engine's table and
+        // resolve chain state through this engine's table and
         // capture buffer ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var chainTable = GetChainTable(engine);
@@ -2736,7 +2874,7 @@ public sealed partial class PrologEngine
             died: chunkAddr + DiedOperandLocal,
             next: chunkAddr + NextOperandLocal,
             chunkAddr: chunkAddr,
-            chunkLength: chunk.Length));
+            chunkLength: chunk.Length), oldHead);
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
@@ -2781,7 +2919,7 @@ public sealed partial class PrologEngine
     /// crash. An 8-byte tail margin covers both the int32 <c>next</c> and
     /// int64 <c>died</c> operands with one check.</summary>
     /// <summary>The two staleness checks above, but only over the entries not
-    /// already validated against THIS program buffer. An entry's offsets
+    /// already validated against this program buffer. An entry's offsets
     /// cannot move while the buffer is the same array object, so a previous
     /// sweep's verdict on it still holds; head, tail and the fail stub are
     /// re-checked every time because those do move. A failure re-arms the full
@@ -2842,7 +2980,7 @@ public sealed partial class PrologEngine
 
     /// <summary>broadcast counterpart of the per-clause died patch: finds
     /// the target engine's chain
-    /// entries whose <see cref="DynChainEntry.Clause"/> IS the retracted
+    /// entries whose <see cref="DynChainEntry.Clause"/> is the retracted
     /// clause (reference identity — the store and every chain share the
     /// same Clause objects) and patches each one's died slot in that
     /// engine's buffer. By-reference matching (not by index) because a
@@ -2857,7 +2995,7 @@ public sealed partial class PrologEngine
     /// <param name="hintIndex">Where the clause sat in the STORE's list. The
     /// chain usually mirrors it, so this is usually the entry — but the chain
     /// can lag the store, which is why this is a hint and not an index. It is
-    /// trusted only when the chain holds exactly ONE entry for the clause,
+    /// trusted only when the chain holds exactly one entry for the clause,
     /// since then there is provably nothing else the walk could find; anything
     /// else falls back to the walk, which is what this always did.</param>
     /// <summary>Died-slot patches that took the hint instead of walking the
@@ -3006,7 +3144,7 @@ public sealed partial class PrologEngine
                 Shumway.Core.BytecodeIO.ReadInt32(program, pc + 2);
             // ADR-041 — the dispatch-time selector resolves a trampoline pc
             // to its functor through this map. Setup-compiled predicates in a
-            // REUSED persistent buffer are in no later query's
+            // reused persistent buffer are in no later query's
             // PredicatesByAddress snapshot, so without this entry their
             // chains never select CP-free (Logtalk's '$lgt_current_category_'
             // lookup leaked its chain CP into every ^^ cache miss).

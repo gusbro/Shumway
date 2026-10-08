@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// cache (<c>Activation.MetaRouteCache</c>, see <c>MetaRoute.cs</c>). A runtime
 /// meta-call's dispatch decision is cached per (goal atom id, total arity)
 /// and replayed on repeat goals. These tests pin the discriminating cases:
-/// every scenario repeats the SAME goal functor within one query, so the
+/// every scenario repeats the same goal functor within one query, so the
 /// second and later dispatches take the cached route — a wrong or stale
 /// route diverges visibly.
 /// </summary>
@@ -38,7 +38,7 @@ public class Chunk416Tests
     [Fact]
     public void RepeatedConjunction_BarrierRouteCutsCorrectly()
     {
-        // (member(X,..), !) as a runtime goal TWICE: both runs must route via
+        // (member(X,..), !) as a runtime goal twice: both runs must route via
         // $call_conj with the barrier in X2 — a `!` inside the runtime goal
         // commits to the call, not further (chunk 88). If the cached
         // BarrierHelperJump route failed to re-store the barrier, the second
@@ -97,13 +97,13 @@ public class Chunk416Tests
     [Fact]
     public void MidQueryAutoPromotion_ResolvesThroughCache()
     {
-        // chunk-207 scenario THROUGH the cache: assertz auto-promotes zzz/1
+        // chunk-207 scenario through the cache: assertz auto-promotes zzz/1
         // mid-query (materialising a trampoline the query's link never saw);
         // the first call(zzz(1)) resolves it via the slow path and caches the
         // route, the second replays it. A stale or wrongly keyed entry would
         // miss the trampoline.
-        // (NOTE: `catch(call(zzz(1)),_,true), assertz(zzz(1))` — a caught
-        // existence_error BEFORE the assertz — fails, but identically on the
+        // (note: `catch(call(zzz(1)),_,true), assertz(zzz(1))` — a caught
+        // existence_error before the assertz — fails, but identically on the
         // pre-cache build: a pre-existing engine issue, not a cache one.)
         var e = Make("ok.\n");
         Assert.True(e.Query(

@@ -35,7 +35,7 @@ public sealed class IlBacktrackReproTests
     [InlineData("mb(M, X) :- member(M, [a, b]), between(1, 2, X).", "mb(M, X)")]
     [InlineData("nt(I, X) :- nth1(I, [a, b, c], X).", "nt(I, X)")]
     [InlineData("rc(K, V) :- recorded(K, V, _).", "(recordz(k, va, _), recordz(k, vb, _), rc(k, V))")]
-    // SEPARATE bug (not the cursor fix): retract on a dynamic predicate from an
+    // Separate bug (not the cursor fix): retract on a dynamic predicate from an
     // IL region — expected to still fail until the dynamic-under-IL issue is
     // fixed. Kept here as the documented reproduction.
     [InlineData(":- dynamic t/1.\nt(1).\nt(2).\nclr :- retractall(t(_)), \\+ t(_).", "clr")]

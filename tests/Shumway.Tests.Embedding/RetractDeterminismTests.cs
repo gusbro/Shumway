@@ -5,7 +5,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>retract/1 left a choice point whenever any clause FOLLOWED the one
+/// <summary>retract/1 left a choice point whenever any clause followed the one
 /// it matched, whether or not that clause could ever match. For the common
 /// shape -- retract a keyed fact from a predicate keyed on that argument --
 /// that meant every call left a choice point nothing could ever use, and every
@@ -14,7 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// call, and quadratic over the loop.
 ///
 /// <para>The first-argument index answers the real question -- is there a
-/// further CANDIDATE, not is there a further clause -- so the call is simply
+/// further candidate, not is there a further clause -- so the call is simply
 /// deterministic and there is no view to keep. Fewer choice points is also the
 /// better answer: the clause that cannot match was never a solution.</para></summary>
 public sealed class RetractDeterminismTests
@@ -27,7 +27,7 @@ public sealed class RetractDeterminismTests
         drain(N) :- retract(tok(N)), M is N - 1, drain(M).
         """;
 
-    /// <summary>COUNTED, not timed. The loop has no cut, so every retract's
+    /// <summary>Counted, not timed. The loop has no cut, so every retract's
     /// choice point survives to the end of the query -- and each one used to
     /// cost a copy of everything still ahead of it. Now nothing is copied,
     /// because nothing is owed.</summary>
@@ -46,7 +46,7 @@ public sealed class RetractDeterminismTests
         }
     }
 
-    /// <summary>ANTI-VACUITY: a retract that really does have another
+    /// <summary>Anti-vacuity: a retract that really does have another
     /// candidate still leaves its choice point and still enumerates. Dropping
     /// one would be a solution that never runs, which is the only way this
     /// optimisation can be wrong.</summary>
@@ -66,7 +66,7 @@ public sealed class RetractDeterminismTests
     }
 
     /// <summary>A clause whose first argument rules nothing out is a candidate
-    /// for every key, so a retract followed by one is NOT deterministic even
+    /// for every key, so a retract followed by one is not deterministic even
     /// when no other clause shares its key.</summary>
     [Fact]
     public void AGeneralClauseAfterTheMatchKeepsTheChoicePoint()

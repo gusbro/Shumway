@@ -82,7 +82,7 @@ public sealed partial class ClauseCompiler
     public int DebugFileId { get; set; }
 
     /// <summary>ADR-035 — record that a debugger may stop at the instruction about
-    /// to be emitted. NOTHING is emitted: a stop site is a note about an offset,
+    /// to be emitted. Nothing is emitted: a stop site is a note about an offset,
     /// not an instruction. Debug code that nobody is stopping in therefore runs at
     /// full speed, and arming a breakpoint later is a one-byte patch — which is
     /// what every real VM does. A position of 0:0 (a synthetic term one of the
@@ -144,10 +144,10 @@ public sealed partial class ClauseCompiler
         List<Term> goals = bodyTerm is null ? new List<Term>() : FlattenConjunction(bodyTerm);
 
         // ADR-035 — the engine wraps every query in a synthetic __query__ clause. It gets no
-        // STOP SITES: there is no source file to stop in, and a debugger stops inside the
+        // stop sites: there is no source file to stop in, and a debugger stops inside the
         // program, not inside the machinery that launched it.
         //
-        // Its VARIABLES are a different matter, and conflating the two was a bug. `X` in
+        // Its variables are a different matter, and conflating the two was a bug. `X` in
         // `?- X = 41, debugger_break.` is the user's variable — the top level itself prints
         // it as the answer — and a debugger stopped in the query must show it. So the
         // variable machinery below (permanence, frame initialisation, no trimming, the frame
@@ -162,7 +162,7 @@ public sealed partial class ClauseCompiler
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
 
-        // ADR-035 — under debug codegen EVERY named source variable is permanent, not
+        // ADR-035 — under debug codegen every named source variable is permanent, not
         // just the ones that outlive a call. A variable the WAM leaves in an X register
         // is unreadable a moment later: the next call overwrites it. A debugger has to
         // be able to show `X` for as long as the clause is on the stack, so debug code
@@ -175,7 +175,7 @@ public sealed partial class ClauseCompiler
         // see DiagYSurvey. Stripped from normal builds.
         DiagYSurvey(name, headArgs, goals, permanents);
 
-        // Cut analysis: a `!` is a NECK cut — reading the engine's _b0 register
+        // Cut analysis: a `!` is a neck cut — reading the engine's _b0 register
         // directly, no barrier slot — when every goal before it is inline
         // Inline goals (`is`/comparisons → a_int_*/a_eval_*, and
         // earlier cuts) never CALL and never push choice points, so _b0 is
@@ -196,7 +196,7 @@ public sealed partial class ClauseCompiler
         }
 
         // ADR-025 — inline if-then-else goals surviving MetaTransform. Every
-        // named variable inside one is forced PERMANENT (the else-branch resume
+        // named variable inside one is forced permanent (the else-branch resume
         // restores no X registers — the try_me_else CP is arity-0 — so branch
         // state must live in Y slots, exactly what the helper-call form implied),
         // and each `->` construct gets one extra Y slot for its commit barrier.
@@ -225,14 +225,14 @@ public sealed partial class ClauseCompiler
         // Frame is required to (a) host permanent Y slots / the cut-barrier
         // slot, or (b) preserve the caller's CP across a non-tail CALL. An
         // inline goal — a cut or arithmetic (`is`/comparisons → a_int_*/a_eval_*)
-        // — does NOT clobber CP, so a body that is inline goals followed by at
+        // — does not clobber CP, so a body that is inline goals followed by at
         // most one final (tail) call needs no frame. (A neck cut
         // before the single recursive call no longer forces an empty
-        // `allocate [0]`, matching GProlog.) A real call BEFORE the last goal
+        // `allocate [0]`, matching GProlog.) A real call before the last goal
         // does need the frame, since it overwrites CP and we must still return.
         bool needFrame = permanents.Count > 0 || needsDeepCut
             // ADR-025 — an inline ITE always needs a frame: its inner goals are
-            // non-tail calls (control flows to END, then proceed), so the
+            // non-tail calls (control flows to end, then proceed), so the
             // continuation must be protected even when the ITE is the last goal.
             || inlineItes.Count > 0;
         if (!needFrame)
@@ -286,14 +286,14 @@ public sealed partial class ClauseCompiler
         // head did not already bind therefore gets a fresh unbound variable here, and
         // reports itself honestly as unbound until something binds it.
         //
-        // The pre-initialised cell IS the variable from here on: the names are added to
-        // YsInitialized below, so the body's first occurrence compiles as the VALUE
+        // The pre-initialised cell is the variable from here on: the names are added to
+        // YsInitialized below, so the body's first occurrence compiles as the value
         // flavour (put_value / set_value / unify_value) against this cell instead of
         // put_variable allocating a fresh one. Semantically identical — either way the
         // goal receives an unbound heap cell — but it makes the cell the debugger shows
         // in Locals the cell the program actually uses, with two consequences that
-        // matter: a variable keeps ONE identity across its life (no _G rename when the
-        // first occurrence executes), and a binding the debugger commits INTO the frame
+        // matter: a variable keeps one identity across its life (no _G rename when the
+        // first occurrence executes), and a binding the debugger commits into the frame
         // before the first occurrence (ADR-035 D5+ bind-into-frame) is seen by the
         // program instead of being orphaned by put_variable's fresh cell.
         if (DebugCodegen && needFrame)
@@ -312,11 +312,11 @@ public sealed partial class ClauseCompiler
         // ADR-035 — a FACT's stop site, placed after the head has matched rather than at
         // the clause's first byte. Two things fall out of that, both of them what a
         // debugger wants: a clause whose head does not match is never stopped in (the
-        // user asked to stop when THIS clause runs, not when it is tried and rejected),
+        // user asked to stop when this clause runs, not when it is tried and rejected),
         // and by the time we stop, the head arguments are bound — so the fact's
         // variables can be read.
         //
-        // A RULE gets no entry site, because it would not be a place of its own: with
+        // A rule gets no entry site, because it would not be a place of its own: with
         // the head matched, the very next instruction is the first body goal's, and that
         // goal has a site already. "The clause was entered" and "the first goal is about
         // to run" are the same point in the machine, and one point deserves one stop. A
@@ -337,7 +337,7 @@ public sealed partial class ClauseCompiler
 
         // ----- Body goals -----
         // Per-call env trimming: for each Call / CallBuiltin
-        // emission, compute how many Y slots are still live AFTER the
+        // emission, compute how many Y slots are still live after the
         // call returns. The interpreter trims the frame accordingly so
         // subsequent CPs / sub-frames pack tightly. The vector is
         // indexed by goal position.
@@ -353,7 +353,7 @@ public sealed partial class ClauseCompiler
         if (goals.Count == 0)
         {
             // Pure fact / trivial-body rule. Under debug codegen a fact whose head has
-            // variables now HAS a frame (they were made permanent so the debugger can
+            // variables now has a frame (they were made permanent so the debugger can
             // read them), and a frame that is allocated must be deallocated: leaving it
             // would hand the caller a stale E, and it would read its own Y slots out of
             // the wrong environment.
@@ -369,11 +369,11 @@ public sealed partial class ClauseCompiler
 
                 MarkStop(state, goal.Position);   // ADR-035 — this goal's stop site
 
-                // ADR-035 — an INLINE goal (`!`, `is`, `=`, a comparison) emits no call
+                // ADR-035 — an inline goal (`!`, `is`, `=`, a comparison) emits no call
                 // and so raises no port: a step walked straight over it, and the user
                 // could never stand at the `!` and look at the variables before it
                 // commits. Under debug codegen each one gets a one-byte port of its own.
-                // Placed AFTER the stop site so a breakpoint armed on this goal patches
+                // Placed after the stop site so a breakpoint armed on this goal patches
                 // the debug_port byte: the Break reports first, the re-dispatched port is
                 // deduplicated as the same stop (see DebugService's reported-call-site).
                 // (Not in the __query__ wrapper — its goals have no source to stand on.)
@@ -445,7 +445,7 @@ public sealed partial class ClauseCompiler
             debugVars is { Count: > 0 } ? debugVars : null,
             hasFrame: needFrame,
             // ADR-035 — the head skeleton, so a stack frame can show the call with its
-            // arguments' CURRENT values. Debug-only: release keeps no AST behind.
+            // arguments' current values. Debug-only: release keeps no AST behind.
             debugHeadArgs: DebugCodegen && headArgs.Length > 0 ? headArgs : null);
     }
 
@@ -474,12 +474,12 @@ public sealed partial class ClauseCompiler
     /// <c>(A ; B)</c> inline:
     /// <code>
     /// [get_level Yb]           ; if-then-else only
-    /// try_me_else ELSE (arity 0)
+    /// try_me_else else (arity 0)
     /// C…  [cut Yb]  T…
-    /// jump END
-    /// ELSE: trust_me
+    /// jump end
+    /// else: trust_me
     /// E…
-    /// END:
+    /// end:
     /// </code>
     /// Inner goals compile as ordinary NON-last body goals with no Y trimming
     /// (every branch variable is already a permanent — see
@@ -491,65 +491,65 @@ public sealed partial class ClauseCompiler
     {
         bool isIte = disj.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 };
         // ADR-037 — ( Cond *-> Then ; Else ): same inline shape as ->, committed
-        // with soft_cut instead of cut, and the barrier captured AFTER the
-        // try_me_else (so it names the ELSE CP, not the parent).
+        // with soft_cut instead of cut, and the barrier captured after the
+        // try_me_else (so it names the else CP, not the parent).
         bool isSoftCut = disj.Args[0] is CompoundTerm { Functor: "*->", Args.Length: 2 };
         bool hasCond = isIte || isSoftCut;
         Term? condPart = hasCond ? ((CompoundTerm)disj.Args[0]).Args[0] : null;
         Term thenPart = hasCond ? ((CompoundTerm)disj.Args[0]).Args[1] : disj.Args[0];
         Term elsePart = disj.Args[1];
 
-        // ADR-025 bring-up fix: capture CURRENT B, not B0 — a pre-ITE body
+        // ADR-025 bring-up fix: capture current B, not B0 — a pre-ITE body
         // call resets B0, so cutting to it pruned a preceding generator's
         // choice points (boyer lost solutions / crashed). get_level_b takes
         // B at the try point: the cut pops exactly the ITE CP + Cond's CPs.
-        // For -> the barrier is captured BEFORE the try_me_else (names the
-        // parent, so cut pops the ITE CP too). For *-> it is captured AFTER
-        // (below), so it names the ITE CP itself and soft_cut neutralises ONLY
+        // For -> the barrier is captured before the try_me_else (names the
+        // parent, so cut pops the ITE CP too). For *-> it is captured after
+        // (below), so it names the ITE CP itself and soft_cut neutralises only
         // that one.
         if (isIte) s.Emitter.EmitGetLevelB(barrierSlot);
         int tryPos = s.Emitter.Position;
-        // ELSE target patched below. The arity operand is the body-CP
-        // SENTINEL (not 0): it marks this try_me_else as an inline ITE for
+        // Else target patched below. The arity operand is the body-CP
+        // sentinel (not 0): it marks this try_me_else as an inline ITE for
         // every whole-bytecode scan (cursor budget, shape guards) — a
         // dispatch-chain try_me_else always carries a real arity >= 0. The
         // interpreter saves 0 argument registers for it either way.
         s.Emitter.EmitTryMeElse(0, arity: OpcodeTable.InlineIteCpArity);
         s.DispatchSites.Add(tryPos + 1);
-        // ADR-037 — *-> captures the barrier AFTER the try_me_else: the slot now
-        // names the ELSE choice point just pushed, so soft_cut neutralises that
+        // ADR-037 — *-> captures the barrier after the try_me_else: the slot now
+        // names the else choice point just pushed, so soft_cut neutralises that
         // one and leaves the condition's CPs (pushed above) alive.
         if (isSoftCut) s.Emitter.EmitGetLevelB(barrierSlot);
         // The emitter's Y-initialization tracking is per-EMISSION-ORDER, but at
-        // runtime only ONE branch executes: the else branch must be emitted as if
+        // runtime only one branch executes: the else branch must be emitted as if
         // starting from the try-point state (else a variable first bound in the
         // then branch would be read as "already initialized" on the else path —
         // an uninitialized-slot read), and after the join only variables
-        // initialized on BOTH paths may be assumed initialized.
+        // initialized on both paths may be assumed initialized.
         var initAtTry = new HashSet<string>(s.YsInitialized);
         if (hasCond)
         {
             foreach (var g in FlattenConjunction(condPart!))
                 CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
             if (isSoftCut)
-                s.Emitter.EmitSoftCut(barrierSlot);   // ADR-037: neutralise ONLY the ELSE CP
+                s.Emitter.EmitSoftCut(barrierSlot);   // ADR-037: neutralise only the else CP
             else
                 s.Emitter.EmitCut(barrierSlot);       // ->: pop the ITE CP (+ Cond's CPs)
         }
         // Branch-tail LCO (ADR-025 follow-up): when the ITE is the clause's
-        // LAST goal, each branch's last goal compiles as a last goal —
+        // last goal, each branch's last goal compiles as a last goal —
         // `deallocate; execute` for a user call, `call_builtin;
         // deallocate_proceed` otherwise — exactly what the helper lowering
         // gave it. The old shape compiled every branch goal as non-last and
-        // joined at END + one shared epilogue, so a tail-recursive call
+        // joined at end + one shared epilogue, so a tail-recursive call
         // through a branch lost LCO: O(depth) frames (a stack-robustness
         // regression vs the helper form) and a call/return round trip per
         // iteration (the dominant share of boyer's Tier-1 inline-ITE cost).
         // Each branch then self-terminates: no `jump`, no join, no epilogue.
-        // A branch's goal list can be EMPTY (FlattenConjunction elides `true`,
+        // A branch's goal list can be empty (FlattenConjunction elides `true`,
         // so `-> true` / `; true` flatten to nothing). Under isLast such a
-        // branch must still CLOSE the clause explicitly — without it the flow
-        // would fall through into the ELSE block (or off the clause end).
+        // branch must still close the clause explicitly — without it the flow
+        // would fall through into the else block (or off the clause end).
         void EmitBranch(List<Term> branchGoals)
         {
             if (isLast && branchGoals.Count == 0)
@@ -569,17 +569,17 @@ public sealed partial class ClauseCompiler
         if (!isLast)
         {
             jumpPos = s.Emitter.Position;
-            s.Emitter.EmitJump(0);              // END target patched below
+            s.Emitter.EmitJump(0);              // End target patched below
             s.DispatchSites.Add(jumpPos + 1);
         }
-        s.Emitter.PatchInt32(tryPos + 1, s.Emitter.Position);   // ELSE:
+        s.Emitter.PatchInt32(tryPos + 1, s.Emitter.Position);   // Else:
         s.Emitter.EmitTrustMe();
         s.YsInitialized.Clear();
         s.YsInitialized.UnionWith(initAtTry);   // else path starts at the try point
         EmitBranch(FlattenConjunction(elsePart));
         if (!isLast)
         {
-            s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // END:
+            s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // End:
             s.YsInitialized.IntersectWith(initAfterThen);   // join: both-paths only
         }
     }
@@ -602,8 +602,8 @@ public sealed partial class ClauseCompiler
     public static Dictionary<string, (int PermTotal, int ClassB)>? YSurvey;
 
     /// <summary>Register-allocator design survey (ADR-021):
-    /// quantifies the CEILING of the classic-allocator arc by classifying each
-    /// permanent. Class B = a permanent whose chunk-crossings are ALL over
+    /// quantifies the ceiling of the classic-allocator arc by classifying each
+    /// permanent. Class B = a permanent whose chunk-crossings are all over
     /// inline-compiled goals (cut / =/2 / is / the six comparisons), i.e. what
     /// a chunk-transparency allocator would demote; Class A = crosses a real
     /// call — irreducible in the WAM model. Diagnostic only; stripped from
@@ -623,10 +623,10 @@ public sealed partial class ClauseCompiler
     }
 
     /// <summary>Survey variant — <see cref="ClassifyPermanents"/> under the
-    /// refuted inline-transparency model: a goal the compiler lowers WITHOUT a
+    /// refuted inline-transparency model: a goal the compiler lowers without a
     /// call (cut, <c>=/2</c>, <c>is/2</c>, the six arithmetic comparisons) does
     /// not end a chunk, so a variable whose uses straddle only such goals stays
-    /// temporary. NOT used for codegen (unsound — choice-point liveness is not
+    /// temporary. Not used for codegen (unsound — choice-point liveness is not
     /// clause-local); used only to
     /// size what a sound allocator could ever reclaim.</summary>
     private static HashSet<string> ClassifyPermanentsInlineTransparent(
@@ -717,7 +717,7 @@ public sealed partial class ClauseCompiler
 
         // Head is in chunk 0.
         foreach (Term arg in headArgs) Visit(arg, 0);
-        // EXPERIMENT: neck cut (position 0) is transparent — does not end a chunk.
+        // Experiment: neck cut (position 0) is transparent — does not end a chunk.
         int chunk = 0;
         for (int i = 0; i < goals.Count; i++)
         {
@@ -780,7 +780,7 @@ public sealed partial class ClauseCompiler
     ///
     /// <para>Conditions for preferencing variable V to register R: V is not a
     /// permanent; V occurs exactly once in the whole body, as a depth-1 argument
-    /// at position R of the FIRST goal (so no intervening goal can clobber
+    /// at position R of the first goal (so no intervening goal can clobber
     /// register R before the use); V appears in exactly one head argument, at
     /// index i ≥ R, and nested (not as the top-level head argument itself); and
     /// <c>headArgs[R]</c> is a non-variable. At most one variable is preferenced
@@ -910,8 +910,8 @@ public sealed partial class ClauseCompiler
     /// cut (<c>!</c>), arithmetic (<c>is/2</c> and the six comparisons →
     /// <c>a_int_*</c> / <c>a_eval_*</c>), and — <c>=/2</c>.
     /// Such a goal needs no environment frame to survive it, and a <c>!</c>
-    /// after a prefix of them is still a NECK cut.
-    /// <para><c>=/2</c> CP-safety across BOTH its lowerings: the inline form
+    /// after a prefix of them is still a neck cut.
+    /// <para><c>=/2</c> CP-safety across both its lowerings: the inline form
     /// (get_*/unify_* head-style matching) is plain unification; the
     /// fallback is a <c>call_builtin</c> of the non-backtrackable <c>=/2</c>,
     /// which runs inline in the dispatch loop — Cp untouched, B0 untouched
@@ -974,7 +974,7 @@ public sealed partial class ClauseCompiler
             CollectForcedSaves(gArgs[i], rootDepth: 0, s, N, forced);
         // in-place sort instead of LINQ OrderBy. The Seq component
         // reproduces OrderBy's stability over the set's enumeration order
-        // exactly (two names CAN share a slot via head-arg aliasing).
+        // exactly (two names can share a slot via head-arg aliasing).
         var forcedOrder = new List<(int Slot, int Seq, string Name)>(forced.Count);
         foreach (string name in forced)
             forcedOrder.Add((s.Xs.GetSlot(name), forcedOrder.Count, name));
@@ -1012,7 +1012,7 @@ public sealed partial class ClauseCompiler
 
         // === Step 3: Iteratively break cycles in the cross-arg graph. ===
         // the per-node reads sets and successor lists are
-        // allocated ONCE and cleared/refilled per cycle-break iteration
+        // allocated once and cleared/refilled per cycle-break iteration
         // (Recompute used to allocate N fresh HashSets per iteration, and
         // FindCycleNode + TopoSort each rebuilt per-node successor lists).
         var reads = new HashSet<int>[N];

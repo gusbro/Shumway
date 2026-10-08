@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// verify_attributes/4 hook :- multifile, and the hook's first argument
 /// (the attribute module) dispatches each wakeup to the right library.
 /// Regression for the multifile clause-context bug: a multifile clause is
-/// module-rewritten at consult under its ORIGIN module, so clpfd's hook
+/// module-rewritten at consult under its origin module, so clpfd's hook
 /// body still reaches clpfd's module-locals after clpr also loads.
 /// </summary>
 public class ClpCoexistenceTests

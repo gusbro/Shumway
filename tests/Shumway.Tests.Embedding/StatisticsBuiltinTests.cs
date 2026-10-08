@@ -60,7 +60,7 @@ public class StatisticsBuiltinTests
             + "with_output_to(atom(A), statistics), atom(A).");
         Assert.True(sol.Success);
         string report = ((Shumway.Compiler.Ast.AtomTerm)sol["A"]!).Name;
-        // The reclaim happened and the report says so: at least one COMPACTING
+        // The reclaim happened and the report says so: at least one compacting
         // collection, and the in-use count is back to a trivial residue (the
         // 100k-cell list is gone). Asserted as the number rather than the word:
         // a collector that ran and moved nothing also used to read as
@@ -195,7 +195,7 @@ public class StatisticsBuiltinTests
         // query whose memory came back through backtracking instead.
         //
         // garbage_collect/0 rather than megabytes of garbage: the claim here is
-        // about the REPORT, and forcing a run states it without waiting for the
+        // about the report, and forcing a run states it without waiting for the
         // watermark. (That the compacting count tracks a real reclaim is what
         // GarbageCollect_ReclaimsDeadStructures_DespiteStaleRegisters pins.)
         var e = new PrologEngine();
@@ -218,8 +218,8 @@ public class StatisticsBuiltinTests
     public void TheCollectorTotalsSurviveTheQueryThatEarnedThem()
     {
         // A query gets a fresh Activation, so the collector's counters die with
-        // it. statistics/0 is typed at a TOP LEVEL, where the question is what
-        // the SESSION has done -- per-query counters answered it with the same
+        // it. statistics/0 is typed at a top level, where the question is what
+        // the session has done -- per-query counters answered it with the same
         // zeroes however much work had gone by. Each garbage_collect/0 below is
         // its own query, so the growth is exactly what used to be lost.
         var e = new PrologEngine();
@@ -245,7 +245,7 @@ public class StatisticsBuiltinTests
     public void TheResidualCopyIsSkippedWhenNothingCarriesAttributes()
     {
         // The top level wraps every query in copy_term/3 to project residual
-        // constraints, which copies the WHOLE answer for every solution.
+        // constraints, which copies the whole answer for every solution.
         // '$any_attvars' is how it learns in O(1) that there is nothing to
         // project -- and it has to be right in both directions.
         var e = new PrologEngine();

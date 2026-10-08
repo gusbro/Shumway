@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.DialectInterop;
 
-/// <summary>ADR-040 — cross-dialect interop against REAL third-party libraries.
+/// <summary>ADR-040 — cross-dialect interop against real third-party libraries.
 /// Parameterised by environment variables naming each engine's library dir; a
 /// test whose dir is unset/missing is a logged no-op (so a clone without the
 /// libraries does not fail). Run explicitly with the dirs you have, e.g.
@@ -19,7 +19,7 @@ public sealed class CrossDialectInteropTests
     private const string SwiEnv = "SHUMWAY_SWI_LIB";
 
     // The configured, existing directory for an engine. When there is none the
-    // test SKIPS rather than passing: a run with nothing configured verifies
+    // test skips rather than passing: a run with nothing configured verifies
     // nothing, and reporting that as a pass made it indistinguishable from a
     // run that loaded the real libraries (2 seconds against 43).
     private string Dir(string env)
@@ -96,7 +96,7 @@ public sealed class CrossDialectInteropTests
     {
         // The headline ADR-040 property: a Scryer library and an SWI library,
         // each from its own system's checkout, loaded and working side by side
-        // in ONE engine — attribute-variable constraints (clpz) next to AVL trees
+        // in one engine — attribute-variable constraints (clpz) next to AVL trees
         // (SWI assoc, which needed meta_predicate + autoload + => + if/else/endif
         // to load), each parsed in its own dialect.
         string scryer = Dir(ScryerEnv);
@@ -149,7 +149,7 @@ public sealed class CrossDialectInteropTests
             if (name == "INDEX") continue;
             attempted++;
             string outcome;
-            // A library that fails to load is NOT thrown — the directive handler
+            // A library that fails to load is not thrown — the directive handler
             // catches it and reports `warning: use_module(...) failed: <msg>`,
             // then use_module returns null. Captured through the engine's own
             // per-engine Warnings writer (not a Console.Error swap — see the
@@ -212,7 +212,7 @@ public sealed class CrossDialectInteropTests
     }
 
     // Pull the predicate indicator out of an existence_error message so the
-    // MISSING bucket groups by the actual missing predicate.
+    // missing bucket groups by the actual missing predicate.
     private static string ExtractPI(string s)
     {
         var m = System.Text.RegularExpressions.Regex.Match(

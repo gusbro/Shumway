@@ -23,7 +23,7 @@ public sealed class ScryerCompatFixTests
     [Fact]
     public void DcgPushback_HeadGroupsUnderRealHead()
     {
-        // A pushback (semicontext) DCG rule + a plain rule of the SAME
+        // A pushback (semicontext) DCG rule + a plain rule of the same
         // nonterminal must be contiguous — they group under the real head, not
         // `,/4`. `peek(X), [X] --> [X]` is a lookahead: consume X, push it back.
         var e = new PrologEngine();
@@ -33,7 +33,7 @@ public sealed class ScryerCompatFixTests
             peek_or_end(end) --> [].
             t(X, Rest) :- phrase(peek(X), [a, b, c], Rest).
             """);
-        // Lookahead: X = a, and the input is UNCONSUMED (Rest still [a,b,c]).
+        // Lookahead: X = a, and the input is unconsumed (Rest still [a,b,c]).
         Assert.True(e.Query("t(a, [a, b, c]).").Success);
     }
 

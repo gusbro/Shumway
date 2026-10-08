@@ -59,10 +59,14 @@ public static class AtomListBuiltins
         // again filling — no intermediate buffer.
         int count = 0;
         Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cursor);
         while (ListCursor.TryUncons(engine, cursor, out _, out Cell countTail))
         {
             count++;
             cursor = ListCursor.Resolve(engine, countTail);
+            // A cyclic L1 has no end to append L2 at: the two-clause append
+            // builds forever, and the answer is the one length/2 gives.
+            if (guard.Loops(cursor)) throw ListCursor.InfiniteList();
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             return AppendSplit(engine, engine.BuiltinReturnPc);
@@ -93,23 +97,24 @@ public static class AtomListBuiltins
         return engine.UnifyRegisterWithHeapAt(2, start);
     }
 
-    /// <summary>Non-deterministic <c>append/3</c> path: L1 isn't bound, so
-    /// we drive the split off L3. Collect L3's elements, then enumerate
-    /// every split point 0..N. The CP machinery (<see cref="Activation.PushBuiltinChoicePoint"/>)
-    /// makes each backtrack try the next split.</summary>
+    /// <summary>Non-deterministic <c>append/3</c> path: L1 is open, so the
+    /// split is driven off L3.</summary>
     private static bool AppendSplit(Activation engine, int returnPc)
     {
-        // L3 must be ground enough to walk — collect its elements.
-        var elems = new List<Cell>();
+        int n = 0;
         Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
-        while (ListCursor.TryUncons(engine, cursor, out Cell el, out Cell elTail))
+        var guard = new SpineGuard(cursor);
+        while (ListCursor.TryUncons(engine, cursor, out _, out Cell elTail))
         {
-            elems.Add(el);
+            n++;
             cursor = ListCursor.Resolve(engine, elTail);
+            // A cyclic L3 has a split at every one of its infinitely many
+            // cells: the enumeration goes through them without end.
+            if (guard.Loops(cursor)) return new AppendStepCursor(returnPc).Start(engine);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
-            // drive the split off. Do NOT raise instantiation_error: the PURE
+            // drive the split off. Do not raise instantiation_error: the pure
             // append/3 enumerates solutions by unification, and the classic
             // difference-list idiom `append(Open, [], Open)` (closing an open
             // list's tail hole) must succeed at the first solution. Enumerate
@@ -122,9 +127,8 @@ public static class AtomListBuiltins
         // `cursor` is L3's final tail: [] for a proper list, or some other
         // term (atom / compound) for an improper list. ISO append/3 splits an
         // improper list too — every suffix L2 simply carries that tail
-        // (append([3], fac, [3|fac]) etc.), so we thread it through to the L2
-        // build instead of rejecting it. For a proper list this tail is [],
-        // so the behaviour is unchanged.
+        // (append([3], fac, [3|fac]) etc.): L2 is a suffix of L3's own spine,
+        // so it carries it with no special case.
 
         // Mode-directed: a proper-list L2 pins the split point (the
         // append(-, +, +) suffix idiom), so the single candidate is checked
@@ -132,104 +136,93 @@ public static class AtomListBuiltins
         // match while the remaining splits can only fail.
         int m = 0;
         Cell c2 = ListCursor.Resolve(engine, engine.GetRegister(1));
+        var l2Guard = new SpineGuard(c2);
         while (ListCursor.TryUncons(engine, c2, out _, out Cell c2Tail))
         {
             m++;
             c2 = ListCursor.Resolve(engine, c2Tail);
+            // A cyclic L2 has no length to pin the split with: try the
+            // splits in turn, as the two-clause append does (each fails).
+            if (l2Guard.Loops(c2)) break;
         }
         if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
         {
-            if (m > elems.Count) return false;
-            int split = elems.Count - m;
-            // L2 is BUILT here rather than shared with L3's spine, which is
-            // what the enumerating path below does. Sharing means walking to
-            // the split point, and this mode's common shape is a long prefix
-            // with a short L2 (`append(_, [Last], L)`): the walk would cost a
-            // step per element to save building the handful that L2 has.
-            int l1Heap = BuildListFromCells(engine, elems, 0, split, Cell.Atom(AtomTable.EmptyListId));
-            int l2Heap = BuildListFromCells(engine, elems, split, elems.Count, cursor);
+            if (m > n) return false;
+            int split = n - m;
+            // L1 is L3's first n - m elements, in one allocation (ADR-017
+            // layout, as the det path builds it); L2 is L3's suffix there.
+            int l1Heap = engine.AllocateHeap(2 * split + 1);
+            Cell suffix = ListCursor.Resolve(engine, engine.GetRegister(2));
+            for (int i = 0; i < split; i++)
+            {
+                ListCursor.TryUncons(engine, suffix, out Cell head, out Cell tail);
+                int lisIdx = l1Heap + 2 * i;
+                engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+                engine.SetHeap(lisIdx + 1, head);
+                suffix = ListCursor.Resolve(engine, tail);
+            }
+            engine.SetHeap(l1Heap + 2 * split, Cell.Atom(AtomTable.EmptyListId));
             return engine.UnifyRegisterWithHeapAt(0, l1Heap)
-                && engine.UnifyRegisterWithHeapAt(1, l2Heap);
+                && engine.UnifyRegisterWithCell(1, suffix);
         }
 
-        return new AppendSplitCursor(elems, CollectSuffixes(engine, elems.Count), returnPc)
-            .Start(engine);
+        return new AppendStepCursor(returnPc).Start(engine);
     }
 
-    /// <summary>The suffix at every split point, for the ENUMERATING path.
+    /// <summary>Resume state for the enumerating <c>append/3</c> split: the
+    /// two-clause definition, run by hand.
+    /// <code>append([], L, L).
+    /// append([H|T], L, [H|R]) :- append(T, L, R).</code>
+    /// A step at (T, R), the rest of L1 and of L3, tries the first clause and
+    /// leaves a choice point for the second, which binds T to [H|T'] with one
+    /// new cons and steps to (T', R'). L1 grows a cell per solution instead of
+    /// being rebuilt for each, and nothing is collected up front.
     ///
-    /// <para>Every split hands L2 a suffix of L3, and that suffix ALREADY
-    /// exists inside L3's spine, so there is nothing to build for it: sharing
-    /// it is what the two-clause Prolog <c>append/3</c> does when it reaches
-    /// <c>append([], L, L)</c>. One walk of the spine, and each of the n + 1
-    /// solutions reads one entry instead of building a list, which is what
-    /// takes the enumeration from two lists per solution down to one.</para>
-    ///
-    /// <para>Only worth it when there ARE n + 1 solutions to amortise it over:
-    /// the deterministic split builds its single L2 instead.</para></summary>
-    private static List<Cell> CollectSuffixes(Activation engine, int count)
+    /// <para>T and R ride in the choice point as saved registers 3 and 4,
+    /// which the heap GC relocates; a heap cell kept in this object would go
+    /// stale at the first collection. Restoring them clobbers X3 and X4,
+    /// which are dead after the call: a variable used past a body goal lives
+    /// in a Y slot.</para></summary>
+    private sealed class AppendStepCursor
     {
-        var suffixes = new List<Cell>(count + 1);
-        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
-        for (int i = 0; ; i++)
-        {
-            suffixes.Add(cursor);
-            if (i == count) return suffixes;
-            ListCursor.TryUncons(engine, cursor, out _, out Cell tail);
-            cursor = ListCursor.Resolve(engine, tail);
-        }
-    }
-
-    /// <summary>Resume state for the non-deterministic <c>append/3</c> split:
-    /// the collected L3 elements, the suffix each split point yields, and the
-    /// running split index, plus a cached resume delegate — allocated once
-    /// per call and re-pushed unchanged on each backtrack, no per-split
-    /// closure.</summary>
-    private sealed class AppendSplitCursor
-    {
-        private readonly IReadOnlyList<Cell> _elems;
-        private readonly IReadOnlyList<Cell> _suffixes;
         private readonly int _returnPc;
-        private int _splitIdx;
         public readonly Func<Activation, int, bool> Resume;
 
-        public AppendSplitCursor(
-            IReadOnlyList<Cell> elems, IReadOnlyList<Cell> suffixes, int returnPc)
+        public AppendStepCursor(int returnPc)
         {
-            _elems = elems;
-            _suffixes = suffixes;
             _returnPc = returnPc;
-            _splitIdx = 0;
-            Resume = (e, _) => Attempt(e, isResume: true);
+            Resume = (e, _) => SecondClause(e);
         }
 
-        public bool Start(Activation engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine)
+            => FirstClause(engine, engine.GetRegister(0),
+                ListCursor.Resolve(engine, engine.GetRegister(2)), isResume: false);
 
-        private bool Attempt(Activation engine, bool isResume)
+        private bool FirstClause(Activation engine, Cell t, Cell r, bool isResume)
         {
-            int n = _elems.Count;
-            int splitIdx = _splitIdx;
-            if (splitIdx > n) return false;
-
-            // Push a CP for the next split point first (unless we're at the
-            // last one), so a backtrack into us retries with splitIdx + 1.
-            // arity 3: the CP must restore append/3's argument registers, else
-            // a following body goal whose builtin call takes >= (resultReg+1)
-            // args clobbers X0/X1 and the enumeration breaks on backtrack.
-            if (splitIdx < n)
+            // Past L3's last cell the second clause has nothing to match: the
+            // last split leaves no choice point.
+            if (ListCursor.TryUncons(engine, r, out _, out _))
             {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+                engine.PushBuiltinChoicePoint(Resume, arity: 5);
+                engine.SetTopCpArgRegister(3, t);
+                engine.SetTopCpArgRegister(4, r);
             }
-
-            // L1 = elems[0..splitIdx], built fresh because it is a new list.
-            // L2 is L3's own suffix from splitIdx on, so it is handed over
-            // rather than rebuilt.
-            int l1Heap = BuildListFromCells(engine, _elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
-            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
-            if (!engine.UnifyRegisterWithCell(1, _suffixes[splitIdx])) return false;
+            if (!engine.UnifyValues(t, Cell.Atom(AtomTable.EmptyListId))) return false;
+            if (!engine.UnifyRegisterWithCell(1, r)) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
+        }
+
+        private bool SecondClause(Activation engine)
+        {
+            ListCursor.TryUncons(engine, engine.GetRegister(4), out Cell head, out Cell rTail);
+            int pair = engine.AllocateHeap(2);
+            engine.SetHeap(pair, head);
+            engine.SetHeap(pair + 1, Cell.UnboundVar(pair + 1));
+            if (!engine.UnifyValues(engine.GetRegister(3), Cell.Lis(pair))) return false;
+            return FirstClause(engine, Cell.Ref(pair + 1),
+                ListCursor.Resolve(engine, rTail), isResume: true);
         }
     }
 
@@ -258,16 +251,16 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int k = _k;
-            // Always re-arm for k+1 — the solution set is unbounded.
+            // The solution set is unbounded: there is always a k + 1.
             _k = k + 1;
-            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more: true, isResume);
 
-            // L1 = [V1..Vk] (fresh vars, closed). Unify FIRST so the shared
+            // L1 = [V1..Vk] (fresh vars, closed). Unify first so the shared
             // var cells pick up L1's actual elements before L3 sees them.
             int l1Heap = BuildFreshVarList(engine, k);
             if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
 
-            // L3 = [V1..Vk | L2] — the SAME var cells (now possibly bound),
+            // L3 = [V1..Vk | L2] — the same var cells (now possibly bound),
             // tail = L2's current cell.
             Cell l2 = engine.GetRegister(1);
             int l3Heap;
@@ -298,28 +291,6 @@ public static class AtomListBuiltins
         }
     }
 
-    private static int BuildListFromCells(
-        Activation engine, IReadOnlyList<Cell> elems, int start, int end, Cell finalTail)
-    {
-        int count = end - start;
-        if (count == 0)
-        {
-            int tailSlot = engine.AllocateHeap(1);
-            engine.SetHeap(tailSlot, finalTail);
-            return tailSlot;
-        }
-        int baseIdx = engine.AllocateHeap(2 * count + 1);
-        for (int i = 0; i < count; i++)
-        {
-            int lisIdx = baseIdx + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, elems[start + i]);
-        }
-        engine.SetHeap(baseIdx + 2 * count, finalTail);
-        return baseIdx;
-    }
-
     // ---------- atom_codes/2 ----------
 
     /// <summary><c>atom_codes(Atom, Codes)</c>. Modes:
@@ -336,10 +307,11 @@ public static class AtomListBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            // With BOTH arguments bound the list is still type-checked
+            // With both arguments bound the list is still type-checked
             // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
-            // representation_error(character_code), not a silent failure.
-            // Only a PROPER list is validated-and-compared: a partial
+            // representation_error(character_code), not a silent failure,
+            // as number_codes/2 is with its Number bound.
+            // Only a proper list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
             if (ListCursor.IsProperListCell(engine, codesCell))
                 return ReadCodesString(engine, codesCell) == name;
@@ -375,15 +347,17 @@ public static class AtomListBuiltins
         if (cursor.Tag is not (Tag.Lis or Tag.Pstr)
             && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
+        var guard = new SpineGuard(cursor);
         while (true)
         {
-            // A packed run of CODES is consumed in bulk; a chars run falls
+            // A packed run of codes is consumed in bulk; a chars run falls
             // through to the element loop and raises the ISO element error
             // from its own head's tag (ADR-047).
             if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
                 && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
+                if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
                 continue;
             }
             if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell rTail)) break;
@@ -393,12 +367,14 @@ public static class AtomListBuiltins
             // ISO §8.16.5.3.d: any bound element that is not a character
             // code — wrong type or out of range alike — is
             // representation_error(character_code). An astral code appends
-            // its surrogate pair.
+            // its surrogate pair. Not type_error(integer, E): ISO names no
+            // such error for a codes list, whatever other systems raise.
             if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, rTail);
+            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
@@ -424,7 +400,7 @@ public static class AtomListBuiltins
 
         if (aCell.Tag == Tag.Atom && bCell.Tag == Tag.Atom)
         {
-            // §8.16.2.3.c: a BOUND non-atom result argument is
+            // §8.16.2.3.c: a bound non-atom result argument is
             // type_error(atom, A3), not a silent unification failure. An SWI
             // caller keeps SWI's compare-as-text (silent fail) for atomics.
             Cell resCell = Resolve(engine, engine.GetRegister(2));
@@ -439,7 +415,7 @@ public static class AtomListBuiltins
 
         // Both arguments instantiated but not both atoms (a number/string in
         // concat mode): ISO §8.16.2 raises type_error(atom). SWI instead coerces
-        // any atomic to text. Honour that ONLY when the caller lives in an SWI
+        // any atomic to text. Honour that only when the caller lives in an SWI
         // module — and only here, on the path that was going to raise anyway, so
         // the strict case pays nothing.
         if (SwiLenient.IsBoundAtomic(aCell) && SwiLenient.IsBoundAtomic(bCell)
@@ -452,7 +428,7 @@ public static class AtomListBuiltins
         }
 
         Cell cCell = Resolve(engine, engine.GetRegister(2));
-        // §8.16.2.3: a BOUND non-atom in A or B is type_error(atom, X)
+        // §8.16.2.3: a bound non-atom in A or B is type_error(atom, X)
         // with that argument as culprit, before the C-driven split.
         foreach (Cell abc in stackalloc Cell[] { aCell, bCell })
             if (abc.Tag is not (Tag.Ref or Tag.AttVar) && abc.Tag != Tag.Atom
@@ -461,7 +437,7 @@ public static class AtomListBuiltins
         if (cCell.Tag != Tag.Atom)
         {
             // ISO §8.16.2: if C is var, neither direction can drive
-            // synthesis unless BOTH A and B are atoms. If C is var and
+            // synthesis unless both A and B are atoms. If C is var and
             // either A or B is var, raise instantiation_error. If C
             // is bound to a non-atom, raise type_error(atom, C).
             if (cCell.Tag is Tag.Ref or Tag.AttVar
@@ -507,7 +483,7 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(aId));
         }
 
-        // Same mode analysis one step further: A and B ALIASED (the same
+        // Same mode analysis one step further: A and B aliased (the same
         // unbound variable, `atom_concat(X, X, aaaa)`) pins the split just as
         // firmly as a bound argument does — only the even split can match, and
         // only when the two halves are equal. One candidate, checked directly,
@@ -550,20 +526,18 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
-            // A split point inside a surrogate pair is not a CHARACTER
+            // A split point inside a surrogate pair is not a character
             // boundary: cutting there manufactured two lone-surrogate atoms
             // ('😀x' used to enumerate 4 splits instead of 3).
             while (splitIdx > 0 && splitIdx < _cName.Length
                    && char.IsLowSurrogate(_cName[splitIdx])
                    && char.IsHighSurrogate(_cName[splitIdx - 1]))
                 splitIdx++;
+            bool more = splitIdx < _cName.Length;
+            if (more) _splitIdx = splitIdx + 1;
+            // arity 3: the retry restores atom_concat/3's args.
+            engine.ArmBuiltinChoicePoint(Resume, arity: 3, more, isResume);
             if (splitIdx > _cName.Length) return false;
-
-            if (splitIdx < _cName.Length)
-            {
-                _splitIdx = splitIdx + 1;
-                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore atom_concat/3 args
-            }
 
             string a = _cName.Substring(0, splitIdx);
             string b = _cName.Substring(splitIdx);

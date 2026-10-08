@@ -3,12 +3,12 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>An instantiation_error is a PROMISE: bind what is missing and the
+/// <summary>An instantiation_error is a promise: bind what is missing and the
 /// term may be admissible. So must_be/2 owes one only when something is still
-/// missing AND nothing already known refutes the term. foo/_ earns it; 1/_
+/// missing and nothing already known refutes the term. foo/_ earns it; 1/_
 /// does not, because no arity makes a non-atom name into a predicate
 /// indicator. That is the same reading the library already gives chars and
-/// codes, where a partial list counts as insufficient only while its KNOWN
+/// codes, where a partial list counts as insufficient only while its known
 /// prefix stays compatible.
 ///
 /// <para>abolish/1 answers 1/_ with instantiation_error instead, and that is
@@ -60,7 +60,7 @@ public sealed class PredicateIndicatorCheckTests
                            "type_error(predicate_indicator, _)"));
     }
 
-    /// <summary>ANTI-VACUITY: a well-formed indicator still passes, and a bare
+    /// <summary>Anti-vacuity: a well-formed indicator still passes, and a bare
     /// variable still reports the way it always did.</summary>
     [Fact]
     public void AWellFormedIndicatorPasses_AndABareVariableIsUnchanged()
@@ -103,7 +103,7 @@ public sealed class PredicateIndicatorCheckTests
         Assert.True(Raises($"abolish({pi})", ball));
     }
 
-    /// <summary>The two agree on WHEN it is an instantiation error, which is
+    /// <summary>The two agree on when it is an instantiation error, which is
     /// the whole point; they differ only in which culprit each names, because
     /// must_be/2's contract is type_error(Type, Value).</summary>
     [Theory]
@@ -117,13 +117,13 @@ public sealed class PredicateIndicatorCheckTests
         string mustBeBall = instantiation
             ? "instantiation_error" : "type_error(predicate_indicator, _)";
         Assert.True(Raises($"must_be(predicate_indicator, {pi})", mustBeBall));
-        // abolish/1 names the half; only the KIND has to line up, and for
+        // abolish/1 names the half; only the kind has to line up, and for
         // _/(-1) the unbound name is what it reaches first.
         if (instantiation)
             Assert.True(Raises($"abolish({pi})", "instantiation_error"));
     }
 
-    /// <summary>current_predicate/1 is deliberately NOT changed with it:
+    /// <summary>current_predicate/1 is deliberately not changed with it:
     /// 8.8.2.3 gives it a single error condition over the whole term, with no
     /// per-half cases to report, so a term that is not an indicator is
     /// type_error(predicate_indicator, PI) and nothing finer.</summary>

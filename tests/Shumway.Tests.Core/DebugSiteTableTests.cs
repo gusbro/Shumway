@@ -6,17 +6,17 @@ using Xunit;
 namespace Shumway.Tests.Core;
 
 /// <summary>
-/// ADR-035 — a source file is identified by its NAME, not by the path somebody reached it
+/// ADR-035 — a source file is identified by its name, not by the path somebody reached it
 /// through, and not by its case.
 ///
-/// <para>That is the identity Shumway already uses everywhere else: a source file IS a
+/// <para>That is the identity Shumway already uses everywhere else: a source file is a
 /// module, and a module takes its name from the file's name with the directory dropped. The
 /// debug site table now agrees with the rest of the engine.</para>
 ///
 /// <para>Keying by the string as given was a real bug, and a silent one. The engine was
 /// started with <c>shumway --debug c:\temp\Blint.pl</c>; the editor opened
 /// <c>C:\temp\Blint.pl</c>; those were two different files here, so every breakpoint bound
-/// against the one with no code in it and NEVER HIT. The program ran clean through them and
+/// against the one with no code in it and never hit. The program ran clean through them and
 /// the debugger looked broken.</para>
 /// </summary>
 public class DebugSiteTableTests
@@ -43,7 +43,7 @@ public class DebugSiteTableTests
     [Fact]
     public void TheNameItGivesBack_IsOneYouCanOpen()
     {
-        // The key identifies the file; the name NAVIGATES to it. A debugger handed
+        // The key identifies the file; the name navigates to it. A debugger handed
         // "blint.pl" cannot open anything, so the fullest name anyone has offered wins —
         // whichever side offered it first.
         DebugSiteTable.InternFile("shumway-nav-test.pl");

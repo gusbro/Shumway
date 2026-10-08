@@ -11,7 +11,7 @@ namespace Shumway.Tests.Compiler.Wam;
 /// and <c>cut; proceed</c> pairs collapse into one dispatched opcode (same total
 /// width, Nop-padded), and <see cref="CompiledPredicate.BytecodeUnfused"/> reverses
 /// it exactly so the Tier-1 IL describers never see a fused opcode.
-/// (DeallocateExecute is deliberately NOT emitted — <c>execute</c> is a link-time
+/// (DeallocateExecute is deliberately not emitted — <c>execute</c> is a link-time
 /// dispatch site the engine rewrites; fusing it would hide that swap.)
 /// </summary>
 public class Adr029FusionTests

@@ -9,7 +9,7 @@ namespace Shumway.Embedding;
 /// flat, Scryer-only <see cref="CompatLibraries"/> switch — that data is now the
 /// <c>scryer</c> pack.
 ///
-/// <para>Resolution prefers the ACTIVE dialect (ADR-040 selection), then falls
+/// <para>Resolution prefers the active dialect (ADR-040 selection), then falls
 /// back to every pack. So an undeclared dialect still resolves a name unique to
 /// one system, and <b>coexistence is the default</b>: a Scryer library and an SWI
 /// library load side by side, each parsed with its own <c>double_quotes</c>. The
@@ -24,7 +24,7 @@ internal static class DialectRegistry
         DoubleQuotesMode DoubleQuotes,
         System.Func<string, (bool Found, string Source)> Resolve);
 
-    // The scryer pack IS the existing CompatLibraries data; Scryer's default is
+    // The scryer pack is the existing CompatLibraries data; Scryer's default is
     // double_quotes = chars.
     private static readonly Pack Scryer = new(
         "scryer", DoubleQuotesMode.Chars,
@@ -33,7 +33,7 @@ internal static class DialectRegistry
     // The swi pack — SWI's double_quotes default is codes. The list-oriented
     // libraries SWI programs import are covered by our prelude, so importing them
     // is a no-op that just marks them available (a real SWI .pl on the search path
-    // resolves from the FILE first — this pack is the fallback for names we cover
+    // resolves from the file first — this pack is the fallback for names we cover
     // natively). apply_macros is a compile-time optimiser: a pure no-op for us.
     // A fuller SWI shim (yall lambdas, real assoc, …) is future data here.
     private static readonly Pack Swi = new(
@@ -55,17 +55,17 @@ internal static class DialectRegistry
     // The trealla pack — Trealla's default is double_quotes = chars. Its
     // library sources are pure Prolog over ordinary builtins (no '$' C
     // internals the way Scryer's are), so a configured tree
-    // (-L trealla:dir) resolves most names from the FILE; this pack covers
+    // (-L trealla:dir) resolves most names from the file; this pack covers
     // what an unconfigured engine can still honour. freeze/when live in our
     // coroutining library, clpz maps onto native clpfd (`in`/`ins`/label).
     private static readonly Pack Trealla = new(
         "trealla", DoubleQuotesMode.Chars,
         name => name switch
         {
-            // NOT "dcgs" and NOT "format": Trealla's dcgs has seq//1 & co
-            // and its format IS the format_//2 non-terminal — beyond the
+            // Not "dcgs" and not "format": Trealla's dcgs has seq//1 & co
+            // and its format is the format_//2 non-terminal — beyond the
             // prelude's phrase/2,3 and format/2,3. Falling through lets the
-            // scryer pack's real shims serve them (a no-op here also STARVES
+            // scryer pack's real shims serve them (a no-op here also starves
             // the format native-override, which re-resolves "format" under
             // this dialect scope).
             "lists" or "charsio" or "error"

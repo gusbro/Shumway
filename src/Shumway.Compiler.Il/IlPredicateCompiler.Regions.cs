@@ -7,21 +7,21 @@ namespace Shumway.Compiler.Il;
 public sealed partial class IlPredicateCompiler
 {
     // ========================================================================
-    // IL REGION COMPILATION (flat local code space).
+    // IL region compilation (flat local code space).
     // docs/design/il-region-compilation.md. A region (root + reachable local
-    // callees, IlRegionBuilder) compiles to ONE IL method: each member a labeled
+    // callees, IlRegionBuilder) compiles to one IL method: each member a labeled
     // block emitted once, an intra-region call a `br`. Stage 3 = single-clause
     // members, intra-region calls + deterministic builtins only (no backtracking,
     // no cut, no cross-region user calls — those are Stages 4-6).
     // ========================================================================
 
-    /// <summary>Region compilation toggle. DEFAULT ON since the
+    /// <summary>Region compilation toggle. Default on since the
     /// validation showed regions fix the if-then-else lowering tax
     /// (the <c>$disj</c> helper costs two trampoline round-trips per iteration
     /// and breaks self-loop detection — regions make both intra-method
     /// branches: ~2× on ITE-recursion shapes, qsort −22%, boyer −15%, corpus
     /// output-identical, one-shot neutral under default promotion). Set
-    /// <c>SHUMWAY_REGION=0</c> to disable. The PERSISTED bundle path ignores
+    /// <c>SHUMWAY_REGION=0</c> to disable. The persisted bundle path ignores
     /// this default — BundleWriter region-compiles a bundle only together
     /// with the dead-region prune (all-as-roots region bundles measured 2.3×
     /// bigger). Settable (CLI dumps, tests); read once per
@@ -42,24 +42,24 @@ public sealed partial class IlPredicateCompiler
     /// <summary>ADR-031 — delayed choice point for the neck-cut guard clause.
     /// A non-last chain clause of the shape <c>Head :- InlineGuard, !, Body.</c>
     /// (guard = non-binding, non-allocating inline ops — currently the
-    /// <c>a_int_cmp</c> integer-comparison fast lane) is emitted WITHOUT its
+    /// <c>a_int_cmp</c> integer-comparison fast lane) is emitted without its
     /// entry <c>PushIlChoicePoint</c>: guard failure is a direct IL branch to
     /// the next clause's label (the guard mutated no engine state, so there is
     /// nothing to restore), and the commit needs no <c>engine.Cut</c> teardown
     /// (nothing was pushed). The one caveat — attribute wakeups pending at the
     /// cut need a choice point to fail into — is handled by materialising the
-    /// skipped CP LAZILY at the commit when <see cref="Activation.HasPendingWakeups"/>
+    /// skipped CP lazily at the commit when <see cref="Activation.HasPendingWakeups"/>
     /// (state-identical to an entry push because the guard changed nothing).
     /// Set <c>SHUMWAY_CPFREE_GUARD=0</c> to disable (A/B lever).</summary>
     public static bool CpFreeGuardCommit { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_GUARD") != "0";
 
-    /// <summary>Stage 9c (cost-based root selection): functor ids FORCED to be region
-    /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member
+    /// <summary>Stage 9c (cost-based root selection): functor ids forced to be region
+    /// roots — excluded from absorption into any other region. Promoting a shared member
     /// to its own root trades N duplicated copies of its sub-region for one copy + N
     /// cross-region trampolines, cutting the all-as-roots inter-root duplication. Set by
     /// the bundle build (save/restore) before a pruned-IL build; null = none.
-    /// ThreadStatic on purpose (it carries the BUNDLE module's fids): a concurrent
+    /// ThreadStatic on purpose (it carries the bundle module's fids): a concurrent
     /// promotion on another thread reading these would plan regions with an unrelated
     /// module's roots. The root selector's probe loop mutates this between probes,
     /// which is why it is an ambient rather than a parameter — same thread, so safe.</summary>
@@ -82,17 +82,34 @@ public sealed partial class IlPredicateCompiler
     {
         public IlRegion Region = null!;
         public int RegionFid;
-        public Sigil.Label RetLabel = null!;
-        public Sigil.Label DispatchLabel = null!;
-        public Sigil.Label FailLabel = null!;
-        public IReadOnlyDictionary<int, Sigil.Label> MemberEntry = null!;
-        public Sigil.Label[] CursorLabels = null!;
+        public IlLabel RetLabel = null!;
+        public IlLocal? CursorLocal;
+        public bool TailCalls;
+        public IlLabel DispatchLabel = null!;
+        public IlLabel FailLabel = null!;
+        public IReadOnlyDictionary<int, IlLabel> MemberEntry = null!;
+        public IlLabel[] CursorLabels = null!;
         public Dictionary<(int Member, int Pc), int> CursorBySite = null!;
         // (member index, clause index 1..N-1) → the clause-alternative cursor.
         public Dictionary<(int Member, int Clause), int> ClauseAltCursor = null!;
         // (member index, node index 0..K-1) → the IndexNode cursor (Stage 6c).
         public Dictionary<(int Member, int Node), int> IndexNodeCursor = null!;
+        // ADR-058: an alternative's cursor → its RESUME cursor, the entry a
+        // choice point's marker names; it restores and pops the choice point
+        // (TrustMe) and branches to the alternative's own label, which forward
+        // entries (index resolve, a CP-free guard's failure) reach directly.
+        public Dictionary<int, int> ResumeCursor = null!;
+        // An alternative that pushes the choice point for the next one on the
+        // plain path: its cursor → (the next alternative's cursor, the label
+        // right after that push). Its resume entry retries (restore, BP to the
+        // next) instead of popping and pushing again.
+        public Dictionary<int, (int Next, IlLabel AfterPush)> RetryPlan = new();
         public int CurrentMemberIndex;
+        // ADR-058 item 6, ADR-060 item 6: the push ladder and the common
+        // restore over the control registers' locals; null when the region
+        // calls the methods (it holds no registers, or it is compiled for
+        // verification or for the debugger).
+        public FrameLocals? Frames;
     }
 
     /// <summary>Stage-3 eligibility: a region this minimal emit can handle — at
@@ -116,7 +133,7 @@ public sealed partial class IlPredicateCompiler
     /// <summary>As <see cref="IsRegionEmittable(IlRegion, IReadOnlyDictionary{int, CompiledPredicate})"/>,
     /// but on rejection sets <paramref name="reason"/> to a human-readable cause (which
     /// member, which opcode) — surfaced under <c>SHUMWAY_IL_SHAPE=1</c> to explain why a
-    /// predicate with a local closure did NOT become a region (the coverage gaps).</summary>
+    /// predicate with a local closure did not become a region (the coverage gaps).</summary>
     internal static bool IsRegionEmittable(
         IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out string? reason)
@@ -132,14 +149,14 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The per-member validation shared by <see cref="IsRegionEmittable(IlRegion,
     /// IReadOnlyDictionary{int, CompiledPredicate}, out string)"/> (which members of a
     /// formed region are all OK) and <see cref="IsRegionMemberEligible"/> (whether a
-    /// callee may be PULLED IN as a member). A member must be a shape the region emit
+    /// callee may be pulled in as a member). A member must be a shape the region emit
     /// handles — single-clause, try_me_else chain, or indexed switch_on_term/arg — and
     /// its emitted body (the full bytecode, or per-clause ranges for an indexed member,
     /// since the resolve replaces the dispatch cascade) must use only opcodes the region
     /// handles (cut OK; Call/Execute with metadata; no backtrackable / meta builtin —
     /// those need a resume cursor the planner doesn't yet allocate). Sharing this between
     /// the two callers is what makes path-1 work: a callee whose body has a backtrackable
-    /// builtin is now refused MEMBERSHIP (stays a cross-region trampoline) instead of
+    /// builtin is now refused membership (stays a cross-region trampoline) instead of
     /// being pulled in and then rejecting the whole region.</summary>
     private static bool RegionMemberOk(
         CompiledPredicate m, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -187,7 +204,7 @@ public sealed partial class IlPredicateCompiler
                     break;
                 // ADR-025 (ITE in regions) — an inline ITE/disjunction body is
                 // now region-emittable: the planner gives its try_me_else pc
-                // an ELSE re-entry cursor (via CollectBuiltinResumePcs) and
+                // an else re-entry cursor (via CollectBuiltinResumePcs) and
                 // the emit pushes the region delegate + that cursor; TrustMe
                 // marks the label; Jump is a local forward branch. A
                 // dispatch-chain try_me_else (real arity >= 0) stays accepted
@@ -244,8 +261,8 @@ public sealed partial class IlPredicateCompiler
                     pcs.Add(pc);
             }
             // ADR-025 (ITE in regions) — an inline ITE/disjunction's body
-            // try_me_else (the arity sentinel) needs an ELSE re-entry cursor:
-            // the CP carries the REGION delegate + this cursor, and a failed
+            // try_me_else (the arity sentinel) needs an else re-entry cursor:
+            // the CP carries the region delegate + this cursor, and a failed
             // condition re-enters the region method at the TrustMe-marked
             // label. Rides the BuiltinResume site kind — the planner merges
             // pcs in order and the emit resolves by (member, pc), so no new
@@ -262,30 +279,32 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Region-membership filter (Stage 6b/6c/6d). A callee is pulled into a
-    /// region only if it is itself IL-compilable AND <see cref="RegionMemberOk"/> — a
+    /// region only if it is itself IL-compilable and <see cref="RegionMemberOk"/> — a
     /// shape the region emit handles (single-clause / try_me_else chain / indexed) whose
     /// emitted body uses only region-handled opcodes. Stage 6d (path 1): a callee whose
     /// body contains a backtrackable / meta builtin (<c>retract</c>, <c>atom_concat</c>,
-    /// <c>call</c>, ...) is NOT pulled in — it stays a cross-region trampoline boundary
+    /// <c>call</c>, ...) is not pulled in — it stays a cross-region trampoline boundary
     /// (Stage 6a) and the rest of the region still forms, instead of one such callee
     /// poisoning the whole region (which is what blocked ~60 Blint local-closure
-    /// predicates). The resume-cursor threading that would let such a builtin live INSIDE
+    /// predicates). The resume-cursor threading that would let such a builtin live inside
     /// a member is a later step.</summary>
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         // When the persisted build compiles
-        // an entry against the WHOLE bundle's predicate map, region membership
-        // stays scoped to the entry's OWN predicates: absorbing a cross-module
+        // an entry against the whole bundle's predicate map, region membership
+        // stays scoped to the entry's own predicates: absorbing a cross-module
         // callee would duplicate its body into this entry's region method
         // (semantically sound — static predicates are immutable — but it
         // changes region shapes and bloats the entry for no dispatch win; the
         // member's standalone IL lives in its own entry).
         if (RegionMemberScopeFids?.Contains(p.FunctorId) == false) return false;
-        // Stage 9c: forced root. Checked LIVE (not cached) — the bundle build
+        // Stage 9c: forced root. Checked live (not cached) — the bundle build
         // mutates the RegionForcedRootFids static between the root-selector
         // probe phase and the compile phase.
         if (RegionForcedRootFids?.Contains(p.FunctorId) == true) return false;
+        // ADR-049: a member's wake hands the activation to its bytecode.
+        if (!HasBytecode(p)) return false;
         // the rest (CanCompileCore + RegionMemberOk) is a pure
         // function of (predicate, calleeMap), recomputed thousands of times by
         // the RegionRootSelector fixpoint (once per call-site edge per region
@@ -310,8 +329,8 @@ public sealed partial class IlPredicateCompiler
     private IReadOnlyDictionary<int, CompiledPredicate>? _regionMemberPureCacheMap;
 
     /// <summary>The set of functor ids a region rooted at <paramref name="root"/> would
-    /// ABSORB as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
-    /// standalone form this root makes intra-region, INCLUDING the root itself. Matches
+    /// absorb as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
+    /// standalone form this root makes intra-region, including the root itself. Matches
     /// exactly what <see cref="Compile"/> emits: it builds the region with the runtime
     /// membership filter, and returns just <c>{root}</c> when the region is not emittable
     /// (root stays a per-predicate method, so every callee trampolines out). Independent
@@ -323,7 +342,7 @@ public sealed partial class IlPredicateCompiler
         => RegionMemberFids(root, calleeMap, extraExcluded: null);
 
     /// <param name="extraExcluded">Stage 9c: additional functor ids excluded from
-    /// absorption (treated as forced roots) for THIS computation, on top of
+    /// absorption (treated as forced roots) for this computation, on top of
     /// <see cref="RegionForcedRootFids"/> — lets the root selector probe regions for a
     /// candidate promotion set without mutating the global static.</param>
     public IReadOnlyCollection<int> RegionMemberFids(
@@ -349,7 +368,7 @@ public sealed partial class IlPredicateCompiler
     private PredicateDelegate CompileRegion(IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
-        // The holder pattern gives the region method a reference to its OWN delegate
+        // The holder pattern gives the region method a reference to its own delegate
         // (for PushIlChoicePoint when a multi-clause member's clause dispatch pushes
         // a choice point that re-enters this method on backtrack).
         lock (IndexedDelegateHolder.RegistrationLock)
@@ -366,9 +385,9 @@ public sealed partial class IlPredicateCompiler
     private PredicateDelegate CompileRegionUnlocked(IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf)
     {
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+        var emit = IlEmit.NewDynamicMethod(
             $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
-            doVerify: DoVerify || DebugMode);
+            record: IlDumpPath is not null);
         EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
             typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
         int regionFid = region.Root.FunctorId;
@@ -387,16 +406,17 @@ public sealed partial class IlPredicateCompiler
     /// and its functor-id / resume-marker uses (all through the patchable
     /// helpers) are identical, so persisted region methods patch correctly cross-process.</summary>
     private void EmitRegionInto(
-        Sigil.Emit<PredicateDelegate> emit, SelfDelegateEmitter emitSelf,
+        IlEmit emit, SelfDelegateEmitter emitSelf,
         IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         System.Type selfDelType)
     {
         int regionFid = region.Root.FunctorId;
         _emitOwnerFid = regionFid;
+        _emitMemberFid = 0;
 
         // Stage 11 (IL-size / CSE): every multi-clause / indexed member's
-        // PushIlChoicePoint reloads the SAME region self-delegate. Hoist that load to ONE
+        // PushIlChoicePoint reloads the same region self-delegate. Hoist that load to one
         // local here, ahead of the dispatch switch (which dominates every member / cursor
         // label, so the store reaches every push site), and hand members a loader that
         // just reads it. The break-even depends on which self-loader is in play, and the
@@ -405,7 +425,7 @@ public sealed partial class IlPredicateCompiler
         //     no runtime cost beyond the array index. Pure IL-SIZE play: hoist costs 4 ops
         //     once (load+store) and saves 2/push, so it only shrinks at ≥3 (saving 2·P−4).
         //   • Runtime-promotion path — SelfFromHolder, 2 IL ops but each executes a
-        //     ConcurrentDictionary lookup at RUNTIME on the CP-push (backtracking) path.
+        //     ConcurrentDictionary lookup at runtime on the CP-push (backtracking) path.
         //     Replacing that per-push dict probe with a hoisted local load is a runtime
         //     win at ≥2 (worth the +1 IL op the size math costs at P=2) — the same call
         //     the inline-fact hoist already makes for its holder-only pushes.
@@ -416,7 +436,10 @@ public sealed partial class IlPredicateCompiler
         foreach (var s in plan.Sites)
             if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
                 pushSites++;
+        // ADR-057: a region that pushes choice points on itself also reads the
+        // delegate in its fail handler, so one push site is already two uses.
         int hoistGate = selfDelType == typeof(PredicateDelegate) ? 3 : 2;
+        if (pushSites >= 1) hoistGate = 1;
         if (pushSites >= hoistGate)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "rselfdel");
@@ -430,11 +453,16 @@ public sealed partial class IlPredicateCompiler
         var dispatchLabel = emit.DefineLabel("rdispatch");
         var curLoc = emit.DeclareLocal<int>("rcur");
 
-        var memberEntry = new Dictionary<int, Sigil.Label>();
+        var memberEntry = new Dictionary<int, IlLabel>();
         foreach (var m in region.Members)
             memberEntry[m.FunctorId] = emit.DefineLabel($"rmember_{m.FunctorId}");
 
-        var cursorLabels = new Sigil.Label[plan.TotalCursors];
+        int resumeCount = 0;
+        foreach (var s in plan.Sites)
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                resumeCount++;
+        var cursorLabels = new IlLabel[plan.TotalCursors + resumeCount];
+        var resumeCursor = new Dictionary<int, int>(resumeCount);
         cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
         var cursorBySite = new Dictionary<(int, int), int>();
         var clauseAltCursor = new Dictionary<(int, int), int>();
@@ -443,13 +471,19 @@ public sealed partial class IlPredicateCompiler
         {
             if (s.Kind == RegionCursorKind.MemberEntry)
             {
-                // an external-entry cursor — its switch slot IS the member's
+                // an external-entry cursor — its switch slot is the member's
                 // entry label (already defined above); no separate block, no site map.
                 cursorLabels[s.Cursor] =
                     memberEntry[region.Members[s.MemberIndex].FunctorId];
                 continue;
             }
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+            {
+                int r = plan.TotalCursors + resumeCursor.Count;
+                resumeCursor[s.Cursor] = r;
+                cursorLabels[r] = emit.DefineLabel($"rresume_{s.Cursor}");
+            }
             if (s.Kind == RegionCursorKind.ClauseAlt)
                 clauseAltCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
             else if (s.Kind == RegionCursorKind.IndexNode)
@@ -460,70 +494,179 @@ public sealed partial class IlPredicateCompiler
 
         var ctx = new RegionEmitContext
         {
-            Region = region, RegionFid = regionFid, RetLabel = retLabel,
+            Region = region, RegionFid = regionFid, RetLabel = retLabel, CursorLocal = curLoc,
+            TailCalls = CrossRegionTailReturn && !DebugMode,
             DispatchLabel = dispatchLabel, FailLabel = failLabel, MemberEntry = memberEntry,
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
             ClauseAltCursor = clauseAltCursor, IndexNodeCursor = indexNodeCursor,
+            ResumeCursor = resumeCursor,
         };
+
+        EmitRegionRegistersEntry(emit, hold: !DebugMode);   // ADR-060
+        FrameLocals? frames = pushSites > 0 && !DebugMode
+            && RegisterFileOf(emit)!.Holds(ControlRegs)
+            ? EmitFrameLocalsEntry(emit) : null;
+        ctx.Frames = frames;
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
         emit.LoadArgument(1);
         emit.StoreLocal(curLoc);
+        // An entry or a local resumption at a resume cursor finds the frame
+        // on top unrestored: the common restore runs first.
+        var resumeCheck = emit.DefineLabel("rresume_check");
+        emit.MarkLabel(resumeCheck);
+        // ADR-049: a cursor above the region's is a wake alternative's, met
+        // on the paths a high cursor already takes (the frame resume's check
+        // is placed with the restore, at the end).
+        IlLabel? frameResume = null;
+        if (frames is not null)
+        {
+            frameResume = emit.DefineLabel("rframe_resume");
+            emit.LoadLocal(curLoc);
+            emit.LoadConstant(plan.TotalCursors);
+            emit.BranchIfGreaterOrEqual(frameResume);
+        }
         emit.MarkLabel(dispatchLabel);
         emit.LoadLocal(curLoc);
         emit.Switch(cursorLabels);
+        EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
         emit.Branch(failLabel);                              // out of range (unreachable)
 
         var gcCtx = new GuardContEmitContext();              // ADR-033 (no-op if unused)
-        for (int mi = 0; mi < region.Members.Count; mi++)
+        try
         {
-            var member = region.Members[mi];
-            ctx.CurrentMemberIndex = mi;
-            emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
-            if (member.ClauseCount == 1)
-                EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
-                    failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
-                    calleeMap: calleeMap, regionCtx: ctx);
-            else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
-                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
-            else
-                EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+            for (int mi = 0; mi < region.Members.Count; mi++)
+            {
+                var member = region.Members[mi];
+                ctx.CurrentMemberIndex = mi;
+                _emitMemberFid = member.FunctorId;               // ADR-049
+                emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
+                if (member.ClauseCount == 1)
+                    EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
+                        failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
+                        calleeMap: calleeMap, regionCtx: ctx);
+                else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
+                    EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
+                else
+                    EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+            }
+        }
+        finally
+        {
+            _emitMemberFid = 0;
         }
 
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
-        // MUST go through EmitFunctorId, not a raw LoadConstant:
+        // Must go through EmitFunctorId, not a raw LoadConstant:
         // in persist mode a build-process fid means nothing at runtime. With
         // the raw constant baked, a persisted region whose BUILD-time fid
-        // happened to equal the RUNTIME fid of a caller's region claimed the
+        // happened to equal the runtime fid of a caller's region claimed the
         // caller's resume marker as its own and branched into a bogus
         // internal cursor — an infinite CP-push loop (Blint --exe hang, the
         // ILO mass parse failures, the member/2 8 GB stack crash).
         EmitFunctorId(emit, regionFid);
-        emit.Call(EngineRegionReturnCursorMethod);
+        EmitHelperCall(emit, EngineRegionReturnCursorMethod);
         emit.StoreLocal(curLoc);
         emit.LoadLocal(curLoc);
         emit.LoadConstant(0);
         emit.BranchIfGreaterOrEqual(dispatchLabel);          // intra-region return
+        EmitContinuationTailCall(emit, ctx.TailCalls, curLoc, () =>
+        {
+            emit.LoadArgument(0);
+            EmitHelperCall(emit, EngineCpGetter);
+        });
         emit.LoadConstant(true);                              // cross-region return
-        emit.Return();
+        EmitReturn(emit);
 
         emit.MarkLabel(failLabel);
+        var failOut = emit.DefineLabel("rfail_out");
+        if (frames is not null)
+            EmitResumeOwnFast(emit, frames, regionFid, curLoc, resumeCheck, failOut);
+        if (pushSites > 0)
+        {
+            // ADR-057/058: a choice point this region pushed is resumed here, at
+            // its cursor, instead of by the interpreter re-invoking the region.
+            emit.LoadArgument(0);
+            effectiveSelf(emit);
+            EmitFunctorId(emit, regionFid);
+            emit.LoadLocalAddress(curLoc);
+            EmitHelperCall(emit, EngineTryResumeOwnCpMethod);
+            emit.BranchIfTrue(resumeCheck);
+        }
+        emit.MarkLabel(failOut);
         emit.LoadConstant(false);
-        emit.Return();
+        EmitReturn(emit);
+
+        // ADR-058 resume entries: restore and pop the choice point whose marker
+        // named this cursor, then run the alternative from its own label.
+        foreach (var (alt, r) in resumeCursor)
+        {
+            emit.MarkLabel(cursorLabels[r]);
+            bool retrying = ctx.RetryPlan.TryGetValue(alt, out var retry);
+            if (frames is not null)
+            {
+                int nextResume = retrying ? resumeCursor[retry.Next] : -1;
+                EmitFrameResumeTail(emit, frames,
+                    retrying ? () => EmitResumeMarker(emit, regionFid, nextResume) : null);
+            }
+            else if (retrying)
+            {
+                // WAM retry: restore, keep the frame, BP to the next alternative.
+                emit.LoadArgument(0);
+                EmitResumeMarker(emit, regionFid, resumeCursor[retry.Next]);
+                EmitHelperCall(emit, EngineRetryMeElseMethod);
+            }
+            else
+            {
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, EngineTrustMeMethod);
+            }
+            emit.Branch(retrying ? retry.AfterPush : cursorLabels[alt]);
+        }
+
+        if (frames is not null)
+        {
+            // Falls into the restore; checks for a wake cursor only in a
+            // region that pushes wake alternatives.
+            emit.MarkLabel(frameResume!);
+            if (WakeStates.TryGetValue(emit, out var ws) && ws.Alternatives.Count > 0)
+                EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
+            EmitFrameRestoreCommon(emit, frames, dispatchLabel);
+            EmitFramePushLadder(emit, frames);
+        }
+    }
+
+    /// <summary>ADR-058: push a plain choice point for the alternative at
+    /// <paramref name="altCursor"/>, its BP the region marker of that
+    /// alternative's resume entry. No IL side-stack entry.</summary>
+    private static void EmitRegionChoicePoint(
+        IlEmit emit, RegionEmitContext ctx, int altCursor, int arity)
+    {
+        if (ctx.Frames is { } frames)
+        {
+            EmitResumeMarker(emit, ctx.RegionFid, ctx.ResumeCursor[altCursor]);
+            emit.StoreLocal(frames.Marker);
+            EmitFramePushSite(emit, frames, arity);
+            return;
+        }
+        emit.LoadArgument(0);
+        emit.LoadConstant(arity);
+        EmitResumeMarker(emit, ctx.RegionFid, ctx.ResumeCursor[altCursor]);
+        EmitHelperCall(emit, EnginePushChoicePointMethod);
     }
 
     /// <summary>Emit a MULTI-clause member's block (Stage 4) — a try_me_else chain.
     /// Clause 0 is at the member-entry label (already marked); clauses 1..N-1 are at
     /// their <c>ClauseAlt</c> cursor labels. Before each clause except the last, push
-    /// a choice point carrying the NEXT clause's cursor + the region delegate, so a
+    /// a choice point carrying the next clause's cursor + the region delegate, so a
     /// head-match (or later) failure returns false → backtrack → the CP → re-enters
     /// the region method at the next clause via <c>dispatch</c>. Each clause body is
     /// region-aware (its proceed → <c>br ret</c>, its calls threaded by the plan).</summary>
     private static void EmitRegionMultiClauseMember(
-        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
+        IlEmit emit, CompiledPredicate member, int mi,
         RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         GuardContEmitContext? gcCtx = null)
@@ -542,9 +685,9 @@ public sealed partial class IlPredicateCompiler
             // failure branches to the next clause-alternative's region cursor
             // label (directly, or via the restore stub); the entry CP push is
             // skipped (lazily materialised at the commit only under pending
-            // wakeups). The GUARD slice is emitted with regionCtx null +
+            // wakeups). The guard slice is emitted with regionCtx null +
             // forceLeafRuleInline so a tier-G guard Call takes the leaf
-            // INLINE path (failure = a direct branch to the guard's fail label)
+            // inline path (failure = a direct branch to the guard's fail label)
             // instead of the region br (whose failure would go to the region
             // fail label — past this clause). The post-commit body slice keeps
             // the region context. The plan's forward-resume cursors for the
@@ -556,16 +699,16 @@ public sealed partial class IlPredicateCompiler
             {
                 int guardEnd = ginfo.CutPc;
                 int mi0 = mi, i0 = i;
-                // ADR-034 — the guard inlines dynamic SNAPSHOTS: prefix the
+                // ADR-034 — the guard inlines dynamic snapshots: prefix the
                 // clause with a staleness test per embedded fid; a mutated one
                 // takes the fallback path — plain entry CP + un-inlined guard
                 // (its dynamic call is a threaded by-fid call that dispatches
-                // against the LIVE predicate) + jump into the shared
-                // post-commit body. The guard's planned Call cursors are NOT
+                // against the live predicate) + jump into the shared
+                // post-commit body. The guard's planned Call cursors are not
                 // dead-marked in that case: the fallback's threaded calls own
                 // them.
                 var dynFids = ginfo.EmbeddedDynamicFids;
-                Sigil.Label? dynFb = null, dynBody = null;
+                IlLabel? dynFb = null, dynBody = null;
                 if (dynFids is { Count: > 0 })
                 {
                     dynFb = emit.DefineLabel($"dynfb_rm{mi}_{i}");
@@ -574,7 +717,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -618,7 +761,8 @@ public sealed partial class IlPredicateCompiler
                             pc2 += (Opcode)code2[pc2] == Opcode.Meta
                                 ? 6 : OpcodeTable.Get(code2[pc2]).Size;
                         }
-                    });
+                    },
+                    wakeDeopt: HasBytecode(member));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -626,7 +770,7 @@ public sealed partial class IlPredicateCompiler
                     emitSelf(emit);                               // → region delegate
                     emit.LoadConstant(ctx.ClauseAltCursor[(mi, i + 1)]);
                     emit.LoadConstant(member.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)member.BytecodeUnfused[guardEnd]).Size;
                     // localSalt: the fallback re-emits the same pcs the
@@ -644,11 +788,14 @@ public sealed partial class IlPredicateCompiler
 
             if (i < n - 1)
             {
-                emit.LoadArgument(0);                         // engine
-                emitSelf(emit);                               // → region delegate
-                emit.LoadConstant(ctx.ClauseAltCursor[(mi, i + 1)]);
-                emit.LoadConstant(member.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int nextAlt = ctx.ClauseAltCursor[(mi, i + 1)];
+                EmitRegionChoicePoint(emit, ctx, nextAlt, member.Arity);
+                if (i > 0)
+                {
+                    var afterPush = emit.DefineLabel($"rretry_rm{mi}_{i}");
+                    emit.MarkLabel(afterPush);
+                    ctx.RetryPlan[ctx.ClauseAltCursor[(mi, i)]] = (nextAlt, afterPush);
+                }
             }
             EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
@@ -656,21 +803,21 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
-    /// <summary>Emit an INDEXED member's block (Stage 6c) — the region analog of
+    /// <summary>Emit an indexed member's block (Stage 6c) — the region analog of
     /// <see cref="EmitIndexedDispatchBody"/>. The member-entry label (already marked)
     /// holds the inline index decision (deref + tag/key tests, lowered from the
     /// compile-time index graph), branching forward to a chain node's label. A node
-    /// pushes the region delegate's choice point carrying the NEXT node's region
+    /// pushes the region delegate's choice point carrying the next node's region
     /// cursor (so a bucket-chain backtrack re-enters this method at that node via the
     /// dispatch switch), then branches to its clause body. Clause bodies are emitted
     /// once and region-aware (proceed → <c>br ret</c>, intra calls → <c>br</c>, their
     /// own calls threaded by the plan) exactly like every other member — the only
     /// indexed-specific code is the resolve + the per-node CP push. The node labels
-    /// ARE the region cursor labels, so forward (resolve) and backward (CP) reach the
+    /// are the region cursor labels, so forward (resolve) and backward (CP) reach the
     /// same block. Index resolve labels/locals are salted per member
     /// (<c>_rm{mi}</c>) so several indexed members share one IL method cleanly.</summary>
     private static void EmitRegionIndexedMember(
-        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
+        IlEmit emit, CompiledPredicate member, int mi,
         IlIndexedDispatchInfo info, RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         GuardContEmitContext? gcCtx = null)
@@ -678,7 +825,7 @@ public sealed partial class IlPredicateCompiler
         if (CpFreeIndexedCensus)
             AnalyzeIndexedBucketGuards(member, info, calleeMap);
         // ADR-031 indexed buckets — see EmitIndexedDispatchBody's twin. The
-        // idxnext local holds the next node's REGION cursor (the same value
+        // idxnext local holds the next node's region cursor (the same value
         // the bucket CP carries), -1 for a chain tail.
         var guardPlan = PlanIndexedGuards(member, info, calleeMap);
         int K = info.Nodes.Count;
@@ -687,10 +834,10 @@ public sealed partial class IlPredicateCompiler
 
         // Node entry = the region cursor label (shared forward-resolve + backtrack
         // re-entry). Body labels are local to this member's block.
-        var nodeLabels = new Sigil.Label[K];
+        var nodeLabels = new IlLabel[K];
         for (int n = 0; n < K; n++)
             nodeLabels[n] = ctx.CursorLabels[ctx.IndexNodeCursor[(mi, n)]];
-        var bodyLabels = new Sigil.Label[N];
+        var bodyLabels = new IlLabel[N];
         for (int i = 0; i < N; i++)
             bodyLabels[i] = emit.DefineLabel($"ridx_body_{mi}_{i}");
 
@@ -701,7 +848,7 @@ public sealed partial class IlPredicateCompiler
             var entry = emit.DeclareLocal<int>($"ridx_entry{salt}");
             emit.LoadArgument(0);
             EmitFunctorId(emit, member.FunctorId);
-            emit.Call(IlIndexedDispatchResolveByFidMethod);
+            EmitHelperCall(emit, IlIndexedDispatchResolveByFidMethod);
             emit.StoreLocal(entry);
             for (int n = 0; n < K; n++)
             {
@@ -715,7 +862,7 @@ public sealed partial class IlPredicateCompiler
         // ---- Chain nodes: push the next-node region CP (if any), run the body.
         //      ADR-031 indexed buckets: a guard clause's node stores the next
         //      node's region cursor in idxnext instead (-1 for a tail). ----
-        Sigil.Local? idxNext = guardPlan is not null
+        IlLocal? idxNext = guardPlan is not null
             ? emit.DeclareLocal<int>($"idxnext{salt}") : null;
         for (int n = 0; n < K; n++)
         {
@@ -728,11 +875,10 @@ public sealed partial class IlPredicateCompiler
             }
             else if (next >= 0)
             {
-                emit.LoadArgument(0);                            // engine
-                emitSelf(emit);                                 // → region delegate
-                emit.LoadConstant(ctx.IndexNodeCursor[(mi, next)]);   // next node's region cursor
-                emit.LoadConstant(member.Arity);
-                emit.Call(EnginePushIlCpMethod);
+                int nextNode = ctx.IndexNodeCursor[(mi, next)];
+                EmitRegionChoicePoint(emit, ctx, nextNode, member.Arity);
+                ctx.RetryPlan[ctx.IndexNodeCursor[(mi, n)]] =
+                    (nextNode, bodyLabels[info.Nodes[n].ClauseIndex]);
             }
             emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
         }
@@ -747,7 +893,7 @@ public sealed partial class IlPredicateCompiler
                 int guardEnd = ginfo.CutPc;
                 int i0 = i;
                 var dynFids = ginfo.EmbeddedDynamicFids;
-                Sigil.Label? dynFb = null, dynBody = null;
+                IlLabel? dynFb = null, dynBody = null;
                 if (dynFids is { Count: > 0 })
                 {
                     dynFb = emit.DefineLabel($"ridx_dynfb{salt}_{i}");
@@ -756,7 +902,7 @@ public sealed partial class IlPredicateCompiler
                     {
                         emit.LoadArgument(0);
                         EmitFunctorId(emit, df);
-                        emit.Call(EngineIsDynMutatedMethod);
+                        EmitHelperCall(emit, EngineIsDynMutatedMethod);
                         emit.BranchIfTrue(dynFb);
                     }
                 }
@@ -811,7 +957,8 @@ public sealed partial class IlPredicateCompiler
                         emit.Switch(ctx.CursorLabels);
                         emit.Branch(ctx.FailLabel);
                     },
-                    dynamicCursor: e2 => e2.LoadLocal(idxNext!));
+                    dynamicCursor: e2 => e2.LoadLocal(idxNext!),
+                    wakeDeopt: HasBytecode(member));
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);
@@ -823,7 +970,7 @@ public sealed partial class IlPredicateCompiler
                     emitSelf(emit);
                     emit.LoadLocal(idxNext!);
                     emit.LoadConstant(member.Arity);
-                    emit.Call(EnginePushIlCpMethod);
+                    EmitHelperCall(emit, EnginePushIlCpMethod);
                     emit.MarkLabel(skipPush);
                     int cutSz = OpcodeTable.Get(
                         (Opcode)member.BytecodeUnfused[guardEnd]).Size;
@@ -856,13 +1003,13 @@ public sealed partial class IlPredicateCompiler
     /// interpreter flushes at every Call/Execute/Proceed/Deallocate; IL code relies
     /// on control passing through the dispatch loop between trampoline calls to get
     /// those flushes — but an intra-region call/return is a `br` that bypasses the
-    /// loop, so the region must flush at its OWN boundaries (same class as the
+    /// loop, so the region must flush at its own boundaries (same class as the
     /// IL-cut flush). Cheap: a `_pendingWakeups.Count==0` fast path.</summary>
     private static void EmitRegionWakeupFlush(
-        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel)
+        IlEmit emit, IlLabel failLabel)
     {
         emit.LoadArgument(0);
-        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
     }
 
@@ -873,54 +1020,54 @@ public sealed partial class IlPredicateCompiler
     ///
     /// <para>The guard is layered so the common case pays almost nothing:
     /// <c>HasPendingWakeups</c> (a field read; false for every non-attvar
-    /// program), then whether an OPERAND is actually unbound (a deref; false
+    /// program), then whether an operand is actually unbound (a deref; false
     /// for every bound operand, which is every operand a clp propagator
     /// computes on). Only when both hold does it drain, which can fail — a
     /// failed wake branches to <paramref name="failLabel"/>.</para>
     ///
     /// <para><paramref name="operands"/> are the (kind, val) pairs to test.
     /// An empty set (the AEvalPush sequence, whose operand is only known at
-    /// each push) falls back to a flush whenever wakeups pend AND the eval
+    /// each push) falls back to a flush whenever wakeups pend and the eval
     /// stack is empty — the mid-expression drain would clobber the shared
     /// stack.</para></summary>
     private static void EmitArithWakeFlush(
-        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel,
+        IlEmit emit, IlLabel failLabel,
         params (int Kind, int Val)[] operands)
     {
         var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
         var doFlush = emit.DefineLabel($"arith_wake_do_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        emit.Call(EngineHasPendingWakeupsGetter);
+        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
         emit.BranchIfFalse(skip);
         if (operands.Length == 0)
         {
             // AEvalPush: operand not known here; gate on an empty eval stack
             // (expression start) so the drain's nested arithmetic is safe.
-            emit.Call(ArithIsEmptyGetter);
+            EmitHelperCall(emit, ArithIsEmptyGetter);
             emit.BranchIfFalse(skip);
         }
         else
         {
-            // Flush only if SOME operand is unbound (a bound operand cannot be
+            // Flush only if some operand is unbound (a bound operand cannot be
             // waiting on a wake). Any unbound operand → doFlush; none → skip.
             foreach (var (kind, val) in operands)
             {
                 emit.LoadArgument(0);
                 emit.LoadConstant(kind);
                 emit.LoadConstant(val);
-                emit.Call(ArithOperandUnboundMethod);
+                EmitHelperCall(emit, ArithOperandUnboundMethod);
                 emit.BranchIfTrue(doFlush);
             }
             emit.Branch(skip);
         }
         emit.MarkLabel(doFlush);
         emit.LoadArgument(0);
-        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
         emit.MarkLabel(skip);
     }
 
-    /// <summary>ADR-049 stage 2: the wake INTERRUPT at a region boundary,
+    /// <summary>ADR-049 stage 2: the wake interrupt at a region boundary,
     /// replacing the bool drain. The helper's verdict: 0 — nothing pending
     /// (or the drain fallback succeeded), fall through; 1 — interrupt armed
     /// (P at the driver, IlTailCallPending set), return true so the dispatch
@@ -930,17 +1077,17 @@ public sealed partial class IlPredicateCompiler
     /// forward marker — CP must already hold the callee's continuation when
     /// this runs).</summary>
     private static void EmitRegionWakeBoundary(
-        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel, int calleeFid)
+        IlEmit emit, IlLabel failLabel, int calleeFid)
     {
         emit.LoadArgument(0);
         if (calleeFid >= 0)
         {
             EmitFunctorId(emit, calleeFid);
-            emit.Call(EngineWakeBoundaryCallMethod);
+            EmitHelperCall(emit, EngineWakeBoundaryCallMethod);
         }
         else
         {
-            emit.Call(EngineWakeBoundaryProceedMethod);
+            EmitHelperCall(emit, EngineWakeBoundaryProceedMethod);
         }
         var verdict = emit.DeclareLocal<int>($"wake_v_{NextLabelSeq()}");
         emit.StoreLocal(verdict);
@@ -952,30 +1099,30 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(0);
         emit.BranchIfEqual(goOn);
         emit.LoadConstant(true);   // verdict 1: suspended — the loop takes P
-        emit.Return();
+        EmitReturn(emit);
         emit.MarkLabel(goOn);
     }
 
     private static bool TryEmitRegionOpcode(
-        Sigil.Emit<PredicateDelegate> emit, byte[] code, int pc, Opcode op,
+        IlEmit emit, byte[] code, int pc, Opcode op,
         RegionEmitContext ctx, ref int pcRef)
     {
         switch (op)
         {
             case Opcode.Proceed:
-                // ADR-049 stage 2: pending wakeups interrupt here instead of
-                // draining — CP already holds the continuation the resume
-                // will jump to.
-                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
+                // ADR-049: a return continues the stretch of unifications
+                // where the code wakes in front of its goals; persisted code
+                // wakes here, CP holding the continuation the resume jumps to.
+                if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + 1;
                 return true;
             case Opcode.DeallocateProceed:
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
+                EmitHelperCall(emit, EngineDeallocateMethod);
                 // After the deallocate, so CP is the caller continuation the
                 // proceed-shape resume captures.
-                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
+                if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
@@ -985,28 +1132,29 @@ public sealed partial class IlPredicateCompiler
                 var member = ctx.Region.Members[ctx.CurrentMemberIndex];
                 int fid = FindCallSiteFunctorId(member.CallSites, pc);
                 if (fid < 0) return false;   // malformed — let the normal path throw
-                // The cut barrier for the callee — set BEFORE the wake
+                // The cut barrier for the callee — set before the wake
                 // boundary: the call-shape resume dispatches the callee by
                 // forward marker without re-running this site, and
                 // WakeReturn re-establishes B0 = B post-wake so a cut in the
                 // callee can never prune the wake's alternatives.
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.Call(EngineSetB0Method);
+                EmitHelperCall(emit, EngineBGetter);
+                EmitHelperCall(emit, EngineSetB0Method);
                 bool intra = ctx.Region.IsIntraRegion(fid);
                 if (op == Opcode.Call)
                 {
                     // Non-tail: register the forward continuation (Cp = a resume
-                    // marker into THIS region at the plan's cursor for this site)
-                    // BEFORE the wake boundary — the wake frame captures it as
+                    // marker into this region at the plan's cursor for this site)
+                    // before the wake boundary — the wake frame captures it as
                     // the continuation the callee will proceed into.
                     int cursor = ctx.CursorBySite[(ctx.CurrentMemberIndex, pc)];
                     emit.LoadArgument(0);
                     EmitResumeMarker(emit, ctx.RegionFid, cursor);
-                    emit.Call(EngineSetCpMethod);
+                    EmitHelperCall(emit, EngineSetCpMethod);
                     // ADR-049 stage 2: the interrupt in front of the call.
                     EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
+                    if (intra) EmitRegionGcSafePoint(emit, fid);
                     if (intra)
                     {
                         // Intra-region: br to the member block; its proceed returns
@@ -1015,27 +1163,30 @@ public sealed partial class IlPredicateCompiler
                     }
                     else
                     {
-                        // Cross-region: the Phase-16 trampoline — set Pc = callee
-                        // entry marker, return to the dispatch loop; when the callee
-                        // proceeds the loop re-enters this region at `cursor`.
+                        // Cross-region: the callee runs by a tail call, or by the
+                        // Phase-16 trampoline — set Pc = callee entry marker,
+                        // return to the dispatch loop; when the callee proceeds
+                        // the loop re-enters this region at `cursor`.
+                        EmitContinuationTailCall(emit, ctx.TailCalls, ctx.CursorLocal!,
+                            () => EmitResumeMarker(emit, fid, 0));
                         emit.LoadArgument(0);
-                        EmitFunctorId(emit, fid);
-                        emit.LoadConstant(0);
-                        emit.Call(EngineEncodeResumeMarkerMethod);
-                        emit.Call(EngineSetPcMethod);
+                        EmitResumeMarker(emit, fid, 0);
+                        EmitHelperCall(emit, EngineSetPcMethod);
                         emit.LoadArgument(0);
                         emit.LoadConstant(true);
-                        emit.Call(EngineIlTailCallPendingSetter);
+                        EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                         emit.LoadConstant(true);
-                        emit.Return();
+                        EmitReturn(emit);
                     }
                     emit.MarkLabel(ctx.CursorLabels[cursor]);   // the continuation
+                    OpenResumeWindow(ctx.RegionFid, cursor);    // ADR-049
                 }
                 else if (intra)
                 {
                     // Intra-region tail call: Cp already holds this member's caller
                     // continuation, so the callee's proceed returns straight to it.
                     EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    EmitRegionGcSafePoint(emit, fid);
                     emit.Branch(ctx.MemberEntry[fid]);
                 }
                 else
@@ -1043,16 +1194,16 @@ public sealed partial class IlPredicateCompiler
                     // Cross-region tail call: tail-trampoline (Cp unchanged = the
                     // region's caller continuation; the callee's proceed returns to it).
                     EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    EmitContinuationTailCall(emit, ctx.TailCalls, ctx.CursorLocal!,
+                        () => EmitResumeMarker(emit, fid, 0));
                     emit.LoadArgument(0);
-                    EmitFunctorId(emit, fid);
-                    emit.LoadConstant(0);
-                    emit.Call(EngineEncodeResumeMarkerMethod);
-                    emit.Call(EngineSetPcMethod);
+                    EmitResumeMarker(emit, fid, 0);
+                    EmitHelperCall(emit, EngineSetPcMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(true);
-                    emit.Call(EngineIlTailCallPendingSetter);
+                    EmitHelperCall(emit, EngineIlTailCallPendingSetter);
                     emit.LoadConstant(true);
-                    emit.Return();
+                    EmitReturn(emit);
                 }
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
@@ -1062,14 +1213,54 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
-    /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
+    /// <summary>Runs the code at a marker (<paramref name="emitMarker"/> pushes
+    /// it) with a tail call to its delegate, when <see cref="Activation.Continuation"/>
+    /// allows it; otherwise falls through with the stack empty.</summary>
+    private static void EmitContinuationTailCall(IlEmit emit,
+        bool enabled, IlLocal cursor, Action emitMarker)
+    {
+        if (!enabled) return;
+        var toLoop = emit.DefineLabel($"rcont_loop_{NextLabelSeq()}");
+        var none = emit.DefineLabel($"rcont_none_{NextLabelSeq()}");
+        emit.LoadArgument(0);
+        emitMarker();
+        emit.LoadLocalAddress(cursor);
+        EmitHelperCall(emit, EngineContinuationMethod);
+        emit.Duplicate();
+        emit.BranchIfFalse(none);
+        emit.LoadArgument(0);
+        emit.LoadLocal(cursor);
+        // IlEmit gives a call before a ret the tail. prefix.
+        emit.CallVirtual(ContinuationInvokeMethod);
+        EmitReturn(emit);
+        emit.MarkLabel(none);
+        emit.Pop();
+        emit.MarkLabel(toLoop);
+    }
+
+    /// <summary>The heap collector's safe point at an intra-region call, which
+    /// is a branch and never reaches the dispatch loop's: without it a loop
+    /// inside one region collects only when it leaves. <c>SHUMWAY_REGION_GC=0</c>
+    /// turns it off.</summary>
+    internal static bool RegionGcSafePoints { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_REGION_GC") != "0";
+
+    private static void EmitRegionGcSafePoint(IlEmit emit, int fid)
+    {
+        if (!RegionGcSafePoints) return;
+        emit.LoadArgument(0);
+        EmitFunctorId(emit, fid);
+        EmitHelperCall(emit, EngineMaybeCollectHeapAtCallMethod);
+    }
+
+    /// <summary>A single-clause rule whose body can be inlined flat into a caller
     /// (inline-rule case 1) — like <see cref="IsLeafPredicate"/> but allowing a body
     /// of deterministic builtins, arithmetic and unification. It must create no
     /// choice point, need no environment frame, make no user call, and not cut: so
-    /// NO allocate/deallocate, NO cut/neck_cut/get_level, NO Call/Execute (any
+    /// no allocate/deallocate, no cut/neck_cut/get_level, no Call/Execute (any
     /// tier), and a <c>CallBuiltin</c> only to a deterministic, non-meta builtin.
     /// Such a body runs to completion in one shot exactly like a leaf's head match
-    /// (a failing body op branches to the caller's fail label), so the EXISTING
+    /// (a failing body op branches to the caller's fail label), so the existing
     /// leaf-inline emit (<see cref="EmitClauseBody"/> with
     /// <c>suppressProceedReturn</c>) handles it with no new machinery — det
     /// builtins emit no resume cursor, arith/unify ops branch to the fail
@@ -1129,7 +1320,7 @@ public sealed partial class IlPredicateCompiler
         return sawProceed;
     }
 
-    /// <summary>True iff <paramref name="pred"/> is a pure FACT predicate: every
+    /// <summary>True iff <paramref name="pred"/> is a pure fact predicate: every
     /// clause is only head matching, and the bytecode is otherwise just the
     /// clause-dispatch skeleton (switch_on_* / try / retry / trust /
     /// try_me_else …) and <c>proceed</c> — no body calls, no environment

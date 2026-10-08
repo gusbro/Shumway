@@ -10,14 +10,14 @@ namespace Shumway.Tests.Embedding;
 /// <see cref="ShmoCompiler.SilentlyIgnoredDirectives"/> (covered in
 /// <see cref="Chunk436Tests"/>, which adapts to the seed).</item>
 /// <item>Backquote char-code literals (<c>`x</c>) under arity_compat
-/// only — same INTEGER token as <c>0'x</c>. Flag off: still an
+/// only — same integer token as <c>0'x</c>. Flag off: still an
 /// unlexable character (error diagnostic). (Chunk 439 revised the
-/// escape rule: the character after the backquote is taken LITERALLY,
+/// escape rule: the character after the backquote is taken literally,
 /// no escape processing — see <see cref="Chunk439Tests"/>.)</item>
 /// <item>Literal backslash inside <c>'...'</c> quoted atoms under
 /// arity_compat only — no escape processing; <c>''</c> doubling still
 /// escapes the quote. Flag off: ISO escapes unchanged.</item>
-/// <item><c>:- define(TermA = TermB)</c> — ALWAYS active (no flag):
+/// <item><c>:- define(TermA = TermB)</c> — always active (no flag):
 /// consumed by the ClauseReader; every subsequent subterm value-equal
 /// to TermA becomes TermB. Single pass, no re-expansion, functor names
 /// untouched, malformed define is an error diagnostic.</item>
@@ -114,8 +114,8 @@ public class Chunk437Tests
     public void QuotedAtom_BackslashN_IsTwoCharsUnderFlag()
     {
         var e = new PrologEngine();
-        // The same '\n' source text that is ONE char (newline) without
-        // the flag is TWO literal chars (backslash, n) with it.
+        // The same '\n' source text that is one char (newline) without
+        // the flag is two literal chars (backslash, n) with it.
         e.ConsultString("""
             :- set_prolog_flag(arity_compat, true).
             b('\n').
@@ -173,7 +173,7 @@ public class Chunk437Tests
             v(a).
             w(b).
             """);
-        // a -> b (NOT chained on to c); b -> c.
+        // a -> b (not chained on to c); b -> c.
         Assert.True(e.Query("v(b).").Success);
         Assert.False(e.Query("v(c).").Success);
         Assert.True(e.Query("w(c).").Success);
@@ -196,7 +196,7 @@ public class Chunk437Tests
     public void Define_FunctorNamesNotRenamed()
     {
         var e = new PrologEngine();
-        // define(f = g) rewrites the ATOM f only — f(1) keeps its
+        // define(f = g) rewrites the atom f only — f(1) keeps its
         // functor; only the atom argument position changes.
         e.ConsultString("""
             :- define(f = g).

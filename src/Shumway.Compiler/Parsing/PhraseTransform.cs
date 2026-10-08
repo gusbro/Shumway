@@ -81,7 +81,7 @@ public static class PhraseTransform
     /// <c>phrase</c> call alone so the resolver can route it to a
     /// user-defined <c>phrase/2</c> or <c>phrase/3</c> predicate.
     /// <paramref name="origin"/> is the phrase/2,3 call being replaced: its
-    /// source POSITION carries over to the expanded goal — dropping it cost
+    /// source position carries over to the expanded goal — dropping it cost
     /// the call its debug stop site, which cost the DCG frame its line in
     /// the call stack and Set Next Statement its caller anchor (ADR-035
     /// D5+, the DCG sibling-head report).</summary>
@@ -90,7 +90,7 @@ public static class PhraseTransform
         switch (body)
         {
             case AtomTerm a when a.Name != "[]" && a.Name != "!":
-                // phrase(a, L, R) → a(L, R). NOT for `!`: a cut body is the
+                // phrase(a, L, R) → a(L, R). Not for `!`: a cut body is the
                 // control construct "consume nothing", not a non-terminal —
                 // expanding it called a nonexistent !/2 (Neumerkel's phrase
                 // case 3); the runtime '$phrase' interpreter handles it.
@@ -106,7 +106,7 @@ public static class PhraseTransform
             case CompoundTerm bc when bc.Functor == ":" && bc.Args.Length == 2:
             {
                 // phrase(M:NT, L, R) → M:NT'(…, L, R): the extra args belong to
-                // the NONTERMINAL, inside the qualification (appending to ':'
+                // the nonterminal, inside the qualification (appending to ':'
                 // itself built an undefined ':'/4). ':'/2 then resolves the
                 // expanded goal module-relative at runtime. A non-expandable
                 // inner body (variable, control construct) keeps the phrase

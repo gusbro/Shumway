@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>What a global variable stores. A non-backtrackable write has to
 /// survive the backtracking it is defined to survive, and what was stored was
-/// the CELL: a heap address. Once the heap unwound past the write, the address
+/// the cell: a heap address. Once the heap unwound past the write, the address
 /// held whatever came after it, so the read handed back another term's cells
 /// as if they were the value.
 ///

@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// retractall on a different 1-arity dynamic raises
 /// instantiation_error inside retract. Phase 17's PE-patch path is
 /// correct; the underlying IL emit produces wrong code for this
-/// shape. These tests narrow down WHICH ingredient triggers it so
+/// shape. These tests narrow down which ingredient triggers it so
 /// the fix can target the minimum reproducer.
 /// </summary>
 public class Phase18Bug3Bisect

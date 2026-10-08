@@ -42,7 +42,7 @@ public class Chunk81Tests
     [Fact]
     public void CopyTerm3_ResidualGoalsReferenceTheCopyVariable()
     {
-        // The variable in the projected goal IS the copy variable —
+        // The variable in the projected goal is the copy variable —
         // checked with ==, which holds only for the *same* variable.
         var engine = new PrologEngine();
         engine.ConsultString("attribute_goals(dom, D, V, [in(V, D)]).");
@@ -115,10 +115,10 @@ public class Chunk81Tests
     [Fact]
     public void CopyTerm3_HookReadsASiblingVariablesAttribute()
     {
-        // The clpz rel_tuple shape: projecting X's attribute reads ANOTHER
+        // The clpz rel_tuple shape: projecting X's attribute reads another
         // variable's attribute (the relation var R lives inside X's attribute
         // value and carries its own module). The prep collects attributed
-        // variables TRANSITIVELY and re-attaches everything before any hook
+        // variables transitively and re-attaches everything before any hook
         // runs, so the hook's get_attr on the sibling copy succeeds.
         var engine = new PrologEngine();
         engine.ConsultString("""

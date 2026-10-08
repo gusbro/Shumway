@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// a bundle whose scenario answered <c>instantiation_error</c> in a fresh
 /// process — a semantically broken bundle out of a build that ran beside other
 /// builds. It has never reproduced locally, so the failure itself must carry
-/// the evidence: rebuild the same bundle on the spot and compare STRUCTURALLY.
+/// the evidence: rebuild the same bundle on the spot and compare structurally.
 /// (Raw bytes cannot be compared: the persisted-IL blob embeds a fresh MVID
 /// and PE timestamp per emit, so it always differs — benignly, in place, at
 /// constant length. Everything else is deterministic, pinned by
@@ -50,7 +50,7 @@ internal static class BundleRaceDiag
                 + $"src={(e1.Source == e2.Source ? "same" : "DIFFER")}");
             // Spawner-side blob hashes: with SHUMWAY_BUNDLE_DIAG=1 the child
             // prints [bundle-diag-child] lines with the same hashes for what
-            // it LOADED — match = transfer clean, corruption is child-side.
+            // it loaded — match = transfer clean, corruption is child-side.
             report.AppendLine(
                 $"      suspect hashes: il-pre={Hash(e1.CompiledIl)} "
                 + $"patches={Hash(e1.CompiledIlPatches)} "

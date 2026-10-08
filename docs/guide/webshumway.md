@@ -12,8 +12,24 @@ The source is `src/Shumway.Web/`; the design decisions behind it are
 
 ```bash
 dotnet publish src/Shumway.Web -c Release
-# the site is bin/Release/Shumway.Web/net10.0/publish/wwwroot
+# the site is src/Shumway.Web/bin/Release/net10.0/publish/wwwroot
+powershell -File src/Shumway.Web/WebShumwayServe.ps1    # http://localhost:8080/
 ```
+
+The engine is compiled ahead of time to WebAssembly, which is what makes
+queries fast once the page is up; that publish takes around twenty minutes
+the first time (the wasm-tools workload is required). For a quick check of
+the page itself, `-p:RunAOTCompilation=false` publishes in a couple of
+minutes with the engine interpreted, several times slower.
+
+The publish builds in the just-in-time compiler, which turns the program
+into WebAssembly as it runs (see
+[Choosing how much gets compiled](#choosing-how-much-gets-compiled)).
+`-p:ShumwayWasmTier=false` leaves it out: the page then runs everything on
+the interpreter, and its first line says `Tier-0 interpreter` where it would
+say `Tier-1 WebAssembly`.
+`WebShumwayServe.ps1` serves the site with the two headers the page needs
+(see [Hosting](#hosting)).
 
 ---
 
@@ -23,11 +39,14 @@ Two panes. On the left a program and the files it belongs to; on the right the
 top level. The interaction is the one every Prolog top level has: type a goal,
 get an answer, press `;` for the next one and `.` to stop.
 
-The browser build runs the **bytecode interpreter only**. Shumway's second tier
-compiles predicates to IL at runtime, which a browser does not allow: the
-capability gate (`Shumway.Core.RuntimeCaps`) reports it as absent, and the
-trimmer removes the IL compiler and its dependency from the payload. Programs
-behave identically; only speed differs.
+Your program runs on two tiers, as it does on the desktop: the bytecode
+interpreter (Tier-0), and a just-in-time compiler (Tier-1) that turns it into
+WebAssembly. By default the whole program is compiled after each consult; the
+other settings are under
+[Choosing how much gets compiled](#choosing-how-much-gets-compiled). The
+standard library and compiled libraries arrive already compiled. The first
+line of the top level names the tier in use. Programs behave identically on
+either tier; only speed differs.
 
 ### Keys
 
@@ -127,13 +146,27 @@ It runs by itself in the background after an import, one library after another:
 - it can be stopped, and what is built stays built: across reloads too;
 - a big collection (SWI's library is about two hundred files) is not compiled
   through unasked: above eighty libraries the batch does what the workspace
-  imports and stops. The rest are a button away and still load from source.
+  imports and stops. The rest are a button away, or built when first imported.
+
+A library a program imports before the batch has reached it is **compiled
+then**, by the consult (or the query) that imports it: the output says which
+library, and that the wait is a one-time one, since the bundle is kept like the
+batch's. If the batch is compiling another library at that moment, that one
+finishes first; the batch starts no other until the import has its bundle. So a
+program never loads a library from source over others already compiled, which
+breaks a library that relies on another's expansion hooks while it loads.
 
 Compiling uses the **consult** path (`ShmoViaConsult`), the only one that works
 for a library which generates clauses as it loads (which is what clpz and its
 attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
+
+Unless the page was built without the WebAssembly tier, a compiled library
+also carries its predicates as a WebAssembly module, baked once at compile
+time. Loading the
+library installs that module instead of compiling the predicates again, the
+same way the engine's own libraries (clpfd, clpr, coroutining) arrive.
 
 ### When one will not compile
 
@@ -150,9 +183,10 @@ each of them:
 | in the list | what it means |
 |---|---|
 | compiled | ready, and fast |
-| source only | not built yet; it works, it just loads slowly |
+| source only | not built yet; the first program that imports it builds it |
 | compiled, with warnings | it built, but part of it did not load: often a foreign interface |
 | will not compile | it cannot be built here; **details** says why |
+| provided by Shumway | the engine has its own version (Scryer's `builtins`, `format`, `dif`, ...); importing it gives that one, and there is nothing to build |
 
 The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the
@@ -175,6 +209,66 @@ works; it just loads slowly.
 
 ---
 
+## Choosing how much gets compiled
+
+`jit_compile/1` sets how much of your program the just-in-time compiler takes
+on, for the goals that follow:
+
+```prolog
+?- jit_compile(all).     % compile everything, now and after every consult
+?- jit_compile(16).      % compile a predicate once it has been called 16 times
+?- jit_compile(off).     % stop compiling, and run on the interpreter again
+?- jit_compile(cps).     % compile to continuation functions from here on
+?- jit_compile(nocps).   % and back to the default form
+```
+
+It is an ordinary predicate, so a directive in a consulted file works too:
+
+```prolog
+:- jit_compile(all).
+```
+
+The same three forms mean the same thing in the desktop system, where what
+they control is the IL compiler rather than the WebAssembly one. A program
+does not have to know which engine it landed in to ask for a setting, which is
+what lets one test harness run under every configuration.
+
+`off` is a real off: the predicates already compiled go back to the
+interpreter, not just the ones that would have been compiled next. That takes
+effect from the goal after the switch, never inside it, because a compiled
+predicate may be in the middle of producing solutions when you ask.
+
+The setting survives `restart.`: a fresh engine comes back in the mode you
+were working in, so clearing the database does not quietly change what you
+were measuring. Reload the page to get the default back.
+
+`none` is accepted as another spelling of `off`, and `on` as a moderate
+threshold. At the top level, `jit_compile.` on its own means `on`.
+
+`cps` and `nocps` choose the form of the compiled code rather than how much
+of it there is: continuation functions, where control moves between compiled
+predicates by tail calls that carry the machine with them, or the default.
+Under `all` the program is compiled again in the new form; with a threshold,
+what was compiled goes back to the interpreter and is compiled again as it
+is called. The first line of the page names the form in use. The desktop
+system takes its form from `SHUMWAY_IL_CPS` when it starts, so there these
+two succeed only for the form already in use.
+
+A compiled library, and the standard library, carry their predicates as a
+WebAssembly module baked when they were compiled, and loading them installs
+it. At the top level, `jit_compile(bundles_off).` compiles those predicates
+the way it compiles your program's instead, and `jit_compile(bundles_on).`
+installs the modules again. It is a measuring switch: it tells whether a
+baked module runs as well as what the compiler builds live.
+
+`jit_compile(status).` is a top-level command rather than a setting, and
+belongs to the page the way `restart.` does: it reports what is compiled,
+what was refused and why, and the tier's counters. Ask for it from a program
+and you get a domain error, because there is nothing for a program to do with
+it.
+
+---
+
 ## Debugging
 
 The **Debug** toggle in the toolbar turns the page into the same source-level
@@ -185,6 +279,11 @@ stack with per-frame variables and residual constraints, goal evaluation at a
 stop, and Set Next Statement. The views live in dockable panes on either side
 of the page, and `debugger_break/0` works here as it does everywhere else,
 with no debugger attached it succeeds and does nothing.
+
+In debug mode your program runs on the interpreter, where a breakpoint can stop
+it: code compiled for debugging is never compiled to WebAssembly, and the first
+line of the top level says `Tier-0 interpreter`. The standard library and
+compiled libraries, which stepping does not enter, keep running compiled.
 
 The in-page guide (the `?` icon, *About WebShumway*) documents the
 debugger's controls and keyboard shortcuts in full.

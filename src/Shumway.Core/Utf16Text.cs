@@ -135,7 +135,7 @@ public static class Utf16Text
     public static bool IsScalarValue(long cp)
         => (ulong)cp <= 0x10FFFF && (cp < 0xD800 || cp > 0xDFFF);
 
-    /// <summary>True when <paramref name="s"/> is exactly ONE code point —
+    /// <summary>True when <paramref name="s"/> is exactly one code point —
     /// the shape of a Prolog character atom (one unit, or one well-formed
     /// surrogate pair).</summary>
     public static bool IsOneCodePoint(string s)
@@ -152,7 +152,7 @@ public static class Utf16Text
     public static string FromCodePoint(int cp)
         => cp <= 0xFFFF ? ((char)cp).ToString() : char.ConvertFromUtf32(cp);
 
-    /// <summary>Ordinal comparison in CODE POINT order. Unit-wise ordinal
+    /// <summary>Ordinal comparison in code point order. Unit-wise ordinal
     /// order differs exactly when one side has a surrogate (D800–DFFF) and
     /// the other a unit in E000–FFFF — the astral character would sort
     /// below. The standard fix-up: when the differing units both lie at or
