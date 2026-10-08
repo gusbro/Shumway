@@ -77,8 +77,10 @@ public sealed partial class Activation
             {
                 // Truly unbound — bind it to the immediate value,
                 // trailing the binding if it sits below HB. Same
-                // young-to-old discipline the full Unify path uses.
-                _heap[deref] = value;
+                // young-to-old discipline the full Unify path uses. A
+                // builtin's resolved ATTVAR binds as a REF to its home,
+                // as in UnifyArgCell: a copy is a second, broken variable.
+                _heap[deref] = value.Tag == Tag.AttVar ? Cell.Ref(value.AsHeapIndex) : value;
                 if (deref < _hb) TrailBinding(deref);
                 return true;
             }

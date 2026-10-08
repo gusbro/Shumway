@@ -161,8 +161,12 @@ public sealed partial class Activation
     public Cell GetHeap(int idx) => _heap[idx];
 
     /// <summary>Writes a cell directly without trailing. Use for setting up state, not
-    /// for binding variables — for that, call <see cref="Bind"/>.</summary>
-    public void SetHeap(int idx, Cell value) => _heap[idx] = value;
+    /// for binding variables — for that, call <see cref="Bind"/>. An ATTVAR cell is the
+    /// variable only in its home slot: written anywhere else it goes in as a REF to it,
+    /// because a copy is a second variable the attribute table does not know.</summary>
+    public void SetHeap(int idx, Cell value)
+        => _heap[idx] = value.Tag == Tag.AttVar && value.AsHeapIndex != idx
+            ? Cell.Ref(value.AsHeapIndex) : value;
 
     /// <summary>Reserves <paramref name="count"/> uninitialised cells on the heap and returns
     /// the index of the first one.</summary>
