@@ -283,6 +283,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a union domain and the reflection predicates" },
         { "X in 1..9, X #\\= 5, X #> 3, fd_inf(X, I), fd_sup(X, H), I-H == 4-9.",
           "bounds read back after propagation" },
+        { "X in 0..20, X mod 7 #= 2, fd_inf(X, L), fd_sup(X, H), L-H == 2-16.",
+          "a remainder narrows the dividend" },
+        { "X in -10..10, Y in -3..3, X div Y #= Q, X = -7, Y = 2, Q == -4.",
+          "a variable divisor, decided by its bindings" },
     };
 
     [Theory]

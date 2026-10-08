@@ -56,7 +56,7 @@
 :- public '$fd_min'/3.
 :- public '$fd_max'/3.
 :- public '$fd_abs'/2.
-:- public '$fd_idiv'/3.
+:- public '$fd_divop'/4.
 :- public '$fd_linear'/4.
 :- public '$fd_neq_lin'/3.
 :- public '$fd_alldiff_view'/1.
@@ -316,7 +316,7 @@ clpfd_prop_to_goal('$fd_times'(A,B,C),(A * B #= C)).
 clpfd_prop_to_goal('$fd_min'(A,B,C),  (min(A,B) #= C)).
 clpfd_prop_to_goal('$fd_max'(A,B,C),  (max(A,B) #= C)).
 clpfd_prop_to_goal('$fd_abs'(A,C),    (abs(A) #= C)).
-clpfd_prop_to_goal('$fd_idiv'(A,B,C), (A // B #= C)).
+clpfd_prop_to_goal('$fd_divop'(Op,A,B,C), (E #= C)) :- E =.. [Op, A, B].
 clpfd_prop_to_goal('$fd_alldiff'(Vs), all_distinct(Vs)).
 % A reified comparison prints as the equivalence that was posted while its
 % truth value is open. Once the value is decided the propagator enforces
@@ -496,10 +496,10 @@ clpfd_expr(abs(A), V) :- !,
     clpfd_expr(A, VA),
     clpfd_makevar(V),
     clpfd_post('$fd_abs'(VA, V), [VA, V]).
-clpfd_expr(A // B, V) :- !,
-    clpfd_expr(A, VA), clpfd_expr(B, VB),
-    clpfd_makevar(V),
-    clpfd_post('$fd_idiv'(VA, VB, V), [VA, VB, V]).
+clpfd_expr(A // B, V) :- !, clpfd_divop_expr(//, A, B, V).
+clpfd_expr(A div B, V) :- !, clpfd_divop_expr(div, A, B, V).
+clpfd_expr(A mod B, V) :- !, clpfd_divop_expr(mod, A, B, V).
+clpfd_expr(A rem B, V) :- !, clpfd_divop_expr(rem, A, B, V).
 clpfd_expr(- A, V) :- !, clpfd_expr(0 - A, V).
 % A ** N (non-negative integer constant N) — GNU-Prolog FD allows power;
 % expand to repeated $fd_times (X**2 -> X*X), N=0 -> 1, N=1 -> X.
@@ -507,6 +507,11 @@ clpfd_expr(A ** N, V) :- integer(N), N >= 0, !,
     clpfd_expr(A, VA), clpfd_pow(VA, N, V).
 clpfd_expr(E, _) :-
     throw(error(type_error(fd_expression, E), _)).
+
+clpfd_divop_expr(Op, A, B, V) :-
+    clpfd_expr(A, VA), clpfd_expr(B, VB),
+    clpfd_makevar(V),
+    clpfd_post('$fd_divop'(Op, VA, VB, V), [VA, VB, V]).
 
 clpfd_pow(_, 0, 1) :- !.
 clpfd_pow(VA, 1, VA) :- !.
@@ -851,42 +856,190 @@ clpfd_square_bounds(Lo, Hi, SLo, SHi) :-
     clpfd_bneg(CMax, NCMax),
     clpfd_narrow_bounds(A, NCMax, CMax).
 
-% V = A // B (truncating). A known positive integer divisor gives
-% two-way propagation; a variable divisor whose domain is wholly
-% positive gives a forward bound on V (truncating division is
-% monotone in each argument, so the extreme quotients lie at the
-% operand-domain corners).
-'$fd_idiv'(A, B, V) :-
+% ===== division: //, div, mod, rem =====
+% V = A Op B: // truncates, div floors, mod has the sign of B and rem the
+% sign of A. Division by zero fails, so 0 never stays in a divisor's
+% domain. With the divisor a known K, bounds go both ways; with a variable
+% divisor, forward to V only. The core works on K > 0; a negative K is the
+% positive case mirrored: A // K and A div K are (-A) Op (-K), A mod K is
+% -((-A) mod (-K)), and A rem K is A rem |K|.
+'$fd_divop'(Op, A, B, V) :-
     ( integer(B) ->
-        ( B =:= 0 -> throw(error(evaluation_error(zero_divisor), _))
-        ; B > 0 -> clpfd_idiv_pos(A, B, V)
-        ; throw(error(type_error(fd_positive_divisor, B), _))
+        B =\= 0,
+        ( integer(A) ->
+            clpfd_divop_eval(Op, A, B, R), clpfd_narrow_bounds(V, R, R)
+        ; clpfd_divop_k(Op, A, B, V)
         )
-    ; clpfd_idiv_var(A, B, V)
+    ; clpfd_dom_of(B, DB), clpfd_dom_del(DB, 0, DB1), clpfd_narrow(B, DB1),
+      ( integer(B) -> '$fd_divop'(Op, A, B, V) ; clpfd_divop_var(Op, A, B, V) )
     ).
 
-clpfd_idiv_var(A, B, V) :-
-    clpfd_dom_of(B, DB), clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
-    clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
-    ( integer(BMin), BMin >= 1, integer(BMax),
-      integer(AMin), integer(AMax) ->
-        T1 is AMin // BMin, T2 is AMin // BMax,
-        T3 is AMax // BMin, T4 is AMax // BMax,
-        VLo is min(min(T1, T2), min(T3, T4)),
-        VHi is max(max(T1, T2), max(T3, T4)),
-        clpfd_narrow_bounds(V, VLo, VHi)
-    ; true
+clpfd_divop_eval(//, A, B, R)  :- R is A // B.
+clpfd_divop_eval(div, A, B, R) :- R is A div B.
+clpfd_divop_eval(mod, A, B, R) :- R is A mod B.
+clpfd_divop_eval(rem, A, B, R) :- R is A rem B.
+
+clpfd_divop_k(Op, A, K, V) :-
+    clpfd_bounds(A, AMin, AMax),
+    ( K > 0 -> clpfd_divop_pos(Op, A, AMin, AMax, K, V)
+    ; Op == (rem) -> K1 is -K, clpfd_divop_pos(rem, A, AMin, AMax, K1, V)
+    ; K1 is -K,
+      clpfd_bneg(AMax, NMin), clpfd_bneg(AMin, NMax),
+      clpfd_divop_neg(Op, A, NMin, NMax, K1, V)
     ).
 
-clpfd_idiv_pos(A, K, V) :-
-    clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
-    clpfd_btruncdiv(AMin, K, VLo), clpfd_btruncdiv(AMax, K, VHi),
-    clpfd_narrow_bounds(V, VLo, VHi),
-    clpfd_dom_of(V, DV), clpfd_dom_min(DV, VMin), clpfd_dom_max(DV, VMax),
-    K1 is K - 1,
-    clpfd_bmul(VMin, K, P1), clpfd_sub_lo(P1, K1, ALo),
-    clpfd_bmul(VMax, K, P2), clpfd_add_hi(P2, K1, AHi),
+% A negative divisor: the positive core on -A, mapped back.
+clpfd_divop_neg(Op, A, NMin, NMax, K, V) :-
+    (   Op == (mod) ->
+        clpfd_mod_fwd(NMin, NMax, K, WDom), clpfd_dom_neg(WDom, VDom),
+        clpfd_narrow_dom(V, VDom),
+        clpfd_bounds(V, VMin, VMax), clpfd_bneg(VMax, WMin), clpfd_bneg(VMin, WMax),
+        clpfd_mod_back(NMin, NMax, K, WMin, WMax, Lo, Hi)
+    ;   clpfd_quot_fwd(Op, NMin, NMax, K, VLo, VHi),
+        clpfd_narrow_bounds(V, VLo, VHi),
+        clpfd_bounds(V, VMin, VMax),
+        clpfd_quot_back(Op, VMin, VMax, K, Lo, Hi)
+    ),
+    clpfd_bneg(Hi, ALo), clpfd_bneg(Lo, AHi),
     clpfd_narrow_bounds(A, ALo, AHi).
+
+clpfd_divop_pos(rem, A, AMin, AMax, K, V) :- !, clpfd_rem_pos(A, AMin, AMax, K, V).
+clpfd_divop_pos(mod, A, AMin, AMax, K, V) :- !,
+    clpfd_mod_fwd(AMin, AMax, K, VDom), clpfd_narrow_dom(V, VDom),
+    clpfd_bounds(V, VMin, VMax),
+    clpfd_mod_back(AMin, AMax, K, VMin, VMax, ALo, AHi),
+    clpfd_narrow_bounds(A, ALo, AHi).
+clpfd_divop_pos(Op, A, AMin, AMax, K, V) :-
+    clpfd_quot_fwd(Op, AMin, AMax, K, VLo, VHi),
+    clpfd_narrow_bounds(V, VLo, VHi),
+    clpfd_bounds(V, VMin, VMax),
+    clpfd_quot_back(Op, VMin, VMax, K, ALo, AHi),
+    clpfd_narrow_bounds(A, ALo, AHi).
+
+% The quotient of [AMin, AMax] by K > 0: both roundings are monotone.
+clpfd_quot_fwd(//, AMin, AMax, K, VLo, VHi) :-
+    clpfd_btruncdiv(AMin, K, VLo), clpfd_btruncdiv(AMax, K, VHi).
+clpfd_quot_fwd(div, AMin, AMax, K, VLo, VHi) :-
+    clpfd_bfloordiv(AMin, K, VLo), clpfd_bfloordiv(AMax, K, VHi).
+
+% The dividends whose quotient by K > 0 lies in [VMin, VMax]. Floor: K*V up
+% to K*V + K - 1. Truncation: a positive quotient V starts at K*V, a
+% non-positive one at K*V - (K - 1); a non-negative V ends at K*V + K - 1,
+% a negative one at K*V.
+clpfd_quot_back(div, VMin, VMax, K, ALo, AHi) :-
+    K1 is K - 1,
+    clpfd_bmul(VMin, K, ALo),
+    clpfd_bmul(VMax, K, P), clpfd_add_hi(P, K1, AHi).
+clpfd_quot_back(//, VMin, VMax, K, ALo, AHi) :-
+    K1 is K - 1,
+    clpfd_bmul(VMin, K, P1),
+    ( integer(VMin), VMin >= 1 -> ALo = P1 ; clpfd_sub_lo(P1, K1, ALo) ),
+    clpfd_bmul(VMax, K, P2),
+    ( integer(VMax), VMax =< -1 -> AHi = P2 ; clpfd_add_hi(P2, K1, AHi) ).
+
+% A mod K for A in [AMin, AMax], K > 0: within one period the remainders run
+% from AMin's to AMax's; across two adjacent ones they wrap around.
+clpfd_mod_fwd(AMin, AMax, K, Dom) :-
+    K1 is K - 1,
+    (   integer(AMin), integer(AMax), AMax - AMin < K ->
+        R1 is AMin mod K, R2 is AMax mod K,
+        ( R1 =< R2 -> clpfd_iv(R1, R2, Dom)
+        ; clpfd_iv(R1, K1, D1), clpfd_iv(0, R2, D2), '$dom_union'(D1, D2, Dom)
+        )
+    ;   clpfd_iv(0, K1, Dom)
+    ).
+
+% The least A >= AMin and the greatest A =< AMax whose remainder by K > 0
+% lies in [VMin, VMax]; an infinite end stays as it is.
+clpfd_mod_back(AMin, AMax, K, VMin, VMax, ALo, AHi) :-
+    (   integer(AMin) ->
+        R1 is AMin mod K,
+        ( R1 < VMin -> ALo is AMin + VMin - R1
+        ; R1 > VMax -> ALo is AMin + K - R1 + VMin
+        ; ALo = AMin
+        )
+    ;   ALo = AMin
+    ),
+    (   integer(AMax) ->
+        R2 is AMax mod K,
+        ( R2 > VMax -> AHi is AMax - (R2 - VMax)
+        ; R2 < VMin -> AHi is AMax - R2 - K + VMax
+        ; AHi = AMax
+        )
+    ;   AHi = AMax
+    ).
+
+% A rem K, K > 0: the remainder of the non-negative part of A, and the
+% negated remainder of its negated non-positive part.
+clpfd_rem_pos(A, AMin, AMax, K, V) :-
+    clpfd_split(AMin, AMax, PLo, PHi, NLo, NHi),
+    ( PLo == none -> clpfd_iv(1, 0, DP) ; clpfd_mod_fwd(PLo, PHi, K, DP) ),
+    ( NLo == none -> clpfd_iv(1, 0, DN)
+    ; clpfd_bneg(NHi, MLo), clpfd_bneg(NLo, MHi),
+      clpfd_mod_fwd(MLo, MHi, K, DM), clpfd_dom_neg(DM, DN)
+    ),
+    '$dom_union'(DP, DN, VDom),
+    clpfd_narrow_dom(V, VDom),
+    clpfd_bounds(V, VMin, VMax),
+    (   PLo \== none, clpfd_ble(0, VMax) ->
+        clpfd_bmax(VMin, 0, RLo),
+        clpfd_mod_back(PLo, PHi, K, RLo, VMax, P1, P2), clpfd_iv(P1, P2, AP)
+    ;   clpfd_iv(1, 0, AP)
+    ),
+    (   NLo \== none, clpfd_ble(VMin, 0) ->
+        clpfd_bneg(NHi, MLo1), clpfd_bneg(NLo, MHi1),
+        clpfd_bneg(VMax, W0), clpfd_bmax(W0, 0, WLo), clpfd_bneg(VMin, WHi),
+        clpfd_mod_back(MLo1, MHi1, K, WLo, WHi, M1, M2),
+        clpfd_bneg(M2, N1), clpfd_bneg(M1, N2), clpfd_iv(N1, N2, AN)
+    ;   clpfd_iv(1, 0, AN)
+    ),
+    '$dom_union'(AP, AN, ADom),
+    clpfd_narrow_dom(A, ADom).
+
+% The non-negative part [PLo, PHi] and the non-positive part [NLo, NHi] of
+% [Lo, Hi]; none for a part that is empty.
+clpfd_split(Lo, Hi, PLo, PHi, NLo, NHi) :-
+    ( clpfd_ble(0, Hi) -> clpfd_bmax(Lo, 0, PLo), PHi = Hi ; PLo = none, PHi = none ),
+    ( clpfd_ble(Lo, 0) -> NLo = Lo, clpfd_bmin(Hi, 0, NHi) ; NLo = none, NHi = none ).
+
+% A variable divisor: V from the corners of A and of each one-signed part
+% of B, where the division is monotone in each argument. An unbounded part
+% leaves V as it is.
+clpfd_divop_var(Op, A, B, V) :-
+    clpfd_bounds(A, AMin, AMax), clpfd_bounds(B, BMin, BMax),
+    (   Op == (mod) ->
+        ( clpfd_blt(0, BMax) -> clpfd_sub_hi(BMax, 1, PHi), clpfd_iv(0, PHi, DP)
+        ; clpfd_iv(1, 0, DP) ),
+        ( clpfd_blt(BMin, 0) -> clpfd_add_lo(BMin, 1, NLo), clpfd_iv(NLo, 0, DN)
+        ; clpfd_iv(1, 0, DN) ),
+        '$dom_union'(DP, DN, VDom), clpfd_narrow_dom(V, VDom)
+    ;   Op == (rem) ->
+        clpfd_bneg(BMin, NB), clpfd_bmax(NB, BMax, M0), clpfd_sub_hi(M0, 1, M),
+        clpfd_bneg(M, NM),
+        clpfd_bmin(AMin, 0, L0), clpfd_bmax(L0, NM, VLo),
+        clpfd_bmax(AMax, 0, H0), clpfd_bmin(H0, M, VHi),
+        clpfd_narrow_bounds(V, VLo, VHi)
+    ;   integer(AMin), integer(AMax), integer(BMin), integer(BMax) ->
+        findall(Q, ( member(Lo-Hi, [BMin-(-1), 1-BMax]),
+                     BLo is max(BMin, Lo), BHi is min(BMax, Hi), BLo =< BHi,
+                     member(X, [AMin, AMax]), member(Y, [BLo, BHi]),
+                     clpfd_divop_eval(Op, X, Y, Q) ), Qs),
+        min_list(Qs, VLo), max_list(Qs, VHi),
+        clpfd_narrow_bounds(V, VLo, VHi)
+    ;   true
+    ).
+
+clpfd_bounds(X, Lo, Hi) :- clpfd_dom_of(X, D), clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi).
+
+clpfd_narrow_dom(X, Dom) :- clpfd_dom_of(X, D0), clpfd_dom_isect(D0, Dom, D), clpfd_narrow(X, D).
+
+% The domain of -X for X in Dom.
+clpfd_dom_neg(Dom, Neg) :-
+    '$dom_intervals'(Dom, IVs), clpfd_iv(1, 0, E), clpfd_dom_neg_(IVs, E, Neg).
+clpfd_dom_neg_([], D, D).
+clpfd_dom_neg_([L-H|T], D0, D) :-
+    clpfd_bneg(H, NL), clpfd_bneg(L, NH), clpfd_iv(NL, NH, IV),
+    '$dom_union'(D0, IV, D1), clpfd_dom_neg_(T, D1, D).
 
 % ===== sum/3 =====
 % sum(List, Rel, Total): Total stands in relation Rel to the sum
