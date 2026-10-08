@@ -517,7 +517,7 @@ public static class BundleWriter
                     var (caid, _) = Shumway.Core.FunctorTable.Lookup(cf);
                     string cn = Shumway.Core.AtomTable.GetById(caid)?.Name ?? "";
                     if ((cn.Contains("$disj_") || cn.Contains("$neg_") || cn.Contains("$once_")
-                         || cn.Contains("$ign_") || cn.Contains("$catchgoal_"))
+                         || cn.Contains("$ign_") || cn.Contains("$catchgoal_") || cn.Contains("$cutb_"))
                         && predicates.ContainsKey(cf))
                     {
                         emitOnly.Add(cf);

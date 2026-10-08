@@ -164,6 +164,43 @@ public sealed class ModulePrivatePredicateTests
         RaisesExistence(e, "never_defined", "never_defined/0");
     }
 
+    // A goal of findall/bagof/setof/\+ with a cut of its own keeps the cut
+    // local to it; it must still be the module's goal, calling the privates.
+    private const string LocalCuts = """
+        :- module(mpp_cut, [lc/2]).
+        p(1). p(2).
+        lc(findall, L) :- findall(X, (p(X), !), L).
+        lc(findall_guard, L) :- findall(X, (p(X), X > 0, !), L).
+        lc(bagof, L) :- bagof(X, (p(X), !), L).
+        lc(setof, L) :- setof(X, (p(X) ; p(X), !), L).
+        lc(not, yes) :- \+ (p(X), X > 5, !).
+        lc(not_cut_fail, yes) :- \+ (!, fail).
+        lc(after, L) :- findall(X, (p(X), !), L).
+        lc(after, more).
+        """;
+
+    [Theory]
+    [InlineData("findall", "[1]")]
+    [InlineData("findall_guard", "[1]")]
+    [InlineData("bagof", "[1]")]
+    [InlineData("setof", "[1, 2]")]
+    [InlineData("not", "yes")]
+    [InlineData("not_cut_fail", "yes")]
+    public void ALocalCutInAnAllSolutionsGoalStillCallsThePrivate(string which, string expected)
+    {
+        var e = new PrologEngine();
+        e.ConsultString(LocalCuts);
+        Succeeds(e, $"lc({which}, L), L == {expected}.");
+    }
+
+    [Fact]
+    public void TheLocalCutDoesNotCutTheClause()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(LocalCuts);
+        Succeeds(e, "findall(L, lc(after, L), Ls), Ls == [[1], more].");
+    }
+
     // ---- a goal built at run time, and the closures a module hands out ----
 
     [Fact]

@@ -1006,6 +1006,7 @@ public sealed partial class PrologEngine
         if (demangled.StartsWith("$neg_", StringComparison.Ordinal)) return ("\\+", 1);
         if (demangled.StartsWith("$once_", StringComparison.Ordinal)) return ("once", 1);
         if (demangled.StartsWith("$ign_", StringComparison.Ordinal)) return ("ignore", 1);
+        if (demangled.StartsWith("$cutb_", StringComparison.Ordinal)) return ("call", 1);
         // ADR-035 (Camino B) — the all-solutions meta-predicates lower to a $disj /
         // $neg collect loop tagged with their own kind (MetaTransform.NextHelperKind),
         // so they show and stop as the goal the user actually wrote, not a transparent
