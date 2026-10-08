@@ -7481,9 +7481,9 @@ public static class WasmPredicateCompiler
                 CellStoreDyn(LHeapB, LKBW, 1,
                     () => Op(new Int64Constant(_env.AtomCell(DotAtomId))));
                 EmitUnivCons(2, 3);
-                CellStoreDyn(LHeapB, LKBW, 3, () => CellLoadDyn(LHeapB, LKH));
+                CellStoreDyn(LHeapB, LKBW, 3, () => LoadCopied(() => CellLoadDyn(LHeapB, LKH)));
                 EmitUnivCons(4, 5);
-                CellStoreDyn(LHeapB, LKBW, 5, () => CellLoadDyn(LHeapB, LKH, 1));
+                CellStoreDyn(LHeapB, LKBW, 5, () => LoadCopied(() => CellLoadDyn(LHeapB, LKH, 1)));
                 EmitUnivNil(6);
                 Op(new Branch(1));                          // -> $built
             }
@@ -7539,7 +7539,7 @@ public static class WasmPredicateCompiler
                 });
 
                 // One cons and one argument per step, the argument copied
-                // from the compound as it lies.
+                // from the compound.
                 Op(new Int32Constant(0));
                 Op(new LocalSet(LKEW));                     // the argument index
                 OpenBlock();
@@ -7574,7 +7574,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Add());
                     Op(new LocalSet(LKT));
                     CellStoreDyn(LHeapB, LKBR, 1,
-                        () => CellLoadDyn(LHeapB, LKT));
+                        () => LoadCopied(() => CellLoadDyn(LHeapB, LKT)));
 
                     Op(new LocalGet(LKEW));
                     Op(new Int32Constant(1));
@@ -7643,6 +7643,22 @@ public static class WasmPredicateCompiler
 
         /// <summary>A cons cell at base+<paramref name="at"/> pointing at the
         /// head that follows it.</summary>
+        /// <summary>A heap cell to be stored somewhere else: a bare ATTVAR goes
+        /// as a REF to its home, as the engine's SetHeap stores it. An ATTVAR
+        /// cell anywhere but its home is a variable nothing can find. Uses LC0.
+        /// </summary>
+        private void LoadCopied(Action load)
+        {
+            load(); Op(new LocalSet(LC0));
+            TagOfC0(); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+            OpenIf();
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+            Op(new LocalSet(LC0));
+            CloseNested();
+            Op(new LocalGet(LC0));
+        }
+
         private void EmitUnivCons(int at, int head)
         {
             CellStoreDyn(LHeapB, LKBW, at, () =>
@@ -8253,8 +8269,8 @@ public static class WasmPredicateCompiler
         ///
         /// <para>Two passes over the list, because the cell count is not
         /// known until the end: one to count and check the shape, one to
-        /// copy. The elements are moved as they lie, for =../2's own reason
-        /// -- a variable's cell is a reference to where it lives.</para>
+        /// copy. A variable's element is copied as a reference to where it
+        /// lives, an attributed one included.</para>
         /// </summary>
         private void EmitUnivCompose(int pc, int slowDepth)
         {
@@ -8394,7 +8410,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32WrapInt64());
                 Op(new LocalSet(LKH));
                 // The head is the functor's name and is already spent; every
-                // element after it is an argument, moved as it lies.
+                // element after it is an argument.
                 Op(new LocalGet(LKEW));
                 OpenIf();
                 {
@@ -8406,7 +8422,7 @@ public static class WasmPredicateCompiler
                     Op(new LocalGet(LKDot));
                     Op(new Int32Subtract());
                     Op(new LocalSet(LKStop));
-                    CellStoreDyn(LHeapB, LKStop, 0, () => CellLoadDyn(LHeapB, LKH));
+                    CellStoreDyn(LHeapB, LKStop, 0, () => LoadCopied(() => CellLoadDyn(LHeapB, LKH)));
                 }
                 CloseNested();
                 Op(new LocalGet(LKEW));

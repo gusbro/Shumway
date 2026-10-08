@@ -77,6 +77,13 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         msortp(L, S) :- msort(L, S).
         appendp(A, B, C) :- append(A, B, C).
         univp(T, L) :- T =.. L.
+        :- public attr_all/1.
+        :- public mkp/2.
+        attr_all([]).
+        attr_all([V|Vs]) :- put_attr(V, m2, a), attr_all(Vs).
+        mkp(Vs, A) :- A =.. [s|Vs].
+        :- public attr_args/1.
+        attr_args(T) :- T =.. [_|As], attr_all(As).
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -148,6 +155,12 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "append/3 keeps an attvar that lives in a list cell" },
         { "T = f(X), put_attr(X, m2, a), univp(T, [_, A]), A == X, get_attr(A, m2, V), V == a.",
           "=../2 keeps an attvar that lives in an argument slot" },
+        { "length(Vs, 2), attr_all(Vs), mkp(Vs, T), Vs = [X|_], arg(1, T, A), A == X, get_attr(A, m2, V), V == a.",
+          "=../2 building a term from list cells that are the attvars' homes" },
+        { "length(L, 1), attr_all(L), univp(L, [_, A, _]), L = [X], A == X, get_attr(A, m2, V), V == a.",
+          "=../2 taking apart a cons whose head is the attvar's home" },
+        { "functor(T, g, 2), attr_args(T), univp(T, [_, A, _]), arg(1, T, X), A == X, get_attr(A, m2, V), V == a.",
+          "=../2 taking apart a compound whose argument slots are the attvars' homes" },
     };
 
     private static PrologEngine Tier0()
@@ -247,7 +260,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
                 || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_")
-                || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(");
+                || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(")
+                || goal.Contains("mkp(");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }
