@@ -287,6 +287,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a remainder narrows the dividend" },
         { "X in -10..10, Y in -3..3, X div Y #= Q, X = -7, Y = 2, Q == -4.",
           "a variable divisor, decided by its bindings" },
+        { "X in 1..3, Y in 1..3, \\+ (X #\\= Y, X = Y).",
+          "aliasing what a disequality keeps apart fails" },
+        { "X in 1..9, Y in 1..9, abs(X - Y) #\\= 2, X = 5, fd_dom(Y, D), D == (1..2 \\/ 4..6 \\/ 8..9).",
+          "abs(X - Y) #\\= C takes both values out" },
     };
 
     [Theory]

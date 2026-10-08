@@ -59,6 +59,8 @@
 :- public '$fd_divop'/4.
 :- public '$fd_linear'/4.
 :- public '$fd_neq_lin'/3.
+:- public '$fd_absdiff_neq'/3.
+:- public '$fix'/1.
 :- public '$fd_alldiff_view'/1.
 :- public '$fd_set'/3.
 :- public '$fd_reif'/4.
@@ -188,7 +190,7 @@ clpfd_narrow(X, NewDom) :-
         ( '$dom_same'(NewDom, OldDom) -> true
         ; '$dom_empty'(NewDom) -> fail
         ; '$dom_singleton'(NewDom, K) -> X = K
-        ; put_attr(X, clpfd, fd(NewDom, Props)), clpfd_run(Props)
+        ; put_attr(X, clpfd, fd(NewDom, Props)), clpfd_run_narrowed(Props)
         )
     ; '$dom_empty'(NewDom) -> fail
     ; '$dom_singleton'(NewDom, K) -> X = K
@@ -204,8 +206,19 @@ clpfd_narrow_bounds(X, Lo, Hi) :-
 clpfd_run([]).
 clpfd_run([P|Ps]) :- call(P), clpfd_run(Ps).
 
+% A propagator that can act only once one of its variables is fixed (the
+% disequalities) is stored as '$fix'(P): a domain that shrinks without
+% becoming a value does not wake it. Binding or aliasing a variable runs
+% every propagator, these included.
+'$fix'(P) :- call(P).
+clpfd_run_narrowed([]).
+clpfd_run_narrowed([P|Ps]) :-
+    ( P = '$fix'(_) -> true ; call(P) ),
+    clpfd_run_narrowed(Ps).
+
 % suspend a propagator on every FD variable it watches, then run it.
 clpfd_post(Prop, Vars) :- clpfd_watch(Vars, Prop), call(Prop).
+clpfd_post_fix(Prop, Vars) :- clpfd_watch(Vars, '$fix'(Prop)), call(Prop).
 % A variable that occurs twice among Vars (X*X) watches the propagator
 % once: what it already watches first is this very propagator.
 clpfd_watch([], _).
@@ -264,7 +277,12 @@ clpfd_attr_goals(fd(Dom, Props), V, Goals) :-
 % whose user-facing form isn't already subsumed by the domain
 % (clpfd_prop_to_goal/2 fails for those — e.g. `$fd_lt(X, 10)`
 % only narrows X's domain, which is already projected).
-clpfd_props_owned_by(Props, V, Goals) :- clpfd_props_owned(Props, V, Props, Goals).
+clpfd_props_owned_by(Props0, V, Goals) :-
+    clpfd_unfix(Props0, Props),
+    clpfd_props_owned(Props, V, Props, Goals).
+
+clpfd_unfix([], []).
+clpfd_unfix([P|Ps], [Q|Qs]) :- ( P = '$fix'(Q) -> true ; Q = P ), clpfd_unfix(Ps, Qs).
 
 % A propagator twice in the list (two aliased variables both watched it)
 % is said once, at its last occurrence.
@@ -309,6 +327,9 @@ clpfd_first_var([_|R], V) :- clpfd_first_var(R, V).
 % `A in 6..9.`, no `5 #< A, A #< 10` residue).
 clpfd_prop_to_goal('$fd_lt'(X, Y),    (X #< Y))   :- var(X), var(Y).
 clpfd_prop_to_goal('$fd_le'(X, Y),    (X #=< Y))  :- var(X), var(Y).
+% Once a side is known its two values are out of the other's domain, which
+% the answer already shows.
+clpfd_prop_to_goal('$fd_absdiff_neq'(X, Y, C), (abs(X - Y) #\= C)) :- var(X), var(Y), X \== Y.
 clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
     ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
@@ -348,7 +369,7 @@ clpfd_still_in(K, V) :-
 
 clpfd_neq_lin_open(Cs, Vs, RHS) :-
     clpfd_neq_lin_scan(Cs, Vs, 0, Sum, none, Free),
-    nonvar(Free), Free = one(C, V),
+    nonvar(Free), Free = one(C, V), C =\= 0,
     Diff is RHS - Sum, Val is Diff // C, C * Val =:= Diff,
     clpfd_still_in(Val, V).
 
@@ -545,9 +566,26 @@ clpfd_pow(VA, N, V) :- N > 1, N1 is N - 1,
 % auxiliary variable is visible: `Q #\= R + D` would answer
 % `_T in 1..8, R + D #= _T, Q #\= _T` — three lines naming a variable the
 % user never wrote. One propagator says it in one.
+'#\\='(L, R) :- clpfd_absdiff_neq(L, R), !.
 '#\\='(L, R) :- ( compound(L) ; compound(R) ), clpfd_norm(L, R, Terms, Const), !,
     RHS is -Const, clpfd_post_neq_lin(Terms, RHS).
-'#\\='(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_neq'(X, Y), [X, Y]).
+'#\\='(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post_fix('$fd_neq'(X, Y), [X, Y]).
+
+% abs(A - B) #\= C with A and B variables or integers and C an integer:
+% one propagator takes the two values at distance C out of one side once
+% the other is known. Through auxiliary variables only bounds moved, so
+% the values in between stayed (n-queens' diagonals).
+clpfd_absdiff_neq(L, R) :-
+    (   nonvar(L), L = abs(E), integer(R) -> C = R
+    ;   nonvar(R), R = abs(E), integer(L) -> C = L
+    ),
+    nonvar(E), E = A - B,
+    clpfd_var_or_int(A), clpfd_var_or_int(B),
+    '$fd_fits'(C),
+    clpfd_makevar(A), clpfd_makevar(B),
+    ( C < 0 -> true ; clpfd_post_fix('$fd_absdiff_neq'(A, B, C), [A, B]) ).
+
+clpfd_var_or_int(X) :- ( var(X) -> true ; integer(X) ).
 '#<'(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const - 1, clpfd_post_lin(Terms, =<, RHS).
 '#<'(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_lt'(X, Y), [X, Y]).
 '#=<'(L, R) :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const, clpfd_post_lin(Terms, =<, RHS).
@@ -619,7 +657,7 @@ clpfd_post_neq_lin([], RHS) :- !, RHS =\= 0.
 clpfd_post_neq_lin(Terms, RHS) :-
     clpfd_unzip(Terms, Coeffs, Vars),
     clpfd_makevars(Vars),
-    clpfd_post('$fd_neq_lin'(Coeffs, Vars, RHS), Vars).
+    clpfd_post_fix('$fd_neq_lin'(Coeffs, Vars, RHS), Vars).
 
 % ===== the linear disequality: sum(Ci*Vi) =\= RHS =====
 % A disequality says nothing until one variable is left: with two
@@ -629,12 +667,11 @@ clpfd_post_neq_lin(Terms, RHS) :-
 % the coefficient divides it exactly.
 '$fd_neq_lin'(Coeffs, Vars, RHS) :-
     clpfd_neq_lin_scan(Coeffs, Vars, 0, Sum, none, Free),
-    ( Free == none -> Sum =\= RHS
+    ( ( Free == none ; Free = one(0, _) ) -> Sum =\= RHS
     ; Free = one(C, V) ->
         Diff is RHS - Sum,
         Val is Diff // C,
-        ( C * Val =:= Diff ->
-            clpfd_dom_of(V, DV), clpfd_dom_del(DV, Val, DV2), clpfd_narrow(V, DV2)
+        ( C * Val =:= Diff -> clpfd_del_or_wait(V, Val, '$fd_neq_lin'(Coeffs, Vars, RHS))
         ; true
         )
     ; true      % two or more unknowns: nothing is excluded yet
@@ -645,6 +682,7 @@ clpfd_neq_lin_scan([_|_], _, S, S, many, many) :- !.
 clpfd_neq_lin_scan([C|Cs], [V|Vs], S0, S, F0, F) :-
     ( integer(V) -> S1 is S0 + C * V, F1 = F0
     ; F0 == none -> F1 = one(C, V), S1 = S0
+    ; F0 = one(C0, V0), V0 == V -> C1 is C0 + C, F1 = one(C1, V0), S1 = S0
     ; F1 = many, S1 = S0
     ),
     clpfd_neq_lin_scan(Cs, Vs, S1, S, F1, F).
@@ -756,10 +794,41 @@ clpfd_div_bounds(C, CLo, CHi, VLo, VHi) :-
 % otherwise, re-firing when narrowing binds one of them.
 '$fd_neq'(X, Y) :-
     ( integer(X), integer(Y) -> X =\= Y
-    ; integer(X) -> clpfd_dom_of(Y, DY), clpfd_dom_del(DY, X, DY2), clpfd_narrow(Y, DY2)
-    ; integer(Y) -> clpfd_dom_of(X, DX), clpfd_dom_del(DX, Y, DX2), clpfd_narrow(X, DX2)
-    ; true
+    ; integer(X) -> clpfd_del_or_wait(Y, X, '$fd_neq'(X, Y))
+    ; integer(Y) -> clpfd_del_or_wait(X, Y, '$fd_neq'(X, Y))
+    ; X \== Y
     ).
+
+% Remove K from V's domain. At an end of the integer range, on a side with
+% no bound, the removal waits (nothing says "one past it"), so the
+% disequality P has to wake on narrowing as well: once that side is
+% bounded, the value goes.
+clpfd_del_or_wait(V, K, P) :-
+    clpfd_dom_of(V, D0), clpfd_dom_del(D0, K, D1), clpfd_narrow(V, D1),
+    clpfd_wait_if_kept(V, K, P).
+
+clpfd_wait_if_kept(V, K, P) :-
+    (   K > -576460752303423488, K < 576460752303423487 -> true
+    ;   var(V), clpfd_dom_of(V, D), clpfd_in_dom(K, D) ->
+        get_attr(V, clpfd, fd(D1, Ps)),
+        ( clpfd_memq(P, Ps) -> true ; put_attr(V, clpfd, fd(D1, [P|Ps])) )
+    ;   true
+    ).
+
+% |X - Y| =\= C, C >= 0.
+'$fd_absdiff_neq'(X, Y, C) :-
+    ( integer(X), integer(Y) -> abs(X - Y) =\= C
+    ; integer(X) -> clpfd_absdiff_del(Y, X, C, '$fd_absdiff_neq'(X, Y, C))
+    ; integer(Y) -> clpfd_absdiff_del(X, Y, C, '$fd_absdiff_neq'(X, Y, C))
+    ; X \== Y -> true
+    ; C =\= 0
+    ).
+
+clpfd_absdiff_del(V, K, C, P) :-
+    Lo is K - C, Hi is K + C,
+    clpfd_dom_of(V, D0), clpfd_dom_del(D0, Lo, D1), clpfd_dom_del(D1, Hi, D2),
+    clpfd_narrow(V, D2),
+    clpfd_wait_if_kept(V, Lo, P), clpfd_wait_if_kept(V, Hi, P).
 
 % A + B = C — bounds propagation in all three directions.
 '$fd_plus'(A, B, C) :-
