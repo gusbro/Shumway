@@ -1714,6 +1714,32 @@ public sealed partial class PrologEngine
     // second EnableDebugging (after a dispose + re-enable) does not stack a second handler.
     private static bool _debugDiagLoggingArmed;
 
+    private static readonly object FirstChanceLogGate = new();
+    private static bool _firstChanceLogBusy;
+
+    /// <summary>One entry of the SHUMWAY_DEBUG_DIAG exception log. The write's own
+    /// failure is a first-chance exception too, raised before any catch runs: re-entry
+    /// returns, or a file held by another process recursed until the stack overflowed.
+    /// Shared for writing, because every test process of a run appends to it.</summary>
+    internal static void LogFirstChance(string path, Exception ex)
+    {
+        lock (FirstChanceLogGate)
+        {
+            if (_firstChanceLogBusy) return;
+            _firstChanceLogBusy = true;
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                using var writer = new StreamWriter(stream);
+                writer.Write(DateTime.Now.ToString("HH:mm:ss.fff") + "  "
+                    + ex.GetType().Name + ": " + ex.Message + "\n"
+                    + ex.StackTrace + "\n\n");
+            }
+            catch (Exception) { /* a diagnostic must never be the thing that fails */ }
+            finally { _firstChanceLogBusy = false; }
+        }
+    }
+
     /// <summary>
     /// ADR-035 — turn on source-level debugging for this engine, so a debugger attached to
     /// this process can set breakpoints in the <c>.pl</c> files it consults, step, inspect
@@ -1781,17 +1807,7 @@ public sealed partial class PrologEngine
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(trace)!);
-                AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
-                {
-                    try
-                    {
-                        File.AppendAllText(trace,
-                            DateTime.Now.ToString("HH:mm:ss.fff") + "  "
-                            + e.Exception.GetType().Name + ": " + e.Exception.Message + "\n"
-                            + e.Exception.StackTrace + "\n\n");
-                    }
-                    catch (Exception) { /* a diagnostic must never be the thing that fails */ }
-                };
+                AppDomain.CurrentDomain.FirstChanceException += (_, e) => LogFirstChance(trace, e.Exception);
             }
             catch (Exception) { /* no temp dir — run without the log */ }
         }
