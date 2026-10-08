@@ -384,6 +384,9 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
            file name, so breakpoints work in every file of the workspace, not
            just the one on screen. <b>Debug</b> again returns to the normal top
            level.</p>
+        <p>In debug mode the program runs on the interpreter, so breakpoints
+           can stop it, and the first line of the top level shows Tier-0.
+           Libraries stay compiled; stepping does not go into them.</p>
 
         <h5>Breakpoints</h5>
         <p>Click the strip left of the code to set one; click it again to
@@ -457,9 +460,14 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
         </ul>
 
         <h4>What is different here</h4>
-        <p>The browser build runs the bytecode interpreter only: Shumway's
-           second tier compiles to IL at runtime, which a browser does not
-           allow. Programs behave identically — only speed differs.</p>
+        <p>Programs run on two tiers: the bytecode interpreter (Tier-0) and a
+           just-in-time compiler (Tier-1) that translates them to WebAssembly.
+           By default the whole program is compiled after each consult.
+           <code>jit_compile(off)</code> keeps everything on the interpreter,
+           <code>jit_compile(16)</code> compiles a predicate after it has been
+           called 16 times, and <code>jit_compile(all)</code> restores the
+           default. The first line of the top level shows which tier is in
+           use. Both tiers give the same results; only the speed changes.</p>
 
         <p class="fineprint">
           Shumway — a Prolog compiler and interpreter for .NET.

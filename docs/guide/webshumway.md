@@ -39,11 +39,14 @@ Two panes. On the left a program and the files it belongs to; on the right the
 top level. The interaction is the one every Prolog top level has: type a goal,
 get an answer, press `;` for the next one and `.` to stop.
 
-The browser build runs the **bytecode interpreter only**. Shumway's second tier
-compiles predicates to IL at runtime, which a browser does not allow: the
-capability gate (`Shumway.Core.RuntimeCaps`) reports it as absent, and the
-trimmer removes the IL compiler and its dependency from the payload. Programs
-behave identically; only speed differs.
+Your program runs on two tiers, as it does on the desktop: the bytecode
+interpreter (Tier-0), and a just-in-time compiler (Tier-1) that turns it into
+WebAssembly. By default the whole program is compiled after each consult; the
+other settings are under
+[Choosing how much gets compiled](#choosing-how-much-gets-compiled). The
+standard library and compiled libraries arrive already compiled. The first
+line of the top level names the tier in use. Programs behave identically on
+either tier; only speed differs.
 
 ### Keys
 
@@ -159,8 +162,9 @@ attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
 
-In a build with the WebAssembly tier, a compiled library also carries its
-predicates as a WebAssembly module, baked once at compile time. Loading the
+Unless the page was built without the WebAssembly tier, a compiled library
+also carries its predicates as a WebAssembly module, baked once at compile
+time. Loading the
 library installs that module instead of compiling the predicates again, the
 same way the engine's own libraries (clpfd, clpr, coroutining) arrive.
 
@@ -275,6 +279,11 @@ stack with per-frame variables and residual constraints, goal evaluation at a
 stop, and Set Next Statement. The views live in dockable panes on either side
 of the page, and `debugger_break/0` works here as it does everywhere else,
 with no debugger attached it succeeds and does nothing.
+
+In debug mode your program runs on the interpreter, where a breakpoint can stop
+it: code compiled for debugging is never compiled to WebAssembly, and the first
+line of the top level says `Tier-0 interpreter`. The standard library and
+compiled libraries, which stepping does not enter, keep running compiled.
 
 The in-page guide (the `?` icon, *About WebShumway*) documents the
 debugger's controls and keyboard shortcuts in full.
