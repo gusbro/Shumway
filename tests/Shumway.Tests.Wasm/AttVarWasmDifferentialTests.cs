@@ -277,6 +277,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "all_distinct plus labeling" },
         { "length(L, 2), L ins 0..1, msort(L, [A, _]), ( A = 5 -> fail ; true ).",
           "a sorted domain variable keeps its domain" },
+        { "catch((X in 0..1, X = b), error(type_error(integer, V), _), true), V == b.",
+          "binding a domain variable to an atom is a type error" },
     };
 
     [Theory]

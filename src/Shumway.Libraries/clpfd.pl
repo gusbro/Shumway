@@ -214,7 +214,9 @@ clpfd_watch([V|Vs], Prop) :-
 
 % ===== the verify_attributes hook =====
 % fired when an FD variable is bound. An integer must lie in the
-% domain; aliasing to another FD variable intersects the domains.
+% domain; aliasing to another FD variable intersects the domains;
+% anything else is a type error, as in SICStus and Scryer, also when
+% the unification is only a test (\=/2, member/2).
 verify_attributes(clpfd, fd(Dom, Props), Value, Goals) :-
     ( integer(Value) ->
         clpfd_in_dom(Value, Dom),
@@ -227,7 +229,7 @@ verify_attributes(clpfd, fd(Dom, Props), Value, Goals) :-
             Goals = ['$fd_set'(Value, Dom3, AllProps)]
         ; Goals = ['$fd_set'(Value, Dom, Props)]
         )
-    ; fail
+    ; throw(error(type_error(integer, Value), _))
     ).
 
 % ===== projection: a constrained variable prints as `V in Dom` =====
