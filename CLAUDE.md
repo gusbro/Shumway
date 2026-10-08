@@ -205,7 +205,7 @@ implementing**.
 
 ## Phase Roadmap
 
-Shumway is designed in phases; all of 1–39 are ✅ complete and tagged
+Shumway is designed in phases; all of 1–42 are ✅ complete and tagged
 (`phase-N`). **The canonical record of each phase is its closure doc in
 [`docs/history/`](docs/history/)** — what shipped, the decisions, the gate at
 close. This table is the index, one line of essence per phase; do not grow
@@ -254,6 +254,8 @@ entries here, grow the closure docs.
 | 38 | WebShumway (ADR-042): the full engine on browser-wasm as a static site — Tier-0 via `RuntimeCaps`, threads + COOP/COEP, MEMFS↔OPFS, `Shumway.TopLevel` extraction, libraries as dialect-tagged collections | [doc](docs/history/phase-38-closure.md) |
 | 39 | ADR-043 .NET Framework 4.8 opt-in multi-target (net48 + 32-bit, Tier-1 unchanged, persisted IL native on Framework), 3-lane CI, debugger VSIX 0.30 round | [doc](docs/history/phase-39-closure.md) |
 | 40 | Version 1.0 + the ecosystem campaigns: ADR-044/045 host-boundary conventions, ADR-046 module-scoped ops, ADR-047 packed-string-is-a-list (default `chars`, lazy `phrase_from_file`), full Neumerkel suites (365/365), Logtalk libraries 100% + ISO battery 3,219/70, Trealla corpus + Triska clpz/clpb certified from their tree, SSU aligned with SWI, WebShumway debug mode, bounded memory (dead-CP reclamation + attr-log hygiene, ~14% faster) | [doc](docs/history/phase-40-closure.md) |
+| 41 | Conformance rounds + backtrackable wakeups: ADR-048 full Unicode, Schimpf ISO 926/945 and the Neumerkel rounds (the bar a default operator, #131), ADR-049 woken goals backtrack on both tiers + the coroutining PR (#134, memory bounded with attvars), `library(quads)`, CLP(R) simplex, deep walks off the C# stack, linear catch/cleanup/retract scans, stable static layout (#116), the ADR-050 wasm Tier-1 spike (#117, opt-in); back to 0.9.x | [doc](docs/history/phase-41-closure.md) |
+| 42 | The WebAssembly tier ships (PR #128): modules that call each other inside wasm, baked into bundles, most of the work inside the module (ADR-051 FD domains on the heap, ADR-054 dynamics as snapshots); WebShumway on the tier by default, libraries compiled on demand, `jit_compile/1`; Tier-1 IL: ADR-057/058 region choice points, ADR-060 registers in locals, ADR-061 continuation methods (behind a switch), ADR-062 own IL emitter (Sigil gone); ADR-052/053 side tables, ADR-055/056/059 modules; 0.9.3 | [doc](docs/history/phase-42-closure.md) |
 
 
 ---
