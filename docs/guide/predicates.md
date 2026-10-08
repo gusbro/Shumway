@@ -548,8 +548,12 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | --- | --- | --- |
 | `all_different(?Vars)` | library | Every element of the list takes a distinct value (pairwise). |
 | `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, with Hall-interval pruning. |
+| `circuit(+Vars)` | library | Vars is a successor list forming one cycle through every position: the I-th element is the position that comes after I. |
+| `element(?Index, +List, ?Value)` | library | Value is the Index-th element of List, counting from 1. |
+| `global_cardinality(+Vars, +Pairs)` | library | Every variable takes one of the keys of Pairs, a list of Key-Count, and each Key occurs Count times among Vars. |
 | `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
 | `sum(+Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the sum of the list of variables. |
+| `tuples_in(+Tuples, +Relation)` | library | Every list of variables in Tuples is one of the rows of Relation, a list of lists of integers. |
 
 ## CLP(FD): labeling
 
@@ -559,7 +563,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | --- | --- | --- |
 | `indomain(?Var)` | library | Binds one variable to each value of its domain in turn, on backtracking. |
 | `label(+Vars)` | library | Assigns each variable in the list a value from its domain, searching by backtracking. |
-| `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. |
+| `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. min(Expr) and max(Expr) give the solutions in increasing or decreasing order of Expr, several of them lexicographically. |
 
 ## CLP(FD): reification
 

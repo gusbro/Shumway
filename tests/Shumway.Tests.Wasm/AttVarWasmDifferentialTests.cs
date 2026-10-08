@@ -305,6 +305,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "aliasing what a disequality keeps apart fails" },
         { "X in 1..9, Y in 1..9, abs(X - Y) #\\= 2, X = 5, fd_dom(Y, D), D == (1..2 \\/ 4..6 \\/ 8..9).",
           "abs(X - Y) #\\= C takes both values out" },
+        { "element(N, [3,5,7], V), V #> 4, findall(N-V, label([N,V]), S), S == [2-5,3-7], length(C, 4), circuit(C), findall(C, label(C), Cs), length(Cs, 6).",
+          "element/3 and circuit/1 labeled" },
+        { "[X,Y] ins 1..3, X #\\= Y, findall(X-Y, labeling([min(X+Y)], [X,Y]), L), L == [1-2,2-1,1-3,3-1,2-3,3-2].",
+          "labeling with min(Expr), best first" },
     };
 
     [Theory]

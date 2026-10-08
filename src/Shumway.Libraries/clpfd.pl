@@ -74,6 +74,14 @@
 :- public all_different/1.
 :- public all_distinct/1.
 :- public fd_var/1.
+:- public element/3.
+:- public global_cardinality/2.
+:- public circuit/1.
+:- public tuples_in/2.
+:- public '$fd_element'/3.
+:- public '$fd_gcc'/3.
+:- public '$fd_circuit'/1.
+:- public '$fd_tuple'/2.
 :- public fd_inf/2.
 :- public fd_sup/2.
 :- public fd_size/2.
@@ -330,6 +338,10 @@ clpfd_prop_to_goal('$fd_le'(X, Y),    (X #=< Y))  :- var(X), var(Y).
 % Once a side is known its two values are out of the other's domain, which
 % the answer already shows.
 clpfd_prop_to_goal('$fd_absdiff_neq'(X, Y, C), (abs(X - Y) #\= C)) :- var(X), var(Y), X \== Y.
+clpfd_prop_to_goal('$fd_element'(N, L, V), element(N, L, V)).
+clpfd_prop_to_goal('$fd_gcc'(Vs, Ks, Ns), global_cardinality(Vs, Ps)) :- clpfd_gcc_pairs_out(Ks, Ns, Ps).
+clpfd_prop_to_goal('$fd_circuit'(Vs), circuit(Vs)).
+clpfd_prop_to_goal('$fd_tuple'(T, Rel), tuples_in([T], Rel)).
 clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
     ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
@@ -1165,7 +1177,7 @@ clpfd_sp_expr(_, _, _, _) :-
 %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
 label(Vars) :- clpfd_labeling([], Vars, label/1).
 
-%! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest.
+%! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. min(Expr) and max(Expr) give the solutions in increasing or decreasing order of Expr, several of them lexicographically.
 labeling(Options, Vars) :- clpfd_labeling(Options, Vars, labeling/2).
 
 % Ctx is the indicator of the predicate the USER called, so a GNU
@@ -1179,8 +1191,46 @@ clpfd_labeling(Options, Vars, Ctx) :-
 clpfd_labeling(Options, Vars, Ctx, Bt) :-
     '$must_be'(list, Options, Ctx),
     '$must_be'(list, Vars, Ctx),
-    clpfd_label_opts(Options, Sel, Ord, Ctx),
-    clpfd_label(Vars, Sel, Ord, Ctx, Bt).
+    clpfd_label_opts(Options, Sel, Ord, Opt, Ctx),
+    (   Opt == [] -> clpfd_label(Vars, Sel, Ord, Ctx, Bt)
+    ;   clpfd_label_optimal(Opt, Vars, Sel, Ord, Ctx, Bt)
+    ).
+
+% labeling with min(Expr) / max(Expr): every solution, in increasing (min)
+% or decreasing (max) order of Expr, ties in the order the other options
+% give; a later min/max orders the ties of an earlier one. The best value
+% is found first by branch and bound, so values below it are never tried.
+clpfd_label_optimal([], Vars, Sel, Ord, Ctx, Bt) :- clpfd_label(Vars, Sel, Ord, Ctx, Bt).
+clpfd_label_optimal([Spec|Specs], Vars, Sel, Ord, Ctx, Bt) :-
+    Spec =.. [Dir, E],
+    Aux #= E,
+    clpfd_best(Dir, Aux, Vars, Sel, Ord, Ctx, Best),
+    clpfd_dom_of(Aux, D),
+    clpfd_value_from(Dir, D, Best, Val),
+    Aux = Val,
+    clpfd_label_optimal(Specs, Vars, Sel, Ord, Ctx, Bt).
+
+clpfd_best(Dir, Aux, Vars, Sel, Ord, Ctx, Best) :-
+    findall(A, ( clpfd_label(Vars, Sel, Ord, Ctx, no_bt), !, clpfd_valued(Aux, Ctx), A = Aux ), [V0]),
+    clpfd_improve(Dir, Aux, Vars, Sel, Ord, Ctx, V0, Best).
+
+clpfd_improve(Dir, Aux, Vars, Sel, Ord, Ctx, V0, Best) :-
+    (   findall(A, ( clpfd_better(Dir, Aux, V0),
+                     clpfd_label(Vars, Sel, Ord, Ctx, no_bt), !, A = Aux ), [V1]) ->
+        clpfd_improve(Dir, Aux, Vars, Sel, Ord, Ctx, V1, Best)
+    ;   Best = V0
+    ).
+
+clpfd_better(min, Aux, V) :- Aux #< V.
+clpfd_better(max, Aux, V) :- Aux #> V.
+
+% An expression of variables that are not being labeled has no value to
+% order by.
+clpfd_valued(Aux, Ctx) :- ( integer(Aux) -> true ; throw(error(instantiation_error, Ctx)) ).
+
+clpfd_value_from(_, _, V, V).
+clpfd_value_from(min, D, V, Val) :- '$dom_next'(D, V, N), clpfd_value_from(min, D, N, Val).
+clpfd_value_from(max, D, V, Val) :- '$dom_prev'(D, V, N), clpfd_value_from(max, D, N, Val).
 
 % option list -> variable-selection and value-ordering strategy.
 % An option that is still a VARIABLE is missing, not wrong: nothing
@@ -1190,15 +1240,17 @@ clpfd_labeling(Options, Vars, Ctx, Bt) :-
 % `up/down/bisect` follow SWI, and fd_labeling/2 maps GNU's
 % variable_method/value_method wrappers onto the same set, so one
 % implementation serves both spellings.
-clpfd_label_opts([], leftmost, up, _).
-clpfd_label_opts([O|Os], Sel, Ord, Ctx) :-
-    clpfd_label_opts(Os, Sel0, Ord0, Ctx),
+clpfd_label_opts([], leftmost, up, [], _).
+clpfd_label_opts([O|Os], Sel, Ord, Opt, Ctx) :-
+    clpfd_label_opts(Os, Sel0, Ord0, Opt0, Ctx),
     ( var(O)          -> throw(error(instantiation_error, Ctx))
-    ; clpfd_var_sel(O) -> Sel = O,   Ord = Ord0
-    ; clpfd_val_ord(O) -> Ord = O,   Sel = Sel0
-    ; O == ffc        -> Sel = most_constrained, Ord = Ord0
-    ; O == min        -> Sel = smallest, Ord = Ord0
-    ; O == max        -> Sel = largest,  Ord = Ord0
+    ; compound(O), O = min(_) -> Opt = [O|Opt0], Sel = Sel0, Ord = Ord0
+    ; compound(O), O = max(_) -> Opt = [O|Opt0], Sel = Sel0, Ord = Ord0
+    ; clpfd_var_sel(O) -> Sel = O,   Ord = Ord0, Opt = Opt0
+    ; clpfd_val_ord(O) -> Ord = O,   Sel = Sel0, Opt = Opt0
+    ; O == ffc        -> Sel = most_constrained, Ord = Ord0, Opt = Opt0
+    ; O == min        -> Sel = smallest, Ord = Ord0, Opt = Opt0
+    ; O == max        -> Sel = largest,  Ord = Ord0, Opt = Opt0
     ; throw(error(domain_error(labeling_option, O), Ctx))
     ).
 
@@ -1462,6 +1514,240 @@ clpfd_doms([V|Vs], [D|Ds]) :- clpfd_dom_of(V, D), clpfd_doms(Vs, Ds).
 
 clpfd_apply_doms([]).
 clpfd_apply_doms([V-D | T]) :- clpfd_narrow(V, D), clpfd_apply_doms(T).
+
+% ===== element/3 =====
+%! element(?Index, +List, ?Value) | CLP(FD): global constraints | Value is the Index-th element of List, counting from 1.
+element(N, List, V) :-
+    '$must_be'(list, List, element/3),
+    clpfd_length(List, Len),
+    Len > 0,
+    clpfd_int_or_vars(List, element/3),
+    N in 1..Len,
+    clpfd_makevars(List), clpfd_makevar(V),
+    clpfd_post('$fd_element'(N, List, V), [N, V | List]).
+
+% Only the indices whose element can still equal V stay, and V keeps only
+% what those elements can take. A known index makes V that element.
+'$fd_element'(N, List, V) :-
+    (   integer(N) -> nth1(N, List, E), V = E
+    ;   clpfd_dom_of(N, DN), clpfd_dom_of(V, DV), clpfd_iv(1, 0, Empty),
+        clpfd_element_scan(List, 1, DN, DV, Empty, Empty, DN1, DV1),
+        clpfd_narrow(N, DN1), clpfd_narrow(V, DV1)
+    ).
+
+clpfd_element_scan([], _, _, _, AN, AV, AN, AV).
+clpfd_element_scan([E|Es], I, DN, DV, AN0, AV0, AN, AV) :-
+    (   clpfd_in_dom(I, DN),
+        clpfd_dom_of(E, DE), clpfd_dom_isect(DE, DV, DX), \+ '$dom_empty'(DX) ->
+        clpfd_iv(I, I, DI), '$dom_union'(AN0, DI, AN1), '$dom_union'(AV0, DX, AV1)
+    ;   AN1 = AN0, AV1 = AV0
+    ),
+    I1 is I + 1,
+    clpfd_element_scan(Es, I1, DN, DV, AN1, AV1, AN, AV).
+
+clpfd_int_or_vars([], _).
+clpfd_int_or_vars([X|Xs], Ctx) :-
+    ( var(X) -> true ; integer(X) -> true ; throw(error(type_error(integer, X), Ctx)) ),
+    clpfd_int_or_vars(Xs, Ctx).
+
+% ===== global_cardinality/2 =====
+%! global_cardinality(+Vars, +Pairs) | CLP(FD): global constraints | Every variable takes one of the keys of Pairs, a list of Key-Count, and each Key occurs Count times among Vars.
+global_cardinality(Vs, Pairs) :-
+    '$must_be'(list, Vs, global_cardinality/2),
+    '$must_be'(list, Pairs, global_cardinality/2),
+    clpfd_gcc_pairs(Pairs, Keys, Nums),
+    (   clpfd_unique(Keys) -> true
+    ;   throw(error(domain_error(gcc_unique_key_pairs, Pairs), global_cardinality/2))
+    ),
+    clpfd_length(Vs, Len),
+    clpfd_int_or_vars(Vs, global_cardinality/2),
+    clpfd_keys_dom(Keys, KD),
+    clpfd_makevars(Vs), clpfd_narrow_each(Vs, KD),
+    Nums ins 0..Len,
+    clpfd_app(Vs, Nums, Watched),
+    clpfd_post('$fd_gcc'(Vs, Keys, Nums), Watched).
+
+clpfd_gcc_pairs([], [], []).
+clpfd_gcc_pairs([P|Ps], [K|Ks], [N|Ns]) :-
+    (   var(P) -> throw(error(instantiation_error, global_cardinality/2))
+    ;   P = K-N, integer(K) -> true
+    ;   P = K-_, var(K) -> throw(error(instantiation_error, global_cardinality/2))
+    ;   throw(error(type_error(pair, P), global_cardinality/2))
+    ),
+    clpfd_gcc_pairs(Ps, Ks, Ns).
+
+clpfd_unique([]).
+clpfd_unique([K|Ks]) :- \+ clpfd_memq(K, Ks), clpfd_unique(Ks).
+
+clpfd_keys_dom(Keys, D) :- clpfd_iv(1, 0, E), clpfd_keys_dom_(Keys, E, D).
+clpfd_keys_dom_([], D, D).
+clpfd_keys_dom_([K|Ks], D0, D) :- clpfd_iv(K, K, DK), '$dom_union'(D0, DK, D1), clpfd_keys_dom_(Ks, D1, D).
+
+clpfd_narrow_each([], _).
+clpfd_narrow_each([V|Vs], D) :- clpfd_narrow_dom(V, D), clpfd_narrow_each(Vs, D).
+
+% For each key: at least the variables already on it, at most those that
+% can still take it. A count at its least excludes the key from the rest;
+% a count at its greatest puts every variable that can take the key on it.
+% Every variable is on some key, so the counts add up to their number.
+'$fd_gcc'(Vs, Keys, Nums) :-
+    clpfd_gcc_keys(Keys, Nums, Vs),
+    clpfd_length(Vs, Len),
+    clpfd_gcc_total(Nums, 0, Lo, 0, Hi),
+    clpfd_gcc_sum(Nums, Len, Lo, Hi).
+
+clpfd_gcc_total([], Lo, Lo, Hi, Hi).
+clpfd_gcc_total([N|Ns], Lo0, Lo, Hi0, Hi) :-
+    clpfd_bounds(N, A, B), Lo1 is Lo0 + A, Hi1 is Hi0 + B,
+    clpfd_gcc_total(Ns, Lo1, Lo, Hi1, Hi).
+
+% Each count is Len less what the others can add up to.
+clpfd_gcc_sum([], _, _, _).
+clpfd_gcc_sum([N|Ns], Len, Lo, Hi) :-
+    clpfd_bounds(N, A, B),
+    NLo is Len - (Hi - B), NHi is Len - (Lo - A),
+    clpfd_narrow_bounds(N, NLo, NHi),
+    clpfd_gcc_sum(Ns, Len, Lo, Hi).
+
+clpfd_gcc_keys([], [], _).
+clpfd_gcc_keys([K|Ks], [N|Ns], Vs) :-
+    clpfd_gcc_count(Vs, K, 0, Fixed, 0, Possible),
+    clpfd_narrow_bounds(N, Fixed, Possible),
+    clpfd_bounds(N, NMin, NMax),
+    (   Fixed =:= Possible -> true
+    ;   NMax =:= Fixed -> clpfd_gcc_exclude(Vs, K)
+    ;   NMin =:= Possible -> clpfd_gcc_force(Vs, K)
+    ;   true
+    ),
+    clpfd_gcc_keys(Ks, Ns, Vs).
+
+clpfd_gcc_count([], _, F, F, P, P).
+clpfd_gcc_count([V|Vs], K, F0, F, P0, P) :-
+    (   integer(V) -> ( V =:= K -> F1 is F0 + 1, P1 is P0 + 1 ; F1 = F0, P1 = P0 )
+    ;   clpfd_dom_of(V, D), clpfd_in_dom(K, D) -> F1 = F0, P1 is P0 + 1
+    ;   F1 = F0, P1 = P0
+    ),
+    clpfd_gcc_count(Vs, K, F1, F, P1, P).
+
+clpfd_gcc_exclude([], _).
+clpfd_gcc_exclude([V|Vs], K) :-
+    ( var(V) -> clpfd_dom_of(V, D), clpfd_dom_del(D, K, D1), clpfd_narrow(V, D1) ; true ),
+    clpfd_gcc_exclude(Vs, K).
+
+clpfd_gcc_force([], _).
+clpfd_gcc_force([V|Vs], K) :-
+    ( var(V), clpfd_dom_of(V, D), clpfd_in_dom(K, D) -> V = K ; true ),
+    clpfd_gcc_force(Vs, K).
+
+clpfd_gcc_pairs_out([], [], []).
+clpfd_gcc_pairs_out([K|Ks], [N|Ns], [K-N|Ps]) :- clpfd_gcc_pairs_out(Ks, Ns, Ps).
+
+% ===== circuit/1 =====
+%! circuit(+Vars) | CLP(FD): global constraints | Vars is a successor list forming one cycle through every position: the I-th element is the position that comes after I.
+circuit(Vs) :-
+    '$must_be'(list, Vs, circuit/1),
+    clpfd_length(Vs, N),
+    (   N =:= 0 -> true
+    ;   N =:= 1 -> Vs = [1]
+    ;   clpfd_int_or_vars(Vs, circuit/1),
+        Vs ins 1..N,
+        clpfd_not_self(Vs, 1),
+        clpfd_post('$fd_circuit'(Vs), Vs)
+    ).
+
+clpfd_not_self([], _).
+clpfd_not_self([V|Vs], I) :- V #\= I, I1 is I + 1, clpfd_not_self(Vs, I1).
+
+% The successors are distinct (all_distinct's pruning, said once as
+% circuit/1), and no cycle is shorter than all of them: the known successors
+% from I lead to End; with fewer than N positions on that path, End may not
+% go back to I.
+'$fd_circuit'(Vs) :-
+    '$fd_alldiff'(Vs),
+    clpfd_length(Vs, N),
+    A =.. [s|Vs],
+    clpfd_circuit_from(1, N, A).
+
+clpfd_circuit_from(I, N, A) :-
+    (   I > N -> true
+    ;   clpfd_circuit_walk(I, I, 0, N, A),
+        I1 is I + 1,
+        clpfd_circuit_from(I1, N, A)
+    ).
+
+clpfd_circuit_walk(Start, J, K, N, A) :-
+    arg(J, A, S),
+    (   integer(S) ->
+        K1 is K + 1,
+        (   S =:= Start -> K1 =:= N
+        ;   K1 >= N -> true
+        ;   clpfd_circuit_walk(Start, S, K1, N, A)
+        )
+    ;   K >= 1, K + 1 < N ->
+        clpfd_dom_of(S, D), clpfd_dom_del(D, Start, D1), clpfd_narrow(S, D1)
+    ;   true
+    ).
+
+% ===== tuples_in/2 =====
+%! tuples_in(+Tuples, +Relation) | CLP(FD): global constraints | Every list of variables in Tuples is one of the rows of Relation, a list of lists of integers.
+tuples_in(Tuples, Relation) :-
+    '$must_be'(list, Tuples, tuples_in/2),
+    '$must_be'(list, Relation, tuples_in/2),
+    clpfd_rows_ok(Relation),
+    clpfd_tuples(Tuples, Relation).
+
+clpfd_rows_ok([]).
+clpfd_rows_ok([R|Rs]) :-
+    '$must_be'(list, R, tuples_in/2),
+    clpfd_ints(R),
+    clpfd_rows_ok(Rs).
+
+clpfd_ints([]).
+clpfd_ints([X|Xs]) :-
+    ( var(X) -> throw(error(instantiation_error, tuples_in/2))
+    ; integer(X) -> true
+    ; throw(error(type_error(integer, X), tuples_in/2))
+    ),
+    clpfd_ints(Xs).
+
+clpfd_tuples([], _).
+clpfd_tuples([T|Ts], Rel) :-
+    '$must_be'(list, T, tuples_in/2),
+    clpfd_int_or_vars(T, tuples_in/2),
+    clpfd_makevars(T),
+    clpfd_post('$fd_tuple'(T, Rel), T),
+    clpfd_tuples(Ts, Rel).
+
+% The rows every value of which is still in its variable's domain; each
+% variable keeps the values its column has in those rows.
+'$fd_tuple'(T, Rel) :-
+    clpfd_doms(T, Doms),
+    clpfd_rows_fit(Rel, Doms, Fit),
+    Fit = [_|_],
+    clpfd_length(T, K), clpfd_iv(1, 0, E), clpfd_n_copies(K, E, Cols0),
+    clpfd_columns(Fit, Cols0, Cols),
+    clpfd_narrow_cols(T, Cols).
+
+clpfd_rows_fit([], _, []).
+clpfd_rows_fit([R|Rs], Doms, Fit) :-
+    ( clpfd_row_fits(R, Doms) -> Fit = [R|Fit1] ; Fit = Fit1 ),
+    clpfd_rows_fit(Rs, Doms, Fit1).
+
+clpfd_row_fits([], []).
+clpfd_row_fits([X|Xs], [D|Ds]) :- clpfd_in_dom(X, D), clpfd_row_fits(Xs, Ds).
+
+clpfd_n_copies(0, _, []) :- !.
+clpfd_n_copies(N, X, [X|Xs]) :- N1 is N - 1, clpfd_n_copies(N1, X, Xs).
+
+clpfd_columns([], Cols, Cols).
+clpfd_columns([R|Rs], Cols0, Cols) :- clpfd_add_row(R, Cols0, Cols1), clpfd_columns(Rs, Cols1, Cols).
+
+clpfd_add_row([], [], []).
+clpfd_add_row([X|Xs], [C|Cs], [C1|Cs1]) :-
+    clpfd_iv(X, X, DX), '$dom_union'(C, DX, C1), clpfd_add_row(Xs, Cs, Cs1).
+
+clpfd_narrow_cols([], []).
+clpfd_narrow_cols([V|Vs], [C|Cs]) :- clpfd_narrow_dom(V, C), clpfd_narrow_cols(Vs, Cs).
 
 % ===== reification =====
 % B #<==> C : the 0/1 variable B is 1 exactly when constraint C
