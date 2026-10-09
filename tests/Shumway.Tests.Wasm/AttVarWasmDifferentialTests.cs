@@ -172,43 +172,13 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         return e;
     }
 
+    // One module per predicate, as the browser's lazy mode builds them:
+    // reinstalling one group of every member on each promotion recompiled
+    // the whole library once per predicate it promoted.
     private static (PrologEngine Engine, List<WasmGroupMember> Members) Wasm()
     {
         EnsureProbe();
-        var engine = new PrologEngine();
-        var store = engine.IlPromotion;
-        store.Threshold = 0;                    // the IL tier stands aside
-        var world = new DesktopWasmWorld();
-        var env = new EngineWasmCompileEnv();
-        var members = new List<WasmGroupMember>();
-
-        void Install()
-        {
-            TieredEngine.Install(world, members, env);
-        }
-
-        store.Wasm = new WasmPromotionStore(store)
-        {
-            Threshold = 1,
-            Promoter = (pred, linkedBase) =>
-            {
-                var m = new WasmGroupMember(pred, linkedBase,
-                    store.FloatPoolProvider?.Invoke(pred.FunctorId));
-                members.Add(m);
-                try
-                {
-                    Install();
-                    return new WasmTierDelegate(pred.FunctorId, world).Invoke;
-                }
-                catch (WasmCompileException)
-                {
-                    members.Remove(m);
-                    if (members.Count > 0) Install();
-                    return null;
-                }
-            },
-        };
-        engine.ConsultString(Corpus);
+        var (engine, members, _) = TieredEngine.BuildWithWorld(Corpus);
         return (engine, members);
     }
 
