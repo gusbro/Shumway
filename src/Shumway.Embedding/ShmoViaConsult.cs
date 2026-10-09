@@ -142,10 +142,18 @@ public static class ShmoViaConsult
 
         System.DateTime bakedTimeUtc = BakedSourceTimeUtc();
 
+        // The engine's own libraries the consult loaded load from their own
+        // bundles: every object records them as a baked dependency (the link
+        // resolves against them and the bundle loads them), none is an object.
+        var engineDeps = new List<ShmoLibraryDep>();
+        foreach (string lib in e.LoadedEngineLibraries)
+            engineDeps.Add(new ShmoLibraryDep(lib, null, Baked: true));
+
         var results = new List<(string, ShmoObject, System.DateTime, bool)>();
         foreach (var (name, manifest) in e.Modules)
         {
             if (pre.Contains(name)) continue;
+            if (LibraryBundles.IsEngineLibrary(name)) continue;
             if (name == PrologEngine.DefaultModuleName && manifest.Clauses.Count == 0)
                 continue;
             bool isRoot = rootModuleSet.Contains(name);
@@ -208,6 +216,7 @@ public static class ShmoViaConsult
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,
+                libraryDeps: engineDeps,
                 dialect: manifest.Dialect,
                 metaArgSpec: e.MetaArgSpec,
                 // A Module:Goal resolves as the consult that loaded this module

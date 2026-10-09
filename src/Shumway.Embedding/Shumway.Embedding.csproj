@@ -18,6 +18,9 @@
     <!-- The REPL itself still reaches for engine internals of its own
          (PrintLoadProfile, PromoteBareBundleModulesToUser). -->
     <InternalsVisibleTo Include="shumway" />
+    <!-- The library bake points LibraryBundles at the bundles it has already
+         baked: a library that imports another loads it at bake time. -->
+    <InternalsVisibleTo Include="shumway-librarybake" />
   </ItemGroup>
 
   <PropertyGroup>

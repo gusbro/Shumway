@@ -801,6 +801,10 @@ The linker performs three checks:
    - The builtin registry.
    - The always-loaded prelude (`member/2`, `length/2`,
      `current_predicate/1`, etc.).
+   - The public predicates of the engine's own libraries a module imports
+     (`clpfd`, `clpr`, `coroutining`). Their code is not linked in: the
+     bundle names them, and loading it loads each from its own baked bundle
+     first.
 3. **Missing predicates.** Anything unresolved is emitted as
    `missing_predicate` (error, or warning under `--allow-undefined`).
 4. **Dead-code elimination.** Modules no root reached are dropped from

@@ -69,10 +69,12 @@ public sealed class Bundle
         IReadOnlyList<string>? nativeLibraries = null,
         ShumwayVersion? generatorVersion = null,
         bool arityCompat = false,
-        IReadOnlyList<byte[]>? wasmModules = null)
+        IReadOnlyList<byte[]>? wasmModules = null,
+        IReadOnlyList<string>? engineLibraries = null)
     {
         Entries = entries;
         WasmModules = wasmModules ?? Array.Empty<byte[]>();
+        EngineLibraries = engineLibraries ?? Array.Empty<string>();
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
         Snapshot = snapshot;
         ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
@@ -95,11 +97,18 @@ public sealed class Bundle
     /// every other host. Empty unless the link asked for them.</summary>
     public IReadOnlyList<byte[]> WasmModules { get; }
 
+    /// <summary>The engine's own libraries (clpfd, coroutining, ...) this
+    /// bundle's code calls: <see cref="PrologEngine.LoadBundle(Bundle)"/>
+    /// loads each, from its own baked bundle, before this one's code. Not
+    /// linked in, so a library is loaded once however many bundles need it.
+    /// </summary>
+    public IReadOnlyList<string> EngineLibraries { get; }
+
     /// <summary>The same bundle carrying <paramref name="wasmModules"/>.
     /// </summary>
     public Bundle WithWasmModules(IReadOnlyList<byte[]> wasmModules)
         => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
-               GeneratorVersion, ArityCompat, wasmModules);
+               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries);
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —

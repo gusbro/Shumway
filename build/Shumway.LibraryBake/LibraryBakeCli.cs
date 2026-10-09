@@ -32,6 +32,13 @@ public static class LibraryBakeCli
         string name = Path.GetFileNameWithoutExtension(source);
         var obj = ShmoCompiler.CompileSource(File.ReadAllText(source), name);
         BundleFormat.DisableCompression = true;
+        // A library that imports another (reif uses coroutining's dif/2) is
+        // baked before the libraries' assembly exists: the other's bundle is
+        // already in the output directory, baked before it, and its source
+        // next to this one.
+        LibraryBundles.UseBakeDirectories(
+            Path.GetDirectoryName(Path.GetFullPath(output))!,
+            Path.GetDirectoryName(Path.GetFullPath(source))!);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },

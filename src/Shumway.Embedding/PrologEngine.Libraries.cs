@@ -41,6 +41,20 @@ public sealed partial class PrologEngine
     // dependency importing it again) does not load it twice.
     private readonly HashSet<string> _loadedEngineLibraries = new();
 
+    /// <summary>Loads one of the engine's own libraries by name, as a
+    /// bundle that calls it asks.</summary>
+    internal void UseEngineLibrary(string name)
+    {
+        if (!LibraryBundles.IsEngineLibrary(name))
+            throw new System.IO.InvalidDataException(
+                $"Bundle: needs the engine library '{name}', which this Shumway does not have.");
+        UseLibrary(name);
+    }
+
+    /// <summary>The engine libraries loaded so far, in a fixed order.</summary>
+    internal IEnumerable<string> LoadedEngineLibraries
+        => LibraryBundles.Names.Where(_loadedEngineLibraries.Contains);
+
     private void UseLibrary(string name)
     {
         if (!_loadedEngineLibraries.Add(name)) return;
