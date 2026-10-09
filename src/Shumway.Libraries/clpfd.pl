@@ -90,6 +90,9 @@
 :- public '$fd_gcc'/3.
 :- public '$fd_circuit'/1.
 :- public '$fd_tuple'/2.
+:- public cumulative/1.
+:- public cumulative/2.
+:- public '$fd_cumulative'/3.
 :- public fd_inf/2.
 :- public fd_sup/2.
 :- public fd_size/2.
@@ -350,6 +353,7 @@ clpfd_prop_to_goal('$fd_element'(N, L, V), element(N, L, V)).
 clpfd_prop_to_goal('$fd_gcc'(Vs, Ks, Ns), global_cardinality(Vs, Ps)) :- clpfd_gcc_pairs_out(Ks, Ns, Ps).
 clpfd_prop_to_goal('$fd_circuit'(Vs), circuit(Vs)).
 clpfd_prop_to_goal('$fd_tuple'(T, Rel), tuples_in([T], Rel)).
+clpfd_prop_to_goal('$fd_cumulative'(_, Tasks, L), cumulative(Tasks, [limit(L)])).
 clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
     ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
@@ -1860,6 +1864,70 @@ clpfd_add_row([X|Xs], [C|Cs], [C1|Cs1]) :-
 
 clpfd_narrow_cols([], []).
 clpfd_narrow_cols([V|Vs], [C|Cs]) :- clpfd_narrow_dom(V, C), clpfd_narrow_cols(Vs, Cs).
+
+% ===== cumulative/1,2 =====
+%! cumulative(+Tasks) | CLP(FD): global constraints | cumulative/2 with limit(1): the tasks run on a resource of capacity 1.
+cumulative(Tasks) :- cumulative(Tasks, [limit(1)]).
+
+%! cumulative(+Tasks, +Options) | CLP(FD): global constraints | Each task(S, D, E, C, Id) of Tasks starts at S, lasts D >= 0 and ends at E = S + D, using C >= 0 of a resource; at every moment the tasks running use at most L of it, where Options holds limit(L) (1 when it does not). A task that lasts 0 occupies no time. Every start must have a bounded domain.
+cumulative(Tasks, Options) :-
+    '$must_be'(list, Options, cumulative/2),
+    clpfd_cumulative_limit(Options, 1, L),
+    '$must_be'(list, Tasks, cumulative/2),
+    clpfd_cumulative_tasks(Tasks),
+    clpfd_cumulative_bounded(Tasks),
+    clpfd_cumulative_sdc(Tasks, SDC),
+    term_variables(SDC, Watched),
+    clpfd_post('$fd_cumulative'(Watched, Tasks, L), Watched).
+
+% The last limit/1 holds.
+clpfd_cumulative_limit([], L, L).
+clpfd_cumulative_limit([O|Os], _, L) :-
+    (   var(O) -> throw(error(instantiation_error, cumulative/2))
+    ;   O = limit(L1) -> '$must_be'(integer, L1, cumulative/2)
+    ;   throw(error(domain_error(cumulative_option, O), cumulative/2))
+    ),
+    clpfd_cumulative_limit(Os, L1, L).
+
+% Every task is task/5 (anything else fails) of integers or variables; its
+% duration and use are not negative, and it ends at its start plus its
+% duration.
+clpfd_cumulative_tasks([]).
+clpfd_cumulative_tasks([T|Ts]) :-
+    (   var(T) -> throw(error(instantiation_error, cumulative/2))
+    ;   T = task(S, D, E, C, _)
+    ),
+    clpfd_int_or_vars([S, D, E, C], cumulative/2),
+    D #>= 0, C #>= 0, S + D #= E,
+    clpfd_cumulative_tasks(Ts).
+
+clpfd_cumulative_bounded([]).
+clpfd_cumulative_bounded([task(S, _, _, _, _)|Ts]) :-
+    clpfd_dom_of(S, D), clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
+    (   integer(Lo), integer(Hi) -> clpfd_cumulative_bounded(Ts)
+    ;   throw(error(instantiation_error, cumulative/2))
+    ).
+
+clpfd_cumulative_sdc([], []).
+clpfd_cumulative_sdc([task(S, D, _, C, _)|Ts], [S, D, C|SDC]) :-
+    clpfd_cumulative_sdc(Ts, SDC).
+
+% The time table runs natively ($fd_cumul): starts and uses come back
+% narrowed, a duration is read as its least. A limit past the inline
+% integers bounds nothing, or everything.
+'$fd_cumulative'(_, Tasks, L) :-
+    clpfd_cumulative_doms(Tasks, Ss, SDs, DDs, Cs, CDs),
+    (   L > 576460752303423487 -> B = sup
+    ;   L < -576460752303423488 -> B = inf
+    ;   B = L
+    ),
+    '$fd_cumul'(Ss, SDs, DDs, Cs, CDs, B, Applies),
+    clpfd_apply_doms(Applies).
+
+clpfd_cumulative_doms([], [], [], [], [], []).
+clpfd_cumulative_doms([task(S, D, _, C, _)|Ts], [S|Ss], [SD|SDs], [DD|DDs], [C|Cs], [CD|CDs]) :-
+    clpfd_dom_of(S, SD), clpfd_dom_of(D, DD), clpfd_dom_of(C, CD),
+    clpfd_cumulative_doms(Ts, Ss, SDs, DDs, Cs, CDs).
 
 % ===== reification =====
 % B #<==> C : the 0/1 variable B is 1 exactly when constraint C

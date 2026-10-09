@@ -304,9 +304,21 @@ D = 2..16, ...
 ```
 
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,
-the global constraints are `element/3`, `global_cardinality/2`, `circuit/1`
-and `tuples_in/2`. `labeling/2` takes `min(Expr)` and `max(Expr)`, and then
-gives the solutions best first:
+the global constraints are `element/3`, `global_cardinality/2`, `circuit/1`,
+`tuples_in/2` and `cumulative/1,2`. `cumulative(Tasks, [limit(L)])` schedules
+tasks `task(Start, Duration, End, Use, Id)` on a resource of capacity `L`: at
+every moment the tasks running use at most `L`. A task that lasts 0 occupies
+no time, and every start needs a bounded domain. A task that surely runs over
+a stretch keeps the others off it:
+
+```prolog
+?- S in 0..10, cumulative([task(2,3,_,1,_), task(S,2,_,1,_)]).
+S in 0\/5..10,
+...
+```
+
+`labeling/2` takes `min(Expr)` and `max(Expr)`, and then gives the solutions
+best first:
 
 ```prolog
 ?- [X,Y] ins 1..3, X #\= Y, labeling([min(X+Y)], [X,Y]).

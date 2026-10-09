@@ -567,6 +567,8 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | `all_different(?Vars)` | library | Every element of the list takes a distinct value (pairwise). |
 | `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, and each value left in a domain is the variable's in some assignment of distinct values to all of them. |
 | `circuit(+Vars)` | library | Vars is a successor list forming one cycle through every position: the I-th element is the position that comes after I. |
+| `cumulative(+Tasks)` | library | cumulative/2 with limit(1): the tasks run on a resource of capacity 1. |
+| `cumulative(+Tasks, +Options)` | library | Each task(S, D, E, C, Id) of Tasks starts at S, lasts D >= 0 and ends at E = S + D, using C >= 0 of a resource; at every moment the tasks running use at most L of it, where Options holds limit(L) (1 when it does not). A task that lasts 0 occupies no time. Every start must have a bounded domain. |
 | `element(?Index, +List, ?Value)` | library | Value is the Index-th element of List, counting from 1. |
 | `global_cardinality(+Vars, +Pairs)` | library | Every variable takes one of the keys of Pairs, a list of Key-Count, and each Key occurs Count times among Vars. |
 | `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
