@@ -37,11 +37,23 @@
        EmbeddedResource item is evaluated before that. -->
   <PropertyGroup>
     <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
-    <LibraryWasmFlag Condition="'$(ShumwayWasmTier)' == 'true'">--wasm</LibraryWasmFlag>
+    <LibraryBakeFlag Condition="'$(ShumwayWasmTier)' == 'true'">--wasm</LibraryBakeFlag>
+    <!-- The desktop flavours carry the libraries' Tier-1 IL, so their code
+         earns IL without generating it at run time; the browser has no IL
+         tier, and the IL would only weigh down its payload. -->
+    <LibraryBakeFlag Condition="'$(ShumwayWasmTier)' != 'true'">--il</LibraryBakeFlag>
     <LibraryBakeDir>obj\$(Configuration)\lib\</LibraryBakeDir>
     <LibraryBakeDir Condition="'$(ShumwayWasmTier)' == 'true'">obj\$(Configuration)\lib-wasm\</LibraryBakeDir>
     <LibraryBakeDll>..\..\build\Shumway.LibraryBake\bin\$(Configuration)\net10.0\shumway-librarybake.dll</LibraryBakeDll>
     <LibraryBakeInputs>@(LibrarySource);$(LibraryBakeDll);..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll;..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</LibraryBakeInputs>
+    <!-- IL baked by the net10 tool references System.Private.CoreLib, which
+         .NET Framework cannot resolve: the net48 flavour embeds bundles the
+         tool's own net48 build baked. -->
+    <LibraryBakeDirNetFx>obj\$(Configuration)\lib-netfx\</LibraryBakeDirNetFx>
+    <LibraryBakeExeNetFx>..\..\build\Shumway.LibraryBake\bin\$(Configuration)\net48\shumway-librarybake.exe</LibraryBakeExeNetFx>
+    <LibraryBakeInputsNetFx>@(LibrarySource);$(LibraryBakeExeNetFx);..\Shumway.Embedding\bin\$(Configuration)\net48\Shumway.Embedding.dll</LibraryBakeInputsNetFx>
+    <LibraryEmbedDir>$(LibraryBakeDir)</LibraryEmbedDir>
+    <LibraryEmbedDir Condition="'$(TargetFramework)' == 'net48'">$(LibraryBakeDirNetFx)</LibraryEmbedDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -49,7 +61,7 @@
     <!-- The source text travels too: the predicate reference is generated
          from the libraries' doc comments, which a Release bundle drops. -->
     <EmbeddedResource Include="@(LibrarySource)" LogicalName="%(Filename).pl" />
-    <EmbeddedResource Include="@(LibrarySource->'$(LibraryBakeDir)%(Filename).shum')"
+    <EmbeddedResource Include="@(LibrarySource->'$(LibraryEmbedDir)%(Filename).shum')"
                       LogicalName="%(Filename).shum" Visible="false" />
   </ItemGroup>
 
@@ -82,11 +94,20 @@
   </Target>
 
   <Target Name="BakeLibraryBundles"
-          DependsOnTargets="BuildLibraryBakeTool"
+          DependsOnTargets="BuildLibraryBakeTool;BakeLibraryBundlesNetFx"
           Inputs="$(LibraryBakeInputs)"
           Outputs="@(LibrarySource->'$(LibraryBakeDir)%(Filename).shum')">
     <MakeDir Directories="$(LibraryBakeDir)" />
-    <Exec Command="dotnet &quot;$(LibraryBakeDll)&quot; %(LibrarySource.Identity) $(LibraryWasmFlag) -o &quot;$(LibraryBakeDir)%(LibrarySource.Filename).shum&quot;" />
+    <Exec Command="dotnet &quot;$(LibraryBakeDll)&quot; %(LibrarySource.Identity) $(LibraryBakeFlag) -o &quot;$(LibraryBakeDir)%(LibrarySource.Filename).shum&quot;" />
+  </Target>
+
+  <Target Name="BakeLibraryBundlesNetFx"
+          DependsOnTargets="BuildLibraryBakeTool"
+          Condition="'$(ShumwayNetFx)' == 'true' and '$(ShumwayWasmTier)' != 'true'"
+          Inputs="$(LibraryBakeInputsNetFx)"
+          Outputs="@(LibrarySource->'$(LibraryBakeDirNetFx)%(Filename).shum')">
+    <MakeDir Directories="$(LibraryBakeDirNetFx)" />
+    <Exec Command="&quot;$(LibraryBakeExeNetFx)&quot; %(LibrarySource.Identity) --il -o &quot;$(LibraryBakeDirNetFx)%(LibrarySource.Filename).shum&quot;" />
   </Target>
 
 </Project>
