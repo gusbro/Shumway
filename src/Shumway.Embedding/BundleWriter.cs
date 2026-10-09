@@ -696,6 +696,7 @@ public static class BundleWriter
                 Cps = pe.Cps,
                 Wakes = pe.Wakes,
                 Cost = pe.Cost,
+                SnapshotClauses = pe.SnapshotClauses,
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);

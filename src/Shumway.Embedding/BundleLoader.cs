@@ -841,7 +841,7 @@ internal sealed class BundleLoader
     /// table: the image is not touched. Functor ids are this process's.</summary>
     private sealed class PersistedIlIndex
     {
-        public required List<(int FunctorId, bool Wakes, bool HasCps, int Cost)> Predicates;
+        public required List<(int FunctorId, bool Wakes, bool HasCps, int Cost, int SnapshotClauses)> Predicates;
         public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
         public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
     }
@@ -857,7 +857,7 @@ internal sealed class BundleLoader
             foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
             {
                 int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name).Id, pe.Arity);
-                index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost));
+                index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost, pe.SnapshotClauses));
                 if (pe.IndexGraph is { Length: > 0 } graph)
                     (index.IndexGraphs ??= new())[fid] = graph;
                 if (pe.RegionMembers is { Count: > 0 } members)
@@ -1415,9 +1415,19 @@ internal sealed class BundleLoader
                     (aliasRoots ??= new()).Add(Activation.DecodeResumeMarker(marker).FunctorId);
         PersistedIlModule? module = null;
         bool unbindable = false;
-        foreach (var (functorId, wakes, hasCps, cost) in index.Predicates)
+        foreach (var (functorId, wakes, hasCps, cost, snapshotClauses) in index.Predicates)
         {
             int fid = functorId;
+            // A dynamic predicate's snapshot holds the clauses the bundle had:
+            // it stands for the predicate only while they are all it has. Two
+            // libraries seed attribute_goals/4, and either snapshot alone drops
+            // the other's residual goals. Otherwise the snapshot of every
+            // clause compiles at its first call, as a sole bundle's would run.
+            if (E._dynStore.IsDynamic(fid) && !SnapshotIsWhole(fid, snapshotClauses))
+            {
+                E.IlPromotion.MarkPrime(fid);
+                continue;
+            }
             if (!atLoad && withBytecode?.Contains(fid) != false && aliasRoots?.Contains(fid) != true)
             {
                 E.IlPromotion.OfferPersisted(fid, wakes, E._dynStore.IsDynamic(fid),
@@ -1449,6 +1459,10 @@ internal sealed class BundleLoader
             foreach (var kv in index.RegionAliases)
                 E._regionMemberAliases[kv.Key] = kv.Value;
     }
+
+    private bool SnapshotIsWhole(int functorId, int snapshotClauses)
+        => snapshotClauses > 0
+            && E._dynStore.TryGetClauses(functorId, out var live) && live.Count == snapshotClauses;
 
     // The entry's image, loaded now, on the caller's thread; null (after a
     // warning) when this runtime cannot bind it.

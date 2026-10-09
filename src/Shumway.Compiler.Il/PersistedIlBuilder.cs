@@ -79,6 +79,10 @@ public static class PersistedIlBuilder
         /// delegate's, and those of its continuation methods).</summary>
         public int Cost { get; init; }
 
+        /// <summary>ADR-023: for a dynamic predicate's snapshot, the clauses
+        /// it was compiled from; zero for any other predicate.</summary>
+        public int SnapshotClauses { get; init; }
+
         /// <summary>ADR-049: the predicates whose bytecode the method enters
         /// at a wake, whose WAM a bundle keeps.</summary>
         public int[] BytecodeEntered { get; init; } = Array.Empty<int>();
@@ -293,6 +297,7 @@ public static class PersistedIlBuilder
                 Cps = cps,
                 Wakes = IlPredicateCompiler.WakePoints,
                 Cost = IlPredicateCompiler.TakePersistedIlBytes(),
+                SnapshotClauses = pred.IsDynamicSnapshot ? pred.ClauseCount : 0,
                 BytecodeEntered = IlPredicateCompiler.TakeBytecodeEntered(),
             });
             IlPredicateCompiler.EndFloatPool(emitPrevPool);

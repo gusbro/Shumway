@@ -118,6 +118,11 @@ public sealed class IlPersistedEntry
     /// <summary>ADR-061: what compiling the predicate's code costs: the IL
     /// bytes of its methods. The loader weighs it against the predicate's calls.</summary>
     public int Cost { get; init; }
+
+    /// <summary>ADR-023: for a dynamic predicate's snapshot, the clauses it was
+    /// compiled from; zero for any other predicate. The snapshot stands for the
+    /// predicate only while those are all it has.</summary>
+    public int SnapshotClauses { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -157,6 +162,7 @@ public static class IlPersistedEntryCodec
                 }
             bw.Write(e.Wakes);
             bw.Write(e.Cost);
+            bw.Write(e.SnapshotClauses);
             var cps = e.Cps;
             bw.Write((uint)(cps?.Methods.Length ?? 0));
             if (cps is not null)
@@ -213,6 +219,7 @@ public static class IlPersistedEntryCodec
             }
             bool wakes = br.ReadBoolean();
             int cost = br.ReadInt32();
+            int snapshotClauses = br.ReadInt32();
             IlPredicateCompiler.CpsLayout? cps = null;
             uint cpsMethods = br.ReadUInt32();
             if (cpsMethods > 0)
@@ -238,6 +245,7 @@ public static class IlPersistedEntryCodec
                 RegionMembers = members,
                 Wakes = wakes,
                 Cost = cost,
+                SnapshotClauses = snapshotClauses,
                 Cps = cps,
             });
         }
