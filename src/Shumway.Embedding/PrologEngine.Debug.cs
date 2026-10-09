@@ -2155,8 +2155,33 @@ public sealed partial class PrologEngine
         var plain = new List<(string, int)>();
         var frames = new List<StackFrame>();
         var seen = new HashSet<int>();
+        Dictionary<int, int>? entryByFunctor = null;
         foreach (int addr in addresses)
         {
+            // A resume marker is a continuation into compiled code: a frame of
+            // the predicate it names, with no bytecode address to search for.
+            if (Activation.IsResumeMarker(addr))
+            {
+                int fid = Activation.DecodeResumeMarker(addr).FunctorId;
+                if (entryByFunctor is null)
+                {
+                    entryByFunctor = new Dictionary<int, int>(map.Count);
+                    foreach (var (a, p) in map) entryByFunctor.TryAdd(p.FunctorId, a);
+                }
+                bool known = entryByFunctor.TryGetValue(fid, out int at);
+                if (!seen.Add(known ? at : -(fid + 1))) continue;
+                var (markerAtom, markerArity) = FunctorTable.Lookup(fid);
+                string markerName = AtomTable.GetById(markerAtom)?.Name ?? "?";
+                if (markerName == "__query__") continue;
+                plain.Add((markerName, markerArity));
+                // The cursor does not say which clause: only a predicate of
+                // one clause has a position to report.
+                var compiled = known ? map[at] : null;
+                frames.Add(new StackFrame(markerName, markerArity,
+                    compiled is { ClauseCount: 1 } ? compiled.SourcePosition : SourcePosition.Start,
+                    _nonDebuggableFunctors.Contains(fid)));
+                continue;
+            }
             int idx = Array.BinarySearch(sortedEntries, addr);
             if (idx < 0) idx = ~idx - 1;
             if (idx < 0) continue;
