@@ -1388,7 +1388,7 @@ internal sealed class BundleLoader
             // predicate is which before the image loads, so all bind now.
             if (LoadedModule(entry) is { } untabled)
                 foreach (var (_, functorId, del, wakes) in untabled.Bound)
-                    E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes);
+                    E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes, fromBundle: true);
             return;
         }
         var index = ReadPersistedIndex(table);
@@ -1442,7 +1442,7 @@ internal sealed class BundleLoader
                 continue;
             }
             if (module.DelegateOf(fid) is not { } del) continue;
-            E.IlPromotion.RegisterBoundDelegate(fid, del, wakes);
+            E.IlPromotion.RegisterBoundDelegate(fid, del, wakes, fromBundle: true);
             var bound = module;
             if (hasCps) E.IlPromotion.OfferBoundCps(fid, del, () => bound.BindCps(fid), cost);
         }

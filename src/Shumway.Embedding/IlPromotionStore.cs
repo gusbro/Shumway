@@ -207,6 +207,7 @@ public sealed class IlPromotionStore
             FunctorId = functorId, Wakes = wakes, IsDynamic = isDynamic, Bind = bind, Stamp = stamp,
             Failed = failed, Cost = cost,
         };
+        _bundleCode.Add(functorId);
         _unpromotable.Remove(functorId);
         // With no tier on, the linker made every site bytecode-only; these
         // have to count their dispatches.
@@ -474,6 +475,36 @@ public sealed class IlPromotionStore
         finally { IlPredicateCompiler.EndFloatPool(prev); }
     }
 
+    // The predicates whose code a bundle carries, bound or offered. A region
+    // compiled at run time calls them: absorbing one would compile its body
+    // again, and the calls inside the region would bypass the bundle's code.
+    private readonly HashSet<int> _bundleCode = new();
+
+    // On the engine's thread: what the compile of functorId keeps as roots.
+    private ISet<int>? BundleRoots(int functorId)
+    {
+        if (_bundleCode.Count == 0) return null;
+        var roots = new HashSet<int>(_bundleCode);
+        roots.Remove(functorId);
+        return roots;
+    }
+
+    // On the compiling thread.
+    private static T WithRoots<T>(ISet<int>? roots, Func<T> compile)
+    {
+        if (roots is null) return compile();
+        var prev = IlPredicateCompiler.RegionForcedRootFids;
+        if (prev is not null)
+        {
+            var both = new HashSet<int>(prev);
+            both.UnionWith(roots);
+            roots = both;
+        }
+        IlPredicateCompiler.RegionForcedRootFids = roots;
+        try { return compile(); }
+        finally { IlPredicateCompiler.RegionForcedRootFids = prev; }
+    }
+
     /// <summary>ADR-023 — builds a static-style snapshot of a dynamic predicate's
     /// currently-visible clauses. Null when it has no visible clauses yet.</summary>
     public Func<int, CompiledPredicate?>? DynamicSnapshotProvider { get; set; }
@@ -528,6 +559,7 @@ public sealed class IlPromotionStore
             _retiredResume[functorId] = (engine, cursor) => retiring(engine, cursor);
         _cpsCode.Remove(functorId);
         if (_offers.TryGetValue(functorId, out var withdrawn)) Withdraw(withdrawn);
+        _bundleCode.Remove(functorId);
         _boundCps.Remove(functorId);
         if (!_delegates.Remove(functorId)) return;
         _dispatchWrappers.Remove(functorId);
@@ -910,6 +942,7 @@ public sealed class IlPromotionStore
             _mutationStamp.TryGetValue(functorId, out int stamp);
             var capturedTarget = target;
             var capturedCallees = calleeMap;
+            var roots = BundleRoots(functorId);
             _pendingCompiles.Add(functorId);
             // An instrumented (PGO) delegate has its own cursor layout:
             // continuation methods compiled from the plain form would push
@@ -920,7 +953,7 @@ public sealed class IlPromotionStore
             {
                 var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
                 var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
-                try { return body(); }
+                try { return WithRoots(roots, body); }
                 finally
                 {
                     IlPredicateCompiler.EndNativeInline(prevN);
@@ -962,19 +995,21 @@ public sealed class IlPromotionStore
             return null;
         }
 
+        var syncRoots = BundleRoots(functorId);
         var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
-                WithNativeInline(() =>
+                WithNativeInline(() => WithRoots(syncRoots, () =>
                 {
                     using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
                     return Compiled(Compiler.CompileInstrumented(target, calleeMap));
-                })));
+                }))));
         var installedDel = isDynamic
             ? GuardDynamicSnapshot(functorId, syncResult.Delegate)
             : syncResult.Delegate;
         InstallDelegate(functorId, installedDel);
         if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithFloatPool(functorId, () =>
-                WithNativeInline(() => TryCompileCps(target, calleeMap, syncResult.Delegate)))) is { } syncCps)
+                WithNativeInline(() => WithRoots(syncRoots,
+                    () => TryCompileCps(target, calleeMap, syncResult.Delegate))))) is { } syncCps)
             _cpsCode[functorId] = syncCps;
         if (syncResult.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = syncResult.ProfileKey;
@@ -1075,6 +1110,7 @@ public sealed class IlPromotionStore
                 // have. The providers read engine state, so they run here.
                 var floatPool = FloatPoolProvider?.Invoke(functorId);
                 var nativeCtx = NativeInlineProvider?.Invoke();
+                var pgoRoots = BundleRoots(functorId);
                 _mutationStamp.TryGetValue(functorId, out int stamp);
                 _pgoProfileKeys.Remove(functorId);
                 IlCompileWorker.RunAsync(
@@ -1082,7 +1118,11 @@ public sealed class IlPromotionStore
                     {
                         var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
                         var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
-                        try { return Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap)); }
+                        try
+                        {
+                            return WithRoots(pgoRoots,
+                                () => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap)));
+                        }
                         finally
                         {
                             IlPredicateCompiler.EndNativeInline(prevN);
@@ -1093,9 +1133,10 @@ public sealed class IlPromotionStore
                     lowPriority: true);
                 continue;
             }
+            var syncPgoRoots = BundleRoots(functorId);
             var optimized = RunOnLargeStack(
-                () => WithFloatPool(functorId, () =>
-                    WithNativeInline(() => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap)))));
+                () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
+                    () => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap))))));
             InstallDelegate(functorId, optimized);
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -1180,15 +1221,17 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
+        var warmRoots = BundleRoots(functorId);
         var del = RunOnLargeStack(() =>
-            WithFloatPool(functorId, () => WithNativeInline(() =>
+            WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
             {
                 using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
                 return Compiled(Compiler.Compile(predicate, calleeMap));
-            })));
+            }))));
         InstallDelegate(functorId, del);
         if (RunOnLargeStack(() => WithFloatPool(functorId, () =>
-                WithNativeInline(() => TryCompileCps(predicate, calleeMap, del)))) is { } warmCps)
+                WithNativeInline(() => WithRoots(warmRoots,
+                    () => TryCompileCps(predicate, calleeMap, del))))) is { } warmCps)
             _cpsCode[functorId] = warmCps;
         return del;
     }
@@ -1212,10 +1255,14 @@ public sealed class IlPromotionStore
 
     /// <summary>Binds a pre-built delegate (persisted-IL bundles). Idempotent — the
     /// first delegate wins. <paramref name="wakes"/>: it was compiled with wake
-    /// points (ADR-049); else the engine wakes at its returns.</summary>
-    public void RegisterBoundDelegate(int functorId, PredicateDelegate del, bool wakes = false)
+    /// points (ADR-049); else the engine wakes at its returns.
+    /// <paramref name="fromBundle"/>: the code is a bundle's, which the regions
+    /// compiled at run time call instead of absorbing.</summary>
+    public void RegisterBoundDelegate(int functorId, PredicateDelegate del, bool wakes = false,
+        bool fromBundle = false)
     {
         if (_delegates.ContainsKey(functorId)) return;
+        if (fromBundle) _bundleCode.Add(functorId);
         if (!wakes) _bound.Add(functorId);
         if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
         // With no tier on, the linker made every site bytecode-only; a
