@@ -66,9 +66,19 @@ public sealed partial class PrologEngine
     private void UseLibrary(string name)
     {
         if (!_loadedEngineLibraries.Add(name)) return;
+        var before = _liveConsultEngine is null
+            ? null : new HashSet<int>(_precompiledStaticPredicates.Keys);
         LoadBundle(LibraryBundles.Get(name));
         SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
         MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
+        // Loaded by a running goal: link it into that goal's code now, as a
+        // mid-query consult links what it defines.
+        if (_liveConsultEngine is { } live && before is not null)
+        {
+            EnsureLiveDynamicTrampolines(live);
+            LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
+                .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
+        }
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -1143,6 +1153,7 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
         bool changed = false;
         List<int>? added = null;
+        List<(int Fid, string Provider)>? addedFrom = null;
         Dictionary<string, List<int>>? kept = null;
         foreach (int fid in srcManifest.ExportFunctors)
         {
@@ -1153,6 +1164,7 @@ public sealed partial class PrologEngine
             {
                 changed = true;
                 (added ??= new List<int>()).Add(fid);
+                (addedFrom ??= new()).Add((fid, provider));
             }
             else if (userManifest.Imports[fid] is { } existing && existing != provider)
             {
@@ -1169,6 +1181,9 @@ public sealed partial class PrologEngine
                     + $"'{winner}' — keeping '{winner}', ignoring '{sourceModule}'.");
         if (added is not null) WarnImportsShadowGlobals(added, sourceModule);
         if (changed) InvalidatePersistent();
+        // Imported by a running goal: its code calls the bare names now.
+        if (_liveConsultEngine is { } live && addedFrom is not null)
+            LinkImportsLive(live, addedFrom);
     }
 
     // The prelude is exempt from shadow warnings — importing a name it also

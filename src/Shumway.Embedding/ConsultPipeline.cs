@@ -2438,6 +2438,8 @@ internal sealed class ConsultPipeline
                         E.LinkConsultedStaticPredicatesLive(other, clauses, moduleName);
                     }
             }
+            // The auto-import into user ran before these predicates linked.
+            E.LinkUserImportsLive(liveEng);
         }
 
         // Evict any promoted Tier-1 IL for the predicates this consult just
