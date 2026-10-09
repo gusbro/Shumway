@@ -9,7 +9,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 Kind says whether a program may define a predicate of the same name: never for control and ISO, inside a module for engine, anywhere for library. See [redefining-predicates.md](redefining-predicates.md).
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Reified conditions](#reified-conditions) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
@@ -337,6 +337,24 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `frozen(@Term, -Goal)` | library | Unifies Goal with the conjunction of the freeze/2, dif/2 and when/2 goals that re-create the constraints on the variables of Term (true when none). |
 | `when(+Condition, :Goal)` | library | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
 
+## Reified conditions
+
+Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `','(:A_1, :B_1, ?T)` | library | T is true when both reified conditions are true. |
+| `;(:A_1, :B_1, ?T)` | library | T is true when either reified condition is true. |
+| `=(?X, ?Y, ?T)` | library | T is true when X and Y are equal and false when they are different; when they are neither yet, true with X = Y, then false with dif(X, Y). |
+| `cond_t(:If_1, :Then_0, ?T)` | library | T is true, and Then_0 has run, when If_1 is true; false when it is false. |
+| `dif(?X, ?Y, ?T)` | library | T is true when X and Y are different and false when they are equal; when they are neither yet, false with X = Y, then true with dif(X, Y). |
+| `if_(:If_1, :Then_0, :Else_0)` | library | Calls If_1 with one more argument T, then Then_0 when T is true and Else_0 when it is false. A T left unbound is an instantiation error, anything but true or false a type error. |
+| `memberd_t(?X, ?Xs, ?T)` | library | T is true when X is an element of the list Xs, false when it is none; each element is tried once, as =/3. |
+| `tfilter(:C_2, ?Xs, ?Ys)` | library | Ys holds the elements of Xs that satisfy the reified condition C_2, in order. |
+| `tmember(:C_2, ?Xs)` | library | Some element of Xs satisfies the reified condition C_2. |
+| `tmember_t(:C_2, ?Xs, ?T)` | library | T is true when some element of Xs satisfies the reified condition C_2, false when none does. |
+| `tpartition(:C_2, ?Xs, ?Ts, ?Fs)` | library | Ts holds the elements of Xs that satisfy the reified condition C_2 and Fs the others, each in order. |
+
 ## Input / output
 
 | Predicate | Kind | Description |
@@ -572,11 +590,18 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `#/\(+Constraint1, +Constraint2)` | library | Both constraints hold (conjunction). |
+| `#<(?X, ?Y, ?T)` | library | T is true when X #< Y holds and false when it does not, as clpfd_t/2. |
 | `#<==(+Constraint1, +Constraint2)` | library | Constraint2 implies Constraint1. |
 | `#<==>(?Constraint1, ?Constraint2)` | library | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one. |
+| `#=(?X, ?Y, ?T)` | library | T is true when X #= Y holds and false when it does not, as clpfd_t/2. |
+| `#=<(?X, ?Y, ?T)` | library | T is true when X #=< Y holds and false when it does not, as clpfd_t/2. |
 | `#==>(+Constraint1, +Constraint2)` | library | Constraint1 implies Constraint2. |
+| `#>(?X, ?Y, ?T)` | library | T is true when X #> Y holds and false when it does not, as clpfd_t/2. |
+| `#>=(?X, ?Y, ?T)` | library | T is true when X #>= Y holds and false when it does not, as clpfd_t/2. |
 | `#\(+Constraint)` | library | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | library | At least one constraint holds (disjunction). |
+| `#\=(?X, ?Y, ?T)` | library | T is true when X #\= Y holds and false when it does not, as clpfd_t/2. |
+| `clpfd_t(+Constraint, ?T)` | library | T is true when the reifiable Constraint holds and false when it does not; undecided, false with its negation posted, then true with the constraint posted. A reified condition for if_/3 of library(reif). |
 
 ## CLP(FD): reflection
 

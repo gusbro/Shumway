@@ -46,6 +46,13 @@
 :- public ('#>')/2.
 :- public ('#=<')/2.
 :- public ('#>=')/2.
+:- public ('#=')/3.
+:- public ('#\\=')/3.
+:- public ('#<')/3.
+:- public ('#>')/3.
+:- public ('#=<')/3.
+:- public ('#>=')/3.
+:- public clpfd_t/2.
 :- public ('in')/2.
 :- public ('ins')/2.
 :- public '$fd_lt'/2.
@@ -1925,6 +1932,36 @@ clpfd_entail_('#\\=', DX, DY, _, _, _, _, E) :-
     ; '$dom_singleton'(DX, V), '$dom_singleton'(DY, V) -> E = false
     ; E = unknown
     ).
+
+% ===== truth values, for library(reif) =====
+% A reifiable constraint answered with true or false, so if_/3 can choose
+% a branch by it. Undecided, it answers false first (the negation posted),
+% then true (the constraint posted).
+%! clpfd_t(+Constraint, ?T) | CLP(FD): reification | T is true when the reifiable Constraint holds and false when it does not; undecided, false with its negation posted, then true with the constraint posted. A reified condition for if_/3 of library(reif).
+clpfd_t(C, T) :-
+    clpfd_reify(C, B),
+    clpfd_truth(B, T).
+
+clpfd_truth(B, T) :-
+    (   B == 1 -> T = true
+    ;   B == 0 -> T = false
+    ;   T == true -> B = 1
+    ;   T == false -> B = 0
+    ;   var(T) -> ( B = 0, T = false ; B = 1, T = true )
+    ).
+
+%! #=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #= Y holds and false when it does not, as clpfd_t/2.
+'#='(X, Y, T) :- clpfd_t(X #= Y, T).
+%! #\=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #\= Y holds and false when it does not, as clpfd_t/2.
+'#\\='(X, Y, T) :- clpfd_t(X #\= Y, T).
+%! #<(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #< Y holds and false when it does not, as clpfd_t/2.
+'#<'(X, Y, T) :- clpfd_t(X #< Y, T).
+%! #>(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #> Y holds and false when it does not, as clpfd_t/2.
+'#>'(X, Y, T) :- clpfd_t(X #> Y, T).
+%! #=<(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #=< Y holds and false when it does not, as clpfd_t/2.
+'#=<'(X, Y, T) :- clpfd_t(X #=< Y, T).
+%! #>=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #>= Y holds and false when it does not, as clpfd_t/2.
+'#>='(X, Y, T) :- clpfd_t(X #>= Y, T).
 
 % ===== GNU-Prolog FD compatibility shim =====
 % Aliases mapping GProlog's fd_* primitives onto the clpfd above, so the

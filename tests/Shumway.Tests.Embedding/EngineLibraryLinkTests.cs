@@ -61,6 +61,8 @@ public sealed class EngineLibraryLinkTests : IDisposable
         "clpfd", "3")]
     [InlineData(":- use_module(library(coroutining)).\nmain(X) :- freeze(V, X = woke(V)), V = b.",
         "coroutining", "woke(b)")]
+    [InlineData(":- use_module(library(reif)).\nmain(X) :- tfilter(=(a), [a,b,a], L), length(L, X).",
+        "reif", "2")]
     public void AConsultedProgramLinksAndLoadsTheLibrary(string source, string library, string answer)
     {
         var r = LinkConsulted(source);
@@ -77,5 +79,14 @@ public sealed class EngineLibraryLinkTests : IDisposable
         var r = Link(new[] { obj });
         Assert.Equal(new[] { "coroutining" }, r.Bundle!.EngineLibraries);
         Assert.Equal("woke(b)", RunMain(r.Bytes!));
+    }
+
+    [Fact]
+    public void ALibraryThatUsesAnotherLoadsIt()
+    {
+        // reif answers an undecided condition with coroutining's dif/2.
+        var engine = new PrologEngine();
+        engine.UseReif();
+        Assert.True(engine.Query("=(X, a, false), \\+ X = a, X = b.").Success);
     }
 }

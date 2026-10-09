@@ -35,6 +35,14 @@ public sealed partial class PrologEngine
     /// CLP(FD)/CLP(R) on one engine. Idempotent.</summary>
     public void UseCoroutining() => UseLibrary(LibraryBundles.Coroutining);
 
+    /// <summary>Loads the reified-conditions library into this engine:
+    /// <c>if_/3</c>, <c>(=)/3</c>, <c>dif/3</c>, <c>tfilter/3</c> and their
+    /// family, which choose between branches by a truth value instead of by
+    /// success, so a decided condition leaves no choice point. Loads the
+    /// coroutining library too (an undecided condition answers with
+    /// <c>dif/2</c>). Idempotent.</summary>
+    public void UseReif() => UseLibrary(LibraryBundles.Reif);
+
     // The engine's own libraries load from bundles baked at build time
     // (Shumway.Libraries), one path on every target; a loaded library is
     // recorded so a repeated request (UseClpfd after use_module, a

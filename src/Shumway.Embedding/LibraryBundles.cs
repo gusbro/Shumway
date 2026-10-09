@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace Shumway.Embedding;
 
-/// <summary>The engine's own Prolog libraries (clpfd, clpr, coroutining),
+/// <summary>The engine's own Prolog libraries (clpfd, clpr, coroutining, reif),
 /// baked at build time into bundles by the Shumway.Libraries assembly.
 /// That assembly cannot be referenced from here (its bake runs the compiler
 /// and linker defined in this one), so it is loaded by name at first use:
@@ -13,9 +13,10 @@ internal static class LibraryBundles
     public const string Clpfd = "clpfd";
     public const string Clpr = "clpr";
     public const string Coroutining = "coroutining";
+    public const string Reif = "reif";
 
     /// <summary>The library names; each is also its module name.</summary>
-    public static readonly string[] Names = { Clpfd, Clpr, Coroutining };
+    public static readonly string[] Names = { Clpfd, Clpr, Coroutining, Reif };
 
     public static bool IsEngineLibrary(string name)
         => Array.IndexOf(Names, name) >= 0;
