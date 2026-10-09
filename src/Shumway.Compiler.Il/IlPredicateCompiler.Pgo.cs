@@ -10,11 +10,6 @@ public sealed partial class IlPredicateCompiler
     // PGO: two-phase profile-guided IL compilation
     // ============================================================================
 
-    /// <summary>Profile key counter — allocated per instrumented
-    /// predicate, indexing <see cref="IlProfileCounters"/>. Separate
-    /// namespace from <see cref="_nextHolderKey"/>.</summary>
-    private static int _nextProfileKey = 1;
-
     /// <summary>Result of a phase-1 PGO compile: the (instrumented)
     /// delegate plus the profile key the engine later passes to
     /// <see cref="CompileOptimized"/>. A <see cref="ProfileKey"/> of
@@ -39,8 +34,7 @@ public sealed partial class IlPredicateCompiler
         {
             lock (IndexedDelegateHolder.RegistrationLock)
             {
-                int profileKey = _nextProfileKey++;
-                IlProfileCounters.Allocate(profileKey, info!.Clauses.Count);
+                int profileKey = IlProfileCounters.Allocate(info!.Clauses.Count);
                 var del = CompileIndexedAtomPredicateUnlocked(
                     predicate, info, profileKey, groundOrder: null);
                 return new PgoCompileResult(del, profileKey);
