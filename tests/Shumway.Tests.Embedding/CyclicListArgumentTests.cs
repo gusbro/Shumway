@@ -112,12 +112,12 @@ public sealed class CyclicListArgumentTests
     public void SkipListTerminatesAndNamesTheEnd(string query) => Assert.True(Holds(query));
 
     [Theory]
-    [InlineData("L = [a|L], \\+ is_list(L).")]
+    [InlineData(@"L = [a|L], \+ is_list(L).")]
     [InlineData("L = [a, b|L], '$cyclic_spine'(L).")]
-    [InlineData("\\+ '$cyclic_spine'([a, b, c]).")]
+    [InlineData(@"\+ '$cyclic_spine'([a, b, c]).")]
     [InlineData("numlist(1, 100000, L), is_list(L), length(L, 100000).")]
-    [InlineData("length(L, 7), is_list(L), \\+ '$cyclic_spine'(L).")]
-    [InlineData("L = [a|L], \\+ length(L, 3).")]
+    [InlineData(@"length(L, 7), is_list(L), \+ '$cyclic_spine'(L).")]
+    [InlineData(@"L = [a|L], \+ length(L, 3).")]
     [InlineData("L = [a|L], catch(length(L, _), error(resource_error(_), _), true).")]
     public void TheSpinePrimitivesAgree(string query) => Assert.True(Holds(query));
 
@@ -145,8 +145,8 @@ public sealed class CyclicListArgumentTests
     [InlineData("L = [a, b|L], findall(X, (append(X, _, L), (length(X, 2) -> ! ; true)), Xs), "
         + "Xs == [[], [a], [a, b]].")]
     // A cyclic L2 is no suffix of a finite list: every split fails.
-    [InlineData("L = [a|L], \\+ append(_, L, [a, a]).")]
-    [InlineData("L = [a|L], \\+ append(_, L, [a|foo]).")]
+    [InlineData(@"L = [a|L], \+ append(_, L, [a, a]).")]
+    [InlineData(@"L = [a|L], \+ append(_, L, [a|foo]).")]
     // A proper L1 in front of a cyclic L2 is a cyclic list.
     [InlineData("L = [a|L], append([x], L, R), R = [x, a, a|_], '$cyclic_spine'(R).")]
     public void AppendSplitsACyclicListTheWayTheTwoClauseAppendDoes(string query)

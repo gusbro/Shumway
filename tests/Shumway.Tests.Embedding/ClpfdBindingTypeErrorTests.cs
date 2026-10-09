@@ -21,7 +21,7 @@ public sealed class ClpfdBindingTypeErrorTests
     [InlineData("X = b", "b")]
     [InlineData("X = 1.0", "1.0")]
     [InlineData("X = f(a)", "f(a)")]
-    [InlineData("X \\= b", "b")]
+    [InlineData(@"X \= b", "b")]
     [InlineData("member(X, [b, 1])", "b")]
     public void ANonIntegerIsATypeError(string bind, string culprit)
     {

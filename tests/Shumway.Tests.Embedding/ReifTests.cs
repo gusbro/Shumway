@@ -43,12 +43,12 @@ public sealed class ReifTests
     [InlineData("=(f(_, b), f(a, c), T), T == false")]
     [InlineData("=(X, X, T), T == true")]
     [InlineData("dif(a, a, T), T == false")]
-    [InlineData("dif(X, a, true), \\+ X = a, X = b")]
+    [InlineData(@"dif(X, a, true), \+ X = a, X = b")]
     [InlineData("dif(X, a, false), X == a")]
     // A decided condition, or a truth value given, leaves no choice point.
     [InlineData("det(=(a, b, _))")]
     [InlineData("det(=(X, a, true)), X == a")]
-    [InlineData("det(=(X, a, false)), \\+ X = a")]
+    [InlineData(@"det(=(X, a, false)), \+ X = a")]
     [InlineData("det(dif(X, a, false)), X == a")]
     [InlineData("det(if_(a = a, R = yes, R = no)), R == yes")]
     [InlineData("det(memberd_t(b, [a,b,c], T)), T == true")]
@@ -71,10 +71,10 @@ public sealed class ReifTests
 
     [Theory]
     // Each answer carries its constraint.
-    [InlineData("=(X, a, T), T == false, \\+ X = a")]
-    [InlineData("memberd_t(X, [a,b], false), \\+ X = a, \\+ X = b, X = c")]
-    [InlineData("tfilter(=(a), [X], []), \\+ X = a")]
-    [InlineData("tmember_t(=(a), [X, a], true), ( X == a ; \\+ X = a )")]
+    [InlineData(@"=(X, a, T), T == false, \+ X = a")]
+    [InlineData(@"memberd_t(X, [a,b], false), \+ X = a, \+ X = b, X = c")]
+    [InlineData(@"tfilter(=(a), [X], []), \+ X = a")]
+    [InlineData(@"tmember_t(=(a), [X, a], true), ( X == a ; \+ X = a )")]
     [InlineData("cond_t(=(X, a), Y = 1, T), T == true, X == a, Y == 1")]
     [InlineData("cond_t(=(a, b), Y = 1, T), T == false, var(Y)")]
     [InlineData("tmember(=(a), [b, X]), X == a")]
@@ -117,17 +117,17 @@ public sealed class ReifTests
     // clpfd's comparisons as reified conditions: false first, then true.
     [InlineData("#=(3, 3, T), T == true")]
     [InlineData("#>(3, 2, T), T == true")]
-    [InlineData("#\\=(3, 2, T), T == true")]
+    [InlineData(@"#\=(3, 2, T), T == true")]
     [InlineData("#=<(3, 2, T), T == false")]
     [InlineData("X in 0..2, answers(T, #=(X, 1, T), As, det), As == [false, true]")]
-    [InlineData("X in 0..2, #=(X, 1, false), fd_dom(X, D), D == (0 \\/ 2)")]
+    [InlineData(@"X in 0..2, #=(X, 1, false), fd_dom(X, D), D == (0 \/ 2)")]
     [InlineData("X in 0..5, #>=(X, 3, true), fd_inf(X, I), I == 3")]
     [InlineData("X in 0..5, answers(R, if_(X #< 3, R = lt, R = ge), As, det), As == [ge, lt]")]
     [InlineData("tfilter(#<(2), [1,2,3,4], L), L == [3,4]")]
     [InlineData("det(if_(2 #< 3, R = lt, R = ge)), R == lt")]
     // A connective decided by the truth value fixes both sides.
-    [InlineData("[X,Y] ins 0..1, clpfd_t(X #= 1 #/\\ Y #= 0, true), X == 1, Y == 0")]
-    [InlineData("[X,Y] ins 0..1, clpfd_t(X #= 1 #\\/ Y #= 0, false), X == 0, Y == 1")]
+    [InlineData(@"[X,Y] ins 0..1, clpfd_t(X #= 1 #/\ Y #= 0, true), X == 1, Y == 0")]
+    [InlineData(@"[X,Y] ins 0..1, clpfd_t(X #= 1 #\/ Y #= 0, false), X == 0, Y == 1")]
     public void ClpfdReifiedComparisons(string goal) => Holds(goal);
 
     [Fact]

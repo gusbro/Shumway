@@ -41,7 +41,7 @@ public sealed class MidQueryLibraryLoadTests : IDisposable
     [InlineData("use_module(library(reif)), tfilter(=(a), [a,b,a], L), L == [a,a]")]
     [InlineData("use_module(library(reif)), G = if_(=(a, b), R = y, R = n), call(G), R == n")]
     // reif's undecided answer is coroutining's dif/2, loaded by reif's load.
-    [InlineData("use_module(library(reif)), =(X, a, false), \\+ X = a, X = b")]
+    [InlineData(@"use_module(library(reif)), =(X, a, false), \+ X = a, X = b")]
     [InlineData("use_module(library(coroutining)), when(nonvar(V), W = woke), V = 1, W == woke")]
     [InlineData("use_module(library(midlib)), hello(X), X == world")]
     [InlineData("use_module(library(midlib)), G = hello(X), call(G), X == world")]

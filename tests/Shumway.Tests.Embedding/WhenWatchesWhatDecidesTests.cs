@@ -42,13 +42,13 @@ public sealed class WhenWatchesWhatDecidesTests(ITestOutputHelper o)
 
     [Theory]
     // The unwatched variable bound first: nothing yet, then once.
-    [InlineData("when((nonvar(X), nonvar(Y)), hit), Y = 1, \\+ hits(_), X = 2, hits(1).")]
-    [InlineData("when((nonvar(X), nonvar(Y)), hit), X = 1, \\+ hits(_), Y = 2, hits(1).")]
-    [InlineData("when(ground(f(V, W)), hit), W = 1, \\+ hits(_), V = 2, hits(1).")]
-    [InlineData("when(ground(f(V, W)), hit), V = 1, \\+ hits(_), W = 2, hits(1).")]
+    [InlineData(@"when((nonvar(X), nonvar(Y)), hit), Y = 1, \+ hits(_), X = 2, hits(1).")]
+    [InlineData(@"when((nonvar(X), nonvar(Y)), hit), X = 1, \+ hits(_), Y = 2, hits(1).")]
+    [InlineData(@"when(ground(f(V, W)), hit), W = 1, \+ hits(_), V = 2, hits(1).")]
+    [InlineData(@"when(ground(f(V, W)), hit), V = 1, \+ hits(_), W = 2, hits(1).")]
     [InlineData("when((nonvar(X) ; nonvar(Y)), hit), Y = 1, X = 2, hits(1).")]
     [InlineData("when(((nonvar(X), nonvar(Y)) ; ground(Z)), hit), Z = z, hits(1), X = 1, Y = 2, hits(1).")]
-    [InlineData("when(?=(X, Y), hit), X = f(A), Y = f(B), \\+ hits(_), A = B, hits(1).")]
+    [InlineData(@"when(?=(X, Y), hit), X = f(A), Y = f(B), \+ hits(_), A = B, hits(1).")]
     public void FiresOnceWhenTheConditionHolds(string query)
         => Assert.True(Co().Query(query).Success, query);
 

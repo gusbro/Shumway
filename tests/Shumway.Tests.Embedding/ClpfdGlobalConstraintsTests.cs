@@ -102,7 +102,7 @@ public sealed class ClpfdGlobalConstraintsTests
 
     [Theory]
     [InlineData("element(N, [3,5,7], V), V #> 4, fd_dom(N, D)", "D", "2..3")]
-    [InlineData("element(N, [3,5,7], V), N in 1..2, fd_dom(V, D)", "D", "3 \\/ 5")]
+    [InlineData("element(N, [3,5,7], V), N in 1..2, fd_dom(V, D)", "D", @"3 \/ 5")]
     [InlineData("element(2, [3,5,7], V)", "V", "5")]
     [InlineData("X in 1..2, Y in 5..6, element(N, [X,Y], V), V #> 3, fd_dom(N, D)", "D", "2..2")]
     [InlineData("X in 1..9, element(N, [X,4], V), N = 1, V = 6", "X", "6")]
@@ -115,7 +115,7 @@ public sealed class ClpfdGlobalConstraintsTests
     [InlineData("circuit([X, Y, Z]), fd_dom(X, D)", "D", "2..3")]
     [InlineData("circuit([X, Y, _]), X = 2, fd_dom(Y, D)", "D", "3..3")]
     [InlineData("tuples_in([[X, Y]], [[1,2],[2,3],[3,1]]), X = 2", "Y", "3")]
-    [InlineData("tuples_in([[X, Y]], [[1,2],[2,3],[3,1]]), Y #\\= 3, fd_dom(X, D)", "D", "1 \\/ 3")]
+    [InlineData(@"tuples_in([[X, Y]], [[1,2],[2,3],[3,1]]), Y #\= 3, fd_dom(X, D)", "D", @"1 \/ 3")]
     public void Propagates(string goal, string variable, string expected)
         => Holds($"{goal}, {variable} == ({expected})");
 
@@ -134,7 +134,7 @@ public sealed class ClpfdGlobalConstraintsTests
     public void AnEmptyCircuitHolds() => Holds("circuit([])");
 
     [Theory]
-    [InlineData("[X,Y] ins 1..3, X #\\= Y, labeling([min(X+Y)], [X,Y])",
+    [InlineData(@"[X,Y] ins 1..3, X #\= Y, labeling([min(X+Y)], [X,Y])",
         "[[1,2],[2,1],[1,3],[3,1],[2,3],[3,2]]")]
     [InlineData("[X,Y] ins 1..3, labeling([max(X*Y)], [X,Y])",
         "[[3,3],[2,3],[3,2],[2,2],[1,3],[3,1],[1,2],[2,1],[1,1]]")]

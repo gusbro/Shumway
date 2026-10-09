@@ -49,8 +49,8 @@ public sealed class ClprInequalityVetoTests
     [InlineData("{X < 3}, X = 1.0", true)]
     [InlineData("{X >= 3}, X = 3.0", true)]
     [InlineData("{X >= 3}, X = 2.0", false)]
-    [InlineData("{X =\\= 3}, X = 3.0", false)]
-    [InlineData("{X =\\= 3}, X = 4.0", true)]
+    [InlineData(@"{X =\= 3}, X = 3.0", false)]
+    [InlineData(@"{X =\= 3}, X = 4.0", true)]
     public void A_DirectBindIsVetted(string goal, bool expected)
         => Assert.Equal(expected, Ask(goal + "."));
 

@@ -94,7 +94,7 @@ public sealed partial class AppendSplitEnumerationTests(ITestOutputHelper o)
     [Theory]
     // L1 partial: its given cells must match L3's.
     [InlineData("findall(X-Y, append([a|X], Y, [a, b, c]), Ps), Ps == [[]-[b, c], [b]-[c], [b, c]-[]].")]
-    [InlineData("\\+ append([z|_], _, [a, b]).")]
+    [InlineData(@"\+ append([z|_], _, [a, b]).")]
     // L3 improper: every suffix carries its tail.
     [InlineData("findall(X-Y, append(X, Y, [a|foo]), Ps), Ps == [[]-[a|foo], [a]-foo].")]
     // L3 packed.

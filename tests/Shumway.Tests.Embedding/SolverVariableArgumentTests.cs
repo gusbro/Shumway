@@ -128,10 +128,10 @@ public class SolverVariableArgumentTests
     // two booleans mean what it says. Left to fall through, such a variable
     // unified with the comparison pattern and became `_ #= _` — a constraint
     // nobody wrote. Answers checked against the reference implementation.
-    [InlineData("B1 #/\\ B2, B1 == 1, B2 == 1")]
-    [InlineData("#\\ B, B == 0")]
+    [InlineData(@"B1 #/\ B2, B1 == 1, B2 == 1")]
+    [InlineData(@"#\ B, B == 0")]
     [InlineData("B #<==> C, B = 1, C == 1")]
-    [InlineData("B1 #\\/ B2, B1 in 0..1, B2 in 0..1, B1 = 0, B2 == 1")]
+    [InlineData(@"B1 #\/ B2, B1 in 0..1, B2 in 0..1, B1 = 0, B2 == 1")]
     // Equivalence is symmetric: the constraint may be written on either
     // side. Reifying only the second argument read the first as the truth
     // value, so this spelling never worked.
@@ -145,7 +145,7 @@ public class SolverVariableArgumentTests
 
     [Theory]
     // The solvers still solve.
-    [InlineData("clpfd", "X in 1..3, Y in 1..3, X #\\= Y, label([X,Y]), X == 1, Y == 2")]
+    [InlineData("clpfd", @"X in 1..3, Y in 1..3, X #\= Y, label([X,Y]), X == 1, Y == 2")]
     [InlineData("clpfd", "sum([X,Y], #=, 5), [X,Y] ins 0..5, label([X,Y]), X == 0, Y == 5")]
     [InlineData("clpfd", "scalar_product([2,3],[X,Y],#=,12), [X,Y] ins 0..4, label([X,Y])")]
     [InlineData("clpfd", "X in 1..2, B #<==> (X #= 1), label([X,B]), X == 1, B == 1")]

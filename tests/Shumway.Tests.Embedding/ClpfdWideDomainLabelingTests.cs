@@ -56,11 +56,11 @@ public sealed class ClpfdWideDomainLabelingTests
     // The orders the stepping keeps, a domain with holes included: the
     // midpoint walk takes the nearer side first, the lower one on a tie.
     [Theory]
-    [InlineData("1..9, X #\\= 4, X #\\= 5", "middle", "[3,6,2,7,1,8,9]")]
-    [InlineData("1..9, X #\\= 5", "down", "[9,8,7,6,4,3,2,1]")]
-    [InlineData("1..9, X #\\= 5", "up", "[1,2,3,4,6,7,8,9]")]
+    [InlineData(@"1..9, X #\= 4, X #\= 5", "middle", "[3,6,2,7,1,8,9]")]
+    [InlineData(@"1..9, X #\= 5", "down", "[9,8,7,6,4,3,2,1]")]
+    [InlineData(@"1..9, X #\= 5", "up", "[1,2,3,4,6,7,8,9]")]
     [InlineData("5..5", "middle", "[5]")]
-    [InlineData("-3..3, X #\\= 0", "middle", "[-1,-2,1,-3,2,3]")]
+    [InlineData(@"-3..3, X #\= 0", "middle", "[-1,-2,1,-3,2,3]")]
     public void AnOrderOverADomainWithHoles(string domain, string order, string values)
         => Assert.Equal(values, Value($"X in {domain}, findall(X, labeling([{order}], [X]), L)", "L"));
 
