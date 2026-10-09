@@ -99,13 +99,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         if (_store.TryGet(functorId) is not null || _store.IsUnpromotable(functorId)) return;
         if (SuspendsWasm(functorId)) return;
         // Counted as a dispatch of the caller, the way OnDispatch counts one:
-        // the wasm tier first, then IL.
+        // the wasm tier first, then IL. A bundle's offer counts its
+        // predicate's dispatches alone, and the predicate is never compiled
+        // here as well.
         if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm)
         {
             int addr = AddressOfFunctor(functorId);
             if (addr >= 0) wasm.RecordDispatch(functorId, caller, addr, _engine);
             return;
         }
+        if (_store.HasOffers && _store.HasOffer(functorId)) return;
         _store.RecordInvocation(functorId, caller, CalleeMap);
     }
 

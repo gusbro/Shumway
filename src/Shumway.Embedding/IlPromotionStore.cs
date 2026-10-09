@@ -198,7 +198,8 @@ public sealed class IlPromotionStore
         Func<(PredicateDelegate Delegate, IlPredicateCompiler.CpsCode? Cps)> bind,
         Action<string>? failed = null, int cost = 0)
     {
-        if (!DynamicCodeSupported || _delegates.ContainsKey(functorId) || _offers.ContainsKey(functorId))
+        if (!DynamicCodeSupported || _delegates.ContainsKey(functorId) || _offers.ContainsKey(functorId)
+            || _pendingCompiles.Contains(functorId))
             return;
         _mutationStamp.TryGetValue(functorId, out int stamp);
         _offers[functorId] = new Offer
@@ -636,14 +637,19 @@ public sealed class IlPromotionStore
                 continue;
             }
             _pendingCompiles.Remove(c.Fid);
+            // An installed delegate is never replaced: the choice points it
+            // pushed resume through the functor's current delegate, at cursors
+            // of its own code.
+            bool installed = _delegates.ContainsKey(c.Fid);
             // A bundle's code that came from an offer: one compiled without
             // wake points wakes at its returns.
             if (_offers.TryGetValue(c.Fid, out var offered))
             {
                 Withdraw(offered);
                 if (c.Error is not null) offered.Failed?.Invoke(c.Error);
-                else if (!offered.Wakes) _bound.Add(c.Fid);
+                else if (!offered.Wakes && !installed) _bound.Add(c.Fid);
             }
+            if (installed) continue;
             if (c.Error is not null)
             {
                 MarkUnpromotable(c.Fid, "compile-failed:" + c.Error);
