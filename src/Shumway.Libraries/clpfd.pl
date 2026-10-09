@@ -1482,13 +1482,9 @@ clpfd_diff_pairs([X|Xs]) :- clpfd_diff_all(Xs, X), clpfd_diff_pairs(Xs).
 clpfd_diff_all([], _).
 clpfd_diff_all([Y|Ys], X) :- X #\= Y, clpfd_diff_all(Ys, X).
 
-% all_distinct is stronger: a single $fd_alldiff propagator does
-% Hall-interval pruning. An interval [Lo,Hi] holding exactly as
-% many variables (whose domains it contains) as it has values is
-% a tight Hall interval — those variables consume every value, so
-% [Lo,Hi] is removed from all the others; more variables than
-% values fails immediately.
-%! all_distinct(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value, with Hall-interval pruning.
+% all_distinct is stronger: a single $fd_alldiff propagator keeps only the
+% values some assignment of distinct values to all the variables gives.
+%! all_distinct(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value, and each value left in a domain is the variable's in some assignment of distinct values to all of them.
 all_distinct(List) :-
     '$must_be'(list, List, all_distinct/1),
     clpfd_makevars(List),
@@ -1497,16 +1493,13 @@ all_distinct(List) :-
 clpfd_makevars([]).
 clpfd_makevars([X|Xs]) :- clpfd_makevar(X), clpfd_makevars(Xs).
 
-% all_distinct's Hall-interval pruning. The O(n^3) interval search runs
-% natively ($fd_hall): it reads the variables' current domains
-% and returns the shrunk domain for every variable a saturated Hall
-% interval pruned (or fails on a pigeonhole violation). Narrowing — and
-% the re-propagation it drives — stays in the engine: clpfd_narrow each
-% returned V-NewDom. The interpreted-Prolog version of this loop was far
-% too slow (it made alpha first-fail ~8x slower).
+% The search for the values to remove runs natively ($fd_regin: a
+% matching of variables to values; Hall intervals for domains too wide to
+% list) and returns the shrunk domain of every variable it pruned, or
+% fails. Narrowing, and the re-propagation it drives, stays here.
 '$fd_alldiff'(Vars) :-
     clpfd_doms(Vars, Doms),
-    '$fd_hall'(Vars, Doms, Applies),
+    '$fd_regin'(Vars, Doms, Applies),
     clpfd_apply_doms(Applies).
 
 clpfd_doms([], []).

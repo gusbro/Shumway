@@ -114,7 +114,7 @@ they are most of the exits and none of them allocate: `$dom_same` by contents,
 `$dom_contains`, `$dom_empty`, `$dom_singleton`, `$dom_min`, `$dom_max`. Then
 `$dom_del`, the single largest, which allocates only when it removes something
 and otherwise returns its argument. The rest (`$dom_isect`, `$dom_union`,
-`$dom_above`, `$dom_below`, `$fd_hall`) stay builtins until a measurement asks
+`$dom_above`, `$dom_below`, `$fd_regin`) stay builtins until a measurement asks
 for them; they are a small share of the exits and the most code to emit.
 
 **D5 — the foreign table keeps its other tenants, and stops being a leak in

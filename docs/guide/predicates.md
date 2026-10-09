@@ -547,7 +547,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `all_different(?Vars)` | library | Every element of the list takes a distinct value (pairwise). |
-| `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, with Hall-interval pruning. |
+| `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, and each value left in a domain is the variable's in some assignment of distinct values to all of them. |
 | `circuit(+Vars)` | library | Vars is a successor list forming one cycle through every position: the I-th element is the position that comes after I. |
 | `element(?Index, +List, ?Value)` | library | Value is the Index-th element of List, counting from 1. |
 | `global_cardinality(+Vars, +Pairs)` | library | Every variable takes one of the keys of Pairs, a list of Key-Count, and each Key occurs Count times among Vars. |

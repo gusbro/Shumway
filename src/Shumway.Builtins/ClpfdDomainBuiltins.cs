@@ -375,14 +375,14 @@ public static class ClpfdDomainBuiltins
         return start;
     }
 
-    /// <summary>$fd_hall(+Vars, +Doms, -Applies): native Hall-interval pruning
-    /// for all_distinct. Vars and Doms are parallel lists (Doms[i] is the domain
-    /// object of Vars[i]). Fails on a pigeonhole violation (more variables than
-    /// values in some interval). Otherwise unifies Applies with a list of
-    /// <c>V-NewDom</c> pairs for every variable whose domain a saturated Hall
-    /// interval shrank — the Prolog caller narrows each (re-propagating), so the
-    /// O(n^3) interval search runs natively while narrowing stays in the engine.</summary>
-    public static bool Hall(Activation engine)
+    /// <summary>$fd_regin(+Vars, +Doms, -Applies): all_distinct's pruning.
+    /// Vars and Doms are parallel lists (Doms[i] is the domain of Vars[i]).
+    /// Fails when the variables cannot all take distinct values; otherwise
+    /// Applies is a list of <c>V-NewDom</c> pairs, one per variable whose
+    /// domain shrank, which the Prolog caller narrows (and so re-propagates).
+    /// Each value left is the variable's in some assignment of distinct
+    /// values to all of them (see <see cref="ClpfdAllDistinct"/>).</summary>
+    public static bool Regin(Activation engine)
     {
         var vars = ReadListCells(engine, 0);
         var domCells = ReadListCells(engine, 1);
@@ -391,30 +391,8 @@ public static class ClpfdDomainBuiltins
         for (int i = 0; i < n; i++)
             work[i] = ReadDom(engine, domCells[i]);
         var orig = (ClpfdDomain[])work.Clone();
+        if (!ClpfdAllDistinct.Prune(work)) return false;
 
-        // Candidate Hall bounds: the finite minima (lo) and maxima (hi).
-        for (int li = 0; li < n; li++)
-        {
-            if (work[li].IsEmpty) return false;
-            long lo = work[li].Min;
-            if (lo == ClpfdDomain.Inf) continue;
-            for (int hj = 0; hj < n; hj++)
-            {
-                long hi = work[hj].Max;
-                if (hi == ClpfdDomain.Sup || lo > hi) continue;
-                int count = 0;
-                for (int k = 0; k < n; k++)
-                    if (work[k].Within(lo, hi)) count++;
-                long size = hi - lo + 1;
-                if (count > size) return false;          // pigeonhole: unsatisfiable
-                if (count == size)
-                    for (int k = 0; k < n; k++)
-                        if (!work[k].Within(lo, hi))
-                            work[k] = work[k].RemoveInterval(lo, hi);
-            }
-        }
-
-        // Emit V-NewDom for every variable whose domain changed.
         var changed = new System.Collections.Generic.List<int>();
         for (int i = 0; i < n; i++)
             if (!work[i].SameAs(orig[i])) changed.Add(i);
@@ -476,10 +454,10 @@ public static class ClpfdDomainBuiltins
         BuiltinsRegistry.Register("$dom_same", 2, Same);
         BuiltinsRegistry.Register("$dom_values", 2, Values);
         BuiltinsRegistry.Register("$dom_intervals", 2, Intervals);
-        BuiltinsRegistry.Register("$fd_hall", 3, Hall);
         BuiltinsRegistry.Register("$fd_fits", 1, Fits);
         BuiltinsRegistry.Register("$dom_next", 3, Next);
         BuiltinsRegistry.Register("$dom_prev", 3, Previous);
         BuiltinsRegistry.Register("$dom_nth0", 3, Nth0);
+        BuiltinsRegistry.Register("$fd_regin", 3, Regin);
     }
 }
