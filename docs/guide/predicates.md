@@ -9,7 +9,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 Kind says whether a program may define a predicate of the same name: never for control and ISO, inside a module for engine, anywhere for library. See [redefining-predicates.md](redefining-predicates.md).
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(R)](#clpr)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
@@ -524,7 +524,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
 | Predicate | Kind | Description |
 | --- | --- | --- |
-| `in(?Var, +Domain)` | library | Constrains a variable to a finite domain (e.g. X in 1..9). |
+| `in(?Var, +Domain)` | library | Constrains a variable to a domain: an integer, L..H, or a union of domains. |
 | `ins(?Vars, +Domain)` | library | Constrains every variable in a list to a finite domain. |
 
 ## CLP(FD): arithmetic constraints
@@ -547,9 +547,13 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `all_different(?Vars)` | library | Every element of the list takes a distinct value (pairwise). |
-| `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, with Hall-interval pruning. |
+| `all_distinct(?Vars)` | library | Every element of the list takes a distinct value, and each value left in a domain is the variable's in some assignment of distinct values to all of them. |
+| `circuit(+Vars)` | library | Vars is a successor list forming one cycle through every position: the I-th element is the position that comes after I. |
+| `element(?Index, +List, ?Value)` | library | Value is the Index-th element of List, counting from 1. |
+| `global_cardinality(+Vars, +Pairs)` | library | Every variable takes one of the keys of Pairs, a list of Key-Count, and each Key occurs Count times among Vars. |
 | `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
 | `sum(+Vars, +Rel, ?Total)` | library | Total stands in relation Rel to the sum of the list of variables. |
+| `tuples_in(+Tuples, +Relation)` | library | Every list of variables in Tuples is one of the rows of Relation, a list of lists of integers. |
 
 ## CLP(FD): labeling
 
@@ -559,7 +563,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | --- | --- | --- |
 | `indomain(?Var)` | library | Binds one variable to each value of its domain in turn, on backtracking. |
 | `label(+Vars)` | library | Assigns each variable in the list a value from its domain, searching by backtracking. |
-| `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. |
+| `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. min(Expr) and max(Expr) give the solutions in increasing or decreasing order of Expr, several of them lexicographically. |
 
 ## CLP(FD): reification
 
@@ -573,6 +577,18 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | `#==>(+Constraint1, +Constraint2)` | library | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | library | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | library | At least one constraint holds (disjunction). |
+
+## CLP(FD): reflection
+
+Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `fd_dom(+Var, -Dom)` | library | Dom is the domain of Var, written as in/2 reads it. |
+| `fd_inf(+Var, -Inf)` | library | Inf is the least value Var can take, or inf when it has no lower bound. |
+| `fd_size(+Var, -Size)` | library | Size is the number of values Var can take, or sup when there is no bound on one side. |
+| `fd_sup(+Var, -Sup)` | library | Sup is the greatest value Var can take, or sup when it has no upper bound. |
+| `fd_var(@Term)` | library | Term is a variable with a CLP(FD) domain. |
 
 ## CLP(R)
 

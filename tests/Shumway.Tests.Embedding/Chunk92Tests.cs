@@ -120,13 +120,10 @@ public class Chunk92Tests
         Assert.False(Fd().Query("X #= A // 2, A in 0..100, X = 4, A = 6.").Success);
     }
 
+    // Division by zero fails, as in SICStus and Scryer.
     [Fact]
-    public void Idiv_ByZero_RaisesEvaluationError()
-    {
-        Assert.True(Fd().Query(
-            "catch(X #= A // 0, error(evaluation_error(zero_divisor), _), " +
-            "true).").Success);
-    }
+    public void Idiv_ByZero_Fails()
+        => Assert.False(Fd().Query("catch(X #= A // 0, _, true).").Success);
 
     // ---- sum/3 ----
 

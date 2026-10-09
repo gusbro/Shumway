@@ -77,6 +77,13 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         msortp(L, S) :- msort(L, S).
         appendp(A, B, C) :- append(A, B, C).
         univp(T, L) :- T =.. L.
+        :- public attr_all/1.
+        :- public mkp/2.
+        attr_all([]).
+        attr_all([V|Vs]) :- put_attr(V, m2, a), attr_all(Vs).
+        mkp(Vs, A) :- A =.. [s|Vs].
+        :- public attr_args/1.
+        attr_args(T) :- T =.. [_|As], attr_all(As).
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -148,6 +155,12 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "append/3 keeps an attvar that lives in a list cell" },
         { "T = f(X), put_attr(X, m2, a), univp(T, [_, A]), A == X, get_attr(A, m2, V), V == a.",
           "=../2 keeps an attvar that lives in an argument slot" },
+        { "length(Vs, 2), attr_all(Vs), mkp(Vs, T), Vs = [X|_], arg(1, T, A), A == X, get_attr(A, m2, V), V == a.",
+          "=../2 building a term from list cells that are the attvars' homes" },
+        { "length(L, 1), attr_all(L), univp(L, [_, A, _]), L = [X], A == X, get_attr(A, m2, V), V == a.",
+          "=../2 taking apart a cons whose head is the attvar's home" },
+        { "functor(T, g, 2), attr_args(T), univp(T, [_, A, _]), arg(1, T, X), A == X, get_attr(A, m2, V), V == a.",
+          "=../2 taking apart a compound whose argument slots are the attvars' homes" },
     };
 
     private static PrologEngine Tier0()
@@ -247,7 +260,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
             bool callsCorpus = goal.Contains("samep(") || goal.Contains("wrap(")
                 || goal.Contains("unwrap(") || goal.Contains("through(")
                 || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_")
-                || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(");
+                || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(")
+                || goal.Contains("mkp(");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }
@@ -277,6 +291,24 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "all_distinct plus labeling" },
         { "length(L, 2), L ins 0..1, msort(L, [A, _]), ( A = 5 -> fail ; true ).",
           "a sorted domain variable keeps its domain" },
+        { "catch((X in 0..1, X = b), error(type_error(integer, V), _), true), V == b.",
+          "binding a domain variable to an atom is a type error" },
+        { "X in 1..3 \\/ 7..9, fd_size(X, S), S == 6, fd_dom(X, D), D == (1..3 \\/ 7..9).",
+          "a union domain and the reflection predicates" },
+        { "X in 1..9, X #\\= 5, X #> 3, fd_inf(X, I), fd_sup(X, H), I-H == 4-9.",
+          "bounds read back after propagation" },
+        { "X in 0..20, X mod 7 #= 2, fd_inf(X, L), fd_sup(X, H), L-H == 2-16.",
+          "a remainder narrows the dividend" },
+        { "X in -10..10, Y in -3..3, X div Y #= Q, X = -7, Y = 2, Q == -4.",
+          "a variable divisor, decided by its bindings" },
+        { "X in 1..3, Y in 1..3, \\+ (X #\\= Y, X = Y).",
+          "aliasing what a disequality keeps apart fails" },
+        { "X in 1..9, Y in 1..9, abs(X - Y) #\\= 2, X = 5, fd_dom(Y, D), D == (1..2 \\/ 4..6 \\/ 8..9).",
+          "abs(X - Y) #\\= C takes both values out" },
+        { "element(N, [3,5,7], V), V #> 4, findall(N-V, label([N,V]), S), S == [2-5,3-7], length(C, 4), circuit(C), findall(C, label(C), Cs), length(Cs, 6).",
+          "element/3 and circuit/1 labeled" },
+        { "[X,Y] ins 1..3, X #\\= Y, findall(X-Y, labeling([min(X+Y)], [X,Y]), L), L == [1-2,2-1,1-3,3-1,2-3,3-2].",
+          "labeling with min(Expr), best first" },
     };
 
     [Theory]

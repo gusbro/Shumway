@@ -280,7 +280,7 @@ public static class MetaTransform
             && InlinableGoal(fa.Args[1]))
         {
             Term spliced = GoalHasLocalCut(fa.Args[1])
-                ? new CompoundTerm("call", new[] { fa.Args[1] })
+                ? SynthesizeCutBarrierHelper(fa.Args[1], ref counter, helpers)
                 : fa.Args[1];
             Term collectLoop = new CompoundTerm(",", new[]
             {
@@ -318,7 +318,7 @@ public static class MetaTransform
             && InlinableGoal(bs.Args[1]))
         {
             Term rewritten = WithResultListCheck(bs.Args[2], RewriteBagof(
-                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter),
+                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter, helpers),
                 bs.Functor, goal.Position);
             // ADR-035 — the inner collect-loop ';' is bagof/setof, not a user ';'.
             _nextHelperKind = bs.Functor;
@@ -694,7 +694,7 @@ public static class MetaTransform
     /// goal argument (top level, <c>,</c>-chain, <c>;</c> arms, <c>-&gt;</c>
     /// thens). Splicing such a goal into the collect loop would let the cut
     /// reach the DRIVER's disjunction and kill the collect alternative —
-    /// wrap it in call/1 instead so the cut stays local (§7.8.3).</summary>
+    /// the goal goes into a helper clause instead, its barrier (§7.8.3).</summary>
     private static bool GoalHasLocalCut(Term t) => t switch
     {
         AtomTerm { Name: "!" } => true,
@@ -961,21 +961,18 @@ public static class MetaTransform
         var seen = new HashSet<string>();
         CollectNamedVars(innerGoal, freeVars, seen);
 
-        // Recurse into the inner goal — nested control constructs inside the
-        // once'd goal are transformed before becoming the helper's body. No
-        // cutK: once/1 is an opaque cut barrier.
-        innerGoal = TransformGoal(innerGoal, ref counter, helpers);
-
         Term BuildHelperHead() => freeVars.Count == 0
             ? (Term)new AtomTerm(helperName)
             : new CompoundTerm(helperName, freeVars.Select(n => (Term)new VarTerm(n)).ToArray());
 
+        // ignore/1's second clause must outlive a cut in G, which a cut in
+        // the first clause's body would take with it.
+        if (ignoreMode && GoalHasLocalCut(innerGoal))
+            innerGoal = SynthesizeCutBarrierHelper(innerGoal, ref counter, helpers);
+
         // Clause 1: '$once_N'(V1..) :- G, !.
-        Term clause1Body = new CompoundTerm(",", new[]
-        {
-            innerGoal,
-            (Term)new AtomTerm("!"),
-        });
+        Term clause1Body = BarrierBody(innerGoal, ref counter, helpers,
+            g => new CompoundTerm(",", new[] { g, (Term)new AtomTerm("!") }));
         helpers.Add(new Clause(
             ClauseKind.Rule,
             new CompoundTerm(":-", new[] { BuildHelperHead(), clause1Body }),
@@ -986,6 +983,54 @@ public static class MetaTransform
             helpers.Add(new Clause(ClauseKind.Fact, BuildHelperHead(), innerGoal.Position));
 
         return BuildHelperHead();
+    }
+
+    /// <summary>The body of a helper whose clause is an opaque cut barrier
+    /// (once/1, ignore/1, a goal with a cut of its own). A <c>!</c> in a
+    /// <c>;</c> arm or a <c>-&gt;</c> then commits that clause, so the body
+    /// gets the barrier capture a source clause gets (see Apply): without it
+    /// the <c>!</c> cuts only the disjunction's helper.</summary>
+    private static Term BarrierBody(Term goal, ref int counter, List<Clause> helpers,
+        Func<Term, Term>? around = null)
+    {
+        around ??= g => g;
+        if (!HasTransparentBranchCut(goal))
+            return around(TransformGoal(goal, ref counter, helpers));
+        counter++;
+        string cutK = $"$CutB_{counter}";
+        Term transformed = around(TransformGoal(goal, ref counter, helpers, cutK));
+        return new CompoundTerm(",", new[]
+        {
+            (Term)new CompoundTerm("$get_cut_barrier", new Term[] { new VarTerm(cutK) }),
+            transformed,
+        }) { Position = goal.Position };
+    }
+
+    /// <summary>A goal whose own <c>!</c> must stay local to it, as a
+    /// <c>call/1</c> argument's does: <c>'$cutb_N'(V..) :- G.</c> The helper
+    /// clause is the cut's barrier. Not call(G): that runs G at run time
+    /// outside the module the clause belongs to, and a private predicate G
+    /// calls is then not found.</summary>
+    private static Term SynthesizeCutBarrierHelper(
+        Term innerGoal, ref int counter, List<Clause> helpers)
+    {
+        string helperName = HelperName("cutb", ref counter);
+
+        var freeVars = new List<string>();
+        var seen = new HashSet<string>();
+        CollectNamedVars(innerGoal, freeVars, seen);
+
+        Term body = BarrierBody(innerGoal, ref counter, helpers);
+
+        Term BuildHelperHead() => freeVars.Count == 0
+            ? (Term)new AtomTerm(helperName)
+            : new CompoundTerm(helperName, freeVars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new[] { BuildHelperHead(), body }),
+            innerGoal.Position));
+        return WithPosition(BuildHelperHead(), innerGoal.Position);
     }
 
     private static Term SynthesizeNegationHelper(
@@ -1002,8 +1047,7 @@ public static class MetaTransform
         // cut the helper itself and take the second clause — the one that
         // makes the negation succeed — with it, so `\+ ((!, fail))` failed.
         if (GoalHasLocalCut(innerGoal))
-            innerGoal = new CompoundTerm("call", new[] { innerGoal })
-                { Position = innerGoal.Position };
+            innerGoal = SynthesizeCutBarrierHelper(innerGoal, ref counter, helpers);
 
         // Recurse into innerGoal too — a nested \+ inside the negated goal
         // should be transformed before being used as the helper's body.
@@ -1058,7 +1102,8 @@ public static class MetaTransform
     /// a meta-called bagof/setof takes — records and enumerates through the
     /// same two builtins, so both paths group identically.</para></summary>
     private static Term RewriteBagof(
-        string functor, Term template, Term goal, Term bag, ref int counter)
+        string functor, Term template, Term goal, Term bag, ref int counter,
+        List<Clause> helpers)
     {
         var position = goal.Position;
 
@@ -1105,7 +1150,7 @@ public static class MetaTransform
 
         // '$findall_push', Goal', '$findall_record'(Wt-T), fail
         Term splicedGoal = GoalHasLocalCut(goal)
-            ? new CompoundTerm("call", new[] { goal })
+            ? SynthesizeCutBarrierHelper(goal, ref counter, helpers)
             : goal;
         Term collectLoop = new CompoundTerm(",", new[]
         {
@@ -1200,28 +1245,24 @@ public static class MetaTransform
         var recVars = new List<string>();
         CollectNamedVars(recovery, recVars, new HashSet<string>());
 
-        Term transformedGoal = TransformGoal(goal, ref counter, helpers);
-        Term transformedRecovery = TransformGoal(recovery, ref counter, helpers);
-
         static Term Invoke(string name, List<string> vars) => vars.Count == 0
             ? new AtomTerm(name)
             : new CompoundTerm(name, vars.Select(n => (Term)new VarTerm(n)).ToArray());
 
         // '$catchgoal_N'(AllVars) :-
         //   '$catch_begin'(Catcher, '$catchrec_N'(RecVars)), Goal', '$catch_end'.
-        Term goalBody = new CompoundTerm(",", new Term[]
+        Term catchBegin = new CompoundTerm("$catch_begin", new Term[]
         {
-            new CompoundTerm("$catch_begin", new Term[]
-            {
-                catcher,
-                Invoke(recName, recVars),
-            }),
-            new CompoundTerm(",", new Term[]
-            {
-                transformedGoal,
-                new AtomTerm("$catch_end"),
-            }),
+            catcher,
+            Invoke(recName, recVars),
         });
+        Term goalBody = BarrierBody(goal, ref counter, helpers,
+            g => new CompoundTerm(",", new Term[]
+            {
+                catchBegin,
+                new CompoundTerm(",", new Term[] { g, new AtomTerm("$catch_end") }),
+            }));
+        Term transformedRecovery = TransformGoal(recovery, ref counter, helpers);
         helpers.Add(new Clause(
             ClauseKind.Rule,
             new CompoundTerm(":-", new Term[] { Invoke(goalName, allVars), goalBody }),

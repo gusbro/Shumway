@@ -427,6 +427,12 @@ public sealed class WasmTierDelegate
     /// built holds a resume marker, not a bytecode address: read as an
     /// address it resolves to whichever predicate happens to sit below
     /// the marker base and reports offsets in the billions.</summary>
+    private static string Indicator(int fid)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        return $"{AtomTable.GetById(atomId)?.Name}/{arity}";
+    }
+
     private static string DescribeReturn(Activation engine, int cp)
     {
         if (Activation.IsResumeMarker(cp))
@@ -818,8 +824,9 @@ public sealed class WasmTierDelegate
         if (growStack) engine.GrowWasmStack();
         if (DiagOrphanScan && engine.FindOrphanAttVar() is int orphan and >= 0)
             throw new System.InvalidOperationException(
-                $"orphan AttVar after delegate: fid={_functorId} "
-                + $"entry-fid={currentFid} heap[{orphan}] result={result}");
+                $"orphan AttVar after delegate: fid={_functorId} ({Indicator(_functorId)}) "
+                + $"entry-fid={currentFid} ({Indicator(currentFid)}) heap[{orphan}] result={result}: "
+                + engine.DumpHeapWindow(orphan, 8));
         if (pendingPc != int.MinValue)
         {
             engine.SetPc(pendingPc);
