@@ -309,13 +309,17 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "element/3 and circuit/1 labeled" },
         { "[X,Y] ins 1..3, X #\\= Y, findall(X-Y, labeling([min(X+Y)], [X,Y]), L), L == [1-2,2-1,1-3,3-1,2-3,3-2].",
           "labeling with min(Expr), best first" },
+        { "X in 0..5, findall(R, if_(X #< 3, R = lt, R = ge), Rs), Rs == [ge, lt].",
+          "if_/3 on a reified clpfd comparison" },
+        { "tfilter(dif(a), [a,b,X], L), L = [b, Y], Y == X, \\+ X = a.",
+          "tfilter/3 with dif/3, an answer with its constraint" },
     };
 
     [Theory]
     [MemberData(nameof(ClpfdShapes))]
     public void Tier0AndWasmAgreeOnClpfd(string goal, string what)
     {
-        const string prog = ":- use_module(library(clpfd)).";
+        const string prog = ":- use_module(library(clpfd)).\n:- use_module(library(reif)).";
         EnsureProbe();
         var t0 = new PrologEngine();
         t0.IlPromotion.Threshold = 0;

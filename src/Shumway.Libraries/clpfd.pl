@@ -46,6 +46,13 @@
 :- public ('#>')/2.
 :- public ('#=<')/2.
 :- public ('#>=')/2.
+:- public ('#=')/3.
+:- public ('#\\=')/3.
+:- public ('#<')/3.
+:- public ('#>')/3.
+:- public ('#=<')/3.
+:- public ('#>=')/3.
+:- public clpfd_t/2.
 :- public ('in')/2.
 :- public ('ins')/2.
 :- public '$fd_lt'/2.
@@ -64,6 +71,7 @@
 :- public '$fd_alldiff_view'/1.
 :- public '$fd_set'/3.
 :- public '$fd_reif'/4.
+:- public '$fd_bool'/4.
 :- public '$fd_alldiff'/1.
 :- public sum/3.
 :- public scalar_product/4.
@@ -360,6 +368,12 @@ clpfd_prop_to_goal('$fd_reif'(B, Kind, X, Y), G) :-
     ;   B =:= 1 -> clpfd_kind_prop(Kind, X, Y, P), clpfd_prop_to_goal(P, G)
     ;   clpfd_neg(Kind, NKind), clpfd_kind_prop(NKind, X, Y, P), clpfd_prop_to_goal(P, G)
     ).
+clpfd_prop_to_goal('$fd_bool'(Op, B, X, Y), G) :-
+    clpfd_bool_goal(Op, X, Y, C),
+    (   var(B) -> G = (C #<==> B)
+    ;   B =:= 1 -> G = C
+    ;   G = (#\ C)
+    ).
 clpfd_prop_to_goal('$fd_alldiff_view'(Vs), all_different(Vs)).
 % A linear constraint prints as the relation the user wrote, not as the
 % coefficient vector it is stored as. With fewer than two variables left
@@ -390,6 +404,10 @@ clpfd_kind_prop('#=<',  X, Y, '$fd_le'(X, Y)).
 clpfd_kind_prop('#>',   X, Y, '$fd_lt'(Y, X)).
 clpfd_kind_prop('#>=',  X, Y, '$fd_le'(Y, X)).
 clpfd_kind_prop('#\\=', X, Y, '$fd_neq'(X, Y)).
+
+clpfd_bool_goal(and, X, Y, (X #/\ Y)).
+clpfd_bool_goal(or, X, Y, (X #\/ Y)).
+clpfd_bool_goal(implies, X, Y, (X #==> Y)).
 
 clpfd_rel_op(=,  (#=)).
 clpfd_rel_op(=<, (#=<)).
@@ -1797,21 +1815,53 @@ clpfd_reify(C, B) :-
         clpfd_expr(L, X), clpfd_expr(R, Y),
         clpfd_post('$fd_reif'(B, Kind, X, Y), [B, X, Y])
     ; C = (C1 #/\ C2) ->
-        clpfd_reify(C1, B1), clpfd_reify(C2, B2), B #= B1 * B2
+        clpfd_reify(C1, B1), clpfd_reify(C2, B2), clpfd_bool(and, B, B1, B2)
     ; C = (C1 #\/ C2) ->
-        clpfd_reify(C1, B1), clpfd_reify(C2, B2),
-        B #= B1 + B2 - B1 * B2
+        clpfd_reify(C1, B1), clpfd_reify(C2, B2), clpfd_bool(or, B, B1, B2)
     ; C = (#\ C1) ->
         clpfd_reify(C1, B1), B #= 1 - B1
     ; C = (C1 #==> C2) ->
-        clpfd_reify(C1, B1), clpfd_reify(C2, B2),
-        B #= 1 - B1 + B1 * B2
+        clpfd_reify(C1, B1), clpfd_reify(C2, B2), clpfd_bool(implies, B, B1, B2)
     ; C = (C1 #<== C2) ->
-        clpfd_reify(C2, B1), clpfd_reify(C1, B2),
-        B #= 1 - B1 + B1 * B2
+        clpfd_reify(C2, B1), clpfd_reify(C1, B2), clpfd_bool(implies, B, B1, B2)
     ; C == true -> B #= 1
     ; C == false -> B #= 0
     ; throw(error(domain_error(clpfd_reifiable_expression, C), _))
+    ).
+
+% B = B1 Op B2 over 0/1 variables (Op and, or, implies), by the truth
+% table: a product of 0/1 variables (B #= B1 * B2) does not propagate what
+% the connective decides, so B = 1 left a conjunction's two sides open.
+clpfd_bool(Op, B, B1, B2) :-
+    [B, B1, B2] ins 0..1,
+    clpfd_post('$fd_bool'(Op, B, B1, B2), [B, B1, B2]).
+
+'$fd_bool'(and, B, X, Y) :-
+    (   X == 0 -> B = 0
+    ;   Y == 0 -> B = 0
+    ;   X == 1, Y == 1 -> B = 1
+    ;   B == 1 -> X = 1, Y = 1
+    ;   B == 0, X == 1 -> Y = 0
+    ;   B == 0, Y == 1 -> X = 0
+    ;   true
+    ).
+'$fd_bool'(or, B, X, Y) :-
+    (   X == 1 -> B = 1
+    ;   Y == 1 -> B = 1
+    ;   X == 0, Y == 0 -> B = 0
+    ;   B == 0 -> X = 0, Y = 0
+    ;   B == 1, X == 0 -> Y = 1
+    ;   B == 1, Y == 0 -> X = 1
+    ;   true
+    ).
+'$fd_bool'(implies, B, X, Y) :-
+    (   X == 0 -> B = 1
+    ;   Y == 1 -> B = 1
+    ;   X == 1, Y == 0 -> B = 0
+    ;   B == 0 -> X = 1, Y = 0
+    ;   B == 1, X == 1 -> Y = 1
+    ;   B == 1, Y == 0 -> X = 0
+    ;   true
     ).
 
 clpfd_reif_cmp((L #= R),   '#=',   L, R).
@@ -1882,6 +1932,36 @@ clpfd_entail_('#\\=', DX, DY, _, _, _, _, E) :-
     ; '$dom_singleton'(DX, V), '$dom_singleton'(DY, V) -> E = false
     ; E = unknown
     ).
+
+% ===== truth values, for library(reif) =====
+% A reifiable constraint answered with true or false, so if_/3 can choose
+% a branch by it. Undecided, it answers false first (the negation posted),
+% then true (the constraint posted).
+%! clpfd_t(+Constraint, ?T) | CLP(FD): reification | T is true when the reifiable Constraint holds and false when it does not; undecided, false with its negation posted, then true with the constraint posted. A reified condition for if_/3 of library(reif).
+clpfd_t(C, T) :-
+    clpfd_reify(C, B),
+    clpfd_truth(B, T).
+
+clpfd_truth(B, T) :-
+    (   B == 1 -> T = true
+    ;   B == 0 -> T = false
+    ;   T == true -> B = 1
+    ;   T == false -> B = 0
+    ;   var(T) -> ( B = 0, T = false ; B = 1, T = true )
+    ).
+
+%! #=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #= Y holds and false when it does not, as clpfd_t/2.
+'#='(X, Y, T) :- clpfd_t(X #= Y, T).
+%! #\=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #\= Y holds and false when it does not, as clpfd_t/2.
+'#\\='(X, Y, T) :- clpfd_t(X #\= Y, T).
+%! #<(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #< Y holds and false when it does not, as clpfd_t/2.
+'#<'(X, Y, T) :- clpfd_t(X #< Y, T).
+%! #>(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #> Y holds and false when it does not, as clpfd_t/2.
+'#>'(X, Y, T) :- clpfd_t(X #> Y, T).
+%! #=<(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #=< Y holds and false when it does not, as clpfd_t/2.
+'#=<'(X, Y, T) :- clpfd_t(X #=< Y, T).
+%! #>=(?X, ?Y, ?T) | CLP(FD): reification | T is true when X #>= Y holds and false when it does not, as clpfd_t/2.
+'#>='(X, Y, T) :- clpfd_t(X #>= Y, T).
 
 % ===== GNU-Prolog FD compatibility shim =====
 % Aliases mapping GProlog's fd_* primitives onto the clpfd above, so the

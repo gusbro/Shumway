@@ -459,8 +459,16 @@ public static partial class MetaBuiltins
         // Same resolution as the consult-time directive (file search path,
         // coroutining, compat libraries), returning the loaded export-qualified
         // module name (or null).
-        string? src = host.ExecuteUseModuleDirective(arg, throwOnUnresolved: true);
-        if (src is not null) host.ImportAllExportsIntoUser(src);
+        // Loaded by a running goal: what it defines links into this query's
+        // code, as consult/1's does, so the goal's next call reaches it.
+        var prevLive = host._liveConsultEngine;
+        host._liveConsultEngine = engine;
+        try
+        {
+            string? src = host.ExecuteUseModuleDirective(arg, throwOnUnresolved: true);
+            if (src is not null) host.ImportAllExportsIntoUser(src);
+        }
+        finally { host._liveConsultEngine = prevLive; }
         return true;
     }
 

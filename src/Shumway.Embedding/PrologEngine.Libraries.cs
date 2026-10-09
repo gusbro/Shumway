@@ -35,18 +35,50 @@ public sealed partial class PrologEngine
     /// CLP(FD)/CLP(R) on one engine. Idempotent.</summary>
     public void UseCoroutining() => UseLibrary(LibraryBundles.Coroutining);
 
+    /// <summary>Loads the reified-conditions library into this engine:
+    /// <c>if_/3</c>, <c>(=)/3</c>, <c>dif/3</c>, <c>tfilter/3</c> and their
+    /// family, which choose between branches by a truth value instead of by
+    /// success, so a decided condition leaves no choice point. Loads the
+    /// coroutining library too (an undecided condition answers with
+    /// <c>dif/2</c>). Idempotent.</summary>
+    public void UseReif() => UseLibrary(LibraryBundles.Reif);
+
     // The engine's own libraries load from bundles baked at build time
     // (Shumway.Libraries), one path on every target; a loaded library is
     // recorded so a repeated request (UseClpfd after use_module, a
     // dependency importing it again) does not load it twice.
     private readonly HashSet<string> _loadedEngineLibraries = new();
 
+    /// <summary>Loads one of the engine's own libraries by name, as a
+    /// bundle that calls it asks.</summary>
+    internal void UseEngineLibrary(string name)
+    {
+        if (!LibraryBundles.IsEngineLibrary(name))
+            throw new System.IO.InvalidDataException(
+                $"Bundle: needs the engine library '{name}', which this Shumway does not have.");
+        UseLibrary(name);
+    }
+
+    /// <summary>The engine libraries loaded so far, in a fixed order.</summary>
+    internal IEnumerable<string> LoadedEngineLibraries
+        => LibraryBundles.Names.Where(_loadedEngineLibraries.Contains);
+
     private void UseLibrary(string name)
     {
         if (!_loadedEngineLibraries.Add(name)) return;
+        var before = _liveConsultEngine is null
+            ? null : new HashSet<int>(_precompiledStaticPredicates.Keys);
         LoadBundle(LibraryBundles.Get(name));
         SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
         MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
+        // Loaded by a running goal: link it into that goal's code now, as a
+        // mid-query consult links what it defines.
+        if (_liveConsultEngine is { } live && before is not null)
+        {
+            EnsureLiveDynamicTrampolines(live);
+            LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
+                .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
+        }
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -1121,6 +1153,7 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
         bool changed = false;
         List<int>? added = null;
+        List<(int Fid, string Provider)>? addedFrom = null;
         Dictionary<string, List<int>>? kept = null;
         foreach (int fid in srcManifest.ExportFunctors)
         {
@@ -1131,6 +1164,7 @@ public sealed partial class PrologEngine
             {
                 changed = true;
                 (added ??= new List<int>()).Add(fid);
+                (addedFrom ??= new()).Add((fid, provider));
             }
             else if (userManifest.Imports[fid] is { } existing && existing != provider)
             {
@@ -1147,6 +1181,9 @@ public sealed partial class PrologEngine
                     + $"'{winner}' — keeping '{winner}', ignoring '{sourceModule}'.");
         if (added is not null) WarnImportsShadowGlobals(added, sourceModule);
         if (changed) InvalidatePersistent();
+        // Imported by a running goal: its code calls the bare names now.
+        if (_liveConsultEngine is { } live && addedFrom is not null)
+            LinkImportsLive(live, addedFrom);
     }
 
     // The prelude is exempt from shadow warnings — importing a name it also

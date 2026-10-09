@@ -207,6 +207,10 @@ internal sealed class BundleLoader
             string probe = PrologEngine.ResolveForeignAssemblyPath(libName, bundleDir) ?? libName;
             E.UseNativeLibrary(probe);
         }
+        // The engine's own libraries the code calls, each from its own baked
+        // bundle, before this bundle's code.
+        foreach (var libName in bundle.EngineLibraries)
+            E.UseEngineLibrary(libName);
         // A shumway-lib librarian archive stores its modules as verbatim
         // .shmo objects (bundle.ArchiveMembers) rather than post-link
         // Entries. Derive a runnable entry from each — exactly the fields a

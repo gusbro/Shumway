@@ -62,7 +62,7 @@ public static class BundleWriter
             HashSet<int>? bytecodeShipped = null;
             if (includeCompiledIl && effective.Any(en => en.CompiledIl is null))
             {
-                warmEngine = BuildWarmEngine(effective);
+                warmEngine = BuildWarmEngine(effective, bundle.EngineLibraries);
                 bytecodeShipped = BytecodeAtRunTime(effective, warmEngine);
                 // Stable-dynamic census — the link-time calleeMap only ever
                 // sees a dynamic predicate's hollow trampoline (the compiler
@@ -298,6 +298,11 @@ public static class BundleWriter
             bw.Write((uint)module.Length);
             bw.Write(module);
         }
+        // Engine-libraries trailer: the engine's own libraries the code
+        // calls. Mirrors ShmoLinker.SerialiseBundle exactly.
+        bw.Write((uint)bundle.EngineLibraries.Count);
+        foreach (var name in bundle.EngineLibraries)
+            WriteLengthPrefixedUtf8(bw, name);
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());
@@ -317,7 +322,8 @@ public static class BundleWriter
     /// per-entry engine this replaces saw only that module + the prelude, so
     /// every cross-module <c>Call</c> rejected its caller as
     /// call-&gt;unresolved.</summary>
-    private static Shumway.Embedding.PrologEngine BuildWarmEngine(BundleEntry[] entries)
+    private static Shumway.Embedding.PrologEngine BuildWarmEngine(BundleEntry[] entries,
+        IReadOnlyList<string> engineLibraries)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         var bare = new List<BundleEntry>();
@@ -348,12 +354,15 @@ public static class BundleWriter
         // engine's own: its helper predicates ($prelude$$disj_N) are numbered
         // by the compile that made them, and compiled code names them.
         Shumway.Embedding.PrologEngine engine;
+        // The engine libraries the code calls load first, as at run time.
+        var warm = new Bundle(bare, foreignAssemblies: null, snapshot: null,
+            engineLibraries: engineLibraries);
         if (bare.Any(e => e.ModuleName == Prelude.ModuleName))
-            engine = Shumway.Embedding.PrologEngine.FromBundle(new Bundle(bare));
+            engine = Shumway.Embedding.PrologEngine.FromBundle(warm);
         else
         {
             engine = new Shumway.Embedding.PrologEngine();
-            if (bare.Count > 0) engine.LoadBundle(new Bundle(bare));
+            if (bare.Count > 0 || engineLibraries.Count > 0) engine.LoadBundle(warm);
         }
         foreach (var s in sources) engine.ConsultString(s);
         engine.Query("true.");

@@ -72,7 +72,9 @@ internal static class DialectRegistry
                 or "pairs" or "ordsets" or "debug" or "gensym"
                 or "iso_ext" or "terms" => (true, ""),
             "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
-            "clpz" => (true, ":- use_module(library(clpfd)).\n"),
+            // clpz_t/2, clpz's general reifier for if_/3, is our clpfd_t/2.
+            "clpz" => (true, ":- use_module(library(clpfd)).\n"
+                + "clpz_t(C, T) :- clpfd_t(C, T).\n"),
             // Trealla's clpz references arithmetic:popcount/2 in its
             // reification residuals; the rest of their arithmetic.pl is
             // evaluable-function machinery our `is` covers natively.

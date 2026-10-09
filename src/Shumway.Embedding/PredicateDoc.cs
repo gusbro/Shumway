@@ -104,6 +104,7 @@ public static class PredicateDoc
         "Atoms & strings",
         "Attributed variables",
         "Coroutining",
+        "Reified conditions",
         "Input / output",
         "Flags, operators & reflection",
         "Grammar",
@@ -134,6 +135,7 @@ public static class PredicateDoc
     private static readonly (string Category, string Library, string? Method)[] CategoryLibrary =
     {
         ("Coroutining", "coroutining", "UseCoroutining"),
+        ("Reified conditions", "reif", "UseReif"),
         ("Quad tests", "quads", null),
         ("CLP(FD): domains", "clpfd", "UseClpfd"),
         ("CLP(FD): arithmetic constraints", "clpfd", "UseClpfd"),

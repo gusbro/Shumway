@@ -1111,6 +1111,7 @@ public sealed partial class PrologEngine
     private static readonly string[] LibraryModules =
     {
         Prelude.ModuleName, LibraryBundles.Clpfd, LibraryBundles.Clpr, LibraryBundles.Coroutining,
+        LibraryBundles.Reif,
     };
 
     internal static bool IsLibraryModule(string moduleName)
@@ -1667,6 +1668,94 @@ public sealed partial class PrologEngine
             return;
         }
 
+        PublishLiveLink(engine, link, loadOffset, addrMap, switchTables, ownsHost);
+    }
+
+    /// <summary>Links the predicates an engine library's bundle brought in
+    /// while a query runs (use_module/1 called by a goal, or a consult/1 of a
+    /// file that imports the library) into that query's code, as
+    /// <see cref="LinkConsultedStaticPredicatesLive"/> does for consulted
+    /// clauses: otherwise the query's next call into the library is
+    /// undefined. Predicates the query already reaches, and dynamic ones
+    /// (their trampolines are <see cref="EnsureLiveDynamicTrampolines"/>'s),
+    /// are skipped.</summary>
+    internal void LinkLoadedPredicatesLive(
+        Activation engine, IEnumerable<Shumway.Compiler.Wam.CompiledPredicate> loaded)
+    {
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
+            || engine.SwitchTables is not { } switchTables)
+            return;
+        var preds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        foreach (var pred in loaded)
+        {
+            if (_dynStore.IsDynamic(pred.FunctorId)) continue;
+            if (addrMap.TryGetValue(pred.FunctorId, out int a)
+                && !Shumway.Core.CallTarget.IsUnresolved(a))
+                continue;
+            preds.Add(pred);
+        }
+        if (preds.Count == 0) return;
+        bool ownsHost = EngineOwnsHostBuffer(engine);
+        int loadOffset = engine.ProgramLength;
+        Shumway.Compiler.Wam.Linker.LinkResult link;
+        try
+        {
+            link = new Shumway.Compiler.Wam.Linker().Link(
+                preds, loadOffset, externalSymbols: addrMap,
+                switchTableIdBase: switchTables.Count);
+        }
+        catch (InvalidOperationException)
+        {
+            // The next top-level setup links the library whole.
+            return;
+        }
+        PublishLiveLink(engine, link, loadOffset, addrMap, switchTables, ownsHost);
+    }
+
+    /// <summary>Makes the imports a running goal just added callable bare
+    /// from that goal's code: each bare name takes the address of the
+    /// definition its import names (<c>provider$name</c>), linked by the
+    /// load that defined it.</summary>
+    internal void LinkImportsLive(Activation engine, IReadOnlyList<(int Fid, string Provider)> imports)
+    {
+        if (engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap) return;
+        var visible = engine.LiveConsultVisibleFids ??= new HashSet<int>();
+        bool any = false;
+        foreach (var (fid, provider) in imports)
+        {
+            if (addrMap.TryGetValue(fid, out int own) && !Shumway.Core.CallTarget.IsUnresolved(own))
+                continue;
+            var (nameId, arity) = FunctorTable.Lookup(fid);
+            int mangled = ModuleQualify.Mangle(
+                AtomTable.Intern(provider, permanent: true).Id, nameId, arity);
+            if (!addrMap.TryGetValue(mangled, out int a) || Shumway.Core.CallTarget.IsUnresolved(a))
+                continue;
+            addrMap[fid] = a;
+            visible.Add(fid);
+            any = true;
+        }
+        if (any) engine.BumpProgramGeneration();
+    }
+
+    /// <summary><see cref="LinkImportsLive"/> for every import of
+    /// <c>user</c> whose definition is linked by now.</summary>
+    internal void LinkUserImportsLive(Activation engine)
+    {
+        if (!_modules.TryGetValue(DefaultModuleName, out var user) || user.Imports.Count == 0)
+            return;
+        var imports = new List<(int, string)>(user.Imports.Count);
+        foreach (var (fid, provider) in user.Imports) imports.Add((fid, provider));
+        LinkImportsLive(engine, imports);
+    }
+
+    /// <summary>Appends a link made against a live query's address map to
+    /// that query's code and publishes its addresses, so the query's
+    /// direct calls and meta-calls reach the new predicates.</summary>
+    private void PublishLiveLink(Activation engine, Shumway.Compiler.Wam.Linker.LinkResult link,
+        int loadOffset, Shumway.Core.LayeredIntMap<int> addrMap,
+        List<Shumway.Core.SwitchTable> switchTables, bool ownsHost)
+    {
         engine.AppendCode(link.Bytecode);
         byte[] prog = engine.CurrentProgram!;
 

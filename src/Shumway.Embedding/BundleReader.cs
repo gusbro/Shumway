@@ -268,8 +268,13 @@ public static class BundleReader
                     + $"got {bytes.Length}).");
             wasmModules[i] = bytes;
         }
+        // Engine-libraries trailer.
+        uint engineLibraryCount = br.ReadUInt32();
+        var engineLibraries = new List<string>((int)engineLibraryCount);
+        for (uint i = 0; i < engineLibraryCount; i++)
+            engineLibraries.Add(ReadLengthPrefixedUtf8(br));
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
-            nativeLibraries, generatorVersion, arityCompat, wasmModules);
+            nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

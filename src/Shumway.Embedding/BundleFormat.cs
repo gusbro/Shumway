@@ -68,6 +68,9 @@ namespace Shumway.Embedding;
 ///                 wasmModuleCount  : uint32   (shumway-link --wasm: relocatable
 ///                       wasm modules of the static predicates; 0 otherwise)
 ///                   each module    : byteCount:uint32 + bytes
+///                 engineLibCount   : uint32   (the engine's own libraries the
+///                       code calls, loaded before it: clpfd, coroutining, ...)
+///                   each library   : { nameLen:uint32, nameBytes:utf-8 }
 /// </code>
 ///
 /// <para>pre-release format policy (same as <see cref="ShmoFormat"/>): there

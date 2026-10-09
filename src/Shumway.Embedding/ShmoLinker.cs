@@ -74,6 +74,23 @@ public static class ShmoLinker
         var foreignIndicators = ReflectForeignAssemblies(
             config, Emit, out var foreignAssemblyNames);
 
+        // ----- 0-engine. The engine's own libraries the objects import (a
+        // baked use_module dependency): their publics are available as the
+        // foreign ones are, and their code stays in their own bundles, which
+        // loading this one loads first.
+        var engineLibraries = new List<string>();
+        void AddEngineLibraries(IEnumerable<ShmoObject> objs)
+        {
+            foreach (var obj in objs)
+                foreach (var dep in obj.LibraryDeps)
+                    if (dep.Baked && !engineLibraries.Contains(dep.LibName))
+                    {
+                        engineLibraries.Add(dep.LibName);
+                        foreignIndicators.UnionWith(LibraryBundles.PublicsOf(dep.LibName));
+                    }
+        }
+        AddEngineLibraries(config.Objects);
+
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
         // in on demand, FIFO, to satisfy otherwise-unresolved references
@@ -93,6 +110,7 @@ public static class ShmoLinker
         // inputs win, source compilation last).
         if (config.LibraryDirs.Count > 0)
             linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
+        AddEngineLibraries(linkInput);
 
         // ADR-038 — a use_module(library(X)) dependency that is still unresolved
         // (X's module is not among the linked inputs, not a member of a passed
@@ -1015,7 +1033,8 @@ public static class ShmoLinker
                 archiveMembers: null, nativeLibraries: nativeLibNames,
                 // any Arity module makes the whole program expect
                 // Arity call semantics at runtime (unknown=fail).
-                arityCompat: objects.Any(o => o.ArityCompat));
+                arityCompat: objects.Any(o => o.ArityCompat),
+                engineLibraries: engineLibraries);
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -2154,6 +2173,10 @@ public static class ShmoLinker
             bw.Write((uint)module.Length);
             bw.Write(module);
         }
+        // Engine-libraries trailer. Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.EngineLibraries.Count);
+        foreach (var name in bundle.EngineLibraries)
+            WriteString(bw, name);
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());

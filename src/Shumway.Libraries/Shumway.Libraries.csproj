@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The engine's own Prolog libraries (clpfd, clpr, coroutining), compiled
+  <!-- The engine's own Prolog libraries (clpfd, clpr, coroutining, reif), compiled
        and linked at build time into the bundles PrologEngine.UseClpfd() and
        use_module(library(clpfd)) load. They live in their own assembly
        because the bake runs the compiler and linker of Shumway.Embedding
@@ -45,7 +45,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <LibrarySource Include="clpfd.pl;clpr.pl;coroutining.pl" />
+    <LibrarySource Include="clpfd.pl;clpr.pl;coroutining.pl;reif.pl" />
     <!-- The source text travels too: the predicate reference is generated
          from the libraries' doc comments, which a Release bundle drops. -->
     <EmbeddedResource Include="@(LibrarySource)" LogicalName="%(Filename).pl" />

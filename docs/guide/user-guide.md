@@ -266,14 +266,15 @@ The attributed-variable libraries are opt-in:
 engine.UseClpfd();        // module 'clpfd': finite-domain constraints
 engine.UseClpr();         // module 'clpr': linear-real constraints
 engine.UseCoroutining();  // module 'coroutining': freeze/2, dif/2
+engine.UseReif();         // module 'reif': if_/3 and reified conditions
 ```
 
-All three can be enabled on one engine (their `verify_attributes/4`
+All of them can be enabled on one engine (the `verify_attributes/4`
 hooks are `:- multifile`, dispatched by the attribute module); keep each
 variable's constraints within one library: mixed clpfd+clpr constraints
 on the same variable are not supported. From Prolog source, the same
 libraries load with `:- use_module(library(clpfd))` /
-`library(clpr)` / `library(coroutining))`.
+`library(clpr)` / `library(coroutining)` / `library(reif)`.
 
 The integers of `clpfd` are those from -576460752303423488 to
 576460752303423487, and `inf` and `sup` stand for a side with no bound. An
@@ -322,6 +323,26 @@ variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
+
+The reif library chooses between two branches by a truth value instead of
+by success. A reified condition is a closure called with one more argument
+that it binds to `true` or `false`, and `if_(If_1, Then_0, Else_0)` runs
+the branch it names. When the arguments decide the condition no choice
+point is left; when they do not, both branches come, each with its
+constraint: `true` with the unification, `false` with `dif/2`.
+
+```prolog
+?- if_(X = a, R = yes, R = no).
+X = a, R = yes ;
+dif(X, a), R = no.
+```
+
+`(=)/3` and `dif/3` are the basic conditions, `(',')/3` and `(;)/3`
+combine them, and `tfilter/3`, `tpartition/4`, `memberd_t/3`, `tmember/2`,
+`tmember_t/3` and `cond_t/3` are built on them. clpfd's comparisons are
+reified conditions too: `#=/3`, `#\=/3`, `#</3`, `#>/3`, `#=</3` and
+`#>=/3`, and `clpfd_t(Constraint, T)` for any reifiable constraint, so
+`if_(X #< 3, ..., ...)` works on finite-domain variables.
 
 A goal woken by a binding runs at the end of the stretch of unifications
 that made the binding: a clause's head unification, the `=/2` goals after
@@ -801,6 +822,10 @@ The linker performs three checks:
    - The builtin registry.
    - The always-loaded prelude (`member/2`, `length/2`,
      `current_predicate/1`, etc.).
+   - The public predicates of the engine's own libraries a module imports
+     (`clpfd`, `clpr`, `coroutining`, `reif`). Their code is not linked in:
+     the bundle names them, and loading it loads each from its own baked
+     bundle first.
 3. **Missing predicates.** Anything unresolved is emitted as
    `missing_predicate` (error, or warning under `--allow-undefined`).
 4. **Dead-code elimination.** Modules no root reached are dropped from
