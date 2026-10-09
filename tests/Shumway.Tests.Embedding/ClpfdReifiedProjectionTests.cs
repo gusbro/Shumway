@@ -124,9 +124,10 @@ public sealed class ClpfdReifiedProjectionTests
     [InlineData("X #< 0, Y #= X*X", "Y", "1..sup")]
     [InlineData("X*Z #= Y, X = Z", "Y", "0..sup")]
     [InlineData("X in 1..10, Z #> 0, Y #= X*Z", "Y", "1..sup")]
-    [InlineData("X in -3..2, Z in 2..sup, Y #= X*Z", "Y", "inf..sup")]
+    // |Z| >= 2: no product is -1 or 1.
+    [InlineData("X in -3..2, Z in 2..sup, Y #= X*Z", "Y", @"inf..-2\/0\/2..sup")]
     [InlineData("X in 2..3, Z #=< -1, Y #= X*Z", "Y", "inf..-2")]
-    [InlineData("X in 0..3, Z #> 5, Y #= X*Z", "Y", "0..sup")]
+    [InlineData("X in 0..3, Z #> 5, Y #= X*Z", "Y", @"0\/6..sup")]
     [InlineData("X in 0..100, Y #= X**12", "Y", "0..sup")]
     public void AProductOfTwoVariables_IsBoundedWithInfiniteSidesToo(string goal, string var, string domain)
         => Assert.Equal(domain, Domain(goal, var));

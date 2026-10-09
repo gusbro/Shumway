@@ -900,25 +900,126 @@ clpfd_times_one(K, Y, C) :-
     ),
     clpfd_narrow_bounds(Y, YLo, YHi).
 
-% The product's bounds are the least and the greatest of the four corner
-% products, an unbounded side included (clpfd_bxmul): X in 1..sup gives
-% X*Z in 1..sup for Z in 1..10. X*X is a square, never negative.
+% The product over the parts of one sign of each factor: the least and the
+% greatest corner product of each pair of parts, an unbounded side included
+% (clpfd_bxmul: X in 1..sup gives X*Z in 1..sup for Z in 1..10), and the
+% union of those. X*X is a square, never negative. Parts keep a gap around
+% 0 out of the product: X, Y in -3 \/ 3 give X*Y in -9 \/ 9.
 clpfd_times_gen(A, B, C) :-
-    clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
-    (   A == B -> clpfd_square_bounds(AMin, AMax, CLo, CHi)
-    ;   clpfd_dom_of(B, DB), clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
-        clpfd_bxmul(AMin, BMin, P1), clpfd_bxmul(AMin, BMax, P2),
-        clpfd_bxmul(AMax, BMin, P3), clpfd_bxmul(AMax, BMax, P4),
-        clpfd_bmin(P1, P2, L1), clpfd_bmin(P3, P4, L2), clpfd_bmin(L1, L2, CLo),
-        clpfd_bmax(P1, P2, H1), clpfd_bmax(P3, P4, H2), clpfd_bmax(H1, H2, CHi)
+    clpfd_dom_of(A, DA), clpfd_sign_parts(DA, PA),
+    (   A == B -> clpfd_square_dom(PA, DC)
+    ;   clpfd_dom_of(B, DB), clpfd_sign_parts(DB, PB),
+        clpfd_iv(1, 0, Empty), clpfd_product_dom(PA, PB, Empty, DC)
     ),
-    clpfd_narrow_bounds(C, CLo, CHi).
-
-clpfd_square_bounds(Lo, Hi, SLo, SHi) :-
-    (   clpfd_ble(0, Lo) -> clpfd_bxmul(Lo, Lo, SLo), clpfd_bxmul(Hi, Hi, SHi)
-    ;   clpfd_ble(Hi, 0) -> clpfd_bxmul(Hi, Hi, SLo), clpfd_bxmul(Lo, Lo, SHi)
-    ;   SLo = 0, clpfd_bxmul(Lo, Lo, S1), clpfd_bxmul(Hi, Hi, S2), clpfd_bmax(S1, S2, SHi)
+    clpfd_narrow_dom(C, DC),
+    (   A == B -> clpfd_square_back(A, C)
+    ;   clpfd_times_back(A, B, C),
+        clpfd_times_back(B, A, C)
     ).
+
+% X = C / Y: each part of Y of one sign bounds X by the corner quotients,
+% rounded inwards. Y = 0 leaves X free when C may be 0; when C may not, 0
+% leaves both factors.
+clpfd_times_back(X, Y, C) :-
+    clpfd_dom_of(C, DC), clpfd_dom_of(Y, DY),
+    (   clpfd_in_dom(0, DC) ->
+        (   clpfd_in_dom(0, DY) -> true
+        ;   clpfd_factor_dom(DY, DC, DX), clpfd_narrow_dom(X, DX)
+        )
+    ;   clpfd_dom_del(DY, 0, DY1), clpfd_narrow(Y, DY1),
+        clpfd_dom_of(Y, DY2),
+        clpfd_factor_dom(DY2, DC, DX),
+        clpfd_dom_of(X, DX0), clpfd_dom_del(DX0, 0, DX1),
+        clpfd_dom_isect(DX1, DX, DXn), clpfd_narrow(X, DXn)
+    ).
+
+% The values X can take for X * Y in DC, Y in DY: the union of the quotient
+% ranges over Y's parts of one sign (clpfd_sign_parts: a gap around 0 in DY
+% stays out of the corners). Y = 0 is the caller's.
+clpfd_factor_dom(DY, DC, DX) :-
+    clpfd_dom_min(DC, CL), clpfd_dom_max(DC, CH),
+    clpfd_sign_parts(DY, Parts),
+    clpfd_iv(1, 0, Empty),
+    clpfd_factor_parts(Parts, CL, CH, Empty, DX).
+
+clpfd_factor_parts([], _, _, D, D).
+clpfd_factor_parts([L-H|Ps], CL, CH, D0, D) :-
+    (   L == 0, H == 0 -> D1 = D0
+    ;   clpfd_ble(1, L) ->
+        clpfd_corner_div(CL, L, ceil, L1), clpfd_corner_div(CL, H, ceil, L2),
+        clpfd_corner_div(CH, L, floor, H1), clpfd_corner_div(CH, H, floor, H2),
+        clpfd_bmin(L1, L2, Lo), clpfd_bmax(H1, H2, Hi),
+        '$dom_new'(Lo, Hi, DP), '$dom_union'(D0, DP, D1)
+    ;   clpfd_corner_div(CH, L, ceil, L3), clpfd_corner_div(CH, H, ceil, L4),
+        clpfd_corner_div(CL, L, floor, H3), clpfd_corner_div(CL, H, floor, H4),
+        clpfd_bmin(L3, L4, Lo), clpfd_bmax(H3, H4, Hi),
+        '$dom_new'(Lo, Hi, DN), '$dom_union'(D0, DN, D1)
+    ),
+    clpfd_factor_parts(Ps, CL, CH, D1, D).
+
+% A corner of C / Y, rounded up or down. Y infinite is the limit, 0: the
+% part's finite end bounds the quotient on the side an infinite C reaches.
+clpfd_corner_div(C, Y, Round, Q) :-
+    (   integer(Y) ->
+        ( Round == ceil -> clpfd_bceildiv(C, Y, Q) ; clpfd_bfloordiv(C, Y, Q) )
+    ;   Q = 0
+    ).
+
+% X * X = C: |X| at most the root of C's greatest value and at least the
+% root, rounded up, of its least positive one.
+clpfd_square_back(X, C) :-
+    clpfd_dom_of(C, DC), clpfd_dom_min(DC, CL), clpfd_dom_max(DC, CH),
+    (   integer(CH) -> clpfd_isqrt(CH, R), NR is -R, clpfd_narrow_bounds(X, NR, R)
+    ;   true
+    ),
+    (   integer(CL), CL > 1 ->
+        CL1 is CL - 1, clpfd_isqrt(CL1, R1), Q is R1 + 1, NQ is -Q,
+        '$dom_new'(inf, NQ, Neg), '$dom_new'(Q, sup, Pos), '$dom_union'(Neg, Pos, Out),
+        clpfd_narrow_dom(X, Out)
+    ;   CL == 1 -> clpfd_dom_of(X, DX), clpfd_dom_del(DX, 0, DX1), clpfd_narrow(X, DX1)
+    ;   true
+    ).
+
+% The integer square root, the float estimate corrected (a float is exact
+% only to 2^53).
+clpfd_isqrt(N, R) :- R0 is truncate(sqrt(N)), clpfd_isqrt_fix(N, R0, R).
+clpfd_isqrt_fix(N, R0, R) :-
+    (   R0 * R0 > N -> R1 is R0 - 1, clpfd_isqrt_fix(N, R1, R)
+    ;   (R0 + 1) * (R0 + 1) =< N -> R1 is R0 + 1, clpfd_isqrt_fix(N, R1, R)
+    ;   R = R0
+    ).
+
+% A domain's hull split by sign: Lo-Hi of its negative values, 0-0 when it
+% holds 0, Lo-Hi of its positive values.
+clpfd_sign_parts(D, Parts) :-
+    clpfd_dom_min(D, Min), clpfd_dom_max(D, Max),
+    ( '$dom_prev'(D, 0, NHi) -> Parts = [Min-NHi|P1] ; Parts = P1 ),
+    ( clpfd_in_dom(0, D) -> P1 = [0-0|P2] ; P1 = P2 ),
+    ( '$dom_next'(D, 0, PLo) -> P2 = [PLo-Max] ; P2 = [] ).
+
+clpfd_product_dom([], _, D, D).
+clpfd_product_dom([L1-H1|Ps], Qs, D0, D) :-
+    clpfd_product_parts(Qs, L1, H1, D0, D1),
+    clpfd_product_dom(Ps, Qs, D1, D).
+
+clpfd_product_parts([], _, _, D, D).
+clpfd_product_parts([L2-H2|Qs], L1, H1, D0, D) :-
+    clpfd_bxmul(L1, L2, P1), clpfd_bxmul(L1, H2, P2),
+    clpfd_bxmul(H1, L2, P3), clpfd_bxmul(H1, H2, P4),
+    clpfd_bmin(P1, P2, M1), clpfd_bmin(P3, P4, M2), clpfd_bmin(M1, M2, Lo),
+    clpfd_bmax(P1, P2, X1), clpfd_bmax(P3, P4, X2), clpfd_bmax(X1, X2, Hi),
+    '$dom_new'(Lo, Hi, DP), '$dom_union'(D0, DP, D1),
+    clpfd_product_parts(Qs, L1, H1, D1, D).
+
+% The squares of each part: a part keeps one sign, so its ends square to
+% the square's ends.
+clpfd_square_dom(Parts, D) :- clpfd_iv(1, 0, E), clpfd_square_dom_(Parts, E, D).
+clpfd_square_dom_([], D, D).
+clpfd_square_dom_([L-H|Ps], D0, D) :-
+    clpfd_bxmul(L, L, S1), clpfd_bxmul(H, H, S2),
+    clpfd_bmin(S1, S2, Lo), clpfd_bmax(S1, S2, Hi),
+    '$dom_new'(Lo, Hi, DS), '$dom_union'(D0, DS, D1),
+    clpfd_square_dom_(Ps, D1, D).
 
 % C = min(A, B) — C tracks the smaller max/min of the two; since
 % C is below both operands, each operand's lower bound rises to C.
