@@ -31,7 +31,7 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 function Step([string] $name, [scriptblock] $body) {
     $t = [System.Diagnostics.Stopwatch]::StartNew()
     $out = & $body 2>&1
-    $lines = $out | Select-String -Pattern 'error|Warning\(s\)|Error\(s\)|Passed!|Failed!|\[parallel\]|RESULT' |
+    $lines = $out | Select-String -Pattern 'error|Warning\(s\)|Error\(s\)|Passed!|Failed!|\[parallel\]|\[wasm\]|RESULT' |
         ForEach-Object { $_.Line }
     if ($LASTEXITCODE -ne 0 -or ($lines -match 'Failed!|RESULT: FAILED|[1-9]\d* Error\(s\)')) { $script:failed = $true }
     "=== {0,-22} {1,5:N0} s" -f $name, $t.Elapsed.TotalSeconds
@@ -46,7 +46,7 @@ Step 'compiler' { dotnet test tests/Shumway.Tests.Compiler/ --nologo -v q --no-b
 Step 'iso' { dotnet test tests/Shumway.Tests.IsoConformance/ --nologo -v q --no-build }
 Step 'embedding (parallel)' { powershell -NoProfile -File tests/test-embedding-parallel.ps1 }
 if ($Level -in 'engine', 'full') {
-    Step 'wasm' { dotnet test tests/Shumway.Tests.Wasm/ --nologo -v q }
+    Step 'wasm (parallel)' { powershell -NoProfile -File tests/test-wasm-parallel.ps1 }
     Step 'net48 build' { dotnet build -p:ShumwayNetFx=true --nologo -v q }
 }
 if ($Level -eq 'full') {

@@ -66,8 +66,8 @@ jobs:
       # (only hops and no host switches, the exact spend of a goal, every
       # deopt accounted for). Without the flag those 21 tests SKIP, and a
       # gate that skips its instruments is not a gate.
-      - name: Wasm
-        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0 -p:ShumwayDiag=true --filter "Category!=Slow"
+      - name: Wasm (parallel)
+        run: powershell -File tests/test-wasm-parallel.ps1 -Configuration Release -Diag -Filter "Category!=Slow"
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
         env:
@@ -82,7 +82,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: parallel-logs-net10
-          path: TestResults/parallel/*.log
+          path: |
+            TestResults/parallel/*.log
+            TestResults/parallel-wasm/*.log
 
   net48-x86:
     runs-on: windows-latest
