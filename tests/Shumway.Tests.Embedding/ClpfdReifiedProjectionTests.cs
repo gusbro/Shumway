@@ -51,7 +51,7 @@ public sealed class ClpfdReifiedProjectionTests
     [InlineData("B #<==> (X #> 5)", "#>5#<==>")]
     [InlineData("X in 0..10, B #<==> (X #= Y)", "#=")]
     [InlineData("B #<==> (X #= 3), X in 0..9", "#=3#<==>")]
-    [InlineData("X in 0..9, B #<==> (X #\\= 4)", "#\\=4#<==>")]
+    [InlineData(@"X in 0..9, B #<==> (X #\= 4)", @"#\=4#<==>")]
     [InlineData("X in 0..9, (X #< 3) #==> B", "#<3#<==>")]
     [InlineData("X in 0..9, B #==> (X #< 3)", "#<3#<==>")]
     public void AnOpenReification_IsInTheAnswer(string goal, string says)
@@ -69,7 +69,7 @@ public sealed class ClpfdReifiedProjectionTests
     [Theory]
     [InlineData("X in 0..9, Y in 0..9, B #<==> (X #< Y), B = 1", "#<_")]
     [InlineData("X in 0..9, Y in 0..9, B #<==> (X #< Y), B = 0", "#=<_")]
-    [InlineData("X in 0..9, Y in 0..9, B #<==> (X #= Y), B = 0", "#\\=_")]
+    [InlineData("X in 0..9, Y in 0..9, B #<==> (X #= Y), B = 0", @"#\=_")]
     public void ADecidedReification_IsTheConstraintItEnforces(string goal, string says)
     {
         string r = Residue(goal, "[X,Y]");
@@ -78,7 +78,7 @@ public sealed class ClpfdReifiedProjectionTests
     }
 
     [Theory]
-    [InlineData("X in 0..9, B #<==> (X #= 3), B = 0", "[X]", "0..2\\/4..9")]
+    [InlineData("X in 0..9, B #<==> (X #= 3), B = 0", "[X]", @"0..2\/4..9")]
     [InlineData("X in 0..9, B #<==> (X #> 5), B = 1", "[X]", "6..9")]
     public void ADecidedReificationAgainstAnInteger_IsSaidByTheDomain(string goal, string vars, string domain)
     {
@@ -99,10 +99,10 @@ public sealed class ClpfdReifiedProjectionTests
     }
 
     [Theory]
-    [InlineData("X in 0..9, Y in 0..9, (X #= 1) #\\/ (Y #= 2), X = 3", true)]
-    [InlineData("X in 0..9, Y in 0..9, (X #= 1) #\\/ (Y #= 2), X = 3, Y = 2", true)]
-    [InlineData("X in 0..9, Y in 0..9, (X #= 1) #\\/ (Y #= 2), X = 3, Y = 4", false)]
-    [InlineData("X in 0..9, Y in 0..9, (X #= 1) #\\/ (Y #= 2), X = 1, Y = 4", true)]
+    [InlineData(@"X in 0..9, Y in 0..9, (X #= 1) #\/ (Y #= 2), X = 3", true)]
+    [InlineData(@"X in 0..9, Y in 0..9, (X #= 1) #\/ (Y #= 2), X = 3, Y = 2", true)]
+    [InlineData(@"X in 0..9, Y in 0..9, (X #= 1) #\/ (Y #= 2), X = 3, Y = 4", false)]
+    [InlineData(@"X in 0..9, Y in 0..9, (X #= 1) #\/ (Y #= 2), X = 1, Y = 4", true)]
     public void ADisjunctionHolds(string goal, bool holds)
         => Assert.Equal(holds, Fd().Query(goal + ".").Success);
 
@@ -124,9 +124,10 @@ public sealed class ClpfdReifiedProjectionTests
     [InlineData("X #< 0, Y #= X*X", "Y", "1..sup")]
     [InlineData("X*Z #= Y, X = Z", "Y", "0..sup")]
     [InlineData("X in 1..10, Z #> 0, Y #= X*Z", "Y", "1..sup")]
-    [InlineData("X in -3..2, Z in 2..sup, Y #= X*Z", "Y", "inf..sup")]
+    // |Z| >= 2: no product is -1 or 1.
+    [InlineData("X in -3..2, Z in 2..sup, Y #= X*Z", "Y", @"inf..-2\/0\/2..sup")]
     [InlineData("X in 2..3, Z #=< -1, Y #= X*Z", "Y", "inf..-2")]
-    [InlineData("X in 0..3, Z #> 5, Y #= X*Z", "Y", "0..sup")]
+    [InlineData("X in 0..3, Z #> 5, Y #= X*Z", "Y", @"0\/6..sup")]
     [InlineData("X in 0..100, Y #= X**12", "Y", "0..sup")]
     public void AProductOfTwoVariables_IsBoundedWithInfiniteSidesToo(string goal, string var, string domain)
         => Assert.Equal(domain, Domain(goal, var));

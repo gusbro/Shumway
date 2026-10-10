@@ -73,7 +73,7 @@ public class LexerTests
     [InlineData("-->", "-->")]
     [InlineData("=..", "=..")]
     [InlineData("==", "==")]
-    [InlineData("\\=", "\\=")]
+    [InlineData(@"\=", @"\=")]
     [InlineData("@<", "@<")]
     public void SymbolicAtom_IsMaximalRunOfGraphicChars(string source, string expected)
     {
@@ -156,8 +156,8 @@ public class LexerTests
     [InlineData("0'a", 'a')]
     [InlineData("0'Z", 'Z')]
     [InlineData("0' ", ' ')]
-    [InlineData("0'\\n", '\n')]
-    [InlineData("0'\\\\", '\\')]
+    [InlineData(@"0'\n", '\n')]
+    [InlineData(@"0'\\", '\\')]
     public void Integer_CharCodeLiteral_IsParsed(string source, int expected)
     {
         Token t = First(source);

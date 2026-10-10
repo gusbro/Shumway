@@ -18,12 +18,12 @@ public sealed class ClpfdConnectiveTests
 
     [Theory]
     // B #<==> a connective of 0/1 variables propagates each way.
-    [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #/\\ Y #= 0), B = 1", "X-Y", "1-0")]
-    [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #\\/ Y #= 0), B = 0", "X-Y", "0-1")]
+    [InlineData(@"[X,Y] ins 0..1, B #<==> (X #= 1 #/\ Y #= 0), B = 1", "X-Y", "1-0")]
+    [InlineData(@"[X,Y] ins 0..1, B #<==> (X #= 1 #\/ Y #= 0), B = 0", "X-Y", "0-1")]
     [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #==> Y #= 0), B = 0", "X-Y", "1-1")]
     [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #<== Y #= 0), B = 0", "X-Y", "0-0")]
-    [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #/\\ Y #= 0), X = 0", "B", "0")]
-    [InlineData("[X,Y] ins 0..1, B #<==> (X #= 1 #\\/ Y #= 0), Y = 0", "B", "1")]
+    [InlineData(@"[X,Y] ins 0..1, B #<==> (X #= 1 #/\ Y #= 0), X = 0", "B", "0")]
+    [InlineData(@"[X,Y] ins 0..1, B #<==> (X #= 1 #\/ Y #= 0), Y = 0", "B", "1")]
     public void ConnectivesPropagate(string goal, string term, string expected)
         => Holds($"{goal}, {term} == {expected}");
 

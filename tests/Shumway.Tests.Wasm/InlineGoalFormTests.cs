@@ -194,7 +194,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     /// attribute and one that does not.</summary>
     [Theory]
     [InlineData("put_attr(X, m, hello), attr(X, m, V), V == hello")]
-    [InlineData("put_attr(X, m, hello), \\+ attr(X, other, _)")]
+    [InlineData(@"put_attr(X, m, hello), \+ attr(X, other, _)")]
     [InlineData("attr(_, m, _)")]
     [InlineData("attr(foo, m, _)")]
     public void GetAttrAsAMetaCalledGoalAgrees(string goal)

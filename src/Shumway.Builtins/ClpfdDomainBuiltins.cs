@@ -414,6 +414,57 @@ public static class ClpfdDomainBuiltins
             }));
     }
 
+    /// <summary>$fd_cumul(+Starts, +StartDoms, +DurationDoms, +Uses, +UseDoms,
+    /// +Limit, -Applies): cumulative's pruning (see <see cref="ClpfdCumulative"/>).
+    /// The lists run parallel, one entry per task; Limit is an inline integer,
+    /// or inf or sup. Fails when the tasks cannot fit under the limit;
+    /// otherwise Applies is a list of <c>V-NewDom</c> pairs, one per start or
+    /// use whose domain shrank.</summary>
+    public static bool Cumulative(Activation engine)
+    {
+        var starts = ReadListCells(engine, 0);
+        var startDoms = ReadListCells(engine, 1);
+        var durationDoms = ReadListCells(engine, 2);
+        var uses = ReadListCells(engine, 3);
+        var useDoms = ReadListCells(engine, 4);
+        Cell lim = Arg(engine, 5);
+        long limit = lim.Tag == Tag.Int ? lim.AsInt
+            : lim.Tag == Tag.Atom && lim.AsAtomId == SupAtom ? Sup : Inf;
+        int n = starts.Count;
+        var s = new ClpfdDomain[n];
+        var d = new long[n];
+        var u = new ClpfdDomain[n];
+        for (int i = 0; i < n; i++)
+        {
+            s[i] = ReadDom(engine, startDoms[i]);
+            var dd = ReadDom(engine, durationDoms[i]);
+            if (dd.IsEmpty) return false;
+            d[i] = dd.Min;
+            u[i] = ReadDom(engine, useDoms[i]);
+        }
+        var s0 = (ClpfdDomain[])s.Clone();
+        var u0 = (ClpfdDomain[])u.Clone();
+        if (!ClpfdCumulative.Prune(s, d, u, limit)) return false;
+
+        var changed = new System.Collections.Generic.List<(Cell Var, ClpfdDomain Dom)>();
+        for (int i = 0; i < n; i++)
+        {
+            if (!s[i].SameAs(s0[i])) changed.Add((starts[i], s[i]));
+            if (!u[i].SameAs(u0[i])) changed.Add((uses[i], u[i]));
+        }
+        return engine.UnifyRegisterWithHeapAt(6, BuildList(engine, changed.Count, j =>
+        {
+            var (v, dom) = changed[j];
+            // A reference to the variable, as $fd_regin's applies.
+            Cell vRef = v.Tag is Tag.AttVar or Tag.Ref ? Cell.Ref(v.AsHeapIndex) : v;
+            int h = engine.AllocateHeap(3);
+            engine.SetHeap(h, Cell.Functor(MinusFunctor));
+            engine.SetHeap(h + 1, vRef);
+            engine.SetHeap(h + 2, DomCell(engine, dom));
+            return Cell.Str(h);
+        }));
+    }
+
     /// <summary>Reads a proper Prolog list at the register into its (deref'd)
     /// element cells.</summary>
     private static System.Collections.Generic.List<Cell> ReadListCells(Activation engine, int reg)
@@ -459,5 +510,6 @@ public static class ClpfdDomainBuiltins
         BuiltinsRegistry.Register("$dom_prev", 3, Previous);
         BuiltinsRegistry.Register("$dom_nth0", 3, Nth0);
         BuiltinsRegistry.Register("$fd_regin", 3, Regin);
+        BuiltinsRegistry.Register("$fd_cumul", 7, Cumulative);
     }
 }

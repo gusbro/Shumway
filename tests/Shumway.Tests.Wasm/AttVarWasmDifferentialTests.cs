@@ -279,6 +279,8 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "element/3 and circuit/1 labeled" },
         { "[X,Y] ins 1..3, X #\\= Y, findall(X-Y, labeling([min(X+Y)], [X,Y]), L), L == [1-2,2-1,1-3,3-1,2-3,3-2].",
           "labeling with min(Expr), best first" },
+        { "S in 0..10, cumulative([task(2,3,_,1,_), task(S,2,_,1,_)]), fd_dom(S, D), D == (0 \\/ 5..10), findall(S, label([S]), Ss), Ss == [0,5,6,7,8,9,10].",
+          "cumulative/1 keeps a task off a busy stretch" },
         { "X in 0..5, findall(R, if_(X #< 3, R = lt, R = ge), Rs), Rs == [ge, lt].",
           "if_/3 on a reified clpfd comparison" },
         { "tfilter(dif(a), [a,b,X], L), L = [b, Y], Y == X, \\+ X = a.",

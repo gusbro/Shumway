@@ -90,6 +90,9 @@
 :- public '$fd_gcc'/3.
 :- public '$fd_circuit'/1.
 :- public '$fd_tuple'/2.
+:- public cumulative/1.
+:- public cumulative/2.
+:- public '$fd_cumulative'/3.
 :- public fd_inf/2.
 :- public fd_sup/2.
 :- public fd_size/2.
@@ -350,6 +353,7 @@ clpfd_prop_to_goal('$fd_element'(N, L, V), element(N, L, V)).
 clpfd_prop_to_goal('$fd_gcc'(Vs, Ks, Ns), global_cardinality(Vs, Ps)) :- clpfd_gcc_pairs_out(Ks, Ns, Ps).
 clpfd_prop_to_goal('$fd_circuit'(Vs), circuit(Vs)).
 clpfd_prop_to_goal('$fd_tuple'(T, Rel), tuples_in([T], Rel)).
+clpfd_prop_to_goal('$fd_cumulative'(_, Tasks, L), cumulative(Tasks, [limit(L)])).
 clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
     ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
@@ -900,25 +904,126 @@ clpfd_times_one(K, Y, C) :-
     ),
     clpfd_narrow_bounds(Y, YLo, YHi).
 
-% The product's bounds are the least and the greatest of the four corner
-% products, an unbounded side included (clpfd_bxmul): X in 1..sup gives
-% X*Z in 1..sup for Z in 1..10. X*X is a square, never negative.
+% The product over the parts of one sign of each factor: the least and the
+% greatest corner product of each pair of parts, an unbounded side included
+% (clpfd_bxmul: X in 1..sup gives X*Z in 1..sup for Z in 1..10), and the
+% union of those. X*X is a square, never negative. Parts keep a gap around
+% 0 out of the product: X, Y in -3 \/ 3 give X*Y in -9 \/ 9.
 clpfd_times_gen(A, B, C) :-
-    clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
-    (   A == B -> clpfd_square_bounds(AMin, AMax, CLo, CHi)
-    ;   clpfd_dom_of(B, DB), clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
-        clpfd_bxmul(AMin, BMin, P1), clpfd_bxmul(AMin, BMax, P2),
-        clpfd_bxmul(AMax, BMin, P3), clpfd_bxmul(AMax, BMax, P4),
-        clpfd_bmin(P1, P2, L1), clpfd_bmin(P3, P4, L2), clpfd_bmin(L1, L2, CLo),
-        clpfd_bmax(P1, P2, H1), clpfd_bmax(P3, P4, H2), clpfd_bmax(H1, H2, CHi)
+    clpfd_dom_of(A, DA), clpfd_sign_parts(DA, PA),
+    (   A == B -> clpfd_square_dom(PA, DC)
+    ;   clpfd_dom_of(B, DB), clpfd_sign_parts(DB, PB),
+        clpfd_iv(1, 0, Empty), clpfd_product_dom(PA, PB, Empty, DC)
     ),
-    clpfd_narrow_bounds(C, CLo, CHi).
-
-clpfd_square_bounds(Lo, Hi, SLo, SHi) :-
-    (   clpfd_ble(0, Lo) -> clpfd_bxmul(Lo, Lo, SLo), clpfd_bxmul(Hi, Hi, SHi)
-    ;   clpfd_ble(Hi, 0) -> clpfd_bxmul(Hi, Hi, SLo), clpfd_bxmul(Lo, Lo, SHi)
-    ;   SLo = 0, clpfd_bxmul(Lo, Lo, S1), clpfd_bxmul(Hi, Hi, S2), clpfd_bmax(S1, S2, SHi)
+    clpfd_narrow_dom(C, DC),
+    (   A == B -> clpfd_square_back(A, C)
+    ;   clpfd_times_back(A, B, C),
+        clpfd_times_back(B, A, C)
     ).
+
+% X = C / Y: each part of Y of one sign bounds X by the corner quotients,
+% rounded inwards. Y = 0 leaves X free when C may be 0; when C may not, 0
+% leaves both factors.
+clpfd_times_back(X, Y, C) :-
+    clpfd_dom_of(C, DC), clpfd_dom_of(Y, DY),
+    (   clpfd_in_dom(0, DC) ->
+        (   clpfd_in_dom(0, DY) -> true
+        ;   clpfd_factor_dom(DY, DC, DX), clpfd_narrow_dom(X, DX)
+        )
+    ;   clpfd_dom_del(DY, 0, DY1), clpfd_narrow(Y, DY1),
+        clpfd_dom_of(Y, DY2),
+        clpfd_factor_dom(DY2, DC, DX),
+        clpfd_dom_of(X, DX0), clpfd_dom_del(DX0, 0, DX1),
+        clpfd_dom_isect(DX1, DX, DXn), clpfd_narrow(X, DXn)
+    ).
+
+% The values X can take for X * Y in DC, Y in DY: the union of the quotient
+% ranges over Y's parts of one sign (clpfd_sign_parts: a gap around 0 in DY
+% stays out of the corners). Y = 0 is the caller's.
+clpfd_factor_dom(DY, DC, DX) :-
+    clpfd_dom_min(DC, CL), clpfd_dom_max(DC, CH),
+    clpfd_sign_parts(DY, Parts),
+    clpfd_iv(1, 0, Empty),
+    clpfd_factor_parts(Parts, CL, CH, Empty, DX).
+
+clpfd_factor_parts([], _, _, D, D).
+clpfd_factor_parts([L-H|Ps], CL, CH, D0, D) :-
+    (   L == 0, H == 0 -> D1 = D0
+    ;   clpfd_ble(1, L) ->
+        clpfd_corner_div(CL, L, ceil, L1), clpfd_corner_div(CL, H, ceil, L2),
+        clpfd_corner_div(CH, L, floor, H1), clpfd_corner_div(CH, H, floor, H2),
+        clpfd_bmin(L1, L2, Lo), clpfd_bmax(H1, H2, Hi),
+        '$dom_new'(Lo, Hi, DP), '$dom_union'(D0, DP, D1)
+    ;   clpfd_corner_div(CH, L, ceil, L3), clpfd_corner_div(CH, H, ceil, L4),
+        clpfd_corner_div(CL, L, floor, H3), clpfd_corner_div(CL, H, floor, H4),
+        clpfd_bmin(L3, L4, Lo), clpfd_bmax(H3, H4, Hi),
+        '$dom_new'(Lo, Hi, DN), '$dom_union'(D0, DN, D1)
+    ),
+    clpfd_factor_parts(Ps, CL, CH, D1, D).
+
+% A corner of C / Y, rounded up or down. Y infinite is the limit, 0: the
+% part's finite end bounds the quotient on the side an infinite C reaches.
+clpfd_corner_div(C, Y, Round, Q) :-
+    (   integer(Y) ->
+        ( Round == ceil -> clpfd_bceildiv(C, Y, Q) ; clpfd_bfloordiv(C, Y, Q) )
+    ;   Q = 0
+    ).
+
+% X * X = C: |X| at most the root of C's greatest value and at least the
+% root, rounded up, of its least positive one.
+clpfd_square_back(X, C) :-
+    clpfd_dom_of(C, DC), clpfd_dom_min(DC, CL), clpfd_dom_max(DC, CH),
+    (   integer(CH) -> clpfd_isqrt(CH, R), NR is -R, clpfd_narrow_bounds(X, NR, R)
+    ;   true
+    ),
+    (   integer(CL), CL > 1 ->
+        CL1 is CL - 1, clpfd_isqrt(CL1, R1), Q is R1 + 1, NQ is -Q,
+        '$dom_new'(inf, NQ, Neg), '$dom_new'(Q, sup, Pos), '$dom_union'(Neg, Pos, Out),
+        clpfd_narrow_dom(X, Out)
+    ;   CL == 1 -> clpfd_dom_of(X, DX), clpfd_dom_del(DX, 0, DX1), clpfd_narrow(X, DX1)
+    ;   true
+    ).
+
+% The integer square root, the float estimate corrected (a float is exact
+% only to 2^53).
+clpfd_isqrt(N, R) :- R0 is truncate(sqrt(N)), clpfd_isqrt_fix(N, R0, R).
+clpfd_isqrt_fix(N, R0, R) :-
+    (   R0 * R0 > N -> R1 is R0 - 1, clpfd_isqrt_fix(N, R1, R)
+    ;   (R0 + 1) * (R0 + 1) =< N -> R1 is R0 + 1, clpfd_isqrt_fix(N, R1, R)
+    ;   R = R0
+    ).
+
+% A domain's hull split by sign: Lo-Hi of its negative values, 0-0 when it
+% holds 0, Lo-Hi of its positive values.
+clpfd_sign_parts(D, Parts) :-
+    clpfd_dom_min(D, Min), clpfd_dom_max(D, Max),
+    ( '$dom_prev'(D, 0, NHi) -> Parts = [Min-NHi|P1] ; Parts = P1 ),
+    ( clpfd_in_dom(0, D) -> P1 = [0-0|P2] ; P1 = P2 ),
+    ( '$dom_next'(D, 0, PLo) -> P2 = [PLo-Max] ; P2 = [] ).
+
+clpfd_product_dom([], _, D, D).
+clpfd_product_dom([L1-H1|Ps], Qs, D0, D) :-
+    clpfd_product_parts(Qs, L1, H1, D0, D1),
+    clpfd_product_dom(Ps, Qs, D1, D).
+
+clpfd_product_parts([], _, _, D, D).
+clpfd_product_parts([L2-H2|Qs], L1, H1, D0, D) :-
+    clpfd_bxmul(L1, L2, P1), clpfd_bxmul(L1, H2, P2),
+    clpfd_bxmul(H1, L2, P3), clpfd_bxmul(H1, H2, P4),
+    clpfd_bmin(P1, P2, M1), clpfd_bmin(P3, P4, M2), clpfd_bmin(M1, M2, Lo),
+    clpfd_bmax(P1, P2, X1), clpfd_bmax(P3, P4, X2), clpfd_bmax(X1, X2, Hi),
+    '$dom_new'(Lo, Hi, DP), '$dom_union'(D0, DP, D1),
+    clpfd_product_parts(Qs, L1, H1, D1, D).
+
+% The squares of each part: a part keeps one sign, so its ends square to
+% the square's ends.
+clpfd_square_dom(Parts, D) :- clpfd_iv(1, 0, E), clpfd_square_dom_(Parts, E, D).
+clpfd_square_dom_([], D, D).
+clpfd_square_dom_([L-H|Ps], D0, D) :-
+    clpfd_bxmul(L, L, S1), clpfd_bxmul(H, H, S2),
+    clpfd_bmin(S1, S2, Lo), clpfd_bmax(S1, S2, Hi),
+    '$dom_new'(Lo, Hi, DS), '$dom_union'(D0, DS, D1),
+    clpfd_square_dom_(Ps, D1, D).
 
 % C = min(A, B) — C tracks the smaller max/min of the two; since
 % C is below both operands, each operand's lower bound rises to C.
@@ -1759,6 +1864,70 @@ clpfd_add_row([X|Xs], [C|Cs], [C1|Cs1]) :-
 
 clpfd_narrow_cols([], []).
 clpfd_narrow_cols([V|Vs], [C|Cs]) :- clpfd_narrow_dom(V, C), clpfd_narrow_cols(Vs, Cs).
+
+% ===== cumulative/1,2 =====
+%! cumulative(+Tasks) | CLP(FD): global constraints | cumulative/2 with limit(1): the tasks run on a resource of capacity 1.
+cumulative(Tasks) :- cumulative(Tasks, [limit(1)]).
+
+%! cumulative(+Tasks, +Options) | CLP(FD): global constraints | Each task(S, D, E, C, Id) of Tasks starts at S, lasts D >= 0 and ends at E = S + D, using C >= 0 of a resource; at every moment the tasks running use at most L of it, where Options holds limit(L) (1 when it does not). A task that lasts 0 occupies no time. Every start must have a bounded domain.
+cumulative(Tasks, Options) :-
+    '$must_be'(list, Options, cumulative/2),
+    clpfd_cumulative_limit(Options, 1, L),
+    '$must_be'(list, Tasks, cumulative/2),
+    clpfd_cumulative_tasks(Tasks),
+    clpfd_cumulative_bounded(Tasks),
+    clpfd_cumulative_sdc(Tasks, SDC),
+    term_variables(SDC, Watched),
+    clpfd_post('$fd_cumulative'(Watched, Tasks, L), Watched).
+
+% The last limit/1 holds.
+clpfd_cumulative_limit([], L, L).
+clpfd_cumulative_limit([O|Os], _, L) :-
+    (   var(O) -> throw(error(instantiation_error, cumulative/2))
+    ;   O = limit(L1) -> '$must_be'(integer, L1, cumulative/2)
+    ;   throw(error(domain_error(cumulative_option, O), cumulative/2))
+    ),
+    clpfd_cumulative_limit(Os, L1, L).
+
+% Every task is task/5 (anything else fails) of integers or variables; its
+% duration and use are not negative, and it ends at its start plus its
+% duration.
+clpfd_cumulative_tasks([]).
+clpfd_cumulative_tasks([T|Ts]) :-
+    (   var(T) -> throw(error(instantiation_error, cumulative/2))
+    ;   T = task(S, D, E, C, _)
+    ),
+    clpfd_int_or_vars([S, D, E, C], cumulative/2),
+    D #>= 0, C #>= 0, S + D #= E,
+    clpfd_cumulative_tasks(Ts).
+
+clpfd_cumulative_bounded([]).
+clpfd_cumulative_bounded([task(S, _, _, _, _)|Ts]) :-
+    clpfd_dom_of(S, D), clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
+    (   integer(Lo), integer(Hi) -> clpfd_cumulative_bounded(Ts)
+    ;   throw(error(instantiation_error, cumulative/2))
+    ).
+
+clpfd_cumulative_sdc([], []).
+clpfd_cumulative_sdc([task(S, D, _, C, _)|Ts], [S, D, C|SDC]) :-
+    clpfd_cumulative_sdc(Ts, SDC).
+
+% The time table runs natively ($fd_cumul): starts and uses come back
+% narrowed, a duration is read as its least. A limit past the inline
+% integers bounds nothing, or everything.
+'$fd_cumulative'(_, Tasks, L) :-
+    clpfd_cumulative_doms(Tasks, Ss, SDs, DDs, Cs, CDs),
+    (   L > 576460752303423487 -> B = sup
+    ;   L < -576460752303423488 -> B = inf
+    ;   B = L
+    ),
+    '$fd_cumul'(Ss, SDs, DDs, Cs, CDs, B, Applies),
+    clpfd_apply_doms(Applies).
+
+clpfd_cumulative_doms([], [], [], [], [], []).
+clpfd_cumulative_doms([task(S, D, _, C, _)|Ts], [S|Ss], [SD|SDs], [DD|DDs], [C|Cs], [CD|CDs]) :-
+    clpfd_dom_of(S, SD), clpfd_dom_of(D, DD), clpfd_dom_of(C, CD),
+    clpfd_cumulative_doms(Ts, Ss, SDs, DDs, Cs, CDs).
 
 % ===== reification =====
 % B #<==> C : the 0/1 variable B is 1 exactly when constraint C

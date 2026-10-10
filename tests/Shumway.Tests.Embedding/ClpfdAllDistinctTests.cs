@@ -99,21 +99,21 @@ public sealed class ClpfdAllDistinctTests
 
     [Theory]
     // Two variables own 1 and 3, so the third is 2: no interval says so.
-    [InlineData("X in 1 \\/ 3, Y in 1 \\/ 3, Z in 1..3, all_distinct([X, Y, Z])", "Z", "2")]
+    [InlineData(@"X in 1 \/ 3, Y in 1 \/ 3, Z in 1..3, all_distinct([X, Y, Z])", "Z", "2")]
     [InlineData("X in 1..2, Y in 1..2, Z in 1..3, all_distinct([X, Y, Z])", "Z", "3")]
-    [InlineData("X in 1 \\/ 4, Y in 1 \\/ 4, Z in 1..5, all_distinct([X, Y, Z]), fd_dom(Z, D)", "D", "2..3 \\/ 5")]
+    [InlineData(@"X in 1 \/ 4, Y in 1 \/ 4, Z in 1..5, all_distinct([X, Y, Z]), fd_dom(Z, D)", "D", @"2..3 \/ 5")]
     // Too wide to list: interval reasoning still prunes.
     [InlineData("X in 1..2, Y in 1..2, Z in 1..sup, all_distinct([X, Y, Z]), fd_inf(Z, I)", "I", "3")]
     // Domains that were too wide and are no longer: the next wake prunes values again.
     [InlineData("X in 1..sup, Y in 1..sup, Z in 1..sup, all_distinct([X, Y, Z]), "
-        + "X in 1 \\/ 3, Y in 1 \\/ 3, Z in 1..3", "Z", "2")]
+        + @"X in 1 \/ 3, Y in 1 \/ 3, Z in 1..3", "Z", "2")]
     [InlineData("X in 1..200000, Y in 1..200000, Z in 1..200000, all_distinct([X, Y, Z]), "
-        + "X in 1 \\/ 3, Y in 1 \\/ 3, Z in 1..3", "Z", "2")]
+        + @"X in 1 \/ 3, Y in 1 \/ 3, Z in 1..3", "Z", "2")]
     public void Prunes(string goal, string variable, string expected)
         => Assert.True(Engine().Query($"{goal}, {variable} == ({expected}).").Success, goal);
 
     [Theory]
-    [InlineData("X in 1 \\/ 3, Y in 1 \\/ 3, Z in 1 \\/ 3, all_distinct([X, Y, Z])")]
+    [InlineData(@"X in 1 \/ 3, Y in 1 \/ 3, Z in 1 \/ 3, all_distinct([X, Y, Z])")]
     [InlineData("all_distinct([1, X, 1])")]
     [InlineData("X in 1..2, Y in 1..2, Z in 1..2, all_distinct([X, Y, Z])")]
     public void Fails(string goal) => Assert.False(Engine().Query(goal + ".").Success, goal);

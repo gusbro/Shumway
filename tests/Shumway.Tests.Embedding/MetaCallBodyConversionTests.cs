@@ -59,7 +59,7 @@ public class MetaCallBodyConversionTests
     [InlineData("call(X)")]
     [InlineData("once(X)")]
     [InlineData("findall(_, X, _)")]
-    [InlineData("\\+ X")]
+    [InlineData(@"\+ X")]
     public void ANumberInARuntimeBodyRaisesBeforeAnythingRuns(string wrap)
     {
         // GNU raises type_error(callable, (fail,3)) for all four, with the

@@ -37,27 +37,27 @@ public sealed class ClpfdDisequalityTests
     private static bool Holds(string goal) => Engine().Query(goal + ".").Success;
 
     [Theory]
-    [InlineData("X in 1..3, Y in 1..3, X #\\= Y, X = Y")]
+    [InlineData(@"X in 1..3, Y in 1..3, X #\= Y, X = Y")]
     [InlineData("X in 1..3, Y in 1..3, all_different([X, Y]), X = Y")]
-    [InlineData("X in 1..9, Y in 1..9, X - Y #\\= 0, X = Y")]
-    [InlineData("X in 1..9, Y in 1..9, abs(X - Y) #\\= 0, X = Y")]
-    [InlineData("X in 1..9, Y in 0..9, Z in 1..9, X + Y - Z #\\= 0, X = Z, Y = 0")]
+    [InlineData(@"X in 1..9, Y in 1..9, X - Y #\= 0, X = Y")]
+    [InlineData(@"X in 1..9, Y in 1..9, abs(X - Y) #\= 0, X = Y")]
+    [InlineData(@"X in 1..9, Y in 0..9, Z in 1..9, X + Y - Z #\= 0, X = Z, Y = 0")]
     public void AliasingWhatADisequalityKeepsApartFails(string goal)
         => Assert.False(Holds(goal), goal);
 
     [Theory]
-    [InlineData("X in 1..9, Y in 1..9, abs(X - Y) #\\= 3, X = Y")]
-    [InlineData("X in 1..9, Y in 1..9, X - Y #\\= 2, X = Y")]
+    [InlineData(@"X in 1..9, Y in 1..9, abs(X - Y) #\= 3, X = Y")]
+    [InlineData(@"X in 1..9, Y in 1..9, X - Y #\= 2, X = Y")]
     public void AliasingThatSatisfiesItSucceeds(string goal)
         => Assert.True(Holds(goal), goal);
 
     [Theory]
-    [InlineData("X in 1..9, Y in 1..9, abs(X - Y) #\\= 2, X = 5", "Y", "1..2 \\/ 4..6 \\/ 8..9")]
-    [InlineData("X in 1..9, Y in 1..9, abs(X - Y) #\\= 2, Y = 5", "X", "1..2 \\/ 4..6 \\/ 8..9")]
-    [InlineData("X in 1..9, Y in 1..9, 2 #\\= abs(X - Y), X = 5", "Y", "1..2 \\/ 4..6 \\/ 8..9")]
-    [InlineData("X in 1..9, abs(X - 3) #\\= 2", "X", "2..4 \\/ 6..9")]
-    [InlineData("X in 1..9, abs(3 - X) #\\= 0", "X", "1..2 \\/ 4..9")]
-    [InlineData("X in 1..9, Y in 1..9, abs(X - Y) #\\= -1, X = 5", "Y", "1..9")]
+    [InlineData(@"X in 1..9, Y in 1..9, abs(X - Y) #\= 2, X = 5", "Y", @"1..2 \/ 4..6 \/ 8..9")]
+    [InlineData(@"X in 1..9, Y in 1..9, abs(X - Y) #\= 2, Y = 5", "X", @"1..2 \/ 4..6 \/ 8..9")]
+    [InlineData(@"X in 1..9, Y in 1..9, 2 #\= abs(X - Y), X = 5", "Y", @"1..2 \/ 4..6 \/ 8..9")]
+    [InlineData(@"X in 1..9, abs(X - 3) #\= 2", "X", @"2..4 \/ 6..9")]
+    [InlineData(@"X in 1..9, abs(3 - X) #\= 0", "X", @"1..2 \/ 4..9")]
+    [InlineData(@"X in 1..9, Y in 1..9, abs(X - Y) #\= -1, X = 5", "Y", "1..9")]
     public void AbsDiffTakesBothValuesOut(string goal, string variable, string domain)
         => Assert.True(Holds($"{goal}, fd_dom({variable}, D), D == ({domain})"), goal);
 

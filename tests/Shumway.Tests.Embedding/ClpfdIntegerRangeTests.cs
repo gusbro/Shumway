@@ -83,9 +83,9 @@ public sealed class ClpfdIntegerRangeTests
     [InlineData("X #>= -100000000000000000000", TooSmall)]
     [InlineData("X #= 100000000000000000000", TooBig)]
     [InlineData("X in 0..10, X #= 100000000000000000000", TooBig)]
-    [InlineData("X in 0..10, X #\\= 100000000000000000000", TooBig)]
+    [InlineData(@"X in 0..10, X #\= 100000000000000000000", TooBig)]
     [InlineData("X in 0..10, Y #= 1000000000000000000000 * X", TooBig)]
-    [InlineData("X in 0..10, 2000000000000000000 * X #\\= 3", TooBig)]
+    [InlineData(@"X in 0..10, 2000000000000000000 * X #\= 3", TooBig)]
     [InlineData("X in 0..10, Y in 0..10, 2*X + 3*Y #=< 100000000000000000000", TooBig)]
     [InlineData("X in 0..576460752303423488", TooBig)]
     [InlineData("X in -576460752303423489..0", TooSmall)]
@@ -159,19 +159,19 @@ public sealed class ClpfdIntegerRangeTests
     // with, so on an unbounded side the end stays in the domain and the
     // disequality stays in the answer.
     [Theory]
-    [InlineData("X #\\= -576460752303423488", "#\\=-576460752303423488")]
-    [InlineData("X #\\= 576460752303423487", "#\\=576460752303423487")]
-    [InlineData("X #\\= Y, Y = 576460752303423487", "#\\=576460752303423487")]
-    [InlineData("X + Y #\\= -576460752303423488, Y = 0", "#\\=")]
+    [InlineData(@"X #\= -576460752303423488", @"#\=-576460752303423488")]
+    [InlineData(@"X #\= 576460752303423487", @"#\=576460752303423487")]
+    [InlineData(@"X #\= Y, Y = 576460752303423487", @"#\=576460752303423487")]
+    [InlineData(@"X + Y #\= -576460752303423488, Y = 0", @"#\=")]
     public void ADisequalityAgainstAnEndOfTheRange_IsSaidByTheAnswer(string goal, string says)
         => Assert.Contains(says, Residue(goal, "X"));
 
     [Theory]
-    [InlineData("X #\\= 576460752303423487, X = 576460752303423487", "false")]
-    [InlineData("X #\\= -576460752303423488, X = -576460752303423488", "false")]
-    [InlineData("X #\\= -576460752303423488, X = -5", "true")]
-    [InlineData("X + Y #\\= -576460752303423488, Y = 0, X = -576460752303423488", "false")]
-    [InlineData("X + Y #\\= -576460752303423488, Y = 0, X = 7", "true")]
+    [InlineData(@"X #\= 576460752303423487, X = 576460752303423487", "false")]
+    [InlineData(@"X #\= -576460752303423488, X = -576460752303423488", "false")]
+    [InlineData(@"X #\= -576460752303423488, X = -5", "true")]
+    [InlineData(@"X + Y #\= -576460752303423488, Y = 0, X = -576460752303423488", "false")]
+    [InlineData(@"X + Y #\= -576460752303423488, Y = 0, X = 7", "true")]
     public void ADisequalityAgainstAnEndOfTheRange_Holds(string goal, string outcome)
         => Assert.Equal(outcome, Outcome(goal));
 
@@ -232,7 +232,7 @@ public sealed class ClpfdIntegerRangeTests
     [InlineData("X is 2^70, clpfd_add_lo(X, -5, R), R =:= X - 5")]
     [InlineData("X is 2^70, clpfd_sub_hi(5, X, R), R =:= 5 - X")]
     [InlineData("X is 2^70, clpfd_bneg(X, R), R =:= -X")]
-    [InlineData("X is 2^70, clpfd_ble(576460752303423487, X), clpfd_blt(5, X), \\+ clpfd_ble(X, 5)")]
+    [InlineData(@"X is 2^70, clpfd_ble(576460752303423487, X), clpfd_blt(5, X), \+ clpfd_ble(X, 5)")]
     [InlineData("X is -(2^70), clpfd_blt(X, -576460752303423488), clpfd_blt(inf, X), clpfd_blt(X, sup)")]
     [InlineData("X is 2^70, clpfd_bmin(X, 5, 5), clpfd_bmax(X, 5, M), M == X, clpfd_bmax(X, sup, sup)")]
     [InlineData("X is 2^70, clpfd_bmul(inf, X, inf), clpfd_bmul(sup, X, sup), Y is -X, clpfd_bmul(inf, Y, sup)")]
