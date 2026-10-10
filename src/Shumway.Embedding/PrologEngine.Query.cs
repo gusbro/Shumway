@@ -1842,7 +1842,7 @@ public sealed partial class PrologEngine
             mutableSwitchTables, queryModule.BigIntLiterals);
         // Compiled code may run: the tier promotes, or this query's table
         // already holds compiled code (a promoted predicate, a bundle's IL).
-        engine.CompiledCodeActive = () => IlPromotion.Threshold > 0
+        engine.CompiledCodeActive = () => IlPromotion.IlTierActive
             || (IlPromotion.Wasm?.Threshold ?? 0) > 0
             || HoldsCompiledCode(interp.IlByFunctorId);
 

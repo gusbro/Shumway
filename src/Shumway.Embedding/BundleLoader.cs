@@ -1398,8 +1398,11 @@ internal sealed class BundleLoader
         // worker loads and binds it then; one with no bytecode (--strip-wam)
         // has its delegate bound now, and so does a region's root that a
         // member with no bytecode enters through its alias. With a threshold
-        // of zero every delegate is bound now.
-        bool atLoad = E.IlPromotion.PersistedThreshold <= 0;
+        // of zero every delegate is bound now, except the engine's own
+        // prelude's: it waits for the IL tier, as an engine with the tier off
+        // runs Tier-0.
+        bool followsTier = LibraryBundles.IsBakedPrelude(entry);
+        bool atLoad = E.IlPromotion.PersistedThreshold <= 0 && !followsTier;
         HashSet<int>? withBytecode = null;
         if (string.IsNullOrEmpty(entry.Source)
             && E._precompiledModules.TryGetValue(entry.ModuleName, out var precompiled))
@@ -1431,7 +1434,7 @@ internal sealed class BundleLoader
             if (!atLoad && withBytecode?.Contains(fid) != false && aliasRoots?.Contains(fid) != true)
             {
                 E.IlPromotion.OfferPersisted(fid, wakes, E._dynStore.IsDynamic(fid),
-                    () => BindOffered(entry, fid), _ => WarnUnbindable(entry), cost);
+                    () => BindOffered(entry, fid), _ => WarnUnbindable(entry), cost, followsTier);
                 continue;
             }
             if (unbindable) continue;
@@ -1596,6 +1599,15 @@ internal sealed class BundleLoader
         // --exe, WebShumway) answered predicate_property(findall(_,_,_), _)
         // with plain failure.
         bool isPrelude = entry.ModuleName == Prelude.ModuleName;
+        if (isPrelude)
+        {
+            var multifile = new HashSet<int>();
+            foreach (var pi in Prelude.MultifileDeclarations)
+                multifile.Add(Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(pi.Name, permanent: true).Id, pi.Arity));
+            manifest.MultifileFunctors.UnionWith(multifile);
+            E.RecordDeclaredEmpty(null, multifile);
+        }
 
         foreach (var d in entry.Defined)
         {
@@ -1868,8 +1880,7 @@ internal sealed class BundleLoader
             E._staticLink = null;
             E.InvalidatePersistent();
             E._consultHistory.Clear();
-            E.ConsultStringInner(Prelude.Source, recordInHistory: false);
-            E.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+            E.InstallPrelude();
             foreach (var src in snap.ConsultHistory)
                 E.ConsultString(src);
         }

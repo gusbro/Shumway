@@ -49,6 +49,7 @@ public sealed class AttsBridgeLifetimeTests(ITestOutputHelper o)
     public void BothTiersHoldTheSameAttributedVariables(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string p0 = Count(plain, goal);
 

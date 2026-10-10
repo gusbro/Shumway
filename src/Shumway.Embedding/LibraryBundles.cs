@@ -2,11 +2,11 @@ using System.Reflection;
 
 namespace Shumway.Embedding;
 
-/// <summary>The engine's own Prolog libraries (clpfd, clpr, coroutining, reif),
-/// baked at build time into bundles by the Shumway.Libraries assembly.
-/// That assembly cannot be referenced from here (its bake runs the compiler
-/// and linker defined in this one), so it is loaded by name at first use:
-/// a host references it, and roots it when trimming.</summary>
+/// <summary>The engine's own Prolog libraries (clpfd, clpr, coroutining, reif)
+/// and its prelude, baked at build time into bundles by the Shumway.Libraries
+/// assembly. That assembly cannot be referenced from here (its bake runs the
+/// compiler and linker defined in this one), so it is loaded by name at first
+/// use: a host references it, and roots it when trimming.</summary>
 internal static class LibraryBundles
 {
     public const string AssemblyName = "Shumway.Libraries";
@@ -66,21 +66,84 @@ internal static class LibraryBundles
     public static string SourceOf(string name)
         => System.Text.Encoding.UTF8.GetString(ReadResource(name + ".pl"));
 
-    private static byte[] ReadResource(string logicalName)
+    /// <summary>Names the engine build: the baked prelude carries the stamp of
+    /// the build that compiled it, and is used only by that build.</summary>
+    /// <remarks>Null where the runtime cannot name it: the prelude is then
+    /// consulted.</remarks>
+    public static string? EngineBuildStamp
     {
+        get
+        {
+            try { return typeof(LibraryBundles).Assembly.ManifestModule.ModuleVersionId.ToString("N"); }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException) { return null; }
+        }
+    }
+
+    private static Bundle? _bakedPrelude;
+    private static bool _bakedPreludeRead;
+
+    /// <summary>The prelude the libraries' assembly carries, compiled by this
+    /// engine build (with its Tier-1 IL on the desktop): read once, and shared
+    /// by every engine, since loading a bundle only reads it. Null when there
+    /// is none to take: the assembly is absent, its flavour carries none (the
+    /// browser's: the stdlib bundle bakes the prelude there), or another engine
+    /// build baked it. The engine then compiles the prelude's text.</summary>
+    public static Bundle? BakedPrelude
+    {
+        get
+        {
+            lock (Gate)
+            {
+                if (!_bakedPreludeRead)
+                {
+                    _bakedPreludeRead = true;
+                    _bakedPrelude = AcceptBakedPrelude(
+                        TryReadResource(PreludeName + ".stamp", out _),
+                        () => TryReadResource(PreludeName + ".shum", out _));
+                }
+                return _bakedPrelude;
+            }
+        }
+    }
+
+    /// <summary>The baked prelude's bundle, when its stamp names this engine
+    /// build; the bundle is not read otherwise.</summary>
+    internal static Bundle? AcceptBakedPrelude(byte[]? stamp, Func<byte[]?> bundle)
+        => stamp is not null && EngineBuildStamp is { } build
+           && System.Text.Encoding.ASCII.GetString(stamp).Trim() == build
+           && bundle() is { } bytes
+            ? BundleReader.FromBytes(bytes)
+            : null;
+
+    /// <summary>Whether the entry is the prelude this process read from the
+    /// libraries' assembly.</summary>
+    public static bool IsBakedPrelude(BundleEntry entry)
+    {
+        lock (Gate)
+            return _bakedPrelude is { } baked && baked.Entries.Contains(entry);
+    }
+
+    private const string PreludeName = "prelude";
+
+    private static byte[] ReadResource(string logicalName)
+        => TryReadResource(logicalName, out string? why)
+            ?? throw new InvalidOperationException(why);
+
+    private static byte[]? TryReadResource(string logicalName, out string? why)
+    {
+        why = null;
         Assembly asm;
         lock (Gate)
         {
-            string? dir = logicalName.EndsWith(".shum", StringComparison.Ordinal)
-                ? _bakedBundleDir : _sourceDir;
+            string? dir = logicalName.EndsWith(".pl", StringComparison.Ordinal)
+                ? _sourceDir : _bakedBundleDir;
             if (dir is not null)
             {
                 string path = Path.Combine(dir, logicalName);
-                if (!File.Exists(path))
-                    throw new InvalidOperationException(
-                        $"The library bake needs '{logicalName}' in {dir}: bake the libraries "
-                        + "a library imports before it.");
-                return File.ReadAllBytes(path);
+                if (File.Exists(path)) return File.ReadAllBytes(path);
+                why = $"The library bake needs '{logicalName}' in {dir}: bake the libraries "
+                    + "a library imports before it.";
+                return null;
             }
             if (_assembly is null)
             {
@@ -88,17 +151,20 @@ internal static class LibraryBundles
                 catch (Exception ex) when (ex is FileNotFoundException or FileLoadException
                                            or BadImageFormatException)
                 {
-                    throw new InvalidOperationException(
-                        $"The engine's Prolog libraries live in the {AssemblyName} assembly, "
+                    why = $"The engine's Prolog libraries live in the {AssemblyName} assembly, "
                         + "which could not be loaded: reference it from the host application "
-                        + "(and root it when trimming).", ex);
+                        + $"(and root it when trimming). {ex.Message}";
+                    return null;
                 }
             }
             asm = _assembly;
         }
-        using var stream = asm.GetManifestResourceStream(logicalName)
-            ?? throw new InvalidOperationException(
-                $"{AssemblyName} carries no resource '{logicalName}'.");
+        using var stream = asm.GetManifestResourceStream(logicalName);
+        if (stream is null)
+        {
+            why = $"{AssemblyName} carries no resource '{logicalName}'.";
+            return null;
+        }
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
         return ms.ToArray();

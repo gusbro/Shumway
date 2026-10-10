@@ -91,6 +91,7 @@ public sealed class CallSiteTierChangeTests
     public void ADelegateIsReachedFromSitesLinkedBeforeTheTierExisted(string when)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string oracle = Answer(plain);
 
@@ -109,6 +110,7 @@ public sealed class CallSiteTierChangeTests
     public void TurningTheTierOffMakesTheSitesBytecodeAgain()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string oracle = Answer(plain);
 
@@ -137,6 +139,7 @@ public sealed class CallSiteTierChangeTests
     public void ARelinkEvictionAfterTheSitesWereRewrittenHeals()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         plain.ConsultString("lo(4).");
         string oracle = Answer(plain);
@@ -168,6 +171,7 @@ public sealed class CallSiteTierChangeTests
     public void AnEvictionBetweenQueriesHeals()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string oracle = Answer(plain);
 

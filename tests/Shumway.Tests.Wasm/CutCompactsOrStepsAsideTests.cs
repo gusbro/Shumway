@@ -60,6 +60,7 @@ public sealed class CutCompactsOrStepsAsideTests(ITestOutputHelper o)
     public void ACutWhoseDropsOweAWriteCompactsAnyway()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Shumway.Core.Diagnostics.CompactCensus.Reset();
         Assert.True(plain.Query("trailed(R), R == yes.").Success);
@@ -102,6 +103,7 @@ public sealed class CutCompactsOrStepsAsideTests(ITestOutputHelper o)
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query(goal).Success,
             "the interpreter's own answer moved");

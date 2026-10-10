@@ -192,8 +192,9 @@ The REPL is also AOT-publishable: see
 
 ## Embedding Shumway in a .NET application
 
-Add a project reference to `Shumway.Embedding`. The public surface is
-small.
+Add a project reference to `Shumway.Embedding` and to `Shumway.Libraries`,
+which carries the engine's prelude and its constraint libraries already
+compiled. The public surface is small.
 
 ### Spinning up an engine and running a query
 
@@ -222,6 +223,14 @@ The engine is **single-threaded**: only one thread may use a given
 `PrologEngine` at a time. It is **thread-agile**, so you can move it
 between threads as long as access is serialised (no
 `[ThreadStatic]` state).
+
+A predicate called 32 times is compiled to Tier-1 IL on a background
+thread, and the engine switches to that code once it is ready.
+`engine.IlPromotion.Threshold` sets the number of calls; `0` keeps the
+engine on the interpreter (Tier-0), the prelude included. A new engine
+installs the prelude compiled, from `Shumway.Libraries`; without that
+assembly it compiles the prelude from its text, and each new engine takes
+about 10 ms longer to answer its first query.
 
 ### Working with `Solution`
 

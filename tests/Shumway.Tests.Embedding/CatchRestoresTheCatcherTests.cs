@@ -51,7 +51,7 @@ public sealed class CatchRestoresTheCatcherTests
         {
             var e = new PrologEngine();
             e.ConsultString(Program);
-            if (compiled) e.IlPromotion.Threshold = 1;
+            e.IlPromotion.Threshold = compiled ? 1 : 0;
             for (int round = 0; round < (compiled ? 2 : 1); round++)
             {
                 var s = e.Query($"catch(({goal}, O__ = yes), B__, O__ = uncaught(B__)).");

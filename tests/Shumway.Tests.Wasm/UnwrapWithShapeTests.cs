@@ -54,6 +54,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
     public void TheWalkAnswersTheSameAndCostsTheSame()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var p = plain.Query("drive(400, T), length(T, N), N == 400.");
         Assert.True(p.Success, "the interpreter's own answer moved");
@@ -88,6 +89,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
     public void TheHashClauseMetaCallsABuiltin()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("drive_hash(200, T), length(T, N), N == 200.").Success,
             "the interpreter's own answer moved");
@@ -118,6 +120,7 @@ public sealed class UnwrapWithShapeTests(ITestOutputHelper o)
     public void TheWalkOverAttributedVariables()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("drive_attr(150, T), length(T, N), N == 150.").Success,
             "the interpreter's own answer moved");

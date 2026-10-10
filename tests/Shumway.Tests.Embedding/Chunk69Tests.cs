@@ -115,6 +115,7 @@ public class Chunk69Tests
             "outer(X) :- inner(X).\n";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var sols0 = tier0.QueryAll("outer(X).").Select(s => s["X"]).ToList();
 

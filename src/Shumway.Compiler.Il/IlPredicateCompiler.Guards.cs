@@ -1562,6 +1562,11 @@ public sealed partial class IlPredicateCompiler
                 // The cut: a goal boundary (flush pending wakeups; a failing
                 // hook backtracks into the next alternative, pre-commit) — but
                 // no engine Cut call: a fail-direct callee pushed nothing.
+                // ADR-049: with a scope, a pending wake goes to the interpreter
+                // at the cut instead: woken goals run Prolog, and with no choice
+                // point under them their cuts compact the trail past the marks
+                // this chain untrails to.
+                if (chainScope is not null) EmitScopedWakePoint(emit, c.CutPc);
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
                 emit.BranchIfFalse(preCutFail);
@@ -1575,7 +1580,7 @@ public sealed partial class IlPredicateCompiler
                     EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
                         suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b", guardContCtx: gcCtx);
-                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
+                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap, chainScope is not null);
                     emit.MarkLabel(df2);
                     emit.LoadArgument(0);
                     EmitHelperCall(emit, EngineDeallocateMethod);
@@ -1586,7 +1591,7 @@ public sealed partial class IlPredicateCompiler
                     EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
                         suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b", guardContCtx: gcCtx);
-                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
+                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap, chainScope is not null);
                 }
             }
             else
@@ -1597,7 +1602,7 @@ public sealed partial class IlPredicateCompiler
                 // ADR-049: the callee's proceed, with alternatives left: a wake
                 // failing after it backtracks into them, as in Tier-0.
                 if (chainScope is not null && i < k - 1) EmitScopedWakePoint(emit, c.TermPc);
-                EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
+                EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap, chainScope is not null);
             }
 
             if (deallocFail is not null)
@@ -1621,13 +1626,21 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The terminator of one inlined fail-direct clause: rejoin the
     /// guard (<c>proceed</c> / <c>deallocate_proceed</c>), loop (self-tail),
     /// or — ADR-033 — branch to a cross-tail target's shared copy, inheriting
-    /// the continuations on the stack (tail-call composition).</summary>
+    /// the continuations on the stack (tail-call composition).
+    /// <paramref name="wakes"/>: the chain has a scope for wake points.</summary>
     private static void EmitFailDirectTerminator(
         IlEmit emit, FailDirectClause c,
         IlLabel entry, IlLabel join,
         GuardContEmitContext? gcCtx = null,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
+        bool wakes = false)
     {
+        // ADR-049: a tail call is the goal boundary where Tier-0 wakes. A wake
+        // the clause's head queued (an attributed list being walked) fires
+        // there, not at the guard's commit: the loop would otherwise run on
+        // past the hook that extends the list, building cells for ever.
+        if (wakes && (c.SelfTail || c.CrossTailFid >= 0))
+            EmitScopedWakePoint(emit, c.TermPc);
         if (c.DeallocProceed)
         {
             emit.LoadArgument(0);

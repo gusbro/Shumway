@@ -190,12 +190,8 @@ internal static class ReplTopLevel
         // RunQuery has the shared top-level logic to drive.
         _session = new TopLevelSession(engine);
         engine.Flags.Argv = programArgs;
-        // Default: promote a predicate to Tier-1 IL once it has been invoked 32
-        // times, so interactive / --goal runs get compiled code for hot predicates
-        // without any flag. SHUMWAY_IL_PROMOTE=N overrides the threshold; N <= 0
-        // disables promotion (Threshold <= 0 is the "off" sentinel), keeping every
-        // dispatch on the Tier-0 interpreter.
-        engine.IlPromotion.Threshold = 32;
+        // SHUMWAY_IL_PROMOTE=N overrides the engine's promotion threshold; N <= 0
+        // keeps every dispatch on the Tier-0 interpreter.
         string? promoteEnv = Environment.GetEnvironmentVariable("SHUMWAY_IL_PROMOTE");
         if (int.TryParse(promoteEnv, out int promoteN))
             engine.IlPromotion.Threshold = promoteN;

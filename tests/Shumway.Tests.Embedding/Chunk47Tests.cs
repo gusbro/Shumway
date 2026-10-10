@@ -115,6 +115,7 @@ public class Chunk47Tests
             "dispatch(R) :- route(R).\n";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var tier0Sols = tier0.QueryAll("dispatch(X).").Select(s => s["X"]).ToList();
 

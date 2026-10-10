@@ -133,8 +133,9 @@ public class Chunk51Tests
         byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: false);
 
         var engine = new PrologEngine();
+        var before = engine.PrecompiledModules.Keys.ToList();   // the engine's prelude
         engine.LoadBundle(BundleReader.FromBytes(bytes));
 
-        Assert.Empty(engine.PrecompiledModules);
+        Assert.Equal(before, engine.PrecompiledModules.Keys.ToList());
     }
 }

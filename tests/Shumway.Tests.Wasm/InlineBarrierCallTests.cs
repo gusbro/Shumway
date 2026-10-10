@@ -50,6 +50,7 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
     public void TheCutReachesExactlyAsFarAsItsCall(string goal, string _)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _2) = TieredEngine.Build(Corpus);
 
@@ -74,6 +75,7 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
             guarded(X) :- setup_call_cleanup(true, ( a(X), ! ), assertz(fired(yes))).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         Assert.True(plain.Query("findall(X, guarded(X), L), L == [1].").Success,
             "the interpreter's own answer moved");

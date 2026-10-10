@@ -53,6 +53,7 @@ public sealed class DomainEdgeOfRangeTests
     public void TheAnswerIsTheEnginesEitherWay(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query($"{goal}.").Success, $"Tier-0: {goal}");
         var (tier, _, _) = TieredEngine.BuildWithWorld(Corpus, wasmThreshold: 1);

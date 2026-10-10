@@ -125,6 +125,7 @@ public class Chunk42Tests
         // Same query against a fresh PrologEngine (Tier 0 only) and a
         // promoted engine — every solution and its order must match.
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString("""
             :- public q/1.
             q(one).

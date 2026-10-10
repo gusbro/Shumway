@@ -2494,12 +2494,24 @@ internal static class Prelude
     /// <c>SeedMetaTemplatesFromSource</c>: one directive per line.</summary>
     public static HashSet<PredicateRef> DynamicDeclarations => _dynamicDeclarations.Value;
 
-    private static readonly Lazy<HashSet<PredicateRef>> _dynamicDeclarations = new(() =>
+    /// <summary>The predicates the prelude declares <c>:- multifile</c>. A
+    /// prelude installed compiled executes no directives, so loading it
+    /// records these as the consult of its text does.</summary>
+    public static HashSet<PredicateRef> MultifileDeclarations => _multifileDeclarations.Value;
+
+    private static readonly Lazy<HashSet<PredicateRef>> _dynamicDeclarations =
+        new(() => ScanDeclarations("dynamic"));
+
+    private static readonly Lazy<HashSet<PredicateRef>> _multifileDeclarations =
+        new(() => ScanDeclarations("multifile"));
+
+    private static HashSet<PredicateRef> ScanDeclarations(string directive)
     {
         var set = new HashSet<PredicateRef>();
         foreach (System.Text.RegularExpressions.Match m in
             System.Text.RegularExpressions.Regex.Matches(Source,
-                @"^\s*:-\s*dynamic\(?\s*('[^']*'|[a-z][A-Za-z0-9_]*)\s*/\s*(\d+)\s*\)?\s*\.\s*$",
+                @"^\s*:-\s*" + directive
+                + @"\(?\s*('[^']*'|[a-z][A-Za-z0-9_]*)\s*/\s*(\d+)\s*\)?\s*\.\s*$",
                 System.Text.RegularExpressions.RegexOptions.Multiline))
         {
             string name = m.Groups[1].Value;
@@ -2507,5 +2519,5 @@ internal static class Prelude
             set.Add(new PredicateRef(name, int.Parse(m.Groups[2].Value)));
         }
         return set;
-    });
+    }
 }

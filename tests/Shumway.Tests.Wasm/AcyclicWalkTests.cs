@@ -29,6 +29,7 @@ public sealed class AcyclicWalkTests(ITestOutputHelper o)
     public void TheAnswersAreTheInterpreters()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string goal in new[] { "shared(20).", "attv(20).", "cyc.", "cyclist.", "deep.",

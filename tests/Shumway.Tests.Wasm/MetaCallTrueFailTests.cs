@@ -37,6 +37,7 @@ public sealed class MetaCallTrueFailTests(ITestOutputHelper o)
     public void TheAnswersAreTheInterpreters()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string goal in Goals)

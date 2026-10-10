@@ -69,6 +69,16 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         wake_pm(_, none).
         wake_gt(a, Y) :- Y > 2.
         wake_gtx(a, Y) :- Y * 2 + 1 > 5.
+        :- public wake_g/1.
+        :- public wake_cut/1.
+        wake_walk(stop, L, L).
+        wake_walk(go, [_|T], R) :- wake_walk(go, T, R).
+        wake_g(L) :- wake_walk(go, L, _), !.
+        wake_g([z|_]).
+        wake_line(['\n'|T], T) :- !.
+        wake_line([_|T], R) :- wake_line(T, R).
+        wake_cut(L) :- wake_line(L, R), !, wake_cut(R).
+        wake_cut([]).
         :- public sortp/2.
         :- public msortp/2.
         :- public appendp/3.
@@ -138,6 +148,10 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a comparison waits for the woken goal, and fails back into its alternatives" },
         { "findall(Y, (freeze(X, wake_mem(Y, [1, 3])), wake_gtx(X, Y)), Ys).",
           "the same with an expression" },
+        { "findall(A-R, (freeze(L, L = [a]), time_out((wake_g(L) -> A = yes ; A = no), 3000, R)), As).",
+          "a guard's callee walks a frozen list: its tail call wakes" },
+        { "findall(R, ('$lazy_freeze'(L, partial_string(\"ab\\n\", L, [])), time_out(wake_cut(L), 3000, R)), Rs).",
+          "a guard's callee binds a lazy list: its neck cut wakes" },
     };
 
     /// <summary>An attvar whose home is a list cell or an argument slot, handed

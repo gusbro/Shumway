@@ -45,6 +45,7 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
     private static (PrologEngine Plain, PrologEngine Tiered) Both()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         return (plain, tiered);
@@ -151,6 +152,7 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
     public void AModuleDeclaredDynamicRunsAsASnapshotAndSeesItsMutations()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(ModuleCorpus);
         var (tiered, _) = TieredEngine.Build(ModuleCorpus);
         Agree(plain, tiered, "mrun(20).");

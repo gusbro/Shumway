@@ -22,8 +22,8 @@ internal static class SmokeNet48Cli
 
         var engine = new PrologEngine();
 
-        Check("tier-0 default (no IL promotion armed)",
-            () => engine.IlPromotion.Threshold == 0);
+        Check("tier-1 default (IL promotion armed at 32 calls)",
+            () => engine.IlPromotion.Threshold == IlPromotionStore.DefaultThreshold);
 
         Check("arithmetic", () =>
             engine.QueryFirst<long>("X is 6*7.", "X") == 42);

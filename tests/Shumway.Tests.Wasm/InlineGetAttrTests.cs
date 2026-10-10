@@ -151,6 +151,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
     {
         const string Corpus = "ask(G) :- atom_length(ab, _), call(G).";
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
 
@@ -201,6 +202,7 @@ public sealed class InlineGetAttrTests(ITestOutputHelper o)
             """;
 
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("story(_, F), F == f(12, no, 5).").Success,
             "the interpreter's own answer moved");

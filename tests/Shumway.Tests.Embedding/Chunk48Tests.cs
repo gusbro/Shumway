@@ -133,6 +133,7 @@ public class Chunk48Tests
         var src = ":- public g/1.\ng(t(1, two, three)).";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var sol0 = tier0.Query("g(T).");
 

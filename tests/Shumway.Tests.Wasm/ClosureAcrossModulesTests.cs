@@ -30,6 +30,7 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
     public void AClosureCalledFromAnotherModuleStaysInTheChain()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("run(200, S), S == 40200.").Success,
             "the interpreter's own answer moved");
@@ -71,6 +72,7 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
             run(L) :- findall(X-N, (member(X, [a,b]), call(pick(k), X, N)), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("run(L), L == [a-1, b-2].").Success,
             "the interpreter's own answer moved");
@@ -92,6 +94,7 @@ public sealed class ClosureAcrossModulesTests(ITestOutputHelper o)
         {
             string goal = $"run({n}, _).";
             var plain = new PrologEngine();
+            plain.IlPromotion.Threshold = 0;
             plain.ConsultString(Corpus);
             string p0;
             try { p0 = plain.Query(goal).Success ? "ok" : "failed"; }

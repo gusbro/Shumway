@@ -43,6 +43,7 @@ public sealed class VarOnAttributedTests(ITestOutputHelper o)
     public void ATypeTestSeesAnAttributedVariableAsAVariable(string test, string expected)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string p0 = Answer(plain, test);
         Assert.Equal(expected, p0);          // the standard says so, first

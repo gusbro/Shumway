@@ -16,8 +16,9 @@ a single native binary with no .NET runtime dependency and no JIT.
   - `PrologEngine.LoadBundle` skips a persisted-IL blob under AOT and
     uses the bundle entry's bytecode instead.
 
-  Tier-1 is an opt-in performance tier (`engine.IlPromotion.Threshold`);
-  the interpreter answers every query correctly without it.
+  Tier-1 is a performance tier, on by default where the runtime can
+  generate code (`engine.IlPromotion.Threshold`, 0 to turn it off); the
+  interpreter answers every query correctly without it.
 
 ## Publishing
 

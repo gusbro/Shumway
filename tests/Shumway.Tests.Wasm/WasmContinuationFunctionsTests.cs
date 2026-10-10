@@ -126,6 +126,7 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
     {
         WasmPredicateCompiler.CpsGrain = grain;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var e = GroupEngine();
         foreach (string g in Goals)
@@ -146,6 +147,7 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
     {
         WasmPredicateCompiler.CpsGrain = grain;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (e, members) = TieredEngine.Build(Corpus);
         foreach (string g in Goals)

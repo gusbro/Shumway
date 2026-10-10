@@ -53,6 +53,7 @@ public sealed class IncrementalTrailCompactionTests(ITestOutputHelper o)
     public void TheEntriesStillUnwind()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (var (e, name) in new[] { (plain, "Tier-0"), (tiered, "the tier") })

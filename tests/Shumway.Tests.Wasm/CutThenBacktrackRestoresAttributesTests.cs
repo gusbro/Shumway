@@ -55,6 +55,7 @@ public sealed class CutThenBacktrackRestoresAttributesTests(ITestOutputHelper o)
     public void ABacktrackUndoesANarrowingTakenUnderACut(string goal, string expected)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string p0 = Answer(plain, goal);
         // Scryer answers "restored" for the first three, and the fourth is

@@ -68,6 +68,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     public void TheTierAgreesWithTheInterpreter(string goal, string want)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
 
@@ -86,6 +87,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     public void SuccessAndFailureAgreeToo(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         bool expected = plain.Query($"{goal}.").Success;
@@ -100,6 +102,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     public void TheBindingsUnwindOnBacktracking()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         const string Q =
@@ -121,6 +124,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
             frozen(X, Seen) :- freeze(X, Seen = woke), mk2(X, bound, G), call(G).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         Assert.True(plain.Query("frozen(X, S), X == bound, S == woke.").Success,
             "the interpreter's own answer moved");
@@ -183,6 +187,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     private void AgreeOnSuccess(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         bool expected = plain.Query($"{goal}.").Success;
@@ -209,6 +214,7 @@ public sealed class InlineGoalFormTests(ITestOutputHelper o)
     public void ADecliningFormLeavesTheGoalWhereTheHostLooksForIt()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         const string Q = "findall(X, (member(X, [1, 2]), eq(f(X), f(X))), L), "

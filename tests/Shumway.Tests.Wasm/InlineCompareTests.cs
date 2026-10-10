@@ -40,6 +40,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
             diff(A, B) :- A \== B.
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("X = \"\", Y = [], same(X, Y).").Success,
             "the interpreter's own answer moved");
@@ -123,6 +124,7 @@ public sealed class InlineCompareTests(ITestOutputHelper o)
         string ne = $"{setup}, diff(X, Y).";
 
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         // The expectation is checked against the interpreter first: a wrong
         // InlineData would otherwise just move the goalposts for both.

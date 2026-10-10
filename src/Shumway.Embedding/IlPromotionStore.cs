@@ -193,14 +193,33 @@ public sealed class IlPromotionStore
     /// <summary>Offers a bundle's compiled code for a predicate the engine has
     /// the bytecode of; <paramref name="bind"/> runs on the compile worker when
     /// the predicate has earned it (<paramref name="cost"/>: the IL bytes of
-    /// its methods). The first offer wins, and none replaces a delegate.</summary>
+    /// its methods). The first offer wins, and none replaces a delegate.
+    /// Code that <paramref name="followsTier"/> (the engine's own prelude)
+    /// stands only while the IL tier is on: with the tier off the engine runs
+    /// Tier-0, and the code waits for the tier.</summary>
     public void OfferPersisted(int functorId, bool wakes, bool isDynamic,
         Func<(PredicateDelegate Delegate, IlPredicateCompiler.CpsCode? Cps)> bind,
-        Action<string>? failed = null, int cost = 0)
+        Action<string>? failed = null, int cost = 0, bool followsTier = false)
     {
         if (!DynamicCodeSupported || _delegates.ContainsKey(functorId) || _offers.ContainsKey(functorId)
             || _pendingCompiles.Contains(functorId))
             return;
+        if (followsTier)
+        {
+            _heldForTier[functorId] = new HeldOffer(wakes, isDynamic, bind, failed, cost);
+            if (!IlTierOn) return;
+        }
+        Stand(functorId, wakes, isDynamic, bind, failed, cost);
+        // With no tier on, the linker made every site bytecode-only; these
+        // have to count their dispatches.
+        if (Threshold <= 0 && Wasm is not { Enabled: true })
+            PromotabilityChanged?.Invoke();
+    }
+
+    private void Stand(int functorId, bool wakes, bool isDynamic,
+        Func<(PredicateDelegate Delegate, IlPredicateCompiler.CpsCode? Cps)> bind,
+        Action<string>? failed, int cost)
+    {
         _mutationStamp.TryGetValue(functorId, out int stamp);
         _offers[functorId] = new Offer
         {
@@ -209,10 +228,38 @@ public sealed class IlPromotionStore
         };
         _bundleCode.Add(functorId);
         _unpromotable.Remove(functorId);
-        // With no tier on, the linker made every site bytecode-only; these
-        // have to count their dispatches.
-        if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+    }
+
+    private sealed record HeldOffer(bool Wakes, bool IsDynamic,
+        Func<(PredicateDelegate Delegate, IlPredicateCompiler.CpsCode? Cps)> Bind,
+        Action<string>? Failed, int Cost);
+
+    // Code offered only while the IL tier is on, by functor.
+    private readonly Dictionary<int, HeldOffer> _heldForTier = new();
+
+    /// <summary>Whether the IL compiler is this engine's Tier-1 and promotes.</summary>
+    private bool IlTierOn => Threshold > 0 && Wasm is not { Enabled: true };
+
+    // The tier went on or off: code that follows it stands, or its untaken
+    // offers go. A taken one stays until jit_compile(off) returns every
+    // promoted predicate to its bytecode.
+    private void FollowTier()
+    {
+        if (_heldForTier.Count == 0) return;
+        bool on = IlTierOn;
+        foreach (var (fid, held) in _heldForTier)
+        {
+            if (on)
+            {
+                if (!_delegates.ContainsKey(fid) && !_offers.ContainsKey(fid) && !_pendingCompiles.Contains(fid))
+                    Stand(fid, held.Wakes, held.IsDynamic, held.Bind, held.Failed, held.Cost);
+            }
+            else if (_offers.TryGetValue(fid, out var standing) && !standing.Requested)
+            {
+                Withdraw(standing);
+                _bundleCode.Remove(fid);
+            }
+        }
     }
 
     /// <summary>Offers the continuation methods of a delegate bound at load.</summary>
@@ -721,8 +768,12 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _pgoProfileKeys = new();
     private readonly HashSet<int> _pgoOptimized = new();
 
-    /// <summary>Invocation count before an IL compile is attempted. 0 (the default)
-    /// disables promotion.</summary>
+    /// <summary>What <see cref="Threshold"/> starts at.</summary>
+    public const int DefaultThreshold = 32;
+
+    /// <summary>Invocation count before an IL compile is attempted
+    /// (<see cref="DefaultThreshold"/> unless set). 0 or less turns the tier
+    /// off: the engine runs Tier-0 only.</summary>
     public int Threshold
     {
         get => _threshold;
@@ -730,10 +781,16 @@ public sealed class IlPromotionStore
         {
             bool flip = (_threshold <= 0) != (value <= 0);
             _threshold = value;
-            if (flip) PromotabilityChanged?.Invoke();
+            if (!flip) return;
+            FollowTier();
+            PromotabilityChanged?.Invoke();
         }
     }
-    private int _threshold;
+    private int _threshold = DefaultThreshold;
+
+    /// <summary>Whether compiled IL may run: the tier is on and this runtime
+    /// can generate code.</summary>
+    public bool IlTierActive => Threshold > 0 && DynamicCodeSupported;
 
     /// <summary>Fires when the answer of <see cref="IsPermanentlyBytecodeOnly"/>
     /// may have changed for every predicate: the tier turned on or off, a
@@ -837,7 +894,9 @@ public sealed class IlPromotionStore
         {
             bool flip = (_wasm is { Enabled: true }) != (value is { Enabled: true });
             _wasm = value;
-            if (flip) PromotabilityChanged?.Invoke();
+            if (!flip) return;
+            FollowTier();
+            PromotabilityChanged?.Invoke();
         }
     }
     private WasmPromotionStore? _wasm;
@@ -850,7 +909,11 @@ public sealed class IlPromotionStore
 
     /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
     /// flipped in place (its threshold set to or from zero).</summary>
-    internal void WasmEnabledChanged() => PromotabilityChanged?.Invoke();
+    internal void WasmEnabledChanged()
+    {
+        FollowTier();
+        PromotabilityChanged?.Invoke();
+    }
 
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
     public PredicateDelegate? TryGet(int functorId)
@@ -858,11 +921,12 @@ public sealed class IlPromotionStore
 
     /// <summary>Records one invocation; compiles and returns the delegate when the
     /// count crosses the threshold. Null otherwise (under-threshold, in-flight,
-    /// unpromotable, or promotion disabled).</summary>
+    /// unpromotable, or promotion disabled). An engine has one Tier-1: with a
+    /// wasm tier attached the IL compiler promotes nothing.</summary>
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        if (Threshold <= 0 || !DynamicCodeSupported) return null;
+        if (!IlTierOn || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         // Mid-consult, no new promotions: the program is still growing — a

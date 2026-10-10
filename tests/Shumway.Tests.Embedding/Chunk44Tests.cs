@@ -103,6 +103,7 @@ public class Chunk44Tests
         var src = ":- public mul/3.\nmul(X, Y, Z) :- Z is X * Y.";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var sol0 = tier0.Query("mul(6, 7, R).");
 

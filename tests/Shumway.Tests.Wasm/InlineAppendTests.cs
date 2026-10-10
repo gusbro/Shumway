@@ -38,6 +38,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
     public void TheResultIsWhatTheInterpreterBuilds(string goal, string _)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _2) = TieredEngine.Build(Corpus);
 
@@ -79,6 +80,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
             probe(R, T) :- app([a], [b|T], R).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         Assert.True(plain.Query("probe(R, T), T = [c], R == [a,b,c].").Success,
             "the interpreter's own answer moved");
@@ -101,6 +103,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
             all(L) :- findall(R, (pick(X), app(X, [z], R)), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         Assert.True(plain.Query("all(L), L == [[a,z],[a,b,z],[a,b,c,z]].").Success,
             "the interpreter's own answer moved");
@@ -121,6 +124,7 @@ public sealed class InlineAppendTests(ITestOutputHelper o)
             splits(L) :- findall(X-Y, app(X, Y, [a,b]), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         string want = plain.Query(
             "splits(L), with_output_to(atom(A), writeq(L)).").Bindings["A"].ToString()!;

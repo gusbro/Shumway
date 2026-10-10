@@ -32,9 +32,17 @@ public class Chunk39Tests
     // ============================================================================
 
     [Fact]
-    public void Store_DisabledByDefault_DoesNotPromote()
+    public void Store_OnByDefault()
     {
-        var store = new IlPromotionStore();
+        Assert.Equal(32, IlPromotionStore.DefaultThreshold);
+        Assert.Equal(IlPromotionStore.DefaultThreshold, new IlPromotionStore().Threshold);
+        Assert.Equal(IlPromotionStore.DefaultThreshold, new PrologEngine().IlPromotion.Threshold);
+    }
+
+    [Fact]
+    public void Store_ThresholdZero_DoesNotPromote()
+    {
+        var store = new IlPromotionStore { Threshold = 0 };
         var pred = CompileSinglePredicate("greet(world).");
         // Threshold = 0 → RecordInvocation always returns null, never compiles.
         for (int i = 0; i < 50; i++)

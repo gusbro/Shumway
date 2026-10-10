@@ -34,6 +34,7 @@ public sealed class MetaCallToAnUncompiledCalleeTests(ITestOutputHelper o)
     public void AMetaCallToAnUncompiledPredicateDoesNotStepAside()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("drive(L), L == [a-1, b-2, c-3].").Success,
             "the interpreter's own answer moved");

@@ -34,6 +34,7 @@ public sealed class InlineSortTests(ITestOutputHelper o)
     public void TheAnswersAreTheInterpreters()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string goal in new[]

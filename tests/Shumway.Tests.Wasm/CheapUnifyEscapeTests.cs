@@ -30,6 +30,7 @@ public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
             bindit(V) :- V = bound.
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("probe(_, S), S == woke.").Success,
             "the interpreter's own ordering moved");

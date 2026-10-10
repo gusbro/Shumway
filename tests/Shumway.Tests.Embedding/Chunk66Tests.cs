@@ -113,6 +113,7 @@ public class Chunk66Tests
             "choose(X, Y) :- color(X), size(Y).\n";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         int sol0 = tier0.QueryAll("choose(_, _).").Count();
 

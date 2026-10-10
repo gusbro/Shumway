@@ -29,6 +29,7 @@ public sealed class CutRunsTheCleanupTests(ITestOutputHelper o)
     public void TheCleanupRunsAtTheCut(string goal, string expected)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string p0 = Answer(plain, goal);
         // ANTI-VACUITY: the interpreter's answer is the one the cleanup makes.

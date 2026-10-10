@@ -35,6 +35,7 @@ public sealed class TabledOnTierTests
     public void ATabledCallBindsItsAnswerOnTheTier(string goal, string want)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Fib);
         Assert.Equal(want, plain.Query(goal).Bindings["N"].ToString());
 
@@ -69,6 +70,7 @@ public sealed class TabledOnTierTests
             path(X, Y) :- path(X, Z), edge(Z, Y).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(P);
         var want = plain.Query(
             "findall(Y, path(a, Y), L), sort(L, S), "

@@ -18,9 +18,11 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class TimeBuiltinTests
 {
+    // Tier-0: compiled code counts no inferences, and the report then has none.
     private static (PrologEngine Activation, StringWriter Out) Activation(string program = "")
     {
         var e = new PrologEngine();
+        e.IlPromotion.Threshold = 0;
         var sw = new StringWriter();
         e.Out = sw;
         if (program.Length > 0) e.ConsultString(program);
