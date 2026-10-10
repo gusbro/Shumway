@@ -209,7 +209,7 @@ public sealed class NativeReftypeTests
             Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
         // Phase 33 L2 — promotion is background by default; settle the
         // in-flight compile before reading its side-effect counter.
-        Assert.True(e.IlPromotion.WaitForPendingPromotions(),
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000),
             "background promotion of go/2 timed out");
         // Promoted: the compiled code answers (under ADR-061 its continuation
         // methods reach the embedding layer the blocks call into).

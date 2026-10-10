@@ -74,7 +74,7 @@ public sealed class CpsContinuationPruneTests : IDisposable
         for (int round = 0; round < 5 && !expected.All(promoted.ContainsKey); round++)
         {
             foreach (string g in Goals) tiered.Query(g);
-            tiered.IlPromotion.WaitForPendingPromotions();
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = tiered.IlPromotion.PromotedFunctorIds().ToDictionary(Name, fid => fid);
         }
         foreach (string pi in expected)

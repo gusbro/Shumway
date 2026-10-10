@@ -44,7 +44,7 @@ public sealed class IlMetaCallTargetTests
         for (int round = 0; round < 5 && !promoted.Contains("drive/2"); round++)
         {
             Assert.True(e.Query("drive(h, 5).").Success);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         Assert.Contains("drive/2", promoted);
@@ -52,7 +52,7 @@ public sealed class IlMetaCallTargetTests
         for (int round = 0; round < 5 && !promoted.Contains("f/2"); round++)
         {
             Assert.True(e.Query("drive(f, 20).").Success);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         Assert.True(promoted.Contains("f/2"),
@@ -72,7 +72,7 @@ public sealed class IlMetaCallTargetTests
         for (int round = 0; round < 5 && !promoted.Contains("pick/2"); round++)
         {
             Assert.True(e.Query("findall(Y, pick(k, Y), L), L == [1, 2].").Success);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         Assert.Contains("pick/2", promoted);
@@ -80,7 +80,7 @@ public sealed class IlMetaCallTargetTests
         for (int round = 0; round < 5 && !promoted.Contains("t/1"); round++)
         {
             Assert.True(e.Query("findall(Y, pick(t, Y), L), L == [1, 7].").Success);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = e.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         Assert.True(promoted.Contains("t/1"),
@@ -107,7 +107,7 @@ public sealed class IlMetaCallTargetTests
         for (int i = 0; i < 3; i++)
         {
             foreach (string g in goals) tiered.Query(g);
-            tiered.IlPromotion.WaitForPendingPromotions();
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
         Assert.Contains("f/2", tiered.IlPromotion.PromotedFunctorIds().Select(Name));
 

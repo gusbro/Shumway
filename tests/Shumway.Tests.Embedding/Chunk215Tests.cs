@@ -43,7 +43,7 @@ public class Chunk215Tests
         Assert.Equal(new[] { "pos" }, Results(engine, "classify(7, R).", "R"));
 
         // The predicate actually ran on Tier-1 (deep cut, no neck cut).
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("classify", 2)));
     }
 
@@ -67,7 +67,7 @@ public class Chunk215Tests
             """);
 
         Assert.Equal(new[] { "1" }, Results(engine, "g(X).", "X"));
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("g", 1)));
     }
 
@@ -92,7 +92,7 @@ public class Chunk215Tests
             .Select(s => $"{s.Bindings["X"]}-{s.Bindings["R"]}")
             .ToList();
         Assert.Equal(new[] { "2-b" }, sols);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("f", 2)));
     }
 
@@ -119,7 +119,7 @@ public class Chunk215Tests
             Assert.Equal(Results(tier0, q, "R"), Results(tier1, q, "R"));
         }
         Assert.False(tier0.IlPromotion.IsPromoted(Fid("classify", 2)));
-        tier1.IlPromotion.WaitForPendingPromotions();
+        Assert.True(tier1.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(tier1.IlPromotion.IsPromoted(Fid("classify", 2)));
     }
 

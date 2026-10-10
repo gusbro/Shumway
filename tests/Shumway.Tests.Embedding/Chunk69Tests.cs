@@ -41,7 +41,7 @@ public class Chunk69Tests
             foo :- q.
             """);
         Assert.True(engine.Query("foo.").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
 
@@ -60,7 +60,7 @@ public class Chunk69Tests
             foo :- q, r.
             """);
         Assert.True(engine.Query("foo.").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
 
@@ -80,7 +80,7 @@ public class Chunk69Tests
             """);
         Assert.True(engine.Query("foo(ok).").Success);
         Assert.False(engine.Query("foo(nope).").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 1)));
     }
 
@@ -202,7 +202,7 @@ public class Chunk69Tests
             chain :- a, b, c.
             """);
         Assert.True(engine.Query("chain.").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("chain", 0)));
     }
 

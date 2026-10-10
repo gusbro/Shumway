@@ -122,7 +122,7 @@ public sealed class NativeBundleTests
         // inline) to install before the count assertion (see
         // Tier1Inline_ArithmeticWithLocal_Runs for the full rationale — the shared
         // worker races under suite parallelism and `> before` would flake).
-        Assert.True(e.IlPromotion.WaitForPendingPromotions(), "IL promotion did not complete");
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "IL promotion did not complete");
         // confirm the block was actually inlined into IL (not run via dispatch).
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }
@@ -152,7 +152,7 @@ public sealed class NativeBundleTests
         // `$native_run` dispatch while the compile is still queued on the shared
         // worker, so NativeBlocksInlined hasn't bumped yet and `> before` flakes.
         // The results themselves are already verified above on whichever tier ran.
-        Assert.True(e.IlPromotion.WaitForPendingPromotions(), "IL promotion did not complete");
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "IL promotion did not complete");
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }
 

@@ -45,7 +45,7 @@ public class Adr029FusionTests
             stripWam: mode == Mode.Tier1StripWam);
         var e = new PrologEngine();
         e.LoadBundle(BundleReader.FromBytes(bytes));
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("pick", 2)), "pick/2 must be Tier-1 IL");
         return e;
     }

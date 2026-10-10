@@ -90,7 +90,7 @@ public class Chunk71Tests
 
         var engine = new PrologEngine();
         engine.LoadBundle(roundtripped);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("hello", 0)));
         Assert.True(engine.Query("hello.").Success);
     }
@@ -118,9 +118,9 @@ public class Chunk71Tests
         var engine = new PrologEngine();
         engine.LoadBundle(roundtripped);
         // Both predicates promoted, regardless of which path.
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("solo", 0)));
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("many", 1)));
         // Both still answer correctly.
         Assert.True(engine.Query("solo.").Success);
@@ -209,7 +209,7 @@ public class Chunk71Tests
 
         var engine = new PrologEngine();
         engine.LoadBundle(rt);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("color", 1)));
         Assert.True(engine.Query("color(red).").Success);
         Assert.True(engine.Query("color(blue).").Success);

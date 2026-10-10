@@ -60,7 +60,7 @@ public sealed class IlInlineFrameTests : IDisposable
         for (int i = 0; i < 3; i++)
         {
             Assert.True(e.Query(Goal).Success);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
         return e;
     }
@@ -161,7 +161,7 @@ public sealed class IlInlineFrameTests : IDisposable
         for (int i = 0; i < 4; i++)
         {
             tiered.Query("findall(X, t(X), L).");
-            tiered.IlPromotion.WaitForPendingPromotions();
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
         // ANTI-VACUITY: t/1 promoted, and its region pushed its own frames.
         var promoted = tiered.IlPromotion.PromotedFunctorIds().Select(fid =>

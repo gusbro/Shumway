@@ -68,7 +68,7 @@ public class Phase33W6Tests
         // Tier-1: the Warm path IL-compiles the predicate at LoadBundle —
         // failing eligibility would leave it unpromoted.
         var (e, fid) = EngineWith("w6ebatom1", 1, "atom", 1, ilThreshold: 1);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid),
             "ExecuteBuiltin predicate must IL-promote");
         for (int i = 0; i < 4; i++)
@@ -86,7 +86,7 @@ public class Phase33W6Tests
         // CALLER's continuation (BuiltinReturnPc = Cp), not inside the IL
         // method — the contract the emit must mirror from the interpreter.
         var (e, fid) = EngineWith("w6ebbet", 3, "between", 3, ilThreshold: 1);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid),
             "backtrackable ExecuteBuiltin predicate must IL-promote");
         for (int i = 0; i < 4; i++)

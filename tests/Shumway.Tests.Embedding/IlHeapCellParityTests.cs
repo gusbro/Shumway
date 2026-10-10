@@ -60,7 +60,7 @@ public sealed class IlHeapCellParityTests
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
             foreach (string g in Goals) tiered.Query(g);
-            tiered.IlPromotion.WaitForPendingPromotions();
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = tiered.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         // ANTI-VACUITY: the predicates the goals exercise did promote.

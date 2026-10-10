@@ -165,7 +165,7 @@ public sealed class WakeBacktrackingTests
         for (int i = 0; i < rounds; i++)
             Assert.True(e.Query(
                 "freeze(X, member(Y, [1,2,3])), bindit(X, _), Y = 3.").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         // Promoted now: the wake fires at the IL boundary and its
         // alternatives must still be re-enterable.
         for (int i = 0; i < 3; i++)
@@ -184,7 +184,7 @@ public sealed class WakeBacktrackingTests
         var e = Promoted(out int rounds);
         for (int i = 0; i < rounds; i++)
             Assert.True(e.Query("bindit(go, _).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         Assert.False(e.Query(
             "freeze(X, ((!, fail) ; true)), bindit(X, _).").Success);
         Assert.True(e.Query(
@@ -202,7 +202,7 @@ public sealed class WakeBacktrackingTests
         var e = Promoted(out int rounds);
         for (int i = 0; i < rounds; i++)
             Assert.True(e.Query("bindit(go, _).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         Assert.False(e.Query("freeze(X, fail), bindit(X, _).").Success);
         Assert.True(e.Query("( freeze(X, fail), bindit(X, _) ; true ).").Success);
     }
@@ -278,7 +278,7 @@ public sealed class WakeBacktrackingTests
         e.ConsultString(":- public aw/3.\naw(X, Y, Z) :- X = 1, Z is Y + 1.\n");
         for (int i = 0; i < 8; i++)
             Assert.True(e.Query("aw(1, 4, _).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         for (int i = 0; i < 3; i++)
         {
             var s = e.Query("freeze(X, Y = 5), aw(X, Y, Z).");
@@ -313,7 +313,7 @@ public sealed class WakeBacktrackingTests
         Holds();   // Tier-0
         for (int i = 0; i < 8; i++)
             Assert.True(e.Query("catch(bad(foo), _, true), sq(1, 2, 5).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         // ANTI-VACUITY: both run compiled from here on.
         foreach (var (n, a) in new[] { ("bad", 1), ("sq", 3) })
             Assert.True(e.IlPromotion.IsPromoted(Shumway.Core.FunctorTable.Intern(

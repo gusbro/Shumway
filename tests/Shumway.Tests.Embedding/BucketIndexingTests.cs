@@ -44,11 +44,11 @@ public class BucketIndexingTests
             stripWam: mode == Mode.Tier1StripWam);
         var e = new PrologEngine();
         e.LoadBundle(BundleReader.FromBytes(bytes));
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("p", 2)), "p/2 must be Tier-1 IL");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("h", 3)), "h/3 must be Tier-1 IL");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("rr", 2)), "rr/2 must be Tier-1 IL");
         return e;
     }

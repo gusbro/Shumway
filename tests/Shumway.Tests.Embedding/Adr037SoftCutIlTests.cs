@@ -25,7 +25,7 @@ public class Adr037SoftCutIlTests
         Assert.True(e.Query(warmQuery).Success);
         Assert.True(e.Query(warmQuery).Success);
         int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid),
             $"{name}/{arity} must promote to IL (ADR-037 soft_cut emit)");
         return (e, fid);

@@ -120,7 +120,7 @@ public sealed class OccursCheckFlagTests
         e.IlPromotion.Threshold = 3;
         e.ConsultString(":- public mk/2.\nmk(X, Y) :- Y = g(X, h(X)).\n");
         for (int i = 0; i < 8; i++) Assert.True(e.Query("mk(1, _).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         Assert.True(e.Query("set_prolog_flag(occurs_check, true).").Success);
         Assert.False(e.Query("mk(V, V).").Success);
         Assert.True(e.Query("mk(1, W), W == g(1, h(1)).").Success);

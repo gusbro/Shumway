@@ -26,7 +26,7 @@ public class Adr025StageBTests
         Assert.True(e.Query(warmQuery).Success);
         Assert.True(e.Query(warmQuery).Success);
         // Promotion compiles on a worker: wait for it before asking.
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
         Assert.True(e.IlPromotion.IsPromoted(fid),
             $"{name}/{arity} must promote to IL (stage-b emit)");
