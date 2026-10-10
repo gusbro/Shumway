@@ -41,7 +41,7 @@ public class FloatLiteralIlTests
             """);
         int fid = Fid("temp", 2);
         for (int i = 0; i < 3; i++) Assert.True(e.Query("temp(tue, 2.5).").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid));                 // floats no longer block IL
         Assert.True(e.Query("temp(wed, X), X =:= 3.5.").Success);   // get_float into an unbound
         Assert.True(e.Query("temp(D, 1.5), D == mon.").Success);    // get_float match
@@ -59,7 +59,7 @@ public class FloatLiteralIlTests
             make(p(1.25)).
             """);
         for (int i = 0; i < 3; i++) Assert.True(e.Query("make(_).").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("make", 1)));
         Assert.True(e.Query("make(p(X)), X =:= 1.25.").Success);
     }
@@ -68,7 +68,7 @@ public class FloatLiteralIlTests
     public void StaticFloatPredicate_BakedToPersistedIl()
     {
         var e = LoadWithPersistedIl(":- public k/2.\nk(a, 1.5).\nk(b, 2.5).\n");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("k", 2)));   // baked from the bundle, no warm-up
         Assert.True(e.Query("k(b, X), X =:= 2.5.").Success);
         Assert.True(e.Query("k(a, 1.5).").Success);
@@ -81,7 +81,7 @@ public class FloatLiteralIlTests
         // value-baked), so a dynamic predicate with floats also bakes.
         var e = LoadWithPersistedIl(":- dynamic measure/1.\nmeasure(1.5).\nmeasure(2.5).\n");
         int fid = Fid("measure", 1);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("measure(X), X =:= 1.5.").Success);
         Assert.True(e.Query("findall(X, measure(X), L), length(L, N), N == 2.").Success);

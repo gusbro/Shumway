@@ -44,7 +44,7 @@ public sealed class IlCallerCreditTests
         for (int round = 0; round < 5 && !promoted.Contains(driver); round++)
         {
             Assert.True(e.Query(goal).Success, goal);
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = Promoted(e);
         }
         // ANTI-VACUITY: the loop body did promote, so the driver called IL.

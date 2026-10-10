@@ -163,7 +163,7 @@ public class Chunk39Tests
         Assert.True(engine.Query("greet(world).").Success);
         Assert.False(engine.IlPromotion.IsPromoted(fid));
         Assert.True(engine.Query("greet(world).").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(fid));
     }
 
@@ -191,7 +191,7 @@ public class Chunk39Tests
         Assert.True(solA.Success);
         Assert.True(solB.Success);
         Assert.Equal(solA["X"], solB["X"]);
-        engineB.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engineB.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engineB.IlPromotion.IsPromoted(FunctorId("answer", 1)));
     }
 
@@ -208,7 +208,7 @@ public class Chunk39Tests
             """);
 
         Assert.True(engine.Query("colour(red).").Success);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("colour", 1)));
         Assert.False(engine.Query("colour(blue).").Success);
         // Re-run the matching arg through the promoted path.
@@ -249,7 +249,7 @@ public class Chunk39Tests
             // re-promote (green solo, red alongside siblings). Waiting for the
             // in-flight compile to install makes each round a real promote→evict
             // cycle — exercising the background path, just synchronised.
-            engine.IlPromotion.WaitForPendingPromotions();
+            Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             engine.Query("assertz(foo(a)).");                       // mutate → evict
         }
         for (int i = 0; i < 5; i++) engine.Query("foo(_).");

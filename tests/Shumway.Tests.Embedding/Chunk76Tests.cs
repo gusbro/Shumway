@@ -54,7 +54,7 @@ public class Chunk76Tests
         var engine = NewColorEngine(pgoThreshold: 100);
         engine.Query("color(red).");   // crosses promotion threshold
         int fid = Fid("color", 1);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(fid));
         // Indexed-atom shape → it carries a profile, phase 1.
         Assert.True(engine.IlPromotion.IsPgoInstrumented(fid));
@@ -148,7 +148,7 @@ public class Chunk76Tests
             """);
         engine.Query("greet.");
         int fid = Fid("greet", 0);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(fid));
         Assert.False(engine.IlPromotion.IsPgoInstrumented(fid));
         Assert.False(engine.IlPromotion.IsPgoOptimized(fid));

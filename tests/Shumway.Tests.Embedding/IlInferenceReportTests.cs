@@ -91,7 +91,7 @@ public sealed class IlInferenceReportTests
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
             foreach (string g in Goals) Report(tiered, sw1, g);
-            tiered.IlPromotion.WaitForPendingPromotions();
+            Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = tiered.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         // ANTI-VACUITY: the program runs promoted.

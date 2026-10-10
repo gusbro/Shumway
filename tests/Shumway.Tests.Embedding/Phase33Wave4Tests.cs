@@ -35,7 +35,7 @@ public class Phase33Wave4Tests
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("inc(1, Y), Y == 2.").Success);
         // Default mode: the threshold-crossing call waited for the compile.
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("inc(41, Y), Y == 42.").Success);
     }
@@ -60,7 +60,7 @@ public class Phase33Wave4Tests
         for (int i = 0; i < 10; i++)
             Assert.True(e.Query("inc(1, Y), Y == 2.").Success);
         // Barrier: wait for the queued compile, then it must be installed.
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         // The install happens at drain time (inside dispatch or the barrier).
         Assert.True(e.IlPromotion.IsPromoted(fid) || RunOnceMore(e, fid));
         Assert.True(e.Query("inc(41, Y), Y == 42.").Success);
@@ -90,12 +90,12 @@ public class Phase33Wave4Tests
         // mutation afterwards.
         for (int i = 0; i < 5; i++) Assert.True(e.Query("d(1).").Success);
         Assert.True(e.Query("assertz(d(2)).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         Assert.True(e.Query("d(2).").Success);
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2].").Success);
         // And it can still re-promote with the current clauses afterwards.
         for (int i = 0; i < 10; i++) Assert.True(e.Query("d(2).").Success);
-        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2].").Success);
     }
 
@@ -183,7 +183,7 @@ public class Phase33Wave4Tests
         // persistent-buffer self-call site is patched to ExecuteIl/CallIl for the
         // remaining recursion. sum(2*i, i=1..100) = 10100 must still come out.
         Assert.True(e.Query("sumd(100, 0, S), S == 10100.").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(fid));
         // Subsequent queries keep working through the patched persistent code.
         Assert.True(e.Query("sumd(10, 0, S), S == 110.").Success);

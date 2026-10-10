@@ -79,7 +79,7 @@ public sealed class IlRegisterFileTests : IDisposable
         for (int round = 0; round < 6 && !Expected.All(promoted.Contains); round++)
         {
             foreach (string g in Goals) engine.Query(g);
-            engine.IlPromotion.WaitForPendingPromotions();
+            Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
             promoted = engine.IlPromotion.PromotedFunctorIds().Select(Name).ToHashSet();
         }
         foreach (string pi in Expected)
@@ -156,7 +156,7 @@ public sealed class IlRegisterFileTests : IDisposable
                 for (int round = 0; round < 6; round++)
                 {
                     engine.Query("findall(Y, walk(Y), Out).");
-                    engine.IlPromotion.WaitForPendingPromotions();
+                    Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
                 }
             });
             Assert.Contains("ADR-060", ex.ToString());

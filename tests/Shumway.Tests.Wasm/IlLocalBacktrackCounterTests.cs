@@ -24,7 +24,7 @@ public sealed class IlLocalBacktrackCounterTests(ITestOutputHelper o)
     private static long[] Run(PrologEngine engine, string goal)
     {
         for (int i = 0; i < 3; i++) engine.Query(goal);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Array.Clear(Activation.DiagLocalResumes);
         Assert.True(engine.Query(goal).Success, goal);
         return (long[])Activation.DiagLocalResumes.Clone();

@@ -57,7 +57,7 @@ public sealed class IlLocalBacktrackTests
         // length/2's open enumeration: its retry extends the list without a
         // call, so no call-boundary safe point interrupts it either.
         for (int i = 0; i < 3; i++) e.Query("length(L, N), N >= 50, !.");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.PromotedFunctorIds().Any(), "length/2's enumerator did not promote");
 
         bool? done = null;
@@ -86,11 +86,11 @@ public sealed class IlLocalBacktrackTests
             spin_once(K) :- b(K), K > 0, !.
             """);
         for (int i = 0; i < 3; i++) Assert.True(e.Query("spin_once(K).").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         for (int i = 0; i < 4; i++)
         {
             e.Query("time_out(spin, 20, _).");
-            e.IlPromotion.WaitForPendingPromotions();
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
         // ANTI-VACUITY: spin/0 runs as compiled code.
         var promoted = e.IlPromotion.PromotedFunctorIds().Select(fid =>
@@ -129,7 +129,7 @@ public sealed class IlLocalBacktrackTests
         tiered.ConsultString(Corpus);
         for (int i = 0; i < 2; i++)
             foreach (string g in Goals) tiered.Query(g);
-        tiered.IlPromotion.WaitForPendingPromotions();
+        Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
 
         // ANTI-VACUITY: the predicates the goals exercise did promote.
         int promoted = tiered.IlPromotion.PromotedFunctorIds().Count();

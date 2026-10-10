@@ -41,7 +41,7 @@ public sealed class JitCompileBuiltinTests
     /// order: drained, every path reaches the same count.</para></summary>
     private static int PromotedAfterDraining(PrologEngine e)
     {
-        Assert.True(e.IlPromotion.WaitForPendingPromotions(),
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000),
             "background promotions did not settle within the timeout");
         return e.IlPromotion.PromotedFunctorIds().Count();
     }
@@ -110,7 +110,7 @@ public sealed class JitCompileBuiltinTests
             Assert.True(e.Query($"jit_compile({mode}).").Success);
             var before = new HashSet<int>(e.IlPromotion.PromotedFunctorIds());
             Assert.True(e.Query(Work).Success);
-            Assert.True(e.IlPromotion.WaitForPendingPromotions());
+            Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000));
             return e.IlPromotion.PromotedFunctorIds().Count(f => !before.Contains(f));
         }
 

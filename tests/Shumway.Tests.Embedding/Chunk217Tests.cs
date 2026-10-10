@@ -35,7 +35,7 @@ public class Chunk217Tests
 
         var engine = new PrologEngine();
         engine.LoadBundle(roundtripped);
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid(predName, arity)),
             $"{predName}/{arity} expected to be IL-promoted from the persisted bundle");
         return engine;

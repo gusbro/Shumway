@@ -44,7 +44,7 @@ public class Adr037IndexedIlTests
             """);
         Assert.True(e.Query("cls(a, R), R == t(1).").Success);
         Assert.True(e.Query("cls(a, R), R == t(1).").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("cls", 2)));
         Assert.True(e.Query("findall(R, cls(a, R), L), L == [t(1),t(2),t(3)].").Success);
         Assert.True(e.Query("cls(b, R), R == bee.").Success);
@@ -62,7 +62,7 @@ public class Adr037IndexedIlTests
             """);
         Assert.True(e.Query("sign(pos, R), R == yes.").Success);
         Assert.True(e.Query("sign(pos, R), R == yes.").Success);
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("sign", 2)));
         Assert.True(e.Query("sign(neg, R), R == other.").Success);
     }
@@ -76,7 +76,7 @@ public class Adr037IndexedIlTests
             ":- public pk/2.\n" +
             "pk(a, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).\n" +
             "pk(b, R) :- R = bee.\n");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("pk", 2)),
             "indexed *-> must bake to IL in a persisted bundle (fallback describer)");
         Assert.True(e.Query("pk(a, R), R == t(1).").Success);
@@ -92,7 +92,7 @@ public class Adr037IndexedIlTests
             ":- public q/1.\n" +
             "q(a) :- ( 1 =< 1 *-> true ; fail ).\n" +
             "q(b).\n");
-        e.IlPromotion.WaitForPendingPromotions();
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.IlPromotion.IsPromoted(Fid("q", 1)),
             "arity-1 indexed *-> must bake to IL in a persisted bundle");
         Assert.True(e.Query("q(a).").Success);

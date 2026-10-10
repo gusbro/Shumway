@@ -80,7 +80,7 @@ public class Chunk66Tests
             pair(X, Y) :- left(X), right(Y).
             """);
         engine.Query("pair(a, 1).");
-        engine.IlPromotion.WaitForPendingPromotions();
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("pair", 2)));
     }
 
