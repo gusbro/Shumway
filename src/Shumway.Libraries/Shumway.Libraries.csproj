@@ -2,9 +2,11 @@
 
   <!-- The engine's own Prolog libraries (clpfd, clpr, coroutining, reif), compiled
        and linked at build time into the bundles PrologEngine.UseClpfd() and
-       use_module(library(clpfd)) load. They live in their own assembly
-       because the bake runs the compiler and linker of Shumway.Embedding
-       itself: Embedding cannot embed what its own build has to produce.
+       use_module(library(clpfd)) load, and the engine's prelude, which every
+       engine of the same build installs from here instead of compiling it.
+       They live in their own assembly because the bake runs the compiler and
+       linker of Shumway.Embedding itself: Embedding cannot embed what its own
+       build has to produce.
        Embedding loads this assembly BY NAME at first use, so a host must
        reference it (and root it when trimming: see Shumway.Web). -->
 
@@ -65,6 +67,13 @@
                       LogicalName="%(Filename).shum" Visible="false" />
   </ItemGroup>
 
+  <!-- The browser boots from its stdlib bundle, which bakes the prelude with
+       its wasm module: the wasm flavour carries no second copy. -->
+  <ItemGroup Condition="'$(ShumwayWasmTier)' != 'true'">
+    <EmbeddedResource Include="$(LibraryEmbedDir)prelude.shum" LogicalName="prelude.shum" Visible="false" />
+    <EmbeddedResource Include="$(LibraryEmbedDir)prelude.stamp" LogicalName="prelude.stamp" Visible="false" />
+  </ItemGroup>
+
   <!-- Each framework's build asks for the bake before it compiles, from ONE
        dedicated project instance (its own global properties, no target
        framework): MSBuild runs a target once per instance and hands the
@@ -93,8 +102,28 @@
              RemoveProperties="ShumwayLibraryBakeInstance;TargetFramework" />
   </Target>
 
+  <!-- Before the libraries, whose bakes then run on the prelude engines have.
+       The inputs are the tool and the engine: the stamp names the engine build. -->
+  <Target Name="BakePreludeBundle"
+          DependsOnTargets="BuildLibraryBakeTool"
+          Condition="'$(ShumwayWasmTier)' != 'true'"
+          Inputs="$(LibraryBakeDll);..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll"
+          Outputs="$(LibraryBakeDir)prelude.shum">
+    <MakeDir Directories="$(LibraryBakeDir)" />
+    <Exec Command="dotnet &quot;$(LibraryBakeDll)&quot; --prelude --il -o &quot;$(LibraryBakeDir)prelude.shum&quot;" />
+  </Target>
+
+  <Target Name="BakePreludeBundleNetFx"
+          DependsOnTargets="BuildLibraryBakeTool"
+          Condition="'$(ShumwayNetFx)' == 'true' and '$(ShumwayWasmTier)' != 'true'"
+          Inputs="$(LibraryBakeExeNetFx);..\Shumway.Embedding\bin\$(Configuration)\net48\Shumway.Embedding.dll"
+          Outputs="$(LibraryBakeDirNetFx)prelude.shum">
+    <MakeDir Directories="$(LibraryBakeDirNetFx)" />
+    <Exec Command="&quot;$(LibraryBakeExeNetFx)&quot; --prelude --il -o &quot;$(LibraryBakeDirNetFx)prelude.shum&quot;" />
+  </Target>
+
   <Target Name="BakeLibraryBundles"
-          DependsOnTargets="BuildLibraryBakeTool;BakeLibraryBundlesNetFx"
+          DependsOnTargets="BuildLibraryBakeTool;BakePreludeBundle;BakeLibraryBundlesNetFx"
           Inputs="$(LibraryBakeInputs)"
           Outputs="@(LibrarySource->'$(LibraryBakeDir)%(Filename).shum')">
     <MakeDir Directories="$(LibraryBakeDir)" />
@@ -102,7 +131,7 @@
   </Target>
 
   <Target Name="BakeLibraryBundlesNetFx"
-          DependsOnTargets="BuildLibraryBakeTool"
+          DependsOnTargets="BuildLibraryBakeTool;BakePreludeBundleNetFx"
           Condition="'$(ShumwayNetFx)' == 'true' and '$(ShumwayWasmTier)' != 'true'"
           Inputs="$(LibraryBakeInputsNetFx)"
           Outputs="@(LibrarySource->'$(LibraryBakeDirNetFx)%(Filename).shum')">

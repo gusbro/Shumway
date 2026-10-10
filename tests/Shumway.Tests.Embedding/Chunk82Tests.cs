@@ -25,9 +25,13 @@ public class Chunk82Tests
     public void Cache_IsEmptyBeforeAnyQuery_PopulatedAfter()
     {
         var engine = new PrologEngine();
+        engine.ConsultString("""
+            :- module(m, [q/1]).
+            q(1).
+            """);
         Assert.Empty(engine.StaticPredicateCache);
         engine.Query("true.");
-        // The prelude's static predicates are now compiled and cached.
+        // The consulted static predicates are now compiled and cached.
         Assert.NotEmpty(engine.StaticPredicateCache);
     }
 
@@ -35,18 +39,22 @@ public class Chunk82Tests
     public void Consult_KeepsUnchangedEntries_AndPicksUpTheNewClause()
     {
         // Invalidation is targeted, not wholesale: a consult leaves compiled
-        // predicates of unchanged modules (the prelude's) in the cache — the
-        // per-module transform fingerprint drops exactly the changed modules'
-        // entries at the next query's product build — and the newly consulted
-        // predicate is live from that same build.
+        // predicates of unchanged modules (m's) in the cache — the per-module
+        // transform fingerprint drops exactly the changed modules' entries at
+        // the next query's product build — and the newly consulted predicate
+        // is live from that same build.
         var engine = new PrologEngine();
+        engine.ConsultString("""
+            :- module(m, [q/1]).
+            q(1).
+            """);
         engine.Query("true.");
         Assert.NotEmpty(engine.StaticPredicateCache);
         engine.ConsultString("""
             :- public p/1.
             p(1).
             """);
-        Assert.NotEmpty(engine.StaticPredicateCache);   // prelude entries survive
+        Assert.NotEmpty(engine.StaticPredicateCache);   // m's entries survive
         Assert.True(engine.Query("p(1).").Success);      // new clause is live
     }
 

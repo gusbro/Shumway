@@ -6,10 +6,12 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Differential harness for baking the prelude as Tier-1 IL. Every public
-/// prelude predicate is exercised with the same query two ways — Tier-0 WAM
-/// (promotion off) and Tier-1 IL (promotion forced on the first call) — and
-/// both the full solution set and any captured output must be byte-identical.
+/// Differential harness for the prelude's Tier-1 IL. Every public prelude
+/// predicate is exercised with the same query three ways — Tier-0 WAM (the
+/// tier off), the prelude's baked IL (taken at once), and the IL the tier
+/// generates for a prelude consulted from its text (promotion forced on the
+/// first call) — and the full solution sets and any captured output must be
+/// byte-identical.
 ///
 /// <para>Crucially, each case also asserts the predicate-under-test actually
 /// promoted to IL (<see cref="IlPromotionStore.IsPromoted"/>), so a silent
@@ -160,26 +162,33 @@ public sealed class PreludeIlDifferentialTests
             return;
         }
 
-        var (ilSols, ilOut, promoted) = Run(c, ilThreshold: 1);
-        Assert.Equal(wamSols, ilSols);
-        if (c.Output)
-            Assert.Equal(wamOut, ilOut);
+        foreach (bool baked in new[] { true, false })
+        {
+            var (ilSols, ilOut, promoted) = Run(c, ilThreshold: 1, baked);
+            Assert.Equal(wamSols, ilSols);
+            if (c.Output)
+                Assert.Equal(wamOut, ilOut);
 
-        if (!WamOnly.Contains(c.Pred))
-            Assert.True(promoted,
-                $"{c.Pred} did not promote to Tier-1 IL for query `{c.Query}` — " +
-                "the differential ran WAM-only and would mask an IL divergence.");
+            if (!WamOnly.Contains(c.Pred))
+                Assert.True(promoted,
+                    $"{c.Pred} did not promote to Tier-1 IL for query `{c.Query}` "
+                    + $"(baked prelude: {baked}) — the differential ran WAM-only and "
+                    + "would mask an IL divergence.");
+        }
     }
 
     private static (System.Collections.Generic.List<string> sols, string output, bool promoted)
-        Run(Case c, int ilThreshold)
+        Run(Case c, int ilThreshold, bool baked = true)
     {
         // Set the output sink once before any query — write/tab/format resolve
         // through the stream registry, which syncs to engine.Out at query time,
         // so reassigning Out mid-life would silently misroute output.
         var sw = new StringWriter();
-        var e = new PrologEngine { Out = sw };
-        if (ilThreshold > 0) e.IlPromotion.Threshold = ilThreshold;
+        var e = baked ? new PrologEngine() : PrologEngine.WithConsultedPrelude();
+        e.Out = sw;
+        e.IlPromotion.Threshold = ilThreshold;
+        // The baked prelude's code, all of it, before the first query.
+        if (ilThreshold > 0) e.IlPromotion.PromoteOffers();
         e.ConsultString(Helpers);
         if (!string.IsNullOrEmpty(c.Setup)) e.ConsultString(c.Setup);
 

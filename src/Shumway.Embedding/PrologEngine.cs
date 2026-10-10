@@ -1043,15 +1043,36 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
 
-        // Consult the internal prelude — Prolog-level definitions of
-        // multi-solution predicates (member/2, clause/2, current_predicate/1)
-        // that ride the standard WAM choice-point machinery instead of
-        // faking backtracking inside a single-shot builtin.
-        if (consultPrelude)
+        if (consultPrelude) InstallPrelude();
+    }
+
+    /// <summary>Installs the internal prelude: Prolog-level definitions of
+    /// library predicates (member/2, clause/2, current_predicate/1...) that
+    /// ride the standard WAM choice-point machinery instead of faking
+    /// backtracking inside a single-shot builtin. Taken compiled from the
+    /// libraries' assembly when this engine build baked it there, its Tier-1
+    /// IL offered while the IL tier is on; consulted from its text
+    /// otherwise.</summary>
+    internal void InstallPrelude(bool fromBundle = true)
+    {
+        if (fromBundle && LibraryBundles.BakedPrelude is { } baked)
         {
-            ConsultStringInner(Prelude.Source, recordInHistory: false);
-            MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+            // A baked prelude executes no directives.
+            SeedMetaTemplatesFromSource(Prelude.Source);
+            LoadBundleCore(baked, bundleDir: null);
         }
+        else
+            ConsultStringInner(Prelude.Source, recordInHistory: false);
+        MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+    }
+
+    /// <summary>An engine whose prelude is consulted from its text, as when
+    /// the libraries' assembly carries none.</summary>
+    internal static PrologEngine WithConsultedPrelude()
+    {
+        var engine = new PrologEngine(consultPrelude: false);
+        engine.InstallPrelude(fromBundle: false);
+        return engine;
     }
 
     /// <summary>Loads a bundle into a fresh engine, using the bundle's baked
@@ -1136,10 +1157,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         foreach (var e in bundle.Entries)
             if (e.ModuleName == Prelude.ModuleName) { bundleHasPrelude = true; break; }
         if (!bundleHasPrelude)
-        {
-            engine.ConsultStringInner(Prelude.Source, recordInHistory: false);
-            engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
-        }
+            engine.InstallPrelude();
         else
         {
             // The baked prelude executes no directives — recover its

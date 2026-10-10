@@ -383,7 +383,12 @@ public static class BundleWriter
             if (e.CompiledBytecode is not null && e.Defined.Count > 0)
                 foreach (var pred in CompiledModuleCodec.Decode(e.CompiledBytecode).Predicates)
                     if (pred.Bytecode.Length > 0) fids.Add(pred.FunctorId);
-        foreach (int fid in warmEngine.StaticPredicateCache.Keys)
+        // The warm engine's prelude is consulted, or installed from its bundle.
+        var own = new List<int>(warmEngine.StaticPredicateCache.Keys);
+        if (warmEngine._precompiledModules.TryGetValue(Prelude.ModuleName, out var prelude))
+            foreach (var pred in prelude.Predicates)
+                if (pred.Bytecode.Length > 0) own.Add(pred.FunctorId);
+        foreach (int fid in own)
         {
             var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
             string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
