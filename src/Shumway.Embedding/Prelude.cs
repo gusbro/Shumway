@@ -47,7 +47,6 @@ internal static class Prelude
         :- public nth1/4.
         :- public aggregate_all/3.
         :- public forall/2.
-        :- public if/3.
         :- public ifthen/2.
         :- public ifthenelse/3.
         :- public evaluable_property/2.
@@ -68,7 +67,6 @@ internal static class Prelude
         :- public delete/3.
         :- public numlist/3.
         :- public sum_list/2.
-        :- public sumlist/2.
         :- public max_list/2.
         :- public min_list/2.
         :- public max_member/2.
@@ -88,7 +86,6 @@ internal static class Prelude
         :- meta_predicate(map_list_to_pairs(2, *, *)).
         :- public predsort/3.
         :- public sort/4.
-        :- public atomic_concat/3.
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
@@ -121,7 +118,6 @@ internal static class Prelude
         :- meta_predicate(call_nth(0, *)).
         :- meta_predicate(setup_call_cleanup(0, 0, 0)).
         :- meta_predicate(call_cleanup(0, 0)).
-        :- meta_predicate(if(0, 0, 0)).
         :- meta_predicate(ifthen(0, 0)).
         :- meta_predicate(ifthenelse(0, 0, 0)).
         :- meta_predicate(apply(1, *)).
@@ -312,9 +308,6 @@ internal static class Prelude
         % variable Condition/Action (it must NOT use an isolated sub-engine —
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
-
-        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded.
-        if(C, T, E) :- ( C *-> T ; E ).
 
         %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails.
         ifthen(P, Q) :- ( P -> Q ; true ).
@@ -1381,9 +1374,6 @@ internal static class Prelude
         %! sum_list(+List, -Sum) | Lists | library | Sum is the sum of the numbers in List.
         sum_list(L, S) :- '$sum_list'(L, 0, S).
 
-        %! sumlist(+List, -Sum) | Lists | library | Sum is the sum of the numbers in List (alias of sum_list/2).
-        sumlist(L, S) :- '$sum_list'(L, 0, S).
-
         %! max_list(+List, -Max) | Lists | library | Max is the largest number in the non-empty list.
         max_list([H|T], M) :- '$maxlist'(T, H, M).
         '$maxlist'([], M, M).
@@ -1538,9 +1528,6 @@ internal static class Prelude
             '$atomic_to_atom'(X, AX),
             '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
-
-        %! atomic_concat(+Atomic1, +Atomic2, -Atom) | Atoms & strings | Concatenates two atomic terms into a single atom.
-        atomic_concat(A, B, C) :- atomic_list_concat([A, B], C).
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-
