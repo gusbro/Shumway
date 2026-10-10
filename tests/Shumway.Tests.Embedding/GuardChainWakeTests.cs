@@ -1,5 +1,6 @@
 using System.IO;
 using System.Linq;
+using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
@@ -17,6 +18,8 @@ public sealed class GuardChainWakeTests : IDisposable
     // clause is a self-tail loop. walk(go) fails its first clause on the
     // argument, so the loop meets no other wake point.
     private const string Grammar = @"
+:- public g/2.
+:- public lines/4.
 walk(stop) --> [].
 walk(go) --> [_], walk(go).
 g --> walk(go), !.
@@ -36,16 +39,24 @@ lines(N, N) --> [].
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    // Compiled: every predicate promoted at its first call, in the engine's
-    // thread, so the first query runs the chain.
+    // Compiled: every predicate is queued at its first call, and the queries
+    // after the first run the chain. Not a synchronous compile: it waits behind
+    // everything the process has queued on the shared worker, inside the
+    // time_out window.
     private static PrologEngine Engine(bool compiled)
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = compiled ? 1 : 0;
-        e.IlPromotion.BackgroundCompilation = false;
         e.Query("use_module(library(coroutining)).");
         e.ConsultString(Grammar);
         return e;
+    }
+
+    private static void Settle(PrologEngine e, string owner, int arity)
+    {
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        Assert.True(e.IlPromotion.IsPromoted(FunctorTable.Intern(AtomTable.Intern(owner).Id, arity)),
+            $"{owner}/{arity} did not compile");
     }
 
     // The hook binds the list the loop walks: [a] ends the walk, so the guard
@@ -65,6 +76,7 @@ lines(N, N) --> [].
                 Assert.True(s.Success, $"compiled: {compiled}, run {i}");
                 Assert.Equal("success", s["R"]!.ToString());
                 Assert.Equal("no", s["A"]!.ToString());
+                if (compiled) Settle(e, "g", 2);
             }
         }
     }
@@ -82,11 +94,15 @@ lines(N, N) --> [].
         {
             var e = Engine(compiled);
             e.IlPromotion.PersistedThreshold = int.MaxValue;
-            var s = e.Query(
-                $"time_out(phrase_from_file(lines(0, N), '{data}'), 3000, R).");
-            Assert.True(s.Success, $"compiled: {compiled}");
-            Assert.Equal("success", s["R"]!.ToString());
-            Assert.Equal("50", s["N"]!.ToString());
+            for (int i = 0; i < 2; i++)
+            {
+                var s = e.Query(
+                    $"time_out(phrase_from_file(lines(0, N), '{data}'), 3000, R).");
+                Assert.True(s.Success, $"compiled: {compiled}, run {i}");
+                Assert.Equal("success", s["R"]!.ToString());
+                Assert.Equal("50", s["N"]!.ToString());
+                if (compiled) Settle(e, "lines", 4);
+            }
         }
     }
 }
