@@ -21,7 +21,7 @@ public sealed class LibraryWakeOrderTests
     private static PrologEngine Loaded(bool tier1, params string[] libs)
     {
         var e = new PrologEngine();
-        if (tier1) e.IlPromotion.Threshold = 1;
+        e.IlPromotion.Threshold = tier1 ? 1 : 0;
         e.Query("true.");
         foreach (string lib in libs)
             Assert.True(e.Query($"use_module(library({lib})).").Success, lib);

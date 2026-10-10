@@ -30,9 +30,12 @@ public sealed class DynamicDispatchIndexTests
         => Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("cp").Id, 2);
 
+    // Tier-0: the selector is the interpreter's. Compiled code takes the
+    // calls off it once hit/2 promotes.
     private static PrologEngine Engine()
     {
         var e = new PrologEngine { Out = new StringWriter() };
+        e.IlPromotion.Threshold = 0;
         e.ConsultString("""
             :- dynamic(cp/2).
             mk(0) :- !.

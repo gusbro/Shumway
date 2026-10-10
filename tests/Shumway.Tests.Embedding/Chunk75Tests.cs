@@ -26,6 +26,16 @@ public class Chunk75Tests
     private static int Fid(string name, int arity) =>
         FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
 
+    // JIT indexing is the interpreter's. With the tier on, a dynamic
+    // predicate can run its compiled snapshot from its first calls, and a
+    // predicate that runs compiled code is counted no more.
+    private static PrologEngine Tier0()
+    {
+        var engine = new PrologEngine();
+        engine.IlPromotion.Threshold = 0;
+        return engine;
+    }
+
     private static bool HasOpcode(byte[] code, Opcode target)
     {
         int pc = 0;
@@ -44,7 +54,7 @@ public class Chunk75Tests
     {
         // Default threshold (16) — a predicate queried once stays cold.
         // Its cached compile is a try_me_else chain: no switch_on_term.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.ConsultString(":- dynamic color/1.");
         foreach (var c in new[] { "red", "green", "blue" })
             engine.Query($"assertz(color({c})).");
@@ -62,7 +72,7 @@ public class Chunk75Tests
     {
         // Threshold 1 — the first call makes the predicate hot, the
         // next query recompiles it indexed.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic color/1.");
         foreach (var c in new[] { "red", "green", "blue" })
@@ -79,7 +89,7 @@ public class Chunk75Tests
     public void Correctness_IdenticalColdAndHot()
     {
         // The answers must not depend on the indexing level.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 3;
         engine.ConsultString(":- dynamic kv/2.");
         foreach (var (k, v) in new[] { ("a", 1), ("b", 2), ("c", 3), ("a", 9) })
@@ -100,7 +110,7 @@ public class Chunk75Tests
     [Fact]
     public void CallCount_IsTracked()
     {
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.ConsultString("""
             :- dynamic ping/0.
             ping.
@@ -115,7 +125,7 @@ public class Chunk75Tests
     [Fact]
     public void Threshold_GovernsTheTransition()
     {
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 5;
         engine.ConsultString(":- dynamic d/1.");
         foreach (var c in new[] { "a", "b", "c" })
@@ -172,7 +182,7 @@ public class Chunk75Tests
         // assertz between queries invalidates the cache (chunk 68).
         // While the predicate is still cold each rebuild is the cheap
         // unindexed compile — no switch tables built on the churn.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 100;   // never hot in this test
         engine.ConsultString(":- dynamic log/1.");
         for (int i = 0; i < 10; i++)
@@ -194,7 +204,7 @@ public class Chunk75Tests
         // A predicate that's gone hot, then gets a new clause via
         // assertz: the cache invalidates, and since it's still hot the
         // recompile stays indexed.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic d/1.");
         engine.Query("assertz(d(a)).");
@@ -214,7 +224,7 @@ public class Chunk75Tests
     {
         // The chunk-67 multi-arg fallback (switch_on_arg) shows up once
         // a multi-arg dynamic predicate goes hot.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic pair/2.");
         engine.Query("assertz(pair(x, 1)).");
@@ -232,7 +242,7 @@ public class Chunk75Tests
         // With the default threshold, a one-shot dynamic predicate
         // never indexes — the common "consult, query once" shape pays
         // no switch-table build cost.
-        var engine = new PrologEngine();
+        var engine = Tier0();
         // `rare` is just an arbitrary data predicate here — not once/1,
         // which is now a library control predicate in the prelude.
         engine.ConsultString("""

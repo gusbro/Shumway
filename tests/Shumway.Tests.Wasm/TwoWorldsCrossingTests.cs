@@ -99,6 +99,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
     public void TwoWorldsAnswerWhatOneWorldAnswers()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string oracle = Answer(plain);
 

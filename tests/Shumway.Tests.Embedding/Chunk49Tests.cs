@@ -116,6 +116,7 @@ public class Chunk49Tests
         var src = ":- public both/2.\nboth(X, [X, X, X]).";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var sol0 = tier0.Query("both(hello, L).");
 

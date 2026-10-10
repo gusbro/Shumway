@@ -33,6 +33,7 @@ public sealed class EnvChainGrowthTests(ITestOutputHelper o)
     public void TheChainTracksDepthNotNodes()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("run(14, T), nonvar(T).").Success,
             "the interpreter's own answer moved");

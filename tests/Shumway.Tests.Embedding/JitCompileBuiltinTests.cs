@@ -169,7 +169,7 @@ public sealed class JitCompileBuiltinTests
     public void ADirectiveSetsTheMode()
     {
         var e = new PrologEngine();
-        Assert.Equal(0, e.IlPromotion.Threshold);
+        Assert.Equal(IlPromotionStore.DefaultThreshold, e.IlPromotion.Threshold);
         e.ConsultString(":- jit_compile(all).\n" + Corpus);
         Assert.Equal(1, e.IlPromotion.Threshold);
         Assert.True(e.Query(Work).Success);

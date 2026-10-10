@@ -39,6 +39,7 @@ public sealed class GlobalVarFetchTests(ITestOutputHelper o)
     public void TheAnswersAreTheInterpreters()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string goal in new[] { "go(50).", "unset.", "undone.", "snap(50).", "loop3(50).",

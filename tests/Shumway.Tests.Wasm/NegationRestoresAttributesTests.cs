@@ -58,6 +58,7 @@ public sealed class NegationRestoresAttributesTests(ITestOutputHelper o)
     public void ADoubleNegationLeavesNothingBehind(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         string p0 = Answer(() => plain.Query($"{goal}(_, R), R == bare.").Success);
 

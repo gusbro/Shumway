@@ -20,9 +20,11 @@ this ADR.
 >   (`IlPromotionStore`) — not a process-wide, bytecode-hash-keyed,
 >   weak-reference `ConcurrentDictionary`. Cross-engine reuse is via persisted
 >   bundles, not a runtime cache.
-> - **Promotion is off by default** (`IlPromotion.Threshold == 0` disables it);
->   there is no `CompilationStrategy` / `EngineConfig` / `Tier1PromotionThreshold`
->   configuration surface, and no `Predicate` / `InterpretedPredicate` /
+> - **Promotion is on by default**: a predicate promotes after 32 calls
+>   (`IlPromotion.Threshold`; 0 keeps the engine on Tier-0, and then the
+>   engine's prelude runs its bytecode too). There is no `CompilationStrategy`
+>   / `EngineConfig` / `Tier1PromotionThreshold` configuration surface, and
+>   no `Predicate` / `InterpretedPredicate` /
 >   `CompiledIlPredicate` class hierarchy (`RunBytecode` does not exist) — the
 >   swap installs a delegate by functor id.
 > - **What shipped beyond this ADR:** region compilation (default on),

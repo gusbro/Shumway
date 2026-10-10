@@ -14,7 +14,7 @@ public class Adr020NonLastNestedTests
     private static PrologEngine Load(string program, int ilThreshold = 0)
     {
         var engine = new PrologEngine();
-        if (ilThreshold > 0) engine.IlPromotion.Threshold = ilThreshold;
+        engine.IlPromotion.Threshold = ilThreshold;
         engine.ConsultString(program);
         return engine;
     }

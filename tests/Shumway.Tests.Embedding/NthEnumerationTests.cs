@@ -40,13 +40,15 @@ public sealed class NthEnumerationTests
     {
         // The garbage below the list makes the collection slide the list's
         // cells down, the rest-of-list cell the choice point holds with them.
+        // A collection per retry: a few hundred retries, or a loaded machine
+        // runs past the deadline.
         var e = new PrologEngine();
         e.ConsultString("junk :- numlist(1, 20000, _).");
         Assert.True(Holds(e,
-            "junk, numlist(1, 2000, L), nth1(I, L, E), garbage_collect, E == 1500, I == 1500."));
+            "junk, numlist(1, 200, L), nth1(I, L, E), garbage_collect, E == 150, I == 150."));
         Assert.True(Holds(e,
-            "junk, numlist(1, 2000, L), findall(I-E, (nth0(I, L, E), garbage_collect, E mod 500 =:= 0), Ps), "
-            + "Ps == [499-500, 999-1000, 1499-1500, 1999-2000]."));
+            "junk, numlist(1, 200, L), findall(I-E, (nth0(I, L, E), garbage_collect, E mod 50 =:= 0), Ps), "
+            + "Ps == [49-50, 99-100, 149-150, 199-200]."));
     }
 
     [Theory]

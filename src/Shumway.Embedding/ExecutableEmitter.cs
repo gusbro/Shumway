@@ -371,12 +371,11 @@ internal static class Program
             // compiling the ~780-line prelude at runtime; falls back to
             // consulting it if the bundle carries none.
             {engineConstruction}
-            // opt-in Tier-1 IL with per-opcode debug markers.
-            // Set SHUMWAY_IL_PROMOTE=N (N>=1) to enable promotion,
-            // optionally SHUMWAY_IL_DEBUG=1 to inject post-opcode
+            // SHUMWAY_IL_PROMOTE=N sets the Tier-1 promotion threshold (0
+            // runs Tier-0 only); SHUMWAY_IL_DEBUG=1 injects post-opcode
             // WAM-semantics assertions in the IL.
             string? promoteStr = System.Environment.GetEnvironmentVariable(""SHUMWAY_IL_PROMOTE"");
-            if (int.TryParse(promoteStr, out int promoteN) && promoteN > 0)
+            if (int.TryParse(promoteStr, out int promoteN))
                 engine.IlPromotion.Threshold = promoteN;
             if (System.Environment.GetEnvironmentVariable(""SHUMWAY_IL_DEBUG"") == ""1"")
                 Shumway.Compiler.Il.IlPredicateCompiler.DebugMode = true;

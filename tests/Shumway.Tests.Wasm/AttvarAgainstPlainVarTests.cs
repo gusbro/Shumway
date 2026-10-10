@@ -40,6 +40,7 @@ public sealed class AttvarAgainstPlainVarTests(ITestOutputHelper o)
     public void ThePlainVariableBindsAndTheAttributeSurvives()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query("go(50).").Success, "the interpreter's own rule moved");
         Assert.True(plain.Query("mkq(Q), direction(Q).").Success);

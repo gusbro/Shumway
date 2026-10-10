@@ -43,6 +43,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     private static string Oracle()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         return Answer(plain);
     }

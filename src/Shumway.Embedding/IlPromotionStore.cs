@@ -768,8 +768,12 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _pgoProfileKeys = new();
     private readonly HashSet<int> _pgoOptimized = new();
 
-    /// <summary>Invocation count before an IL compile is attempted. 0 (the default)
-    /// disables promotion.</summary>
+    /// <summary>What <see cref="Threshold"/> starts at.</summary>
+    public const int DefaultThreshold = 32;
+
+    /// <summary>Invocation count before an IL compile is attempted
+    /// (<see cref="DefaultThreshold"/> unless set). 0 or less turns the tier
+    /// off: the engine runs Tier-0 only.</summary>
     public int Threshold
     {
         get => _threshold;
@@ -782,7 +786,11 @@ public sealed class IlPromotionStore
             PromotabilityChanged?.Invoke();
         }
     }
-    private int _threshold;
+    private int _threshold = DefaultThreshold;
+
+    /// <summary>Whether compiled IL may run: the tier is on and this runtime
+    /// can generate code.</summary>
+    public bool IlTierActive => Threshold > 0 && DynamicCodeSupported;
 
     /// <summary>Fires when the answer of <see cref="IsPermanentlyBytecodeOnly"/>
     /// may have changed for every predicate: the tier turned on or off, a
@@ -913,11 +921,12 @@ public sealed class IlPromotionStore
 
     /// <summary>Records one invocation; compiles and returns the delegate when the
     /// count crosses the threshold. Null otherwise (under-threshold, in-flight,
-    /// unpromotable, or promotion disabled).</summary>
+    /// unpromotable, or promotion disabled). An engine has one Tier-1: with a
+    /// wasm tier attached the IL compiler promotes nothing.</summary>
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        if (Threshold <= 0 || !DynamicCodeSupported) return null;
+        if (!IlTierOn || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         // Mid-consult, no new promotions: the program is still growing — a

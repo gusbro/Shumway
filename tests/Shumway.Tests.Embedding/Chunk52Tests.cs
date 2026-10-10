@@ -162,6 +162,7 @@ public class Chunk52Tests
             "pick(X) :- number(X).\n";
 
         var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(src);
         var sol0 = tier0.QueryAll("(X = foo ; X = 7), pick(X).").Count();
 

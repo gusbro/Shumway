@@ -107,7 +107,8 @@ public class Chunk215Tests
             + "classify(X, R) :- X =:= 0, !, R = zero.\n"
             + "classify(_, R) :- R = pos.\n";
 
-        var tier0 = new PrologEngine();                 // Threshold defaults to 0 (off)
+        var tier0 = new PrologEngine();
+        tier0.IlPromotion.Threshold = 0;
         tier0.ConsultString(program);
         var tier1 = new PrologEngine();
         tier1.IlPromotion.Threshold = 1;

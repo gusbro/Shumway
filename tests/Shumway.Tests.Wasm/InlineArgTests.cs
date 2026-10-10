@@ -64,6 +64,7 @@ public sealed class InlineArgTests(ITestOutputHelper o)
     public void TheTierAnswersWhatTheInterpreterAnswers(string goal)
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         Assert.True(plain.Query(goal).Success,
             "the interpreter's own answer moved");

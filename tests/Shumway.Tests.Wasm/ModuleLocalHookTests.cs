@@ -57,6 +57,7 @@ public sealed class ModuleLocalHookTests(ITestOutputHelper o)
     public void TheHookStillRunsAndAgreesWithTheInterpreter()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         var (tiered, _) = TieredEngine.Build(Corpus);
         foreach (string q in new[]

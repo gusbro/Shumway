@@ -18,7 +18,7 @@ public sealed class IlBacktrackReproTests
     private static List<string> Solutions(string setup, string query, int threshold)
     {
         var e = new PrologEngine();
-        if (threshold > 0) e.IlPromotion.Threshold = threshold;
+        e.IlPromotion.Threshold = threshold;
         e.ConsultString(setup);
         return e.QueryAll(query + ".")
             .Select(s => string.Join(",", s.Bindings.OrderBy(b => b.Key).Select(b => b.Key + "=" + b.Value)))

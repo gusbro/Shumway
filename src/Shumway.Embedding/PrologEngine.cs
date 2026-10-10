@@ -770,11 +770,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>Per-engine state for Tier-0 → Tier-1 auto-promotion: an
     /// invocation counter per functor plus a cache of successfully
-    /// IL-compiled delegates. The store's <c>Threshold</c> property
-    /// gates the promotion machinery — left at <c>0</c> nothing ever
-    /// promotes, which is the default. Set
-    /// <c>engine.IlPromotion.Threshold = N</c> to enable; future
-    /// <c>:- option(...)</c> directives may surface a friendlier knob.</summary>
+    /// IL-compiled delegates. A predicate promotes after
+    /// <c>Threshold</c> calls (<see cref="IlPromotionStore.DefaultThreshold"/>);
+    /// <c>engine.IlPromotion.Threshold = 0</c> keeps the engine on Tier-0.</summary>
     public IlPromotionStore IlPromotion { get; } = new();
 
     /// <summary>JIT indexing profile. Tracks per-predicate

@@ -25,6 +25,7 @@ public class Chunk216Tests
         (string name, int arity)? promoted = null)
     {
         var t0 = new PrologEngine();
+        t0.IlPromotion.Threshold = 0;
         t0.ConsultString(program);
         var r0 = t0.QueryAll(query).Select(s => s.Bindings[var].ToString()!).ToList();
 

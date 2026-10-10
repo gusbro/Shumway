@@ -88,6 +88,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     public void TheAnswersAreTheInterpreters()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         plain.ConsultString(UserCorpus);
         var (tiered, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);
@@ -113,6 +114,7 @@ public sealed class MetaCallBuiltinRequestTests(ITestOutputHelper o)
     public void AFormDeclinesToTheRequestNotToTheHost()
     {
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
         plain.ConsultString(UserCorpus);
         var (tiered, _) = TieredEngine.Build(Corpus + "\n" + UserCorpus);

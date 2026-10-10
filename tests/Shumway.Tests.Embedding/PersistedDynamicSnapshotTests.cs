@@ -71,6 +71,7 @@ public sealed class PersistedDynamicSnapshotTests : IDisposable
     public void WithTheTierOff_ADynamicPredicateTwoBundlesSeed_StaysOnBytecode()
     {
         var e = PrologEngine.FromBundle(Seeding("first_seed", "a"));
+        e.IlPromotion.Threshold = 0;
         e.LoadBundle(Seeding("second_seed", "b"));
         for (int i = 0; i < 40; i++)
             Assert.True(e.Query("findall(X, shared_hook(X), [a, b]).").Success);

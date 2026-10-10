@@ -99,6 +99,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             collect(Gs) :- call(Gs).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("findall(X, collect(pick(X)), L), L == [a, b, c].").Success,
             "the interpreter's own answer moved");
@@ -135,6 +136,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             drive(L) :- findall(X, bare(pick(X)), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("drive(L), L == [a, b, c].").Success,
             "the interpreter's own answer moved");
@@ -177,6 +179,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             drive(Xs) :- findall(X, one(X), Xs).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("drive(L), L == [a, b, c].").Success,
             "the interpreter's own answer moved");
@@ -207,6 +210,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             drive(L) :- findall(X-Y, check(X, Y), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query("drive(L), L == [2-20, 3-30].").Success,
             "the interpreter's own answer moved");
@@ -237,6 +241,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             drive(L) :- findall(I-J, both(I, J), L).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query(
             "drive(L), L == [1-x, 1-y, 2-x, 2-y].").Success,
@@ -266,6 +271,7 @@ public sealed class InlineMetaCallTests(ITestOutputHelper o)
             outer(X, Y) :- two(X), call(cutter(Y)).
             """;
         var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Program);
         Assert.True(plain.Query(
             "findall(X-Y, outer(X, Y), L), L == [1-1, 2-1].").Success,

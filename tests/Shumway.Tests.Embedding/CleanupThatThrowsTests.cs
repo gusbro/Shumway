@@ -56,7 +56,7 @@ public sealed class CleanupThatThrowsTests
     {
         var e = new PrologEngine();
         e.ConsultString(Program);
-        if (compiled) e.IlPromotion.Threshold = 1;
+        e.IlPromotion.Threshold = compiled ? 1 : 0;
         return e;
     }
 
