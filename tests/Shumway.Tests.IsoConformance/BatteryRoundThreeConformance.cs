@@ -335,7 +335,6 @@ public class BatteryRoundThreeConformance
         // can represent is a resource answer, not a flag-derived one.
         Succeeds("catch(functor(_, t, 18446744073709097979076548489551455463), "
             + "error(resource_error(finite_memory), _), true).");
-        Succeeds("atomic_concat(foo, 42, A), A == foo42.");
         Succeeds("atomic_list_concat([a, b], 42, X), X == a42b.");
         // ISO 7.11.1: min_integer / max_integer carry a value only when
         // bounded is true. Shumway is unbounded, so the queries FAIL —

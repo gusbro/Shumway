@@ -14,7 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// <item><c>nth0/3</c> / <c>nth1/3</c> with a variable index now enumerate
 /// (SWI/SICStus), instead of raising instantiation_error — see also
 /// <c>Chunk131cTests</c>.</item>
-/// <item><c>sumlist/2</c> — the older SWI alias of <c>sum_list/2</c>.</item>
+/// <item><c>sumlist/2</c> — SWI's older name for <c>sum_list/2</c>, from the SWI shim.</item>
 /// <item><c>format/1</c> — <c>format(Fmt)</c> with no arguments.</item>
 /// <item><c>format/2</c> directives <c>~c</c> (character), numeric prefixes
 /// (<c>~Nc</c>), and <c>~t</c> / <c>~|</c> column control (accepted, so a
@@ -46,10 +46,15 @@ public class Chunk346Tests
         Assert.Equal(4, cells);   // 2x2 grid
     }
 
+    // sumlist/2 is SWI's older name for sum_list/2: it comes with the SWI
+    // shim, and the engine itself answers only to sum_list/2.
     [Fact]
-    public void Sumlist_AliasOfSumList()
+    public void Sumlist_ComesWithTheSwiShim()
     {
-        var sol = new PrologEngine().Query("sumlist([1,2,3,4], S).");
+        var e = new PrologEngine();
+        Assert.True(e.Query("catch(sumlist([1], _), error(existence_error(procedure, _), _), true).").Success);
+        Assert.True(e.Query("use_module(library(swi)).").Success);
+        var sol = e.Query("sumlist([1,2,3,4], S).");
         Assert.True(sol.Success);
         Assert.Equal(new IntTerm(10), sol["S"]);
     }

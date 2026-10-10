@@ -57,7 +57,6 @@ public sealed class PreludeIlDifferentialTests
         new("delete/3", "delete([1, 2, 1, 3, 1], 1, R)"),
         new("numlist/3", "numlist(1, 6, L)"),
         new("sum_list/2", "sum_list([1, 2, 3, 4], S)"),
-        new("sumlist/2", "sumlist([10, 20, 30], S)"),
         new("max_list/2", "max_list([3, 1, 4, 1, 5], M)"),
         new("min_list/2", "min_list([3, 1, 4, 1, 5], M)"),
         new("max_member/2", "max_member(M, [3, 1, 4, 1, 5, 9, 2])"),

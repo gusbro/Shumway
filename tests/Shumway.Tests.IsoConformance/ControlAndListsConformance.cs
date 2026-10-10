@@ -194,16 +194,13 @@ public class ControlAndListsConformance
     }
 
     [Fact]
-    public void SoftCutIf3_RunsEveryConditionSolution()
+    public void SoftCutIsABuiltInControlConstruct()
     {
-        // SICStus if/3: Then for every solution of Cond; Else only when
-        // Cond never succeeded. predicate_property reports it built_in
-        // (the Logtalk conformity testers gate on that).
+        // The Logtalk conformity testers gate on predicate_property.
         var engine = new PrologEngine();
         Assert.True(engine.Query(
-            "findall(X, if(member(X, [1,2]), true, fail), L), L == [1,2].").Success);
-        Assert.True(engine.Query("if(fail, true, X = e), X == e.").Success);
-        Assert.True(engine.Query("predicate_property(if(_,_,_), built_in).").Success);
+            "findall(X, (member(X, [1,2]) *-> true ; fail), L), L == [1,2].").Success);
+        Assert.True(engine.Query("(fail *-> true ; X = e), X == e.").Success);
         Assert.True(engine.Query("predicate_property('*->'(_,_), built_in).").Success);
         Assert.True(engine.Query("\\+ current_predicate((',')/2).").Success);
     }

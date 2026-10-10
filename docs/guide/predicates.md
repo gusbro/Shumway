@@ -146,7 +146,6 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_cpu_time(-Time)` | engine | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
 | `halt` | iso | Halts the engine with exit code 0. |
 | `halt(+Status)` | iso | Halts the engine with the given exit code. |
-| `if(:Condition, :Then, :Else)` | engine | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded. |
 | `ifthen(:Condition, :Then)` | engine | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
 | `ifthenelse(:Condition, :Then, :Else)` | engine | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | engine | Runs Goal, succeeding whether or not Goal does. |
@@ -280,7 +279,6 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `sort(+Key, +Order, +List, -Sorted)` | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |
 | `subtract(+Set, +Delete, -Rest)` | library | Rest is Set without the elements that also occur in Delete. |
 | `sum_list(+List, -Sum)` | library | Sum is the sum of the numbers in List. |
-| `sumlist(+List, -Sum)` | library | Sum is the sum of the numbers in List (alias of sum_list/2). |
 | `union(+Set1, +Set2, -Union)` | library | Union holds the elements of Set1 not in Set2, followed by all of Set2. |
 
 ## Atoms & strings
@@ -293,7 +291,6 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atom_length(+Atom, ?Length)` | iso | Relates an atom to its length in characters. |
 | `atom_number(?Atom, ?Number)` | engine | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
 | `atom_string(?Atom, ?String)` | engine | Converts between an atom and a string. |
-| `atomic_concat(+Atomic1, +Atomic2, -Atom)` | engine | Concatenates two atomic terms into a single atom. |
 | `atomic_list_concat(+List, -Atom)` | engine | Concatenates a list of atomic terms into a single atom. |
 | `atomic_list_concat(?List, +Separator, ?Atom)` | engine | Joins a list of atomics with a separator, or splits an atom on the separator. |
 | `char_code(?Char, ?Code)` | iso | Relates a one-character atom to its character code. |

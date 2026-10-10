@@ -238,6 +238,15 @@ internal static class SwiShim
             ( QExpr = _:Expr -> true ; Expr = QExpr ),
             Value is Expr.
 
+        % ----- lists -----
+        % sum_list/2 under its older name. Self-contained, not a call to
+        % sum_list/2: an SWI lists module loaded from a tree exports that
+        % name, and its import wins in the caller's scope.
+        :- public sumlist/2.
+        sumlist(L, S) :- '$swi_sumlist'(L, 0, S).
+        '$swi_sumlist'([], S, S).
+        '$swi_sumlist'([X|Xs], S0, S) :- S1 is S0 + X, '$swi_sumlist'(Xs, S1, S).
+
         % ----- arithmetic-function introspection -----
         % We do not support user-defined arithmetic functions, so this reports the
         % built-in evaluable functors only.
