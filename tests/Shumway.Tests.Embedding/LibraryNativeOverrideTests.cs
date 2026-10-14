@@ -89,4 +89,38 @@ public sealed class LibraryNativeOverrideTests : IDisposable
         Assert.True(PrologEngine.ProvidesLibraryNatively("when", src));
         Assert.False(PrologEngine.ProvidesLibraryNatively("clpz", src));
     }
+
+    // Another system's library(reif), as a collection would hold it. Its if_/3
+    // always fails, so a query that succeeds ran the engine's.
+    private const string OtherReif = """
+        :- module(reif, [if_/3]).
+        if_(_, _, _) :- fail.
+        """;
+
+    [Fact]
+    public void AnEngineLibraryIsProvidedWhateverItsSource()
+    {
+        string src = Path.Combine(_dir, "src", "reif.pl");
+        File.WriteAllText(src, OtherReif);
+        foreach (string name in LibraryBundles.Names)
+            Assert.True(PrologEngine.ProvidesLibraryNatively(name, src), name);
+
+        var e = new PrologEngine();
+        e.AddLibraryDirectory(Path.Combine(_dir, "src"), "scryer");
+        e.ConsultString(":- use_module(library(reif)).");
+        Assert.True(e.Query("if_(a = a, X = yes, X = no), X == yes.").Success);
+    }
+
+    [Fact]
+    public void CompilingAnEngineLibrarySaysWhyNothingCompiled()
+    {
+        string src = Path.Combine(_dir, "src", "reif.pl");
+        File.WriteAllText(src, OtherReif);
+        var errors = new List<ShmoCompileError>();
+        var compiled = ShmoViaConsult.CompileMany(
+            new[] { src }, Array.Empty<string>(), ShmoBuildMode.Release, errors);
+        Assert.Empty(compiled);
+        var error = Assert.Single(errors);
+        Assert.Contains("reif is provided by Shumway itself", error.Message);
+    }
 }
