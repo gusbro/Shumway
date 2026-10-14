@@ -569,8 +569,9 @@ async function whileConsulting(work) {
 // bundle is stored like the batch's, so a reload does not compile it again.
 async function keepCompiledOnDemand() {
   try {
-    if (!(await libraries.takeCompiledOnDemand())) return;
-    await libraries.persist();
+    const compiled = await libraries.takeCompiledOnDemand();
+    if (compiled.length === 0) return;
+    for (const { name, library } of compiled) await libraries.persistLibrary(name, library);
     if (librariesDialog.open) await refreshLibraries();
   } catch { /* storing is a convenience; the bundle is in place either way */ }
 }
@@ -658,7 +659,7 @@ async function buildCollection(name) {
       const err = await libraries.compile(name, entry.name);
       if (err) failed.push(entry.name); else built++;
       // Stored as each one lands: a reload keeps what is already built.
-      await libraries.persist();
+      await libraries.persistLibrary(name, entry.name);
       if (librariesDialog.open) await refreshLibraries();
     }
   } finally {
@@ -726,7 +727,8 @@ async function refreshLibraries() {
                      'Its files are deleted from this browser. Programs that '
                      + 'import it will stop finding it.', 'Remove')) return;
       await libraries.remove(name);
-      await libraries.persist();
+      await libraries.forget(name);
+      await dropLibraryFiles(name);
       await refreshLibraries();
       emit(`% removed library ${name}\n`, 'note');
     });
@@ -788,7 +790,7 @@ async function refreshLibraries() {
       build.addEventListener('click', async () => {
         const failed = await withBusy(`compiling ${entry.name}`,
                                       () => libraries.compile(name, entry.name, true));
-        await libraries.persist();
+        await libraries.persistLibrary(name, entry.name);
         emit(failed ? `% ${entry.name}: ${failed}\n` : `% ${entry.name} compiled\n`,
              failed ? 'error' : 'note');
         await refreshLibraries();
@@ -1000,6 +1002,26 @@ let currentLib = null;
 // the user's own program.
 let currentDialect = '';
 
+// The library sources open beside the workspace's files, in the order they were
+// opened: each keeps its chip until it is closed. `saved` is its text as last
+// read or written, so leaving one that was only looked at writes nothing.
+let libraryFiles = [];
+const libraryFile = (lib, file) =>
+  libraryFiles.find((f) => f.lib === lib && f.file === file);
+
+// Where the editor has been, most recent last: closing a library source goes
+// back to the file shown before it.
+let visited = [];
+function visit(lib, file) {
+  visited = visited.filter((v) => v.lib !== lib || v.file !== file);
+  visited.push({ lib, file });
+  if (visited.length > 32) visited.shift();
+}
+
+// Global like the libraries themselves: switching workspace keeps them open.
+const rememberLibraryFiles = (patch = {}) =>
+  settings.update({ libraryFiles: libraryFiles.map((f) => [f.lib, f.file]), ...patch });
+
 /** Opens a WORKSPACE file — the user's own program, in ISO Prolog. Going
  *  through one function is what keeps `currentLib` from being left pointing at
  *  a library after moving off one: saveBuffer would then write the workspace's
@@ -1008,15 +1030,22 @@ function editingWorkspaceFile(name) {
   currentLib = null;
   currentDialect = '';
   currentFile = name;
+  visit(null, name);
   // Remembered like the theme: a reload reopens the file you were looking at.
-  settings.update({ openFile: name });
+  settings.update({ openFile: name, openLibraryFile: null });
 }
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
 async function saveBuffer() {
   if (currentLib !== null) {
-    await libraries.write(currentLib, currentFile, program());
-    await libraries.persist();
+    // Only an edit is written. A library source that was closed has been
+    // saved on its way out.
+    const open = libraryFile(currentLib, currentFile);
+    const text = program();
+    if (!open || open.saved === text) return;
+    await libraries.write(currentLib, currentFile, text);
+    open.saved = text;
+    await libraries.persistSource(currentLib, currentFile);
     return;
   }
   await workspace.write(currentFile, program());
@@ -1024,16 +1053,60 @@ async function saveBuffer() {
   await refreshFiles();
 }
 
-/** Opens a library's file in the editor. It saves back into the library. */
+/** Opens a library's file in the editor, beside the ones already open. It
+ *  saves back into the library. Returns false when there is no such file. */
 async function openLibraryFile(name, file) {
   await saveBuffer();
+  const text = await libraries.read(name, file);
+  if (text === null) return false;
+  const open = libraryFile(name, file);
+  if (open) open.saved = text;
+  else libraryFiles.push({ lib: name, file, saved: text });
   currentLib = name;
   currentDialect = await libraries.dialect(name);
   currentFile = file;
-  await editor.setText((await libraries.read(name, file)) ?? '');
+  visit(name, file);
+  rememberLibraryFiles({ openLibraryFile: [name, file] });
+  await editor.setText(text);
   await refreshFiles();
-  emit(`% editing library ${name}/${file}`
-     + (currentDialect ? ` — consulting it reads ${currentDialect} Prolog\n` : '\n'), 'note');
+  if (!open) {
+    emit(`% editing library ${name}/${file}`
+       + (currentDialect ? ` — consulting it reads ${currentDialect} Prolog\n` : '\n'), 'note');
+  }
+  return true;
+}
+
+/** Back to the file shown before the one that was closed: a library source
+ *  still open, or a workspace file, or the workspace's first. */
+async function showPrevious() {
+  const names = await workspace.list();
+  const back = visited.findLast((v) => (v.lib === null
+    ? names.includes(v.file) : libraryFile(v.lib, v.file) !== undefined));
+  if (back && back.lib !== null && await openLibraryFile(back.lib, back.file)) return;
+  const next = (back?.lib === null ? back.file : names[0]) ?? 'scratch.pl';
+  if (names.length === 0) await workspace.write(next, '');
+  await openWorkspaceFile(next);
+}
+
+/** Takes the library source on screen off the strip. The file stays in its
+ *  library, with an edit to it saved, as leaving it would. */
+async function closeLibraryFile() {
+  await saveBuffer();
+  const [lib, file] = [currentLib, currentFile];
+  libraryFiles = libraryFiles.filter((f) => f.lib !== lib || f.file !== file);
+  visited = visited.filter((v) => v.lib !== lib || v.file !== file);
+  rememberLibraryFiles();
+  await showPrevious();
+}
+
+/** Takes a removed collection's sources off the strip. */
+async function dropLibraryFiles(name) {
+  const shown = currentLib === name;
+  libraryFiles = libraryFiles.filter((f) => f.lib !== name);
+  visited = visited.filter((v) => v.lib !== name);
+  rememberLibraryFiles();
+  if (shown) await showPrevious();
+  else await refreshFiles();
 }
 
 async function refreshWorkspaces() {
@@ -1079,16 +1152,24 @@ async function refreshFiles() {
     return item;
   });
 
-  // A library file is not one of the workspace's, so it gets a chip of its own
-  // saying where it is from — otherwise the editor would be showing a file that
-  // no chip claims.
-  if (currentLib !== null) {
-    const chip = document.createElement('span');
-    chip.className = 'file current lib';
-    chip.textContent = `library(${currentLib}) ${currentFile}`;
-    chips.unshift(chip);
+  // A library source is not one of the workspace's files, so its chip says
+  // where it is from, and the button beside the editor closes it rather than
+  // deleting it.
+  for (const f of libraryFiles) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'file lib'
+      + (currentLib === f.lib && currentFile === f.file ? ' current' : '');
+    item.textContent = `library(${f.lib}) ${f.file}`;
+    item.title = `open ${f.file} from library ${f.lib}`;
+    item.addEventListener('click', () => openLibraryFile(f.lib, f.file));
+    chips.push(item);
   }
   filesEl.replaceChildren(...chips);
+  const deleteButton = document.getElementById('delete-file');
+  deleteButton.textContent = currentLib === null ? 'Delete file' : 'Close file';
+  deleteButton.title = currentLib === null ? 'delete this file from the workspace'
+    : 'close this library source; it stays in its library';
   // The open file has to be the one you can see, whatever the strip was
   // scrolled to before: `nearest` so it moves the strip and not the page.
   filesEl.querySelector('.current')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -1245,10 +1326,9 @@ document.getElementById('new-file').addEventListener('click', async () => {
 
 document.getElementById('delete-file').addEventListener('click', async () => {
   // A library file is not the workspace's to delete: it belongs to the
-  // collection, and removing one there is what Libraries… is for.
+  // collection, so the button closes it.
   if (currentLib !== null) {
-    emit(`% ${currentFile} belongs to library ${currentLib} — remove it from Libraries…\n`,
-         'note');
+    await closeLibraryFile();
     return;
   }
   const doomed = currentFile;
@@ -1639,7 +1719,19 @@ if (inWorkspace.length === 0) await workspace.write(currentFile, '');
 // A shared link brings its own files. They are ADDED — never written over what
 // is already here — so following a link cannot destroy someone's work.
 await editor.setText((await workspace.read(currentFile)) ?? '');
-await openSharedFromHash();
+// The library sources that were open come back as chips; one whose library has
+// gone since is dropped.
+for (const [lib, file] of config.libraryFiles ?? []) {
+  let text = null;
+  try { text = await libraries.read(lib, file); } catch { /* not a library name now */ }
+  if (text !== null) libraryFiles.push({ lib, file, saved: text });
+}
+rememberLibraryFiles();
+const linked = await openSharedFromHash();
+// A link brings its own file to the screen; otherwise the library source that
+// was on screen is again.
+const [shownLib, shownFile] = config.openLibraryFile ?? [];
+if (!linked && libraryFile(shownLib, shownFile)) await openLibraryFile(shownLib, shownFile);
 await editor.repaintNow();
 await refreshFiles();
 // The debugger's memory: breakpoints, watches, and the mode itself come back
@@ -2137,6 +2229,17 @@ if (persistMode) {
       '            [5,_,_,_,_,_,_,7,3],[_,_,2,_,1,_,_,_,_],[_,_,_,_,4,_,_,_,9]]).',
     ].join('\n') + '\n', 'sudoku');
     await answer('problem(1, Rows), sudoku(Rows), maplist(labeling([ff]), Rows), Rows = [R|_].', 'sudoku');
+    // What the consult compiled is stored by the time it returns, so a reload
+    // does not compile it again.
+    const storedBundle = async (lib) => {
+      try {
+        await (await (await (await (await navigator.storage.getDirectory())
+          .getDirectoryHandle('libraries')).getDirectoryHandle(collection))
+          .getDirectoryHandle('built')).getFileHandle(lib);
+        return true;
+      } catch { return false; }
+    };
+    mark(`ondemand: clpz stored=${await storedBundle('clpz')}`);
 
     await consultTimed([
       ':- use_module(library(atts)).',
@@ -2761,6 +2864,62 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash === '#libswitch') {
+  // Leaving a library source for another file, timed, with Scryer's library
+  // imported and compiled: the switch now, and what it cost when every switch
+  // wrote the source back and copied the whole collection into storage.
+  // `froze` is the longest the page went without running a timer, which is
+  // what an unresponsive page is.
+  const m = await import('./measure.js');
+  const timed = async (work) => {
+    let last = performance.now(), froze = 0;
+    const tick = setInterval(() => {
+      const now = performance.now(); froze = Math.max(froze, now - last); last = now;
+    }, 10);
+    const t0 = performance.now();
+    await work();
+    const ms = performance.now() - t0;
+    clearInterval(tick);
+    return { ms, froze: Math.max(froze, performance.now() - last) };
+  };
+  const show = (runs) => runs.map((r) => `${Math.round(r.ms)}/${Math.round(r.froze)}`).join(' ');
+  try {
+    const collection = 'scryer';
+    const loaded = await m.loadScryerLibrary(libraries, collection);
+    m.mark(`libswitch: collection holds ${(await libraries.files(collection)).length} files`
+         + ` (wrote ${loaded.files})`);
+    const batch = await timed(() => buildCollection(collection));
+    const built = (await libraries.entries(collection)).filter((e) => e.compiled).length;
+    m.mark(`libswitch: batch compiled ${built} libraries in ${Math.round(batch.ms)} ms`);
+
+    const home = currentFile;
+    const source = 'lists.pl';
+    const text = await libraries.read(collection, source);
+    const unedited = [], edited = [], before = [];
+    for (let i = 0; i < 5; i++) {
+      await openLibraryFile(collection, source);
+      unedited.push(await timed(() => openWorkspaceFile(home)));
+    }
+    for (let i = 0; i < 3; i++) {
+      await openLibraryFile(collection, source);
+      await editor.setText(text + `% edit ${i}\n`);
+      edited.push(await timed(() => openWorkspaceFile(home)));
+    }
+    await libraries.write(collection, source, text);
+    for (let i = 0; i < 3; i++) {
+      before.push(await timed(async () => {
+        await libraries.write(collection, source, text);
+        await libraries.persist(collection);
+      }));
+    }
+    m.mark(`libswitch: ms/longest freeze in ms, per run`);
+    m.mark(`libswitch: leaving an unedited source: ${show(unedited)}`);
+    m.mark(`libswitch: leaving an edited source:   ${show(edited)}`);
+    m.mark(`libswitch: what leaving one cost before: ${show(before)}`);
+    m.mark('LIBSWITCH DONE');
+  } catch (ex) {
+    m.mark(`libswitch CRASHED: ${ex && ex.stack ? ex.stack : ex}`);
+  }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);

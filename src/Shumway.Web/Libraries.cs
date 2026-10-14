@@ -1,6 +1,7 @@
 using Shumway.Compiler.Wasm;
 using Shumway.Core;
 using Shumway.Embedding;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices.JavaScript;
 
 namespace Shumway.Web;
@@ -224,13 +225,18 @@ internal static partial class WebShumwayApp
     // Libraries compiled on demand since the page last asked: it stores them,
     // as it stores what the batch compiles, so a reload does not compile them
     // again.
-    private static int _compiledOnDemand;
+    private static readonly ConcurrentQueue<string> _compiledOnDemand = new();
 
-    /// <summary>True when a consult or a query compiled a library it needed
-    /// since the last call.</summary>
+    /// <summary>The libraries a consult or a query compiled because it needed
+    /// them, since the last call: one per line, the collection, a tab and the
+    /// library.</summary>
     [JSExport]
-    internal static Task<bool> LibraryTakeCompiledOnDemand()
-        => Task.FromResult(Interlocked.Exchange(ref _compiledOnDemand, 0) > 0);
+    internal static Task<string> LibraryTakeCompiledOnDemand()
+    {
+        var taken = new List<string>();
+        while (_compiledOnDemand.TryDequeue(out string? entry)) taken.Add(entry);
+        return Task.FromResult(string.Join('\n', taken));
+    }
 
     /// <summary>The engine's <see cref="PrologEngine.LibrarySourceResolver"/>:
     /// a library of an imported collection that has no bundle yet is compiled
@@ -272,7 +278,7 @@ internal static partial class WebShumwayApp
 
         if (failed is null && File.Exists(target))
         {
-            Interlocked.Increment(ref _compiledOnDemand);
+            _compiledOnDemand.Enqueue($"{name}\t{library}");
             say.WriteLine($"% library({library}) compiled in {clock.Elapsed.TotalSeconds:0.#} s.");
             say.Flush();
             return target;

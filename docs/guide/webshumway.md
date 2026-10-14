@@ -207,6 +207,12 @@ until **rebuild**, and that is visible in the layout rather than imposed by a
 read-only flag somebody has to police. A library that will not compile still
 works; it just loads slowly.
 
+Clicking a library in **Libraries** opens its source in the editor, under a chip
+of its own beside your files, such as `library(scryer) clpz.pl`. Several can be
+open at once, and they are still open after a reload. With one on screen, the
+button that deletes a workspace file reads **Close file**: it takes the chip
+away and leaves the file in its library.
+
 ---
 
 ## Choosing how much gets compiled

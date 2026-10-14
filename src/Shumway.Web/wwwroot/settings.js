@@ -20,6 +20,10 @@ const DEFAULTS = {
   theme: 'dark',            // what a first visit gets; the toggle overrides it
   workspace: 'scratch',     // the one to open on load
   openFile: null,           // the file that was on screen, reopened on load
+  // The library sources open in the file strip, as [collection, file] pairs,
+  // and the one on screen when it was one of them. Additive over v1.
+  libraryFiles: null,
+  openLibraryFile: null,
   // The debugger's own memory: mode on/off, breakpoints per file (condition,
   // log message, enabled), watch goals. Written by debug.js; a reload
   // reapplies the lot. Additive over v1 — the merge fills it in.

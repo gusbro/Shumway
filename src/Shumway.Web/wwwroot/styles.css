@@ -427,7 +427,7 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
 .field input, .field select { margin-top: .2rem; }
 
 /* A file open from a library rather than from the workspace. */
-.file.lib { border-style: dashed; cursor: default; }
+.file.lib { border-style: dashed; }
 
 /* The guide reads as prose. It keeps a measure — a line the full width of a
    wide panel is one the eye loses its place on — but a generous one, so the
