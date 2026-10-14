@@ -311,11 +311,13 @@ public sealed partial class IlPredicateCompiler
         // build per iteration). Cache per fid for the current calleeMap
         // instance (fid → predicate is unique within one map; a new map —
         // e.g. the next query's promotion view — resets the cache).
-        if (!ReferenceEquals(_regionMemberPureCacheMap, calleeMap)
+        // A CalleeRecorder is new per compile; the map under it is the view.
+        var cacheMap = CalleeRecorder.Underlying(calleeMap);
+        if (!ReferenceEquals(_regionMemberPureCacheMap, cacheMap)
             || _regionMemberPureCache is null)
         {
             _regionMemberPureCache = new Dictionary<int, bool>();
-            _regionMemberPureCacheMap = calleeMap;
+            _regionMemberPureCacheMap = cacheMap;
         }
         if (_regionMemberPureCache.TryGetValue(p.FunctorId, out bool ok)) return ok;
         ok = CanCompileCore(p, calleeMap)

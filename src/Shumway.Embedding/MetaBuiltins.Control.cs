@@ -643,7 +643,8 @@ public static partial class MetaBuiltins
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
-        host.ReconsultFile(path);
+        // Runtime reconsult: the rest of this query sees the file, as with consult/1.
+        host.ReconsultFileLive(path, engine);
         return true;
     }
 

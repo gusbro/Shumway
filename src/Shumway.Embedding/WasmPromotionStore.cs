@@ -451,10 +451,15 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// delegate when the count crosses the threshold. Engine-thread only,
     /// synchronous -- the browser wraps the promoter's instantiation half
     /// asynchronously and returns null until it lands.</summary>
+    /// <param name="viewEpoch">The IL store's <see cref="IlPromotionStore.StaticEpoch"/>
+    /// when the program view <paramref name="predicate"/> comes from was built.</param>
     public PredicateDelegate? RecordDispatch(int functorId, CompiledPredicate predicate,
-        int linkedAddress, Activation? engine = null)
+        int linkedAddress, Activation? engine = null, int? viewEpoch = null)
     {
         if (!Enabled || _unpromotable.Contains(functorId)) return null;
+        // The view's copy of it predates a consult that changed it.
+        if (viewEpoch is { } view && view != ilStore.StaticEpoch
+            && ilStore.ChangedAfter(functorId, view)) return null;
         // The synthetic __query__ wrappers have a different body per query
         // under one functor id: promoting one would replay a stale query.
         // Mid-consult suspension mirrors the IL store's reasoning too.
@@ -562,6 +567,19 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         _retiredShadows.Add(functorId);
         _counters.Remove(functorId);
         ShadowRetirements++;
+    }
+
+    /// <summary>A consult changed a static predicate's clauses: its module, and
+    /// the modules that reach it by an internal jump, leave the tier now. The
+    /// next relink would find it, but the rest of a query that consulted runs
+    /// before that.</summary>
+    public void OnStaticChanged(int functorId)
+    {
+        if (!_installed.ContainsKey(functorId)) return;
+        var stale = new[] { functorId };
+        Displaced(stale);
+        var gone = StaleEvicted?.Invoke(stale);
+        if (gone is not null) Displaced(gone);
     }
 
     /// <summary>The persistent code space was built again, and the shadow

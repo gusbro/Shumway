@@ -1582,6 +1582,44 @@ public sealed partial class PrologEngine
     /// forward references to predicates a later batch defines are re-patched
     /// as those addresses become known.</para>
     /// </summary>
+    /// <summary>The batch a live link compiles: a predicate the consult extends
+    /// brings the clauses earlier sources gave it, in the manifest's order,
+    /// since consult/1 appends. Linked from the new clauses alone, the running
+    /// query saw only those, and the next query all of them.</summary>
+    private static IReadOnlyList<Clause> WithEarlierClauses(
+        ModuleManifest manifest, IReadOnlyList<Clause> batch)
+    {
+        var inBatch = new HashSet<Clause>(ReferenceEqualityComparer.Instance);
+        var heads = new List<int>();
+        var defined = new HashSet<int>();
+        foreach (var c in batch)
+        {
+            inBatch.Add(c);
+            if (c.Kind == ClauseKind.Directive) continue;
+            int fid = ConsultPipeline.HeadFunctorIdOf(c);
+            if (defined.Add(fid)) heads.Add(fid);
+        }
+        Dictionary<int, List<Clause>>? all = null;
+        bool extends = false;
+        foreach (var c in manifest.Clauses)
+        {
+            if (c.Kind == ClauseKind.Directive) continue;
+            int fid = ConsultPipeline.HeadFunctorIdOf(c);
+            if (!defined.Contains(fid)) continue;
+            all ??= new Dictionary<int, List<Clause>>();
+            if (!all.TryGetValue(fid, out var list)) all[fid] = list = new List<Clause>();
+            list.Add(c);
+            extends |= !inBatch.Contains(c);
+        }
+        if (!extends) return batch;
+        var merged = new List<Clause>(batch.Count);
+        foreach (var c in batch)
+            if (c.Kind == ClauseKind.Directive) merged.Add(c);
+        foreach (int fid in heads)
+            if (all!.TryGetValue(fid, out var list)) merged.AddRange(list);
+        return merged;
+    }
+
     internal void LinkConsultedStaticPredicatesLive(
         Activation engine, IReadOnlyList<Clause> newStaticClauses, string moduleName)
     {
@@ -1609,6 +1647,7 @@ public sealed partial class PrologEngine
         }
         // capture buffer ownership before AppendCode below.
         bool ownsHost = EngineOwnsHostBuffer(engine);
+        newStaticClauses = WithEarlierClauses(manifest, newStaticClauses);
 
         // --- same transform pipeline as the setup static branch --------
         // ADR-035 — keep the wrapper a real predicate for a debuggable module

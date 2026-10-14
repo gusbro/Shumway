@@ -1040,6 +1040,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
+        IlPromotion.OnDelegateEvicted = ClearLiveIlSlots;
 
         if (consultPrelude) InstallPrelude();
     }
