@@ -178,9 +178,15 @@ async function collect(dir, prefix, into) {
 export const compile = (name, library, force = false) =>
   engine.LibraryCompile(name, library, force);
 
-/** Whether a consult or a query compiled a library it needed since the last
- *  ask (the engine compiles an uncompiled one on first use). */
-export const takeCompiledOnDemand = () => engine.LibraryTakeCompiledOnDemand();
+/** The libraries a consult or a query compiled because it needed them, since
+ *  the last ask (the engine compiles an uncompiled one on first use):
+ *  `[{name, library}]`. */
+export async function takeCompiledOnDemand() {
+  return lines(await engine.LibraryTakeCompiledOnDemand()).map((line) => {
+    const [name, library] = line.split('\t');
+    return { name, library };
+  });
+}
 
 /** Everything the last compile of one library had to say. */
 export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, library);
@@ -222,13 +228,18 @@ export async function importFolder(name, dial, picked, report = () => {}) {
     if (failed) return failed;
   }
   report('storing');
-  await persist();
+  await persist(name);
   return null;
 }
 
 // --- persistence ----------------------------------------------------------
 // Mirrored to OPFS like the workspaces, in a directory of their own — the two
 // are separate things and deleting a workspace must not touch a library.
+//
+// Each step stores what it changed and nothing else. A collection's bundles run
+// to megabytes, and copying all of them after every compile made the batch
+// quadratic and leaving a library source the user had only looked at take
+// seconds of a busy page.
 
 export const persistent = () =>
   typeof navigator !== 'undefined' && navigator.storage && !!navigator.storage.getDirectory;
@@ -236,43 +247,64 @@ export const persistent = () =>
 const root = async () => (await navigator.storage.getDirectory())
   .getDirectoryHandle('libraries', { create: true });
 
-/** Copies every library into OPFS. */
-export async function persist() {
+/** A collection's stored directory, made with its dialect the first time. */
+async function storedCollection(name) {
+  const dir = await root();
+  try { return await dir.getDirectoryHandle(name); } catch { /* not stored yet */ }
+  const made = await dir.getDirectoryHandle(name, { create: true });
+  await writeInto(made, '.dialect', await dialect(name));
+  return made;
+}
+
+/** Stores one library's compiled bundle and diagnostic as they are now, a
+ *  stored one that is gone included: a library recompiled clean must stop
+ *  reading as broken after a reload. Base64 because it is the only shape bytes
+ *  cross the boundary in. */
+async function storeBuilt(libDir, name, library) {
+  const said = await diagnostic(name, library);
+  if (said.length > 0) await writeInto(libDir, `diag/${library}`, said);
+  else await removeFrom(libDir, `diag/${library}`);
+  const bundle = await engine.LibraryBundle(name, library);
+  if (bundle.length > 0) await writeInto(libDir, `built/${library}`, bundle);
+  else await removeFrom(libDir, `built/${library}`);
+}
+
+/** Copies one whole collection into OPFS: what an import needs, once. */
+export async function persist(name) {
   if (!persistent()) return false;
   try {
-    const dir = await root();
-    const present = new Set(await names());
-    for (const name of present) {
-      const libDir = await dir.getDirectoryHandle(name, { create: true });
-      const tag = await dialect(name);
-      await writeInto(libDir, '.dialect', tag);
-      // Every compiled bundle, so a reload does not mean compiling again.
-      // Base64 because it is the only shape bytes cross the boundary in.
-      // The diagnostics travel too: a library that could not be compiled has
-      // to still read as unusable tomorrow, and the batch that found that out
-      // runs once, at import.
-      const diagDir = await libDir.getDirectoryHandle('diag', { create: true });
-      for (const entry of await entries(name)) {
-        if (entry.note) {
-          const said = await diagnostic(name, entry.name);
-          if (said.length > 0) await writeInto(libDir, `diag/${entry.name}`, said);
-        } else {
-          // A library that has been recompiled clean must stop reading as
-          // broken, which means the stored record has to GO — writing only
-          // when there is something to write would leave yesterday's.
-          try { await diagDir.removeEntry(entry.name); } catch { /* none stored */ }
-        }
-        if (!entry.compiled) continue;
-        const bundle = await engine.LibraryBundle(name, entry.name);
-        if (bundle.length > 0) await writeInto(libDir, `built/${entry.name}`, bundle);
-      }
-      for (const file of await files(name))
-        await writeInto(libDir, 'src/' + file, (await read(name, file)) ?? '');
-    }
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === 'directory' && !present.has(name))
-        await dir.removeEntry(name, { recursive: true });
-    }
+    const libDir = await storedCollection(name);
+    await writeInto(libDir, '.dialect', await dialect(name));
+    for (const entry of await entries(name)) await storeBuilt(libDir, name, entry.name);
+    for (const file of await files(name))
+      await writeInto(libDir, 'src/' + file, (await read(name, file)) ?? '');
+    return true;
+  } catch { return false; }
+}
+
+/** Stores what compiling one library changed: its bundle and its diagnostic. */
+export async function persistLibrary(name, library) {
+  if (!persistent()) return false;
+  try {
+    await storeBuilt(await storedCollection(name), name, library);
+    return true;
+  } catch { return false; }
+}
+
+/** Stores one source file of a collection, after an edit. */
+export async function persistSource(name, file) {
+  if (!persistent()) return false;
+  try {
+    await writeInto(await storedCollection(name), 'src/' + file, (await read(name, file)) ?? '');
+    return true;
+  } catch { return false; }
+}
+
+/** Drops a removed collection from storage. */
+export async function forget(name) {
+  if (!persistent()) return false;
+  try {
+    await (await root()).removeEntry(name, { recursive: true });
     return true;
   } catch { return false; }
 }
@@ -322,6 +354,16 @@ async function readInto(dir, prefix, into) {
     if (handle.kind === 'directory') await readInto(handle, path + '/', into);
     else into.push({ path, text: await (await handle.getFile()).text() });
   }
+}
+
+/** Removes `path` under an OPFS directory; nothing stored there is not an error. */
+async function removeFrom(dir, path) {
+  const parts = path.split('/');
+  try {
+    let here = dir;
+    for (const part of parts.slice(0, -1)) here = await here.getDirectoryHandle(part);
+    await here.removeEntry(parts[parts.length - 1]);
+  } catch { /* none stored */ }
 }
 
 /** Writes `path` (which may name subdirectories) under an OPFS directory. */

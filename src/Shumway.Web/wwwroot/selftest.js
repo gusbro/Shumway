@@ -468,6 +468,85 @@ export async function run(session, emit, out, editor, workspace) {
           await until(async () => !(await workspace.list()).includes('selftest_doomed.pl')), true);
     check('leaving another file open',
           await until(async () => (await workspace.list()).includes(open())), true);
+
+    // A library source opens beside the workspace's files and stays there: a
+    // chip to come back to, several at once, and the button closes it instead
+    // of deleting anything. An edit is stored on the way out; a source that
+    // was only looked at is not written at all.
+    const collection = 'selftest_srcs';
+    await libraries.remove(collection);
+    await libraries.forget(collection);
+    await libraries.create(collection, '');
+    await libraries.write(collection, 'src_a.pl', 'a(1).\n');
+    await libraries.write(collection, 'src_b.pl', 'b(1).\n');
+    const home = open();
+    const a = `library(${collection}) src_a.pl`;
+    const b = `library(${collection}) src_b.pl`;
+    const chip = (text) =>
+      [...document.querySelectorAll('#files .file')].find((c) => c.textContent === text);
+    const libChips = () =>
+      [...document.querySelectorAll('#files .file.lib')].map((c) => c.textContent)
+        .filter((t) => t === a || t === b);
+    const button = () => document.getElementById('delete-file').textContent;
+    const librariesDialog = document.getElementById('libraries-dialog');
+    const fromDialog = async (library) => {
+      document.getElementById('libraries').click();
+      await until(() => librariesDialog.open && [...librariesDialog.querySelectorAll('button')]
+        .some((x) => x.textContent === `library(${library})`));
+      press(librariesDialog, `library(${library})`);
+    };
+    // What OPFS holds of one source, or null.
+    const stored = async (file) => {
+      try {
+        const src = await (await (await (await navigator.storage.getDirectory())
+          .getDirectoryHandle('libraries')).getDirectoryHandle(collection))
+          .getDirectoryHandle('src');
+        return await (await (await src.getFileHandle(file)).getFile()).text();
+      } catch { return null; }
+    };
+
+    await fromDialog('src_a');
+    check('a library source opens', await until(() => open() === a), true);
+    check('and the button closes it', button(), 'Close file');
+    await fromDialog('src_b');
+    check('a second one opens beside it', await until(() => open() === b), true);
+    check('both have chips', libChips().length, 2);
+
+    chip(home).click();
+    check('a workspace file opens again', await until(() => open() === home), true);
+    check('the library sources keep their chips', libChips().length, 2);
+    check('and the button deletes again', button(), 'Delete file');
+
+    chip(a).click();
+    check('a chip brings its source back',
+          await until(() => open() === a && editor.getText().includes('a(1).')), true);
+    await editor.setText('a(2).\n');
+    chip(home).click();
+    check('an edit is saved on the way out', await until(async () =>
+      (await libraries.read(collection, 'src_a.pl'))?.includes('a(2).') ?? false), true);
+    if (libraries.persistent()) {
+      check('and stored', await until(async () =>
+        (await stored('src_a.pl'))?.includes('a(2).') ?? false), true);
+      check('a source only looked at is not written', await stored('src_b.pl'), null);
+    }
+
+    chip(b).click();
+    await until(() => open() === b);
+    chip(a).click();
+    await until(() => open() === a);
+    document.getElementById('delete-file').click();
+    check('closing goes back to the file before', await until(() => open() === b), true);
+    check('and takes its chip away', libChips().includes(a), false);
+    check('without asking', confirmDialog.open, false);
+    check('the file stays in its library',
+          (await libraries.read(collection, 'src_a.pl'))?.includes('a(2).') ?? false, true);
+    document.getElementById('delete-file').click();
+    check('the last one goes back to the workspace', await until(() => open() === home), true);
+    check('nothing is left open for a reload',
+          JSON.stringify(settings.get().libraryFiles), '[]');
+
+    await libraries.remove(collection);
+    await libraries.forget(collection);
   }
 
   // --- keeping the examples current ------------------------------------------
