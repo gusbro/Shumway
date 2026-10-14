@@ -107,15 +107,23 @@ public static class ShmoViaConsult
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);
-            string name;
-            if (m.Success)
+            string name = m.Success
+                ? m.Groups[1].Value
+                : System.IO.Path.GetFileNameWithoutExtension(rp);
+            // use_module(library(Name)) loads the engine's own library and never
+            // this file, and its module is not emitted (below): say so, rather
+            // than fail with no object and no reason.
+            if (LibraryBundles.IsEngineLibrary(name))
             {
-                name = m.Groups[1].Value;
-                e.WithLibraryDialect(rootDialect, () => { e.ConsultFile(rp); return 0; });
+                errors.Add(new ShmoCompileError(
+                    $"[{name}] {name} is provided by Shumway itself: there is nothing to compile",
+                    0, 0));
+                continue;
             }
+            if (m.Success)
+                e.WithLibraryDialect(rootDialect, () => { e.ConsultFile(rp); return 0; });
             else
             {
-                name = System.IO.Path.GetFileNameWithoutExtension(rp);
                 // ConsultString has no path — record the root's source file so
                 // its timestamp is right (roots regenerate anyway, but keep it honest).
                 e._moduleSourceFile[name] = System.IO.Path.GetFullPath(rp);

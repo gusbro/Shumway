@@ -430,11 +430,14 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>True when the engine replaces the library whose source is
-    /// <paramref name="sourcePath"/> with its own (ADR-040): loading it gives
-    /// the engine's version, so a host has nothing to compile for it.</summary>
+    /// <paramref name="sourcePath"/> with its own: one of the engine's libraries,
+    /// which <c>use_module</c> loads before it looks at any file, or an ADR-040
+    /// override whose marker the file carries. Loading it gives the engine's
+    /// version, so a host has nothing to compile for it.</summary>
     public static bool ProvidesLibraryNatively(string name, string sourcePath)
-        => NativeOverrideMarkers.TryGetValue(name, out string[]? markers)
-           && CarriesMarker(sourcePath, markers);
+        => LibraryBundles.IsEngineLibrary(name)
+           || (NativeOverrideMarkers.TryGetValue(name, out string[]? markers)
+               && CarriesMarker(sourcePath, markers));
 
     private static bool CarriesMarker(string path, string[] markers)
     {
