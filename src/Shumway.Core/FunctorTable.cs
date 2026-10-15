@@ -72,22 +72,24 @@ public static class FunctorTable
         if (_byKey.TryGetValue(key, out int existing))
             return existing;
 
-        int candidate = Interlocked.Increment(ref _nextId) - 1;
-        _byId[candidate] = key;
-
-        if (_byKey.TryAdd(key, candidate))
+        // A new functor is published before the limit moves past it, so every
+        // id below IdLimit has an entry. Not a lock-free reservation: the loser
+        // of a race left an id that was never published, a hole that stopped
+        // the functor mirror (CopyPackedFrom) for good.
+        lock (_internLock)
         {
-            // Publish to the dense array only for the canonical (winning)
-            // id — a lost-race orphan must never appear there, since the
-            // dictionary entry it mirrors is removed below.
-            StoreInByIdArray(candidate, atomId, arity);
-            return candidate;
+            if (_byKey.TryGetValue(key, out existing))
+                return existing;
+            int id = _nextId;
+            _byId[id] = key;
+            StoreInByIdArray(id, atomId, arity);
+            _byKey[key] = id;
+            Volatile.Write(ref _nextId, id + 1);
+            return id;
         }
-
-        // Lost the race; drop our orphan and adopt the winner.
-        _byId.TryRemove(candidate, out _);
-        return _byKey[key];
     }
+
+    private static readonly object _internLock = new();
 
     /// <summary>Returns <c>(atomId, arity)</c> for a previously-interned functor id.</summary>
     /// <exception cref="ArgumentException">If <paramref name="functorId"/> was never returned by <see cref="Intern"/>.</exception>
@@ -141,21 +143,21 @@ public static class FunctorTable
         return false;
     }
 
-    /// <summary>Number of distinct functors interned so far. Includes orphaned ids from lost intern races.</summary>
+    /// <summary>Number of distinct functors interned so far.</summary>
     public static int Count => _byId.Count;
 
-    /// <summary>One past the highest functor id ever allocated. Unlike
-    /// <see cref="Count"/> this counts holes, so it is the right bound for
-    /// anything indexing by id rather than enumerating entries.</summary>
+    /// <summary>One past the highest functor id allocated. Every id below it
+    /// has its entry published, so it is the bound for anything indexing by
+    /// id.</summary>
     public static int IdLimit => Volatile.Read(ref _nextId);
 
     /// <summary>Copies the dense <c>(atomId &lt;&lt; 32) | arity</c> publication
     /// array, starting at <paramref name="from"/>, into <paramref name="dest"/>
     /// indexed from zero. Returns the first id not copied.
     ///
-    /// <para>Copying stops at the first id a racing intern has allocated but
-    /// not yet published, so an incremental mirror resumes exactly there
-    /// instead of freezing a filler in place forever. The packed layout is
+    /// <para>Copying stops at the first id the array it read does not hold
+    /// (the array grew after it was read), so an incremental mirror resumes
+    /// exactly there instead of freezing a filler in place. The packed layout is
     /// the one the table already keeps for its own lock-free lookups, which
     /// is what makes an exact mirror a memcpy rather than a probe per
     /// id.</para></summary>
@@ -168,7 +170,7 @@ public static class FunctorTable
         while (from + n < limit && n < dest.Length)
         {
             long packed = Volatile.Read(ref arr[from + n]);
-            if (packed < 0) break;              // allocated, not published yet
+            if (packed < 0) break;              // published into a newer array
             dest[n] = packed;
             n++;
         }
@@ -180,6 +182,7 @@ public static class FunctorTable
     /// </summary>
     internal static void ResetForTesting()
     {
+        lock (_internLock)
         lock (_byIdArrayLock)
         {
             _byKey.Clear();

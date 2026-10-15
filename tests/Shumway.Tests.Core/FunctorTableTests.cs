@@ -116,4 +116,33 @@ public class FunctorTableTests
         Assert.Equal(distinct, ids.Distinct().Count());
         Assert.Equal(distinct, FunctorTable.Count);
     }
+
+    /// <summary>Racing interns of one new functor leave no id without an
+    /// entry. The functor mirror copies up to the first such id, so one left
+    /// for good stopped it there: the wasm tier never saw a functor interned
+    /// after it.</summary>
+    [Fact]
+    public void Intern_RacingCallers_LeaveNoHole()
+    {
+        for (int round = 0; round < 50; round++)
+        {
+            int atom = 5000 + round;
+            using var go = new ManualResetEventSlim();
+            var threads = new Thread[8];
+            for (int t = 0; t < threads.Length; t++)
+            {
+                threads[t] = new Thread(() =>
+                {
+                    go.Wait();
+                    for (int arity = 0; arity < 64; arity++) FunctorTable.Intern(atom, arity);
+                });
+                threads[t].Start();
+            }
+            go.Set();
+            foreach (var t in threads) t.Join();
+        }
+        Assert.Equal(FunctorTable.Count, FunctorTable.IdLimit);
+        var mirror = new long[FunctorTable.IdLimit];
+        Assert.Equal(FunctorTable.IdLimit, FunctorTable.CopyPackedFrom(0, mirror));
+    }
 }

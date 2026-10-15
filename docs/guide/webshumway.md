@@ -56,8 +56,16 @@ either tier; only speed differs.
 | `.`, Enter or Escape | stop asking |
 | **Ctrl-Enter** | consult the program |
 | **Ctrl-S** | save the file |
-| Tab | complete a predicate name |
+| Tab | complete a predicate name, or indent |
+| Shift-Tab | indent one stop less |
+| Escape, then Tab | leave the editor |
 | Escape (while a program reads) | end of file |
+
+In the editor, Tab completes the name before the cursor; with nothing to
+complete, it indents to the next multiple of four columns. With a selection,
+Tab and Shift-Tab move every line it touches. Enter starts the new line at the
+indentation of the one before, one stop further in after `:-` or `-->`, and at
+the margin after the full stop that ends a clause.
 
 Ctrl-Enter rather than a Ctrl-letter because no letter is free across browsers:
 `B`, `I` and `M` open a sidebar, page info or mute the tab in Firefox; `E`, `K`
@@ -156,11 +164,21 @@ finishes first; the batch starts no other until the import has its bundle. So a
 program never loads a library from source over others already compiled, which
 breaks a library that relies on another's expansion hooks while it loads.
 
+After a reload the page is usable at once: the compiled libraries come back
+while you work, and a consult or a query that arrives before they are back
+waits for them.
+
 Compiling uses the **consult** path (`ShmoViaConsult`), the only one that works
 for a library which generates clauses as it loads (which is what clpz and its
 attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
+
+A compiled library holds its own code only. The libraries of the collection it
+imports load from their own bundles, while it compiles and whenever it loads,
+and one with no bundle yet is compiled first. Scryer's uuid imports crypto,
+which imports clpz: compiling uuid compiles clpz, then crypto, then uuid, and
+clpz's code is stored once rather than inside each of the three.
 
 Unless the page was built without the WebAssembly tier, a compiled library
 also carries its predicates as a WebAssembly module, baked once at compile

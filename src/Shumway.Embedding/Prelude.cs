@@ -1152,6 +1152,43 @@ internal static class Prelude
             ; '$can_be_ok'(Type, Term) -> true
             ; '$must_be_wrong'(Type, Term, can_be/2) ).
 
+        % library(error)'s throwers, as Scryer and SWI export them. ISO leaves
+        % the second argument of error/2 to the implementation; without a
+        % context it is [], Scryer's: there the context is a list of Key-Value
+        % pairs, the one call_with_error_context/2 adds to.
+        :- public instantiation_error/0.
+        :- public instantiation_error/1.
+        :- public domain_error/2.
+        :- public domain_error/3.
+        :- public type_error/2.
+        :- public type_error/3.
+        :- public representation_error/1.
+        :- public resource_error/1.
+        :- public call_with_error_context/2.
+        :- meta_predicate(call_with_error_context(0, *)).
+        %! instantiation_error | Type checking | library | Throws error(instantiation_error, []).
+        instantiation_error :- throw(error(instantiation_error, [])).
+        %! instantiation_error(+Context) | Type checking | library | Throws error(instantiation_error, Context).
+        instantiation_error(Context) :- throw(error(instantiation_error, Context)).
+        %! domain_error(+Domain, @Culprit) | Type checking | library | Throws error(domain_error(Domain, Culprit), []).
+        domain_error(Domain, Culprit) :- throw(error(domain_error(Domain, Culprit), [])).
+        %! domain_error(+Domain, @Culprit, +Context) | Type checking | library | Throws error(domain_error(Domain, Culprit), Context).
+        domain_error(Domain, Culprit, Context) :-
+            throw(error(domain_error(Domain, Culprit), Context)).
+        %! type_error(+Type, @Culprit) | Type checking | library | Throws error(type_error(Type, Culprit), []).
+        type_error(Type, Culprit) :- throw(error(type_error(Type, Culprit), [])).
+        %! type_error(+Type, @Culprit, +Context) | Type checking | library | Throws error(type_error(Type, Culprit), Context).
+        type_error(Type, Culprit, Context) :-
+            throw(error(type_error(Type, Culprit), Context)).
+        %! representation_error(+Flag) | Type checking | library | Throws error(representation_error(Flag), []).
+        representation_error(Flag) :- throw(error(representation_error(Flag), [])).
+        %! resource_error(+Resource) | Type checking | library | Throws error(resource_error(Resource), []).
+        resource_error(Resource) :- throw(error(resource_error(Resource), [])).
+        %! call_with_error_context(:Goal, +Key-Value) | Type checking | library | Runs Goal; an error(E, Pairs) it raises is raised again as error(E, [Key-Value|Pairs]).
+        call_with_error_context(Goal, Pair) :-
+            '$must_be'(pair, Pair, call_with_error_context/2),
+            catch(Goal, error(E, Pairs), throw(error(E, [Pair|Pairs]))).
+
         % The check's NAME is validated first, whatever the value looks like: a
         % name neither predicate knows is a programming error at the call site,
         % and hiding it behind the value's own verdict let it pass unnoticed

@@ -1377,6 +1377,7 @@ internal sealed class ConsultPipeline
         bool isExportQualified = false;
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
+        List<string>? pendingImportedModules = null;
         var clauses = new List<Clause>();
         // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
@@ -2180,6 +2181,7 @@ internal sealed class ConsultPipeline
         void RecordImports(string? src, List<(string Name, int Arity)>? filter)
         {
             if (src is null) return;
+            if (!(pendingImportedModules ??= new()).Contains(src)) pendingImportedModules.Add(src);
             // ADR-046 — importing a module activates its exported operators
             // for the rest of this file (both use_module forms: the syntax
             // is a practical precondition for reading the importer at all,
@@ -2301,6 +2303,8 @@ internal sealed class ConsultPipeline
             manifest.ExportFunctors.UnionWith(exports);
             if (pendingImports is not null)
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
+            if (pendingImportedModules is not null)
+                manifest.ImportedModules.AddRange(pendingImportedModules);
             if (pendingDiscontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) manifest.MultifileFunctors.UnionWith(pendingMultifile);
             E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);
@@ -2361,6 +2365,9 @@ internal sealed class ConsultPipeline
             // hides same-named bare-global publics (clpfd + clpz coexistence).
             if (pendingImports is not null)
                 E.RecordUserImports(existing, pendingImports);
+            if (pendingImportedModules is not null)
+                foreach (string m in pendingImportedModules)
+                    if (!existing.ImportedModules.Contains(m)) existing.ImportedModules.Add(m);
             if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
             E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);

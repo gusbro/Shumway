@@ -31,14 +31,19 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atomic(@Term)` | iso | Succeeds if the argument is atomic (atom, number or string). |
 | `atomic_si(@Term)` | engine | Sound atomic test (si family). |
 | `attvar(@Term)` | engine | Succeeds if the argument is an attributed variable. |
+| `call_with_error_context(:Goal, +Key-Value)` | library | Runs Goal; an error(E, Pairs) it raises is raised again as error(E, [Key-Value\|Pairs]). |
 | `callable(@Term)` | iso | Succeeds if the argument is an atom or a compound term. |
 | `can_be(+Type, @Term)` | engine | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises. |
 | `character_si(@Term)` | engine | Sound one-char-atom test (si family). |
 | `chars_si(@Term)` | engine | Sound list-of-characters test (si family). |
 | `compound(@Term)` | iso | Succeeds if the argument is a compound term. |
 | `cyclic_term(@Term)` | engine | Succeeds if the argument is a cyclic (infinite/rational) term. |
+| `domain_error(+Domain, @Culprit)` | library | Throws error(domain_error(Domain, Culprit), []). |
+| `domain_error(+Domain, @Culprit, +Context)` | library | Throws error(domain_error(Domain, Culprit), Context). |
 | `float(@Term)` | iso | Succeeds if the argument is a float. |
 | `ground(@Term)` | iso | Succeeds if the argument contains no unbound variables. |
+| `instantiation_error` | library | Throws error(instantiation_error, []). |
+| `instantiation_error(+Context)` | library | Throws error(instantiation_error, Context). |
 | `integer(@Term)` | iso | Succeeds if the argument is an integer. |
 | `integer_si(@Term)` | engine | Sound integer test (si family). |
 | `is_list(@Term)` | engine | Succeeds if the argument is a proper list. |
@@ -47,7 +52,11 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nonvar(@Term)` | iso | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | iso | Succeeds if the argument is a number. |
 | `rational(@Term)` | engine | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
+| `representation_error(+Flag)` | library | Throws error(representation_error(Flag), []). |
+| `resource_error(+Resource)` | library | Throws error(resource_error(Resource), []). |
 | `string(@Term)` | engine | Succeeds if the argument is a non-empty proper list of characters or of codes (this engine has no separate string type). |
+| `type_error(+Type, @Culprit)` | library | Throws error(type_error(Type, Culprit), []). |
+| `type_error(+Type, @Culprit, +Context)` | library | Throws error(type_error(Type, Culprit), Context). |
 | `var(@Term)` | iso | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
