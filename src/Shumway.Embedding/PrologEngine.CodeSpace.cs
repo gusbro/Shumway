@@ -400,6 +400,14 @@ public sealed partial class PrologEngine
         IlPromotion.EvictDelegate(functorId);
         // ADR-054: a wasm snapshot of it leaves new calls too.
         IlPromotion.Wasm?.OnMutated(functorId);
+        ClearLiveIlSlots(functorId);
+    }
+
+    /// <summary>Clears every live interpreter's direct-dispatch slot for a
+    /// functor whose delegate went: a running query's next call takes its
+    /// bytecode, or whatever compiled code it has by then.</summary>
+    private void ClearLiveIlSlots(int functorId)
+    {
         for (int i = _liveInterps.Count - 1; i >= 0; i--)
         {
             if (!_liveInterps[i].TryGetTarget(out var li))

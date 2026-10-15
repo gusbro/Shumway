@@ -21,6 +21,9 @@ public sealed partial class PrologEngine
     /// defines, then consults it.</summary>
     public void ReconsultFile(string path) => Consults.ReconsultFile(path);
 
+    internal void ReconsultFileLive(string path, Shumway.Core.Activation liveEngine)
+        => Consults.ReconsultFileLive(path, liveEngine);
+
     /// <summary>Consults Prolog source text into this engine.</summary>
     public void ConsultString(string source) => Consults.ConsultString(source);
 

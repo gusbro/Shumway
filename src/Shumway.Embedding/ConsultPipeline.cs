@@ -1028,6 +1028,22 @@ internal sealed class ConsultPipeline
         finally { E._liveConsultEngine = prev; }
     }
 
+    /// <summary>Runtime <c>reconsult/1</c>: <see cref="ReconsultFile"/> made
+    /// visible to the rest of the query that called it, as
+    /// <see cref="ConsultFileLive"/> does for <c>consult/1</c>.</summary>
+    internal void ReconsultFileLive(string path, Activation liveEngine)
+    {
+        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+        {
+            ReconsultFile(path);
+            return;
+        }
+        var prev = E._liveConsultEngine;
+        E._liveConsultEngine = liveEngine;
+        try { ReconsultFile(path); }
+        finally { E._liveConsultEngine = prev; }
+    }
+
     /// <summary>Directory of the file currently being consulted (null for a
     /// raw <see cref="ConsultString"/>) — the base `:- include/1` paths
     /// resolve against.</summary>
@@ -2448,11 +2464,16 @@ internal sealed class ConsultPipeline
         // the call threshold on its own ~50 clauses) kept serving the pre-append
         // IL, so a later library's hook clauses (atts' `:- attribute`) were
         // silently invisible. Cheap for the common never-promoted functor.
+        // HeadFunctorIdOf, not TryExtractHead: a grammar rule defines g/2, not '-->'/2.
+        var changedHeads = new HashSet<int>();
         foreach (var cl in clauses)
         {
-            if (!PrologEngine.TryExtractHead(cl, out string hn, out int ha)) continue;
-            E.InvalidateIlForFunctor(FunctorTable.Intern(
-                AtomTable.Intern(hn, permanent: true).Id, ha));
+            if (cl.Kind == ClauseKind.Directive || !changedHeads.Add(HeadFunctorIdOf(cl))) continue;
+            int fid = HeadFunctorIdOf(cl);
+            E.InvalidateIlForFunctor(fid);
+            // And the code that copied the old clauses in: a region it is a
+            // member of, a caller that inlined it.
+            E.IlPromotion.StaticClausesChanged(fid);
         }
 
         // The code the debugger's breakpoints were waiting for has just arrived. Bind them

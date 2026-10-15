@@ -25,6 +25,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // of one costs this probe and a count until its code is installed.
     private readonly Dictionary<int, IlPromotionStore.Offer> _offerCache = new();
 
+    // The store's static epoch when this query's program view was built.
+    private readonly int _viewEpoch;
+
     // The activation this query runs on: a dynamic predicate's snapshot is
     // linked into its code space when it promotes (ADR-054).
     private readonly Activation? _engine;
@@ -41,6 +44,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     {
         _store = store;
         _predicatesByAddress = predicatesByAddress;
+        _viewEpoch = store.StaticEpoch;
         _jitProfile = jitProfile;
         _engine = engine;
     }
@@ -105,11 +109,11 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm)
         {
             int addr = AddressOfFunctor(functorId);
-            if (addr >= 0) wasm.RecordDispatch(functorId, caller, addr, _engine);
+            if (addr >= 0) wasm.RecordDispatch(functorId, caller, addr, _engine, _viewEpoch);
             return;
         }
         if (_store.HasOffers && _store.HasOffer(functorId)) return;
-        _store.RecordInvocation(functorId, caller, CalleeMap);
+        _store.RecordInvocation(functorId, caller, CalleeMap, _viewEpoch);
     }
 
     private CompiledPredicate? PredicateContaining(int pc)
@@ -190,7 +194,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // The wasm tier counts the same dispatches; its install lands in the
         // store's table, so the wrapper below is the ordinary one.
         if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm
-            && wasm.RecordDispatch(functorId, pred, targetAddress, _engine) is not null)
+            && wasm.RecordDispatch(functorId, pred, targetAddress, _engine, _viewEpoch) is not null)
         {
             var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
             _dispatchCache[targetAddress] = wrappedWasm;
@@ -227,7 +231,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         }
 
         // Not cached when null: the next call may cross the promotion threshold.
-        var fresh = _store.RecordInvocation(functorId, pred, CalleeMap);
+        var fresh = _store.RecordInvocation(functorId, pred, CalleeMap, _viewEpoch);
         if (fresh is null) return null;
         var wrappedFresh = _store.TryGetDispatchWrapper(functorId)!;
         _dispatchCache[targetAddress] = wrappedFresh;

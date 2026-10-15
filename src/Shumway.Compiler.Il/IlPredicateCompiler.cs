@@ -762,6 +762,14 @@ public sealed partial class IlPredicateCompiler
                 var rplan = IlRegionPlanner.Plan(region,
                     m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
                     m => RegionBuiltinResumePcs(m, calleeMap));
+                if (calleeMap is CalleeRecorder recorder)
+                {
+                    var members = new List<(int, int)>();
+                    foreach (var s in rplan.Sites)
+                        if (s.Kind == RegionCursorKind.MemberEntry)
+                            members.Add((region.Members[s.MemberIndex].FunctorId, s.Cursor));
+                    recorder.RegionMembers = members;
+                }
                 return CompileRegion(region, rplan, calleeMap);
             }
             // Explain why a predicate with a local closure didn't become a region —

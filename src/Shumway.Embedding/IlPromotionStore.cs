@@ -608,7 +608,17 @@ public sealed class IlPromotionStore
         if (_offers.TryGetValue(functorId, out var withdrawn)) Withdraw(withdrawn);
         _bundleCode.Remove(functorId);
         _boundCps.Remove(functorId);
+        ForgetCopies(functorId);
+        if (_aliasRoot.Remove(functorId, out int root) && _aliasesOf.TryGetValue(root, out var siblings))
+            siblings.Remove(functorId);
+        if (_aliasesOf.Remove(functorId, out var aliased))
+            foreach (int member in aliased)
+            {
+                _aliasRoot.Remove(member);
+                EvictDelegate(member, mutation: false);
+            }
         if (!_delegates.Remove(functorId)) return;
+        OnDelegateEvicted?.Invoke(functorId);
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
         _counters.Remove(functorId);
@@ -679,6 +689,10 @@ public sealed class IlPromotionStore
     /// CallIl/ExecuteIl so the rest of the running query dispatches directly.</summary>
     public Action<int, PredicateDelegate>? OnPromotionInstalled { get; set; }
 
+    /// <summary>Invoked on the engine thread when a functor's delegate goes, so
+    /// a running query's direct-dispatch tables let go of it too.</summary>
+    public Action<int>? OnDelegateEvicted { get; set; }
+
     // In-flight background compiles (engine thread only) and their results
     // (worker → engine thread hand-off).
     private readonly HashSet<int> _pendingCompiles = new();
@@ -687,12 +701,108 @@ public sealed class IlPromotionStore
     private readonly ConcurrentQueue<CompletedCompile> _completedCompiles = new();
     private sealed record CompletedCompile(
         int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error,
-        bool IsDynamicSnapshot, bool CpsOnly = false);
+        bool IsDynamicSnapshot, bool CpsOnly = false, CalleeRecorder? Callees = null, int Epoch = 0);
 
     // Per-fid mutation stamp, bumped by EvictDelegate on every mutation: a background
     // compile whose snapshot was mutated while in flight must be discarded at drain
     // (installing it would violate the logical-update view with stale clauses).
     private readonly Dictionary<int, int> _mutationStamp = new();
+
+    // The predicates each installed delegate copied into its code (a region's
+    // members, inlined callees), and the reverse: a consult that changes one's
+    // clauses evicts every delegate holding a copy, or it keeps running the old.
+    private readonly Dictionary<int, HashSet<int>> _copies = new();
+    private readonly Dictionary<int, HashSet<int>> _copiedBy = new();
+    // Static clause changes, numbered: a background compile that looked at a
+    // predicate changed after it started is stale when it lands.
+    private int _staticEpoch;
+    private readonly Dictionary<int, int> _staticChangedAt = new();
+    // A region member with no delegate of its own runs its root's code, entered
+    // at its member-entry cursor; it goes when the root does.
+    private readonly Dictionary<int, List<int>> _aliasesOf = new();
+    private readonly Dictionary<int, int> _aliasRoot = new();
+
+    private static CalleeRecorder? Recording(IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => calleeMap is null ? null : new CalleeRecorder(calleeMap);
+
+    /// <summary>The root whose region code <paramref name="functorId"/> runs,
+    /// being a member with no code of its own; null otherwise.</summary>
+    public int? RegionRootOf(int functorId)
+        => _aliasRoot.TryGetValue(functorId, out int root) ? root : null;
+
+    /// <summary>A consult gave <paramref name="functorId"/> new clauses, or
+    /// replaced them: the delegates that copied the old ones go.</summary>
+    public void StaticClausesChanged(int functorId)
+    {
+        _staticChangedAt[functorId] = ++_staticEpoch;
+        if (_copiedBy.TryGetValue(functorId, out var holders))
+            foreach (int holder in holders.ToList()) EvictDelegate(holder, mutation: false);
+        Wasm?.OnStaticChanged(functorId);
+    }
+
+    /// <summary>True when a consult changed <paramref name="functorId"/>'s
+    /// clauses after the program view of <paramref name="viewEpoch"/> was built.</summary>
+    internal bool ChangedAfter(int functorId, int viewEpoch)
+        => _staticChangedAt.TryGetValue(functorId, out int at) && at > viewEpoch;
+
+    private bool ChangedSince(CalleeRecorder? callees, int epoch)
+    {
+        if (callees is null || epoch == _staticEpoch) return false;
+        foreach (int fid in callees.LookedUp)
+            if (_staticChangedAt.TryGetValue(fid, out int at) && at > epoch) return true;
+        return false;
+    }
+
+    private void RecordCopies(int functorId, CalleeRecorder? callees)
+    {
+        if (callees is null) return;
+        if (!_copies.TryGetValue(functorId, out var copied)) _copies[functorId] = copied = new HashSet<int>();
+        foreach (int fid in callees.LookedUp)
+        {
+            if (fid == functorId || !copied.Add(fid)) continue;
+            if (!_copiedBy.TryGetValue(fid, out var holders)) _copiedBy[fid] = holders = new HashSet<int>();
+            holders.Add(functorId);
+        }
+    }
+
+    private void ForgetCopies(int functorId)
+    {
+        if (!_copies.Remove(functorId, out var copied)) return;
+        foreach (int fid in copied)
+            if (_copiedBy.TryGetValue(fid, out var holders) && holders.Remove(functorId) && holders.Count == 0)
+                _copiedBy.Remove(fid);
+    }
+
+    /// <summary>Gives each member of the region rooted at <paramref name="root"/>
+    /// that has no code of its own the root's, entered where the member
+    /// starts: compiling it again for its own callers would be the same code
+    /// twice, and until then those callers ran it on the interpreter.</summary>
+    private void InstallMemberAliases(int root, PredicateDelegate rootDelegate, CalleeRecorder? callees)
+    {
+        if (callees?.RegionMembers is not { Count: > 0 } members) return;
+        foreach (var (member, cursor) in members)
+        {
+            if (_delegates.ContainsKey(member) || _pendingCompiles.Contains(member)
+                || _offers.ContainsKey(member) || _unpromotable.Contains(member)
+                || IsExcludedFromPromotion(member)
+                || !callees.Inner.TryGetValue(member, out var memberCode) || memberCode.IsDebuggable)
+                continue;
+            int entry = cursor;
+            // A resume (cursor > 0) by the member's id is a call that began on
+            // code of its own, since retired; the root's cursors are its own.
+            var earlier = _retiredResume.GetValueOrDefault(member);
+            PredicateDelegate alias = (engine, c) => c == 0
+                ? rootDelegate(engine, entry)
+                : earlier is not null ? earlier(engine, c)
+                : throw new InvalidOperationException(
+                    $"resume at cursor {c} of region member {member}, which has no code of its own");
+            InstallDelegate(member, alias);
+            _aliasRoot[member] = root;
+            if (!_aliasesOf.TryGetValue(root, out var aliased)) _aliasesOf[root] = aliased = new List<int>();
+            aliased.Add(member);
+            OnPromotionInstalled?.Invoke(member, alias);
+        }
+    }
 
     private void DrainCompletedCompiles()
     {
@@ -705,8 +815,10 @@ public sealed class IlPromotionStore
                 // Only for the delegate it was compiled against, still in place.
                 if (stampNow == c.Stamp && c.Result is { Cps: { } lateCps } late
                     && _delegates.TryGetValue(c.Fid, out var current)
-                    && ReferenceEquals(current, late.Delegate))
+                    && ReferenceEquals(current, late.Delegate)
+                    && !ChangedSince(c.Callees, c.Epoch))
                 {
+                    RecordCopies(c.Fid, c.Callees);
                     _boundCps.Remove(c.Fid);
                     _cpsCode[c.Fid] = lateCps;
                     _dispatchWrappers.Remove(c.Fid);
@@ -736,13 +848,22 @@ public sealed class IlPromotionStore
             }
             _mutationStamp.TryGetValue(c.Fid, out int now);
             if (now != c.Stamp) continue;   // mutated mid-compile: stale, re-warm
+            if (ChangedSince(c.Callees, c.Epoch))
+            {
+                // A callee it copied changed after its view was built.
+                _staleForView[c.Fid] = c.Epoch;
+                continue;
+            }
             var drainDel = c.IsDynamicSnapshot
                 ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
                 : c.Result!.Value.Delegate;
             InstallDelegate(c.Fid, drainDel);
+            RecordCopies(c.Fid, c.Callees);
             if (c.Result.Value.Cps is { } drainCps) _cpsCode[c.Fid] = drainCps;
             if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
             OnPromotionInstalled?.Invoke(c.Fid, drainDel);
+            // A dynamic snapshot goes at its next mutation, and its aliases with it.
+            if (!c.IsDynamicSnapshot) InstallMemberAliases(c.Fid, drainDel, c.Callees);
         }
     }
 
@@ -923,8 +1044,10 @@ public sealed class IlPromotionStore
     /// count crosses the threshold. Null otherwise (under-threshold, in-flight,
     /// unpromotable, or promotion disabled). An engine has one Tier-1: with a
     /// wasm tier attached the IL compiler promotes nothing.</summary>
+    /// <param name="viewEpoch">The <see cref="StaticEpoch"/> the program view
+    /// <paramref name="calleeMap"/> was built at; null when it is current.</param>
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null, int? viewEpoch = null)
     {
         if (!IlTierOn || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
@@ -952,12 +1075,30 @@ public sealed class IlPromotionStore
 
         int effectiveThreshold = _primeImmediately.Contains(functorId) ? 1 : Threshold;
         if (count < effectiveThreshold) return null;
-        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic);
+        // Its compile from this view copied a predicate changed since: the
+        // count stands, and a later view promotes it.
+        int epoch = viewEpoch ?? _staticEpoch;
+        // A view built at the current epoch has nothing newer than it.
+        if (epoch != _staticEpoch)
+        {
+            if (_staleForView.TryGetValue(functorId, out int staleView) && staleView == epoch) return null;
+            // The view's own copy of it predates its new clauses.
+            if (ChangedAfter(functorId, epoch)) return null;
+        }
+        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic, epoch);
     }
+
+    // Predicates whose compile copied a callee changed after the program view
+    // it compiled from was built, and that view's epoch.
+    private readonly Dictionary<int, int> _staleForView = new();
+
+    /// <summary>How many consult-time static clause changes there have been: a
+    /// program view records it when built.</summary>
+    public int StaticEpoch => _staticEpoch;
 
     // Not in RecordInvocation, for Request's reason.
     private PredicateDelegate? CompileAtThreshold(int functorId, CompiledPredicate predicate,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic, int viewEpoch)
     {
         // ADR-035: debuggable code stays on the interpreter. Not left to the
         // debug opcodes the compiler refuses: a fact or a rule ending in a
@@ -1006,6 +1147,8 @@ public sealed class IlPromotionStore
             _mutationStamp.TryGetValue(functorId, out int stamp);
             var capturedTarget = target;
             var capturedCallees = calleeMap;
+            var callees = Recording(calleeMap);
+            int epoch = viewEpoch;
             var roots = BundleRoots(functorId);
             _pendingCompiles.Add(functorId);
             // An instrumented (PGO) delegate has its own cursor layout:
@@ -1030,13 +1173,13 @@ public sealed class IlPromotionStore
                     // ADR-061: the delegate and its continuation methods push
                     // the same choice points (WAM, with resume markers).
                     using var wam = IlPredicateCompiler.WamChoicePoints(wantCps);
-                    return Compiled(Compiler.CompileInstrumented(capturedTarget, capturedCallees));
+                    return Compiled(Compiler.CompileInstrumented(capturedTarget, callees));
                 }),
                 (result, error) =>
                 {
                     var r = (IlPredicateCompiler.PgoCompileResult?)result;
                     _completedCompiles.Enqueue(new CompletedCompile(
-                        functorId, r, stamp, error?.Message, isDynamic));
+                        functorId, r, stamp, error?.Message, isDynamic, Callees: callees, Epoch: epoch));
                     // ADR-061: the delegate is in use while its continuation
                     // methods compile, which takes several emissions.
                     if (!wantCps) return;
@@ -1046,38 +1189,51 @@ public sealed class IlPromotionStore
                             functorId, null, stamp, null, false, CpsOnly: true));
                         return;
                     }
+                    var cpsCallees = Recording(capturedCallees);
                     IlCompileWorker.RunAsync(
                         () => WithContexts(() => (object?)(plain with
                         {
-                            Cps = TryCompileCps(capturedTarget, capturedCallees, plain.Delegate),
+                            Cps = TryCompileCps(capturedTarget, cpsCallees, plain.Delegate),
                         })),
                         (cpsResult, _) => _completedCompiles.Enqueue(new CompletedCompile(
                             functorId, (IlPredicateCompiler.PgoCompileResult?)cpsResult, stamp,
-                            null, false, CpsOnly: true)),
+                            null, false, CpsOnly: true, Callees: cpsCallees, Epoch: epoch)),
                         lowPriority: true);
                 });
             return null;
         }
 
         var syncRoots = BundleRoots(functorId);
+        var syncCallees = Recording(calleeMap);
         var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
                 WithNativeInline(() => WithRoots(syncRoots, () =>
                 {
                     using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
-                    return Compiled(Compiler.CompileInstrumented(target, calleeMap));
+                    return Compiled(Compiler.CompileInstrumented(target, syncCallees));
                 }))));
+        if (ChangedSince(syncCallees, viewEpoch))
+        {
+            _staleForView[functorId] = viewEpoch;
+            return null;
+        }
         var installedDel = isDynamic
             ? GuardDynamicSnapshot(functorId, syncResult.Delegate)
             : syncResult.Delegate;
         InstallDelegate(functorId, installedDel);
+        RecordCopies(functorId, syncCallees);
+        var syncCpsCallees = Recording(calleeMap);
         if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithFloatPool(functorId, () =>
                 WithNativeInline(() => WithRoots(syncRoots,
-                    () => TryCompileCps(target, calleeMap, syncResult.Delegate))))) is { } syncCps)
+                    () => TryCompileCps(target, syncCpsCallees, syncResult.Delegate))))) is { } syncCps)
+        {
             _cpsCode[functorId] = syncCps;
+            RecordCopies(functorId, syncCpsCallees);
+        }
         if (syncResult.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = syncResult.ProfileKey;
         OnPromotionInstalled?.Invoke(functorId, installedDel);
+        if (!isDynamic) InstallMemberAliases(functorId, installedDel, syncCallees);
         return installedDel;
     }
 
@@ -1286,17 +1442,24 @@ public sealed class IlPromotionStore
             return null;
         }
         var warmRoots = BundleRoots(functorId);
+        var warmCallees = Recording(calleeMap);
         var del = RunOnLargeStack(() =>
             WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
             {
                 using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
-                return Compiled(Compiler.Compile(predicate, calleeMap));
+                return Compiled(Compiler.Compile(predicate, warmCallees));
             }))));
         InstallDelegate(functorId, del);
+        RecordCopies(functorId, warmCallees);
+        var warmCpsCallees = Recording(calleeMap);
         if (RunOnLargeStack(() => WithFloatPool(functorId, () =>
                 WithNativeInline(() => WithRoots(warmRoots,
-                    () => TryCompileCps(predicate, calleeMap, del))))) is { } warmCps)
+                    () => TryCompileCps(predicate, warmCpsCallees, del))))) is { } warmCps)
+        {
             _cpsCode[functorId] = warmCps;
+            RecordCopies(functorId, warmCpsCallees);
+        }
+        InstallMemberAliases(functorId, del, warmCallees);
         return del;
     }
 
@@ -1398,6 +1561,14 @@ public sealed class IlPromotionStore
                 : "counting";
             sb.AppendLine($"        candidate {name}/{arity}: count={kv.Value} {state}");
         }
+        foreach (var (member, root) in _aliasRoot)
+            sb.AppendLine($"        member {Indicator(member)} runs the region of {Indicator(root)}");
         return sb.ToString();
+    }
+
+    private static string Indicator(int functorId)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        return $"{Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"#{atomId}"}/{arity}";
     }
 }

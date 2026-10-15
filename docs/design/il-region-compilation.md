@@ -148,7 +148,17 @@ WAM state.
 
 - **Dynamic predicates**: never region members (mutation-driven dispatch must stay
   Tier-0; chunk 159 invariant). Cross-region trampoline.
-- **Public predicates**: never region members (callable from elsewhere). Trampoline.
+- **Members called from outside**: a member is callable from outside its region (a
+  public predicate, a top-level query, a meta-call). Its code there is the region's,
+  entered at its member-entry cursor: a bundle aliases it in the address map (see
+  Stage 9b below), and a runtime region gives each member that has no delegate of
+  its own an alias delegate into the root's method, which goes when the root does.
+- **Clauses that change under a copy**: consult/1 appends, so a member, or a callee
+  a compile inlined, can gain clauses after its code was copied. Each runtime
+  compile records the callees it looked up (`CalleeRecorder`); a consult that
+  changes one evicts every delegate holding a copy, a background compile that
+  copied it is dropped when it lands, and a query that consulted promotes nothing
+  more from its now older program view that would copy it.
 - **Persisted bundles**: the region method bakes the root fid into markers; the
   patch-site mechanism (Phase 17) already remaps fids. Members reached only inside
   the region need no separate persisted entry, but their standalone delegate (if any
