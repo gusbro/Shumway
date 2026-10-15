@@ -53,6 +53,49 @@ internal sealed class BundleLoader
     /// already set and spent its own.</summary>
     internal IReadOnlyList<string> LastLoadedModules { get; private set; } = Array.Empty<string>();
 
+    /// <summary>ADR-038 §4: what loading <paramref name="bundle"/> loads
+    /// before its own code, without loading the bundle.</summary>
+    internal void LoadLibraryDependencies(Bundle bundle)
+    {
+        var members = new List<ShmoObject>(bundle.ArchiveMembers.Count);
+        foreach (var member in bundle.ArchiveMembers)
+            members.Add(ShmoReader.FromBytes(member.ShmoBytes));
+        LoadMissingLibraries(members);
+    }
+
+    /// <summary>ADR-038 §4: loads each library a member of an archive imports
+    /// that the archive does not hold and the engine has not loaded, through
+    /// use_module(library(X)), before the archive's code. The archive holds a
+    /// library when a member module is named like it.</summary>
+    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members)
+    {
+        var held = new List<string>();
+        foreach (var member in members)
+            if (_archiveModulesLoading.Add(member.ModuleName)) held.Add(member.ModuleName);
+        try
+        {
+            foreach (var member in members)
+                foreach (var dep in member.LibraryDeps)
+                {
+                    // An archive further up the load (A imports B, B imports
+                    // A) is on its way: loading it again would not end.
+                    if (dep.Baked || _archiveModulesLoading.Contains(dep.LibName)
+                        || E._modules.ContainsKey(dep.LibName)
+                        || LibraryBundles.IsEngineLibrary(dep.LibName))
+                        continue;
+                    E.ExecuteUseModuleDirective(
+                        new CompoundTerm("library", new Term[] { new AtomTerm(dep.LibName) }));
+                }
+        }
+        finally
+        {
+            foreach (string module in held) _archiveModulesLoading.Remove(module);
+        }
+    }
+
+    // The modules of the archives whose dependencies are loading.
+    private readonly HashSet<string> _archiveModulesLoading = new(StringComparer.Ordinal);
+
     /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
     /// debugger can open, and return its full path. Named for the module so
     /// <see cref="Shumway.Core.DebugSiteTable"/>'s base-name file identity matches the
@@ -224,9 +267,11 @@ internal sealed class BundleLoader
             var combined = new List<BundleEntry>(
                 bundle.Entries.Count + bundle.ArchiveMembers.Count);
             combined.AddRange(bundle.Entries);
+            var members = new List<ShmoObject>(bundle.ArchiveMembers.Count);
             foreach (var member in bundle.ArchiveMembers)
             {
                 var shmo = ShmoReader.FromBytes(member.ShmoBytes);
+                members.Add(shmo);
                 // librarian archives keep the per-object flag — any Arity
                 // member switches the runtime to Arity call semantics.
                 if (shmo.ArityCompat) ApplyArityRuntimeFlags();
@@ -246,6 +291,7 @@ internal sealed class BundleLoader
                     dialect: shmo.Dialect,
                     clauseTerms: shmo.ClauseTerms));
             }
+            LoadMissingLibraries(members);
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link
@@ -409,6 +455,8 @@ internal sealed class BundleLoader
         LastLoadedModules = effectiveEntries
             .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
             .Distinct().ToList();
+        foreach (string module in LastLoadedModules)
+            if (module != PrologEngine.DefaultModuleName) E._modulesFromBundles.Add(module);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
@@ -1625,6 +1673,13 @@ internal sealed class BundleLoader
             {
                 manifest.DynamicFunctors.Add(fid);
                 E._dynStore.MarkDynamic(fid);
+                // The declaring module, as a consult records it: compiling a
+                // library over this bundle must not declare or seed the
+                // bundle's dynamics in its own object (ADR-038 §4). First
+                // declarer wins.
+                if (!E._dynamicDeclaringModule.ContainsKey(fid))
+                    E._dynamicDeclaringModule[fid] = string.IsNullOrEmpty(entry.ModuleName)
+                        ? PrologEngine.DefaultModuleName : entry.ModuleName;
                 if (!E._dynStore.HasClauses(fid))
                     E._dynStore[fid] = new List<Clause>();
             }
@@ -1697,7 +1752,11 @@ internal sealed class BundleLoader
             bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
                 && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
-                E._dynStore.AppendClause(fid, TermCodec.DecodeClause(encoded));
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                E._clausesFromBundles?.Add(clause);
+                E._dynStore.AppendClause(fid, clause);
+            }
             if (seed.EncodedClauses.Count > 0)
             {
                 // Every dynamic-store mutation funnels through

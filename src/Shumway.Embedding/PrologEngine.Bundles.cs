@@ -17,6 +17,12 @@ public sealed partial class PrologEngine
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine.</summary>
     public void LoadBundle(Bundle bundle) => Bundles.LoadBundle(bundle);
 
+    /// <summary>Loads the libraries the members of a librarian archive import
+    /// and the archive does not hold, as loading it does first (ADR-038 §4),
+    /// without loading the archive. A host that needs to tell the archive's own
+    /// predicates from its dependencies' loads these before it.</summary>
+    public void LoadLibraryDependencies(Bundle bundle) => Bundles.LoadLibraryDependencies(bundle);
+
     internal void LoadBundleCore(Bundle bundle, string? bundleDir)
         => Bundles.LoadBundleCore(bundle, bundleDir);
 

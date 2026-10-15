@@ -18,8 +18,14 @@ public static class WasmBundleTier
     /// name="stdlib"/>, else on top of the ordinary prelude) and every
     /// static it added is compiled with relocations. Null when nothing
     /// compiled. Members the compiler refuses are dropped and reported
-    /// through <paramref name="log"/>.</summary>
-    public static byte[]? Bake(Bundle bundle, bool stdlib, Action<string>? log = null)
+    /// through <paramref name="log"/>.
+    ///
+    /// <para>The libraries an archive imports and does not hold (ADR-038
+    /// §4) load first, through the library path <paramref name="prepare"/>
+    /// gives the engine, and are not baked: a call into one is a relocation
+    /// the install resolves against their code.</para></summary>
+    public static byte[]? Bake(Bundle bundle, bool stdlib, Action<string>? log = null,
+                               Action<PrologEngine>? prepare = null)
     {
         PrologEngine engine;
         var before = new HashSet<int>();
@@ -32,6 +38,8 @@ public static class WasmBundleTier
         {
             engine = new PrologEngine();
             Silence(engine);
+            prepare?.Invoke(engine);
+            engine.LoadLibraryDependencies(bundle);
             engine.Query("true.");
             foreach (var (_, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
                 before.Add(pred.FunctorId);

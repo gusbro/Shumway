@@ -183,9 +183,9 @@ export const compile = async (name, library, force = false) => {
   return engine.LibraryCompile(name, library, force);
 };
 
-/** The libraries a consult or a query compiled because it needed them, since
- *  the last ask (the engine compiles an uncompiled one on first use):
- *  `[{name, library}]`. */
+/** The libraries a consult, a query or the compile of another library
+ *  compiled because it needed them, since the last ask (the engine compiles
+ *  an uncompiled one on first use): `[{name, library}]`. */
 export async function takeCompiledOnDemand() {
   return lines(await engine.LibraryTakeCompiledOnDemand()).map((line) => {
     const [name, library] = line.split('\t');

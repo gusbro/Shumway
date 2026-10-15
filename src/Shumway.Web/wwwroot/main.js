@@ -577,8 +577,9 @@ async function whileConsulting(work) {
   }
 }
 
-// A consult or a query compiles a library it needs that has no bundle yet: the
-// bundle is stored like the batch's, so a reload does not compile it again.
+// A consult, a query or the compile of another library compiles a library it
+// needs that has no bundle yet: the bundle is stored like the batch's, so a
+// reload does not compile it again.
 async function keepCompiledOnDemand() {
   try {
     const compiled = await libraries.takeCompiledOnDemand();
@@ -670,8 +671,10 @@ async function buildCollection(name) {
       // reason is a click away in the library list.
       const err = await libraries.compile(name, entry.name);
       if (err) failed.push(entry.name); else built++;
-      // Stored as each one lands: a reload keeps what is already built.
+      // Stored as each one lands: a reload keeps what is already built. So
+      // are the libraries it imports that its compile built first.
       await libraries.persistLibrary(name, entry.name);
+      await keepCompiledOnDemand();
       if (librariesDialog.open) await refreshLibraries();
     }
   } finally {
@@ -803,6 +806,7 @@ async function refreshLibraries() {
         const failed = await withBusy(`compiling ${entry.name}`,
                                       () => libraries.compile(name, entry.name, true));
         await libraries.persistLibrary(name, entry.name);
+        await keepCompiledOnDemand();
         emit(failed ? `% ${entry.name}: ${failed}\n` : `% ${entry.name} compiled\n`,
              failed ? 'error' : 'note');
         await refreshLibraries();

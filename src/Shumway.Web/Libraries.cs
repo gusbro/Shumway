@@ -82,24 +82,7 @@ internal static partial class WebShumwayApp
         {
             string marker = Path.Combine(dir, DialectMarker);
             string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
-            // The library's root first, so a compiled bundle there is what
-            // `library(X)` finds; its sources after, so an uncompiled library
-            // still resolves. Order is what makes the compiled one win.
-            foreach (string searched in new[] { dir, Path.Combine(dir, SourceDir) })
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(dialect))
-                        _session!.Engine.AddLibraryDirectory(searched);
-                    else _session!.Engine.AddLibraryDirectory(searched, dialect);
-                }
-                catch (ArgumentException)
-                {
-                    // An unknown dialect (a marker written by an older build, or
-                    // by hand). The library is still usable, just untagged.
-                    _session!.Engine.AddLibraryDirectory(searched);
-                }
-            }
+            AddCollection(engine, dir, dialect);
         }
     }
 
@@ -227,9 +210,9 @@ internal static partial class WebShumwayApp
     // again.
     private static readonly ConcurrentQueue<string> _compiledOnDemand = new();
 
-    /// <summary>The libraries a consult or a query compiled because it needed
-    /// them, since the last call: one per line, the collection, a tab and the
-    /// library.</summary>
+    /// <summary>The libraries a consult, a query or the compile of another
+    /// library compiled because it needed them, since the last call: one per
+    /// line, the collection, a tab and the library.</summary>
     [JSExport]
     internal static Task<string> LibraryTakeCompiledOnDemand()
     {
@@ -304,8 +287,16 @@ internal static partial class WebShumwayApp
             library, Path.Combine(root, SourceDir, library + ".pl"));
 
     /// <summary>Compiles one library into its bundle. Returns null, or the
-    /// diagnostic. Callers hold the compile gate.</summary>
-    private static string? CompileLibrary(string root, string name, string library)
+    /// diagnostic. Callers hold the compile gate.
+    ///
+    /// <para>ADR-038 §4: the libraries of the collection it imports load from
+    /// their own bundles, and one that has none yet is compiled first (see
+    /// <see cref="CompileDependency"/>). The bundle holds this library's
+    /// modules only; loading it loads those libraries first.
+    /// <paramref name="compiling"/> names the libraries on their way up the
+    /// chain.</para></summary>
+    private static string? CompileLibrary(string root, string name, string library,
+                                          HashSet<string>? compiling = null)
     {
         if (ProvidedNatively(root, library))
             return $"{library} is provided by Shumway itself: there is nothing to compile";
@@ -315,6 +306,9 @@ internal static partial class WebShumwayApp
 
         string marker = Path.Combine(root, DialectMarker);
         string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
+        if (string.IsNullOrEmpty(dialect)) dialect = null;
+        compiling ??= new HashSet<string>(StringComparer.Ordinal);
+        compiling.Add(library);
 
         // The consult's warnings are caught, not printed. This runs on the
         // page's behalf rather than the user's, and what a library from
@@ -323,9 +317,13 @@ internal static partial class WebShumwayApp
         try
         {
             var errors = new List<ShmoCompileError>();
+            // The root first, as on the page's engine: a bundle there is what
+            // library(X) finds.
             var compiled = ShmoViaConsult.CompileMany(
-                new[] { entry }, new[] { sources }, ShmoBuildMode.Release, errors,
-                string.IsNullOrEmpty(dialect) ? null : dialect, said);
+                new[] { entry }, new[] { root, sources }, ShmoBuildMode.Release, errors,
+                dialect, said,
+                configure: e => e.LibrarySourceResolver =
+                    (dep, source) => CompileDependency(root, name, dep, source, compiling));
             if (errors.Count > 0)
             {
                 string text = string.Join(
@@ -337,16 +335,21 @@ internal static partial class WebShumwayApp
 
             // Packed by the librarian, not the linker: a library has no entry
             // point, so there is nothing to compute reachability from — every
-            // module it brought in is kept. Under the wasm tier the archive
-            // also carries its predicates as a wasm module, baked here once
-            // (the batch compile the tier would otherwise run on every
-            // visit) and installed when the library loads.
+            // module it brought in is kept, but for another library of the
+            // collection, which has a bundle of its own. One the engine
+            // provides has none, so it stays. Under the wasm tier
+            // the archive also carries its predicates as a wasm module, baked
+            // here once (the batch compile the tier would otherwise run on
+            // every visit) and installed when the library loads.
             bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
             byte[] bytes = Librarian.CreateArchive(compiled
+                .Where(c => c.IsRoot || !HasBundleOfItsOwn(root, c.ModuleName))
                 .Select(c => new BundleArchiveMember(
                     c.ModuleName + ".shmo", ShmoWriter.ToBytes(c.Object)))
                 .ToList(),
-                wasm ? b => WasmBundleTier.Bake(b, stdlib: false) : null);
+                wasm ? b => WasmBundleTier.Bake(b, stdlib: false,
+                                                prepare: e => AddCollection(e, root, dialect))
+                     : null);
             // Written under a temporary name and moved into place, so what
             // `library(X)` can see is either the old bundle or the new one
             // and never half of one — a consult may look while this runs.
@@ -360,6 +363,55 @@ internal static partial class WebShumwayApp
         catch (Exception ex)
         {
             return RecordDiagnostic(root, library, ex.Message, said, failed: true);
+        }
+        finally { compiling.Remove(library); }
+    }
+
+    /// <summary>The compiling engine's resolver: a library of the same
+    /// collection with no bundle yet is compiled into its own, which the
+    /// library importing it then loads. Null loads the source: a library
+    /// further up the chain (an import cycle), or one that does not compile.
+    /// The page stores what this compiled, as it stores the batch's.</summary>
+    private static string? CompileDependency(
+        string root, string name, string library, string source, HashSet<string> compiling)
+    {
+        string? dir = Path.GetDirectoryName(Path.GetFullPath(source));
+        if (dir != Path.GetFullPath(Path.Combine(root, SourceDir))) return null;
+        if (compiling.Contains(library) || LastCompileFailed(root, library)) return null;
+        string target = Path.Combine(root, library + ".shum");
+        if (!File.Exists(target))
+        {
+            if (CompileLibrary(root, name, library, compiling) is not null) return null;
+            _compiledOnDemand.Enqueue($"{name}\t{library}");
+        }
+        return File.Exists(target) ? target : null;
+    }
+
+    /// <summary>Whether <paramref name="module"/> is a library of the collection
+    /// that compiles into a bundle of its own, so another library's bundle
+    /// leaves it out.</summary>
+    private static bool HasBundleOfItsOwn(string root, string module)
+        => File.Exists(Path.Combine(root, SourceDir, module + ".pl"))
+           && !ProvidedNatively(root, module);
+
+    /// <summary>Puts a collection on an engine's search path: its root first,
+    /// so a compiled bundle there is what <c>library(X)</c> finds, its sources
+    /// after, so an uncompiled library still resolves.</summary>
+    private static void AddCollection(PrologEngine engine, string root, string? dialect)
+    {
+        foreach (string searched in new[] { root, Path.Combine(root, SourceDir) })
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dialect)) engine.AddLibraryDirectory(searched);
+                else engine.AddLibraryDirectory(searched, dialect);
+            }
+            catch (ArgumentException)
+            {
+                // An unknown dialect (a marker written by an older build, or
+                // by hand). The library is still usable, just untagged.
+                engine.AddLibraryDirectory(searched);
+            }
         }
     }
 

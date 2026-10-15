@@ -78,6 +78,11 @@ public sealed class ModuleManifest
     /// the bare-global namespace. Built from <c>:- use_module/1,2</c>.</summary>
     public Dictionary<int, string> Imports { get; }
 
+    /// <summary>ADR-038 §4: the export-qualified modules this module's
+    /// <c>use_module</c> directives loaded, in order. A library archive that
+    /// leaves one of them out loads it first.</summary>
+    public List<string> ImportedModules { get; }
+
     /// <summary>Functors the module declares <c>:- dynamic</c>. These bypass
     /// local-functor mangling so the runtime <c>assertz</c> / <c>retract</c>
     /// store (a flat global table on the engine) can reach the same predicate
@@ -112,6 +117,7 @@ public sealed class ModuleManifest
         PublicFunctors = new HashSet<int>();
         ExportFunctors = new HashSet<int>();
         Imports = new Dictionary<int, string>();
+        ImportedModules = new List<string>();
         DynamicFunctors = new HashSet<int>();
         DiscontiguousFunctors = new HashSet<int>();
         MultifileFunctors = new HashSet<int>();

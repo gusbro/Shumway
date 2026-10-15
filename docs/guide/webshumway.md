@@ -174,6 +174,12 @@ attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
 
+A compiled library holds its own code only. The libraries of the collection it
+imports load from their own bundles, while it compiles and whenever it loads,
+and one with no bundle yet is compiled first. Scryer's uuid imports crypto,
+which imports clpz: compiling uuid compiles clpz, then crypto, then uuid, and
+clpz's code is stored once rather than inside each of the three.
+
 Unless the page was built without the WebAssembly tier, a compiled library
 also carries its predicates as a WebAssembly module, baked once at compile
 time. Loading the

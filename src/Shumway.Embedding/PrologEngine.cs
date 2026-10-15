@@ -322,6 +322,15 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal string? ModuleSourceFile(string moduleName) =>
         _moduleSourceFile.TryGetValue(moduleName, out var f) ? f : null;
 
+    /// <summary>ADR-038 §4: the modules that bundle loads brought in. They are
+    /// their bundle's code, so compiling a library emits no object for them.</summary>
+    internal readonly HashSet<string> _modulesFromBundles = new(StringComparer.Ordinal);
+
+    /// <summary>ADR-038 §4: the dynamic clauses that bundle loads seeded, kept
+    /// only by an engine that compiles a library (null elsewhere): its object
+    /// seeds what its own load added, never what a bundle did.</summary>
+    internal HashSet<Shumway.Compiler.Ast.Clause>? _clausesFromBundles;
+
     /// <summary>Dynamic functor id → the module whose consult declared it
     /// <c>:- dynamic</c>. The dynamic store itself is engine-wide (flat
     /// global), but separate compilation needs to seed each dynamic

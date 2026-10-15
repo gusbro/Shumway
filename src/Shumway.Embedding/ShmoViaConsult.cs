@@ -56,20 +56,31 @@ public static class ShmoViaConsult
     /// standard error, which is right for a CLI compiling what its user
     /// asked for; a host compiling on its own behalf passes a writer, since
     /// warnings from a library nobody is watching are not the user's
-    /// business.</para></summary>
+    /// business.</para>
+    ///
+    /// <para><paramref name="configure"/> sees the engine before the roots
+    /// load (a host sets its <see cref="PrologEngine.LibrarySourceResolver"/>
+    /// there). A module a bundle brought in is that bundle's and gets no
+    /// object; the objects that import it record it as a library dependency
+    /// (ADR-038 §4).</para></summary>
     public static List<(string ModuleName, ShmoObject Object, System.DateTime SourceTimeUtc, bool IsRoot)> CompileMany(
         IReadOnlyList<string> rootPaths,
         IReadOnlyList<string> libraryDirs,
         ShmoBuildMode buildMode,
         List<ShmoCompileError> errors,
         string? dialect = null,
-        System.IO.TextWriter? warnings = null)
+        System.IO.TextWriter? warnings = null,
+        System.Action<PrologEngine>? configure = null)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
         // land in is what everything downstream links), where the same file
         // loaded into a live engine reports it and carries on.
-        var e = new PrologEngine { StrictConsultSyntax = true };
+        var e = new PrologEngine
+        {
+            StrictConsultSyntax = true,
+            _clausesFromBundles = new HashSet<Clause>(ReferenceEqualityComparer.Instance),
+        };
         if (warnings is not null) e.Warnings = warnings;
         // ADR-040: a library collection may be a non-shumway dialect. An
         // explicit dialect applies to every dir; otherwise each dir spec may
@@ -83,6 +94,7 @@ public static class ShmoViaConsult
             if (System.IO.Path.GetDirectoryName(
                     System.IO.Path.GetFullPath(rp)) is { Length: > 0 } ownDir)
                 e.AddLibraryDirectory(ownDir);
+        configure?.Invoke(e);
 
         var pre = new HashSet<string>(e.Modules.Keys);
 
@@ -137,13 +149,18 @@ public static class ShmoViaConsult
         // Assign each dynamic functor to exactly one owning module, so its
         // clauses are seeded once across the object set. The owner is the
         // module whose consult declared it `:- dynamic`; a functor whose
-        // declarer is not emitted (auto-promoted, or declared by the baked
-        // prelude) goes to the primary root.
+        // declarer is not emitted (auto-promoted, declared by the baked
+        // prelude, or by a module a bundle brought in) goes to the primary
+        // root. Of a bundle's dynamic, the root seeds only the clauses its own
+        // load added: the bundle seeds the rest when it loads (ADR-038 §4).
         var dynOwner = new Dictionary<int, string>();
+        var bundleDeclared = new HashSet<int>();
         foreach (int fid in e._dynStore.Functors)
         {
             string? decl = e.DynamicDeclaringModule(fid);
-            dynOwner[fid] = decl is { } d && !pre.Contains(d)
+            bool fromBundle = decl is not null && e._modulesFromBundles.Contains(decl);
+            if (fromBundle) bundleDeclared.Add(fid);
+            dynOwner[fid] = decl is { } d && !pre.Contains(d) && !fromBundle
                 ? d
                 : (primaryRoot ?? decl ?? PrologEngine.DefaultModuleName);
         }
@@ -162,6 +179,9 @@ public static class ShmoViaConsult
         {
             if (pre.Contains(name)) continue;
             if (LibraryBundles.IsEngineLibrary(name)) continue;
+            // A root a bundle also brought in (an import cycle, a rebuild over
+            // an old bundle) is still what is being compiled.
+            if (e._modulesFromBundles.Contains(name) && !rootModuleSet.Contains(name)) continue;
             if (name == PrologEngine.DefaultModuleName && manifest.Clauses.Count == 0)
                 continue;
             bool isRoot = rootModuleSet.Contains(name);
@@ -173,6 +193,20 @@ public static class ShmoViaConsult
             var imports = new List<ShmoImportEntry>();
             foreach (var (fid, src) in manifest.Imports)
                 imports.Add(new ShmoImportEntry(RefOf(fid), src));
+
+            // ADR-038 §4: the libraries this module loaded, for an archive
+            // that leaves one out. The import table is already resolved, so
+            // each carries what it gave (a filter): the linker treats an
+            // unfiltered dependency as an import-all still to resolve.
+            var libraryDeps = new List<ShmoLibraryDep>(engineDeps);
+            foreach (string lib in manifest.ImportedModules)
+            {
+                if (lib == name || LibraryBundles.IsEngineLibrary(lib)) continue;
+                var gave = new List<PredicateRef>();
+                foreach (var (fid, src) in manifest.Imports)
+                    if (src == lib) gave.Add(RefOf(fid));
+                libraryDeps.Add(new ShmoLibraryDep(lib, gave, Baked: false));
+            }
 
             // This module's own dynamic declarations, and the seeds of the
             // functors it owns (each functor seeded by exactly one module).
@@ -191,8 +225,13 @@ public static class ShmoViaConsult
             foreach (int fid in e._dynStore.Functors)
                 if (dynOwner.TryGetValue(fid, out var owner) && owner == name)
                 {
+                    var seeded = new List<Clause>();
+                    if (e._dynStore.TryGetClauses(fid, out var dcls))
+                        foreach (var c in dcls)
+                            if (!e._clausesFromBundles!.Contains(c)) seeded.Add(c);
+                    if (seeded.Count == 0 && bundleDeclared.Contains(fid)) continue;
                     dynamicSet.Add(RefOf(fid));
-                    if (e._dynStore.TryGetClauses(fid, out var dcls)) raw.AddRange(dcls);
+                    raw.AddRange(seeded);
                 }
 
             // This module's own operators (a `:- op` under its consult).
@@ -224,7 +263,7 @@ public static class ShmoViaConsult
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,
-                libraryDeps: engineDeps,
+                libraryDeps: libraryDeps,
                 dialect: manifest.Dialect,
                 metaArgSpec: e.MetaArgSpec,
                 // A Module:Goal resolves as the consult that loaded this module

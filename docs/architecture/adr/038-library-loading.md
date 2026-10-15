@@ -145,6 +145,35 @@ A dependency on one of the **engine's own libraries** (clpfd, clpr, coroutining:
 export-qualified module's `ExportFunctors` + `Imports` table travel in the `.shmo` /
 `.shum` so a fresh process reconstructs the resolution.
 
+### 4. A library's archive holds its own modules; its dependencies resolve when it loads
+
+A library compiled into a librarian archive (WebShumway builds one per library
+of a collection) holds that library's modules only: its own module, and the
+modules it loaded that are not libraries with an archive of their own. A
+dependency that has one, such as `library(clpz)` for Scryer's `crypto`, is left
+out, so a collection stores each library's code once instead of once per
+library that imports it.
+
+Loading an archive resolves what it left out. Before the archive's code, each
+`use_module(library(D))` dependency of a member is loaded through
+`use_module(library(D))` when the archive does not hold `D`, `D` is not one of
+the engine's own libraries, and `D` is not loaded yet: the order of section 2,
+the host's resolver included. The archive holds `D` when a member module is
+named `D`, the convention the linker (section 3) and `use_module` of a module
+a bundle already brought in both use.
+
+Compiling a library loads its dependencies the way a program does: from their
+archives when they have them. A dependency with no archive yet is compiled
+first, into its own, and the library's compile goes on with it loaded from
+there. A cycle (A imports B, B imports A) is broken by loading A from source
+while B compiles; A stays out of B's archive and resolves from its own when B
+loads.
+
+The archive's baked wasm module (ADR-050) holds the predicates of its own
+members only. A call into a dependency is a relocation by name, resolved when
+the module is installed against the dependency's code, which the load order
+installs first.
+
 ## Consequences
 
 - Third-party `:- module(Name, [Exports])` libraries load via `use_module(library(X))`
@@ -159,6 +188,11 @@ export-qualified module's `ExportFunctors` + `Imports` table travel in the `.shm
   export-qualified same-name exports coexist by construction.
 - The linker gains a library search path at link time and a directive-replay record
   for baked-C# deps.
+- A library archive is not self-contained: loading it needs its dependencies loaded
+  or on the library search path. An archive that leaves one out, such as a
+  `shumway-lib` archive built without it, used to load without it and fail at the
+  first call; it now resolves it, or warns of an unknown library as a program's
+  `use_module` does.
 
 ## Alternatives considered
 
