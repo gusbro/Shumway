@@ -175,6 +175,135 @@ export async function run(session, emit, out, editor, workspace) {
   probe.setEnd(target, targetOffset);
   check('the caret is where the text says it is', probe.toString(), 'abc(d');
 
+  // Keys. A synthetic event runs the editor's handler but never the browser's
+  // own action, so a Tab the editor lets through shows as not prevented.
+  {
+    program.focus();
+    const offsetOf = (node, offset) => {
+      const r = document.createRange();
+      r.selectNodeContents(program);
+      r.setEnd(node, offset);
+      return r.toString().length;
+    };
+    const point = (at) => {
+      const walk = document.createTreeWalker(program, NodeFilter.SHOW_TEXT);
+      let node, seen = 0, last = null;
+      while ((node = walk.nextNode())) {
+        if (seen + node.data.length >= at) return [node, at - seen];
+        seen += node.data.length;
+        last = node;
+      }
+      return last ? [last, last.data.length] : [program, 0];
+    };
+    const select = (start, end = start) => {
+      const r = document.createRange();
+      r.setStart(...point(start));
+      r.setEnd(...point(end));
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+    };
+    /** The text and the selection, as `text|start` or `text|start-end`. */
+    const state = () => {
+      const r = getSelection().getRangeAt(0);
+      const a = offsetOf(r.startContainer, r.startOffset);
+      const b = offsetOf(r.endContainer, r.endOffset);
+      return editor.getText() + '|' + (a === b ? a : `${a}-${b}`);
+    };
+    const key = (name, mods = {}) => {
+      const ev = new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...mods });
+      program.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const settles = async (holds) => {
+      for (let i = 0; i < 250 && !holds(); i++) await new Promise((r) => setTimeout(r, 20));
+      return holds();
+    };
+
+    await paint('foo :-\nbar.\n');
+    select(7);
+    check('Tab at the margin indents', [key('Tab'), state()].join(' '),
+          'true foo :-\n    bar.\n|11');
+
+    await paint('p(X),');
+    select(5);
+    key('Tab');
+    check('Tab goes to the next stop of four', state(), 'p(X),   |8');
+
+    await paint('zqzqzq');
+    select(6);
+    key('Tab');
+    await settles(() => editor.getText() !== 'zqzqzq');
+    check('Tab with nothing to complete indents', state(), 'zqzqzq  |8');
+
+    await paint('appen');
+    select(5);
+    key('Tab');
+    check('Tab still completes',
+          await settles(() => editor.getText().startsWith('append')), true);
+
+    await paint('a :-\n    b,\nc.\n');
+    select(0, 14);
+    key('Tab');
+    check('Tab moves the selected lines one stop right', state(),
+          '    a :-\n        b,\n    c.\n|0-26');
+    key('Tab', { shiftKey: true });
+    check('Shift-Tab moves them back', state(), 'a :-\n    b,\nc.\n|0-14');
+
+    await paint('a.\nb.\nc.\n');
+    select(0, 6);
+    key('Tab');
+    check('a selection ending at a line start leaves that line', editor.getText(),
+          '    a.\n    b.\nc.\n');
+    key('z', { ctrlKey: true });
+    check('undoing the shift is one step',
+          await settles(() => editor.getText() === 'a.\nb.\nc.\n'), true);
+
+    await paint('      x\n');
+    select(7);
+    key('Tab', { shiftKey: true });
+    check('Shift-Tab goes back to the stop before', state(), '    x\n|5');
+
+    await paint('foo :-\nbar.\n');
+    select(7);
+    key('Escape');
+    key('Shift');
+    check('Escape, then Tab, leaves the editor',
+          [key('Tab', { shiftKey: true }), state()].join(' '), 'false foo :-\nbar.\n|7');
+    check('the next Tab is the editor\'s again', key('Tab'), true);
+
+    const enter = async (src) => {
+      await paint(src);
+      select(src.length);
+      key('Enter');
+      return state();
+    };
+    check('Enter keeps the indentation', await enter('    b,'), '    b,\n    |11');
+    check('Enter after a neck goes one stop in', await enter('foo :-'), 'foo :-\n    |11');
+    check('Enter after a grammar neck too', await enter('s -->'), 's -->\n    |10');
+    check('Enter after a neck and a comment', await enter('foo :- % why'),
+          'foo :- % why\n    |17');
+    check('Enter after a full stop goes to the margin', await enter('    b.'), '    b.\n|7');
+    check('a full stop in a comment does not end a clause', await enter('    % see.'),
+          '    % see.\n    |15');
+    check('a full stop in a quoted atom does not end a clause', await enter("    X = 'a.'"),
+          "    X = 'a.'\n    |17");
+    check('=.. is not a full stop', await enter('    T =..'), '    T =..\n    |14');
+    check('a line of indentation alone is emptied', await enter('foo :-\n    '),
+          'foo :-\n\n    |12');
+    await paint('\nfoo.\n');
+    select(0);
+    key('Enter');
+    check('Enter at the very start', state(), '\n\nfoo.\n|1');
+
+    await paint('a.\n');
+    select(3);
+    const clip = new DataTransfer();
+    clip.setData('text/plain', 'b :-\r\n    c.\r\n');
+    program.dispatchEvent(new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true }));
+    check('a pasted program keeps its lines', state(), 'a.\nb :-\n    c.\n|15');
+  }
+
   await editor.setText('');
 
   // A query left waiting for its next solution does not survive a load: the

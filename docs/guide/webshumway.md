@@ -56,8 +56,16 @@ either tier; only speed differs.
 | `.`, Enter or Escape | stop asking |
 | **Ctrl-Enter** | consult the program |
 | **Ctrl-S** | save the file |
-| Tab | complete a predicate name |
+| Tab | complete a predicate name, or indent |
+| Shift-Tab | indent one stop less |
+| Escape, then Tab | leave the editor |
 | Escape (while a program reads) | end of file |
+
+In the editor, Tab completes the name before the cursor; with nothing to
+complete, it indents to the next multiple of four columns. With a selection,
+Tab and Shift-Tab move every line it touches. Enter starts the new line at the
+indentation of the one before, one stop further in after `:-` or `-->`, and at
+the margin after the full stop that ends a clause.
 
 Ctrl-Enter rather than a Ctrl-letter because no letter is free across browsers:
 `B`, `I` and `M` open a sidebar, page info or mute the tab in Firefox; `E`, `K`
