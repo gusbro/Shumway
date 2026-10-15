@@ -12797,6 +12797,13 @@ public static class WasmPredicateCompiler
                 TagIs(CB, 0);
                 OIf(); Bind(DB, CA); Continue(); OEnd();
 
+                // A PSTR on either side is the engine's, before the tag rule:
+                // a packed string is a list (ADR-047), so a PSTR and a LIS, or
+                // an empty PSTR and [], can be one term under two tags.
+                TagIs(CA, (long)Tag.Pstr); TagIs(CB, (long)Tag.Pstr);
+                O(new Int32Or());
+                OIf(); Ret2(6); OEnd();
+
                 LG(CA); I64(60); O(new Int64ShiftRightUnsigned());
                 LG(CB); I64(60); O(new Int64ShiftRightUnsigned());
                 O(new Int64NotEqual());
