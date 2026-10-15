@@ -292,6 +292,7 @@ async function run(queryText) {
     emit(report + '\n', 'note');
     return;
   }
+  await untilLibrariesRestored();
   const err = await session.start(queryText);
   if (err) { emit(err + '\n\n', 'error'); return; }
   answersShown = 0;
@@ -556,9 +557,20 @@ let consultsInFlight = 0;
 // changed: a consult, and a switch to a different workspace's files.
 let consultEpoch = 0;
 
+/** A consult or a query waits for the stored libraries' bundles: without them
+ *  the engine finds only the sources, and compiles them again. */
+async function untilLibrariesRestored() {
+  if (!libraries.restoring()) return;
+  emit('% waiting for the stored libraries\n', 'note');
+  await libraries.restored();
+}
+
 async function whileConsulting(work) {
   consultsInFlight++;
-  try { return await work(); }
+  try {
+    await untilLibrariesRestored();
+    return await work();
+  }
   finally {
     consultsInFlight--; consultEpoch++;
     await keepCompiledOnDemand();
@@ -1693,10 +1705,12 @@ if (settings.wasDiscarded()) {
 // Files: bring back whatever the last session left, then open the workspace it
 // was left in.
 const restored = await workspace.restoreAll();
-// Libraries come back before anything is consulted: a program whose first act
-// is use_module(library(…)) must find it.
-const restoredLibs = await libraries.restoreAll();
-if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
+// The libraries' sources come back now; their bundles while the page is in use
+// (see libraries.js). A consult or a query waits for those.
+const storedLibs = await libraries.restoreSources();
+libraries.restoreBundles(storedLibs).then(() => {
+  if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
+});
 // The examples workspace reappears whenever it is ABSENT: deleting it and
 // reloading is how you ask for a fresh, current copy of the examples. (The
 // old once-ever flag respected deletion forever — which also meant an updated
@@ -2235,7 +2249,7 @@ if (persistMode) {
       try {
         await (await (await (await (await navigator.storage.getDirectory())
           .getDirectoryHandle('libraries')).getDirectoryHandle(collection))
-          .getDirectoryHandle('built')).getFileHandle(lib);
+          .getDirectoryHandle('bundles')).getFileHandle(lib);
         return true;
       } catch { return false; }
     };

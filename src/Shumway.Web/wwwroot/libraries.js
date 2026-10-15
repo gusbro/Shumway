@@ -18,7 +18,9 @@ const lines = (s) => (s.length === 0 ? [] : s.split('\n'));
 export const names = async () => lines(await engine.LibraryNames());
 export const dialect = (name) => engine.LibraryDialect(name);
 export const create = (name, dial) => engine.LibraryCreate(name, dial ?? '');
-export const remove = (name) => engine.LibraryRemove(name);
+// After the stored bundles are back: one restored later would bring the
+// library back.
+export const remove = async (name) => { await restored(); return engine.LibraryRemove(name); };
 export const files = async (name) => lines(await engine.LibraryFiles(name));
 export const read = (name, file) => engine.LibraryRead(name, file);
 export const write = (name, file, content) => engine.LibraryWrite(name, file, content);
@@ -174,9 +176,12 @@ async function collect(dir, prefix, into) {
 }
 
 // Without force, a library that has a bundle already is left as it is: the
-// batch queued it before a consult compiled it on demand.
-export const compile = (name, library, force = false) =>
-  engine.LibraryCompile(name, library, force);
+// batch queued it before a consult compiled it on demand. After the stored
+// bundles are back, so an older one does not land over what this builds.
+export const compile = async (name, library, force = false) => {
+  await restored();
+  return engine.LibraryCompile(name, library, force);
+};
 
 /** The libraries a consult or a query compiled because it needed them, since
  *  the last ask (the engine compiles an uncompiled one on first use):
@@ -202,6 +207,7 @@ export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, libr
  * the same thing for whoever tries to call it.
  */
 export async function entries(name) {
+  await restored();                  // which ones are compiled is in the bundles
   const text = await engine.LibraryEntries(name);
   return lines(text).map((line) => {
     const [entry, state, note] = line.split('\t');
@@ -258,15 +264,23 @@ async function storedCollection(name) {
 
 /** Stores one library's compiled bundle and diagnostic as they are now, a
  *  stored one that is gone included: a library recompiled clean must stop
- *  reading as broken after a reload. Base64 because it is the only shape bytes
- *  cross the boundary in. */
+ *  reading as broken after a reload. The bundle is stored as bytes: every page
+ *  load reads every stored bundle back. */
 async function storeBuilt(libDir, name, library) {
   const said = await diagnostic(name, library);
   if (said.length > 0) await writeInto(libDir, `diag/${library}`, said);
   else await removeFrom(libDir, `diag/${library}`);
   const bundle = await engine.LibraryBundle(name, library);
-  if (bundle.length > 0) await writeInto(libDir, `built/${library}`, bundle);
-  else await removeFrom(libDir, `built/${library}`);
+  if (bundle.length > 0) await writeInto(libDir, `bundles/${library}`, fromBase64(bundle));
+  else await removeFrom(libDir, `bundles/${library}`);
+}
+
+function fromBase64(text) {
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text);
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 /** Copies one whole collection into OPFS: what an import needs, once. */
@@ -309,26 +323,38 @@ export async function forget(name) {
   } catch { return false; }
 }
 
-/** Brings every stored library back into the engine's filesystem, and onto its
- *  search path. Returns how many libraries arrived. */
-export async function restoreAll() {
-  if (!persistent()) return 0;
-  let count = 0;
+// A page load restores the stored libraries in two steps. Their sources,
+// dialects and diagnostics come back first, and the page waits for them: they
+// are small, and a library file left open needs its source. Their bundles,
+// tens of megabytes, come back while the page is already in use; a consult, a
+// query or a compile waits for them through restored(), or the engine would
+// find only the sources and compile them again.
+
+let bundlesPending = null;
+
+/** Whether the stored bundles are still being restored. */
+export const restoring = () => bundlesPending !== null;
+
+/** Resolves once the stored bundles are back. */
+export const restored = () => bundlesPending ?? Promise.resolve();
+
+/** Brings every stored library's sources, dialect and diagnostics back into
+ *  the engine's filesystem, and onto its search path. Returns the names of
+ *  the collections restored, for restoreBundles. */
+export async function restoreSources() {
+  if (!persistent()) return [];
+  const restoredNames = [];
   try {
     const dir = await root();
     for await (const [name, handle] of dir.entries()) {
       if (handle.kind !== 'directory') continue;
+      // Bundles an earlier version stored as base64. Not converted: a library
+      // whose bundle is gone compiles again when it is used.
+      try { await handle.removeEntry('built', { recursive: true }); } catch { /* none */ }
       const collected = [];
-      await readInto(handle, '', collected);
+      await readInto(handle, '', collected, 'bundles/');
       const tagged = collected.find((f) => f.path === '.dialect');
       await create(name, tagged ? tagged.text.trim() : '');
-
-      // The bundles first: they are what library(X) resolves to, and a program
-      // whose first act is to import one must not find only the sources.
-      for (const file of collected) {
-        if (!file.path.startsWith('built/')) continue;
-        await engine.LibraryPutBundle(name, file.path.slice(6), file.text);
-      }
 
       for (const file of collected) {
         if (!file.path.startsWith('diag/')) continue;
@@ -336,23 +362,45 @@ export async function restoreAll() {
       }
 
       for (const file of collected) {
-        if (file.path === '.dialect'
-            || file.path.startsWith('built/') || file.path.startsWith('diag/')) continue;
+        if (file.path === '.dialect' || file.path.startsWith('diag/')) continue;
         // Stored under src/; the library's own file names are relative to it.
         const relative = file.path.startsWith('src/') ? file.path.slice(4) : file.path;
         await write(name, relative, file.text);
       }
-      count++;
+      restoredNames.push(name);
     }
   } catch { /* no storage, or it refused: the session just has no libraries */ }
-  return count;
+  return restoredNames;
 }
 
-async function readInto(dir, prefix, into) {
+/** Puts the stored bundles of `names` back, which is what library(X) resolves
+ *  to, without holding the caller up: restored() says when they are back. */
+export function restoreBundles(names) {
+  bundlesPending = (async () => {
+    for (const name of names) {
+      let stored;
+      try {
+        stored = await (await (await root()).getDirectoryHandle(name)).getDirectoryHandle('bundles');
+      } catch { continue; }                  // none compiled
+      for await (const [library, handle] of stored.entries()) {
+        if (handle.kind !== 'file') continue;
+        try {
+          const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+          await engine.LibraryPutBundle(name, library, bytes);
+        } catch { /* that library compiles again when it is used */ }
+      }
+    }
+  })().finally(() => { bundlesPending = null; });
+  return bundlesPending;
+}
+
+/** Reads every file under `dir` as text, but those under `skip`. */
+async function readInto(dir, prefix, into, skip) {
   for await (const [name, handle] of dir.entries()) {
     const path = prefix + name;
-    if (handle.kind === 'directory') await readInto(handle, path + '/', into);
-    else into.push({ path, text: await (await handle.getFile()).text() });
+    if (handle.kind === 'directory') {
+      if (path + '/' !== skip) await readInto(handle, path + '/', into, skip);
+    } else into.push({ path, text: await (await handle.getFile()).text() });
   }
 }
 
@@ -366,14 +414,15 @@ async function removeFrom(dir, path) {
   } catch { /* none stored */ }
 }
 
-/** Writes `path` (which may name subdirectories) under an OPFS directory. */
-async function writeInto(dir, path, text) {
+/** Writes `path` (which may name subdirectories) under an OPFS directory:
+ *  text, or bytes. */
+async function writeInto(dir, path, content) {
   const parts = path.split('/');
   let here = dir;
   for (const part of parts.slice(0, -1))
     here = await here.getDirectoryHandle(part, { create: true });
   const handle = await here.getFileHandle(parts[parts.length - 1], { create: true });
   const writable = await handle.createWritable();
-  await writable.write(text);
+  await writable.write(content);
   await writable.close();
 }

@@ -164,6 +164,10 @@ finishes first; the batch starts no other until the import has its bundle. So a
 program never loads a library from source over others already compiled, which
 breaks a library that relies on another's expansion hooks while it loads.
 
+After a reload the page is usable at once: the compiled libraries come back
+while you work, and a consult or a query that arrives before they are back
+waits for them.
+
 Compiling uses the **consult** path (`ShmoViaConsult`), the only one that works
 for a library which generates clauses as it loads (which is what clpz and its
 attributed-variable machinery do) and packs the result with the **librarian**

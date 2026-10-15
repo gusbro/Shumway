@@ -515,7 +515,8 @@ internal static partial class WebShumwayApp
 
     /// <summary>One compiled bundle, base64-encoded, or the empty string when
     /// there is none — so the page can put it in storage and not have to compile
-    /// the library again on every visit.</summary>
+    /// the library again on every visit. Base64 because a promise cannot carry
+    /// a byte array; the page stores the bytes.</summary>
     [JSExport]
     internal static Task<string> LibraryBundle(string name, string library)
         => OnEngine(() =>
@@ -524,17 +525,19 @@ internal static partial class WebShumwayApp
             return File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : "";
         });
 
-    /// <summary>Puts a stored bundle back.</summary>
+    /// <summary>Puts a stored bundle back. Bytes, not base64: every page load
+    /// restores every stored bundle, and decoding strings of tens of megabytes
+    /// held the page up.</summary>
     [JSExport]
-    internal static Task<string?> LibraryPutBundle(string name, string library, string base64)
+    internal static Task<string?> LibraryPutBundle(
+        string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
         => OnEngine(() =>
         {
             try
             {
                 string root = ResolveLibrary(name);
                 Directory.CreateDirectory(root);
-                File.WriteAllBytes(Path.Combine(root, library + ".shum"),
-                                   Convert.FromBase64String(base64));
+                File.WriteAllBytes(Path.Combine(root, library + ".shum"), bundle);
                 return (string?)null;
             }
             catch (Exception ex) { return ex.Message; }
