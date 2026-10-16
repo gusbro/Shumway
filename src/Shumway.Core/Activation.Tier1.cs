@@ -1423,7 +1423,10 @@ public sealed partial class Activation
     /// and IL-tail-call flag so the interpreter resumes execution at
     /// the next goal instead of falling back on the saved <c>Cp</c>
     /// (which points at the parent procedure's continuation, not the
-    /// next instruction in the current clause).</para></summary>
+    /// next instruction in the current clause).</para>
+    ///
+    /// <para>The push comes before any binding of an attributed variable:
+    /// the rule on <see cref="ArmBuiltinChoicePoint"/>.</para></summary>
     public void PushBuiltinChoicePoint(
         Func<Activation, int, bool> del, int arity)
     {
@@ -1466,7 +1469,15 @@ public sealed partial class Activation
     /// retry still needs: that is undone at the next backtrack. Such a step
     /// trusts the frame and pushes a new one (<see
     /// cref="TrustBuiltinChoicePoint"/>, then this with <paramref
-    /// name="isResume"/> false).</para></summary>
+    /// name="isResume"/> false).</para>
+    ///
+    /// <para>Rule: never bind an attributed variable before arming or
+    /// pushing the frame. Its hooks run when the builtin returns (ADR-049),
+    /// above the frame, so a retry undoes the hooks' work and keeps the
+    /// binding, and nothing reports it. A step that reaches an attributed
+    /// variable arms first and binds after, rebuilding what the binding
+    /// needs on each retry; a plain variable may still be bound before the
+    /// frame, as the linear list walks do.</para></summary>
     public void ArmBuiltinChoicePoint(
         Func<Activation, int, bool> del, int arity, bool more, bool isResume)
     {

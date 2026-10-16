@@ -82,28 +82,22 @@ public static class ListBuiltins
             i++;
         }
         // Prologue generate mode: an integer index against a partial list
-        // (unbound tail) extends it — nth0(2, Es, E) gives Es = [_,_,E|_].
-        // A closed or improper tail still just fails.
-        if (cur.Tag != Tag.Ref) return false;
+        // (unbound tail, attributed or not) extends it — nth0(2, Es, E) gives
+        // Es = [_,_,E|_]. A closed or improper tail still just fails.
+        if (cur.Tag is not (Tag.Ref or Tag.AttVar)) return false;
         Cell built = BuildOpenSkeleton(engine, target - i, out int elemSlot);
         return engine.UnifyHeapWithCell(cur.AsHeapIndex, built)
             && engine.UnifyRegisterWithCell(2, Cell.Ref(elemSlot));
     }
 
-    /// <summary>Advances one list cell, extending a partial list by a fresh
-    /// <c>[H|T]</c> cons when the walk reaches an unbound tail — the prologue
-    /// generate mode, and what makes a variable-index enumeration over a
-    /// partial list produce answers ad infinitum instead of stopping at the
-    /// end. The extension binding is trailed like any other, so backtracking
-    /// past the whole call undoes it. A bound non-list tail fails.</summary>
-    private static bool UnconsOrExtend(Activation engine, ref Cell cur, out Cell head)
+    /// <summary>Extends a partial list by a fresh <c>[H|T]</c> cons at its
+    /// unbound tail <paramref name="cur"/> — the prologue generate mode, and
+    /// what makes a variable-index enumeration over a partial list produce
+    /// answers ad infinitum instead of stopping at the end. The extension
+    /// binding is trailed like any other, so backtracking past the whole
+    /// call undoes it.</summary>
+    private static void Extend(Activation engine, ref Cell cur, out Cell head)
     {
-        if (ListCursor.TryUncons(engine, cur, out head, out Cell tail))
-        {
-            cur = Resolve(engine, tail);
-            return true;
-        }
-        if (cur.Tag != Tag.Ref) return false;
         int h = engine.AllocateHeap(1);
         engine.SetHeap(h, Cell.Ref(h));
         int t = engine.AllocateHeap(1);
@@ -111,10 +105,9 @@ public static class ListBuiltins
         int p = engine.AllocateHeap(2);
         engine.SetHeap(p, Cell.Ref(h));
         engine.SetHeap(p + 1, Cell.Ref(t));
-        if (!engine.UnifyHeapWithCell(cur.AsHeapIndex, Cell.Lis(p))) return false;
+        engine.Bind(cur.AsHeapIndex, Cell.Lis(p));
         head = Cell.Ref(h);
         cur = Cell.Ref(t);
-        return true;
     }
 
     /// <summary>Builds the open list skeleton <c>[_,...,_,E|_]</c> with
@@ -150,6 +143,9 @@ public static class ListBuiltins
     private sealed class NthCursor
     {
         public long Pos;
+        /// <summary>The position at which the walk met an attributed tail,
+        /// or -1: from there each retry binds that tail afresh (see NthStep).</summary>
+        public long OpenAt = -1;
         public readonly bool OneBased;
         public readonly int ReturnPc;
         public readonly Func<Activation, int, bool> Resume;
@@ -178,20 +174,43 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
         }
-        else
+        else if (cur.Tag == Tag.Ref)
         {
             // A partial list grows a cell here, before the choice point: the
             // frame being retried saved a heap top below it, so that frame is
             // trusted and a new one pushed above the new cell.
             if (isResume) engine.TrustBuiltinChoicePoint();
-            if (!UnconsOrExtend(engine, ref cur, out head))
-                return false;                          // improper tail
+            Extend(engine, ref cur, out head);
             engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume: false);
+        }
+        else if (cur.Tag == Tag.AttVar)
+        {
+            // An attributed tail wakes its hooks when bound, and they run once
+            // the builtin has returned, above any choice point armed here. A
+            // cell grown before the choice point would stay bound through the
+            // retry while the hooks' work is undone, leaving the attributes (a
+            // constraint on the list's length, say) out of step with the list.
+            // So the choice point comes first, and the k-th retry binds the
+            // tail afresh to k cells and the element: the hooks see each
+            // shape, and the retry undoes binding and hooks together.
+            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
+            if (c.OpenAt < 0) c.OpenAt = c.Pos;
+            Cell built = BuildOpenSkeleton(engine, c.Pos - c.OpenAt, out int elemSlot);
+            if (!engine.UnifyHeapWithCell(cur.AsHeapIndex, built)) return false;
+            head = Cell.Ref(elemSlot);
+        }
+        else
+        {
+            // A closed or improper tail ends the enumeration. The frame goes
+            // before the failure: left armed, the engine retries it without end.
+            if (isResume) engine.TrustBuiltinChoicePoint();
+            return false;
         }
 
         long pos = c.Pos;
         c.Pos = pos + 1;
-        engine.SetTopCpArgRegister(3, cur);
+        // An attributed variable kept outside its home is a reference to it.
+        engine.SetTopCpArgRegister(3, cur.Tag == Tag.AttVar ? Cell.Ref(cur.AsHeapIndex) : cur);
 
         long idxVal = c.OneBased ? pos + 1 : pos;
         if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
@@ -216,7 +235,7 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             if (guard.Loops(cur)) throw ListCursor.InfiniteList();
         }
-        if (cur.Tag == Tag.Ref)
+        if (cur.Tag is Tag.Ref or Tag.AttVar)
             // A partial list — the tail is unbound, so we can't
             // determine the length. ISO instantiation_error.
             throw new PrologRuntimeException("instantiation_error");
