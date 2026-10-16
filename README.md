@@ -104,8 +104,8 @@ dotnet build -c Release Shumway.slnx
 ```
 
 will build every project into its own directory and then gather everything
-into `dist/Release/`, along with the assemblies the tools share and the `lib/`
-tree of Prolog libraries:
+into `dist/Release/`, along with the assemblies the tools share, the `lib/`
+tree of Prolog libraries and the example programs:
 
 ```
 dist/Release/
@@ -115,7 +115,8 @@ dist/Release/
 ├── shumway-lib        .shmo archives (ar-style)
 ├── shumway-disasm     WAM disassembler
 ├── shumway-dap        VS Code debug adapter
-└── lib/
+├── lib/
+└── examples/          try `shumway examples/clpfd.pl`
 ```
 
 Put it on your PATH and you have the toolchain:

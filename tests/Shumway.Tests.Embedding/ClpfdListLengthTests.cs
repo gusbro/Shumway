@@ -101,6 +101,28 @@ public sealed class ClpfdListLengthTests
     [InlineData("@L #= N, @M #= K, L = [a|T], M = [b,c|T], K = 4, N == 3, T = [_,_]")]
     public void TailsAliased(string goal) => Assert.True(Holds(goal), goal);
 
+    // ----- beside library(coroutining) -----
+    // The tail carries both attributes; each library's hook runs on its own.
+
+    private static bool HoldsWithCoroutining(string goal)
+    {
+        var e = Fd();
+        e.UseCoroutining();
+        return e.Query(goal + ".").Success;
+    }
+
+    [Theory]
+    [InlineData("@[foo|T] #= N, dif(T, []), N = 2, T = [_]")]
+    [InlineData("@L #= N, freeze(L, Woke = yes), N = 2, Woke == yes, L = [_,_]")]
+    [InlineData("@L #= N, when(ground(L), Ground = yes), N = 1, var(Ground), L = [x], Ground == yes")]
+    [InlineData("dif(T, []), @[foo|T] #= N, N #> 1, T = [_|_]")]
+    public void BesideCoroutining(string goal) => Assert.True(HoldsWithCoroutining(goal), goal);
+
+    [Theory]
+    [InlineData("@[foo|T] #= N, dif(T, []), N = 1")]
+    [InlineData("dif(T, []), @[foo|T] #= N, N #=< 1")]
+    public void ClosingTheTailAgainstDifFails(string goal) => Assert.False(HoldsWithCoroutining(goal), goal);
+
     // ----- what is no list -----
 
     [Theory]

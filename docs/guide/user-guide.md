@@ -72,7 +72,8 @@ dist/<configuration>/
 ├── shumway-compile.exe    shumway-disasm.exe
 ├── shumway-link.exe       shumway-dap.exe
 ├── Shumway.*.dll          the assemblies they share
-└── lib/                   the shipped Prolog libraries (ADR-038)
+├── lib/                   the shipped Prolog libraries (ADR-038)
+└── examples/              example programs
 ```
 
 Put it on your PATH and the tools are simply available, the layout GNU Prolog
@@ -334,6 +335,20 @@ expression, not a variable, so it cannot be passed to `label/1`; to enumerate
 the possible lengths, label the length variable (`@L #= N, label([N])`), and
 the list is extended and closed accordingly. A list with a cyclic spine, or
 whose tail is neither a variable nor `[]`, raises `type_error(list, L)`.
+
+`@L` has its meaning only inside the constraints of `clpfd` (`#=`, `#\=`,
+`#<`, `in`, and the rest). Elsewhere it is the term `@(L)`: `dif(@L, 2)`
+compares that term with `2`, which never unify, so the goal succeeds at once
+whatever the length of `L`. To state that the length of a list is not some
+value, or that two lists differ in length, use the disequality of `clpfd`:
+
+```prolog
+?- @L #\= 2, L = [a,b].
+false.
+
+?- @A #\= @B, A = [1,2], B = [_|T].
+A = [1,2], B = [_A|T], @[_A|T] #= _B, _B in 1\/3..sup.
+```
 
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,
 the global constraints are `element/3`, `global_cardinality/2`, `circuit/1`,
