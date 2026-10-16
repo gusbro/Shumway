@@ -55,6 +55,14 @@ multi-target build. The test gate currently runs on Windows.
 - **Prolog extensions** including attributed variables, coroutining (`dif/2`,
   `freeze/2`, `when/2`), tabling with well-founded negation, CLP(FD) and CLP(R),
   rationals, module system, partial strings, and exceptions with full error terms.
+- **The length of a list as a constraint**: in CLP(FD), `@L` stands for the
+  length of the list `L` and takes part in constraints like any integer.
+  `@A #= @B` keeps two lists the same length, `@L #< 5` bounds a list that is
+  still open, and `label([@L])` enumerates its lengths; the constraint keeps
+  track of the list as it is built, and closes it once the length is known.
+  This is a Shumway extension; see the
+  [user guide](docs/guide/user-guide.md#loading-constraint-and-coroutining-libraries)
+  and [its design](docs/design/clpfd-list-length.md).
 - **Two garbage collectors**: a
   [sliding mark-compact heap GC](docs/architecture/adr/016-heap-garbage-collection.md)
   which runs
