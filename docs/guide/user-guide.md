@@ -330,11 +330,18 @@ L = [_A,_B,_C,_D,_E,_F,_G|_H], ...
 L = [_A,_B,_C].
 ```
 
-`@A #= @B` constrains two lists to have the same length. `@L` is an
-expression, not a variable, so it cannot be passed to `label/1`; to enumerate
-the possible lengths, label the length variable (`@L #= N, label([N])`), and
-the list is extended and closed accordingly. A list with a cyclic spine, or
-whose tail is neither a variable nor `[]`, raises `type_error(list, L)`.
+`@A #= @B` constrains two lists to have the same length. `label/1` and
+`labeling/2` accept `@L` among the variables to label: each value tried for
+the length extends and closes the list accordingly. A list with a cyclic
+spine, or whose tail is neither a variable nor `[]`, raises
+`type_error(list, L)`.
+
+```prolog
+?- @L #< 3, label([@L]).
+L = [] ;
+L = [_A] ;
+L = [_A,_B].
+```
 
 `@L` has its meaning only inside the constraints of `clpfd` (`#=`, `#\=`,
 `#<`, `in`, and the rest). Elsewhere it is the term `@(L)`: `dif(@L, 2)`

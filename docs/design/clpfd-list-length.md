@@ -167,8 +167,10 @@ operations read the attribute cell without inspecting the term.
 
 ## Labeling
 
-`@L` is an expression, not a variable, so it cannot be passed to `label/1`.
-To enumerate lengths, a program labels the length variable; fixing the length
+`@L` names one variable, the length of `L`, so `label/1` and `labeling/2`
+accept it among the variables to label: `clpfd_labeling/4` replaces each `@L`
+by that variable through `clpfd_expr/2`, which gives the variable the list
+already has or an integer for a proper list. Each value tried for the length
 closes the list. `length/2` and `same_length/2` are unchanged: `length(L, N)`
 with `N` unbound still enumerates, whether or not `N` is an FD variable.
 Making `length/2` post `@L #= N` when `N` already has a domain is a possible

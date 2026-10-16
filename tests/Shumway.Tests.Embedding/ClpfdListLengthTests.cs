@@ -174,6 +174,16 @@ public sealed class ClpfdListLengthTests
         Assert.True(Holds("findall(N, (@L #= N, L = [a|_], N #< 3, label([N])), Ns), Ns == [1,2]"));
     }
 
+    // @L names the length variable, so it is something to label.
+    [Theory]
+    [InlineData("findall(L, (@L #< 3, label([@L])), Ls), Ls = [[],[_],[_,_]]")]
+    [InlineData("findall(L, (@L #< 3, labeling([down], [@L])), Ls), Ls = [[_,_],[_],[]]")]
+    [InlineData("findall(T, (@[a|T] #=< 2, label([@[a|T]])), Ts), Ts = [[],[_]]")]
+    [InlineData("@L #= N, N in 1..2, label([@L]), N == 1, L = [_]")]
+    [InlineData("label([@[a,b]])")]
+    [InlineData("findall(A-B, (@A #< 2, @B #< 2, @A #\\= @B, label([@A, @B])), Ps), Ps = [[]-[_], [_]-[]]")]
+    public void TheLengthCanBeLabeled(string goal) => Assert.True(Holds(goal), goal);
+
     [Theory]
     [InlineData("@L #= N, ( L = [a|_], fd_inf(N, 1), fail ; fd_inf(N, 0) )")]
     [InlineData("@L #= N, ( L = [a|_], fail ; L = [], N == 0 )")]

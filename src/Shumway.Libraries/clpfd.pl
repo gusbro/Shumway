@@ -1392,7 +1392,7 @@ clpfd_sp_expr(_, _, _, _) :-
 % label/1 and labeling/2 assign each variable a value from its
 % domain, backtracking over the choices; propagation runs between
 % assignments and prunes the remaining search.
-%! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
+%! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking. @L in the list labels the length of the list L.
 label(Vars) :- clpfd_labeling([], Vars, label/1).
 
 %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. min(Expr) and max(Expr) give the solutions in increasing or decreasing order of Expr, several of them lexicographically.
@@ -1406,13 +1406,21 @@ clpfd_labeling(Options, Vars, Ctx) :-
 
 % Bt is either no_bt or the key of a non-backtrackable counter, so
 % counting costs one comparison per value tried when nobody asked.
-clpfd_labeling(Options, Vars, Ctx, Bt) :-
+clpfd_labeling(Options, Vars0, Ctx, Bt) :-
     '$must_be'(list, Options, Ctx),
-    '$must_be'(list, Vars, Ctx),
+    '$must_be'(list, Vars0, Ctx),
+    clpfd_to_label(Vars0, Vars),
     clpfd_label_opts(Options, Sel, Ord, Opt, Ctx),
     (   Opt == [] -> clpfd_label(Vars, Sel, Ord, Ctx, Bt)
     ;   clpfd_label_optimal(Opt, Vars, Sel, Ord, Ctx, Bt)
     ).
+
+% @L among the variables to label stands for the length of L: the variable
+% the list already has, or an integer for a proper list, which is skipped.
+clpfd_to_label([], []).
+clpfd_to_label([V0|Vs0], [V|Vs]) :-
+    ( nonvar(V0), V0 = @L -> clpfd_expr(@L, V) ; V = V0 ),
+    clpfd_to_label(Vs0, Vs).
 
 % labeling with min(Expr) / max(Expr): every solution, in increasing (min)
 % or decreasing (max) order of Expr, ties in the order the other options
