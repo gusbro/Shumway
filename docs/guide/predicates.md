@@ -588,7 +588,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `indomain(?Var)` | library | Binds one variable to each value of its domain in turn, on backtracking. |
-| `label(+Vars)` | library | Assigns each variable in the list a value from its domain, searching by backtracking. |
+| `label(+Vars)` | library | Assigns each variable in the list a value from its domain, searching by backtracking. @L in the list labels the length of the list L. |
 | `labeling(+Options, +Vars)` | library | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest. min(Expr) and max(Expr) give the solutions in increasing or decreasing order of Expr, several of them lexicographically. |
 
 ## CLP(FD): reification

@@ -72,7 +72,8 @@ dist/<configuration>/
 ├── shumway-compile.exe    shumway-disasm.exe
 ├── shumway-link.exe       shumway-dap.exe
 ├── Shumway.*.dll          the assemblies they share
-└── lib/                   the shipped Prolog libraries (ADR-038)
+├── lib/                   the shipped Prolog libraries (ADR-038)
+└── examples/              example programs
 ```
 
 Put it on your PATH and the tools are simply available, the layout GNU Prolog
@@ -310,6 +311,50 @@ read a variable's domain:
 ```prolog
 ?- X in 0..20, X mod 7 #= 2, fd_dom(X, D).
 D = 2..16, ...
+```
+
+`@L` denotes the length of the list `L` and can appear in a constraint
+wherever an integer can. Propagation works in both directions. When the list
+gets more elements, the lower bound of its length rises. When the length gets
+a lower bound, the list gets that many elements, and when the length is fixed
+the list is closed:
+
+```prolog
+?- @L #= N, L = [a|_].
+L = [a|_A], N in 1..sup, @[a|_A] #= N.
+
+?- @L #> N, N #> 5.
+L = [_A,_B,_C,_D,_E,_F,_G|_H], ...
+
+?- @L #= 3.
+L = [_A,_B,_C].
+```
+
+`@A #= @B` constrains two lists to have the same length. `label/1` and
+`labeling/2` accept `@L` among the variables to label: each value tried for
+the length extends and closes the list accordingly. A list with a cyclic
+spine, or whose tail is neither a variable nor `[]`, raises
+`type_error(list, L)`.
+
+```prolog
+?- @L #< 3, label([@L]).
+L = [] ;
+L = [_A] ;
+L = [_A,_B].
+```
+
+`@L` has its meaning only inside the constraints of `clpfd` (`#=`, `#\=`,
+`#<`, `in`, and the rest). Elsewhere it is the term `@(L)`: `dif(@L, 2)`
+compares that term with `2`, which never unify, so the goal succeeds at once
+whatever the length of `L`. To state that the length of a list is not some
+value, or that two lists differ in length, use the disequality of `clpfd`:
+
+```prolog
+?- @L #\= 2, L = [a,b].
+false.
+
+?- @A #\= @B, A = [1,2], B = [_|T].
+A = [1,2], B = [_A|T], @[_A|T] #= _B, _B in 1\/3..sup.
 ```
 
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,

@@ -91,6 +91,8 @@
            whichever CLI happens to carry a copy — in this directory EVERY tool
            gets it, not just the REPL. -->
       <ShumwayDistFile Include="$(ShumwayRepoRoot)lib/**/*.pl" DistSubdir="lib/" />
+      <!-- The example programs, kept under the web site's static files. -->
+      <ShumwayDistFile Include="$(ShumwayRepoRoot)src/Shumway.Web/wwwroot/examples/*.pl" DistSubdir="examples/" />
     </ItemGroup>
     <Copy SourceFiles="@(ShumwayDistFile)"
           DestinationFiles="@(ShumwayDistFile->'$(ShumwayDistDir)%(DistSubdir)%(RecursiveDir)%(Filename)%(Extension)')"

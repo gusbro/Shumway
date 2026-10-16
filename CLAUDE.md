@@ -106,7 +106,7 @@ published; the first tagged release will).
 dotnet restore
 
 # Build. Besides each project's own bin/, this COLLECTS every CLI, the
-# assemblies they share and lib/ into dist/<configuration>/ — put that on
+# assemblies they share, lib/ and examples/ into dist/<configuration>/ — put that on
 # PATH and `shumway`, `shumway-compile`, `shumway-link`, `shumway-lib`,
 # `shumway-disasm`, `shumway-dap` are available directly. Prefer it to
 # `dotnet run --project`, which re-evaluates the project every invocation
