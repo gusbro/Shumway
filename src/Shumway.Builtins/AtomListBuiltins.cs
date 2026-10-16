@@ -216,13 +216,95 @@ public static class AtomListBuiltins
 
         private bool SecondClause(Activation engine)
         {
-            ListCursor.TryUncons(engine, engine.GetRegister(4), out Cell head, out Cell rTail);
+            Cell t = ListCursor.Resolve(engine, engine.GetRegister(3));
+            Cell r = ListCursor.Resolve(engine, engine.GetRegister(4));
+            // An attributed T bound here, below the next split's choice point,
+            // would stay bound through the retry while its hooks' work, done
+            // above that choice point, is undone. From here on each split
+            // binds T afresh, after its own choice point.
+            if (t.Tag == Tag.AttVar)
+                return new AppendAttributedTailCursor(_returnPc).Start(engine, t, r);
+            ListCursor.TryUncons(engine, r, out Cell head, out Cell rTail);
             int pair = engine.AllocateHeap(2);
             engine.SetHeap(pair, head);
             engine.SetHeap(pair + 1, Cell.UnboundVar(pair + 1));
-            if (!engine.UnifyValues(engine.GetRegister(3), Cell.Lis(pair))) return false;
+            if (!engine.UnifyValues(t, Cell.Lis(pair))) return false;
             return FirstClause(engine, Cell.Ref(pair + 1),
                 ListCursor.Resolve(engine, rTail), isResume: true);
+        }
+    }
+
+    /// <summary>Resume state for the enumerating <c>append/3</c> split from
+    /// the point where the rest of L1 is an attributed variable. Binding it
+    /// wakes its hooks, which run once the builtin has returned, above the
+    /// choice point the step leaves: a cell grown before that choice point
+    /// would stay bound through the retry while the hooks' work is undone,
+    /// and the attributes (a constraint on the list's length, say) would fall
+    /// out of step with the list. So the choice point comes first, and
+    /// attempt k binds the tail afresh to the next k elements of L3, closed,
+    /// and L2 to the rest of L3: the hooks see each split, and the retry
+    /// undoes binding and hooks together. The tail and the rest of L3 ride in
+    /// the choice point as saved registers 3 and 4.</summary>
+    private sealed class AppendAttributedTailCursor
+    {
+        private readonly int _returnPc;
+        private int _k;
+        public readonly Func<Activation, int, bool> Resume;
+
+        public AppendAttributedTailCursor(int returnPc)
+        {
+            _returnPc = returnPc;
+            _k = 1;     // split 0, the tail as [], was the first clause's
+            Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        public bool Start(Activation engine, Cell tail, Cell rest)
+        {
+            engine.SetRegister(3, Cell.Ref(tail.AsHeapIndex));
+            engine.SetRegister(4, rest);
+            return Attempt(engine, isResume: false);
+        }
+
+        private bool Attempt(Activation engine, bool isResume)
+        {
+            Cell tail = ListCursor.Resolve(engine, engine.GetRegister(3));
+            Cell rest = ListCursor.Resolve(engine, engine.GetRegister(4));
+            int k = _k;
+            _k = k + 1;
+            // Attempt k takes k elements of L3; there is a k + 1 while L3
+            // goes on past them. The previous attempt saw the k-th cell, so
+            // the walk cannot come up short; should it, the frame goes
+            // before the failure, or the engine retries it without end.
+            Cell c = rest;
+            for (int i = 0; i < k; i++)
+            {
+                if (!ListCursor.TryUncons(engine, c, out _, out Cell ct))
+                {
+                    if (isResume) engine.TrustBuiltinChoicePoint();
+                    return false;
+                }
+                c = ListCursor.Resolve(engine, ct);
+            }
+            bool more = ListCursor.TryUncons(engine, c, out _, out _);
+            engine.ArmBuiltinChoicePoint(Resume, arity: 5, more, isResume);
+
+            // L1's tail = those k elements, closed (ADR-017 layout, as the
+            // det path builds it).
+            int l1Heap = engine.AllocateHeap(2 * k + 1);
+            c = rest;
+            for (int i = 0; i < k; i++)
+            {
+                ListCursor.TryUncons(engine, c, out Cell head, out Cell ct);
+                int lisIdx = l1Heap + 2 * i;
+                engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+                engine.SetHeap(lisIdx + 1, head);
+                c = ListCursor.Resolve(engine, ct);
+            }
+            engine.SetHeap(l1Heap + 2 * k, Cell.Atom(AtomTable.EmptyListId));
+            if (!engine.UnifyHeapWithCell(tail.AsHeapIndex, Cell.Lis(l1Heap + 1))) return false;
+            if (!engine.UnifyRegisterWithCell(1, c)) return false;
+            engine.ResumeAtReturnPc(_returnPc);
+            return true;
         }
     }
 
