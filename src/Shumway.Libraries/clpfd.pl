@@ -39,6 +39,9 @@
 :- op(760, yfx, #=>).
 :- op(760, yfx, #<=).
 :- op(720, yfx, ##).
+% @L: the length of a list L as an FD variable (docs/design/clpfd-list-length.md).
+% Tighter than every arithmetic operator, so `2 * @L #= @M - 1` reads as meant.
+:- op(150, fx, @).
 
 :- public ('#=')/2.
 :- public ('#\\=')/2.
@@ -70,6 +73,8 @@
 :- public '$fix'/1.
 :- public '$fd_alldiff_view'/1.
 :- public '$fd_set'/3.
+:- public '$fd_length'/2.
+:- public '$fd_spine'/3.
 :- public '$fd_reif'/4.
 :- public '$fd_bool'/4.
 :- public '$fd_alldiff'/1.
@@ -196,7 +201,9 @@ clpfd_dom_of(X, D) :-
 
 clpfd_makevar(X) :-
     ( integer(X) -> true
-    ; get_attr(X, clpfd, _) -> true
+    ; get_attr(X, clpfd, A) ->
+        % the open tail of a list (spine/2) is a list, not an integer
+        ( A = fd(_, _) -> true ; throw(error(type_error(integer, X), _)) )
     ; var(X) -> '$dom_universal'(U), put_attr(X, clpfd, fd(U, []))
     ; throw(error(type_error(integer, X), _))
     ).
@@ -265,15 +272,24 @@ verify_attributes(clpfd, fd(Dom, Props), Value, Goals) :-
         clpfd_in_dom(Value, Dom),
         Goals = Props
     ; var(Value) ->
-        ( get_attr(Value, clpfd, fd(Dom2, Props2)) ->
-            clpfd_dom_isect(Dom, Dom2, Dom3),
-            \+ '$dom_empty'(Dom3),
-            clpfd_app(Props, Props2, AllProps),
-            Goals = ['$fd_set'(Value, Dom3, AllProps)]
+        ( get_attr(Value, clpfd, A) ->
+            ( A = fd(Dom2, Props2) ->
+                clpfd_dom_isect(Dom, Dom2, Dom3),
+                \+ '$dom_empty'(Dom3),
+                clpfd_app(Props, Props2, AllProps),
+                Goals = ['$fd_set'(Value, Dom3, AllProps)]
+            % the open tail of a list: an integer there makes it no list
+            ; throw(error(type_error(list, Value), _))
+            )
         ; Goals = ['$fd_set'(Value, Dom, Props)]
         )
     ; throw(error(type_error(integer, Value), _))
     ).
+% The open tail of a list whose length is an FD variable: Len is Off plus
+% the length of the tail. Whatever the tail is bound to is looked at after
+% the binding, as '$fd_set' does, when a cycle through the tail shows.
+verify_attributes(clpfd, spine(Len, Off), Value, Goals) :-
+    Goals = ['$fd_spine'(Value, Len, Off)].
 
 % ===== projection: a constrained variable prints as `V in Dom` =====
 % attribute_goals/4 is dynamic (pre-declared by the prelude); a
@@ -291,6 +307,8 @@ clpfd_attr_goals(fd(Dom, Props), V, Goals) :-
     clpfd_dom_expr(Dom, Expr),
     clpfd_props_owned_by(Props, V, PropGoals),
     Goals = [V in Expr | PropGoals].
+% A tail says nothing of its own: `@L #= Len` is said through Len.
+clpfd_attr_goals(spine(_, _), _, []).
 
 % Emit those propagators whose first variable argument == V and
 % whose user-facing form isn't already subsumed by the domain
@@ -326,9 +344,12 @@ clpfd_view_covers([P|Ps], X, Y) :-
 clpfd_memq(X, [Y|Ys]) :- ( X == Y -> true ; clpfd_memq(X, Ys) ).
 
 clpfd_prop_owner(P, V) :-
-    P =.. [_|Args],
-    clpfd_first_var(Args, FV),
+    clpfd_prop_owner_var(P, FV),
     FV == V.
+
+% The list of '$fd_length' is no FD variable: its length owns it.
+clpfd_prop_owner_var('$fd_length'(_, Len), Len) :- !.
+clpfd_prop_owner_var(P, FV) :- P =.. [_|Args], clpfd_first_var(Args, FV).
 
 % A list argument is searched, but a list with no variable in it must
 % NOT end the search: `$fd_neq_lin`'s first argument is its coefficients,
@@ -356,6 +377,7 @@ clpfd_prop_to_goal('$fd_tuple'(T, Rel), tuples_in([T], Rel)).
 clpfd_prop_to_goal('$fd_cumulative'(_, Tasks, L), cumulative(Tasks, [limit(L)])).
 clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :-
     ( var(X), var(Y) -> true ; clpfd_still_in(Y, X) -> true ; clpfd_still_in(X, Y) ).
+clpfd_prop_to_goal('$fd_length'(L, Len), (@L #= Len)).
 clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
 clpfd_prop_to_goal('$fd_times'(A,B,C),(A * B #= C)).
 clpfd_prop_to_goal('$fd_min'(A,B,C),  (min(A,B) #= C)).
@@ -502,7 +524,7 @@ clpfd_ins_([X|Xs], Spec) :- 'in'(X, Spec), clpfd_ins_(Xs, Spec).
 % An integer is its own one-value domain; a variable without one has the
 % universal domain, inf..sup.
 %! fd_var(@Term) | CLP(FD): reflection | Term is a variable with a CLP(FD) domain.
-fd_var(X) :- var(X), get_attr(X, clpfd, _).
+fd_var(X) :- var(X), get_attr(X, clpfd, fd(_, _)).
 %! fd_inf(+Var, -Inf) | CLP(FD): reflection | Inf is the least value Var can take, or inf when it has no lower bound.
 fd_inf(X, Inf) :- clpfd_refl_dom(X, fd_inf/2, D), clpfd_dom_min(D, Inf).
 %! fd_sup(+Var, -Sup) | CLP(FD): reflection | Sup is the greatest value Var can take, or sup when it has no upper bound.
@@ -560,8 +582,81 @@ clpfd_expr(- A, V) :- !, clpfd_expr(0 - A, V).
 % expand to repeated $fd_times (X**2 -> X*X), N=0 -> 1, N=1 -> X.
 clpfd_expr(A ** N, V) :- integer(N), N >= 0, !,
     clpfd_expr(A, VA), clpfd_pow(VA, N, V).
+clpfd_expr(@L, V) :- !, clpfd_length_expr(L, V).
 clpfd_expr(E, _) :-
     throw(error(type_error(fd_expression, E), _)).
+
+% ===== @L: the length of a list (docs/design/clpfd-list-length.md) =====
+% Two halves that never refer to each other. The open tail of L carries
+% spine(Len, Off), Len being Off plus the length of that tail, and the
+% attribute moves with the tail as the list grows. Len carries
+% '$fd_length'(L, Len), which walks L from its start when Len narrows.
+clpfd_length_expr(L, V) :-
+    '$skip_list'(N, L, Tail),
+    (   Tail == [] -> V = N
+    ;   var(Tail) ->
+        (   get_attr(Tail, clpfd, A) ->
+            (   A = spine(Len1, Off1) ->
+                % the same tail again: one length, at an offset (posted as
+                % a difference when negative, which reads as M + 1 #= N)
+                K is N - Off1,
+                (   K =:= 0 -> V = Len1
+                ;   K > 0 -> clpfd_expr(Len1 + K, V)
+                ;   K1 is -K, clpfd_expr(Len1 - K1, V)
+                )
+            ;   throw(error(type_error(list, L), _))
+            )
+        ;   clpfd_makevar(V),
+            put_attr(Tail, clpfd, spine(V, N)),
+            clpfd_post('$fd_length'(L, V), [V])
+        )
+    ;   throw(error(type_error(list, L), _))
+    ).
+
+% Len narrowed: the known cells bound Len below; a maximum reached closes
+% the list; a minimum past the known cells extends it, in one unification.
+% Narrowing Len runs this again, so nothing is done after it here; the
+% extension's binding runs the spine hook, which narrows Len to a bound it
+% already has, which runs nothing.
+'$fd_length'(L, Len) :-
+    '$skip_list'(N, L, Tail),
+    (   Tail == [] -> Len = N
+    ;   var(Tail) ->
+        (   integer(Len) ->
+            K is Len - N, K >= 0, clpfd_fresh_cells(K, [], Ext), Tail = Ext
+        ;   clpfd_bounds(Len, Lo, Hi),
+            (   Hi == N -> Tail = []
+            ;   \+ ( integer(Lo), Lo >= N ) -> clpfd_narrow_bounds(Len, N, sup)
+            ;   Lo > N -> K is Lo - N, clpfd_fresh_cells(K, _, Ext), Tail = Ext
+            ;   true
+            )
+        )
+    ;   throw(error(type_error(list, L), _))
+    ).
+
+% K fresh cells ending in End, built apart and unified once.
+clpfd_fresh_cells(0, End, End) :- !.
+clpfd_fresh_cells(K, End, [_|Cells]) :- K1 is K - 1, clpfd_fresh_cells(K1, End, Cells).
+
+% The tail carrying spine(Len, Off) was bound to T. A list: the attribute
+% moves past it and Len is at least the cells now known. Another open tail:
+% the two lists share it from here, so their lengths differ by a constant.
+'$fd_spine'(T, Len, Off) :-
+    (   var(T) ->
+        (   get_attr(T, clpfd, A) ->
+            (   A = spine(Len2, Off2) -> Len + Off2 #= Len2 + Off
+            ;   throw(error(type_error(list, T), _))
+            )
+        ;   put_attr(T, clpfd, spine(Len, Off))
+        )
+    ;   '$skip_list'(K, T, T2), Off2 is Off + K,
+        (   T2 == [] -> Len = Off2
+        ;   var(T2), \+ get_attr(T2, clpfd, fd(_, _)) ->
+            '$fd_spine'(T2, Len, Off2),
+            clpfd_narrow_bounds(Len, Off2, sup)
+        ;   throw(error(type_error(list, T), _))
+        )
+    ).
 
 clpfd_divop_expr(Op, A, B, V) :-
     clpfd_expr(A, VA), clpfd_expr(B, VB),

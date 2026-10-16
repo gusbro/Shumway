@@ -312,6 +312,29 @@ read a variable's domain:
 D = 2..16, ...
 ```
 
+`@L` denotes the length of the list `L` and can appear in a constraint
+wherever an integer can. Propagation works in both directions. When the list
+gets more elements, the lower bound of its length rises. When the length gets
+a lower bound, the list gets that many elements, and when the length is fixed
+the list is closed:
+
+```prolog
+?- @L #= N, L = [a|_].
+L = [a|_A], N in 1..sup, @[a|_A] #= N.
+
+?- @L #> N, N #> 5.
+L = [_A,_B,_C,_D,_E,_F,_G|_H], ...
+
+?- @L #= 3.
+L = [_A,_B,_C].
+```
+
+`@A #= @B` constrains two lists to have the same length. `@L` is an
+expression, not a variable, so it cannot be passed to `label/1`; to enumerate
+the possible lengths, label the length variable (`@L #= N, label([N])`), and
+the list is extended and closed accordingly. A list with a cyclic spine, or
+whose tail is neither a variable nor `[]`, raises `type_error(list, L)`.
+
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,
 the global constraints are `element/3`, `global_cardinality/2`, `circuit/1`,
 `tuples_in/2` and `cumulative/1,2`. `cumulative(Tasks, [limit(L)])` schedules

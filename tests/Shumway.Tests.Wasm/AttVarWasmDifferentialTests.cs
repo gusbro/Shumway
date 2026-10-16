@@ -299,6 +299,12 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "if_/3 on a reified clpfd comparison" },
         { "tfilter(dif(a), [a,b,X], L), L = [b, Y], Y == X, \\+ X = a.",
           "tfilter/3 with dif/3, an answer with its constraint" },
+        { "@L #= N, L = [a|T], fd_inf(N, I), I == 1, T = [b], N == 2.",
+          "@L: the list grows, the length follows" },
+        { "@L #> N, N #> 5, L = [_,_,_,_,_,_,_|T], var(T), @L #=< 7, T == [], N == 6.",
+          "@L: the length narrows, the list grows and closes" },
+        { "@A #= @B, A = [x,y], B = [_|T], T = [_], findall(L, (@L #= M, M in 1..2, label([M])), Ls), Ls = [[_],[_,_]].",
+          "@A #= @B as same_length/2, and labeling the length" },
     };
 
     [Theory]
