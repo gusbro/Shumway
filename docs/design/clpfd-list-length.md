@@ -59,6 +59,12 @@ tokens and are not affected.
 5. Anything else is not a list: a non-list tail, a cyclic spine, or a tail that
    is an FD variable (`fd(_, _)`, so an integer). `type_error(list, L)`.
 
+`@L` requires the spine of `L` to be acyclic, and checks it as the list grows:
+each binding of the attributed tail walks the cells it adds, with cycle
+detection in linear time, and a cycle raises `type_error(list, L)` right there,
+before the next goal runs, rather than when something walks the list later.
+Only the spine is checked; an element may be cyclic, so `L = [L]` has length 1.
+
 ## Propagation from the list to the length
 
 Binding the tail fires `verify_attributes/4` on `spine(Len, Off)` with the

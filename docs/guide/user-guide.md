@@ -332,9 +332,12 @@ L = [_A,_B,_C].
 
 `@A #= @B` constrains two lists to have the same length. `label/1` and
 `labeling/2` accept `@L` among the variables to label: each value tried for
-the length extends and closes the list accordingly. A list with a cyclic
-spine, or whose tail is neither a variable nor `[]`, raises
-`type_error(list, L)`.
+the length extends and closes the list accordingly. A list whose tail is
+neither a variable nor `[]` raises `type_error(list, L)`, and so does a cyclic
+spine: `@L` requires the spine to be acyclic and checks it as the list grows,
+so a cycle raises the error right there, before the next goal runs, rather
+than when something walks the list later. Only the spine is checked; an
+element may be cyclic, so `L = [L]` has length 1.
 
 ```prolog
 ?- @L #< 3, label([@L]).
