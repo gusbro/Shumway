@@ -1,10 +1,6 @@
 % Constraints over finite domains: state the relationships, let the solver
 % narrow the possibilities.
 %
-% The library is opt-in, and the program says so itself — the directive below
-% runs as this file is consulted, which is what puts `ins`, `#=` and the rest
-% in the operator table before the clauses that use them are read.
-%
 % Try:  puzzle(Digits).           SEND + MORE = MONEY
 %       queens_fd(8, Qs).
 %       X #> 3, X #< 7.           an answer that is still a constraint
