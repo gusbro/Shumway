@@ -95,7 +95,8 @@ public static class ListBuiltins
     /// what makes a variable-index enumeration over a partial list produce
     /// answers ad infinitum instead of stopping at the end. The extension
     /// binding is trailed like any other, so backtracking past the whole
-    /// call undoes it.</summary>
+    /// call undoes it. An attributed tail binds through the attribute
+    /// protocol, which queues its hooks.</summary>
     private static void Extend(Activation engine, ref Cell cur, out Cell head)
     {
         int h = engine.AllocateHeap(1);
@@ -105,9 +106,94 @@ public static class ListBuiltins
         int p = engine.AllocateHeap(2);
         engine.SetHeap(p, Cell.Ref(h));
         engine.SetHeap(p + 1, Cell.Ref(t));
-        engine.Bind(cur.AsHeapIndex, Cell.Lis(p));
+        if (cur.Tag == Tag.Ref) engine.Bind(cur.AsHeapIndex, Cell.Lis(p));
+        else engine.UnifyHeapWithCell(cur.AsHeapIndex, Cell.Lis(p));
         head = Cell.Ref(h);
         cur = Cell.Ref(t);
+    }
+
+    // ---------- '$nth_gen'/5 ----------
+    // The step of a free-index nth0/nth1 past an unbound tail, as a builtin the
+    // wake driver enters once the hooks of the tail's binding have run
+    // (docs/design/builtin-continues-after-wakeups.md): H is the element at
+    // position Idx of the list whose rest is Tail. X0 = Tail, X1 = Elem,
+    // X2 = H, X3 = Idx, X4 = Index; the frame also saves X5, the return
+    // address, as a raw integer, so no C# object outlives a retry.
+
+    private static readonly int NthGenFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$nth_gen", permanent: true).Id, 5);
+
+    /// <summary>Queues <c>'$nth_gen'(Tail, Elem, H, Idx, Index)</c> behind
+    /// the wakeups the binding of the tail queued. The item belongs to that
+    /// binding, at <paramref name="home"/>.</summary>
+    private static void QueueNthGen(Activation engine, Cell tail, Cell elem,
+                                    Cell head, long idx, Cell index, int home)
+    {
+        int f = engine.AllocateHeap(6);
+        engine.SetHeap(f, Cell.Functor(NthGenFunctorId));
+        engine.SetHeap(f + 1, tail);
+        engine.SetHeap(f + 2, elem);
+        engine.SetHeap(f + 3, head);
+        engine.SetHeap(f + 4, Cell.Int(idx));
+        engine.SetHeap(f + 5, index);
+        int g = engine.AllocateHeap(1);
+        engine.SetHeap(g, Cell.Str(f));
+        engine.QueueWakeGoal(g, home);
+    }
+
+    public static bool NthGen(Activation engine)
+    {
+        engine.SetRegister(5, Cell.RawInt(engine.BuiltinReturnPc));
+        engine.ArmBuiltinChoicePoint(NthGenResume, arity: 6, more: true, isResume: false);
+        return NthGenYield(engine);
+    }
+
+    private static readonly Func<Activation, int, bool> NthGenResume = (e, _) => NthGenNext(e);
+
+    // Index = Idx, Elem = H. A miss returns false into the armed frame, which
+    // retries at the next position.
+    private static bool NthGenYield(Activation engine)
+        => engine.UnifyRegisterWithCell(4, Resolve(engine, engine.GetRegister(3)))
+           && engine.UnifyRegisterWithCell(1, engine.GetRegister(2));
+
+    /// <summary>The retry, with X0..X5 restored: the second clause of the
+    /// enumeration, and the last, so the frame is trusted before the tail is
+    /// bound to the next cons. With wakeups pending the next level is queued
+    /// behind them; otherwise it is armed and yields in line.</summary>
+    private static bool NthGenNext(Activation engine)
+    {
+        engine.TrustBuiltinChoicePoint();
+        int returnPc = (int)engine.GetRegister(5).Data;
+        long idx = Resolve(engine, engine.GetRegister(3)).AsInt + 1;
+        Cell cur = Resolve(engine, engine.GetRegister(0));
+        Cell head;
+        if (ListCursor.TryUncons(engine, cur, out head, out Cell tail))
+        {
+            cur = Resolve(engine, tail);
+        }
+        else if (cur.Tag is Tag.Ref or Tag.AttVar)
+        {
+            int home = cur.AsHeapIndex;
+            Extend(engine, ref cur, out head);
+            if (engine.HasPendingWakeups)
+            {
+                QueueNthGen(engine, cur, engine.GetRegister(1), head, idx,
+                    engine.GetRegister(4), home);
+                engine.ResumeAtReturnPc(returnPc);
+                return true;
+            }
+        }
+        else
+        {
+            return false;                       // a closed or improper tail
+        }
+        engine.SetRegister(0, cur);
+        engine.SetRegister(2, head);
+        engine.SetRegister(3, Cell.Int(idx));
+        engine.ArmBuiltinChoicePoint(NthGenResume, arity: 6, more: true, isResume: false);
+        if (!NthGenYield(engine)) return false;
+        engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     /// <summary>Builds the open list skeleton <c>[_,...,_,E|_]</c> with
@@ -143,9 +229,6 @@ public static class ListBuiltins
     private sealed class NthCursor
     {
         public long Pos;
-        /// <summary>The position at which the walk met an attributed tail,
-        /// or -1: from there each retry binds that tail afresh (see NthStep).</summary>
-        public long OpenAt = -1;
         public readonly bool OneBased;
         public readonly int ReturnPc;
         public readonly Func<Activation, int, bool> Resume;
@@ -174,30 +257,25 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
         }
-        else if (cur.Tag == Tag.Ref)
+        else if (cur.Tag is Tag.Ref or Tag.AttVar)
         {
             // A partial list grows a cell here, before the choice point: the
             // frame being retried saved a heap top below it, so that frame is
-            // trusted and a new one pushed above the new cell.
+            // trusted and a new one pushed above the new cell. An attributed
+            // tail wakes its hooks, which run at the next goal boundary, above
+            // any frame armed here; the step then goes on from the batch, once
+            // they have run (docs/design/builtin-continues-after-wakeups.md).
             if (isResume) engine.TrustBuiltinChoicePoint();
+            int home = cur.AsHeapIndex;
             Extend(engine, ref cur, out head);
+            if (engine.HasPendingWakeups)
+            {
+                QueueNthGen(engine, cur, engine.GetRegister(2), head,
+                    c.OneBased ? c.Pos + 1 : c.Pos, engine.GetRegister(0), home);
+                if (isResume) engine.ResumeAtReturnPc(c.ReturnPc);
+                return true;
+            }
             engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume: false);
-        }
-        else if (cur.Tag == Tag.AttVar)
-        {
-            // An attributed tail wakes its hooks when bound, and they run once
-            // the builtin has returned, above any choice point armed here. A
-            // cell grown before the choice point would stay bound through the
-            // retry while the hooks' work is undone, leaving the attributes (a
-            // constraint on the list's length, say) out of step with the list.
-            // So the choice point comes first, and the k-th retry binds the
-            // tail afresh to k cells and the element: the hooks see each
-            // shape, and the retry undoes binding and hooks together.
-            engine.ArmBuiltinChoicePoint(c.Resume, arity: 4, more: true, isResume);
-            if (c.OpenAt < 0) c.OpenAt = c.Pos;
-            Cell built = BuildOpenSkeleton(engine, c.Pos - c.OpenAt, out int elemSlot);
-            if (!engine.UnifyHeapWithCell(cur.AsHeapIndex, built)) return false;
-            head = Cell.Ref(elemSlot);
         }
         else
         {

@@ -397,6 +397,10 @@ public static class StandardBuiltins
             Lists, "nth0(?Index, ?List, ?Elem)", "Relates a 0-based index to the list element at that position.", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("nth1",         3, ListBuiltins.Nth1,
             Lists, "nth1(?Index, ?List, ?Elem)", "Relates a 1-based index to the list element at that position.", kind: PredicateKind.Library);
+        // The steps of nth0/nth1 and append/3 past an attributed tail, entered
+        // by the wake driver (docs/design/builtin-continues-after-wakeups.md).
+        BuiltinsRegistry.Register("$nth_gen",     5, ListBuiltins.NthGen);
+        BuiltinsRegistry.Register("$append_gen",  3, AtomListBuiltins.AppendGen);
         BuiltinsRegistry.Register("reverse",      2, ListBuiltins.Reverse,
             Lists, "reverse(?List, ?Reversed)", "Relates a list to its reverse. A cyclic list raises resource_error(finite_memory).", kind: PredicateKind.Library);
         BuiltinsRegistry.Register("last",         2, ListBuiltins.Last,

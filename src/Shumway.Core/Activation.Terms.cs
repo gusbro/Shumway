@@ -2105,6 +2105,16 @@ public sealed partial class Activation
         AttrQueueWakeups(attvarHome, otherIdx, ref _pendingWakeups);
     }
 
+    /// <summary>Queues the goal at <paramref name="goalIdx"/> behind the
+    /// wakeups pending so far, as a <c>'$lazy'</c> item: the driver calls it
+    /// once the hooks queued before it have run. A builtin that bound an
+    /// attributed variable and must go on only after its hooks continues in
+    /// the goal (docs/design/builtin-continues-after-wakeups.md). The item
+    /// belongs to the binding at <paramref name="home"/>: a backtrack that
+    /// undoes it drops the goal as it drops the hooks.</summary>
+    public void QueueWakeGoal(int goalIdx, int home)
+        => _pendingWakeups.Add((LazyAttrModuleId, goalIdx, goalIdx, home));
+
     /// <summary>True when attribute hooks are queued and waiting to run.
     /// The interpreter checks this at every goal boundary.</summary>
     public bool HasPendingWakeups => _pendingWakeups.Count > 0;

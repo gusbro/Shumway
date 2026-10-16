@@ -1475,9 +1475,11 @@ public sealed partial class Activation
     /// pushing the frame. Its hooks run when the builtin returns (ADR-049),
     /// above the frame, so a retry undoes the hooks' work and keeps the
     /// binding, and nothing reports it. A step that reaches an attributed
-    /// variable arms first and binds after, rebuilding what the binding
-    /// needs on each retry; a plain variable may still be bound before the
-    /// frame, as the linear list walks do.</para></summary>
+    /// variable binds it with its own frame trusted, queues the rest of the
+    /// step behind the hooks with <see cref="QueueWakeGoal"/> and yields from
+    /// there (docs/design/builtin-continues-after-wakeups.md); a plain
+    /// variable may still be bound before the frame, as the linear list
+    /// walks do.</para></summary>
     public void ArmBuiltinChoicePoint(
         Func<Activation, int, bool> del, int arity, bool more, bool isResume)
     {
