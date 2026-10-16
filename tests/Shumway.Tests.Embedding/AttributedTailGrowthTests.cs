@@ -8,7 +8,9 @@ namespace Shumway.Tests.Embedding;
 /// builtin leaves, so a step that binds the tail before its choice point
 /// keeps the binding through the retry and loses the hooks' work: a
 /// constraint on the list's length falls out of step with the list. The
-/// enumeration must bind the tail after the choice point instead, and an
+/// step continues from the wake batch instead, after the hooks
+/// (docs/design/builtin-continues-after-wakeups.md), so the answers follow
+/// the constraint and a rejected extension ends the enumeration; and an
 /// integer index must grow an attributed tail as it grows a plain one.</summary>
 public sealed class AttributedTailGrowthTests
 {
@@ -60,10 +62,12 @@ public sealed class AttributedTailGrowthTests
         => Assert.True(Holds(query), query);
 
     [Theory]
-    // A goal frozen on the tail runs on each shape tried, and can reject it.
+    // A goal frozen on the tail runs on each cell grown, before the element
+    // is placed in it, as it does with a Prolog definition: the cell's head
+    // is still a variable when the goal sees it.
     [InlineData("freeze(T, Woke = yes), L = [foo|T], nth0(X, L, a), X == 1, !, Woke == yes")]
-    [InlineData("freeze(T, (T = [H|_], H \\== a)), L = [foo|T], nth0(X, L, a), !, X == 2")]
-    [InlineData("freeze(T, (T = [H|_], H \\== a)), L = [foo|T], nth1(X, L, a), !, X == 3")]
+    [InlineData("freeze(T, (T = [H|_], H \\== a)), L = [foo|T], nth0(X, L, a), !, X == 1")]
+    [InlineData("freeze(T, (T = [H|_], H \\== a)), L = [foo|T], nth1(X, L, a), !, X == 2")]
     public void TheTailsCoroutinesRunOnEachShape(string query)
         => Assert.True(Holds(query), query);
 
@@ -101,6 +105,33 @@ public sealed class AttributedTailGrowthTests
     [Fact]
     public void TheSplitUnderABoundedLengthFindsTheAnswersThatFit()
         => Assert.True(Holds("@L #= N, N #>= 2, findall(L-R, append(L, R, [a,b,c]), Ps), Ps == [[a,b]-[c], [a,b,c]-[]]"));
+
+    // ----- the enumeration ends where the constraint ends it -----
+    // A hook that rejects the next cell fails the step with no frame left,
+    // as the second clause of a Prolog definition would: findall/3 returns.
+
+    [Theory]
+    [InlineData("@A #=< 6, findall(X, nth0(X, A, a), Xs), Xs == [0,1,2,3,4,5]")]
+    [InlineData("@A #=< 6, findall(X, nth1(X, A, a), Xs), Xs == [1,2,3,4,5,6]")]
+    [InlineData("@B #= 4, @A #= @B + 2, findall(X, nth0(X, A, a), Xs), Xs == [0,1,2,3,4,5]")]
+    [InlineData("@L #= N, N #< 3, findall(X, nth1(X, L, a), Xs), Xs == [1,2]")]
+    [InlineData("@[foo|T] #= N, N #=< 3, findall(X, nth0(X, [foo|T], a), Xs), Xs == [1,2]")]
+    [InlineData("@L #= 0, findall(X, nth0(X, L, a), Xs), Xs == []")]
+    [InlineData("freeze(T, fail), L = [foo|T], findall(X, nth0(X, L, foo), Xs), Xs == [0]")]
+    [InlineData("freeze(T, T = []), L = [foo|T], findall(X, nth0(X, L, a), Xs), Xs == []")]
+    [InlineData("@L #=< 1, findall(L-R, append(L, R, [a,b,c]), Ps), Ps == [[]-[a,b,c], [a]-[b,c]]")]
+    [InlineData("@L #= N, N #>= 1, N #=< 2, findall(L, append(L, _, [a,b,c]), Ls), Ls == [[a], [a,b]]")]
+    [InlineData("freeze(T, T = []), L = [a|T], findall(R, append(L, R, [a,b,c]), Rs), Rs == [[b,c]]")]
+    public void ABoundedLengthEndsTheEnumeration(string query)
+        => Assert.True(Holds(query), query);
+
+    // The yield comes before a cut: the cut commits to the first position.
+    [Theory]
+    [InlineData("@A #=< 6, nth0(X, A, a), !, X == 0, A = [a|T], var(T)")]
+    [InlineData("@A #=< 6, \\+ (nth0(X, A, a), !, X > 0)")]
+    [InlineData("@L #= N, append(L, R, [a,b,c]), !, L == [], R == [a,b,c], N == 0")]
+    public void TheYieldComesBeforeACut(string query)
+        => Assert.True(Holds(query), query);
 
     // ----- reverse/2 -----
 
