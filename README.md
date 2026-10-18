@@ -1,4 +1,4 @@
-# Shumway
+# Shumway Prolog
 
 **Shumway** is a cross-platform Prolog engine for .NET, built for Prolog systems 
 large enough to need real engineering: separate compilation, a linker, a
@@ -58,9 +58,9 @@ multi-target build. The test gate currently runs on Windows.
 - **The length of a list as a constraint**: in CLP(FD), `@L` stands for the
   length of the list `L` and takes part in constraints like any integer.
   `@A #= @B` keeps two lists the same length, `@L #< 5` bounds a list that is
-  still open, and `label([@L])` enumerates its lengths; the constraint keeps
-  track of the list as it is built, and closes it once the length is known.
-  This is a Shumway extension; see the
+  still open, and `label([@L])` enumerates its lengths. The constraint keeps
+  track of the list as it is built and closes it once the length is known.
+  This is a Shumway extension, more information in
   [user guide](docs/guide/user-guide.md#loading-constraint-and-coroutining-libraries)
   and [its design](docs/design/clpfd-list-length.md).
 - **Two garbage collectors**: a
@@ -77,7 +77,7 @@ multi-target build. The test gate currently runs on Windows.
 - **A full toolchain**: `shumway-compile` (`.pl` → `.shmo`), `shumway-link`
   (`.shum` bundles, `--exe` native executables, `--dll` loadable class
   libraries), `shumway-lib` (archives), and the `shumway` REPL.
-- **Link-time optimization**: Shumway's JIT promotes hot predicates knowing only what it can see. The linker knows the whole program, so bundles get cross-module unfolding, cross-module cut elision, and larger [deterministic regions](docs/design/il-region-compilation.md). So a linked bundle isn't just precompiled, it's compiled better.
+- **Link-time optimization**: Shumway's JIT promotes hot predicates knowing only what it can see. The linker knows the whole program, so bundles get cross-module unfolding, cross-module cut elision, and larger [deterministic regions](docs/design/il-region-compilation.md). A linked bundle isn't just precompiled but compiled better.
 - **Builtin predicates**: check the [current list](docs/guide/predicates.md).
 - **Support for third-party libraries**:
   [SWI-Prolog](docs/guide/swi-library-support.md),
@@ -85,7 +85,7 @@ multi-target build. The test gate currently runs on Windows.
   [Trealla Prolog](docs/guide/trealla-library-support.md) libraries
   load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md) (3.101.0) runs as a
   first-class backend.
-- **Runs in a browser**: the same engine on WebAssembly, as a static site with
+- **Runs in a browser**: the same engine on WebAssembly as a static site with
   no backend ([WebShumway](docs/guide/webshumway.md)).
 - **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md),
   with the same capabilities in [WebShumway](docs/guide/webshumway.md)'s embedded
@@ -159,11 +159,6 @@ for a fully native build.
 
 Every tool takes `--help`. The [user guide](docs/guide/user-guide.md) covers
 the whole toolchain, and separate compilation in particular.
-
-> Running the tools through `dotnet run --project src/Shumway.Repl/ -- ...` works
-> and needs no PATH entry, but re-evaluates the project on **every**
-> invocation: about 5.8 seconds against 0.65 for the executable, paid again at
-> each step of a compile/link/run cycle.
 
 ### Debug
 
