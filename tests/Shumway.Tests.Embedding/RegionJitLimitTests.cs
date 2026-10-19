@@ -44,6 +44,7 @@ public sealed class RegionJitLimitTests
         return e;
     }
 
+#if !NETFRAMEWORK   // .NET Framework has no event source for its JIT: the planner's own counts stand alone there
     /// <summary>The optimization tier of every method the runtime JIT
     /// reports, by name, from its MethodLoadVerbose events.</summary>
     private sealed class JitTiers : EventListener
@@ -90,12 +91,26 @@ public sealed class RegionJitLimitTests
             lock (_tiers) _tiers[(string)e.Payload[name]!] = tierName;
         }
     }
+#endif
 
+    /// <summary>The regions of this program's predicates, the last emission
+    /// of each root: the log is the process's, other classes compile regions
+    /// on their own threads meanwhile (under the byte budget raised here), and
+    /// a first plan past a limit is logged before it is emitted again.</summary>
     private static IReadOnlyList<IlRegionCost.Emission> RegionsOf(PrologEngine e, string goal)
     {
         IlRegionCost.ResetDiagnostics();
         Assert.True(e.Query(goal).Success);
-        return IlRegionCost.Emissions;
+        var last = new Dictionary<int, IlRegionCost.Emission>();
+        foreach (var r in IlRegionCost.Emissions)
+        {
+            var (atomId, _) = Shumway.Core.FunctorTable.Lookup(r.RootFid);
+            string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+            name = name[(name.LastIndexOf('$') + 1)..];
+            if (name is "run" or "urun" || (name.Length > 1 && name[0] is 'p' or 'u' && name[1..].All(char.IsDigit)))
+                last[r.RootFid] = r;
+        }
+        return last.Values.ToList();
     }
 
     [Fact]
@@ -105,7 +120,9 @@ public sealed class RegionJitLimitTests
         try
         {
             IlRegionCost.Target = 7200;
+#if !NETFRAMEWORK
             using var tiers = new JitTiers();
+#endif
             var e = Engine(Program(40));
             var regions = RegionsOf(e, "run(30).");
             Assert.True(regions.Count >= 1, "no region compiled");
@@ -116,8 +133,9 @@ public sealed class RegionJitLimitTests
                 Assert.True(r.IlBytes <= IlJitLimits.IlBytes, $"root {r.RootFid}: {r.IlBytes} IL bytes");
                 Assert.True(r.Instructions <= IlJitLimits.Instructions, $"root {r.RootFid}: {r.Instructions} instructions");
             }
-            // The JIT agrees: no region method compiled without optimization.
             Assert.True(e.Query("run(30).").Success);
+#if !NETFRAMEWORK
+            // The JIT agrees: no region method compiled without optimization.
             var reported = tiers.RegionTiers();
             var minOpts = reported.Where(kv => kv.Key.StartsWith("ShumwayIlRegion_", StringComparison.Ordinal)
                                             && kv.Value.Contains("MinOpt", StringComparison.Ordinal)).ToList();
@@ -125,6 +143,7 @@ public sealed class RegionJitLimitTests
                 $"the JIT reported no region method ({tiers.Events} events [{tiers.Seen}] payload [{tiers.FirstPayload}], {reported.Count} methods: "
                 + string.Join(", ", reported.Keys.Where(k => k.Contains("Shumway")).Take(5)) + ")");
             Assert.Empty(minOpts);
+#endif
         }
         finally
         {
@@ -140,15 +159,19 @@ public sealed class RegionJitLimitTests
         try
         {
             IlRegionCost.Target = 0;
+#if !NETFRAMEWORK
             using var tiers = new JitTiers();
+#endif
             var e = Engine(Program(40));
             var regions = RegionsOf(e, "run(30).");
             Assert.True(regions.Any(r => r.LocalRefs > IlJitLimits.LocalRefs),
                 "largest region: " + regions.Max(r => r.LocalRefs) + " local refs, members " + regions.Max(r => r.Members));
             Assert.True(e.Query("run(30).").Success);
+#if !NETFRAMEWORK
             var reported = tiers.RegionTiers();
             Assert.Contains(reported, kv => kv.Key.StartsWith("ShumwayIlRegion_", StringComparison.Ordinal)
                                             && kv.Value.Contains("MinOpt", StringComparison.Ordinal));
+#endif
         }
         finally
         {
