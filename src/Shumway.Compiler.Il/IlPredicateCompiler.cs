@@ -432,13 +432,6 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetProperty(nameof(Activation.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
-    // Theme-1 / WAM stripping: an IL caller dispatches a callee by functor id
-    // (a resume marker with cursor 0 = entry), not by resolving it to a WAM
-    // address. The dispatcher routes the marker to the callee's IL delegate
-    // directly via IlByFunctorId when it has IL, or falls back to its WAM
-    // address otherwise — so an IL-only callee needs no WAM body/address.
-    private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
-        typeof(Activation).GetMethod(nameof(Activation.EncodeResumeMarker))!;
     // Region compilation — a member's proceed decodes Cp via this to
     // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
     private static readonly MethodInfo EngineRegionReturnCursorMethod =
