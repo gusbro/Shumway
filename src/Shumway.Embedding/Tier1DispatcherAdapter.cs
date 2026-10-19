@@ -193,12 +193,21 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
         // The wasm tier counts the same dispatches; its install lands in the
         // store's table, so the wrapper below is the ordinary one.
-        if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm
-            && wasm.RecordDispatch(functorId, pred, targetAddress, _engine, _viewEpoch) is not null)
+        if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm)
         {
-            var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
-            _dispatchCache[targetAddress] = wrappedWasm;
-            return wrappedWasm;
+            if (wasm.RecordDispatch(functorId, pred, targetAddress, _engine, _viewEpoch, out bool wasmSettled) is not null)
+            {
+                var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
+                _dispatchCache[targetAddress] = wrappedWasm;
+                return wrappedWasm;
+            }
+            // The same settled null as the IL store's below; the predicate is
+            // hot for the indexing profile by then.
+            if (wasmSettled)
+            {
+                _dispatchCache[targetAddress] = null!;
+                return null;
+            }
         }
 
         // JIT-indexing profile counts only not-yet-promoted predicates — a promoted
@@ -230,9 +239,17 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             return null;
         }
 
-        // Not cached when null: the next call may cross the promotion threshold.
-        var fresh = _store.RecordInvocation(functorId, pred, CalleeMap, _viewEpoch);
-        if (fresh is null) return null;
+        // A null answer is cached only when it holds for the rest of this view
+        // (a dynamic predicate with no snapshot this query is the common one:
+        // a parser asks its empty pushback predicate at every character).
+        // Below the threshold or with a compile in flight the next call may
+        // promote, so nothing is cached.
+        var fresh = _store.RecordInvocation(functorId, pred, CalleeMap, _viewEpoch, out bool settled);
+        if (fresh is null)
+        {
+            if (settled) _dispatchCache[targetAddress] = null!;
+            return null;
+        }
         var wrappedFresh = _store.TryGetDispatchWrapper(functorId)!;
         _dispatchCache[targetAddress] = wrappedFresh;
         return wrappedFresh;

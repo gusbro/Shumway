@@ -1048,7 +1048,19 @@ public sealed class IlPromotionStore
     /// <paramref name="calleeMap"/> was built at; null when it is current.</param>
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null, int? viewEpoch = null)
+        => RecordInvocation(functorId, predicate, calleeMap, viewEpoch, out _);
+
+    /// <summary>As above; <paramref name="settled"/> is true when a null
+    /// answer holds for the rest of the program view: the predicate is
+    /// unpromotable, the view's copy of it is stale, or it is a dynamic
+    /// predicate with no snapshot this query (no clauses, or mutated since
+    /// the query's setup, which makes it stale until the next one). A count
+    /// below the threshold, a compile in flight or a churn pin is not
+    /// settled: a later call may promote.</summary>
+    internal PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, int? viewEpoch, out bool settled)
     {
+        settled = false;
         if (!IlTierOn || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
@@ -1059,9 +1071,9 @@ public sealed class IlPromotionStore
         // keep serving (consult-commit eviction drops any this load extends);
         // counting resumes when the outermost consult finishes.
         if (PromotionsSuspended) return null;
-        if (_unpromotable.Contains(functorId)) return null;
+        if (_unpromotable.Contains(functorId)) { settled = true; return null; }
         if (_pendingCompiles.Contains(functorId)) return null;   // compile in flight
-        if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
+        if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); settled = true; return null; }
 
         // ADR-023 — a dynamic predicate promotes as a snapshot of its visible
         // clauses; mutation evicts it. Churn-pinned predicates stay Tier-0 until
@@ -1081,11 +1093,11 @@ public sealed class IlPromotionStore
         // A view built at the current epoch has nothing newer than it.
         if (epoch != _staticEpoch)
         {
-            if (_staleForView.TryGetValue(functorId, out int staleView) && staleView == epoch) return null;
+            if (_staleForView.TryGetValue(functorId, out int staleView) && staleView == epoch) { settled = true; return null; }
             // The view's own copy of it predates its new clauses.
-            if (ChangedAfter(functorId, epoch)) return null;
+            if (ChangedAfter(functorId, epoch)) { settled = true; return null; }
         }
-        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic, epoch);
+        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic, epoch, out settled);
     }
 
     // Predicates whose compile copied a callee changed after the program view
@@ -1098,25 +1110,28 @@ public sealed class IlPromotionStore
 
     // Not in RecordInvocation, for Request's reason.
     private PredicateDelegate? CompileAtThreshold(int functorId, CompiledPredicate predicate,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic, int viewEpoch)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool isDynamic, int viewEpoch, out bool settled)
     {
+        settled = false;
         // ADR-035: debuggable code stays on the interpreter. Not left to the
         // debug opcodes the compiler refuses: a fact or a rule ending in a
         // builtin carries none, and compiled, a breakpoint in it never fires.
-        if (predicate.IsDebuggable) return null;
-        // A null snapshot (no visible clauses yet) is a retry, not a rejection —
-        // clauses may arrive on a later assertz.
+        if (predicate.IsDebuggable) { settled = true; return null; }
+        // A null snapshot (no visible clauses, or clauses the query's setup
+        // has not seen) is a retry at the next query, not a rejection: an
+        // assertz now leaves the predicate stale until that setup.
         CompiledPredicate target = predicate;
         if (isDynamic)
         {
             var snapshot = DynamicSnapshotProvider?.Invoke(functorId);
-            if (snapshot is null) return null;
+            if (snapshot is null) { settled = true; return null; }
             target = snapshot;
         }
 
         if (IsExcludedBySize(target))
         {
             MarkUnpromotable(functorId, isDynamic ? "dynamic-size" : "size");
+            settled = true;
             return null;
         }
 
@@ -1134,6 +1149,7 @@ public sealed class IlPromotionStore
         if (!canCompile)
         {
             MarkUnpromotable(functorId, "cannot-compile:" + rejection);
+            settled = true;
             return null;
         }
 
@@ -1215,6 +1231,7 @@ public sealed class IlPromotionStore
         if (ChangedSince(syncCallees, viewEpoch))
         {
             _staleForView[functorId] = viewEpoch;
+            settled = true;
             return null;
         }
         var installedDel = isDynamic

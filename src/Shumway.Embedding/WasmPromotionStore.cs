@@ -455,8 +455,16 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// when the program view <paramref name="predicate"/> comes from was built.</param>
     public PredicateDelegate? RecordDispatch(int functorId, CompiledPredicate predicate,
         int linkedAddress, Activation? engine = null, int? viewEpoch = null)
+        => RecordDispatch(functorId, predicate, linkedAddress, engine, viewEpoch, out _);
+
+    /// <summary>As above; <paramref name="settled"/> is true when a null
+    /// answer holds for the rest of the program view (see
+    /// <see cref="IlPromotionStore.RecordInvocation(int, CompiledPredicate, IReadOnlyDictionary{int, CompiledPredicate}, int?, out bool)"/>).</summary>
+    internal PredicateDelegate? RecordDispatch(int functorId, CompiledPredicate predicate,
+        int linkedAddress, Activation? engine, int? viewEpoch, out bool settled)
     {
-        if (!Enabled || _unpromotable.Contains(functorId)) return null;
+        settled = false;
+        if (!Enabled || _unpromotable.Contains(functorId)) { settled = true; return null; }
         // The view's copy of it predates a consult that changed it.
         if (viewEpoch is { } view && view != ilStore.StaticEpoch
             && ilStore.ChangedAfter(functorId, view)) return null;
@@ -466,6 +474,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (IlPromotionStore.IsExcludedFromPromotion(functorId))
         {
             _unpromotable.Add(functorId);
+            settled = true;
             return null;
         }
         if (ilStore.PromotionsSuspended) return null;
@@ -482,9 +491,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (count < Threshold) return null;
         // ADR-035: debuggable code stays on the interpreter (see
         // IlPromotionStore.CompileAtThreshold).
-        if (predicate.IsDebuggable) return null;
+        if (predicate.IsDebuggable) { settled = true; return null; }
         // A snapshot is a module of its own, so it never waits for a batch.
-        if (shadow) return PromoteShadow(functorId, engine!);
+        if (shadow) return PromoteShadow(functorId, engine!, out settled);
 
         // Under the batch, a straggler must not build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
@@ -503,6 +512,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (del is null)
         {
             _unpromotable.Add(functorId);
+            settled = true;
             return null;
         }
         ilStore.RegisterBoundDelegate(functorId, del);
@@ -534,21 +544,25 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// </summary>
     public bool HasShadow(int functorId) => _shadows.ContainsKey(functorId);
 
-    private PredicateDelegate? PromoteShadow(int functorId, Activation engine)
+    private PredicateDelegate? PromoteShadow(int functorId, Activation engine, out bool settled)
     {
         var shadow = ilStore.ShadowSnapshotProvider!(engine, functorId);
         if (shadow.Snapshot is null)
         {
-            // No refusal: no visible clause yet, so a later call retries.
+            // No refusal: no visible clause this query (none, or a mutation
+            // since the setup), so a later query retries.
             if (shadow.Refusal is not null) MarkUnpromotable(functorId, shadow.Refusal);
+            settled = true;
             return null;
         }
         var del = Promoter!(shadow.Snapshot, shadow.Address);
         if (del is null)
         {
             _unpromotable.Add(functorId);
+            settled = true;
             return null;
         }
+        settled = false;
         ilStore.RegisterBoundDelegate(functorId, del);
         _shadows[functorId] = shadow.Address;
         ShadowPromotions++;
