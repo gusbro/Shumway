@@ -368,7 +368,8 @@ public sealed record WasmEntry(
 public sealed record WasmGroupMember(
     CompiledPredicate Predicate,
     int Bias,
-    System.Collections.Generic.IReadOnlyList<double>? FloatLiterals);
+    System.Collections.Generic.IReadOnlyList<double>? FloatLiterals,
+    System.Collections.Generic.IReadOnlyList<TermImage>? ImageLiterals = null);
 
 /// <summary>A compiled group module: one dispatcher over every member's
 /// code, global cursors, cross-member calls as internal jumps.</summary>

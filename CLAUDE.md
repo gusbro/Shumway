@@ -337,6 +337,7 @@ When proposing changes:
 | A region holds the machine registers in locals (accepted in part) | ADR-060 |
 | Tier-1 as continuation methods per predicate (proposed) | ADR-061 |
 | Shumway's own IL emitter | ADR-062 |
+| A ground term of a clause body is copied from an image (proposed) | ADR-063 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

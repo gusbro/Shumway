@@ -502,6 +502,10 @@ public sealed partial class IlPredicateCompiler
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstr))!;
     private static readonly MethodInfo IlPutPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
+    private static readonly MethodInfo IlPutBlitHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutBlit))!;
+    private static readonly MethodInfo IlPutBlitGlobalHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutBlitGlobal))!;
 #if DEBUG
     // Debug-mode marker methods. Reflection lookups stripped
     // from Release — no static init cost, no field, no IL site.
@@ -889,6 +893,8 @@ public sealed partial class IlPredicateCompiler
         // PSTR + Call.
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
+        // ADR-063: persisted, the image goes in the patch, so the pool is needed.
+        Opcode.PutBlit => _persistPatches is null || _ilImagePool is not null,
         Opcode.Call => true,
         // ADR-018 arithmetic instruction set. a_eval_bin / a_eval_un /
         // a_eval_cmp carry no literal operand and are always emittable; the

@@ -2658,6 +2658,14 @@ public sealed partial class BytecodeInterpreter
                     _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
+                case Opcode.PutBlit:   // ADR-063
+                {
+                    int imageId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, _engine.BuildImage(ResolveImage(imageId)));
+                    _engine.SetPc(pc + 9); inClause = true;
+                    break;
+                }
 
                 // ---------- Float literal opcodes ----------
 

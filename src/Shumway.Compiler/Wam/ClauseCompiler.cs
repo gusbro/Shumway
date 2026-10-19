@@ -56,6 +56,16 @@ public sealed partial class ClauseCompiler
     private LiteralPool<Shumway.Core.TextLiteral> _stringLiterals = new();
     private LiteralPool<double> _floatLiterals = new();
     private LiteralPool<System.Numerics.BigInteger> _bigIntLiterals = new();
+    // ADR-063: null when the caller keeps no image pool; then every ground
+    // term is built by instructions.
+    private LiteralPool<Shumway.Core.TermImage>? _imageLiterals;
+
+    /// <summary>ADR-063: a ground compound of a body with at least this many
+    /// cells is copied from an image instead of built; 0 turns images off.
+    /// An image has a fixed cost (a call, a reservation, a loop) that an
+    /// inline build of a few cells does not.</summary>
+    public static int ImageThreshold { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_THRESHOLD"), out int t) ? t : 8;
 
     /// <summary>ADR-035 debug codegen (<c>compile_mode=debug</c>). Two changes,
     /// both in service of a debuggable call stack:
@@ -103,18 +113,21 @@ public sealed partial class ClauseCompiler
         => Compile(clause,
             new LiteralPool<Shumway.Core.TextLiteral>(),
             new LiteralPool<double>(),
-            new LiteralPool<System.Numerics.BigInteger>());
+            new LiteralPool<System.Numerics.BigInteger>(),
+            new LiteralPool<Shumway.Core.TermImage>());
 
     public CompiledClause Compile(
         Clause clause,
         LiteralPool<Shumway.Core.TextLiteral> stringLiterals,
         LiteralPool<double> floatLiterals,
-        LiteralPool<System.Numerics.BigInteger> bigIntLiterals)
+        LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
+        LiteralPool<Shumway.Core.TermImage>? imageLiterals = null)
     {
         ArgumentNullException.ThrowIfNull(clause);
         _stringLiterals = stringLiterals;
         _floatLiterals = floatLiterals;
         _bigIntLiterals = bigIntLiterals;
+        _imageLiterals = imageLiterals;
 
         switch (clause.Kind)
         {

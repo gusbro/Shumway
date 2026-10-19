@@ -618,6 +618,18 @@ public sealed partial class BytecodeInterpreter
         return _stringLiterals[literalId];
     }
 
+    // ADR-063: the image pool is the activation's, as the IL helper reads it.
+    private TermImage ResolveImage(int imageId)
+    {
+        var pool = _engine.CurrentImages
+            ?? throw new InvalidOperationException(
+                "put_blit: the activation has no image pool (CurrentImages); the embedding layer sets it at query setup.");
+        if (imageId < 0 || imageId >= pool.Count)
+            throw new InvalidOperationException(
+                $"Image id {imageId} is out of range [0, {pool.Count}).");
+        return pool[imageId];
+    }
+
     private double ResolveFloatLiteral(int literalId)
     {
         if (literalId < 0 || literalId >= _floatLiterals.Count)

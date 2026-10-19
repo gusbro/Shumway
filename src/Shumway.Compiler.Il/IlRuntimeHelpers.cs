@@ -44,6 +44,24 @@ public static class IlRuntimeHelpers
         engine.SetRegister(argReg, Cell.Ref(headerIdx));
     }
 
+    /// <summary>ADR-063: IL <c>put_blit</c>, the image copied at the heap top
+    /// and the register set to the term.</summary>
+    public static void PutBlit(Activation engine, int imageId, int argReg)
+    {
+        var pool = engine.CurrentImages
+            ?? throw new InvalidOperationException(
+                "IL put_blit: engine.CurrentImages is null. The embedding layer must populate it at query setup.");
+        if (imageId < 0 || imageId >= pool.Count)
+            throw new InvalidOperationException($"IL put_blit: image id {imageId} is out of range [0, {pool.Count}).");
+        engine.SetRegister(argReg, engine.BuildImage(pool[imageId]));
+    }
+
+    /// <summary>ADR-063: persisted IL's <c>put_blit</c>, whose id names the
+    /// process's image table (a persisted module is loaded once per process
+    /// and shared by every engine; the loader's patch interned the image).</summary>
+    public static void PutBlitGlobal(Activation engine, int imageId, int argReg)
+        => engine.SetRegister(argReg, engine.BuildImage(TermImageTable.Get(imageId)));
+
     private static TextLiteral ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals

@@ -36,6 +36,7 @@ public class OpcodeTableTests
     [InlineData(Opcode.GetRational, 13, 3, "get_rational")]
     [InlineData(Opcode.PutRational, 13, 3, "put_rational")]
     [InlineData(Opcode.UnifyRational, 9, 2, "unify_rational")]
+    [InlineData(Opcode.PutBlit, 9, 2, "put_blit")]
     public void Get_ReturnsDocumentedEntry(Opcode op, byte size, byte numOperands, string mnemonic)
     {
         var info = OpcodeTable.Get(op);

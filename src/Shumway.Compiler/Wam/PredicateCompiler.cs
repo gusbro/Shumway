@@ -75,7 +75,8 @@ public sealed class PredicateCompiler
         => Compile(clauses,
             new LiteralPool<Shumway.Core.TextLiteral>(),
             new LiteralPool<double>(),
-            new LiteralPool<System.Numerics.BigInteger>());
+            new LiteralPool<System.Numerics.BigInteger>(),
+            imageLiterals: new LiteralPool<Shumway.Core.TermImage>());
 
     /// <summary>Public entry — compiles then applies the ADR-029 epilogue
     /// fusion to the final bytecode (in place; the fused opcodes keep the same
@@ -87,10 +88,11 @@ public sealed class PredicateCompiler
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
         bool enableIndexing = true,
         bool isDynamic = false,
-        int failStubAddr = 0)
+        int failStubAddr = 0,
+        LiteralPool<Shumway.Core.TermImage>? imageLiterals = null)
     {
         CompiledPredicate result = CompileCore(clauses, stringLiterals, floatLiterals,
-            bigIntLiterals, enableIndexing, isDynamic, failStubAddr);
+            bigIntLiterals, enableIndexing, isDynamic, failStubAddr, imageLiterals);
         if (EnableEpilogueFusion) FuseEpilogues(result.Bytecode);
         return result;
     }
@@ -144,7 +146,8 @@ public sealed class PredicateCompiler
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
         bool enableIndexing = true,
         bool isDynamic = false,
-        int failStubAddr = 0)
+        int failStubAddr = 0,
+        LiteralPool<Shumway.Core.TermImage>? imageLiterals = null)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         if (clauses.Count == 0)
@@ -155,7 +158,7 @@ public sealed class PredicateCompiler
         var compiler = new ClauseCompiler
             { DebugCodegen = DebugCodegen, DebugFileId = DebugFileId };
         foreach (var c in clauses)
-            compiledClauses.Add(compiler.Compile(c, stringLiterals, floatLiterals, bigIntLiterals));
+            compiledClauses.Add(compiler.Compile(c, stringLiterals, floatLiterals, bigIntLiterals, imageLiterals));
 
         // Verify all clauses share the same functor signature.
         int functorId = compiledClauses[0].FunctorId;

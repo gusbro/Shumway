@@ -57,7 +57,8 @@ public static class WasmBundleTier
         {
             if (before.Contains(pred.FunctorId) || !own.Contains(pred.FunctorId)) continue;
             members.Add(new WasmGroupMember(pred, addr,
-                store.FloatPoolProvider?.Invoke(pred.FunctorId)));
+                store.FloatPoolProvider?.Invoke(pred.FunctorId),
+                store.ImagePoolProvider?.Invoke(pred.FunctorId)));
         }
         if (members.Count == 0) return null;
         var module = WasmRelocatableModule.BakeCompilable(members, new EngineWasmCompileEnv(),

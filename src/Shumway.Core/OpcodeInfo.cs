@@ -86,6 +86,8 @@ public static class OpcodeTable
         Set(Opcode.PutBigInt, 9, "put_bigint", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutRational, 13, "put_rational",
             OperandKind.LiteralId, OperandKind.LiteralId, OperandKind.Reg);
+        // ADR-063: the literal id names the image pool.
+        Set(Opcode.PutBlit, 9, "put_blit", OperandKind.LiteralId, OperandKind.Reg);
 
         // Unify instructions
         Set(Opcode.UnifyVariableX, 5, "unify_variable_x", OperandKind.Reg);

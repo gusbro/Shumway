@@ -67,9 +67,11 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         {
             _compilingIndex = _predIndexByFunctor[p.FunctorId];
             var entry = WasmPredicateCompiler.Compile(p, this,
-                floatLiterals: module.FloatLiterals);
+                floatLiterals: module.FloatLiterals, imageLiterals: module.ImageLiterals);
             using var stream = new MemoryStream(entry.Module);
-            var creator = Module.ReadFromBinary(stream).Compile<WasmPredicateExports>();
+            // From the bytes: a Module object drops the data count section a
+            // module with images carries (ADR-063).
+            var creator = WebAssembly.Runtime.Compile.FromBinary<WasmPredicateExports>(stream);
             var instance = creator(new ImportDictionary
             {
                 { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },

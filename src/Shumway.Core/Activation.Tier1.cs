@@ -290,6 +290,10 @@ public sealed partial class Activation
     /// to carry its own pool reference.</summary>
     public IReadOnlyList<TextLiteral>? CurrentStringLiterals { get; set; }
 
+    /// <summary>ADR-063: the image pool of the current program, for the
+    /// <c>put_blit</c> of both tiers; set beside the string literals.</summary>
+    public IReadOnlyList<TermImage>? CurrentImages { get; set; }
+
     /// <summary>Per-query bytecode program, set alongside
     /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
     /// opcodes re-enter the bytecode interpreter on this

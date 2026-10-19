@@ -301,6 +301,16 @@ public sealed partial class Activation
         return nil;
     }
 
+    /// <summary>ADR-063: builds a ground term by copying its image at the heap
+    /// top, and returns the cell that names it. The cells are new and above
+    /// HB, so nothing is trailed.</summary>
+    public Cell BuildImage(TermImage image)
+    {
+        int start = AllocateHeap(image.Length);
+        image.CopyTo(_heap, start);
+        return image.RootCell(start);
+    }
+
     public int MakePstr(string value, TextKind kind)
     {
         ArgumentNullException.ThrowIfNull(value);

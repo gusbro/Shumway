@@ -829,6 +829,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             ? pool
             : _literalPools.Floats.Items;
 
+    /// <summary>ADR-063: the image pool a predicate's <c>put_blit</c> ids
+    /// index. Every id indexes the live pool: a loaded module's are remapped
+    /// into it, and persisted IL carries the image in its patch.</summary>
+    internal IReadOnlyList<Shumway.Core.TermImage> ImagePoolForFid(int fid)
+        => _literalPools.Images.Items;
+
+
     /// <summary>Remaps a source-less precompiled module's float / string / bigint
     /// literal ids from its module-local pools into this engine's shared
     /// <see cref="_literalPools"/>, rewriting the bytecode operands in place. See the
@@ -838,7 +845,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         var floats = module.FloatLiterals;
         var strings = module.StringLiterals;
         var bigints = module.BigIntLiterals;
-        if (floats.Count == 0 && strings.Count == 0 && bigints.Count == 0) return;
+        var images = module.ImageLiterals;
+        if (floats.Count == 0 && strings.Count == 0 && bigints.Count == 0 && images.Count == 0) return;
         foreach (var pred in module.Predicates)
         {
             byte[] code = pred.Bytecode;
@@ -869,6 +877,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
                     case Shumway.Core.Opcode.GetPstr:
                     case Shumway.Core.Opcode.PutPstr:
                         RemapLit(code, pc + 1, strings, _literalPools.Strings);
+                        break;
+                    case Shumway.Core.Opcode.PutBlit:   // ADR-063
+                        RemapLit(code, pc + 1, images, _literalPools.Images);
                         break;
                     case Shumway.Core.Opcode.AEvalPush:
                     {
@@ -1049,6 +1060,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
+        IlPromotion.ImagePoolProvider = ImagePoolForFid;
         IlPromotion.OnDelegateEvicted = ClearLiveIlSlots;
 
         if (consultPrelude) InstallPrelude();

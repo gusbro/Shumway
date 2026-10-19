@@ -1338,6 +1338,9 @@ internal sealed class BundleLoader
                     expect = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
                     break;
                 }
+                case Shumway.Compiler.Il.IlPatchKind.Image:   // ADR-063
+                    expect = Shumway.Core.TermImageTable.Intern(s.Image!);
+                    break;
                 case Shumway.Compiler.Il.IlPatchKind.Builtin:
                     expect = ResolveBuiltinPatch(s.Name, s.Arity);
                     break;
@@ -1398,6 +1401,9 @@ internal sealed class BundleLoader
                     runtimeValue = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
                     break;
                 }
+                case Shumway.Compiler.Il.IlPatchKind.Image:   // ADR-063
+                    runtimeValue = Shumway.Core.TermImageTable.Intern(s.Image!);
+                    break;
                 case Shumway.Compiler.Il.IlPatchKind.Builtin:
                     runtimeValue = ResolveBuiltinPatch(s.Name, s.Arity);
                     break;

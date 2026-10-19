@@ -111,6 +111,7 @@ public sealed partial class IlPredicateCompiler
         or Opcode.PutConstant or Opcode.PutInteger or Opcode.PutAtom or Opcode.PutNil
         or Opcode.PutStructure or Opcode.PutList or Opcode.PutFloat or Opcode.PutBigInt
         or Opcode.PutStructureR or Opcode.PutListR or Opcode.PutPstr or Opcode.PutRational
+        or Opcode.PutBlit
         or Opcode.UnifyVariableX or Opcode.UnifyVariableY or Opcode.UnifyValueX or Opcode.UnifyValueY
         or Opcode.UnifyConstant or Opcode.UnifyInteger or Opcode.UnifyAtom or Opcode.UnifyNil
         or Opcode.UnifyVoid or Opcode.UnifyFloat or Opcode.UnifyBigInt or Opcode.UnifyStructure

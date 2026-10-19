@@ -44,6 +44,23 @@ public sealed partial class IlPredicateCompiler
     public static void EndFloatPool(System.Collections.Generic.IReadOnlyList<double>? restore)
         => _ilFloatPool = restore;
 
+    /// <summary>ADR-063: the image pool a persisted emit reads, to put each
+    /// image of a <c>put_blit</c> in its patch site. A run-time emit needs
+    /// none: its id indexes the activation's pool.</summary>
+    [System.ThreadStaticAttribute]
+    private static System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? _ilImagePool;
+
+    public static System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? BeginImagePool(
+        System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? pool)
+    {
+        var prev = _ilImagePool;
+        _ilImagePool = pool;
+        return prev;
+    }
+
+    public static void EndImagePool(System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? restore)
+        => _ilImagePool = restore;
+
     /// <summary>True iff a <c>get_float</c>/<c>put_float</c> at <paramref name="pc"/>
     /// can be resolved against the current <see cref="_ilFloatPool"/> — the gate the
     /// opcode-support switches consult so the float opcodes are accepted only when
@@ -149,6 +166,25 @@ public sealed partial class IlPredicateCompiler
             Name = name,
             Arity = arity,
             Cursor = cursor,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
+    // ADR-063, persisted only: the image goes in the patch, and the loader
+    // bakes the id the process's image table gives it.
+    private static void EmitImageId(IlEmit emit, int imageId)
+    {
+        if (_persistPatches is null) { emit.LoadConstant(imageId); return; }
+        var pool = _ilImagePool
+            ?? throw new InvalidOperationException("Persisted IL emit: put_blit without an image pool.");
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.Image,
+            Name = "",
+            Arity = 0,
+            Image = pool[imageId],
         });
         emit.LoadConstant(sentinel);
     }
@@ -1445,6 +1481,28 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(literalId);
                 emit.LoadConstant(arg);
                 EmitHelperCall(emit, IlPutPstrHelperMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutBlit)   // ADR-063
+            {
+                int imageId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                if (_persistPatches is null)
+                {
+                    // The activation's pool, by the bytecode's id.
+                    emit.LoadConstant(imageId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlPutBlitHelperMethod);
+                }
+                else
+                {
+                    // The process's table, by the id the loader's patch bakes.
+                    EmitImageId(emit, imageId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlPutBlitGlobalHelperMethod);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

@@ -31,6 +31,8 @@ public sealed class CompiledModule
     /// literals that don't fit in a 32-bit operand are routed through this
     /// pool by the compiler (see ADR-013).</summary>
     public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals { get; }
+    /// <summary>ADR-063: the images <c>put_blit</c> instructions copy.</summary>
+    public IReadOnlyList<Shumway.Core.TermImage> ImageLiterals { get; }
 
     public CompiledModule(
         IReadOnlyList<CompiledPredicate> predicates,
@@ -46,10 +48,22 @@ public sealed class CompiledModule
         IReadOnlyList<Shumway.Core.TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals)
+        : this(predicates, stringLiterals, floatLiterals, bigIntLiterals,
+               Array.Empty<Shumway.Core.TermImage>())
+    {
+    }
+
+    public CompiledModule(
+        IReadOnlyList<CompiledPredicate> predicates,
+        IReadOnlyList<Shumway.Core.TextLiteral> stringLiterals,
+        IReadOnlyList<double> floatLiterals,
+        IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals,
+        IReadOnlyList<Shumway.Core.TermImage> imageLiterals)
     {
         Predicates = predicates;
         StringLiterals = stringLiterals;
         FloatLiterals = floatLiterals;
         BigIntLiterals = bigIntLiterals;
+        ImageLiterals = imageLiterals;
     }
 }
