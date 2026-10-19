@@ -120,6 +120,17 @@ public sealed class IlEmit
     /// <summary>The IL bytes emitted so far, a pending call apart.</summary>
     public int Size => _il.ILOffset;
 
+    /// <summary>Instructions emitted so far, a pending call included.</summary>
+    public int InstructionCount { get; private set; }
+
+    /// <summary>Loads and stores of arguments and locals emitted so far,
+    /// address loads included: what the JIT counts against the threshold
+    /// past which it stops optimizing (<see cref="IlJitLimits"/>).</summary>
+    public int LocalRefCount { get; private set; }
+
+    /// <summary>Locals declared so far.</summary>
+    public int LocalCount { get; private set; }
+
     /// <summary>The labels declared and not yet marked.</summary>
     public IReadOnlyList<IlLabel> UnmarkedLabels => _labels.Where(l => !l.Marked).ToList();
 
@@ -147,7 +158,10 @@ public sealed class IlEmit
     public IlLocal DeclareLocal<T>(string? name = null) => DeclareLocal(typeof(T), name);
 
     public IlLocal DeclareLocal(Type type, string? name = null)
-        => new(_il.DeclareLocal(type), name ?? $"_local{_localSeq++}");
+    {
+        LocalCount++;
+        return new(_il.DeclareLocal(type), name ?? $"_local{_localSeq++}");
+    }
 
     // ---- the instruction stream ----
 
@@ -155,6 +169,7 @@ public sealed class IlEmit
     {
         Flush();
         if (_unreachable) throw Fail("Unreachable code detected");
+        InstructionCount++;
     }
 
     private IlEmitException Fail(string message) => new(message, Instructions());
@@ -186,6 +201,7 @@ public sealed class IlEmit
     public void LoadArgument(int index)
     {
         Begin();
+        LocalRefCount++;
         switch (index)
         {
             case 0: _il.Emit(OpCodes.Ldarg_0); Text("ldarg.0"); return;
@@ -200,6 +216,7 @@ public sealed class IlEmit
     public void StoreArgument(int index)
     {
         Begin();
+        LocalRefCount++;
         if (index <= 255) { _il.Emit(OpCodes.Starg_S, (byte)index); Text("starg.s", index.ToString()); }
         else { _il.Emit(OpCodes.Starg, (short)index); Text("starg", index.ToString()); }
     }
@@ -209,6 +226,7 @@ public sealed class IlEmit
     public void LoadLocal(IlLocal local)
     {
         Begin();
+        LocalRefCount++;
         int i = local.Index;
         switch (i)
         {
@@ -224,6 +242,7 @@ public sealed class IlEmit
     public void StoreLocal(IlLocal local)
     {
         Begin();
+        LocalRefCount++;
         int i = local.Index;
         switch (i)
         {
@@ -239,6 +258,7 @@ public sealed class IlEmit
     public void LoadLocalAddress(IlLocal local)
     {
         Begin();
+        LocalRefCount++;
         int i = local.Index;
         if (i <= 255) { _il.Emit(OpCodes.Ldloca_S, (byte)i); Text("ldloca.s", i.ToString()); }
         else { _il.Emit(OpCodes.Ldloca, (short)i); Text("ldloca", i.ToString()); }
@@ -483,6 +503,7 @@ public sealed class IlEmit
         }
         Flush();
         _il.Emit(OpCodes.Ret);
+        InstructionCount++;
         Text("ret");
         _unreachable = true;
     }

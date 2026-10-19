@@ -591,6 +591,7 @@ public static class BundleWriter
                 emitOnly.Contains(f)
                     ? ic.RegionMemberFids(predicates[f], predicates, ex)
                     : new[] { f };
+            ic.WarmRegionCosts(predicates);
             var forcedRoots = Shumway.Compiler.Il.RegionRootSelector.ComputeForcedRoots(
                 predicates.Keys,
                 (f, ex) => MembersForAnalysis(f, ex),

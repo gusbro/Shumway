@@ -629,6 +629,7 @@ public static class ShmoLinker
                 }
                 var seedFids = ResolveSeedFids(stage9Seeds, byName);
                 var ic = new IlPredicateCompiler();
+                ic.WarmRegionCosts(predicates);
 
                 // Stage 9c: cost-based root selection. Promote shared members to their own
                 // roots (excluded from absorption) to cut inter-root duplication; passed
