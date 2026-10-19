@@ -24,6 +24,14 @@ public sealed class IlInlineArithAndIdentityTests
         m(X, Y, R) :- R is X * Y.
         s(A, B, C) :- 1000*A + 100*B + 10*C =:= 10000*A - 8990.
         c(X, Y) :- X * 1000 < Y.
+        d(X, Y, R) :- R is X // Y.
+        md(X, Y, R) :- R is X mod Y.
+        mn(X, Y, R) :- R is min(X, Y) + max(X, Y).
+        ab(X, R) :- R is abs(X) + sign(X).
+        bn(X, R) :- R is \X.
+        dm(X, Y, R) :- R is (X * Y) mod 1000 + X // Y.
+        d2(X, Y, R) :- R is (X // Y) + 0.
+        md2(X, Y, R) :- R is (X mod Y) + 0.
         """;
 
     // Called from the query, not from a Prolog wrapper: a wrapper would itself
@@ -61,6 +69,26 @@ public sealed class IlInlineArithAndIdentityTests
         // Unchecked, 2^58 * 1000 wraps 64 bits to a negative number, and a
         // comparison has no result check to catch it.
         "B is 2^58, " + Try("c(B, 0)") + ".",
+        // The lane's other operators: truncating division, mod with the
+        // divisor's sign, min, max, abs, sign, bitwise not; a zero divisor
+        // and a product past the lane's width take the general path.
+        Try("d(7, 2, R0)") + ", X = R0.", Try("d(-7, 2, R0)") + ", X = R0.", Try("d(7, -2, R0)") + ", X = R0.",
+        Try("md(7, 2, R0)") + ", X = R0.", Try("md(-7, 2, R0)") + ", X = R0.",
+        Try("md(7, -2, R0)") + ", X = R0.", Try("md(-7, -2, R0)") + ", X = R0.",
+        Try("d(1, 0, _)") + ".", Try("md(1, 0, _)") + ".", Try("d(1.5, 1, _)") + ".",
+        Try("d2(7, 2, R0)") + ", X = R0.", Try("d2(-7, 2, R0)") + ", X = R0.", Try("d2(7, -2, R0)") + ", X = R0.",
+        Try("md2(7, 2, R0)") + ", X = R0.", Try("md2(-7, 2, R0)") + ", X = R0.",
+        Try("md2(7, -2, R0)") + ", X = R0.", Try("md2(-7, -2, R0)") + ", X = R0.",
+        Try("d2(1, 0, _)") + ".", Try("md2(1, 0, _)") + ".", Try("dm(1, 0, _)") + ".",
+        "M is 2^59 - 1, " + Try("d(M, -1, R0)") + ", X = R0.",
+        "N is -(2^59), " + Try("md(N, 7, R0)") + ", X = R0.",
+        Try("mn(3, 5, R0)") + ", X = R0.", Try("mn(-3, -5, R0)") + ", X = R0.",
+        Try("ab(-5, R0)") + ", X = R0.", Try("ab(0, R0)") + ", X = R0.", Try("ab(5, R0)") + ", X = R0.",
+        "N is -(2^59), " + Try("ab(N, R0)") + ", X = R0.",
+        Try("bn(5, R0)") + ", X = R0.", Try("bn(-1, R0)") + ", X = R0.",
+        "M is 2^59 - 1, " + Try("bn(M, R0)") + ", X = R0.",
+        Try("dm(123, 7, R0)") + ", X = R0.",
+        "B is 2^40, " + Try("dm(B, B, R0)") + ", X = R0.",
         // The general path: a float, an unbound operand, a non-number.
         Try("p(1.5, 2, R0)") + ", X = R0.",
         Try("p(_, 1, _)") + ".",
@@ -103,7 +131,7 @@ public sealed class IlInlineArithAndIdentityTests
         // Promotion is asynchronous: run and drain until every predicate the
         // goals exercise has promoted (ANTI-VACUITY), within a few rounds.
         string[] expected = { "p/3", "q/3", "n/2", "w/3", "v/3", "l/2", "e/2", "id/3", "nid/3",
-            "k/2", "g/2", "m/3", "s/3", "c/2" };
+            "k/2", "g/2", "m/3", "s/3", "c/2", "d/3", "md/3", "mn/3", "ab/2", "bn/2", "dm/3", "d2/3", "md2/3" };
         var promoted = new HashSet<string>();
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
@@ -136,7 +164,17 @@ public sealed class IlInlineArithAndIdentityTests
             "B is 2^58, k(B, X), X =:= 2^58 * 1000 + 7.",
             "M is 2^59 - 1, g(M, M).", "N is -(2^59), \\+ g(N, N).",
             "B is 2^31, m(B, B, X), X =:= 2^62.", "B is -(2^31), m(B, B, X), X =:= 2^62.",
-            "s(1, 0, 1).", "\\+ s(1, 1, 0).", "B is 2^58, \\+ c(B, 0)." })
+            "s(1, 0, 1).", "\\+ s(1, 1, 0).", "B is 2^58, \\+ c(B, 0).",
+            "d(-7, 2, -3).", "d(7, -2, -3).", "md(-7, 2, 1).", "md(7, -2, -1).", "md(-7, -2, -1).",
+            "catch(d(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
+            "catch(md(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
+            "d2(-7, 2, -3).", "d2(7, -2, -3).", "md2(-7, 2, 1).", "md2(7, -2, -1).", "md2(-7, -2, -1).",
+            "catch(d2(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
+            "catch(md2(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
+            "catch(dm(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
+            "M is 2^59 - 1, d(M, -1, X), X =:= -(2^59) + 1.",
+            "mn(3, 5, 8).", "ab(-5, 4).", "ab(0, 0).", "bn(5, -6).", "M is 2^59 - 1, bn(M, X), X =:= -(2^59).",
+            "B is 2^40, dm(B, B, X), X =:= (2^80 mod 1000) + 1." })
             Assert.True(tiered.Query(check).Success, check);
     }
 }

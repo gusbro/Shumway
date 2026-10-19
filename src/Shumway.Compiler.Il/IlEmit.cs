@@ -388,6 +388,8 @@ public sealed class IlEmit
     public void Subtract() => Op(OpCodes.Sub);
     public void Multiply() => Op(OpCodes.Mul);
     public void Divide() => Op(OpCodes.Div);
+    public void Remainder() => Op(OpCodes.Rem);
+    public void Not() => Op(OpCodes.Not);
     public void Negate() => Op(OpCodes.Neg);
     public void And() => Op(OpCodes.And);
     public void Or() => Op(OpCodes.Or);
@@ -396,6 +398,8 @@ public sealed class IlEmit
     public void ShiftRight() => Op(OpCodes.Shr);
     public void UnsignedShiftRight() => Op(OpCodes.Shr_Un);
     public void CompareEqual() => Op(OpCodes.Ceq);
+    public void CompareGreaterThan() => Op(OpCodes.Cgt);
+    public void CompareLessThan() => Op(OpCodes.Clt);
     public void Duplicate() => Op(OpCodes.Dup);
     public void Pop() => Op(OpCodes.Pop);
 
