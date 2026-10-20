@@ -157,7 +157,7 @@ public sealed partial class ClauseCompiler
                 break;
 
             case CompoundTerm c:
-                s.Pending.Enqueue((argSlot, c));
+                s.Pending.Enqueue((argSlot, c, false));
                 break;
 
             case FloatTerm f:
@@ -180,8 +180,9 @@ public sealed partial class ClauseCompiler
     {
         while (s.Pending.Count > 0)
         {
-            var (slot, comp) = s.Pending.Dequeue();
+            var (slot, comp, build) = s.Pending.Dequeue();
             bool isList = comp.Functor == "." && comp.Args.Length == 2;
+            s.Building = build;
 
             var multiCellTemps = PreEmitMultiCellLiterals(s, comp.Args);
 
@@ -420,8 +421,9 @@ public sealed partial class ClauseCompiler
         if (TryEmitCse(s, c)) return;
         bool isList = c.Functor == "." && c.Args.Length == 2;
         // AllNestedCompoundsInlinable guarantees no float/string sub-arg here, so
-        // this map is empty; kept for symmetry / defence.
-        var multiCellTemps = PreEmitMultiCellLiterals(s, c.Args);
+        // this map is empty; kept for symmetry / defence. No image either: the
+        // reserved stream is open (ADR-063 images go to the root's temporaries).
+        var multiCellTemps = PreEmitMultiCellLiterals(s, c.Args, images: false);
         if (isList)
             s.Emitter.EmitUnifyList();
         else
@@ -448,13 +450,32 @@ public sealed partial class ClauseCompiler
     /// <c>unify_*</c>. By allocating them ahead of the <c>put_structure</c> we
     /// keep arg cells one-each and let the compound just reference the literal
     /// via the temp register.</para></summary>
-    private Dictionary<int, int> PreEmitMultiCellLiterals(CompileState s, Term[] args)
+    /// <summary>ADR-063: the image pool id of <paramref name="term"/> when
+    /// it is a ground compound of at least <see cref="ImageThreshold"/> cells
+    /// an image can carry, and the compilation keeps an image pool.</summary>
+    private int? TryImage(CompileState s, Term term)
+    {
+        if (!s.Building || _imageLiterals is null || ImageThreshold <= 0) return null;
+        if (term is not CompoundTerm || TermImageBuilder.CellCount(term) < ImageThreshold) return null;
+        var image = TermImageBuilder.Build(term);
+        return image is null ? null : _imageLiterals.Intern(image);
+    }
+
+    private Dictionary<int, int> PreEmitMultiCellLiterals(CompileState s, Term[] args, bool images = true)
     {
         Dictionary<int, int>? temps = null;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
+                // ADR-063: a ground compound argument past the threshold is
+                // a multi-cell literal too: its image goes to a temporary.
+                case CompoundTerm c when images && TryImage(s, c) is { } image:
+                    temps ??= new Dictionary<int, int>();
+                    int imageSlot = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutBlit(image, imageSlot);
+                    temps[i] = imageSlot;
+                    break;
                 case FloatTerm f:
                     temps ??= new Dictionary<int, int>();
                     int floatSlot = s.Xs.AllocateAnonymousSlot();
@@ -544,7 +565,7 @@ public sealed partial class ClauseCompiler
                 if (TryEmitCse(s, c)) break;
                 int temp = s.Xs.AllocateAnonymousSlot();
                 s.Emitter.EmitUnifyVariableX(temp);
-                s.Pending.Enqueue((temp, c));
+                s.Pending.Enqueue((temp, c, s.Building));
                 break;
 
             // FloatTerm and StringTerm are handled upstream by
@@ -1095,6 +1116,14 @@ public sealed partial class ClauseCompiler
                 break;
 
             case CompoundTerm c:
+                // A body argument is built, and its deferred parts inherit
+                // that: an image may stand in for a ground part (ADR-063).
+                s.Building = true;
+                if (TryImage(s, c) is { } image)
+                {
+                    s.Emitter.EmitPutBlit(image, argSlot);
+                    break;
+                }
                 // ADR-020: a body-arg term tree with a non-last nested compound,
                 // every nested compound inline-buildable, is built in reserve-
                 // upfront write mode (put_structure_r / put_list_r + a runtime
@@ -1194,7 +1223,14 @@ public sealed partial class ClauseCompiler
         /// <c>unify_variable</c> is emitted.</summary>
         public Dictionary<string, int> PreferredReg { get; } = new();
         public int PermanentCount { get; }
-        public Queue<(int Slot, CompoundTerm Compound)> Pending { get; } = new();
+        public Queue<(int Slot, CompoundTerm Compound, bool Build)> Pending { get; } = new();
+
+        /// <summary>ADR-063: the unify stream being compiled builds a fresh
+        /// term (a body argument), so an image may stand in for a ground part
+        /// of it. False while matching a head or an inline <c>=/2</c>, whose
+        /// stream may run in read mode: an image there would allocate and
+        /// unify where the stream matches in place.</summary>
+        public bool Building { get; set; }
         public List<CallSite> CallSites { get; } = new();
 
         /// <summary>ADR-025 — clause-local address-operand offsets from the

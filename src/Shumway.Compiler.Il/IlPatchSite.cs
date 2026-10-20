@@ -33,6 +33,12 @@ public enum IlPatchKind : byte
     /// <c>BuiltinsRegistry.TryGetByFunctor</c>, exactly like the bytecode
     /// codec's builtin-ref table already does for Tier-0.</summary>
     Builtin = 4,
+
+    /// <summary>ADR-063: an image id of <c>put_blit</c>. The site carries
+    /// the image itself (<see cref="IlPatchSite.Image"/>); the loader
+    /// interns it in the engine's image pool and bakes the id it gets, the
+    /// id the bytecode's remap gives the same image.</summary>
+    Image = 5,
 }
 
 /// <summary>
@@ -68,6 +74,9 @@ public sealed class IlPatchSite
     /// functor id via <c>Activation.EncodeResumeMarker</c> to compute the
     /// runtime marker value.</summary>
     public int Cursor { get; init; }
+
+    /// <summary>The image, for <see cref="IlPatchKind.Image"/> (ADR-063).</summary>
+    public Shumway.Core.TermImage? Image { get; init; }
 
     /// <summary>The absolute byte offset within the saved PE bytes
     /// where the four-byte int operand lives. Filled by the post-Save
@@ -300,6 +309,7 @@ public static class IlPatchSiteCodec
             byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(s.Name);
             bw.Write((uint)nameBytes.Length);
             bw.Write(nameBytes);
+            if (s.Kind == IlPatchKind.Image) Shumway.Core.TermImageCodec.Write(bw, s.Image!);
         }
         bw.Flush();
         return ms.ToArray();
@@ -327,6 +337,7 @@ public static class IlPatchSiteCodec
             uint nameLength = br.ReadUInt32();
             byte[] nameBytes = br.ReadBytes((int)nameLength);
             string name = System.Text.Encoding.UTF8.GetString(nameBytes);
+            Shumway.Core.TermImage? image = kind == IlPatchKind.Image ? Shumway.Core.TermImageCodec.Read(br) : null;
             result.Add(new IlPatchSite
             {
                 AbsoluteByteOffset = offset,
@@ -335,6 +346,7 @@ public static class IlPatchSiteCodec
                 Name = name,
                 Arity = arity,
                 Cursor = cursor,
+                Image = image,
             });
         }
         return result;

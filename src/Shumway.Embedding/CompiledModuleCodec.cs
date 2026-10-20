@@ -48,6 +48,7 @@ public static class CompiledModuleCodec
         WriteStringTable(bw, module.StringLiterals);
         WriteFloatTable(bw, module.FloatLiterals);
         WriteBigIntTable(bw, module.BigIntLiterals);
+        WriteImageTable(bw, module.ImageLiterals);
 
         bw.Write((uint)module.Predicates.Count);
         foreach (var pred in module.Predicates)
@@ -77,13 +78,14 @@ public static class CompiledModuleCodec
         var stringLiterals = ReadStringTable(br);
         var floatLiterals = ReadFloatTable(br);
         var bigIntLiterals = ReadBigIntTable(br);
+        var imageLiterals = ReadImageTable(br);
 
         uint predCount = br.ReadUInt32();
         var predicates = new List<CompiledPredicate>((int)predCount);
         for (uint i = 0; i < predCount; i++)
             predicates.Add(ReadPredicate(br));
 
-        return new CompiledModule(predicates, stringLiterals, floatLiterals, bigIntLiterals);
+        return new CompiledModule(predicates, stringLiterals, floatLiterals, bigIntLiterals, imageLiterals);
     }
 
     // ---------- Predicate ----------
@@ -616,6 +618,25 @@ public static class CompiledModuleCodec
     // as codes are different lists and get different pool ids, so the byte has
     // to survive the round trip or a mis-read would show up as a chars/codes
     // confusion very far from here.
+    // ADR-063: an image cell by cell. Atom and functor ids are per process,
+    // so those two go by name; every other cell is its raw bits, the indices
+    // in them relative to the image already.
+    private static void WriteImageTable(BinaryWriter bw, IReadOnlyList<TermImage> images)
+    {
+        bw.Write(images.Count);
+        foreach (TermImage image in images)
+            TermImageCodec.Write(bw, image);
+    }
+
+    private static List<TermImage> ReadImageTable(BinaryReader br)
+    {
+        int count = br.ReadInt32();
+        var list = new List<TermImage>(count);
+        for (int i = 0; i < count; i++)
+            list.Add(TermImageCodec.Read(br));
+        return list;
+    }
+
     private static void WriteStringTable(BinaryWriter bw, IReadOnlyList<TextLiteral> strings)
     {
         bw.Write(strings.Count);

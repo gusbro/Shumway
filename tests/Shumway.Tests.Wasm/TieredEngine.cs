@@ -40,7 +40,8 @@ internal static class TieredEngine
             Promoter = (pred, linkedBase) =>
             {
                 var m = new WasmGroupMember(pred, linkedBase,
-                    store.FloatPoolProvider?.Invoke(pred.FunctorId));
+                    store.FloatPoolProvider?.Invoke(pred.FunctorId),
+                    store.ImagePoolProvider?.Invoke(pred.FunctorId));
                 try
                 {
                     InstallOne(world, m, env, store);

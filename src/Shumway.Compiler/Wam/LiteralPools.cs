@@ -18,4 +18,6 @@ public sealed class LiteralPools
     public LiteralPool<Shumway.Core.TextLiteral> Strings { get; } = new();
     public LiteralPool<double> Floats { get; } = new();
     public LiteralPool<BigInteger> BigInts { get; } = new();
+    /// <summary>ADR-063: the images of the ground terms a body copies.</summary>
+    public LiteralPool<Shumway.Core.TermImage> Images { get; } = new();
 }

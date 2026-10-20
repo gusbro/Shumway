@@ -515,6 +515,11 @@ public sealed class IlPromotionStore
     /// bake ldc.r8 constants from it. Null → predicates with float literals stay Tier-0.</summary>
     public Func<int, System.Collections.Generic.IReadOnlyList<double>?>? FloatPoolProvider { get; set; }
 
+    /// <summary>ADR-063: supplies the image pool a predicate's <c>put_blit</c>
+    /// indexes, for the wasm tier, which bakes each image into its module.
+    /// Null, predicates with images stay Tier-0 there.</summary>
+    public Func<int, System.Collections.Generic.IReadOnlyList<TermImage>?>? ImagePoolProvider { get; set; }
+
     private T WithFloatPool<T>(int functorId, Func<T> compile)
     {
         var prev = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));

@@ -824,6 +824,24 @@ The IL compiler may treat `dbg_info` instructions as no-ops or as boundaries (in
 
 ---
 
+## Term images (ADR-063)
+
+### put_blit (0x6A)
+
+Operands: `int image_literal_id`, `reg arg`
+Total size: 9 bytes
+
+Copies the image named by the id, from the module's image pool, to the heap
+top, relocating every heap index in it by the base, and sets the argument
+register to the cell that names the term (`STR` or `LIS` of the base). The
+compiler emits it for a ground compound of a clause body with at least
+`ImageThreshold` cells (8 by default) in place of the `put_structure` /
+`put_list` and `set_*` sequence that would build it; as an argument of a
+compound being built, the register is then referenced with `unify_value_x`,
+like a float or a string literal.
+
+---
+
 ## Halt and reserved opcodes
 
 | Opcode | Mnemonic | Note |

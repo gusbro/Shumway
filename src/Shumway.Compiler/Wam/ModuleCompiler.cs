@@ -186,6 +186,7 @@ public sealed class ModuleCompiler
         var stringLiterals = pools.Strings;
         var floatLiterals = pools.Floats;
         var bigIntLiterals = pools.BigInts;
+        var imageLiterals = pools.Images;
 
         var predicates = new List<CompiledPredicate>(order.Count);
         var predicateCompiler = new PredicateCompiler
@@ -224,7 +225,7 @@ public sealed class ModuleCompiler
             long profPd0 = System.Diagnostics.Stopwatch.GetTimestamp();
             var compiled = predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
-                enableIndexing, isDynamic, failStubAddr);
+                enableIndexing, isDynamic, failStubAddr, imageLiterals);
             if (callerSuppliedPools) compiled.PoolsRef = pools;
             predicates.Add(compiled);
             ProfPredTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profPd0;
@@ -238,7 +239,8 @@ public sealed class ModuleCompiler
             predicates,
             stringLiterals.Snapshot(),
             floatLiterals.Snapshot(),
-            bigIntLiterals.Snapshot());
+            bigIntLiterals.Snapshot(),
+            imageLiterals.Snapshot());
         ProfSnapshotTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profSn0;
         return result;
     }
@@ -297,7 +299,9 @@ public sealed class ModuleCompiler
                     // ADR-039: both ids name the same audited BigInt pool.
                     or (byte)Opcode.GetRational or (byte)Opcode.PutRational
                     or (byte)Opcode.UnifyRational
-                    or (byte)Opcode.GetPstr or (byte)Opcode.PutPstr;
+                    or (byte)Opcode.GetPstr or (byte)Opcode.PutPstr
+                    // ADR-063: the image pool is one more of the same kind.
+                    or (byte)Opcode.PutBlit;
                 for (int i = 0; i < info.OperandKinds.Length; i++)
                 {
                     if (info.OperandKinds[i] == OperandKind.LiteralId && !stableLiteralOp)

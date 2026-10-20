@@ -348,6 +348,10 @@ public enum Opcode : byte
     GetRational = 0x67,
     PutRational = 0x68,
     UnifyRational = 0x69,
+    // ADR-063: a ground term of a body, copied from its image in the image
+    // pool (a fourth literal pool) and relocated at the heap top.
+    //   put_blit <imageLit:int32> <reg:int32>   9 bytes
+    PutBlit = 0x6A,
 
     // 0x67-0x70 once parked a "reserved specialised-builtin" family
     // (unify_eq, is_op, the comparison ops) that predated ADR-018's

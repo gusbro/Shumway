@@ -663,6 +663,7 @@ public static class BundleWriter
                 // literals against its own module's pool (precompiled static) or
                 // the build engine's live pool (dynamic snapshots).
                 engine.FloatPoolForFid,
+                engine.ImagePoolForFid,
                 emitOnly: emitOnly,
                 bytecodeShipped: bytecodeShipped,
                 // Without --strip-wam every predicate keeps its bytecode, and

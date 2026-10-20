@@ -1755,6 +1755,7 @@ public sealed partial class PrologEngine
             // and the linked program byte array for the
             // IL Call re-entry helper.
             CurrentStringLiterals = queryModule.StringLiterals,
+            CurrentImages = queryModule.ImageLiterals,   // ADR-063
             CurrentProgram = program,
             // ADR-015 — bytecode-level dynamic dispatch reads the
             // host's generation at every enter_dynamic opcode
@@ -1876,6 +1877,7 @@ public sealed partial class PrologEngine
         {
             interp.RefreshLiteralPools(s, f, b);
             engine.CurrentStringLiterals = s;
+            engine.CurrentImages = _literalPools.Images.Snapshot();   // ADR-063
         };
         // record the pool lengths the interpreter was built
         // with; RefreshLiteralPoolsIfGrown compares against these so the
@@ -1887,6 +1889,7 @@ public sealed partial class PrologEngine
             queryModule.StringLiterals.Count,
             queryModule.FloatLiterals.Count,
             queryModule.BigIntLiterals.Count,
+            queryModule.ImageLiterals.Count,   // ADR-063
         });
 
         // lets a PrologRuntimeException thrown from a

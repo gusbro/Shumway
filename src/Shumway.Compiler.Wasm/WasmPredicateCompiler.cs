@@ -30,10 +30,11 @@ public static class WasmPredicateCompiler
 {
     public static WasmEntry Compile(CompiledPredicate predicate, IWasmCompileEnv env,
                                     bool shared = false,
-                                    IReadOnlyList<double>? floatLiterals = null)
+                                    IReadOnlyList<double>? floatLiterals = null,
+                                    IReadOnlyList<TermImage>? imageLiterals = null)
     {
         var g = CompileGroup(
-            new[] { new WasmGroupMember(predicate, 0, floatLiterals) }, env, shared);
+            new[] { new WasmGroupMember(predicate, 0, floatLiterals, imageLiterals) }, env, shared);
         return new WasmEntry(g.Module, predicate.FunctorId, predicate.Arity,
                              g.CursorByAddress, g.RegisterDemand);
     }
@@ -624,6 +625,10 @@ public static class WasmPredicateCompiler
                 case Opcode.PutFloat:
                     if (Sec(ins).FloatLiterals is null)
                         throw new WasmCompileException($"{ins.Op} without a float pool at {ins.Pc}");
+                    return;
+                case Opcode.PutBlit:   // ADR-063
+                    if (Sec(ins).ImageLiterals is null)
+                        throw new WasmCompileException($"put_blit without an image pool at {ins.Pc}");
                     return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
@@ -1249,9 +1254,64 @@ public static class WasmPredicateCompiler
             // reads "p12:clpz$state/3" instead of "wasm-function[12]".
             if (DebugMetaGuards) module.CustomSections.Add(BuildNameSection(addrsInOrder));
 
+            // ADR-063: the images, passive segments memory.init copies from,
+            // known once every body is emitted.
+            foreach (byte[] image in _images)
+                module.Data.Add(new Data { Kind = DataKind.Passive, RawData = image });
+
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
-            return ms.ToArray();
+            return _images.Count == 0 ? ms.ToArray() : WithDataCount(ms.ToArray(), _images.Count);
+        }
+
+        /// <summary>ADR-063: a module with passive data segments carries a
+        /// data count section (id 12) before its code section, which a
+        /// memory.init needs to validate; the library writes none, so it is
+        /// inserted here. Sections are an id byte and a LEB128 size.</summary>
+        private static byte[] WithDataCount(byte[] module, int count)
+        {
+            int pos = 8;   // magic and version
+            while (pos < module.Length)
+            {
+                byte id = module[pos];
+                if (id == 12) return module;
+                if (id == 10)
+                {
+                    var payload = Leb(count);
+                    var header = Leb(payload.Length);
+                    var withCount = new byte[module.Length + 1 + header.Length + payload.Length];
+                    Array.Copy(module, 0, withCount, 0, pos);
+                    withCount[pos] = 12;
+                    header.CopyTo(withCount, pos + 1);
+                    payload.CopyTo(withCount, pos + 1 + header.Length);
+                    Array.Copy(module, pos, withCount, pos + 1 + header.Length + payload.Length, module.Length - pos);
+                    return withCount;
+                }
+                int size = 0, shift = 0, at = pos + 1;
+                while (true)
+                {
+                    byte b = module[at++];
+                    size |= (b & 0x7F) << shift;
+                    if ((b & 0x80) == 0) break;
+                    shift += 7;
+                }
+                pos = at + size;
+            }
+            return module;
+
+            static byte[] Leb(int value)
+            {
+                var bytes = new List<byte>();
+                do
+                {
+                    byte b = (byte)(value & 0x7F);
+                    value >>= 7;
+                    if (value != 0) b |= 0x80;
+                    bytes.Add(b);
+                }
+                while (value != 0);
+                return bytes.ToArray();
+            }
         }
 
         /// <summary>run(mailbox, cursor): route the cursor to the partition
@@ -2730,6 +2790,7 @@ public static class WasmPredicateCompiler
                     return true;
                 case Opcode.GetFloat: EmitGetFloat(ins); return false;
                 case Opcode.PutFloat: EmitPutFloat(ins); return false;
+                case Opcode.PutBlit: EmitPutBlit(ins); return false;   // ADR-063
                 case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
                 case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
                 case Opcode.TrustMe: EmitTrustMe(ins); return false;
@@ -10565,6 +10626,68 @@ public static class WasmPredicateCompiler
             RegStore(reg, () =>
             { Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); });
             Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        // ADR-063: the images this module copies, each a passive data segment
+        // of the module, in the order of their segment index.
+        private readonly List<byte[]> _images = new();
+
+        /// <summary>ADR-063 <c>put_blit</c>: memory.init copies the image to
+        /// the heap top, a loop relocates each cell by H the way
+        /// TermImage.CopyTo does (a REF, STR, LIS or FLOAT header gains H, a
+        /// PSTR header gains H four times, the rest nothing), the register
+        /// takes STR or LIS of H.</summary>
+        private void EmitPutBlit(Instr ins)
+        {
+            int imageId = ins.I0, reg = ins.I1, pc = ins.Pc;
+            TermImage image = Sec(ins).ImageLiterals![imageId];
+            int n = image.Length;
+            var bytes = new byte[n * 8];
+            for (int i = 0; i < n; i++)
+                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(i * 8), image.Cells[i].Data);
+            uint segment = (uint)_images.Count;
+            _images.Add(bytes);
+
+            EmitHeapGuard(pc, n);
+            CellAddr(LHeapB, LH);                       // dst: the heap top's byte address
+            Op(new Int32Constant(0));                   // src: the segment's start
+            Op(new Int32Constant(n * 8));               // len
+            Op(new MemoryInit { SegmentIndex = segment });
+            // for (i = 0; i < n; i++) relocate heap[H + i]
+            Op(new Int32Constant(0)); Op(new LocalSet(LT0));
+            OpenBlock();
+            OpenLoop();
+            Op(new LocalGet(LT0)); Op(new Int32Constant(n)); Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(1));                        // done
+            Op(new LocalGet(LHeapB));
+            Op(new LocalGet(LH)); Op(new LocalGet(LT0)); Op(new Int32Add());
+            Op(new Int32Constant(3)); Op(new Int32ShiftLeft()); Op(new Int32Add());
+            Op(new LocalSet(LT1));                      // the cell's byte address
+            Op(new LocalGet(LT1)); Op(new Int64Load()); Op(new LocalSet(LC0));
+            // step = (tag <= LIS) | (tag == FLOAT) | ((tag == PSTR) << 2), tag = cell >>> 60
+            Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.TagShift)); Op(new Int64ShiftRightUnsigned()); Op(new LocalSet(LC1));
+            Op(new LocalGet(LC1)); Op(new Int64Constant((long)Tag.Lis)); Op(new Int64LessThanOrEqualUnsigned()); Op(new Int64ExtendInt32Unsigned());
+            Op(new LocalGet(LC1)); Op(new Int64Constant((long)Tag.Float)); Op(new Int64Equal()); Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Or());
+            Op(new LocalGet(LC1)); Op(new Int64Constant((long)Tag.Pstr)); Op(new Int64Equal()); Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant(2)); Op(new Int64ShiftLeft());
+            Op(new Int64Or());                          // the step
+            Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); Op(new Int64Multiply());
+            Op(new LocalGet(LC0)); Op(new Int64Add());
+            Op(new LocalSet(LC0));
+            Op(new LocalGet(LT1)); Op(new LocalGet(LC0)); Op(new Int64Store());
+            Op(new LocalGet(LT0)); Op(new Int32Constant(1)); Op(new Int32Add()); Op(new LocalSet(LT0));
+            Op(new Branch(0));                          // again
+            CloseNested();
+            CloseNested();
+            RegStore(reg, () =>
+            {
+                Op(new Int64Constant((long)image.Root << Cell.TagShift));
+                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+            });
+            Op(new LocalGet(LH)); Op(new Int32Constant(n)); Op(new Int32Add());
             Op(new LocalSet(LH));
         }
 

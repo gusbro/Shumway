@@ -100,7 +100,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         IEnumerable<(int Caller, int Callee)> callEdges)
     {
         using var stream = new MemoryStream(module);
-        var creator = Module.ReadFromBinary(stream).Compile<WasmRunExports>();
+        // From the bytes, not through a Module object: the object has no
+        // data count section, and a module with images (ADR-063) carries one.
+        var creator = Compile.FromBinary<WasmRunExports>(stream);
         var instance = creator(new ImportDictionary
         {
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },

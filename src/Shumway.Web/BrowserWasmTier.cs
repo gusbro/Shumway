@@ -1156,7 +1156,8 @@ internal static class BrowserWasmTier
             var members = new List<WasmGroupMember>();
             foreach (var (pred, addr) in candidates)
                 members.Add(new WasmGroupMember(pred, addr,
-                    store.FloatPoolProvider?.Invoke(pred.FunctorId)));
+                    store.FloatPoolProvider?.Invoke(pred.FunctorId),
+                    store.ImagePoolProvider?.Invoke(pred.FunctorId)));
             try
             {
                 Install(store, world, members, env);
@@ -1221,7 +1222,8 @@ internal static class BrowserWasmTier
         try
         {
             var candidate = new WasmGroupMember(pred, linkedBase,
-                store.FloatPoolProvider?.Invoke(pred.FunctorId));
+                store.FloatPoolProvider?.Invoke(pred.FunctorId),
+                store.ImagePoolProvider?.Invoke(pred.FunctorId));
             Install(store, world, new List<WasmGroupMember> { candidate }, env);
             return new WasmTierDelegate(pred.FunctorId, world).Invoke;
         }

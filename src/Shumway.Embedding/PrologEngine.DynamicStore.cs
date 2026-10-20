@@ -108,7 +108,8 @@ public sealed partial class PrologEngine
         raw.AddRange(StaticClausesFor(fid));
         var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
-                enableIndexing: true, isDynamic: false, failStubAddr: 0);
+                enableIndexing: true, isDynamic: false, failStubAddr: 0,
+                imageLiterals: _literalPools.Images);
         // ADR-034 — mark the snapshot so caller-side inlining knows this
         // "static-looking" predicate is really a dynamic whose truth can
         // change; having rules (per the raw source clauses — the transformed
@@ -196,13 +197,15 @@ public sealed partial class PrologEngine
     {
         int s0 = _literalPools.Strings.Count;
         int b0 = _literalPools.BigInts.Count;
+        int i0 = _literalPools.Images.Count;
         var snap = BuildDynamicSnapshot(fid);
         if (snap is null) return null;
         // Float literals are value-baked into the IL (ldc.r8), so a snapshot-only
         // float is fine. Strings / bigints are still index-addressed and would
         // mis-read at runtime, so a snapshot that introduces one stays Tier-0.
         if (_literalPools.Strings.Count != s0
-            || _literalPools.BigInts.Count != b0)
+            || _literalPools.BigInts.Count != b0
+            || _literalPools.Images.Count != i0)
             return null;
         return snap;
     }
@@ -1475,7 +1478,8 @@ public sealed partial class PrologEngine
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
             enableIndexing: false,
             isDynamic: true,
-            failStubAddr: engine.DynamicFailStubAddr);
+            failStubAddr: engine.DynamicFailStubAddr,
+            imageLiterals: _literalPools.Images);
 
         int trampolineAddr = engine.AppendCode(predicate.Bytecode);
         // ADR-041 — mid-query trampolines are invisible to the per-query
@@ -2449,10 +2453,11 @@ public sealed partial class PrologEngine
     {
         // per-engine counters (an engine with no record refreshes
         // unconditionally; refresh is idempotent).
-        var counts = _interpPoolCounts.GetValue(engine, static _ => new int[3]);
+        var counts = _interpPoolCounts.GetValue(engine, static _ => new int[4]);
         if (_literalPools.Strings.Count == counts[0]
             && _literalPools.Floats.Count == counts[1]
-            && _literalPools.BigInts.Count == counts[2])
+            && _literalPools.BigInts.Count == counts[2]
+            && _literalPools.Images.Count == counts[3])
             return;
         engine.RefreshLiteralPoolsCallback?.Invoke(
             _literalPools.Strings.Snapshot(),
@@ -2461,6 +2466,7 @@ public sealed partial class PrologEngine
         counts[0] = _literalPools.Strings.Count;
         counts[1] = _literalPools.Floats.Count;
         counts[2] = _literalPools.BigInts.Count;
+        counts[3] = _literalPools.Images.Count;
     }
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a

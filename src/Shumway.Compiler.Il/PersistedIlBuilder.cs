@@ -123,6 +123,7 @@ public static class PersistedIlBuilder
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
         ISet<int>? prunableFids = null,
         Func<int, IReadOnlyList<double>?>? floatPoolProvider = null,
+        Func<int, IReadOnlyList<TermImage>?>? imagePoolProvider = null,
         ISet<int>? emitOnly = null,
         ISet<int>? bytecodeShipped = null,
         bool compiledByWorker = false)
@@ -165,9 +166,10 @@ public static class PersistedIlBuilder
             // Float-literal support: set the predicate's own float pool so
             // get_float/put_float are accepted (and later value-baked).
             var prevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
+            var prevImages = IlPredicateCompiler.BeginImagePool(imagePoolProvider?.Invoke(functorId));
             bool persistable;
             try { persistable = CanPersist(pred, probeCalleeMap); }
-            finally { IlPredicateCompiler.EndFloatPool(prevPool); }
+            finally { IlPredicateCompiler.EndFloatPool(prevPool); IlPredicateCompiler.EndImagePool(prevImages); }
             if (persistable) eligible.Add((functorId, pred));
         }
 
@@ -227,6 +229,7 @@ public static class PersistedIlBuilder
             // values from its own float pool. Set on this (emit) thread for the
             // whole per-predicate emit; restored in the finally below.
             var emitPrevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
+            var emitPrevImages = IlPredicateCompiler.BeginImagePool(imagePoolProvider?.Invoke(functorId));
             IlPredicateCompiler.TakeBytecodeEntered();
             IlPredicateCompiler.TakePersistedIlBytes();
             IlPredicateCompiler.CpsLayout? cps = null;
@@ -260,6 +263,7 @@ public static class PersistedIlBuilder
                 when (ex is NotSupportedException or IlEmitException)
             {
                 IlPredicateCompiler.EndFloatPool(emitPrevPool);
+            IlPredicateCompiler.EndImagePool(emitPrevImages);
                 // CanPersist accepted this predicate but the emit failed (an
                 // emitter check, or a construct the IL compiler does not
                 // handle). The runtime promotion store skips such a predicate;
@@ -301,6 +305,7 @@ public static class PersistedIlBuilder
                 BytecodeEntered = IlPredicateCompiler.TakeBytecodeEntered(),
             });
             IlPredicateCompiler.EndFloatPool(emitPrevPool);
+            IlPredicateCompiler.EndImagePool(emitPrevImages);
         }
 
         typeBuilder.CreateType();

@@ -578,6 +578,15 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    /// <summary>ADR-063: <c>put_blit</c>, the image to copy and the register
+    /// that takes the term.</summary>
+    public void EmitPutBlit(int imageLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutBlit);
+        EmitInt(imageLitId);
+        EmitInt(argSlot);
+    }
+
     public void EmitPutVariableY(int destPermSlot, int argSlot)
     {
         _bytes.Add((byte)Opcode.PutVariableY);
