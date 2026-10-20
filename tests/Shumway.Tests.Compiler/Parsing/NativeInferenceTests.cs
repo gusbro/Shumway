@@ -53,16 +53,16 @@ public sealed class NativeInferenceTests
     [Fact]
     public void Output_LongFromIsRhsLocal_VarGuard_GlobalAndLocalClassified()
     {
-        // var(MsgId) → output; `MsgId is id` with `id: long` local → long.
+        // var(MsgId) → output; `ItemId is id` with `id: long` local → long.
         var i = Infer(
-            "t(Mod, MsgId) :- integer(Mod), var(MsgId), "
-            + "{ id: long; id = 'get_next_literal'(Mod, pTranslateRef1); MsgId is id }.\n",
-            "reftype pTranslateRef1;\nint get_next_literal(int, reftype);\n");
+            "data(Code, ItemId) :- integer(Code), var(ItemId), "
+            + "{ id: long; id = 'get_data'(Code, myRef); ItemId is id }.\n",
+            "reftype myRef;\nint get_data(int, reftype);\n");
         Assert.Empty(i.Diagnostics);
-        AssertVar(i, "Mod", NativeKind.Int, NativeMode.Input);
-        AssertVar(i, "MsgId", NativeKind.Long, NativeMode.Output);
+        AssertVar(i, "Code", NativeKind.Int, NativeMode.Input);
+        AssertVar(i, "ItemId", NativeKind.Long, NativeMode.Output);
         Assert.Contains("id", i.Locals);                 // block-local C temporary
-        Assert.Contains("pTranslateRef1", i.Globals);    // :- c global
+        Assert.Contains("myRef", i.Globals);    // :- c global
         Assert.DoesNotContain(i.PrologVars, v => v.Name == "id");
     }
 
@@ -73,9 +73,9 @@ public sealed class NativeInferenceTests
         // int output (from the :- c prototype). The length args LLen/RLen — Prolog
         // vars here — are consumed by the intrinsic and must not need a type.
         var i = Infer(
-            "strcmp_p(LS, RS, X):- LLen = 255, RLen = 255, "
+            "strcmp_p(LS, RS, X):- LLen = 155, RLen = 155, "
             + "{ 'MakeCString'(lbuf, LLen, &LS); 'MakeCString'(rbuf, RLen, &RS); X is 'strcmp'(lbuf, rbuf) }, !.\n",
-            "char lbuf[255];\nchar rbuf[255];\nint strcmp(const char*, const char*);\n");
+            "char lbuf[155];\nchar rbuf[155];\nint strcmp(const char*, const char*);\n");
         Assert.Empty(i.Diagnostics);
         AssertVar(i, "LS", NativeKind.String, NativeMode.Input);
         AssertVar(i, "RS", NativeKind.String, NativeMode.Input);
@@ -88,8 +88,8 @@ public sealed class NativeInferenceTests
     public void MakePrologString_OutputString()
     {
         var i = Infer(
-            "p(Path) :- { 'MakePrologString'('get_exepath'(void), &Path) }.\n",
-            "const char* get_exepath(void);\n");
+            "p(Path) :- { 'MakePrologString'('get_path'(void), &Path) }.\n",
+            "const char* get_path(void);\n");
         Assert.Empty(i.Diagnostics);
         AssertVar(i, "Path", NativeKind.String, NativeMode.Output);
     }
@@ -99,9 +99,9 @@ public sealed class NativeInferenceTests
     {
         // Arity writes a C string argument as a quoted atom that holds the
         // literal: a string, not a native global to declare.
-        var i = Infer("dbg_break :- { '_dbg_break'('\"Attach Prolog debugger\"') }.\n");
+        var i = Infer("send_msg :- { '_send:msg'('\"MyMessage\"') }.\n");
         Assert.Empty(i.Diagnostics);
-        var stmts = CParser.ParseStatements("'_dbg_break'('\"hi\\n\"')");
+        var stmts = CParser.ParseStatements("'_send_msg'('\"hi\\n\"')");
         var call = Assert.IsType<CCallExpr>(Assert.IsType<CCallStmt>(stmts.Single()).Call);
         Assert.Equal("hi\n", Assert.IsType<CStringExpr>(call.Args.Single()).Value);
     }
