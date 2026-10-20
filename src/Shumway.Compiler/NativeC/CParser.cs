@@ -155,6 +155,10 @@ public sealed class CParser
                 return new CStringExpr(t.Text);
             case CTokenKind.QuotedName:
                 Next();
+                // Arity writes a C string argument as a quoted atom that holds
+                // the literal, `'"text"'`: a string, not a name.
+                if (t.Text.Length >= 2 && t.Text[0] == '"' && t.Text[t.Text.Length - 1] == '"')
+                    return new CStringExpr(CLexer.Unescape(t.Text.Substring(1, t.Text.Length - 2)));
                 return Is(CTokenKind.LParen)
                     ? new CCallExpr(t.Text, ParseArgs())
                     : new CIdentExpr(t.Text);

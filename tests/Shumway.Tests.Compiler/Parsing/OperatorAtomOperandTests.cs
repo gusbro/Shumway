@@ -27,6 +27,8 @@ public class OperatorAtomOperandTests
     [InlineData("a * *")]        // '*' as right operand of '*' (needs ≤ 399, has 400)
     [InlineData("X = '<'")]      // quoted operator-atom: same atom, same error
     [InlineData(@"X = '\\'")]    // Neumerkel syntax #106
+    [InlineData("X = table")]    // a prefix operator of the engine (tabling)
+    [InlineData("X = dynamic")]
     public void OperatorAtom_AsOperatorOperand_IsRejected(string source)
     {
         Assert.Throws<ParseException>(() => Parse(source + " ."));
@@ -53,5 +55,27 @@ public class OperatorAtomOperandTests
     {
         var flags = new PrologFlags { ArityCompat = true };
         Assert.NotNull(Parse(source + " .", flags));
+    }
+
+    // Arity sources use operator atoms bare as operands: `table` is an
+    // operator of the engine, not of Arity, and `dynamic` is one of both.
+    [Theory]
+    [InlineData("X = table")]
+    [InlineData("X = dynamic")]
+    [InlineData("S = 'my table '-table")]            // operand of `-`, maximum priority 499
+    [InlineData("make_dynamic(Data, Host, dynamic)")]
+    [InlineData("ifthenelse(Type = table, a, b)")]
+    public void BareOperatorAtomOperand_AcceptedUnderArityCompat(string source)
+    {
+        var flags = new PrologFlags { ArityCompat = true };
+        Assert.NotNull(Parse(source + " .", flags));
+    }
+
+    [Fact]
+    public void BareOperatorAtomOperand_IsTheAtomUnderArityCompat()
+    {
+        var t = Assert.IsType<CompoundTerm>(Parse("X = table .", new PrologFlags { ArityCompat = true }));
+        Assert.Equal("=", t.Functor);
+        Assert.Equal("table", Assert.IsType<AtomTerm>(t.Args[1]).Name);
     }
 }
