@@ -3,14 +3,45 @@ using Shumway.Core;
 
 namespace Shumway.Compiler.Wam;
 
-/// <summary>ADR-063: lays a ground compound out as the heap would hold it,
-/// every index relative to the first cell (<see cref="TermImage"/>). Null
-/// for a term an image cannot carry: a variable, a big integer or a rational
+/// <summary>ADR-063: lays a compound out as the heap would hold it, every
+/// index relative to the first cell (<see cref="TermImage"/>). A variable is
+/// a REF to its own cell, or to the cell of its first occurrence; a named
+/// one is also a hole the <see cref="HoleClassifier"/> decides (the register
+/// it comes from or goes to), an anonymous one is a fresh cell and nothing
+/// more. Null for a term an image cannot carry: a big integer or a rational
 /// (their cells name a table of the activation), a text past the packed
-/// string's length. No recursion: the compounds still to lay wait on a
-/// stack, so a long list's spine or a long left-nested chain is a loop.</summary>
+/// string's length, a named variable with no classifier. No recursion: the
+/// compounds still to lay wait on a stack, so a long list's spine or a long
+/// left-nested chain is a loop.</summary>
 internal static class TermImageBuilder
 {
+    /// <summary>The hole for the first occurrence of a named variable in
+    /// the image, at <c>offset</c>: which register, in or out. Called once
+    /// per variable, in the image's order, and may take registers.</summary>
+    public delegate ImageHole HoleClassifier(string name, int offset);
+
+    /// <summary>The holes the image of <paramref name="term"/> would need:
+    /// the named variables in it, each once. No side effect, for the
+    /// threshold test before building.</summary>
+    public static int HoleCount(Term term)
+    {
+        var names = new HashSet<string>();
+        var pending = new Stack<Term>();
+        pending.Push(term);
+        while (pending.Count > 0)
+        {
+            switch (pending.Pop())
+            {
+                case CompoundTerm c:
+                    foreach (var a in c.Args) pending.Push(a);
+                    break;
+                case VarTerm v when v.Name != "_":
+                    names.Add(v.Name);
+                    break;
+            }
+        }
+        return names.Count;
+    }
     /// <summary>The cells the term takes on the heap, counted without laying
     /// it out: the threshold test before building an image.</summary>
     public static int CellCount(Term term)
@@ -37,12 +68,16 @@ internal static class TermImageBuilder
         return n;
     }
 
-    public static TermImage? Build(Term term)
+    public static TermImage? Build(Term term) => Build(term, null);
+
+    public static TermImage? Build(Term term, HoleClassifier? classify)
     {
         if (term is not CompoundTerm root) return null;
         var cells = new List<Cell>();
-        if (!Lay(root, cells)) return null;
-        return new TermImage(cells.ToArray(), IsCons(root) ? Tag.Lis : Tag.Str);
+        var holes = new List<ImageHole>();
+        if (!Lay(root, cells, holes, classify)) return null;
+        return new TermImage(cells.ToArray(), IsCons(root) ? Tag.Lis : Tag.Str,
+            holes.Count == 0 ? null : holes.ToArray());
     }
 
     private static bool IsCons(CompoundTerm c) => c.Functor == "." && c.Args.Length == 2;
@@ -51,8 +86,9 @@ internal static class TermImageBuilder
     // and the argument cell that refers to it is written then, with the
     // index the block starts at. Scalars go in place; a float's pair and a
     // packed string's cells go at the end as they are met.
-    private static bool Lay(CompoundTerm root, List<Cell> cells)
+    private static bool Lay(CompoundTerm root, List<Cell> cells, List<ImageHole> holes, HoleClassifier? classify)
     {
+        Dictionary<string, int>? first = null;   // a named variable's first cell
         var pending = new Stack<(int Slot, CompoundTerm Term)>();
         pending.Push((-1, root));
         while (pending.Count > 0)
@@ -105,8 +141,26 @@ internal static class TermImageBuilder
                     case CompoundTerm sub:
                         pending.Push((argBase + i, sub));
                         break;
+                    case VarTerm v when v.Name == "_":
+                        cells[argBase + i] = Cell.Ref(argBase + i);   // unbound once relocated
+                        break;
+                    case VarTerm v:
+                    {
+                        int at = argBase + i;
+                        first ??= new Dictionary<string, int>();
+                        if (first.TryGetValue(v.Name, out int firstAt))
+                        {
+                            cells[at] = Cell.Ref(firstAt);
+                            break;
+                        }
+                        if (classify is null) return false;
+                        first[v.Name] = at;
+                        cells[at] = Cell.Ref(at);
+                        holes.Add(classify(v.Name, at));
+                        break;
+                    }
                     default:
-                        return false;   // a variable, a big integer, a rational
+                        return false;   // a big integer, a rational
                 }
             }
         }

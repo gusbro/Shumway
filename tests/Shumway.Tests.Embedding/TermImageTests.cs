@@ -1,16 +1,20 @@
+using Shumway.Compiler.Ast;
+using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
 using Shumway.Embedding;
 using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-063: a ground term a body copies from an image is the term
-/// the build gave, on both tiers, after a collection, after failing back
-/// past it, from a bundle, and in a clause asserted at run time.</summary>
+/// <summary>ADR-063: a term a body copies from an image is the term the
+/// build gave, its variables included (holes a register fills or receives,
+/// a repeated one, an anonymous one, an attributed one), on both tiers,
+/// after a collection, after failing back past it, from a bundle, and in a
+/// clause asserted at run time.</summary>
 public sealed class TermImageTests
 {
     private const string Program = """
-        :- public lookup/2, mixed/1, text/1, loop/1, all/1.
+        :- public lookup/2, mixed/1, text/1, loop/1, all/1, pair/3, fresh/2, perm/2, attv/1, back/1.
         id(X, X).
         lookup(K, V) :- t([k(a, 1), k(b, 2), k(c, 3), k(d, 4), k(e, 5), k(f, 6)], K, V).
         t([k(K, V)|_], K, V) :- !.
@@ -22,6 +26,11 @@ public sealed class TermImageTests
         mem(X, [X|_]).
         mem(X, [_|T]) :- mem(X, T).
         all(Vs) :- findall(K-V, (mem(K, [a, b, c, d, e, f]), lookup(K, V)), Vs).
+        pair(X, Y, P) :- id(p(X, [a, b, c], Y, [d, e, f], X), P).
+        fresh(P, Q) :- id(f(A, [1, 2, 3], B, g(A, B), _, _), P), id(h(A, B), Q).
+        perm(P, Q) :- id(a, A), id(f(A, [x, y, z], B, B), P), id(B, Q).
+        attv(P) :- put_attr(V, t, 1), id(f(V, [1, 2, 3], V), P).
+        back(L) :- findall(P, (mem(X, [1, 2]), id(f(X, [a, b, c], X), P)), L).
         """;
 
     private static readonly (string Goal, string Var)[] Goals =
@@ -33,6 +42,13 @@ public sealed class TermImageTests
         ("text(X), X = f(S, A, F, L), S == \"hello world\", A == x, F =:= 1.5, L == [1, 2, 3], R = yes.", "R"),
         ("mixed(X), garbage_collect, X = f(L, _, _, _), garbage_collect, L = [_, _, S|_], garbage_collect, S == \"str\", R = yes.", "R"),
         ("loop(2000), lookup(f, V).", "V"),
+        ("pair(1, 2, P).", "P"),
+        ("fresh(P, Q), P = f(A, L, B, G, _, _), L == [1, 2, 3], G == g(A, B), Q == h(A, B), var(A), var(B), R = yes.", "R"),
+        ("perm(P, Q), P = f(a, [x, y, z], B1, B2), B1 == B2, B1 == Q, var(Q), R = yes.", "R"),
+        ("attv(P), P = f(W, _, W2), W == W2, get_attr(W, t, A), R = A.", "R"),
+        ("back(L).", "L"),
+        ("fresh(P, _), garbage_collect, P = f(A, L, _, _, _, _), garbage_collect, L == [1, 2, 3], var(A), R = yes.", "R"),
+        ("findall(P, (mem(X, [1, 2, 3]), pair(X, X, P)), Ps).", "Ps"),
     };
 
     private static string Answer(PrologEngine e, string goal, string var)
@@ -73,9 +89,25 @@ public sealed class TermImageTests
     public void TheProgramCopiesItsGroundTermsFromImages()
     {
         // ANTI-VACUITY: the predicates under test do carry the instruction.
-        foreach (string pred in new[] { "lookup", "mixed", "text" })
-            Assert.Contains("put_blit",
-                PredicateDisassembler.Disassemble(Program).First(e => e.Name == pred).Text);
+        // back/1 builds its term inside the auxiliary predicate of its findall goal.
+        var entries = PredicateDisassembler.Disassemble(Program);
+        foreach (string pred in new[] { "lookup", "mixed", "text", "pair", "fresh", "perm", "attv" })
+        {
+            var own = entries.Where(e => e.Name.Contains(pred)).ToList();
+            Assert.True(own.Any(e => e.Text.Contains("put_blit")),
+                pred + " copies no image:\n" + string.Join("\n", own.Select(e => e.Name + "\n" + e.Text)));
+        }
+        // ...and the ones with variables carry images with holes of every kind.
+        var pools = new LiteralPools();
+        var compiler = new ClauseCompiler();
+        foreach (var clause in new ClauseReader(Program).ReadAll())
+            if (clause.Kind is ClauseKind.Rule or ClauseKind.Fact)
+                compiler.Compile(clause, pools.Strings, pools.Floats, pools.BigInts, pools.Images);
+        var holes = pools.Images.Items.SelectMany(i => i.Holes.ToArray()).ToList();
+        Assert.Contains(holes, h => !h.IsOut && !h.IsY);
+        Assert.Contains(holes, h => h.IsOut && !h.IsY);
+        Assert.Contains(holes, h => !h.IsOut && h.IsY);
+        Assert.Contains(holes, h => h.IsOut && h.IsY);
     }
 
     [Fact]
@@ -96,7 +128,7 @@ public sealed class TermImageTests
             Assert.Equal(expected, Answer(plain, goal, v));
             Assert.Equal(expected, Answer(tiered, goal, v));
         }
-        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1" })
+        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1" })
             Assert.True(Promoted(tiered, pi), $"{pi} did not promote\n{tiered.IlPromotion.DescribePromotionState()}");
         // Promoted, the answers are the compiled code's.
         foreach (var (goal, v) in Goals)
@@ -129,5 +161,7 @@ public sealed class TermImageTests
         Assert.True(e.Query("big(L), L == [a, b, c, d, e, f, g, h, i, j].").Success);
         // The clause's source is what clause/2 shows.
         Assert.True(e.Query("clause(big(Y), id(L, Y)), L == [a, b, c, d, e, f, g, h, i, j].").Success);
+        // With holes: the asserted clause's variables come and go through the copy.
+        Assert.True(e.Query("assertz((wrap(X, Y, W) :- id(w(X, [a, b, c], Y, Y, _), W))), wrap(1, 2, W), W = w(1, L, 2, 2, V), L == [a, b, c], var(V).").Success);
     }
 }

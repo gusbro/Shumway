@@ -832,13 +832,19 @@ Operands: `int image_literal_id`, `reg arg`
 Total size: 9 bytes
 
 Copies the image named by the id, from the module's image pool, to the heap
-top, relocating every heap index in it by the base, and sets the argument
-register to the cell that names the term (`STR` or `LIS` of the base). The
-compiler emits it for a ground compound of a clause body with at least
-`ImageThreshold` cells (8 by default) in place of the `put_structure` /
-`put_list` and `set_*` sequence that would build it; as an argument of a
-compound being built, the register is then referenced with `unify_value_x`,
-like a float or a string literal.
+top, relocating every heap index in it by the base, fills the image's holes,
+and sets the argument register to the cell that names the term (`STR` or
+`LIS` of the base). A hole is a cell of the image a variable of the term
+decides at copy time: one the copy fills from an argument register or a
+frame slot (the variable was seen before, as `unify_value` in write mode),
+or one the copy points the register or the slot at (the variable's first
+occurrence, as `unify_variable`); an anonymous variable is an unbound cell
+of the image, a repeated one a reference to its first. The compiler emits
+it for a compound of a clause body with at least `ImageThreshold` cells (8
+by default) and holes for at most half of them, in place of the
+`put_structure` / `put_list` and `set_*` sequence that would build it; as an
+argument of a compound being built, the register is then referenced with
+`unify_value_x`, like a float or a string literal.
 
 ---
 

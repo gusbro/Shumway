@@ -875,12 +875,13 @@ public class Adr031BindingGuardTests
         // cumulative duplication), each copy still bounded by the caps.
         string Bulk(string name, string next)
         {
-            // The anonymous variable keeps the term off an image (ADR-063):
-            // the bulk this test counts on is the build's instructions.
+            // The big integer keeps the term off an image (ADR-063: an image
+            // holds variables now, but no big integer): the bulk this test
+            // counts on is the build's instructions.
             var args = string.Join(",", System.Linq.Enumerable.Range(1, 80));
             return next.Length == 0
-                ? $"{name}(X):-X=f(_,{args})."
-                : $"{name}(X):-{next}(Y),X=f(_,{args}),Y=X.";
+                ? $"{name}(X):-X=f(100000000000000000000,{args})."
+                : $"{name}(X):-{next}(Y),X=f(100000000000000000000,{args}),Y=X.";
         }
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
         var b5 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(

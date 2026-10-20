@@ -19,6 +19,13 @@ public sealed class TermImageTests
         text(X) :- id(f("hello world", 'x', 1.5, [1, 2, 3]), X).
         run(0) :- !.
         run(N) :- lookup(c, 3), N1 is N - 1, run(N1).
+        pair(X, Y, P) :- id(p(X, [a, b, c], Y, [d, e, f], X), P).
+        fresh(P, Q) :- id(f(A, [1, 2, 3], B, g(A, B), _, _), P), id(h(A, B), Q).
+        perm(P, Q) :- id(a, A), id(f(A, [x, y, z], B, B), P), id(B, Q).
+        attv(P) :- put_attr(V, t, 1), id(f(V, [1, 2, 3], V), P).
+        mem(X, [X|_]).
+        mem(X, [_|T]) :- mem(X, T).
+        back(L) :- findall(P, (mem(X, [1, 2]), id(f(X, [a, b, c], X), P)), L).
         """;
 
     private static readonly string[] Goals =
@@ -29,6 +36,12 @@ public sealed class TermImageTests
         "mixed(X), X = f(L, A, N, B), L = [_, F, S, G, T], F =:= 2.5, S == \"str\", G == g(h(i)), T == [x, y|z], A == 'A b', N =:= -3, B =:= 1000000000000.",
         "text(X), X = f(S, A, F, L), S == \"hello world\", A == x, F =:= 1.5, L == [1, 2, 3].",
         "run(100), mixed(X), X = f([_, _, S|_], _, _, _), S == \"str\".",
+        "pair(1, 2, P), P == p(1, [a, b, c], 2, [d, e, f], 1).",
+        "fresh(P, Q), P = f(A, L, B, G, _, _), L == [1, 2, 3], G == g(A, B), Q == h(A, B), var(A), var(B).",
+        "perm(P, Q), P = f(a, [x, y, z], B1, B2), B1 == B2, B1 == Q, var(Q).",
+        "attv(P), P = f(W, _, W2), W == W2, get_attr(W, t, 1).",
+        "back(L), L == [f(1, [a, b, c], 1), f(2, [a, b, c], 2)].",
+        "findall(P, (mem(X, [1, 2, 3]), pair(X, X, P)), Ps), Ps == [p(1, [a, b, c], 1, [d, e, f], 1), p(2, [a, b, c], 2, [d, e, f], 2), p(3, [a, b, c], 3, [d, e, f], 3)].",
     };
 
     // By name, module prefix stripped: a consulted predicate's functor carries its module.
@@ -56,7 +69,7 @@ public sealed class TermImageTests
             Assert.True(tiered.Query(goal).Success, goal + " on the tier");
         }
         // ANTI-VACUITY: the predicates with images did promote to the tier.
-        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1" })
+        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1" })
             Assert.True(Promoted(tiered, indicator),
                 $"{indicator} was not promoted\n" + tiered.IlPromotion.DescribePromotionState());
         foreach (string goal in Goals)

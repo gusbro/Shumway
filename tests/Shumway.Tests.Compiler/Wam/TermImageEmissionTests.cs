@@ -1,17 +1,33 @@
+using System.Collections.Generic;
 using System.Linq;
+using Shumway.Compiler.Ast;
+using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
+using Shumway.Core;
 using Xunit;
 
 namespace Shumway.Tests.Compiler.Wam;
 
-/// <summary>ADR-063: a ground compound of a clause body with at least the
+/// <summary>ADR-063: a compound of a clause body with at least the
 /// threshold's cells is copied from an image (<c>put_blit</c>) instead of
-/// built; a smaller one, or one with a variable or a big integer, is built
-/// as before.</summary>
+/// built, its variables as holes the copy fills from registers or points
+/// registers at; a smaller one, one with holes for more than half its
+/// cells, or one with a big integer, is built as before.</summary>
 public class TermImageEmissionTests
 {
     private static string Dis(string src) =>
         PredicateDisassembler.Disassemble(src).First(e => e.Name == "p").Text;
+
+    /// <summary>The images the clauses of <paramref name="src"/> intern.</summary>
+    private static IReadOnlyList<TermImage> Images(string src)
+    {
+        var pools = new LiteralPools();
+        var compiler = new ClauseCompiler();
+        foreach (var clause in new ClauseReader(src).ReadAll())
+            if (clause.Kind is ClauseKind.Rule or ClauseKind.Fact)
+                compiler.Compile(clause, pools.Strings, pools.Floats, pools.BigInts, pools.Images);
+        return pools.Images.Items;
+    }
 
     [Fact]
     public void AGroundListPastTheThresholdIsCopiedFromAnImage()
@@ -32,19 +48,84 @@ public class TermImageEmissionTests
     }
 
     [Fact]
-    public void AVariableKeepsTheBuild()
+    public void AVariableSeenBeforeIsAHoleTheRegisterFills()
     {
-        string text = Dis("p(X) :- q([a, b, c, d, e, f, g, h, i, X]).");
-        Assert.DoesNotContain("put_blit", text);
-        Assert.Contains("put_list", text);
+        string src = "p(X) :- q([a, b, c, d, e, f, g, h, i, X]).";
+        string text = Dis(src);
+        Assert.Contains("put_blit", text);
+        Assert.DoesNotContain("put_list", text);
+        var image = Assert.Single(Images(src));
+        // Ten cell pairs; X is the head of the last, in the register the
+        // head's X moved to (A0 is the call's).
+        var hole = Assert.Single(image.Holes.ToArray());
+        Assert.False(hole.IsOut);
+        Assert.False(hole.IsY);
+        Assert.Equal(18, hole.Offset);
+        Assert.Equal(Cell.Ref(18), image.Cells[18]);
     }
 
     [Fact]
-    public void AGroundArgumentOfACompoundGoesToATemporary()
+    public void AVariableFirstSeenInTheImageIsAHoleTheCopyPointsAt()
     {
-        // g(X, [...]) is not ground; its list is, and past the threshold: the
+        var image = Assert.Single(Images("p :- q(f(X, a, b, c, d, e, f), X)."));
+        var hole = Assert.Single(image.Holes.ToArray());
+        Assert.True(hole.IsOut);
+        Assert.False(hole.IsY);
+        Assert.Equal(1, hole.Offset);
+    }
+
+    [Fact]
+    public void ARepeatedVariableIsOneHoleAndAReferenceToItsFirstCell()
+    {
+        var image = Assert.Single(Images("p :- q(f(X, X, a, b, c, d, X))."));
+        Assert.Single(image.Holes.ToArray());
+        Assert.Equal(Cell.Ref(1), image.Cells[1]);
+        Assert.Equal(Cell.Ref(1), image.Cells[2]);
+        Assert.Equal(Cell.Ref(1), image.Cells[7]);
+    }
+
+    [Fact]
+    public void AnAnonymousVariableIsAFreshCellAndNoHole()
+    {
+        var image = Assert.Single(Images("p :- q([h(_, _), h(_, _), h(_, _)])."));
+        Assert.False(image.HasHoles);
+        Assert.Equal(15, image.Length);
+        // Every anonymous variable is a REF to its own cell: unbound once relocated.
+        int fresh = 0;
+        for (int i = 0; i < image.Length; i++)
+            if (image.Cells[i] == Cell.Ref(i)) fresh++;
+        Assert.Equal(6, fresh);
+    }
+
+    [Fact]
+    public void APermanentVariableIsAHoleOfTheFrame()
+    {
+        // Y lives in the frame: seen by r/1 before the image, the copy reads
+        // the frame; first seen in the image, the copy writes the frame.
+        var seen = Assert.Single(Images("p :- r(Y), q(f(Y, a, b, c, d, e, f)), s(Y)."));
+        var h = Assert.Single(seen.Holes.ToArray());
+        Assert.True(h.IsY);
+        Assert.False(h.IsOut);
+        var first = Assert.Single(Images("p :- q(f(Y, a, b, c, d, e, f)), s(Y)."));
+        h = Assert.Single(first.Holes.ToArray());
+        Assert.True(h.IsY);
+        Assert.True(h.IsOut);
+    }
+
+    [Fact]
+    public void HolesForMoreThanHalfTheCellsKeepTheBuild()
+    {
+        string src = "p :- q(f(A, B, C, D, E, F, G)).";
+        Assert.Empty(Images(src));
+        Assert.Contains("put_structure", Dis(src));
+    }
+
+    [Fact]
+    public void AnArgumentOfACompoundTheImageCannotCarryGoesToATemporary()
+    {
+        // g's big integer keeps g built; its list is past the threshold: the
         // image goes to a temporary and unify_value_x puts it in place.
-        string text = Dis("p(X) :- q(g(X, [a, b, c, d, e, f, g, h])).");
+        string text = Dis("p(X) :- q(g(X, 100000000000000000000, [a, b, c, d, e, f, g, h])).");
         Assert.Contains("put_blit", text);
         Assert.Contains("unify_value_x", text);
         Assert.DoesNotContain("put_list", text);
@@ -75,10 +156,12 @@ public class TermImageEmissionTests
     public void ADeferredPartOfABodyBuildIsCopiedToo()
     {
         // g's first argument is a nested compound in a non-last position with
-        // a float beside it, so the tree is not a reserved build: the list is
-        // deferred onto a temporary and built there, from its image.
-        string text = Dis("p(X) :- q(g([a, b, c, d, e, f, g, h], 1.5, X)).");
+        // a big integer beside it, so neither is g an image nor the tree a
+        // reserved build: the list is deferred onto a temporary and built
+        // there, from its image.
+        string text = Dis("p(X) :- q(g([a, b, c, d, e, f, g, h], 100000000000000000000, X)).");
         Assert.Contains("put_blit", text);
+        Assert.Contains("put_structure", text);
     }
 
     [Fact]

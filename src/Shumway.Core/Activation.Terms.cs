@@ -308,7 +308,34 @@ public sealed partial class Activation
     {
         int start = AllocateHeap(image.Length);
         image.CopyTo(_heap, start);
+        if (image.HasHoles) FillHoles(image, start);
         return image.RootCell(start);
+    }
+
+    // The holes, in their order: a register's cell into the image (a bare
+    // ATTVAR as a REF to its home, as unify_value writes one: the attribute
+    // table keys on a cell's own address) or the register at the image's
+    // unbound cell. The cells are the youngest on the heap, so nothing is
+    // bound and nothing is trailed; the occurs check has nothing to find in
+    // a term that did not exist before the copy.
+    private void FillHoles(TermImage image, int start)
+    {
+        var holes = image.Holes;
+        for (int i = 0; i < holes.Length; i++)
+        {
+            var h = holes[i];
+            int idx = start + h.Offset;
+            if (h.IsOut)
+            {
+                if (h.IsY) SetY(h.Slot, Cell.Ref(idx));
+                else SetRegister(h.Slot, Cell.Ref(idx));
+            }
+            else
+            {
+                Cell v = h.IsY ? GetY(h.Slot) : GetRegister(h.Slot);
+                _heap[idx] = v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v;
+            }
+        }
     }
 
     public int MakePstr(string value, TextKind kind)

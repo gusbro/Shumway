@@ -67,6 +67,13 @@ public sealed partial class ClauseCompiler
     public static int ImageThreshold { get; set; } =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_THRESHOLD"), out int t) ? t : 8;
 
+    /// <summary>ADR-063: whether an image may hold variables, as holes the
+    /// copy fills from registers or points registers at; off, images are
+    /// ground terms alone. <c>SHUMWAY_IMAGE_HOLES</c>, 0 for off: the
+    /// measurement's switch, within one build.</summary>
+    public static bool ImageHoles { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_HOLES") != "0";
+
     /// <summary>ADR-035 debug codegen (<c>compile_mode=debug</c>). Two changes,
     /// both in service of a debuggable call stack:
     /// <list type="bullet">
