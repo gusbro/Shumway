@@ -95,6 +95,18 @@ public sealed class NativeInferenceTests
     }
 
     [Fact]
+    public void CStringAtomArgument_IsAStringLiteral()
+    {
+        // Arity writes a C string argument as a quoted atom that holds the
+        // literal: a string, not a native global to declare.
+        var i = Infer("dbg_break :- { '_dbg_break'('\"Attach Prolog debugger\"') }.\n");
+        Assert.Empty(i.Diagnostics);
+        var stmts = CParser.ParseStatements("'_dbg_break'('\"hi\\n\"')");
+        var call = Assert.IsType<CCallExpr>(Assert.IsType<CCallStmt>(stmts.Single()).Call);
+        Assert.Equal("hi\n", Assert.IsType<CStringExpr>(call.Args.Single()).Value);
+    }
+
+    [Fact]
     public void Uninferrable_Variable_IsADiagnostic()
     {
         // A is passed to a non-intrinsic function with no guard / decl / prototype:

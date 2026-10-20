@@ -35,6 +35,23 @@ public sealed class CParseException(string message, int offset)
 /// <see cref="CTokenKind.QuotedName"/> with the quotes stripped.</summary>
 public static class CLexer
 {
+    /// <summary>The character a C escape stands for: the three the subset
+    /// knows, and the character itself for any other.</summary>
+    internal static char Escape(char e) => e switch { 'n' => '\n', 't' => '\t', 'r' => '\r', _ => e };
+
+    /// <summary>A string literal's text with its escapes applied.</summary>
+    internal static string Unescape(string s)
+    {
+        if (s.IndexOf('\\') < 0) return s;
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '\\' && i + 1 < s.Length) { sb.Append(Escape(s[++i])); continue; }
+            sb.Append(s[i]);
+        }
+        return sb.ToString();
+    }
+
     public static List<CToken> Tokenize(string source)
     {
         var tokens = new List<CToken>();
@@ -131,7 +148,7 @@ public static class CLexer
                     if (source[i] == '\\' && i + 1 < n)
                     {
                         char e = source[i + 1];
-                        sb.Append(e switch { 'n' => '\n', 't' => '\t', 'r' => '\r', _ => e });
+                        sb.Append(Escape(e));
                         i += 2;
                         continue;
                     }

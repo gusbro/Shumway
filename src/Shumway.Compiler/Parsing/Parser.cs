@@ -576,7 +576,8 @@ public sealed class Parser
         // `'\\'` is the operator `\` (Neumerkel syntax #106), so `X = '\\'` is
         // the same error as `X = *`, and the conforming spelling is `X = ('\\')`.
         // The leniencies that do accept it: arity_compat (Arity sources use
-        // quoted operator atoms as plain operands) and the SWI dialect scope
+        // operator atoms, quoted or bare, as plain operands: `X = table`,
+        // `'DROP TABLE '-table`) and the SWI dialect scope
         // (LenientBareOperatorOperands — SWI accepts them everywhere).
         Token pk = PeekToken();
         Term prim = ReadPrimary();
@@ -600,7 +601,8 @@ public sealed class Parser
                 // it via _bareOp unless a dialect leniency admits it. The ISO
                 // §6.3.1.3 rejection rides on _bareOp (the apply sites) and
                 // the direct priority throw below.
-                if (maxPrec < 999 && p > maxPrec && !_flags.LenientBareOperatorOperands)
+                if (maxPrec < 999 && p > maxPrec
+                    && !_flags.LenientBareOperatorOperands && !_flags.ArityCompat)
                     throw new ParseException(
                         $"Operator '{bareAt.Name}' (priority {p}) needs parentheses "
                         + $"to be an operand here (maximum priority {maxPrec}).", pk.Position);
