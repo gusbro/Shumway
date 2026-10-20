@@ -121,8 +121,8 @@ cap is absolute, not a share of the method's size, so a larger region loses
 a larger tail of itself to it.
 
 The JIT's own events (`MethodJitInliningFailed`, keyword JitTracing) show
-it on Blint at the 7,200 target: 67 of 119 regions reach the cap, after
-464 inlines at the median, and 21,266 inlines are declined for it; the
+it on Blint at the 7,200 target: 69 of 121 regions reach the cap, after
+435 inlines at the median, and 19,680 inlines are declined for it; the
 hottest among them are the wake check after a builtin call, the register
 reads, the atom cells, the trail push. In the native code the regions keep
 two to four times the calls to small helpers per instruction that regions
@@ -191,11 +191,23 @@ hot loop gain from it, sendmore 0.95, flatten 0.95, crypt 0.96, qsort
 0.97, tak 0.98; Blint and the puzzles, whose regions reach it in their
 cold tails, are even.
 
-| program, at the 7,200 target | regions reaching the cap, by references alone | under the locals target |
-|---|---|---|
-| Blint | 67 of 119 | 24 of 120 |
-| clpz puzzles | 302 of 583 | 124 of 582 |
-| boyer and the Van Roy nine | as before | the same regions, to the member |
+| program, at the 7,200 target | regions reaching the cap, by references alone | under the locals target | call sites left as calls, before and after |
+|---|---|---|---|
+| Blint | 69 of 121 | 28 of 124 | 19,680 and 2,578 |
+| clpz puzzles | 302 of 583 | 125 of 583 | 105,589 and 10,969 |
+| boyer and the Van Roy nine | as before | the same regions, to the member | as before |
+
+A region still at the cap is one method under full optimization like any
+other: the cap is a point of no return inside the method, so what it loses
+is its last call sites in IL order, the choice-point helpers and register
+reads of its last members, and nothing before them. In Blint those are 6%
+to 27% of the sites of each such region. Of its 28, 21 were planned at the
+edge of the target (the model's factor is the middle of its band, so a
+region planned at the target reaches the cap about half the time), 3 are a
+root with the one callee the budget refused, 4 are under the floor. A
+target of 900 takes the 21 under the cap and runs Blint 3% slower than
+1,000: each cut is a trampoline, and that costs more than the sites it
+saves.
 
 Measured in one process against the tip this branch grew from, eight
 rounds ABBA over two copies, heap cells identical: Blint 0.93 at the
