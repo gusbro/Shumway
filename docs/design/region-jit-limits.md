@@ -225,6 +225,46 @@ be under half of the first, and the planner's own count under the target
 in every region. The JIT's part runs on Release only: Debug helpers inline
 less and never reach the cap.
 
+### Raising the cap from the host
+
+The cap is the runtime's `JitMaxLocalsToTrack`, a hexadecimal number the
+JIT reads from the environment once, when it starts, before `Main` runs:
+`DOTNET_JitMaxLocalsToTrack`, then the `COMPlus_` prefix, and nothing
+else. A probe method with 1,200 call sites of a two-argument helper shows
+what reaches it: 921 inlined and 279 refused with nothing set, 1,200 and
+none with the variable in the environment at launch, 921 and 279 again
+with the variable set by `Main` itself as its first statement or written
+in `runtimeconfig.json` under any name. So a shell, a launcher or a parent
+process raises it, and a program cannot raise it for itself. `3072` reads
+as 0x3072: write `0xC00`.
+
+The engine reads the value the way the JIT does (`IlJitLimits.InlineLocals`)
+and the default target follows it, the cap less 24. Measured with one
+process per configuration in ABBA order, eight processes each on Blint
+and four on the clpz puzzles, the minimum over them, the median of every
+round, and the JIT's own compilation time per process (the puzzles
+compile their regions twice per process):
+
+| cap, target | Blint minimum | Blint median | puzzles minimum | puzzles median | puzzles JIT time |
+|---|---|---|---|---|---|
+| 0x400, 1,000 (the defaults) | 0.400 s | 0.493 s | 1.194 s | 1.614 s | 116 s |
+| 0xC00, 3,048 | 1.01 | 1.02 | 1.09 | 1.63 | 1.65 |
+| 0xC00, 1,000 | 0.98 | 1.02 | 0.95 | 1.23 | 1.35 |
+| 0x1600, 5,608 | 1.01 | 1.11 | 1.20 | 1.70 | 1.54 |
+
+With the cap tripled and the same plans, the regions at it are inlined
+whole and the programs run the same at the minimum, Blint 0.98 and the
+puzzles 0.95, inside the noise of a measurement across processes. With
+the target following the cap, the plans are the ones from before the
+locals model, now under no cap, and that is slower: Blint 1.01, the
+puzzles 1.09. The 7% those plans lost to the cap is what the model
+recovered, by planning rather than by the runtime, and a larger method
+is not a faster one. The cost is on the other side: the JIT spends 35%
+to 65% more time compiling the puzzles' regions, and the medians, which
+the background compilation overlaps, say so. Nothing in the toolchain
+sets the variable; a host that tries it has `0xC00` to `0x1600` as the
+sensible range, and the planner follows.
+
 ## The wasm tier
 
 Not mirrored: the wasm tier emits one function per predicate and the browser

@@ -51,7 +51,11 @@ internal static class IlRegionCost
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_LOCALS"), out var s) && s >= 0
             ? s : DefaultLocalsTarget;
 
-    public const int DefaultLocalsTarget = 1000;
+    /// <summary>The cap the JIT runs with less <see cref="CapSlack"/>: 1,000
+    /// at the JIT's own 1,024, and as much more as a host raised it.</summary>
+    public static int DefaultLocalsTarget => IlJitLimits.InlineLocals - CapSlack;
+
+    public const int CapSlack = 24;
 
     /// <summary>Temporaries per inline the table predicts, in sixteenths:
     /// 1.19. The JIT creates 1.4 to 1.8 per inline it makes, and makes 80
