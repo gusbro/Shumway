@@ -383,7 +383,7 @@ public sealed partial class IlPredicateCompiler
         // allocated over its home (ADR-049 §8): a call, only when one pends.
         var noWakes = emit.DefineLabel($"crest_nowakes_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfFalse(noWakes);
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineDropUndoneWakesMethod);

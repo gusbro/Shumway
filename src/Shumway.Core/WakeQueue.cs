@@ -3,7 +3,8 @@ namespace Shumway.Core;
 /// <summary>The queue of pending wakes (ADR-049): its array and count live
 /// inline in the activation, so the empty test made at every goal boundary and
 /// every backtrack is a single field read.</summary>
-internal struct WakeQueue
+[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+public struct WakeQueue
 {
     private (int Module, int AttrValueIdx, int OtherIdx, int AttvarHome)[]? _items;
 

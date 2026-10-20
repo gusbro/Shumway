@@ -325,8 +325,21 @@ public sealed partial class IlPredicateCompiler
     // ADR-031 — CP-free guard commit: the fast-path check that lets the
     // emitted commit skip materialising the clause choice point entirely
     // (see EmitCpFreeGuardCommit).
-    private static readonly MethodInfo EngineHasPendingWakeupsGetter =
-        typeof(Activation).GetProperty(nameof(Activation.HasPendingWakeups))!.GetGetMethod()!;
+    private static readonly FieldInfo EnginePendingWakeupsField =
+        typeof(Activation).GetField(nameof(Activation._pendingWakeups))!;
+    private static readonly FieldInfo WakeQueueCountField =
+        typeof(WakeQueue).GetField(nameof(WakeQueue.Count))!;
+
+    /// <summary><c>engine.HasPendingWakeups</c> with the activation on the
+    /// stack, as a field read: no call for the JIT to decide an inline on
+    /// and no temporaries for it, at a site every goal boundary has.</summary>
+    private static void EmitHasPendingWakeups(IlEmit emit)
+    {
+        emit.LoadFieldAddress(EnginePendingWakeupsField);
+        emit.LoadField(WakeQueueCountField);
+        emit.LoadConstant(0);
+        emit.CompareGreaterThan();
+    }
     // ADR-049 stage 2 — the region-boundary wake interrupt entry points.
     private static readonly MethodInfo EngineWakeBoundaryCallMethod =
         typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryCall))!;
@@ -1098,7 +1111,8 @@ public sealed partial class IlPredicateCompiler
                         $"[region-over] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}: {over}");
                 }
                 IlRegionCost.Log(new IlRegionCost.Emission(predicate.FunctorId, region.MemberCount,
-                    emit.LocalRefCount, emit.Size, emit.InstructionCount, emit.LocalCount, 1, Persisted: true));
+                    emit.LocalRefCount, emit.Size, emit.InstructionCount, emit.LocalCount, 1, Persisted: true,
+                    emit.InlineCount));
                 return FinishPersistedEmit(emit,
                     $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
                     + $"/{predicate.Arity} members={region.MemberCount} "

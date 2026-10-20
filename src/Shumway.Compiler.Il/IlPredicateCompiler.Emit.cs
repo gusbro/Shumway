@@ -1883,7 +1883,7 @@ public sealed partial class IlPredicateCompiler
                     // iteration when no wake pends.
                     var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
                     emit.LoadArgument(0);
-                    EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+                    EmitHasPendingWakeups(emit);
                     emit.BranchIfFalse(skipWake);
                     EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
                     emit.MarkLabel(skipWake);

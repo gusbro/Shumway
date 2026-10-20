@@ -142,12 +142,12 @@ public sealed partial class IlPredicateCompiler
             return true;
         }
         if (method == EngineFlushWakeupsForIlCutMethod)
-            return EmitGuardedCall(emit, rf, method, EngineHasPendingWakeupsGetter, true);
+            return EmitGuardedCall(emit, rf, method, EmitHasPendingWakeups, true);
         if (method == EngineWakeBoundaryCallMethod || method == EngineWakeBoundaryProceedMethod
             || method == EngineWakeBoundaryAtMethod)
-            return EmitGuardedCall(emit, rf, method, EngineHasPendingWakeupsGetter, 0);
+            return EmitGuardedCall(emit, rf, method, EmitHasPendingWakeups, 0);
         if (method == EngineMaybeCollectHeapAtCallMethod)
-            return EmitGuardedCall(emit, rf, method, EngineCallSafePointDueGetter, null);
+            return EmitGuardedCall(emit, rf, method, e => e.Call(EngineCallSafePointDueGetter), null);
         return false;
     }
 
@@ -453,7 +453,7 @@ public sealed partial class IlPredicateCompiler
     /// it. <paramref name="skipped"/> is the method's result when the guard
     /// is false (null for a void method).</summary>
     private static bool EmitGuardedCall(IlEmit emit, RegisterFile rf,
-        MethodInfo method, MethodInfo guard, object? skipped)
+        MethodInfo method, Action<IlEmit> guard, object? skipped)
     {
         var ps = method.GetParameters();
         var args = new IlLocal[ps.Length];
@@ -467,7 +467,7 @@ public sealed partial class IlPredicateCompiler
         var skip = emit.DefineLabel($"guarded_skip_{NextLabelSeq()}");
         var done = emit.DefineLabel($"guarded_done_{NextLabelSeq()}");
         emit.LoadLocal(act);
-        emit.Call(guard);
+        guard(emit);
         emit.BranchIfFalse(skip);
         if (!EmitColdExit(emit))
         {

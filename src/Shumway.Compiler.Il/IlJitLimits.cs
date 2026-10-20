@@ -14,6 +14,15 @@ internal static class IlJitLimits
     public const int Locals = 2000;
     public const int LocalRefs = 8000;
 
+    /// <summary>The locals, arguments and temporaries included, past which
+    /// the JIT inlines nothing more into a method: every later call site of
+    /// the method stays a call, a field read or a struct constructor among
+    /// them. The method's own locals count from the start and every inline
+    /// made adds temporaries. This is the JIT's JitMaxLocalsToTrack, which a
+    /// process may raise and a library cannot; it is not a MinOpts switch,
+    /// so <see cref="Exceeded"/> does not test it.</summary>
+    public const int InlineLocals = 1024;
+
     /// <summary>Whether the method as emitted so far is past any limit;
     /// <paramref name="what"/> names the first one.</summary>
     public static bool Exceeded(IlEmit emit, out string what)

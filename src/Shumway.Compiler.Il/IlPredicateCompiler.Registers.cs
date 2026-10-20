@@ -387,7 +387,6 @@ public sealed partial class IlPredicateCompiler
         Row(EngineGetStruct2VarXVarXMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
         Row(EngineGetStructureMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineGetYMethod, MachineRegs.E | MachineRegs.StackArray, MachineRegs.None);
-        Row(EngineHasPendingWakeupsGetter, MachineRegs.None, MachineRegs.None);
         Row(EngineHeapTopGetter, MachineRegs.HeapTop, MachineRegs.None);
         Row(EngineIlTailCallPendingSetter, MachineRegs.None, MachineRegs.None);
         Row(EngineIsDynMutatedMethod, MachineRegs.None, MachineRegs.None);
