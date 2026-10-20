@@ -91,12 +91,62 @@ exact. The heap top advances once, before the copy, so a collection never
 sees a half-built image, and there is no safe point inside the copy. The
 instruction has no read mode: a body argument is always built.
 
+## Holes: an image with variables
+
+The decision above took ground terms. A census of body compounds with at
+least the threshold's cells, over a corpus of 556 application modules, the
+clpz library and Blint, found the ground ones to be a minority of the
+cells built: 37% to 45% of the cells of body construction in the
+application modules were compounds with variables, with two or three
+variables in the median, 23% in clpz, 4% in Blint. So an image holds
+variables too:
+
+1. An anonymous variable is a REF cell to its own offset: relocated, an
+   unbound variable, and nothing more. A variable repeated inside the image
+   is a REF to the offset of its first occurrence. Neither needs a word at
+   copy time: the image is what the heap would hold after building the
+   term with its variables unbound.
+
+2. A named variable's first occurrence in the image is a hole, decided by
+   the compiler exactly as the unify stream would decide the occurrence: a
+   variable seen before (a permanent of the frame already initialised, a
+   temporary in a register) is a hole the copy fills from that register,
+   as `unify_value` writes one in write mode, a bare attributed variable as
+   a REF to its home; a variable first seen here is a hole the copy points
+   the register at, as `unify_variable` does, the image's cell being the
+   variable. The hole table lives in the image, so the literal id names the
+   site: two sites with the same term and the same registers share one
+   image, two with different registers are two entries. `put_blit` keeps
+   its shape, and so does the bundle, cell by cell with the holes after.
+
+3. A compound is imaged when it has at least the threshold's cells and
+   holes for at most half of them. The copy of such an image is one
+   reservation, one relocating pass and a store or a load per hole, against
+   one instruction per cell.
+
+Tier-0 and the IL tier share the copy (`Activation.BuildImage` fills the
+holes after relocating; the IL helper's row already names the register
+array); the wasm tier emits a store or a load per hole after its relocation
+loop. The soundness argument changes in one place: a reference may now
+leave the image, through a hole filled from a register. It is a write into
+the youngest cells of the heap, not a binding of any variable: nothing is
+trailed, no wakeup is due, and the occurs check has nothing to find in a
+term that did not exist before the copy.
+
+Two consequences for the tiers' bookkeeping. The wasm tier refuses a
+predicate whose text is dominated by host crossings, counting its
+compilable instructions; a `put_blit` now counts for its image's cells,
+the stores it stands for, since as one instruction the prelude's `length/2`
+read as crossings and left the tier. And the prelude and the libraries are
+baked at build time, so for them the threshold and the holes are decided
+by the build's environment, not by a running engine's switch
+(`SHUMWAY_IMAGE_HOLES`, 0 for off), which governs the code compiled after
+it.
+
 ## Not in this decision
 
 Heads keep their `get_*` matching: a `get_blit` (unify against the image in
-read mode, copy and bind in write mode) is a later extension. So is an image
-with variables, copied and then patched with the registers that hold the
-variables: it would cover most body compounds, not only ground ones. Big
+read mode, copy and bind in write mode) is a later extension. Big
 integers and rationals stay out of images while their payloads name a
 per-activation table. A clause asserted at run time interns its images in
 the pool as it interns its string literals, and the pool does not free; the
@@ -121,6 +171,16 @@ interleaved, heap cells identical in every program:
 | Blint | 0.84 (0.528 s to 0.442 s) | 0.85 |
 | nreverse | 1.01 | 1.01 |
 | the other Van Roy programs, clpz | within 3% | within the noise |
+
+With holes, against the same tip without them, one process per build,
+eight rounds ABBA over two copies, heap cells identical: Blint, the clpz
+puzzles and zebra stay within the noise of the run, which the programs
+with no candidate compound put at 0.95 to 1.05; none of the twelve builds
+such terms on its hot path. The mechanism itself, one build with the holes
+switched off against on, a loop building the census's three shapes (22
+cells with three variables seen before, 12 with one first seen and
+repeated, 40 of anonymous variables): 0.66 at the minimum and 0.60 at the
+median on the IL tier, 0.72 and 0.76 on Tier-0.
 
 A first form took images in heads too: a fact with a thirty-element list
 in its head got a copy before its `get_list`, and nreverse, which calls

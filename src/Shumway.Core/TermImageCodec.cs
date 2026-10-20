@@ -34,6 +34,9 @@ public static class TermImageCodec
                     break;
             }
         }
+        var holes = image.Holes;
+        bw.Write(holes.Length);
+        for (int i = 0; i < holes.Length; i++) bw.Write(holes[i].Key);
     }
 
     public static TermImage Read(BinaryReader br)
@@ -66,7 +69,16 @@ public static class TermImageCodec
                     break;
             }
         }
-        return new TermImage(cells, root);
+        int holeCount = br.ReadInt32();
+        if (holeCount < 0 || holeCount > length)
+            throw new InvalidDataException("An image in a bundle has more holes than cells.");
+        ImageHole[]? holes = null;
+        if (holeCount > 0)
+        {
+            holes = new ImageHole[holeCount];
+            for (int j = 0; j < holeCount; j++) holes[j] = ImageHole.FromKey(br.ReadInt64());
+        }
+        return new TermImage(cells, root, holes);
     }
 
     private static void WriteName(BinaryWriter bw, string name)

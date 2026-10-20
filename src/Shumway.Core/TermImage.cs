@@ -1,13 +1,18 @@
 namespace Shumway.Core;
 
-/// <summary>ADR-063: a ground term's cells as the heap lays them, with every
-/// heap index in them relative to the image's first cell. Immutable and
-/// shared by every activation: <c>put_blit</c> copies it to the heap top and
-/// relocates (<see cref="CopyTo"/>). Equal by content, so a literal pool
-/// interns one image per distinct term.</summary>
+/// <summary>ADR-063: a term's cells as the heap lays them, with every heap
+/// index in them relative to the image's first cell. Immutable and shared by
+/// every activation: <c>put_blit</c> copies it to the heap top and relocates
+/// (<see cref="CopyTo"/>). A variable of the term is a REF cell to its own
+/// offset (unbound once relocated) or to the offset of its first occurrence;
+/// the <see cref="Holes"/> say which cells the copy fills from a register
+/// and which registers it points at a cell. Equal by content, holes
+/// included, so a literal pool interns one image per distinct term and
+/// register assignment.</summary>
 public sealed class TermImage : IEquatable<TermImage>
 {
     private readonly Cell[] _cells;
+    private readonly ImageHole[] _holes;
 
     // What a payload gains per unit of base, by tag: an index in the low
     // bits (a REF, a STR, a LIS, a FLOAT header's pair) moves by one, a PSTR
@@ -25,7 +30,9 @@ public sealed class TermImage : IEquatable<TermImage>
         return s;
     }
 
-    public TermImage(Cell[] cells, Tag root)
+    public TermImage(Cell[] cells, Tag root) : this(cells, root, null) { }
+
+    public TermImage(Cell[] cells, Tag root, ImageHole[]? holes)
     {
         ArgumentNullException.ThrowIfNull(cells);
         if (cells.Length == 0)
@@ -33,6 +40,10 @@ public sealed class TermImage : IEquatable<TermImage>
         if (root is not (Tag.Str or Tag.Lis))
             throw new ArgumentOutOfRangeException(nameof(root), "An image is a structure or a list.");
         _cells = cells;
+        _holes = holes ?? Array.Empty<ImageHole>();
+        foreach (var h in _holes)
+            if ((uint)h.Offset >= (uint)cells.Length)
+                throw new ArgumentOutOfRangeException(nameof(holes), $"Hole at {h.Offset} is outside the image.");
         Root = root;
     }
 
@@ -43,6 +54,12 @@ public sealed class TermImage : IEquatable<TermImage>
     public int Length => _cells.Length;
 
     public ReadOnlySpan<Cell> Cells => _cells;
+
+    /// <summary>The cells the copy fills from a register, and the registers
+    /// it points at a cell, in the order they are applied.</summary>
+    public ReadOnlySpan<ImageHole> Holes => _holes;
+
+    public bool HasHoles => _holes.Length > 0;
 
     /// <summary>Copies the image into <paramref name="heap"/> at
     /// <paramref name="start"/>, every index in it relocated by that much.
@@ -62,7 +79,8 @@ public sealed class TermImage : IEquatable<TermImage>
     public Cell RootCell(int start) => Root == Tag.Lis ? Cell.Lis(start) : Cell.Str(start);
 
     public bool Equals(TermImage? other)
-        => other is not null && Root == other.Root && _cells.AsSpan().SequenceEqual(other._cells);
+        => other is not null && Root == other.Root && _cells.AsSpan().SequenceEqual(other._cells)
+            && _holes.AsSpan().SequenceEqual(other._holes);
 
     public override bool Equals(object? obj) => Equals(obj as TermImage);
 
@@ -74,6 +92,8 @@ public sealed class TermImage : IEquatable<TermImage>
             long h = (long)Root * unchecked((long)0x9E3779B97F4A7C15UL) + _cells.Length;
             for (int i = 0; i < _cells.Length; i++)
                 h = (h ^ _cells[i].Data) * 0x100000001B3L;
+            for (int i = 0; i < _holes.Length; i++)
+                h = (h ^ _holes[i].Key) * 0x100000001B3L;
             return (int)h ^ (int)(h >> 32);
         }
     }

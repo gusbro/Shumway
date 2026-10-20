@@ -507,6 +507,12 @@ public static class WasmPredicateCompiler
                         if (nm.Contains("$catchgoal_")) _sureExits[sec] += 2;
                     }
                     return;
+                case Opcode.PutBlit:
+                    // ADR-063: the work of one store per cell, as the unify
+                    // stream the image stands for; as one op, a body that
+                    // copies its term reads as text dominated by crossings.
+                    _compilable[sec] += Math.Max(1, Sec(ins).ImageLiterals?[ins.I0].Length ?? 1);
+                    return;
                 case Opcode.CallBuiltin:
                 case Opcode.ExecuteBuiltin:
                     if (BuiltinHasInlineForm(ins.I0)) _compilable[sec]++;
@@ -10681,6 +10687,40 @@ public static class WasmPredicateCompiler
             Op(new Branch(0));                          // again
             CloseNested();
             CloseNested();
+            // The holes, in their order (Activation.FillHoles is the mirror):
+            // a register's cell into the image, a bare ATTVAR as a REF to its
+            // home; or the register at the image's unbound cell.
+            var holes = image.Holes;
+            for (int k = 0; k < holes.Length; k++)
+            {
+                var h = holes[k];
+                if (h.IsOut)
+                {
+                    void Ref()
+                    {
+                        Op(new Int64Constant((long)Tag.Ref << Cell.TagShift));
+                        Op(new LocalGet(LH)); Op(new Int32Constant(h.Offset)); Op(new Int32Add());
+                        Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Or());
+                    }
+                    if (h.IsY) YStore(h.Slot, Ref); else RegStore(h.Slot, Ref);
+                }
+                else
+                {
+                    if (h.IsY) YLoad(h.Slot); else RegLoad(h.Slot);
+                    Op(new LocalSet(LC0));
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.AttVar));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    Op(new LocalGet(LC0));
+                    Op(new Int64Constant(0xFFFFFFFFL));
+                    Op(new Int64And());
+                    Op(new LocalSet(LC0));
+                    CloseNested();
+                    CellStoreDyn(LHeapB, LH, h.Offset, () => Op(new LocalGet(LC0)));
+                }
+            }
             RegStore(reg, () =>
             {
                 Op(new Int64Constant((long)image.Root << Cell.TagShift));

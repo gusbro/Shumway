@@ -451,14 +451,49 @@ public sealed partial class ClauseCompiler
     /// keep arg cells one-each and let the compound just reference the literal
     /// via the temp register.</para></summary>
     /// <summary>ADR-063: the image pool id of <paramref name="term"/> when
-    /// it is a ground compound of at least <see cref="ImageThreshold"/> cells
-    /// an image can carry, and the compilation keeps an image pool.</summary>
-    private int? TryImage(CompileState s, Term term)
+    /// it is a compound of at least <see cref="ImageThreshold"/> cells an
+    /// image can carry, with holes for at most half of them, and the
+    /// compilation keeps an image pool. A named variable in it takes the
+    /// register the unify stream would have given it, and the stream's
+    /// bookkeeping sees it taken; <paramref name="target"/> is the register
+    /// the image goes to, which no variable takes.</summary>
+    private int? TryImage(CompileState s, Term term, int target = -1)
     {
         if (!s.Building || _imageLiterals is null || ImageThreshold <= 0) return null;
-        if (term is not CompoundTerm || TermImageBuilder.CellCount(term) < ImageThreshold) return null;
-        var image = TermImageBuilder.Build(term);
+        if (term is not CompoundTerm) return null;
+        int cells = TermImageBuilder.CellCount(term);
+        if (cells < ImageThreshold) return null;
+        int holes = TermImageBuilder.HoleCount(term);
+        if (holes * 2 > cells || (holes > 0 && !ImageHoles)) return null;
+        var image = TermImageBuilder.Build(term, (name, offset) => ImageHoleFor(s, name, offset, target));
         return image is null ? null : _imageLiterals.Intern(image);
+    }
+
+    // The register a variable's first occurrence in an image comes from or
+    // goes to, exactly as CompileUnifyArg decides for the unify stream: a
+    // permanent seen before is read, else written and marked; a temporary
+    // seen before is read, else taken fresh, or in the argument register it
+    // flows to when that is not the image's own.
+    private static ImageHole ImageHoleFor(CompileState s, string name, int offset, int target)
+    {
+        if (s.Ys.TryGetValue(name, out int y))
+        {
+            if (s.YsInitialized.Contains(name)) return new ImageHole(offset, ImageHole.In | ImageHole.Y, y);
+            s.YsInitialized.Add(name);
+            return new ImageHole(offset, ImageHole.Out | ImageHole.Y, y);
+        }
+        if (!s.Xs.IsNewName(name)) return new ImageHole(offset, ImageHole.In, s.Xs.GetSlot(name));
+        int x;
+        if (s.PreferredReg.TryGetValue(name, out int pref) && pref != target)
+        {
+            x = pref;
+            s.Xs.Bind(name, pref);
+        }
+        else
+        {
+            x = s.Xs.AllocateFresh(name);
+        }
+        return new ImageHole(offset, ImageHole.Out, x);
     }
 
     private Dictionary<int, int> PreEmitMultiCellLiterals(CompileState s, Term[] args, bool images = true)
@@ -1119,7 +1154,7 @@ public sealed partial class ClauseCompiler
                 // A body argument is built, and its deferred parts inherit
                 // that: an image may stand in for a ground part (ADR-063).
                 s.Building = true;
-                if (TryImage(s, c) is { } image)
+                if (TryImage(s, c, argSlot) is { } image)
                 {
                     s.Emitter.EmitPutBlit(image, argSlot);
                     break;

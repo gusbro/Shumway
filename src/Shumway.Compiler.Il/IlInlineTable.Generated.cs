@@ -38,7 +38,7 @@ internal static partial class IlInlineTable
         ["Shumway.Compiler.Il.IlRegisterCheck::Mismatch(System.String)"] = 0,   // unprofitable inline
         ["Shumway.Compiler.Il.IlRuntimeHelpers::GetPstr(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlit(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // too many il bytes
-        ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 11,   // inlined
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutPstr(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Core.Activation::Allocate(System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::AllocateHeapUnbound()"] = 4,   // inlined

@@ -76,9 +76,78 @@ public class TermImageTests
         Assert.Equal(Cell.Lis(17), engine.GetHeap(13));   // the second copy's list is inside the second copy
     }
 
+    // f(X, Y, Z, W): X comes from A1, Y from Y1 of the frame, Z goes to A2,
+    // W to Y0; each variable is a cell the image holds unbound.
+    private static TermImage Holed()
+    {
+        var cells = new Cell[5];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 4));
+        for (int i = 1; i <= 4; i++) cells[i] = Cell.Ref(i);
+        return new TermImage(cells, Tag.Str, new[]
+        {
+            new ImageHole(1, ImageHole.In, 1),
+            new ImageHole(2, ImageHole.In | ImageHole.Y, 1),
+            new ImageHole(3, ImageHole.Out, 2),
+            new ImageHole(4, ImageHole.Out | ImageHole.Y, 0),
+        });
+    }
+
+    [Fact]
+    public void TheHolesTakeAndGiveRegisters()
+    {
+        var engine = new Activation();
+        engine.Allocate(2);
+        engine.AllocateHeap(10);
+        int older = engine.AllocateHeapUnbound();
+        engine.SetRegister(1, Cell.Ref(older));
+        engine.SetY(1, Cell.Int(42));
+        int b = engine.HeapTop;
+        Cell root = engine.BuildImage(Holed());
+        Assert.Equal(Cell.Str(b), root);
+        Assert.Equal(Cell.Ref(older), engine.GetHeap(b + 1));      // in, from the register
+        Assert.Equal(Cell.Int(42), engine.GetHeap(b + 2));         // in, from the frame
+        Assert.Equal(Cell.Ref(b + 3), engine.GetHeap(b + 3));      // unbound, and the register at it
+        Assert.Equal(Cell.Ref(b + 3), engine.GetRegister(2));
+        Assert.Equal(Cell.Ref(b + 4), engine.GetHeap(b + 4));
+        Assert.Equal(Cell.Ref(b + 4), engine.GetY(0));
+        Assert.Equal(b + 5, engine.HeapTop);
+    }
+
+    [Fact]
+    public void AnAttributedVariableComesInAsAReferenceToItsHome()
+    {
+        // As unify_value writes one: the attribute table keys on the cell's
+        // own address, and a copy would claim attributes it does not have.
+        var engine = new Activation();
+        int home = engine.AllocateHeapUnbound();
+        engine.SetRegister(1, Cell.AttVar(home));
+        var cells = new Cell[2];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[1] = Cell.Ref(1);
+        int b = engine.HeapTop;
+        engine.BuildImage(new TermImage(cells, Tag.Str, new[] { new ImageHole(1, ImageHole.In, 1) }));
+        Assert.Equal(Cell.Ref(home), engine.GetHeap(b + 1));
+    }
+
+    [Fact]
+    public void TheCodecCarriesTheHoles()
+    {
+        var image = Holed();
+        using var ms = new MemoryStream();
+        TermImageCodec.Write(new BinaryWriter(ms), image);
+        ms.Position = 0;
+        var back = TermImageCodec.Read(new BinaryReader(ms));
+        Assert.Equal(image, back);
+        Assert.Equal(4, back.Holes.Length);
+        Assert.Equal(new ImageHole(4, ImageHole.Out | ImageHole.Y, 0), back.Holes[3]);
+    }
+
     [Fact]
     public void ImagesAreEqualByContent()
     {
+        var holed = Holed();
+        Assert.Equal(holed, Holed());
+        Assert.NotEqual(holed, new TermImage(holed.Cells.ToArray(), Tag.Str));   // the same cells, no holes
         Assert.Equal(Image(), Image());
         Assert.Equal(Image().GetHashCode(), Image().GetHashCode());
         var other = Image().Cells.ToArray();

@@ -467,8 +467,8 @@ public sealed partial class IlPredicateCompiler
         Row(IlProfileCountersBump, MachineRegs.None, MachineRegs.None);
         Row(IlPutPstrHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
         // ADR-063: the reservation may grow or collect the heap, as put_pstr's.
-        Row(IlPutBlitHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
-        Row(IlPutBlitGlobalHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
+        Row(IlPutBlitHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
+        Row(IlPutBlitGlobalHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
         Row(IlWalkSubOrMissMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(PreferRationalsGetter, MachineRegs.None, MachineRegs.None);
         return t;
