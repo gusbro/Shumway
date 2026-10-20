@@ -72,18 +72,25 @@ internal static class IlRegionBuilder
     /// aggressiveness level onto this later. The budget is the prune point: a member
     /// that would push the region past it stays a trampoline boundary — i.e. a
     /// region that would otherwise overflow is pruned, and the un-pulled callees are
-    /// treated as ordinary (visible) predicates reached by the trampoline. (A real
-    /// post-emit IL-size guard — fall back if the emitted method nears 64 KB — is a
-    /// later stage; this bytecode proxy is the first-line bound.)</summary>
-    public static readonly int DefaultBudgetBytes =
+    /// treated as ordinary (visible) predicates reached by the trampoline. The bound
+    /// that keeps the method inside the JIT's optimizing range is the cost budget
+    /// of <see cref="Build"/> (<see cref="IlRegionCost"/>); this one caps the
+    /// bytecode a region absorbs.</summary>
+    public static int DefaultBudgetBytes { get; set; } =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_BUDGET"), out var b) && b > 0
             ? b : FallbackBudgetBytes;
 
+    /// <param name="memberCost">What a member adds to the region in the JIT's
+    /// measure (<see cref="IlRegionCost.MemberCost"/>); with
+    /// <paramref name="costBudget"/>, a callee whose cost would take the sum
+    /// past it stays a trampoline, like one past the byte budget.</param>
     public static IlRegion Build(
         CompiledPredicate root,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         int budgetBytes = -1,
-        Func<CompiledPredicate, bool>? extraEligible = null)
+        Func<CompiledPredicate, bool>? extraEligible = null,
+        Func<CompiledPredicate, int>? memberCost = null,
+        int costBudget = 0)
     {
         ArgumentNullException.ThrowIfNull(root);
         if (budgetBytes < 0) budgetBytes = DefaultBudgetBytes;
@@ -93,6 +100,7 @@ internal static class IlRegionBuilder
             return new IlRegion(root, members, memberFids);
 
         int sizeSum = root.BytecodeUnfused.Length;
+        int costSum = memberCost?.Invoke(root) ?? 0;
         var queue = new Queue<CompiledPredicate>();
         queue.Enqueue(root);
         while (queue.Count > 0)
@@ -106,9 +114,12 @@ internal static class IlRegionBuilder
                 if (!IsStructurallyEligible(callee)) continue;   // dynamic / empty
                 if (extraEligible is not null && !extraEligible(callee)) continue;  // caller filter
                 if (sizeSum + callee.BytecodeUnfused.Length > budgetBytes) continue;       // budget → stays trampoline
+                int cost = memberCost?.Invoke(callee) ?? 0;
+                if (costBudget > 0 && costSum + cost > costBudget) continue;               // JIT limit → stays trampoline
                 members.Add(callee);
                 memberFids.Add(fid);
                 sizeSum += callee.BytecodeUnfused.Length;
+                costSum += cost;
                 queue.Enqueue(callee);
             }
         }

@@ -48,15 +48,13 @@ public sealed partial class IlPredicateCompiler
             }
             else if (op == Opcode.AEvalBin)
             {
-                if ((BinOp)BytecodeIO.ReadInt32(code, pc + 1)
-                    is not (BinOp.Add or BinOp.Sub or BinOp.Mul)) return false;
+                if (!ArithBounds.IsLaneBinOp((BinOp)BytecodeIO.ReadInt32(code, pc + 1))) return false;
                 if (depth < 2) return false;
                 depth--;
             }
             else if (op == Opcode.AEvalUn)
             {
-                if ((UnOp)BytecodeIO.ReadInt32(code, pc + 1)
-                    is not (UnOp.Neg or UnOp.Pos)) return false;
+                if (!ArithBounds.IsLaneUnOp((UnOp)BytecodeIO.ReadInt32(code, pc + 1))) return false;
                 if (depth < 1) return false;
             }
             else if (op == Opcode.AEvalCmp)
@@ -136,6 +134,16 @@ public sealed partial class IlPredicateCompiler
                         stack.Add(ArithValue.Of(folded));
                         break;
                     }
+                    if (bin is not (BinOp.Add or BinOp.Sub or BinOp.Mul))
+                    {
+                        // Bounded by the operands: no fit check at any width.
+                        var r2 = Temp();
+                        EmitLaneBinOp(emit, bin, a, b, r2, slow, Load);
+                        Release(a);
+                        Release(b);
+                        stack.Add(new ArithValue(r2, 0, IsTemp: true));
+                        break;
+                    }
                     if (bin == BinOp.Mul && width == 0)
                     {
                         // The product must not wrap 64 bits. Factors within 31
@@ -164,24 +172,24 @@ public sealed partial class IlPredicateCompiler
                     break;
                 }
                 case Opcode.AEvalUn:
-                    if ((UnOp)a1 == UnOp.Neg)
+                {
+                    var un = (UnOp)a1;
+                    if (un == UnOp.Pos) break;
+                    var a = stack[^1];
+                    stack.RemoveAt(stack.Count - 1);
+                    if (a.Local is null && FoldUn(un, a.Constant) is { } folded)
                     {
-                        var a = stack[^1];
-                        stack.RemoveAt(stack.Count - 1);
-                        if (a.Local is null && FoldInt(BinOp.Sub, 0, a.Constant) is { } negated)
-                        {
-                            stack.Add(ArithValue.Of(negated));
-                            break;
-                        }
-                        Load(a);
-                        emit.Negate();
-                        Release(a);
-                        var r = Temp();
-                        emit.StoreLocal(r);
-                        if (width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
-                        stack.Add(new ArithValue(r, 0, IsTemp: true));
+                        stack.Add(ArithValue.Of(folded));
+                        break;
                     }
+                    var r = Temp();
+                    EmitLaneUnOp(emit, un, a, r, Load);
+                    Release(a);
+                    // Only a negation can leave 60 bits: -(-2^59).
+                    if (un == UnOp.Neg && width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
+                    stack.Add(new ArithValue(r, 0, IsTemp: true));
                     break;
+                }
                 case Opcode.AEvalCmp:
                     Load(stack[0]);
                     Load(stack[1]);
@@ -262,22 +270,157 @@ public sealed partial class IlPredicateCompiler
         return ArithBounds.OperandWidth(seq, out resultFits);
     }
 
-    /// <summary>a op b on two constants when the result is a 60-bit integer.</summary>
+    /// <summary>a op b on two constants when the result is a 60-bit integer;
+    /// null for a zero divisor, which the slow path raises.</summary>
     private static long? FoldInt(BinOp op, long a, long b)
     {
         long r;
         try
         {
-            r = op switch
+            switch (op)
             {
-                BinOp.Add => checked(a + b),
-                BinOp.Sub => checked(a - b),
-                _ => checked(a * b),
-            };
+                case BinOp.Add: r = checked(a + b); break;
+                case BinOp.Sub: r = checked(a - b); break;
+                case BinOp.Mul: r = checked(a * b); break;
+                case BinOp.IntDiv: if (b == 0) return null; r = a / b; break;
+                case BinOp.Mod:
+                    if (b == 0) return null;
+                    r = a % b;
+                    if (r != 0 && (r ^ b) < 0) r += b;
+                    break;
+                case BinOp.Min: r = System.Math.Min(a, b); break;
+                default: r = System.Math.Max(a, b); break;
+            }
         }
         catch (System.OverflowException) { return null; }
         long lim = 1L << (Cell.TagShift - 1);
         return r >= -lim && r < lim ? r : null;
+    }
+
+    /// <summary>op a on a constant when the result is a 60-bit integer.</summary>
+    private static long? FoldUn(UnOp op, long a)
+    {
+        long r = op switch
+        {
+            UnOp.Neg => -a,
+            UnOp.Abs => a < 0 ? -a : a,
+            UnOp.Sign => a > 0 ? 1 : a < 0 ? -1 : 0,
+            _ => ~a,   // BitNot
+        };
+        long lim = 1L << (Cell.TagShift - 1);
+        return r >= -lim && r < lim ? r : null;
+    }
+
+    /// <summary>a op b for the lane's operators beyond +, - and *, into
+    /// <paramref name="r"/>: //, mod, min and max, whose results the
+    /// operands bound. A zero divisor goes to <paramref name="slow"/>, where
+    /// the evaluator raises; the same ISO rules as TryFastBin.</summary>
+    private static void EmitLaneBinOp(IlEmit emit, BinOp op, ArithValue a, ArithValue b,
+        IlLocal r, IlLabel slow, Action<ArithValue> load)
+    {
+        switch (op)
+        {
+            case BinOp.IntDiv:
+            case BinOp.Mod:
+            {
+                if (b.Local is null)
+                {
+                    if (b.Constant == 0) { emit.Branch(slow); break; }
+                }
+                else
+                {
+                    load(b);
+                    emit.BranchIfFalse(slow);
+                }
+                load(a);
+                load(b);
+                if (op == BinOp.IntDiv)
+                {
+                    emit.Divide();                      // truncates toward zero, as ISO //
+                    emit.StoreLocal(r);
+                    break;
+                }
+                emit.Remainder();                        // the sign of the dividend
+                emit.StoreLocal(r);
+                // ISO mod takes the sign of the divisor: add it back when they differ.
+                var done = emit.DefineLabel($"mod_done_{NextLabelSeq()}");
+                emit.LoadLocal(r);
+                emit.BranchIfFalse(done);
+                emit.LoadLocal(r);
+                load(b);
+                emit.Xor();
+                emit.LoadConstant(0L);
+                emit.BranchIfGreaterOrEqual(done);
+                emit.LoadLocal(r);
+                load(b);
+                emit.Add();
+                emit.StoreLocal(r);
+                emit.MarkLabel(done);
+                break;
+            }
+            default:
+            {
+                // min / max: the operand the comparison picks.
+                var takeB = emit.DefineLabel($"minmax_b_{NextLabelSeq()}");
+                var done = emit.DefineLabel($"minmax_done_{NextLabelSeq()}");
+                load(a);
+                load(b);
+                if (op == BinOp.Min) emit.BranchIfGreater(takeB);
+                else emit.BranchIfLess(takeB);
+                load(a);
+                emit.StoreLocal(r);
+                emit.Branch(done);
+                emit.MarkLabel(takeB);
+                load(b);
+                emit.StoreLocal(r);
+                emit.MarkLabel(done);
+                break;
+            }
+        }
+    }
+
+    /// <summary>op a for the lane's unary operators, into <paramref name="r"/>.</summary>
+    private static void EmitLaneUnOp(IlEmit emit, UnOp op, ArithValue a, IlLocal r, Action<ArithValue> load)
+    {
+        switch (op)
+        {
+            case UnOp.Neg:
+                load(a);
+                emit.Negate();
+                emit.StoreLocal(r);
+                break;
+            case UnOp.Abs:
+            {
+                var done = emit.DefineLabel($"abs_done_{NextLabelSeq()}");
+                load(a);
+                emit.StoreLocal(r);
+                emit.LoadLocal(r);
+                emit.LoadConstant(0L);
+                emit.BranchIfGreaterOrEqual(done);
+                emit.LoadLocal(r);
+                emit.Negate();
+                emit.StoreLocal(r);
+                emit.MarkLabel(done);
+                break;
+            }
+            case UnOp.Sign:
+                // (a > 0) - (a < 0)
+                load(a);
+                emit.LoadConstant(0L);
+                emit.CompareGreaterThan();
+                load(a);
+                emit.LoadConstant(0L);
+                emit.CompareLessThan();
+                emit.Subtract();
+                emit.Convert<long>();
+                emit.StoreLocal(r);
+                break;
+            default:   // BitNot
+                load(a);
+                emit.Not();
+                emit.StoreLocal(r);
+                break;
+        }
     }
 
     /// <summary>Branches to <paramref name="slow"/> unless <paramref name="v"/>

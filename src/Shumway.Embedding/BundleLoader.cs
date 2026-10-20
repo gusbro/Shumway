@@ -983,6 +983,42 @@ internal sealed class BundleLoader
         : Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(bytes)).Substring(0, 8);
 
+#if !NETFRAMEWORK
+    /// <summary>Loads persisted IL so that its references to the engine bind.
+    /// <c>Assembly.Load(byte[])</c> gives the assembly a context of its own
+    /// whose references resolve in the default context; a host that loaded
+    /// the engine into a context of its own (a plugin, two builds side by
+    /// side) has no <c>Shumway.Core</c> there, and the first delegate fails
+    /// to bind. The context here resolves them where <c>Shumway.Embedding</c>
+    /// lives, and is the default probe when that is the default context. Not
+    /// collectible, like the delegates cached from it.</summary>
+    private static System.Reflection.Assembly LoadWhereTheEngineResolves(byte[] ilBytes)
+    {
+        var engine = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(typeof(BundleLoader).Assembly)
+            ?? System.Runtime.Loader.AssemblyLoadContext.Default;
+        return new PersistedIlLoadContext(engine)
+            .LoadFromStream(new System.IO.MemoryStream(ilBytes, writable: false));
+    }
+
+    private sealed class PersistedIlLoadContext : System.Runtime.Loader.AssemblyLoadContext
+    {
+        private readonly System.Runtime.Loader.AssemblyLoadContext _engine;
+
+        public PersistedIlLoadContext(System.Runtime.Loader.AssemblyLoadContext engine)
+            : base("Shumway persisted IL") => _engine = engine;
+
+        protected override System.Reflection.Assembly? Load(System.Reflection.AssemblyName name)
+        {
+            if (ReferenceEquals(_engine, Default)) return null;
+            foreach (var loaded in _engine.Assemblies)
+                if (string.Equals(loaded.GetName().Name, name.Name, StringComparison.OrdinalIgnoreCase))
+                    return loaded;
+            try { return _engine.LoadFromAssemblyName(name); }
+            catch (System.IO.FileNotFoundException) { return null; }
+        }
+    }
+#endif
+
     private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
     {
         // overwrite each baked build-time atom/functor/builtin id sentinel
@@ -1017,7 +1053,11 @@ internal sealed class BundleLoader
             if (entry.CompiledIlPatches is { Length: > 0 })
                 VerifyIlPatches(ilBytes, entry.CompiledIlPatches, entry.ModuleName);
         }
+#if NETFRAMEWORK
         var asm = System.Reflection.Assembly.Load(ilBytes);
+#else
+        var asm = LoadWhereTheEngineResolves(ilBytes);
+#endif
         System.Threading.Interlocked.Increment(ref PersistedIlLoadCount);
         var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
         if (type is null) return null;

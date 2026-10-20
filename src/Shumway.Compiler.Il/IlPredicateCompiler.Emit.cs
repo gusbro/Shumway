@@ -1674,14 +1674,13 @@ public sealed partial class IlPredicateCompiler
                 CpsRecordContinuation(resumeCursor);   // ADR-061
                 if (!EmitCpsCall(emit, siteFunctorId))
                 {
-                    // engine.SetPc(Activation.EncodeResumeMarker(siteFunctorId, 0));
+                    // engine.SetPc(callee entry marker): a constant of this
+                    // method (a sentinel when persisted), not a lookup per call.
                     // The dispatcher routes the marker to the callee's IL delegate
                     // (by functor id, cursor 0 = entry) or falls back to its WAM
                     // address — no resolution through the callee's WAM address here.
                     emit.LoadArgument(0);
-                    EmitFunctorId(emit, siteFunctorId);
-                    emit.LoadConstant(0);
-                    EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                    EmitResumeMarker(emit, siteFunctorId, 0);
                     EmitHelperCall(emit, EngineSetPcMethod);
 
                     // engine.IlTailCallPending = true; return true.
@@ -1759,9 +1758,7 @@ public sealed partial class IlPredicateCompiler
                     if (!EmitCpsCall(emit, siteFunctorId))
                     {
                         emit.LoadArgument(0);                 // engine.SetPc(callee entry marker)
-                        EmitFunctorId(emit, siteFunctorId);
-                        emit.LoadConstant(0);
-                        EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                        EmitResumeMarker(emit, siteFunctorId, 0);
                         EmitHelperCall(emit, EngineSetPcMethod);
                         emit.LoadArgument(0);                 // IlTailCallPending = true; return true
                         emit.LoadConstant(true);
@@ -1877,9 +1874,7 @@ public sealed partial class IlPredicateCompiler
                 if (!EmitCpsCall(emit, siteFunctorId))   // ADR-061
                 {
                     emit.LoadArgument(0);
-                    EmitFunctorId(emit, siteFunctorId);
-                    emit.LoadConstant(0);
-                    EmitHelperCall(emit, EngineEncodeResumeMarkerMethod);
+                    EmitResumeMarker(emit, siteFunctorId, 0);
                     EmitHelperCall(emit, EngineSetPcMethod);
                     emit.LoadArgument(0);
                     emit.LoadConstant(true);

@@ -78,6 +78,60 @@ public sealed partial class IlPredicateCompiler
 
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
     /// while emitting a region member's block.</summary>
+    /// <summary>What one emission of a region cost, in the JIT's measure
+    /// (<see cref="IlJitLimits"/>): the local references of the prologue,
+    /// of each member's block, and of the shared tail after them. The
+    /// calibration data of the region planner's cost model.</summary>
+    private sealed class RegionCostTrace
+    {
+        public int RootFid, Prologue, MembersEnd, ResumeCursors, LadderEntries, Attempt = 1;
+        public readonly List<(CompiledPredicate Member, int LocalRefs, int Instrs, string Ops)> Members = new();
+    }
+    private RegionCostTrace? _regionTrace;
+
+    /// <summary>The opcodes of a member body as <c>name:count</c> pairs; an
+    /// indexed member's clause ranges, since its dispatch tables are not
+    /// linearly decodable.</summary>
+    private static string OpcodeHistogram(byte[] code, IReadOnlyList<(int Start, int End)>? ranges)
+    {
+        var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        void Walk(int start, int end)
+        {
+            for (int pc = start; pc < end;)
+            {
+                var op = (Opcode)code[pc];
+                int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+                if (size <= 0) return;
+                counts[op.ToString()] = counts.TryGetValue(op.ToString(), out int n) ? n + 1 : 1;
+                pc += size;
+            }
+        }
+        if (ranges is null) Walk(0, code.Length);
+        else foreach (var (s, e) in ranges) Walk(s, e);
+        return string.Join(",", counts.Select(kv => $"{kv.Key}:{kv.Value}"));
+    }
+
+    /// <summary>The cost trace of the region method just finished, to the IL
+    /// dump: one line for the region, one per member.</summary>
+    private void DumpRegionCost(IlEmit emit)
+    {
+        var t = _regionTrace;
+        _regionTrace = null;
+        if (t is null || IlDumpPath is null) return;
+        var sb = new System.Text.StringBuilder();
+        int blocks = 0;
+        foreach (var m in t.Members) blocks += m.LocalRefs;
+        sb.Append($";;; region-cost root={t.RootFid} members={t.Members.Count} prologue={t.Prologue} blocks={blocks}")
+          .Append($" tail={emit.LocalRefCount - t.MembersEnd} total={emit.LocalRefCount} instrs={emit.InstructionCount}")
+          .Append($" bytes={emit.Size} locals={emit.LocalCount} resume={t.ResumeCursors} ladder={t.LadderEntries} attempt={t.Attempt}\n");
+        foreach (var (m, refs, instrs, ops) in t.Members)
+            sb.Append($";;; member-cost root={t.RootFid} fid={m.FunctorId} name={FidName(m.FunctorId)}/{m.Arity}")
+              .Append($" clauses={m.ClauseCount} bytes={m.BytecodeUnfused.Length} calls={m.CallSites.Count}")
+              .Append($" lvrefs={refs} instrs={instrs} ops={ops}\n");
+        lock (IlDumpLock)
+            System.IO.File.AppendAllText(IlDumpPath, sb.ToString());
+    }
+
     private sealed class RegionEmitContext
     {
         public IlRegion Region = null!;
@@ -352,9 +406,7 @@ public sealed partial class IlPredicateCompiler
         ISet<int>? extraExcluded)
     {
         if (calleeMap is null) return new[] { root.FunctorId };
-        var region = IlRegionBuilder.Build(root, calleeMap,
-            extraEligible: p => IsRegionMemberEligible(p, calleeMap)
-                && extraExcluded?.Contains(p.FunctorId) != true);
+        var region = PlanRegion(root, calleeMap, extraExcluded);
         if (!IsRegionEmittable(region, calleeMap)) return new[] { root.FunctorId };
         var s = new HashSet<int>(region.Members.Count);
         foreach (var m in region.Members) s.Add(m.FunctorId);
@@ -367,8 +419,104 @@ public sealed partial class IlPredicateCompiler
     /// that decodes <c>Cp</c> (<see cref="Activation.RegionReturnCursor"/>) — intra-region
     /// → <c>br dispatch</c> at the return cursor, cross-region → <c>return true</c>
     /// (the loop runs <c>Cp</c>).</summary>
-    private PredicateDelegate CompileRegion(IlRegion region, IlRegionPlan plan,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    /// <summary>The region rooted at <paramref name="root"/>: its local
+    /// closure under the bytecode budget and, when the cost model is on,
+    /// under <paramref name="costBudget"/> local references
+    /// (<see cref="IlRegionCost.PlanBudget"/> by default).</summary>
+    private IlRegion PlanRegion(CompiledPredicate root,
+        IReadOnlyDictionary<int, CompiledPredicate> calleeMap,
+        ISet<int>? extraExcluded = null, int costBudget = -1)
+    {
+        bool Eligible(CompiledPredicate p)
+            => IsRegionMemberEligible(p, calleeMap) && extraExcluded?.Contains(p.FunctorId) != true;
+        if (IlRegionCost.Target <= 0)
+            return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible);
+        if (costBudget < 0) costBudget = IlRegionCost.PlanBudget;
+        return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
+            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget);
+    }
+
+    /// <summary>What <paramref name="m"/> adds to a region in local
+    /// references: its block and one resume entry per clause alternative or
+    /// index node (<see cref="IlRegionCost.MemberCost"/>).</summary>
+    private int RegionMemberCost(CompiledPredicate m, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (TryDescribeIndexed(m, calleeMap, out var ii))
+            return IlRegionCost.MemberCost(m, ii!.Clauses, ii.Nodes.Count);
+        return IlRegionCost.MemberCost(m, null, Math.Max(0, m.ClauseCount - 1));
+    }
+
+    private static bool SameMembers(IlRegion a, IlRegion b)
+    {
+        if (a.MemberCount != b.MemberCount) return false;
+        foreach (var m in a.Members)
+            if (!b.IsIntraRegion(m.FunctorId)) return false;
+        return true;
+    }
+
+    /// <summary>The cursor plan of a region.</summary>
+    private IlRegionPlan PlanCursors(IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => IlRegionPlanner.Plan(region,
+            m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
+            m => RegionBuiltinResumePcs(m, calleeMap));
+
+    /// <summary>What follows the members in every region method: the wake
+    /// alternatives and their dispatch, and the resume entries.</summary>
+    private static void EmitRegionTail(IlEmit emit)
+    {
+        EmitWakeAlternatives(emit); // ADR-049
+        EmitWakeDispatch(emit);
+        EmitResumeEntries(emit);   // ADR-061
+    }
+
+    /// <summary>Measures the cost of every predicate some root would absorb,
+    /// by emitting each root's region once into a scratch method
+    /// (<see cref="IlRegionCost.Record"/>). The linker calls it before it
+    /// selects roots: a member costs the same in every region, so from here
+    /// on the membership the selector computes is the membership the emission
+    /// produces, and the emission needs no second plan.</summary>
+    public void WarmRegionCosts(IReadOnlyDictionary<int, CompiledPredicate> predicates)
+    {
+        ArgumentNullException.ThrowIfNull(predicates);
+        if (IlRegionCost.Target <= 0 || !EffectiveRegionCompile || CpsMode) return;
+        bool prevScratch = _persistScratch;
+        _persistScratch = true;
+        try
+        {
+            foreach (var root in predicates.Values)
+            {
+                using var code = new CodeScope(root);
+                IlRegion region;
+                try { region = PlanRegion(root, predicates); }
+                catch (Exception ex) when (ex is NotSupportedException or IlEmitException) { continue; }
+                if (!IsRegionEmittable(region, predicates)) continue;
+                bool measured = true;
+                foreach (var m in region.Members)
+                    if (!IlRegionCost.IsMeasured(m)) { measured = false; break; }
+                if (measured) continue;
+                var emit = IlEmit.NewDynamicMethod(
+                    $"ShumwayIlRegionScratch_{root.FunctorId}_{root.Arity}", record: false);
+                try
+                {
+                    EmitRegionInto(emit, SelfFromHolder(0), region, PlanCursors(region, predicates),
+                        predicates, typeof(Func<Activation, int, bool>));
+                    EmitRegionTail(emit);
+                }
+                catch (Exception ex) when (ex is NotSupportedException or IlEmitException) { }
+                _regionTrace = null;
+            }
+        }
+        finally
+        {
+            _persistScratch = prevScratch;
+        }
+    }
+
+    /// <summary>Null when the region is past a JIT limit and no smaller
+    /// region holds together: the root compiles on its own, as a method under
+    /// the limit, with its callees reached through trampolines.</summary>
+    private PredicateDelegate? CompileRegion(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, out IlRegionPlan finalPlan)
     {
         // The holder pattern gives the region method a reference to its own delegate
         // (for PushIlChoicePoint when a multi-clause member's clause dispatch pushes
@@ -377,26 +525,66 @@ public sealed partial class IlPredicateCompiler
         {
             int holderKey = _nextHolderKey;
             var emitSelf = SelfFromHolder(holderKey);
-            var del = CompileRegionUnlocked(region, plan, calleeMap, emitSelf);
+            var del = CompileRegionUnlocked(region, plan, calleeMap, emitSelf, out finalPlan);
+            if (del is null) return null;
             IndexedDelegateHolder.Register(holderKey, del);
             _nextHolderKey = holderKey + 1;
             return del;
         }
     }
 
-    private PredicateDelegate CompileRegionUnlocked(IlRegion region, IlRegionPlan plan,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf)
+    /// <summary>Emits the region; past a JIT limit (<see cref="IlJitLimits"/>)
+    /// it plans again, now with every member measured, and emits that: once
+    /// at the same budget, then once more under a budget lowered by the
+    /// overshoot. A discarded emission cost its IL only, never a JIT. The
+    /// third emission ships whatever it measures; a plan that keeps no member
+    /// gives up the region (null) for the root's own method.</summary>
+    private PredicateDelegate? CompileRegionUnlocked(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf,
+        out IlRegionPlan finalPlan)
     {
-        var emit = IlEmit.NewDynamicMethod(
-            $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
-            record: IlDumpPath is not null);
-        EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
-            typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
-        int regionFid = region.Root.FunctorId;
-        return FinishEmit(emit,
-            $"region root={regionFid} {FidName(regionFid)} members=["
-            + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
-            + "]");
+        for (int attempt = 1; ; attempt++)
+        {
+            var emit = IlEmit.NewDynamicMethod(
+                $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
+                record: IlDumpPath is not null);
+            EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
+                typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
+            EmitRegionTail(emit);
+            if (_regionTrace is { } tr) tr.Attempt = attempt;
+            if (IlRegionCost.Target > 0 && attempt < 3 && calleeMap is not null
+                && IlJitLimits.Exceeded(emit, out _))
+            {
+                int budget = attempt == 1
+                    ? IlRegionCost.PlanBudget
+                    : IlRegionCost.PlanBudget - Math.Max(1, emit.LocalRefCount - IlRegionCost.Target);
+                // Measured, the plan can differ in any direction: a member the
+                // estimate priced cheaply leaves and callees that did not fit
+                // beside it come in. Only the same membership is no progress.
+                var smaller = PlanRegion(region.Root, calleeMap, null, budget);
+                if (!SameMembers(smaller, region))
+                {
+                    IlRegionCost.NoteReplan();
+                    _regionTrace = null;
+                    if (!IsRegionEmittable(smaller, calleeMap))
+                    {
+                        finalPlan = plan;
+                        return null;
+                    }
+                    region = smaller;
+                    plan = PlanCursors(region, calleeMap);
+                    continue;
+                }
+            }
+            int regionFid = region.Root.FunctorId;
+            IlRegionCost.Log(new IlRegionCost.Emission(regionFid, region.MemberCount, emit.LocalRefCount,
+                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false));
+            finalPlan = plan;
+            return FinishEmit(emit,
+                $"region root={regionFid} {FidName(regionFid)} members=["
+                + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
+                + "]", regionTailDone: true);
+        }
     }
 
     /// <summary>Emit a region's body into <paramref name="emit"/> — shared by the runtime
@@ -535,6 +723,8 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(failLabel);                              // out of range (unreachable)
 
         var gcCtx = new GuardContEmitContext();              // ADR-033 (no-op if unused)
+        var trace = new RegionCostTrace { RootFid = regionFid, Prologue = emit.LocalRefCount };
+        _regionTrace = trace;
         try
         {
             for (int mi = 0; mi < region.Members.Count; mi++)
@@ -542,15 +732,28 @@ public sealed partial class IlPredicateCompiler
                 var member = region.Members[mi];
                 ctx.CurrentMemberIndex = mi;
                 _emitMemberFid = member.FunctorId;               // ADR-049
+                int refsBefore = emit.LocalRefCount, instrsBefore = emit.InstructionCount;
+                string ops;
                 emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
                 if (member.ClauseCount == 1)
+                {
                     EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
                         failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
                         calleeMap: calleeMap, regionCtx: ctx);
+                    ops = OpcodeHistogram(member.BytecodeUnfused, null);
+                }
                 else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
+                {
                     EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
+                    ops = OpcodeHistogram(member.BytecodeUnfused, idxInfo!.Clauses);
+                }
                 else
+                {
                     EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+                    ops = OpcodeHistogram(member.BytecodeUnfused, null);
+                }
+                IlRegionCost.Record(member, emit.LocalRefCount - refsBefore);
+                trace.Members.Add((member, emit.LocalRefCount - refsBefore, emit.InstructionCount - instrsBefore, ops));
             }
         }
         finally
@@ -560,6 +763,8 @@ public sealed partial class IlPredicateCompiler
 
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
+        trace.MembersEnd = emit.LocalRefCount;
+        trace.ResumeCursors = resumeCursor.Count;
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
         // Must go through EmitFunctorId, not a raw LoadConstant:
@@ -638,6 +843,7 @@ public sealed partial class IlPredicateCompiler
                 EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
             EmitFrameRestoreCommon(emit, frames, dispatchLabel);
             EmitFramePushLadder(emit, frames);
+            trace.LadderEntries = frames.Entries.Count;
         }
     }
 

@@ -30,7 +30,8 @@ public static class ArithBounds
     /// <summary>The widest operand width, from 60 down to 32 bits, under which
     /// no value of <paramref name="seq"/> leaves 2^62 in magnitude; 0 when there
     /// is none, or when the sequence has a float or bignum literal or an
-    /// operator other than +, -, * and unary - and +. <paramref name="resultFits"/>:
+    /// operator outside the integer lane of the compiled tiers: +, -, *, //,
+    /// mod, min, max, and unary -, +, abs, sign and \. <paramref name="resultFits"/>:
     /// is/2's result then stays within 2^58, a 60-bit integer.</summary>
     public static int OperandWidth(IReadOnlyList<Step> seq, out bool resultFits)
     {
@@ -68,11 +69,11 @@ public static class ArithBounds
                     depth++;
                     break;
                 case Opcode.AEvalBin:
-                    if ((BinOp)s.A1 is not (BinOp.Add or BinOp.Sub or BinOp.Mul) || depth < 2) return false;
+                    if (!IsLaneBinOp((BinOp)s.A1) || depth < 2) return false;
                     depth--;
                     break;
                 case Opcode.AEvalUn:
-                    if ((UnOp)s.A1 is not (UnOp.Neg or UnOp.Pos) || depth < 1) return false;
+                    if (!IsLaneUnOp((UnOp)s.A1) || depth < 1) return false;
                     break;
                 case Opcode.AEvalIs:
                     if (!last || depth != 1) return false;
@@ -86,6 +87,16 @@ public static class ArithBounds
         }
         return seq[seq.Count - 1].Op is Opcode.AEvalIs or Opcode.AEvalCmp;
     }
+
+    /// <summary>The binary operators the compiled tiers evaluate on integers
+    /// without the evaluator.</summary>
+    public static bool IsLaneBinOp(BinOp op)
+        => op is BinOp.Add or BinOp.Sub or BinOp.Mul or BinOp.IntDiv or BinOp.Mod or BinOp.Min or BinOp.Max;
+
+    /// <summary>The unary operators the compiled tiers evaluate on integers
+    /// without the evaluator.</summary>
+    public static bool IsLaneUnOp(UnOp op)
+        => op is UnOp.Neg or UnOp.Pos or UnOp.Abs or UnOp.Sign or UnOp.BitNot;
 
     /// <summary>Interval arithmetic over the sequence with every operand within
     /// <paramref name="w"/> bits. The bounds are doubles: the limits, 2^62 and
@@ -111,23 +122,36 @@ public static class ArithBounds
                 var b = stack[stack.Count - 1];
                 var a = stack[stack.Count - 2];
                 stack.RemoveRange(stack.Count - 2, 2);
+                double aMag = System.Math.Max(-a.Lo, a.Hi), bMag = System.Math.Max(-b.Lo, b.Hi);
                 switch ((BinOp)s.A1)
                 {
                     case BinOp.Add: r = (a.Lo + b.Lo, a.Hi + b.Hi); break;
                     case BinOp.Sub: r = (a.Lo - b.Hi, a.Hi - b.Lo); break;
-                    default:
+                    case BinOp.Mul:
                         double p1 = a.Lo * b.Lo, p2 = a.Lo * b.Hi, p3 = a.Hi * b.Lo, p4 = a.Hi * b.Hi;
                         r = (System.Math.Min(System.Math.Min(p1, p2), System.Math.Min(p3, p4)),
                              System.Math.Max(System.Math.Max(p1, p2), System.Math.Max(p3, p4)));
                         break;
+                    // a // b is at most |a| in magnitude (a zero divisor is an
+                    // error, not a value); a mod b is less than |b|.
+                    case BinOp.IntDiv: r = (-aMag, aMag); break;
+                    case BinOp.Mod: r = (-bMag, bMag); break;
+                    case BinOp.Min: r = (System.Math.Min(a.Lo, b.Lo), System.Math.Min(a.Hi, b.Hi)); break;
+                    default: r = (System.Math.Max(a.Lo, b.Lo), System.Math.Max(a.Hi, b.Hi)); break;   // Max
                 }
             }
             else if (s.Op == Opcode.AEvalUn)
             {
-                if ((UnOp)s.A1 != UnOp.Neg) continue;
+                if ((UnOp)s.A1 == UnOp.Pos) continue;
                 var a = stack[stack.Count - 1];
                 stack.RemoveAt(stack.Count - 1);
-                r = (-a.Hi, -a.Lo);
+                r = (UnOp)s.A1 switch
+                {
+                    UnOp.Neg => (-a.Hi, -a.Lo),
+                    UnOp.Abs => (0, System.Math.Max(-a.Lo, a.Hi)),
+                    UnOp.Sign => (-1, 1),
+                    _ => (-a.Hi - 1, -a.Lo - 1),   // BitNot: ~a = -a - 1
+                };
             }
             else
             {

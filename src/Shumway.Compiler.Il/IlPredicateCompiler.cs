@@ -116,13 +116,12 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Finalize an emit into a delegate, dumping its IL first when
     /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
     /// every compile site so the dump covers them all.</summary>
-    private PredicateDelegate FinishEmit(IlEmit emit, string header)
+    private PredicateDelegate FinishEmit(IlEmit emit, string header, bool regionTailDone = false)
     {
-        EmitWakeAlternatives(emit); // ADR-049
-        EmitWakeDispatch(emit);
-        EmitResumeEntries(emit);   // ADR-061
+        if (!regionTailDone) EmitRegionTail(emit);
         if (TryFinishCps(emit, header, out var cpsBase)) return cpsBase;   // ADR-061
         DumpIl(emit, header);
+        DumpRegionCost(emit);
         return emit.CreateDelegate(initLocals: ZeroLocals);
     }
 
@@ -148,11 +147,9 @@ public sealed partial class IlPredicateCompiler
     /// (<c>shumway-link --dump-il</c>) shows the exact IL the bundle ships — post-prune,
     /// region mode, forced roots — rather than the runtime all-as-roots superset.</summary>
     private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
-        IlEmit emit, string header)
+        IlEmit emit, string header, bool regionTailDone = false)
     {
-        EmitWakeAlternatives(emit); // ADR-049
-        EmitWakeDispatch(emit);
-        EmitResumeEntries(emit);   // ADR-061
+        if (!regionTailDone) EmitRegionTail(emit);
         if (_persistOptimized) emit.OptimizeAtOnce();
         if (IlDumpPath is not null)
         {
@@ -163,6 +160,7 @@ public sealed partial class IlPredicateCompiler
                 System.IO.File.AppendAllText(IlDumpPath,
                     $"\n;;; ===== {header} =====\n{text}\n");
         }
+        DumpRegionCost(emit);
         var method = emit.CreateMethod();
         _persistIlBytes += method.GetILGenerator().ILOffset;
         return method;
@@ -434,13 +432,6 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetProperty(nameof(Activation.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
-    // Theme-1 / WAM stripping: an IL caller dispatches a callee by functor id
-    // (a resume marker with cursor 0 = entry), not by resolving it to a WAM
-    // address. The dispatcher routes the marker to the callee's IL delegate
-    // directly via IlByFunctorId when it has IL, or falls back to its WAM
-    // address otherwise — so an IL-only callee needs no WAM body/address.
-    private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
-        typeof(Activation).GetMethod(nameof(Activation.EncodeResumeMarker))!;
     // Region compilation — a member's proceed decodes Cp via this to
     // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
     private static readonly MethodInfo EngineRegionReturnCursorMethod =
@@ -752,25 +743,28 @@ public sealed partial class IlPredicateCompiler
         // closure as one IL method when the region is in the minimal subset.
         if (EffectiveRegionCompile && !CpsMode && !_noBytecode && calleeMap is not null)   // ADR-061: no regions
         {
-            var region = IlRegionBuilder.Build(predicate, calleeMap,
-                extraEligible: p => IsRegionMemberEligible(p, calleeMap));
+            var region = PlanRegion(predicate, calleeMap);
             if (IsRegionEmittable(region, calleeMap, out var why))
             {
                 DiagShape("1", true, () =>
                     $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
                     + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
-                var rplan = IlRegionPlanner.Plan(region,
-                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
-                    m => RegionBuiltinResumePcs(m, calleeMap));
-                if (calleeMap is CalleeRecorder recorder)
+                var rplan = PlanCursors(region, calleeMap);
+                var del = CompileRegion(region, rplan, calleeMap, out var finalPlan);
+                if (del is not null)
                 {
-                    var members = new List<(int, int)>();
-                    foreach (var s in rplan.Sites)
-                        if (s.Kind == RegionCursorKind.MemberEntry)
-                            members.Add((region.Members[s.MemberIndex].FunctorId, s.Cursor));
-                    recorder.RegionMembers = members;
+                    if (calleeMap is CalleeRecorder recorder)
+                    {
+                        // The members of the plan that was emitted: a re-plan drops some.
+                        var members = new List<(int, int)>();
+                        foreach (var s in finalPlan.Sites)
+                            if (s.Kind == RegionCursorKind.MemberEntry)
+                                members.Add((finalPlan.Region.Members[s.MemberIndex].FunctorId, s.Cursor));
+                        recorder.RegionMembers = members;
+                    }
+                    return del;
                 }
-                return CompileRegion(region, rplan, calleeMap);
+                // Past a JIT limit with no smaller region: the root's own method.
             }
             // Explain why a predicate with a local closure didn't become a region —
             // the coverage gaps (a backtrackable-builtin member, etc.).
@@ -1062,16 +1056,13 @@ public sealed partial class IlPredicateCompiler
         // duplicative until the prune skips absorbed-only members.)
         if (EffectiveRegionCompile && !CpsMode && !_noBytecode && calleeMap is not null)   // ADR-061: no regions
         {
-            var region = IlRegionBuilder.Build(predicate, calleeMap,
-                extraEligible: p => IsRegionMemberEligible(p, calleeMap));
+            var region = PlanRegion(predicate, calleeMap);
             if (IsRegionEmittable(region, calleeMap))
             {
                 if (emitSelf is null)
                     throw new InvalidOperationException(
                         "Region predicate needs a delegates field for self-reference.");
-                var plan = IlRegionPlanner.Plan(region,
-                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
-                    m => RegionBuiltinResumePcs(m, calleeMap));
+                var plan = PlanCursors(region, calleeMap);
                 // hand the builder the (memberName, arity, entryCursor) table
                 // so the load path can alias a stripped member's functor to
                 // EncodeResumeMarker(rootFid, entryCursor) — name-relative (the runtime
@@ -1091,10 +1082,22 @@ public sealed partial class IlPredicateCompiler
                     + $"members={region.MemberCount}");
                 EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
                     typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
+                EmitRegionTail(emit);
+                // No second plan here: the prune fixed this membership when the
+                // roots were selected (WarmRegionCosts measured the members first).
+                if (IlRegionCost.Target > 0 && IlJitLimits.Exceeded(emit, out string over))
+                {
+                    IlRegionCost.NotePersistedOverflow();
+                    DiagShape("1", true, () =>
+                        $"[region-over] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}: {over}");
+                }
+                IlRegionCost.Log(new IlRegionCost.Emission(predicate.FunctorId, region.MemberCount,
+                    emit.LocalRefCount, emit.Size, emit.InstructionCount, emit.LocalCount, 1, Persisted: true));
                 return FinishPersistedEmit(emit,
                     $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
                     + $"/{predicate.Arity} members={region.MemberCount} "
-                    + $"[{string.Join(", ", region.Members.Select(m => FidName(m.FunctorId) + "/" + m.Arity))}]");
+                    + $"[{string.Join(", ", region.Members.Select(m => FidName(m.FunctorId) + "/" + m.Arity))}]",
+                    regionTailDone: true);
             }
         }
 

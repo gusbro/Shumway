@@ -51,6 +51,7 @@ Detailed designs referenced from the code:
 - [pstr-design.md](design/pstr-design.md) — partial strings for grammar processing.
 - [clpfd-list-length.md](design/clpfd-list-length.md) — `@L`, the length of a list as a CLP(FD) variable.
 - [builtin-continues-after-wakeups.md](design/builtin-continues-after-wakeups.md) — a C# builtin that binds an attributed variable yields from the wake batch.
+- [region-jit-limits.md](design/region-jit-limits.md) — a region is planned in the JIT's measure and stays inside its optimizing range.
 - [il-emission-patterns.md](design/il-emission-patterns.md) · [il-region-compilation.md](design/il-region-compilation.md) · [il-local-inlining.md](design/il-local-inlining.md) — the Tier-1 IL backend.
 - [atom-gc-coordination.md](design/atom-gc-coordination.md) — atom GC and safe points.
 - [debug-info.md](design/debug-info.md) — positions, ports, the debugger's site tables.

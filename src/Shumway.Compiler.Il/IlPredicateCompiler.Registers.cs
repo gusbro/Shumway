@@ -373,7 +373,6 @@ public sealed partial class IlPredicateCompiler
         Row(EngineDeallocateMethod, MachineRegs.E | MachineRegs.B | MachineRegs.StackTop | MachineRegs.StackArray, MachineRegs.E | MachineRegs.Cp | MachineRegs.StackTop);
         Row(EngineDerefMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(EngineEGetter, MachineRegs.E, MachineRegs.None);
-        Row(EngineEncodeResumeMarkerMethod, MachineRegs.None, MachineRegs.None);
         Row(EngineExtraTrailTopGetter, MachineRegs.None, MachineRegs.None);
         Row(EngineFailIlGuardMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineFlushWakeupsForIlCutMethod, MachineRegs.All, MachineRegs.All);
