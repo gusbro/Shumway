@@ -178,7 +178,10 @@ filled from the register that stream gave it. A variable first captured
 in a later argument's stream, or in an earlier argument's deferred part,
 has no register when the copy runs and the stream would overwrite the one
 the copy gave: such an argument keeps the stream alone. The census put
-these at 9% of the candidates in clpz and 22% in the Scryer libraries.
+these at 9% of the candidates in clpz and 22% in the Scryer libraries. So
+does an argument with a sub-term equal to another argument's compound:
+the stream shares it through that argument's register (CSE), a copy would
+build it again.
 
 Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
 the wasm tier copies and binds in the module, steps aside to the
@@ -236,11 +239,7 @@ leaves, 0.71 and 0.74 (0.77 and 0.76). The copy pays from the threshold
 on and more as the term grows. Over the corpus, nreverse, whose data fact
 is a thirty-element list, 0.92 at the minimum and 0.98 at the median;
 the other programs within the noise of the run, clpz at 1.02 and 0.98
-over eight rounds. A first form, a copy before the stream with no mode
-test, had made nreverse 6 to 8% slower: the stream ran in read mode after
-the copy. Blint's heap once grew by 108 cells: a sub-term CSE shares with
-an argument's register was copied, and the planner now leaves such an
-argument to the stream.
+over eight rounds.
 
 ## Risks
 
