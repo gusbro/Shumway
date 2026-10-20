@@ -74,6 +74,13 @@ public sealed partial class ClauseCompiler
     public static bool ImageHoles { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_HOLES") != "0";
 
+    /// <summary>ADR-063: whether a head argument's compound gets an image
+    /// before its matching stream (<c>get_blit</c>): the argument unbound,
+    /// the copy stands in for the stream. <c>SHUMWAY_IMAGE_HEADS</c>, 0 for
+    /// off: the measurement's switch, within one build.</summary>
+    public static bool ImageHeads { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_HEADS") != "0";
+
     /// <summary>ADR-035 debug codegen (<c>compile_mode=debug</c>). Two changes,
     /// both in service of a debuggable call stack:
     /// <list type="bullet">
@@ -293,9 +300,11 @@ public sealed partial class ClauseCompiler
         // the body starts, the argument registers are overwritten by call setup,
         // so CSE is switched off.
         state.CseActive = true;
+        PlanHeadImages(state, headArgs);   // ADR-063, heads
         for (int i = 0; i < headArgs.Length; i++)
             CompileHeadArg(state, headArgs[i], i);
         DrainPendingCompounds(state);
+        FinishHeadImages(state);
         state.CseActive = false;
 
         // ADR-035 — initialise the frame. The WAM writes a Y slot at the variable's

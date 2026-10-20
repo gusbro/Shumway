@@ -11,11 +11,14 @@ public readonly struct ImageHole : IEquatable<ImageHole>
     public const byte In = 0;
     public const byte Out = 1;
     public const byte Y = 2;
+    /// <summary>The register takes the copy mark: a temporary of a part
+    /// the matching stream defers, which <c>skip_if_copied</c> then skips.</summary>
+    public const byte Sentinel = 4;
 
     public ImageHole(int offset, byte kind, int slot)
     {
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
-        if (kind > (Out | Y)) throw new ArgumentOutOfRangeException(nameof(kind));
+        if (kind > (Out | Y) && kind != Sentinel) throw new ArgumentOutOfRangeException(nameof(kind));
         if (slot < 0) throw new ArgumentOutOfRangeException(nameof(slot));
         Offset = offset;
         Kind = kind;
@@ -34,6 +37,7 @@ public readonly struct ImageHole : IEquatable<ImageHole>
 
     public bool IsOut => (Kind & Out) != 0;
     public bool IsY => (Kind & Y) != 0;
+    public bool IsSentinel => Kind == Sentinel;
 
     /// <summary>The hole as one number, for hashing and bundles.</summary>
     public long Key => ((long)Offset << 32) | ((long)Kind << 24) | (uint)Slot;
@@ -45,5 +49,5 @@ public readonly struct ImageHole : IEquatable<ImageHole>
     public override bool Equals(object? obj) => obj is ImageHole h && Equals(h);
     public override int GetHashCode() => Key.GetHashCode();
     public override string ToString()
-        => $"{(IsOut ? "out" : "in")} {(IsY ? "Y" : "X")}{Slot} at {Offset}";
+        => IsSentinel ? $"mark X{Slot}" : $"{(IsOut ? "out" : "in")} {(IsY ? "Y" : "X")}{Slot} at {Offset}";
 }

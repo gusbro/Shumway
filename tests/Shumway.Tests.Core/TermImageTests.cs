@@ -114,6 +114,53 @@ public class TermImageTests
     }
 
     [Fact]
+    public void GetBlitBindsAnUnboundArgumentAndLeavesABoundOneToTheStream()
+    {
+        var engine = new Activation();
+        engine.Allocate(2);
+        engine.AllocateHeap(10);
+        int older = engine.AllocateHeapUnbound();
+        engine.SetRegister(1, Cell.Ref(older));
+        engine.SetY(1, Cell.Int(42));
+        int v = engine.AllocateHeapUnbound();
+        engine.SetRegister(0, Cell.Ref(v));
+        int b = engine.HeapTop;
+        Assert.True(engine.GetBlit(Holed(), 0));
+        Assert.Equal(Cell.Str(b), engine.GetHeap(v));            // the variable, bound to the copy
+        Assert.Equal(Cell.Ref(older), engine.GetHeap(b + 1));    // the holes, as in a put
+        Assert.Equal(Cell.Ref(b + 3), engine.GetRegister(2));
+        Assert.Equal(Cell.Ref(b + 4), engine.GetY(0));
+        // Bound now: the stream's turn, and nothing is allocated.
+        int top = engine.HeapTop;
+        Assert.False(engine.GetBlit(Holed(), 0));
+        Assert.Equal(top, engine.HeapTop);
+        // Not a variable at all: the stream's turn too (it will fail).
+        engine.SetRegister(3, Cell.Int(7));
+        Assert.False(engine.GetBlit(Holed(), 3));
+        Assert.Equal(top, engine.HeapTop);
+    }
+
+    [Fact]
+    public void TheCopyMarksTheDeferredTemporaries()
+    {
+        // g(X) with X's cell marked for the temporary X5 a deferred part would use.
+        var engine = new Activation();
+        var cells = new Cell[2];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[1] = Cell.Ref(1);
+        var image = new TermImage(cells, Tag.Str, new[] { new ImageHole(0, ImageHole.Sentinel, 5) });
+        engine.SetRegister(5, Cell.Int(0));
+        int v = engine.AllocateHeapUnbound();
+        engine.SetRegister(0, Cell.Ref(v));
+        Assert.True(engine.GetBlit(image, 0));
+        Assert.True(Activation.IsCopiedMark(engine.GetRegister(5)));
+        // The stream's turn leaves the temporaries alone.
+        engine.SetRegister(5, Cell.Int(0));
+        Assert.False(engine.GetBlit(image, 0));
+        Assert.False(Activation.IsCopiedMark(engine.GetRegister(5)));
+    }
+
+    [Fact]
     public void AnAttributedVariableComesInAsAReferenceToItsHome()
     {
         // As unify_value writes one: the attribute table keys on the cell's

@@ -879,6 +879,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
                         RemapLit(code, pc + 1, strings, _literalPools.Strings);
                         break;
                     case Shumway.Core.Opcode.PutBlit:   // ADR-063
+                    case Shumway.Core.Opcode.GetBlit:
                         RemapLit(code, pc + 1, images, _literalPools.Images);
                         break;
                     case Shumway.Core.Opcode.AEvalPush:

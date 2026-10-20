@@ -587,6 +587,29 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    /// <summary>ADR-063, heads. Returns the instruction's position: the image
+    /// id (at +1) and the skip target (at +9) are patched after the stream.</summary>
+    public int EmitGetBlit(int imageLitId, int argSlot)
+    {
+        int pos = Position;
+        _bytes.Add((byte)Opcode.GetBlit);
+        EmitInt(imageLitId);
+        EmitInt(argSlot);
+        EmitInt(0);
+        return pos;
+    }
+
+    /// <summary>ADR-063, heads. Returns the instruction's position: the target
+    /// (at +5) is patched after the part's stream.</summary>
+    public int EmitSkipIfCopied(int slot)
+    {
+        int pos = Position;
+        _bytes.Add((byte)Opcode.SkipIfCopied);
+        EmitInt(slot);
+        EmitInt(0);
+        return pos;
+    }
+
     public void EmitPutVariableY(int destPermSlot, int argSlot)
     {
         _bytes.Add((byte)Opcode.PutVariableY);

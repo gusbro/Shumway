@@ -173,6 +173,8 @@ internal static class IlRegionCost
         Opcode.GetVariableY => 30,
         Opcode.PutVariableY => 26,
         Opcode.PutBlit => 13,
+        Opcode.GetBlit => 13,
+        Opcode.SkipIfCopied => 4,
         Opcode.UnifyList => 10,
         Opcode.UnifyStructure => 9,
         _ => 0,

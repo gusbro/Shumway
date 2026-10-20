@@ -184,6 +184,34 @@ public sealed partial class ClauseCompiler
             bool isList = comp.Functor == "." && comp.Args.Length == 2;
             s.Building = build;
 
+            // ADR-063, heads: an argument with an image gets its get_blit
+            // before its stream, each of its deferred parts a skip_if_copied
+            // before its own; the targets are patched after each stream, the
+            // image id when the head is done and every register known.
+            HeadImage? owner = null;
+            int patchAt = -1;
+            if (!build && s.HeadImages is { } images)
+            {
+                foreach (var hi in images)
+                {
+                    if (hi.ArgSlot == slot && ReferenceEquals(hi.Term, comp))
+                    {
+                        hi.GetBlitPos = s.Emitter.EmitGetBlit(0, slot);
+                        patchAt = hi.GetBlitPos + 9;
+                        owner = hi;
+                        break;
+                    }
+                    if (hi.DeferredSlots.Contains(slot))
+                    {
+                        patchAt = s.Emitter.EmitSkipIfCopied(slot) + 5;
+                        owner = hi;
+                        break;
+                    }
+                }
+            }
+            var prevOwner = s.CurrentHeadImage;
+            s.CurrentHeadImage = owner;
+
             var multiCellTemps = PreEmitMultiCellLiterals(s, comp.Args);
 
             if (isList)
@@ -208,12 +236,158 @@ public sealed partial class ClauseCompiler
                     CompileUnifyArg(s, comp.Args[i]);
             }
 
+            s.CurrentHeadImage = prevOwner;
+            if (patchAt >= 0)
+            {
+                s.Emitter.PatchInt32(patchAt, s.Emitter.Position);
+                s.DispatchSites.Add(patchAt);
+            }
+
             // CSE: this top-level head-argument compound now lives, fully
             // matched, in its (stable) argument register — record it so a later
             // head sub-term equal to it is referenced instead of rebuilt.
             if (s.CseActive && slot < s.Arity && StructuralKey(comp) is string key)
                 s.CseMap.TryAdd(key, slot);
         }
+    }
+
+    /// <summary>ADR-063, heads: an argument whose compound has an image
+    /// before its matching stream.</summary>
+    internal sealed class HeadImage
+    {
+        public int ArgSlot { get; init; }
+        public CompoundTerm Term { get; init; } = null!;
+        public int GetBlitPos { get; set; } = -1;
+        /// <summary>The temporaries of the parts the stream defers: the copy
+        /// marks them, and their streams skip.</summary>
+        public List<int> DeferredSlots { get; } = new();
+    }
+
+    // ADR-063, heads. The arguments an image may stand in for, decided before
+    // the head compiles: at least the threshold's cells, holes for at most
+    // half of them, nothing an image cannot carry, and every named variable
+    // of the argument available when its get_blit runs: first met, in the
+    // order the streams run (every argument's own stream first, the deferred
+    // parts after, first in first out), either in this argument, or as a
+    // plain argument (its register holds the call's argument throughout),
+    // or in an earlier argument's own stream. A variable first captured in
+    // a later argument's stream or in an earlier one's deferred part has no
+    // register yet, and the stream would overwrite the one the copy gave.
+    private void PlanHeadImages(CompileState s, Term[] headArgs)
+    {
+        s.HeadImages = null;
+        s.CurrentHeadImage = null;
+        if (!ImageHeads || _imageLiterals is null || ImageThreshold <= 0) return;
+        var first = new Dictionary<string, (int Arg, int Kind)>();   // kind: 0 plain, 1 own stream, 2 deferred part
+        var deferred = new Queue<(int Arg, CompoundTerm C)>();
+        void Walk(CompoundTerm c, int arg, int kind)
+        {
+            while (true)
+            {
+                CompoundTerm? tail = null;
+                for (int i = 0; i < c.Args.Length; i++)
+                {
+                    switch (c.Args[i])
+                    {
+                        case VarTerm v when v.Name != "_":
+                            if (!first.ContainsKey(v.Name)) first[v.Name] = (arg, kind);
+                            break;
+                        case CompoundTerm sub:
+                            if (i == c.Args.Length - 1 && CanInlineCompound(sub)) tail = sub;
+                            else deferred.Enqueue((arg, sub));
+                            break;
+                    }
+                }
+                if (tail is null) return;
+                c = tail;
+            }
+        }
+        // The head loop binds every plain argument to its register before
+        // the streams drain, so a plain variable comes first wherever it sits.
+        for (int a = 0; a < headArgs.Length; a++)
+            if (headArgs[a] is VarTerm v && v.Name != "_" && !first.ContainsKey(v.Name)) first[v.Name] = (a, 0);
+        for (int a = 0; a < headArgs.Length; a++)
+            if (headArgs[a] is CompoundTerm c) Walk(c, a, 1);
+        while (deferred.Count > 0) { var (a, c) = deferred.Dequeue(); Walk(c, a, 2); }
+
+        // CSE shares a sub-term equal to a top-level argument compound with
+        // that argument's register; a copy would build it again.
+        HashSet<string>? shared = null;
+        for (int a = 0; a < headArgs.Length; a++)
+            if (headArgs[a] is CompoundTerm c && StructuralKey(c) is string k)
+                (shared ??= new HashSet<string>(StringComparer.Ordinal)).Add(k);
+
+        List<HeadImage>? plan = null;
+        for (int a = 0; a < headArgs.Length; a++)
+        {
+            if (headArgs[a] is not CompoundTerm c) continue;
+            int cells = TermImageBuilder.CellCount(c);
+            if (cells < ImageThreshold || TermImageBuilder.HoleCount(c) * 2 > cells) continue;
+            if (TermImageBuilder.Build(c, (_, offset) => new ImageHole(offset, ImageHole.Out, 0)) is null) continue;
+            bool eligible = true;
+            var pending = new Stack<Term>();
+            pending.Push(c);
+            while (eligible && pending.Count > 0)
+            {
+                switch (pending.Pop())
+                {
+                    case CompoundTerm k:
+                        if (shared is not null && !ReferenceEquals(k, c)
+                            && StructuralKey(k) is string kk && shared.Contains(kk))
+                        {
+                            eligible = false;
+                            break;
+                        }
+                        foreach (var x in k.Args) pending.Push(x);
+                        break;
+                    case VarTerm v when v.Name != "_":
+                        var site = first[v.Name];
+                        eligible = site.Arg == a || site.Kind == 0 || (site.Arg < a && site.Kind == 1);
+                        break;
+                }
+            }
+            if (!eligible) continue;
+            plan ??= new List<HeadImage>();
+            plan.Add(new HeadImage { ArgSlot = a, Term = c });
+        }
+        if (plan is null) return;
+        s.HeadImages = plan;
+        s.HeadFirstSites = first;
+    }
+
+    // The head compiled, every variable has its register: the images are
+    // built with their holes, the deferred temporaries as marks, and each
+    // get_blit learns its image's id.
+    private void FinishHeadImages(CompileState s)
+    {
+        if (s.HeadImages is not { } images) return;
+        foreach (var hi in images)
+        {
+            if (hi.GetBlitPos < 0) continue;   // its stream never ran: nothing to patch
+            var image = TermImageBuilder.Build(hi.Term, (name, offset) => HeadHoleFor(s, name, offset, hi.ArgSlot))!;
+            var holes = new List<ImageHole>(image.Holes.ToArray());
+            foreach (int t in hi.DeferredSlots) holes.Add(new ImageHole(0, ImageHole.Sentinel, t));
+            int id = _imageLiterals!.Intern(new TermImage(image.Cells.ToArray(), image.Root,
+                holes.Count == 0 ? null : holes.ToArray()));
+            s.Emitter.PatchInt32(hi.GetBlitPos + 1, id);
+        }
+        s.HeadImages = null;
+        s.HeadFirstSites = null;
+        s.CurrentHeadImage = null;
+    }
+
+    // The register a head variable comes from or goes to when the argument's
+    // copy runs: a plain argument's own register (the call's argument, there
+    // throughout the head); for the rest the register the streams gave it,
+    // read when another stream gave it, written when this argument's did.
+    private static ImageHole HeadHoleFor(CompileState s, string name, int offset, int arg)
+    {
+        var site = s.HeadFirstSites![name];
+        if (site.Kind == 0) return new ImageHole(offset, ImageHole.In, site.Arg);
+        bool own = site.Arg == arg;
+        if (s.Ys.TryGetValue(name, out int y))
+            return new ImageHole(offset, own ? (byte)(ImageHole.Out | ImageHole.Y) : (byte)(ImageHole.In | ImageHole.Y), y);
+        return new ImageHole(offset, own ? ImageHole.Out : ImageHole.In, s.Xs.GetSlot(name));
     }
 
     /// <summary>A canonical structural key for CSE, distinguishing functor,
@@ -601,6 +775,7 @@ public sealed partial class ClauseCompiler
                 int temp = s.Xs.AllocateAnonymousSlot();
                 s.Emitter.EmitUnifyVariableX(temp);
                 s.Pending.Enqueue((temp, c, s.Building));
+                s.CurrentHeadImage?.DeferredSlots.Add(temp);   // ADR-063, heads
                 break;
 
             // FloatTerm and StringTerm are handled upstream by
@@ -1259,6 +1434,13 @@ public sealed partial class ClauseCompiler
         public Dictionary<string, int> PreferredReg { get; } = new();
         public int PermanentCount { get; }
         public Queue<(int Slot, CompoundTerm Compound, bool Build)> Pending { get; } = new();
+
+        /// <summary>ADR-063, heads: the arguments an image stands in for, the
+        /// one whose stream is being emitted, and where each named variable
+        /// of the head is first met in stream order.</summary>
+        public List<HeadImage>? HeadImages { get; set; }
+        public HeadImage? CurrentHeadImage { get; set; }
+        public Dictionary<string, (int Arg, int Kind)>? HeadFirstSites { get; set; }
 
         /// <summary>ADR-063: the unify stream being compiled builds a fresh
         /// term (a body argument), so an image may stand in for a ground part

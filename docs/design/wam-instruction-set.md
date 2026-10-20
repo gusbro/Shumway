@@ -846,6 +846,31 @@ by default) and holes for at most half of them, in place of the
 argument of a compound being built, the register is then referenced with
 `unify_value_x`, like a float or a string literal.
 
+### get_blit (0x6B)
+
+Operands: `int image_literal_id`, `reg arg`, `addr skip`
+Total size: 13 bytes
+
+The prefix of a head argument's matching stream. The argument unbound: the
+image is copied to the heap top as `put_blit` copies it, its holes filled,
+the temporaries of the parts the stream defers set to the copy mark, the
+variable bound to the copy (trailed when older than HB, an attributed one
+with its wakeups queued), and control continues at `skip`, past the
+argument's own stream. Bound, or not a variable: the stream that follows
+matches as it would without the prefix. The compiler emits it for a head
+argument compound with at least `ImageThreshold` cells, holes for at most
+half of them, and every named variable available when it runs.
+
+### skip_if_copied (0x6C)
+
+Operands: `reg temp`, `addr target`
+Total size: 9 bytes
+
+Before the deferred part of an argument that has a `get_blit`: when the
+temporary holds the copy mark, the part is on the heap already and control
+continues at `target`; otherwise the part's `get_structure` matches it as
+before.
+
 ---
 
 ## Halt and reserved opcodes

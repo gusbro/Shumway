@@ -2667,6 +2667,29 @@ public sealed partial class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.GetBlit:   // ADR-063, heads
+                {
+                    int arg = ReadI32(code, codeArr, pc + 5);
+                    // A bound argument is the stream's: nothing resolved for it.
+                    if (_engine.GetRegister(arg).Tag is Tag.Ref or Tag.AttVar
+                        && _engine.GetBlit(ResolveImage(ReadI32(code, codeArr, pc + 1)), arg))
+                        _engine.SetPc(ReadI32(code, codeArr, pc + 9));
+                    else
+                        _engine.SetPc(pc + 13);
+                    inClause = true;
+                    break;
+                }
+
+                case Opcode.SkipIfCopied:   // ADR-063, heads
+                {
+                    int reg = ReadI32(code, codeArr, pc + 1);
+                    _engine.SetPc(Activation.IsCopiedMark(_engine.GetRegister(reg))
+                        ? ReadI32(code, codeArr, pc + 5)
+                        : pc + 9);
+                    inClause = true;
+                    break;
+                }
+
                 // ---------- Float literal opcodes ----------
 
                 case Opcode.GetFloat:
