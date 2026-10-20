@@ -577,7 +577,7 @@ public sealed class Parser
         // the same error as `X = *`, and the conforming spelling is `X = ('\\')`.
         // The leniencies that do accept it: arity_compat (Arity sources use
         // operator atoms, quoted or bare, as plain operands: `X = table`,
-        // `'DROP TABLE '-table`) and the SWI dialect scope
+        // `DynamicVariableMap-dynamic`) and the SWI dialect scope
         // (LenientBareOperatorOperands — SWI accepts them everywhere).
         Token pk = PeekToken();
         Term prim = ReadPrimary();
