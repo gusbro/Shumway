@@ -62,8 +62,8 @@ public class OperatorAtomOperandTests
     [Theory]
     [InlineData("X = table")]
     [InlineData("X = dynamic")]
-    [InlineData("S = 'DROP TABLE '-table")]            // operand of `-`, maximum priority 499
-    [InlineData("is_dynamic_trn(M, T, dynamic)")]
+    [InlineData("S = 'my table '-table")]            // operand of `-`, maximum priority 499
+    [InlineData("make_dynamic(Data, Host, dynamic)")]
     [InlineData("ifthenelse(Type = table, a, b)")]
     public void BareOperatorAtomOperand_AcceptedUnderArityCompat(string source)
     {
