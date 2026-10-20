@@ -64,6 +64,13 @@ internal static partial class IlInlineTable
 
     public static int Count => Table.Count;
 
+    // GetMethodBody is trim-unsafe (IL2026): trimming may change a body, and
+    // so its size. The size here only guesses the inlines of a helper the
+    // table does not name, and a trimmed app (the browser) runs no IL
+    // emitter: Tier-1 needs dynamic code.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The body's size is a guess at the JIT's inlining for a method "
+        + "the table does not know, and the emitter never runs in a trimmed app.")]
     private static int Guess(MethodBase m)
     {
         var flags = m.GetMethodImplementationFlags();
