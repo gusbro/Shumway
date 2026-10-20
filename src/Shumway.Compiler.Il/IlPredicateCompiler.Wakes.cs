@@ -453,7 +453,7 @@ public sealed partial class IlPredicateCompiler
         var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
         var wake = emit.DefineLabel($"arith_wake_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfFalse(skip);
         foreach (var (kind, val) in operands)
         {
@@ -537,7 +537,7 @@ public sealed partial class IlPredicateCompiler
         System.Threading.Interlocked.Increment(ref HandoverPoints);
         var skip = emit.DefineLabel($"swake_skip_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfFalse(skip);
         // The frames the callees allocated, innermost first from E.
         var env = new IlLocal?[n];
@@ -662,7 +662,7 @@ public sealed partial class IlPredicateCompiler
         System.Threading.Interlocked.Increment(ref WindowPoints);
         var skip = emit.DefineLabel($"wwake_skip_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfFalse(skip);
         emit.LoadArgument(0);
         emit.LoadConstant(0);

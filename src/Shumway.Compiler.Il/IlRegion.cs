@@ -84,13 +84,18 @@ internal static class IlRegionBuilder
     /// measure (<see cref="IlRegionCost.MemberCost"/>); with
     /// <paramref name="costBudget"/>, a callee whose cost would take the sum
     /// past it stays a trampoline, like one past the byte budget.</param>
+    /// <param name="memberLocals">What a member adds in the JIT's locals
+    /// (<see cref="IlRegionCost.MemberLocals"/>), under
+    /// <paramref name="localsBudget"/> the same way.</param>
     public static IlRegion Build(
         CompiledPredicate root,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         int budgetBytes = -1,
         Func<CompiledPredicate, bool>? extraEligible = null,
         Func<CompiledPredicate, int>? memberCost = null,
-        int costBudget = 0)
+        int costBudget = 0,
+        Func<CompiledPredicate, int>? memberLocals = null,
+        int localsBudget = 0)
     {
         ArgumentNullException.ThrowIfNull(root);
         if (budgetBytes < 0) budgetBytes = DefaultBudgetBytes;
@@ -101,6 +106,8 @@ internal static class IlRegionBuilder
 
         int sizeSum = root.BytecodeUnfused.Length;
         int costSum = memberCost?.Invoke(root) ?? 0;
+        int localsSum = memberLocals?.Invoke(root) ?? 0;
+        CompiledPredicate? firstRefused = null;   // by the locals budget, with the root alone
         var queue = new Queue<CompiledPredicate>();
         queue.Enqueue(root);
         while (queue.Count > 0)
@@ -116,12 +123,26 @@ internal static class IlRegionBuilder
                 if (sizeSum + callee.BytecodeUnfused.Length > budgetBytes) continue;       // budget → stays trampoline
                 int cost = memberCost?.Invoke(callee) ?? 0;
                 if (costBudget > 0 && costSum + cost > costBudget) continue;               // JIT limit → stays trampoline
+                int locals = memberLocals?.Invoke(callee) ?? 0;
+                if (localsBudget > 0 && localsSum + locals > localsBudget)                  // inline cap → stays trampoline
+                {
+                    if (members.Count == 1) firstRefused ??= callee;
+                    continue;
+                }
                 members.Add(callee);
                 memberFids.Add(fid);
                 sizeSum += callee.BytecodeUnfused.Length;
                 costSum += cost;
+                localsSum += locals;
                 queue.Enqueue(callee);
             }
+        }
+        // A root alone is a method, not a region: two members past the cap
+        // beat two methods and a trampoline between them.
+        if (members.Count == 1 && firstRefused is not null)
+        {
+            members.Add(firstRefused);
+            memberFids.Add(firstRefused.FunctorId);
         }
         return new IlRegion(root, members, memberFids);
     }

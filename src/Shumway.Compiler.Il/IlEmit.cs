@@ -131,6 +131,26 @@ public sealed class IlEmit
     /// <summary>Locals declared so far.</summary>
     public int LocalCount { get; private set; }
 
+    /// <summary>The inlines the JIT will make for the calls and the struct
+    /// constructors emitted so far (<see cref="IlInlineTable"/>). Each adds
+    /// temporaries to the method's locals, whose count the JIT caps for
+    /// inlining (<see cref="IlJitLimits.InlineLocals"/>).</summary>
+    public int InlineCount { get; private set; }
+
+    /// <summary>When set, every method a direct call or a construction
+    /// names is recorded in <see cref="CalleesSeen"/>: the table's generator
+    /// compiles a corpus and probes what it saw.</summary>
+    public static bool RecordCallees { get; set; }
+
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<MethodBase, byte> CalleesSeen = new();
+
+    private void NoteCallee(MethodBase method, bool built)
+    {
+        if (built || method is MethodBuilder) return;
+        InlineCount += IlInlineTable.Inlines(method);
+        if (RecordCallees) CalleesSeen.TryAdd(method, 0);
+    }
+
     /// <summary>The labels declared and not yet marked.</summary>
     public IReadOnlyList<IlLabel> UnmarkedLabels => _labels.Where(l => !l.Marked).ToList();
 
@@ -321,6 +341,13 @@ public sealed class IlEmit
 
     // ---- fields, elements, conversions ----
 
+    public void LoadFieldAddress(FieldInfo field)
+    {
+        Begin();
+        _il.Emit(OpCodes.Ldflda, field);
+        Text("ldflda", field.ToString());
+    }
+
     public void LoadField(FieldInfo field)
     {
         Begin();
@@ -472,6 +499,7 @@ public sealed class IlEmit
         _pendingOp = op;
         _pendingMethod = method;
         _pendingBuilt = built;
+        if (op == OpCodes.Call) NoteCallee(method, built);
         _pendingTextAt = _text?.Length ?? 0;
         Text(op.Name!, method is MethodBuilder ? method.Name : method.ToString());
     }
@@ -486,6 +514,7 @@ public sealed class IlEmit
     public void NewObject(ConstructorInfo constructor)
     {
         Begin();
+        NoteCallee(constructor, built: false);
         _il.Emit(OpCodes.Newobj, constructor);
         Text("newobj", constructor.ToString());
     }

@@ -107,7 +107,7 @@ public sealed partial class Activation
     // failure fails the triggering unification. The queue is transient
     // — not trailed — because it is consumed before the next goal and
     // cleared outright on backtracking.
-    private WakeQueue _pendingWakeups;
+    [EditorBrowsable(EditorBrowsableState.Never)] public WakeQueue _pendingWakeups;   // Tier-1 IL reads its count in place
 
     // catch/3 scopes, innermost last. Pushed by '$catch_begin', deactivated
     // by '$catch_end'; both operations are recorded on the extra trail

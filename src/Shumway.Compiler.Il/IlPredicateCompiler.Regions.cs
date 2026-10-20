@@ -84,8 +84,8 @@ public sealed partial class IlPredicateCompiler
     /// calibration data of the region planner's cost model.</summary>
     private sealed class RegionCostTrace
     {
-        public int RootFid, Prologue, MembersEnd, ResumeCursors, LadderEntries, Attempt = 1;
-        public readonly List<(CompiledPredicate Member, int LocalRefs, int Instrs, string Ops)> Members = new();
+        public int RootFid, Prologue, MembersEnd, MembersEndInlines, MembersEndLocals, PrologueLocals, ResumeCursors, LadderEntries, Attempt = 1;
+        public readonly List<(CompiledPredicate Member, int LocalRefs, int Instrs, int Inlines, int Locals, string Ops)> Members = new();
     }
     private RegionCostTrace? _regionTrace;
 
@@ -119,15 +119,18 @@ public sealed partial class IlPredicateCompiler
         _regionTrace = null;
         if (t is null || IlDumpPath is null) return;
         var sb = new System.Text.StringBuilder();
-        int blocks = 0;
-        foreach (var m in t.Members) blocks += m.LocalRefs;
+        int blocks = 0, blockInlines = 0, blockLocals = 0;
+        foreach (var m in t.Members) { blocks += m.LocalRefs; blockInlines += m.Inlines; blockLocals += m.Locals; }
         sb.Append($";;; region-cost root={t.RootFid} members={t.Members.Count} prologue={t.Prologue} blocks={blocks}")
           .Append($" tail={emit.LocalRefCount - t.MembersEnd} total={emit.LocalRefCount} instrs={emit.InstructionCount}")
-          .Append($" bytes={emit.Size} locals={emit.LocalCount} resume={t.ResumeCursors} ladder={t.LadderEntries} attempt={t.Attempt}\n");
-        foreach (var (m, refs, instrs, ops) in t.Members)
+          .Append($" bytes={emit.Size} locals={emit.LocalCount} resume={t.ResumeCursors} ladder={t.LadderEntries} attempt={t.Attempt}")
+          .Append($" inlines={emit.InlineCount} blockinlines={blockInlines} tailinlines={emit.InlineCount - t.MembersEndInlines}")
+          .Append($" prologuelocals={t.PrologueLocals} blocklocals={blockLocals} taillocals={emit.LocalCount - t.MembersEndLocals}")
+          .Append($" jitlocals={IlRegionCost.Locals(emit.LocalCount, emit.InlineCount)}\n");
+        foreach (var (m, refs, instrs, inlines, locals, ops) in t.Members)
             sb.Append($";;; member-cost root={t.RootFid} fid={m.FunctorId} name={FidName(m.FunctorId)}/{m.Arity}")
               .Append($" clauses={m.ClauseCount} bytes={m.BytecodeUnfused.Length} calls={m.CallSites.Count}")
-              .Append($" lvrefs={refs} instrs={instrs} ops={ops}\n");
+              .Append($" lvrefs={refs} instrs={instrs} inlines={inlines} locals={locals} ops={ops}\n");
         lock (IlDumpLock)
             System.IO.File.AppendAllText(IlDumpPath, sb.ToString());
     }
@@ -422,19 +425,35 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The region rooted at <paramref name="root"/>: its local
     /// closure under the bytecode budget and, when the cost model is on,
     /// under <paramref name="costBudget"/> local references
-    /// (<see cref="IlRegionCost.PlanBudget"/> by default).</summary>
+    /// (<see cref="IlRegionCost.PlanBudget"/> by default) and
+    /// <paramref name="localsBudget"/> of the JIT's locals
+    /// (<see cref="IlRegionCost.LocalsPlanBudget"/>).</summary>
     private IlRegion PlanRegion(CompiledPredicate root,
         IReadOnlyDictionary<int, CompiledPredicate> calleeMap,
-        ISet<int>? extraExcluded = null, int costBudget = -1)
+        ISet<int>? extraExcluded = null, int costBudget = -1, int localsBudget = -1)
     {
         bool Eligible(CompiledPredicate p)
             => IsRegionMemberEligible(p, calleeMap) && extraExcluded?.Contains(p.FunctorId) != true;
         if (IlRegionCost.Target <= 0)
             return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible);
         if (costBudget < 0) costBudget = IlRegionCost.PlanBudget;
-        return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
+        var byRefs = IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
             memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget);
+        if (localsBudget < 0) localsBudget = IlRegionCost.LocalsTarget > 0 ? IlRegionCost.LocalsPlanBudget : 0;
+        if (localsBudget <= 0) return byRefs;
+        // The locals budget applies to a large region only (IlRegionCost.LocalsFloorRefs).
+        int refs = 0;
+        foreach (var m in byRefs.Members) refs += RegionMemberCost(m, calleeMap);
+        if (refs < IlRegionCost.LocalsFloorRefs) return byRefs;
+        return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
+            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget,
+            memberLocals: m => RegionMemberLocals(m, calleeMap), localsBudget: localsBudget);
     }
+
+    /// <summary>What <paramref name="m"/> adds to a region in the JIT's
+    /// locals (<see cref="IlRegionCost.MemberLocals"/>).</summary>
+    private int RegionMemberLocals(CompiledPredicate m, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => IlRegionCost.MemberLocals(m, TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Clauses : null);
 
     /// <summary>What <paramref name="m"/> adds to a region in local
     /// references: its block and one resume entry per clause alternative or
@@ -534,7 +553,8 @@ public sealed partial class IlPredicateCompiler
     }
 
     /// <summary>Emits the region; past a JIT limit (<see cref="IlJitLimits"/>)
-    /// it plans again, now with every member measured, and emits that: once
+    /// or the locals target (<see cref="IlRegionCost.LocalsTarget"/>) it
+    /// plans again, now with every member measured, and emits that: once
     /// at the same budget, then once more under a budget lowered by the
     /// overshoot. A discarded emission cost its IL only, never a JIT. The
     /// third emission ships whatever it measures; a plan that keeps no member
@@ -552,16 +572,22 @@ public sealed partial class IlPredicateCompiler
                 typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
             EmitRegionTail(emit);
             if (_regionTrace is { } tr) tr.Attempt = attempt;
+            int jitLocals = IlRegionCost.Locals(emit.LocalCount, emit.InlineCount);
+            bool overLocals = IlRegionCost.LocalsTarget > 0 && jitLocals > IlRegionCost.LocalsTarget
+                && emit.LocalRefCount >= IlRegionCost.LocalsFloorRefs;
             if (IlRegionCost.Target > 0 && attempt < 3 && calleeMap is not null
-                && IlJitLimits.Exceeded(emit, out _))
+                && (IlJitLimits.Exceeded(emit, out _) || overLocals))
             {
                 int budget = attempt == 1
                     ? IlRegionCost.PlanBudget
                     : IlRegionCost.PlanBudget - Math.Max(1, emit.LocalRefCount - IlRegionCost.Target);
+                int localsBudget = attempt == 1 || !overLocals
+                    ? -1
+                    : IlRegionCost.LocalsPlanBudget - Math.Max(1, jitLocals - IlRegionCost.LocalsTarget);
                 // Measured, the plan can differ in any direction: a member the
                 // estimate priced cheaply leaves and callees that did not fit
                 // beside it come in. Only the same membership is no progress.
-                var smaller = PlanRegion(region.Root, calleeMap, null, budget);
+                var smaller = PlanRegion(region.Root, calleeMap, null, budget, localsBudget);
                 if (!SameMembers(smaller, region))
                 {
                     IlRegionCost.NoteReplan();
@@ -578,7 +604,7 @@ public sealed partial class IlPredicateCompiler
             }
             int regionFid = region.Root.FunctorId;
             IlRegionCost.Log(new IlRegionCost.Emission(regionFid, region.MemberCount, emit.LocalRefCount,
-                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false));
+                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false, emit.InlineCount));
             finalPlan = plan;
             return FinishEmit(emit,
                 $"region root={regionFid} {FidName(regionFid)} members=["
@@ -723,7 +749,7 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(failLabel);                              // out of range (unreachable)
 
         var gcCtx = new GuardContEmitContext();              // ADR-033 (no-op if unused)
-        var trace = new RegionCostTrace { RootFid = regionFid, Prologue = emit.LocalRefCount };
+        var trace = new RegionCostTrace { RootFid = regionFid, Prologue = emit.LocalRefCount, PrologueLocals = emit.LocalCount };
         _regionTrace = trace;
         try
         {
@@ -732,7 +758,8 @@ public sealed partial class IlPredicateCompiler
                 var member = region.Members[mi];
                 ctx.CurrentMemberIndex = mi;
                 _emitMemberFid = member.FunctorId;               // ADR-049
-                int refsBefore = emit.LocalRefCount, instrsBefore = emit.InstructionCount;
+                int refsBefore = emit.LocalRefCount, instrsBefore = emit.InstructionCount,
+                    inlinesBefore = emit.InlineCount, localsBefore = emit.LocalCount;
                 string ops;
                 emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
                 if (member.ClauseCount == 1)
@@ -752,8 +779,10 @@ public sealed partial class IlPredicateCompiler
                     EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
                     ops = OpcodeHistogram(member.BytecodeUnfused, null);
                 }
-                IlRegionCost.Record(member, emit.LocalRefCount - refsBefore);
-                trace.Members.Add((member, emit.LocalRefCount - refsBefore, emit.InstructionCount - instrsBefore, ops));
+                IlRegionCost.Record(member, emit.LocalRefCount - refsBefore, emit.InlineCount - inlinesBefore,
+                    emit.LocalCount - localsBefore);
+                trace.Members.Add((member, emit.LocalRefCount - refsBefore, emit.InstructionCount - instrsBefore,
+                    emit.InlineCount - inlinesBefore, emit.LocalCount - localsBefore, ops));
             }
         }
         finally
@@ -764,6 +793,8 @@ public sealed partial class IlPredicateCompiler
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         trace.MembersEnd = emit.LocalRefCount;
+        trace.MembersEndInlines = emit.InlineCount;
+        trace.MembersEndLocals = emit.LocalCount;
         trace.ResumeCursors = resumeCursor.Count;
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
@@ -1245,7 +1276,7 @@ public sealed partial class IlPredicateCompiler
         var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
         var doFlush = emit.DefineLabel($"arith_wake_do_{NextLabelSeq()}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfFalse(skip);
         if (operands.Length == 0)
         {

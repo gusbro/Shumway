@@ -1881,7 +1881,7 @@ public sealed partial class IlPredicateCompiler
         if (cpsFields) CpsInstructionBoundary(emit, false);
         var rare = emit.DefineLabel($"cf_rare{salt}");
         emit.LoadArgument(0);
-        EmitHelperCall(emit, EngineHasPendingWakeupsGetter);
+        EmitHasPendingWakeups(emit);
         emit.BranchIfTrue(rare);
         EmitTheCut();
         if (g.NeedsSnapshot)
