@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-19). Extends the instruction set (ADR-006) with three
+Accepted (2026-10-19). Extends the instruction set (ADR-006) with four
 instructions and the literal pools (ADR-015) with one pool. No cell tag, no
 heap layout and no collector change (ADR-002, ADR-016).
 
@@ -183,17 +183,58 @@ does an argument with a sub-term equal to another argument's compound:
 the stream shares it through that argument's register (CSE), a copy would
 build it again.
 
+A part the stream defers, from `PartThreshold` cells (16), gets an image
+of its own and `unify_blit image, Xk, L` in place of the skip; its stream
+stays after the instruction. The temporary holds the mark: the part is on
+the heap already, and every tier goes on at L. Otherwise a tier runs the
+stream, or unifies the term with the image in one pass of the engine
+(`Activation.UnifyBlit`: a bound cell against the image's cell by cell,
+an unbound one bound to a copy of the image from that cell down, the
+holes read and written as the stream would read and write them, the
+temporaries of the parts nested under it marked) and goes on at L. The
+part's variables are all there when it runs: every stream before it has
+run, and one first met inside the part is the part's own.
+
+The pass is slower than the stream's code on the IL tier, where the JIT
+inlines the stream's helpers into straight-line code with the constants
+folded: 1.5 to 1.7 times on trees and nested lists read in a loop. But a
+stream costs the method its locals whether it runs or not, and the nested
+term of a data fact can put a region past the JIT's cap (ADR-060,
+`docs/design/region-jit-limits.md`) with code that never runs while the
+argument comes unbound. So the region planner has two passes. The first
+emission leaves every part to its stream. A region measured past the cap
+on locals, or past a limit of the JIT, sends to the matcher every stream
+it emitted at or past a threshold of locals whose argument the
+predicate's local callers all pass fresh, a variable first met at the
+call (`IlColdArguments`: the last write to the argument register before
+the call is a `put_variable`); such a stream never runs in read mode
+from those callers, so the matcher costs it nothing, while a stream some
+caller may read bound stays, past the cap or not, read in a loop the
+stream's code being the faster. The region keeps its members and emits
+again; only when that is not enough does it shed members, as before. The
+measure alone triggers it, under the floor of references that keeps a
+small region out of the locals budget: a region of streams has few
+references and many inlines (flatten's: 3,518 references, 1,454 locals
+against the cap of 1,024, and the JIT refusing its inlines). The
+compaction sticks to the code, and a persisted bundle, whose regions are
+never emitted twice, carries no matcher site. Tier-0 and the wasm module
+test the mark and run the stream.
+
 Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
-the wasm tier copies and binds in the module, steps aside to the
-interpreter for an attributed variable, and branches on the mark. The
-switch is `SHUMWAY_IMAGE_HEADS`, 0 for off.
+the wasm tier copies and binds in the module and steps aside to the
+interpreter for an attributed variable. The switches are
+`SHUMWAY_IMAGE_HEADS` and `SHUMWAY_IMAGE_PARTS`, 0 for off;
+`SHUMWAY_IMAGE_PART_THRESHOLD` is the part's cells,
+`SHUMWAY_IMAGE_MATCH_LOCALS` the locals a stream must cost for a
+compaction to take it, and `SHUMWAY_IMAGE_MATCH_ALL=1` sends every part
+to the matcher, for measuring.
 
 ## Not in this decision
 
-A matcher that unifies a bound argument against the image, without the
-stream, would spare Tier-0 its dispatch per cell; in the IL tier it would
-compete with the specialised code the stream compiles to. It is a later
-measurement, behind a switch of its own. Big integers and rationals stay
+A read-only form of the stream on the IL tier, the unify pointer in a
+local and no mode test, an unbound nested cell served by a copy of its
+sub-image, is a later measurement; so is a matcher in the wasm module.
+Big integers and rationals stay
 out of images while their payloads name a per-activation table. A clause
 asserted at run time interns its images in the pool as it interns its
 string literals, and the pool does not free; the threshold keeps small
@@ -240,6 +281,18 @@ on and more as the term grows. Over the corpus, nreverse, whose data fact
 is a thirty-element list, 0.92 at the minimum and 0.98 at the median;
 the other programs within the noise of the run, clpz at 1.02 and 0.98
 over eight rounds.
+
+The matcher, every part sent to it against none, on the IL tier: trees of
+45 cells and nested lists of the same size read bound in a loop 1.47 and
+1.66 at the minimum, 1.53 and 1.74 at the median (the stream's code,
+inlined by the JIT, against a pass over cells); on Tier-0 0.90 to 1.20.
+The compaction, parts off against on under the two-pass planner, same
+protocol, heap identical: flatten 0.76 at the minimum and 0.75 at the
+median, its data fact, a nested list of 70 cells called unbound, the
+region's locals from 1,454 to 945 and the JIT's refusals from 896 to
+none; the trees and lists read bound 0.99 to 1.04 (their callers read
+them bound, so their streams stay); clpz 0.98, Blint 0.98, the other Van
+Roy programs 0.95 to 1.03.
 
 ## Risks
 

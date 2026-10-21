@@ -176,6 +176,199 @@ public class TermImageTests
         Assert.Equal(Cell.Ref(home), engine.GetHeap(b + 1));
     }
 
+    // f(a, [1, 2], X, g(X, Y)) as the builder lays it: g's block (pushed last,
+    // popped first) before the list's; X a hole for X2, Y one for X3.
+    private static TermImage Nested()
+    {
+        var cells = new Cell[12];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 4));
+        cells[1] = Cell.Atom(AtomTable.Intern("a", permanent: true).Id);
+        cells[2] = Cell.Lis(8);
+        cells[3] = Cell.Ref(3);
+        cells[4] = Cell.Str(5);
+        cells[5] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 2));
+        cells[6] = Cell.Ref(3);
+        cells[7] = Cell.Ref(7);
+        cells[8] = Cell.Int(1);
+        cells[9] = Cell.Lis(10);
+        cells[10] = Cell.Int(2);
+        cells[11] = Cell.Atom(AtomTable.EmptyListId);
+        return new TermImage(cells, Tag.Str, new[] { new ImageHole(3, ImageHole.Out, 2), new ImageHole(7, ImageHole.Out, 3) });
+    }
+
+    // f(a, [1, 2], V, g(V, W)) on the heap, V and W unbound: the functor cell's
+    // index, g's, the list's two pairs'.
+    private static (int T, int G, int L1, int L2) NestedTerm(Activation engine)
+    {
+        int t = engine.AllocateHeap(5);
+        int g = engine.AllocateHeap(3);
+        int l1 = engine.AllocateHeap(2);
+        int l2 = engine.AllocateHeap(2);
+        engine.SetHeap(t, Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 4)));
+        engine.SetHeap(t + 1, Cell.Atom(AtomTable.Intern("a", permanent: true).Id));
+        engine.SetHeap(t + 2, Cell.Lis(l1));
+        engine.SetHeap(t + 3, Cell.Ref(t + 3));
+        engine.SetHeap(t + 4, Cell.Str(g));
+        engine.SetHeap(g, Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 2)));
+        engine.SetHeap(g + 1, Cell.Ref(t + 3));
+        engine.SetHeap(g + 2, Cell.Ref(g + 2));
+        engine.SetHeap(l1, Cell.Int(1));
+        engine.SetHeap(l1 + 1, Cell.Lis(l2));
+        engine.SetHeap(l2, Cell.Int(2));
+        engine.SetHeap(l2 + 1, Cell.Atom(AtomTable.EmptyListId));
+        return (t, g, l1, l2);
+    }
+
+    [Fact]
+    public void TheBlocksEndWhereTheirSubTermsDo()
+    {
+        var image = Nested();
+        Assert.Equal(12, image.BlockEnd(0));
+        Assert.Equal(8, image.BlockEnd(5));     // g(X, Y)
+        Assert.Equal(12, image.BlockEnd(8));    // [1, 2]
+        Assert.Equal(12, image.BlockEnd(10));   // [2]
+        var literals = Image();                 // f([a], "xy", 1.5, 7): the literals are the root's
+        Assert.Equal(12, literals.BlockEnd(0));
+        Assert.Equal(7, literals.BlockEnd(5));
+    }
+
+    [Fact]
+    public void UnifyBlitMatchesABoundPartCellByCell()
+    {
+        var engine = new Activation();
+        var (t, g, _, _) = NestedTerm(engine);
+        engine.SetRegister(0, Cell.Str(t));
+        int top = engine.HeapTop;
+        Assert.True(engine.UnifyBlit(Nested(), 0));
+        Assert.Equal(top, engine.HeapTop);                      // nothing built
+        Assert.Equal(Cell.Ref(t + 3), engine.GetRegister(2));   // X, from V's cell
+        Assert.Equal(Cell.Ref(g + 2), engine.GetRegister(3));   // Y, from W's cell
+        // A bound cell comes into the register as it is; a different atom fails.
+        engine.SetHeap(g + 2, Cell.Int(5));
+        Assert.True(engine.UnifyBlit(Nested(), 0));
+        Assert.Equal(Cell.Int(5), engine.GetRegister(3));
+        engine.SetHeap(t + 1, Cell.Atom(AtomTable.Intern("b", permanent: true).Id));
+        Assert.False(engine.UnifyBlit(Nested(), 0));
+    }
+
+    [Fact]
+    public void UnifyBlitCopiesAnUnboundSubTerm()
+    {
+        var engine = new Activation();
+        var (t, _, _, _) = NestedTerm(engine);
+        engine.SetHeap(t + 2, Cell.Ref(t + 2));                 // the list's place, unbound
+        engine.SetRegister(0, Cell.Str(t));
+        int top = engine.HeapTop;
+        Assert.True(engine.UnifyBlit(Nested(), 0));
+        Assert.Equal(Cell.Lis(top), engine.GetHeap(t + 2));
+        Assert.Equal(Cell.Int(1), engine.GetHeap(top));
+        Assert.Equal(Cell.Lis(top + 2), engine.GetHeap(top + 1));
+        Assert.Equal(Cell.Int(2), engine.GetHeap(top + 2));
+        Assert.Equal(Cell.Atom(AtomTable.EmptyListId), engine.GetHeap(top + 3));
+        Assert.Equal(top + 4, engine.HeapTop);
+    }
+
+    [Fact]
+    public void AMatchMarksTheDeferredTemporariesAsACopyDoes()
+    {
+        // g(1) with the mark for X5, the temporary of a part nested under it:
+        // matched against g(1) on the heap, X5 holds the mark afterwards.
+        var engine = new Activation();
+        var cells = new Cell[2];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[1] = Cell.Int(1);
+        var image = new TermImage(cells, Tag.Str, new[] { new ImageHole(0, ImageHole.Sentinel, 5) });
+        int t = engine.AllocateHeap(2);
+        engine.SetHeap(t, cells[0]);
+        engine.SetHeap(t + 1, Cell.Int(1));
+        engine.SetRegister(0, Cell.Str(t));
+        engine.SetRegister(5, Cell.Int(0));
+        Assert.True(engine.UnifyBlit(image, 0));
+        Assert.True(Activation.IsCopiedMark(engine.GetRegister(5)));
+        // A mismatch leaves the temporaries alone.
+        engine.SetRegister(5, Cell.Int(0));
+        engine.SetHeap(t + 1, Cell.Int(2));
+        Assert.False(engine.UnifyBlit(image, 0));
+        Assert.False(Activation.IsCopiedMark(engine.GetRegister(5)));
+    }
+
+    [Fact]
+    public void UnifyBlitTakesTheMarkAsTheCopy()
+    {
+        var engine = new Activation();
+        engine.SetRegister(0, Activation.CopiedMark);
+        int top = engine.HeapTop;
+        Assert.True(engine.UnifyBlit(Nested(), 0));
+        Assert.Equal(top, engine.HeapTop);
+    }
+
+    [Fact]
+    public void UnifyBlitBindsAnUnboundPartToTheWholeImage()
+    {
+        var engine = new Activation();
+        int v = engine.AllocateHeapUnbound();
+        engine.SetRegister(0, Cell.Ref(v));
+        int top = engine.HeapTop;
+        Assert.True(engine.UnifyBlit(Nested(), 0));
+        Assert.Equal(Cell.Str(top), engine.GetHeap(v));
+        Assert.Equal(Cell.Ref(top + 3), engine.GetRegister(2));
+        Assert.Equal(Cell.Ref(top + 7), engine.GetRegister(3));
+        Assert.Equal(top + 12, engine.HeapTop);
+    }
+
+    [Fact]
+    public void AVariablesFirstCellIsMetBeforeItsOthers()
+    {
+        // f(g(X), h(X)): h's block is laid first, so X's first cell is in it
+        // and g's cell refers back; the matcher takes the blocks in that order.
+        var cells = new Cell[7];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 2));
+        cells[1] = Cell.Str(5);
+        cells[2] = Cell.Str(3);
+        cells[3] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1));
+        cells[4] = Cell.Ref(4);
+        cells[5] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[6] = Cell.Ref(4);
+        var image = new TermImage(cells, Tag.Str, new[] { new ImageHole(4, ImageHole.Out, 1) });
+        var engine = new Activation();
+        // f(g(P), h(Q)), P and Q unbound.
+        int t = engine.AllocateHeap(3);
+        int gp = engine.AllocateHeap(2);
+        int hq = engine.AllocateHeap(2);
+        engine.SetHeap(t, cells[0]);
+        engine.SetHeap(t + 1, Cell.Str(gp));
+        engine.SetHeap(t + 2, Cell.Str(hq));
+        engine.SetHeap(gp, cells[5]);
+        engine.SetHeap(gp + 1, Cell.Ref(gp + 1));
+        engine.SetHeap(hq, cells[3]);
+        engine.SetHeap(hq + 1, Cell.Ref(hq + 1));
+        engine.SetRegister(0, Cell.Str(t));
+        Assert.True(engine.UnifyBlit(image, 0));
+        Assert.Equal(Cell.Ref(hq + 1), engine.GetRegister(1));
+        Assert.Equal(engine.Deref(gp + 1), engine.Deref(hq + 1));   // P and Q, one variable now
+        // P bound: Q takes its value; both bound and different: no match.
+        engine.SetHeap(gp + 1, Cell.Int(1));
+        engine.SetHeap(hq + 1, Cell.Ref(hq + 1));
+        Assert.True(engine.UnifyBlit(image, 0));
+        Assert.Equal(Cell.Int(1), engine.GetHeap(engine.Deref(hq + 1)));
+        engine.SetHeap(hq + 1, Cell.Int(2));
+        Assert.False(engine.UnifyBlit(image, 0));
+    }
+
+    [Fact]
+    public void UnifyBlitMatchesBoxedLiterals()
+    {
+        var engine = new Activation();
+        int b = engine.HeapTop;
+        engine.SetRegister(0, engine.BuildImage(Image()));      // f([a], "xy", 1.5, 7), a copy
+        Assert.True(engine.UnifyBlit(Image(), 0));
+        engine.SetHeap(b + 4, Cell.Int(8));
+        Assert.False(engine.UnifyBlit(Image(), 0));
+        engine.SetHeap(b + 4, Cell.Int(7));
+        engine.SetHeap(b + 8, Cell.PstrBuffer('x', 'z', 0));
+        Assert.False(engine.UnifyBlit(Image(), 0));
+    }
+
     [Fact]
     public void TheCodecCarriesTheHoles()
     {

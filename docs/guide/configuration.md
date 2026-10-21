@@ -62,7 +62,10 @@ is what ships. Any build honors them.
 | `SHUMWAY_REGION` | on | `=0` disables region compilation (each local predicate emitted inline in the caller's IL method). |
 | `SHUMWAY_REGION_BUDGET`, `SHUMWAY_REGION_ROOT_MINSAVE` | tuned | Size/benefit thresholds bounding which predicates become regions. |
 | `SHUMWAY_REGION_LVREFS`, `SHUMWAY_REGION_LOCALS` | 7200, 1000 | The local references and the JIT locals a region is planned to stay under; `=0` plans by size alone. |
-| `SHUMWAY_IMAGE_HOLES`, `SHUMWAY_IMAGE_HEADS` | on | `=0` keeps images to ground terms, or keeps head arguments to their matching streams; the measurement's switches. |
+| `SHUMWAY_IMAGE_HOLES`, `SHUMWAY_IMAGE_HEADS`, `SHUMWAY_IMAGE_PARTS` | on | `=0` keeps images to ground terms, keeps head arguments to their matching streams, or keeps the deferred parts of a head argument to theirs; the measurement's switches. |
+| `SHUMWAY_IMAGE_PART_THRESHOLD` | 16 | The cells a deferred part of a head argument needs to carry an image of its own. |
+| `SHUMWAY_IMAGE_MATCH_LOCALS` | 32 | The locals a head part's matching stream must cost for a region past the JIT's cap to match the part by the engine instead of by the stream. |
+| `SHUMWAY_IMAGE_MATCH_ALL` | off | `=1` matches every such part by the engine, whatever the region; a measurement's switch. |
 | `DOTNET_JitMaxLocalsToTrack` | the runtime's `0x400` | The runtime's own cap on the locals the JIT tracks in one method, past which it inlines nothing more into it. A hexadecimal number, read by the runtime once from the environment the process starts with: set it in the shell or launcher, not from the program or `runtimeconfig.json`. The engine reads the same value and plans its regions to it. Raising it to `0xC00` measured no gain on the corpus; if you try it, `0xC00` to `0x1600` is the sensible range. |
 | `SHUMWAY_CPFREE_IDXBUCKET` | on | `=0` disables the lazy choice-point in indexed-bucket dispatch (ADR-031). |
 | `SHUMWAY_CPFREE_GUARD` | on | `=0` disables CP-free guard-commit (ADR-031). |

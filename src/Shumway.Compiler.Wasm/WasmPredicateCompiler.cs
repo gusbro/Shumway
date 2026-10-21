@@ -635,6 +635,7 @@ public static class WasmPredicateCompiler
                     return;
                 case Opcode.PutBlit:   // ADR-063
                 case Opcode.GetBlit:
+                case Opcode.UnifyBlit:
                     if (Sec(ins).ImageLiterals is null)
                         throw new WasmCompileException($"{ins.Op} without an image pool at {ins.Pc}");
                     return;
@@ -737,6 +738,7 @@ public static class WasmPredicateCompiler
                         _leaders.Add(b + ins.I0);
                         break;
                     case Opcode.GetBlit:
+                    case Opcode.UnifyBlit:
                         _leaders.Add(b + ins.I2);
                         break;
                     case Opcode.SkipIfCopied:
@@ -2809,6 +2811,7 @@ public static class WasmPredicateCompiler
                 case Opcode.PutBlit: EmitPutBlit(ins); return false;   // ADR-063
                 case Opcode.GetBlit: EmitGetBlit(ins); return false;
                 case Opcode.SkipIfCopied: EmitSkipIfCopied(ins); return false;
+                case Opcode.UnifyBlit: EmitUnifyBlit(ins); return false;
                 case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
                 case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
                 case Opcode.TrustMe: EmitTrustMe(ins); return false;
@@ -10696,6 +10699,20 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
             OpenIf();
             EmitDeopt(pc, 30);
+            CloseNested();
+        }
+
+        /// <summary>ADR-063, heads: the part's temporary holds the mark, the
+        /// part is on the heap already; otherwise its stream matches it (the
+        /// module has no matcher).</summary>
+        private void EmitUnifyBlit(Instr ins)
+        {
+            int target = Bias(ins) + ins.I2;
+            RegLoad(ins.I1);
+            Op(new Int64Constant(Activation.CopiedMark.Data));
+            Op(new Int64Equal());
+            OpenIf();
+            GoTo(target);
             CloseNested();
         }
 

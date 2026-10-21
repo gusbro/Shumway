@@ -157,7 +157,7 @@ public sealed partial class ClauseCompiler
                 break;
 
             case CompoundTerm c:
-                s.Pending.Enqueue((argSlot, c, false));
+                s.Pending.Enqueue((argSlot, c, false, null));
                 break;
 
             case FloatTerm f:
@@ -180,33 +180,29 @@ public sealed partial class ClauseCompiler
     {
         while (s.Pending.Count > 0)
         {
-            var (slot, comp, build) = s.Pending.Dequeue();
+            var (slot, comp, build, enclosing) = s.Pending.Dequeue();
             bool isList = comp.Functor == "." && comp.Args.Length == 2;
             s.Building = build;
 
-            // ADR-063, heads: an argument with an image gets its get_blit
-            // before its stream, each of its deferred parts a skip_if_copied
-            // before its own; the targets are patched after each stream, the
-            // image id when the head is done and every register known.
+            // ADR-063, heads: a term with an image gets its prefix before its
+            // stream (get_blit for an argument, unify_blit for a part); a part
+            // under an image without one of its own gets a skip_if_copied.
+            // The targets are patched after each stream, the image ids when
+            // the head is done and every register known.
             HeadImage? owner = null;
             int patchAt = -1;
-            if (!build && s.HeadImages is { } images)
+            if (!build && s.HeadImageByTerm is { } byTerm)
             {
-                foreach (var hi in images)
+                if (byTerm.TryGetValue(comp, out var own))
                 {
-                    if (hi.ArgSlot == slot && ReferenceEquals(hi.Term, comp))
-                    {
-                        hi.GetBlitPos = s.Emitter.EmitGetBlit(0, slot);
-                        patchAt = hi.GetBlitPos + 9;
-                        owner = hi;
-                        break;
-                    }
-                    if (hi.DeferredSlots.Contains(slot))
-                    {
-                        patchAt = s.Emitter.EmitSkipIfCopied(slot) + 5;
-                        owner = hi;
-                        break;
-                    }
+                    own.Pos = own.IsArg ? s.Emitter.EmitGetBlit(0, slot) : s.Emitter.EmitUnifyBlit(0, slot);
+                    patchAt = own.Pos + 9;
+                    owner = own;
+                }
+                else if (enclosing is not null)
+                {
+                    patchAt = s.Emitter.EmitSkipIfCopied(slot) + 5;
+                    owner = enclosing;
                 }
             }
             var prevOwner = s.CurrentHeadImage;
@@ -251,15 +247,23 @@ public sealed partial class ClauseCompiler
         }
     }
 
-    /// <summary>ADR-063, heads: an argument whose compound has an image
-    /// before its matching stream.</summary>
+    /// <summary>ADR-063, heads: a term with an image before its matching
+    /// stream, an argument (<c>get_blit</c>) or a deferred part
+    /// (<c>unify_blit</c>).</summary>
     internal sealed class HeadImage
     {
-        public int ArgSlot { get; init; }
         public CompoundTerm Term { get; init; } = null!;
-        public int GetBlitPos { get; set; } = -1;
-        /// <summary>The temporaries of the parts the stream defers: the copy
-        /// marks them, and their streams skip.</summary>
+        public bool IsArg { get; init; }
+        public int ArgSlot { get; init; }
+        /// <summary>A part's stream unit, in the order the streams run.</summary>
+        public int Unit { get; init; }
+        /// <summary>The nearest enclosing term with an image.</summary>
+        public HeadImage? Parent { get; set; }
+        /// <summary>The prefix instruction's position, -1 until its stream runs.</summary>
+        public int Pos { get; set; } = -1;
+        /// <summary>The temporaries of the parts the streams defer under this
+        /// term, at every depth: the copy and the match mark them, and their
+        /// streams skip.</summary>
         public List<int> DeferredSlots { get; } = new();
     }
 
@@ -276,11 +280,25 @@ public sealed partial class ClauseCompiler
     private void PlanHeadImages(CompileState s, Term[] headArgs)
     {
         s.HeadImages = null;
+        s.HeadImageByTerm = null;
         s.CurrentHeadImage = null;
         if (!ImageHeads || _imageLiterals is null || ImageThreshold <= 0) return;
-        var first = new Dictionary<string, (int Arg, int Kind)>();   // kind: 0 plain, 1 own stream, 2 deferred part
-        var deferred = new Queue<(int Arg, CompoundTerm C)>();
-        void Walk(CompoundTerm c, int arg, int kind)
+        // Where each named variable is first met in stream order: as a plain
+        // argument (kind 0), in an argument's own stream (1) or in a deferred
+        // part (2). A unit is one stream, numbered in the order they run:
+        // the arguments' own streams, then the parts first in first out.
+        var first = new Dictionary<string, (int Arg, int Kind, int Unit)>();
+        var unitParent = new List<int>();
+        var unitRoot = new List<CompoundTerm>();
+        var parts = new List<(CompoundTerm Term, int Arg, int Unit)>();
+        var deferred = new Queue<(int Arg, CompoundTerm C, int ParentUnit)>();
+        int NewUnit(int parent, CompoundTerm root)
+        {
+            unitParent.Add(parent);
+            unitRoot.Add(root);
+            return unitParent.Count - 1;
+        }
+        void Walk(CompoundTerm c, int arg, int kind, int unit)
         {
             while (true)
             {
@@ -290,11 +308,11 @@ public sealed partial class ClauseCompiler
                     switch (c.Args[i])
                     {
                         case VarTerm v when v.Name != "_":
-                            if (!first.ContainsKey(v.Name)) first[v.Name] = (arg, kind);
+                            if (!first.ContainsKey(v.Name)) first[v.Name] = (arg, kind, unit);
                             break;
                         case CompoundTerm sub:
                             if (i == c.Args.Length - 1 && CanInlineCompound(sub)) tail = sub;
-                            else deferred.Enqueue((arg, sub));
+                            else deferred.Enqueue((arg, sub, unit));
                             break;
                     }
                 }
@@ -305,10 +323,16 @@ public sealed partial class ClauseCompiler
         // The head loop binds every plain argument to its register before
         // the streams drain, so a plain variable comes first wherever it sits.
         for (int a = 0; a < headArgs.Length; a++)
-            if (headArgs[a] is VarTerm v && v.Name != "_" && !first.ContainsKey(v.Name)) first[v.Name] = (a, 0);
+            if (headArgs[a] is VarTerm v && v.Name != "_" && !first.ContainsKey(v.Name)) first[v.Name] = (a, 0, -1);
         for (int a = 0; a < headArgs.Length; a++)
-            if (headArgs[a] is CompoundTerm c) Walk(c, a, 1);
-        while (deferred.Count > 0) { var (a, c) = deferred.Dequeue(); Walk(c, a, 2); }
+            if (headArgs[a] is CompoundTerm c) Walk(c, a, 1, NewUnit(-1, c));
+        while (deferred.Count > 0)
+        {
+            var (a, c, parentUnit) = deferred.Dequeue();
+            int unit = NewUnit(parentUnit, c);
+            parts.Add((c, a, unit));
+            Walk(c, a, 2, unit);
+        }
 
         // CSE shares a sub-term equal to a top-level argument compound with
         // that argument's register; a copy would build it again.
@@ -317,42 +341,87 @@ public sealed partial class ClauseCompiler
             if (headArgs[a] is CompoundTerm c && StructuralKey(c) is string k)
                 (shared ??= new HashSet<string>(StringComparer.Ordinal)).Add(k);
 
-        List<HeadImage>? plan = null;
-        for (int a = 0; a < headArgs.Length; a++)
+        bool Carries(CompoundTerm c, int threshold)
         {
-            if (headArgs[a] is not CompoundTerm c) continue;
             int cells = TermImageBuilder.CellCount(c);
-            if (cells < ImageThreshold || TermImageBuilder.HoleCount(c) * 2 > cells) continue;
-            if (TermImageBuilder.Build(c, (_, offset) => new ImageHole(offset, ImageHole.Out, 0)) is null) continue;
-            bool eligible = true;
+            return cells >= threshold && TermImageBuilder.HoleCount(c) * 2 <= cells
+                && TermImageBuilder.Build(c, (_, offset) => new ImageHole(offset, ImageHole.Out, 0)) is not null;
+        }
+        // Every named variable of the term available when its prefix runs,
+        // and no sub-term CSE would share.
+        bool Available(CompoundTerm c, Func<(int Arg, int Kind, int Unit), bool> ok)
+        {
             var pending = new Stack<Term>();
             pending.Push(c);
-            while (eligible && pending.Count > 0)
+            while (pending.Count > 0)
             {
                 switch (pending.Pop())
                 {
                     case CompoundTerm k:
                         if (shared is not null && !ReferenceEquals(k, c)
                             && StructuralKey(k) is string kk && shared.Contains(kk))
-                        {
-                            eligible = false;
-                            break;
-                        }
+                            return false;
                         foreach (var x in k.Args) pending.Push(x);
                         break;
                     case VarTerm v when v.Name != "_":
-                        var site = first[v.Name];
-                        eligible = site.Arg == a || site.Kind == 0 || (site.Arg < a && site.Kind == 1);
+                        if (!ok(first[v.Name])) return false;
                         break;
                 }
             }
-            if (!eligible) continue;
-            plan ??= new List<HeadImage>();
-            plan.Add(new HeadImage { ArgSlot = a, Term = c });
+            return true;
         }
-        if (plan is null) return;
+
+        var plan = new List<HeadImage>();
+        var byTerm = new Dictionary<CompoundTerm, HeadImage>(ReferenceEqualityComparer.Instance);
+        // An argument's prefix runs at its own stream: a variable is there as
+        // a plain argument, in this argument, or in an earlier argument's own
+        // stream.
+        for (int a = 0; a < headArgs.Length; a++)
+        {
+            if (headArgs[a] is not CompoundTerm c || !Carries(c, ImageThreshold)) continue;
+            int arg = a;
+            if (!Available(c, site => site.Arg == arg || site.Kind == 0 || (site.Arg < arg && site.Kind == 1))) continue;
+            var hi = new HeadImage { Term = c, IsArg = true, ArgSlot = a };
+            plan.Add(hi);
+            byTerm[c] = hi;
+        }
+        // A part's prefix runs after every own stream and the parts before
+        // it: a variable is there as a plain argument, in an earlier unit,
+        // or in the part itself at any depth.
+        foreach (var (c, a, unit) in parts)
+        {
+            if (!ImageParts || !Carries(c, PartThreshold)) continue;
+            int u = unit;
+            if (!Available(c, site => site.Kind == 0 || site.Unit < u || InUnit(unitParent, site.Unit, u))) continue;
+            var hi = new HeadImage { Term = c, IsArg = false, ArgSlot = a, Unit = unit };
+            plan.Add(hi);
+            byTerm[c] = hi;
+        }
+        if (plan.Count == 0) return;
+        foreach (var hi in plan)
+        {
+            if (hi.IsArg) continue;
+            for (int p = unitParent[hi.Unit]; p >= 0; p = unitParent[p])
+                if (byTerm.TryGetValue(unitRoot[p], out var ancestor))
+                {
+                    hi.Parent = ancestor;
+                    break;
+                }
+        }
         s.HeadImages = plan;
+        s.HeadImageByTerm = byTerm;
         s.HeadFirstSites = first;
+        s.HeadUnitParent = unitParent;
+    }
+
+    private static bool InUnit(List<int> unitParent, int unit, int ancestor)
+    {
+        while (unit >= 0)
+        {
+            if (unit == ancestor) return true;
+            unit = unitParent[unit];
+        }
+        return false;
     }
 
     // The head compiled, every variable has its register: the images are
@@ -363,28 +432,31 @@ public sealed partial class ClauseCompiler
         if (s.HeadImages is not { } images) return;
         foreach (var hi in images)
         {
-            if (hi.GetBlitPos < 0) continue;   // its stream never ran: nothing to patch
-            var image = TermImageBuilder.Build(hi.Term, (name, offset) => HeadHoleFor(s, name, offset, hi.ArgSlot))!;
+            if (hi.Pos < 0) continue;   // its stream never ran: nothing to patch
+            var image = TermImageBuilder.Build(hi.Term, (name, offset) => HeadHoleFor(s, name, offset, hi))!;
             var holes = new List<ImageHole>(image.Holes.ToArray());
             foreach (int t in hi.DeferredSlots) holes.Add(new ImageHole(0, ImageHole.Sentinel, t));
             int id = _imageLiterals!.Intern(new TermImage(image.Cells.ToArray(), image.Root,
                 holes.Count == 0 ? null : holes.ToArray()));
-            s.Emitter.PatchInt32(hi.GetBlitPos + 1, id);
+            s.Emitter.PatchInt32(hi.Pos + 1, id);
         }
         s.HeadImages = null;
+        s.HeadImageByTerm = null;
         s.HeadFirstSites = null;
+        s.HeadUnitParent = null;
         s.CurrentHeadImage = null;
     }
 
-    // The register a head variable comes from or goes to when the argument's
-    // copy runs: a plain argument's own register (the call's argument, there
-    // throughout the head); for the rest the register the streams gave it,
-    // read when another stream gave it, written when this argument's did.
-    private static ImageHole HeadHoleFor(CompileState s, string name, int offset, int arg)
+    // The register a head variable comes from or goes to when the term's
+    // copy or match runs: a plain argument's own register (the call's
+    // argument, there throughout the head); for the rest the register the
+    // streams gave it, read when a stream outside the term gave it, written
+    // when one of the term's did.
+    private static ImageHole HeadHoleFor(CompileState s, string name, int offset, HeadImage hi)
     {
         var site = s.HeadFirstSites![name];
         if (site.Kind == 0) return new ImageHole(offset, ImageHole.In, site.Arg);
-        bool own = site.Arg == arg;
+        bool own = hi.IsArg ? site.Arg == hi.ArgSlot : InUnit(s.HeadUnitParent!, site.Unit, hi.Unit);
         if (s.Ys.TryGetValue(name, out int y))
             return new ImageHole(offset, own ? (byte)(ImageHole.Out | ImageHole.Y) : (byte)(ImageHole.In | ImageHole.Y), y);
         return new ImageHole(offset, own ? ImageHole.Out : ImageHole.In, s.Xs.GetSlot(name));
@@ -774,8 +846,9 @@ public sealed partial class ClauseCompiler
                 if (TryEmitCse(s, c)) break;
                 int temp = s.Xs.AllocateAnonymousSlot();
                 s.Emitter.EmitUnifyVariableX(temp);
-                s.Pending.Enqueue((temp, c, s.Building));
-                s.CurrentHeadImage?.DeferredSlots.Add(temp);   // ADR-063, heads
+                s.Pending.Enqueue((temp, c, s.Building, s.CurrentHeadImage));
+                // ADR-063, heads: every image above marks the part's temporary.
+                for (var o = s.CurrentHeadImage; o is not null; o = o.Parent) o.DeferredSlots.Add(temp);
                 break;
 
             // FloatTerm and StringTerm are handled upstream by
@@ -1433,14 +1506,16 @@ public sealed partial class ClauseCompiler
         /// <c>unify_variable</c> is emitted.</summary>
         public Dictionary<string, int> PreferredReg { get; } = new();
         public int PermanentCount { get; }
-        public Queue<(int Slot, CompoundTerm Compound, bool Build)> Pending { get; } = new();
+        public Queue<(int Slot, CompoundTerm Compound, bool Build, HeadImage? Owner)> Pending { get; } = new();
 
         /// <summary>ADR-063, heads: the arguments an image stands in for, the
         /// one whose stream is being emitted, and where each named variable
         /// of the head is first met in stream order.</summary>
         public List<HeadImage>? HeadImages { get; set; }
+        public Dictionary<CompoundTerm, HeadImage>? HeadImageByTerm { get; set; }
         public HeadImage? CurrentHeadImage { get; set; }
-        public Dictionary<string, (int Arg, int Kind)>? HeadFirstSites { get; set; }
+        public Dictionary<string, (int Arg, int Kind, int Unit)>? HeadFirstSites { get; set; }
+        public List<int>? HeadUnitParent { get; set; }
 
         /// <summary>ADR-063: the unify stream being compiled builds a fresh
         /// term (a body argument), so an image may stand in for a ground part

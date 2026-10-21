@@ -308,7 +308,7 @@ public sealed partial class Activation
     {
         int start = AllocateHeap(image.Length);
         image.CopyTo(_heap, start);
-        if (image.HasHoles) FillHoles(image, start);
+        if (image.HasHoles) FillHoles(image, start, 0, image.Length, marks: true);
         return image.RootCell(start);
     }
 
@@ -318,7 +318,7 @@ public sealed partial class Activation
     // unbound cell. The cells are the youngest on the heap, so nothing is
     // bound and nothing is trailed; the occurs check has nothing to find in
     // a term that did not exist before the copy.
-    private void FillHoles(TermImage image, int start)
+    private void FillHoles(TermImage image, int start, int from, int to, bool marks)
     {
         var holes = image.Holes;
         for (int i = 0; i < holes.Length; i++)
@@ -326,9 +326,10 @@ public sealed partial class Activation
             var h = holes[i];
             if (h.IsSentinel)
             {
-                SetRegister(h.Slot, CopiedMark);
+                if (marks) SetRegister(h.Slot, CopiedMark);
                 continue;
             }
+            if (h.Offset < from || h.Offset >= to) continue;
             int idx = start + h.Offset;
             if (h.IsOut)
             {
@@ -370,16 +371,199 @@ public sealed partial class Activation
         }
         if (v.Tag == Tag.AttVar)
         {
-            // As GetStructureSlow: the value needs an address of its own for
-            // the hooks, so the root cell goes on the heap before the copy.
-            int h = AllocateHeap(1);
-            Cell root = BuildImage(image);
-            _heap[h] = root;
-            QueueAttrWakeups(addr, h);
-            BindAttVarToValue(addr, h, root);
+            BindAttVarToCopy(addr, image, 0, Tag.Ref);
             return true;
         }
         return false;
+    }
+
+    // As GetStructureSlow: the value needs an address of its own for the
+    // hooks, so the root cell goes on the heap before the copy; the whole
+    // image when the block cell's tag is REF, else the block it names.
+    private void BindAttVarToCopy(int addr, TermImage image, int offset, Tag block)
+    {
+        int h = AllocateHeap(1);
+        Cell root = block == Tag.Ref ? BuildImage(image) : CopyBlock(image, offset, block);
+        _heap[h] = root;
+        QueueAttrWakeups(addr, h);
+        BindAttVarToValue(addr, h, root);
+    }
+
+    // The matcher's work stack, pairs of an image offset and a heap index;
+    // a plain array, grown by hand: the IL tier's helper analysis descends
+    // into this code, and a generic collection's methods are not all its.
+    private int[]? _matchStack;
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private void PushMatchPair(ref int sp, int offset, int at)
+    {
+        var stack = _matchStack!;
+        if (sp + 2 > stack.Length)
+        {
+            var bigger = new int[stack.Length * 2];
+            for (int i = 0; i < stack.Length; i++) bigger[i] = stack[i];
+            _matchStack = stack = bigger;
+        }
+        stack[sp++] = offset;
+        stack[sp++] = at;
+    }
+
+    /// <summary>ADR-063, heads: <c>unify_blit</c>. The register holds the copy
+    /// mark (its argument was copied whole, this part with it): true.
+    /// Otherwise the register's term is unified with the image, a bound cell
+    /// against the image's cell by cell and an unbound one bound to a copy
+    /// of the image from that cell down; the holes read and write their
+    /// registers as the part's stream would in read mode.</summary>
+    public bool UnifyBlit(TermImage image, int regIdx)
+    {
+        Cell c = _registers[regIdx];
+        return c.Data == CopiedMark.Data || MatchImage(image, c);
+    }
+
+    private bool MatchImage(TermImage image, Cell c)
+    {
+        int addr = -1;
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+        {
+            addr = Deref(c.AsHeapIndex);
+            c = _heap[addr];
+        }
+        if (c.Tag == Tag.Ref)
+        {
+            Bind(addr, BuildImage(image));
+            return true;
+        }
+        if (c.Tag == Tag.AttVar)
+        {
+            BindAttVarToCopy(addr, image, 0, Tag.Ref);
+            return true;
+        }
+        if (c.Tag != image.Root) return false;
+        _matchStack ??= new int[64];
+        var cells = image.Cells;
+        var arities = image.BlockArities;
+        int sp = 0;
+        if (!MatchBlock(image, cells, arities, 0, image.Root == Tag.Lis, c.AsHeapIndex, ref sp)) return false;
+        while (sp > 0)
+        {
+            int at = _matchStack[--sp];
+            int offset = _matchStack[--sp];
+            Cell ic = cells[offset];
+            int a = Deref(at);
+            Cell v = _heap[a];
+            if (v.Tag == Tag.Ref)
+            {
+                Bind(a, CopyBlock(image, ic.AsHeapIndex, ic.Tag));
+                continue;
+            }
+            if (v.Tag == Tag.AttVar)
+            {
+                BindAttVarToCopy(a, image, ic.AsHeapIndex, ic.Tag);
+                continue;
+            }
+            if (v.Tag != ic.Tag) return false;
+            if (!MatchBlock(image, cells, arities, ic.AsHeapIndex, ic.Tag == Tag.Lis, v.AsHeapIndex, ref sp)) return false;
+        }
+        // The parts nested under the term are on the heap, matched or
+        // copied: their streams skip on the mark, as after a copy.
+        var holes = image.Holes;
+        for (int i = 0; i < holes.Length; i++)
+            if (holes[i].IsSentinel) SetRegister(holes[i].Slot, CopiedMark);
+        return true;
+    }
+
+    // A block's own cells in order, its nested blocks left for the loop, the
+    // last pushed first: the order the builder laid them in, so a variable's
+    // first cell is met before its other occurrences.
+    private bool MatchBlock(TermImage image, ReadOnlySpan<Cell> cells, ReadOnlySpan<int> arities,
+        int offset, bool list, int at, ref int sp)
+    {
+        int first = offset, n = 2;
+        if (!list)
+        {
+            if (cells[offset].Data != _heap[at].Data) return false;   // the functor
+            first = offset + 1;
+            at++;
+            n = arities[offset];
+        }
+        for (int i = 0; i < n; i++)
+        {
+            Cell ic = cells[first + i];
+            switch (ic.Tag)
+            {
+                case Tag.Atom:
+                case Tag.Int:
+                {
+                    // As UnifyHeapWithCell's fast path: an unbound cell takes
+                    // the constant, a constant compares, the rest unify.
+                    int a = Deref(at + i);
+                    Cell hv = _heap[a];
+                    if (hv.Tag == Tag.Ref) { Bind(a, ic); break; }
+                    if (hv.Data == ic.Data) break;
+                    if (hv.Tag is Tag.Atom or Tag.Int) return false;
+                    if (!UnifyCells(ic, Cell.Ref(a))) return false;
+                    break;
+                }
+                case Tag.Str:
+                case Tag.Lis:
+                    PushMatchPair(ref sp, first + i, at + i);
+                    break;
+                case Tag.Ref:
+                {
+                    int p = ic.AsHeapIndex;
+                    Cell t = cells[p];
+                    if (t.Tag is Tag.Float or Tag.Pstr)
+                    {
+                        // A boxed literal: a copy, unified as the cells are.
+                        int end = t.Tag == Tag.Float ? p + 2 : TermImage.PstrBlockEnd(p, t);
+                        int h = AllocateHeap(end - p);
+                        image.CopyBlockTo(_heap, h, p, end);
+                        if (!UnifyCells(Cell.Ref(at + i), Cell.Ref(h))) return false;
+                        break;
+                    }
+                    if (!MatchVariable(image, p, p == first + i, at + i)) return false;
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException($"An image argument cell of tag {ic.Tag}.");
+            }
+        }
+        return true;
+    }
+
+    // A named variable's cell: its hole names the register. Its first cell
+    // takes the heap cell into the register (as unify_variable does in read
+    // mode) or unifies the register with it; a later cell unifies with the
+    // register, set by then. A self-reference with no hole is anonymous.
+    private bool MatchVariable(TermImage image, int p, bool first, int at)
+    {
+        var holes = image.Holes;
+        for (int i = 0; i < holes.Length; i++)
+        {
+            var h = holes[i];
+            if (h.Offset != p || h.IsSentinel) continue;
+            if (first && h.IsOut)
+            {
+                Cell src = _heap[at];
+                Cell v = src.Tag == Tag.AttVar ? Cell.Ref(at) : src;
+                if (h.IsY) SetY(h.Slot, v); else SetRegister(h.Slot, v);
+                return true;
+            }
+            return h.IsY ? UnifyPermanentWithHeapAt(h.Slot, at) : UnifyRegisterWithHeapAt(h.Slot, at);
+        }
+        return true;
+    }
+
+    // A copy of the sub-term whose block starts at the offset, at the heap
+    // top, its holes applied; the cell that names it.
+    private Cell CopyBlock(TermImage image, int offset, Tag block)
+    {
+        int end = image.BlockEnd(offset);
+        int h = AllocateHeap(end - offset);
+        image.CopyBlockTo(_heap, h, offset, end);
+        if (image.HasHoles) FillHoles(image, h - offset, offset, end, marks: false);
+        return block == Tag.Lis ? Cell.Lis(h) : Cell.Str(h);
     }
 
     public int MakePstr(string value, TextKind kind)

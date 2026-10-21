@@ -62,6 +62,14 @@ the first emission, and the tail follows from the plan.
   three times: at the plan, at the plan with every member measured, and at a
   budget lowered by the overshoot. A plan that keeps no member gives up the
   region for the root's own method, a method under the limit.
+- Before a plan sheds members, a region measured past the cap on locals
+  (the measure alone, under the floor of references) or past a limit of
+  the JIT sends to the engine's matcher the head-matching streams it
+  emitted, at or past a threshold of locals, of the arguments every local
+  caller passes fresh (ADR-063, `IlRegionCost.CompactStreams`,
+  `IlColdArguments`): the stream of a data fact's nested argument costs
+  the method its locals whether it runs or not, and the members stay
+  together; a stream some caller reads bound stays.
 - The linker and the bundle writer measure every member first
   (`WarmRegionCosts`: each root's region emitted once to a scratch method)
   and then select roots. The membership the prune computes must be the

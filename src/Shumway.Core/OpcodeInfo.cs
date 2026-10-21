@@ -90,6 +90,7 @@ public static class OpcodeTable
         Set(Opcode.PutBlit, 9, "put_blit", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.GetBlit, 13, "get_blit", OperandKind.LiteralId, OperandKind.Reg, OperandKind.Address);
         Set(Opcode.SkipIfCopied, 9, "skip_if_copied", OperandKind.Reg, OperandKind.Address);
+        Set(Opcode.UnifyBlit, 13, "unify_blit", OperandKind.LiteralId, OperandKind.Reg, OperandKind.Address);
 
         // Unify instructions
         Set(Opcode.UnifyVariableX, 5, "unify_variable_x", OperandKind.Reg);

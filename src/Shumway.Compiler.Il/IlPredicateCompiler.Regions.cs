@@ -568,13 +568,29 @@ public sealed partial class IlPredicateCompiler
             var emit = IlEmit.NewDynamicMethod(
                 $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
                 record: IlDumpPath is not null);
-            EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
-                typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
-            EmitRegionTail(emit);
+            var streamSites = _streamSites = new List<(byte[] Code, int Pc)>();
+            try
+            {
+                EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
+                    typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
+                EmitRegionTail(emit);
+            }
+            finally { _streamSites = null; }
             if (_regionTrace is { } tr) tr.Attempt = attempt;
             int jitLocals = IlRegionCost.Locals(emit.LocalCount, emit.InlineCount);
-            bool overLocals = IlRegionCost.LocalsTarget > 0 && jitLocals > IlRegionCost.LocalsTarget
-                && emit.LocalRefCount >= IlRegionCost.LocalsFloorRefs;
+            bool pastLocals = IlRegionCost.LocalsTarget > 0 && jitLocals > IlRegionCost.LocalsTarget;
+            bool overLocals = pastLocals && emit.LocalRefCount >= IlRegionCost.LocalsFloorRefs;
+            // ADR-063: past the cap on locals or a limit of the JIT, the head
+            // streams the region emitted go to the matcher first, the members
+            // kept; the plan sheds members only when that is not enough. The
+            // floor of references does not apply: a region of streams has
+            // few references and many inlines.
+            if (attempt < 3 && (pastLocals || IlJitLimits.Exceeded(emit, out _))
+                && IlRegionCost.CompactStreams(streamSites, calleeMap))
+            {
+                _regionTrace = null;
+                continue;
+            }
             if (IlRegionCost.Target > 0 && attempt < 3 && calleeMap is not null
                 && (IlJitLimits.Exceeded(emit, out _) || overLocals))
             {

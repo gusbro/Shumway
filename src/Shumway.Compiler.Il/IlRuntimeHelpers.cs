@@ -81,6 +81,20 @@ public static class IlRuntimeHelpers
     public static bool IsCopied(Activation engine, int reg)
         => Activation.IsCopiedMark(engine.GetRegister(reg));
 
+    /// <summary>ADR-063, heads: IL <c>unify_blit</c>; false is failure.</summary>
+    public static bool UnifyBlit(Activation engine, int imageId, int reg)
+    {
+        var pool = engine.CurrentImages
+            ?? throw new InvalidOperationException(
+                "IL unify_blit: engine.CurrentImages is null. The embedding layer must populate it at query setup.");
+        if (imageId < 0 || imageId >= pool.Count)
+            throw new InvalidOperationException($"IL unify_blit: image id {imageId} is out of range [0, {pool.Count}).");
+        return engine.UnifyBlit(pool[imageId], reg);
+    }
+
+    public static bool UnifyBlitGlobal(Activation engine, int imageId, int reg)
+        => engine.UnifyBlit(TermImageTable.Get(imageId), reg);
+
     private static TextLiteral ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals

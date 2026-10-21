@@ -472,6 +472,8 @@ public sealed partial class IlPredicateCompiler
         Row(IlGetBlitHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
         Row(IlGetBlitGlobalHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
         Row(IlIsCopiedHelperMethod, MachineRegs.RegisterArray, MachineRegs.None);
+        Row(IlUnifyBlitHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
+        Row(IlUnifyBlitGlobalHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
         Row(IlWalkSubOrMissMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(PreferRationalsGetter, MachineRegs.None, MachineRegs.None);
         return t;
