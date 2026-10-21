@@ -353,6 +353,17 @@ public enum Opcode : byte
     //   put_blit <imageLit:int32> <reg:int32>   9 bytes
     PutBlit = 0x6A,
 
+    // ADR-063, heads: the image of a head argument. The argument unbound,
+    // the copy is built and bound and the matching stream that follows is
+    // skipped; bound, the stream matches it as before.
+    //   get_blit <imageLit:int32> <reg:int32> <skip:addr>   13 bytes
+    GetBlit = 0x6B,
+
+    // ADR-063, heads: a deferred part of a copied argument is on the heap
+    // already, its temporary holding the copy mark: skip its matching.
+    //   skip_if_copied <reg:int32> <target:addr>   9 bytes
+    SkipIfCopied = 0x6C,
+
     // 0x67-0x70 once parked a "reserved specialised-builtin" family
     // (unify_eq, is_op, the comparison ops) that predated ADR-018's
     // arithmetic instruction set and the phase-26 inline `=/2`. Never

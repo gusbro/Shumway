@@ -15,6 +15,8 @@ public sealed class TermImageTests
 {
     private const string Program = """
         :- public lookup/2, mixed/1, text/1, loop/1, all/1, pair/3, fresh/2, perm/2, attv/1, back/1.
+        :- public tbl/2, tree/2, patt/3, hd/2, frz/2, ptbl/2, ptree/2, ppatt/3, phd/2.
+        :- use_module(library(coroutining)).
         id(X, X).
         lookup(K, V) :- t([k(a, 1), k(b, 2), k(c, 3), k(d, 4), k(e, 5), k(f, 6)], K, V).
         t([k(K, V)|_], K, V) :- !.
@@ -31,6 +33,16 @@ public sealed class TermImageTests
         perm(P, Q) :- id(a, A), id(f(A, [x, y, z], B, B), P), id(B, Q).
         attv(P) :- put_attr(V, t, 1), id(f(V, [1, 2, 3], V), P).
         back(L) :- findall(P, (mem(X, [1, 2]), id(f(X, [a, b, c], X), P)), L).
+        tbl(1, [a, b, c, d, e, f, g, h]).
+        tbl(2, [i, j, k, l, m, n, o, p]).
+        tree(t(l(1, 2), l(3, 4)), n(l(5, 6), l(7, 8))).
+        patt(f(X, g(X, Y), [a, b, c]), Y, h(Y, X)).
+        hd(V, f(V, [1, 2, 3], V)).
+        frz(V, R) :- freeze(V, R = woke), tbl(2, V).
+        ptbl(K, L) :- tbl(K, L).
+        ptree(A, B) :- tree(A, B).
+        ppatt(F, Y, H) :- patt(F, Y, H).
+        phd(V, T) :- hd(V, T).
         """;
 
     private static readonly (string Goal, string Var)[] Goals =
@@ -49,6 +61,21 @@ public sealed class TermImageTests
         ("back(L).", "L"),
         ("fresh(P, _), garbage_collect, P = f(A, L, _, _, _, _), garbage_collect, L == [1, 2, 3], var(A), R = yes.", "R"),
         ("findall(P, (mem(X, [1, 2, 3]), pair(X, X, P)), Ps).", "Ps"),
+        ("tbl(2, L).", "L"),
+        ("ptbl(2, L).", "L"),
+        ("ptbl(K, [i, j, k, l, m, n, o, p]).", "K"),
+        ("ptbl(2, [i | T]).", "T"),
+        ("findall(L, ptbl(_, L), Ls).", "Ls"),
+        ("ptree(A, B), R = A-B.", "R"),
+        ("ptree(t(l(1, 2), X), B), X = l(P, Q), R = P-Q-B.", "R"),
+        ("ptree(A, n(l(5, 6), l(7, 8))), R = A.", "R"),
+        ("\\+ ptree(t(l(1, 2), l(3, 5)), _), R = yes.", "R"),
+        ("ppatt(F, y, H), R = F-H.", "R"),
+        ("ppatt(f(1, g(1, 2), [a, b, c]), Y, H), R = Y-H.", "R"),
+        ("phd(7, T).", "T"),
+        ("tree(A, B), patt(F, y, H), hd(7, T), R = A-B-F-H-T.", "R"),
+        ("frz(V, R).", "R"),
+        ("tree(A, _), garbage_collect, A = t(l(P, _), _), R = P.", "R"),
     };
 
     private static string Answer(PrologEngine e, string goal, string var)
@@ -97,6 +124,9 @@ public sealed class TermImageTests
             Assert.True(own.Any(e => e.Text.Contains("put_blit")),
                 pred + " copies no image:\n" + string.Join("\n", own.Select(e => e.Name + "\n" + e.Text)));
         }
+        // ...and the heads with large arguments carry the prefix.
+        foreach (string pred in new[] { "tbl", "tree", "patt", "hd" })
+            Assert.True(entries.Any(e => e.Name.Contains(pred) && e.Text.Contains("get_blit")), pred + " has no get_blit");
         // ...and the ones with variables carry images with holes of every kind.
         var pools = new LiteralPools();
         var compiler = new ClauseCompiler();
@@ -128,7 +158,9 @@ public sealed class TermImageTests
             Assert.Equal(expected, Answer(plain, goal, v));
             Assert.Equal(expected, Answer(tiered, goal, v));
         }
-        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1" })
+        // The head-image predicates themselves, not only their wrappers: a
+        // get_blit the IL pre-scan does not know leaves them on Tier-0.
+        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "ptbl/2", "ptree/2", "ppatt/3", "phd/2", "tbl/2", "tree/2", "patt/3", "hd/2" })
             Assert.True(Promoted(tiered, pi), $"{pi} did not promote\n{tiered.IlPromotion.DescribePromotionState()}");
         // Promoted, the answers are the compiled code's.
         foreach (var (goal, v) in Goals)

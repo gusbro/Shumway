@@ -1506,6 +1506,51 @@ public sealed partial class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.GetBlit)   // ADR-063, heads
+            {
+                int imageId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                int skip = BytecodeIO.ReadInt32(code, pc + 9);
+                emit.LoadArgument(0);
+                if (_persistPatches is null)
+                {
+                    emit.LoadConstant(imageId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlGetBlitHelperMethod);
+                }
+                else
+                {
+                    EmitImageId(emit, imageId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlGetBlitGlobalHelperMethod);
+                }
+                jumpLabels ??= new Dictionary<int, IlLabel>();
+                if (!jumpLabels.TryGetValue(skip, out var skipLabel))
+                {
+                    skipLabel = emit.DefineLabel($"blit_skip_{skip}_{NextLabelSeq()}");
+                    jumpLabels[skip] = skipLabel;
+                }
+                emit.BranchIfTrue(skipLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.SkipIfCopied)   // ADR-063, heads
+            {
+                int reg = BytecodeIO.ReadInt32(code, pc + 1);
+                int target = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(reg);
+                EmitHelperCall(emit, IlIsCopiedHelperMethod);
+                jumpLabels ??= new Dictionary<int, IlLabel>();
+                if (!jumpLabels.TryGetValue(target, out var partLabel))
+                {
+                    partLabel = emit.DefineLabel($"part_skip_{target}_{NextLabelSeq()}");
+                    jumpLabels[target] = partLabel;
+                }
+                emit.BranchIfTrue(partLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (op == Opcode.Call)
             {
                 // Non-tail Call — threaded: Cp is set to a resume marker

@@ -469,6 +469,9 @@ public sealed partial class IlPredicateCompiler
         // ADR-063: the reservation may grow or collect the heap, as put_pstr's.
         Row(IlPutBlitHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
         Row(IlPutBlitGlobalHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.HeapTop | MachineRegs.HeapArray | MachineRegs.RegisterArray);
+        Row(IlGetBlitHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
+        Row(IlGetBlitGlobalHelperMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray);
+        Row(IlIsCopiedHelperMethod, MachineRegs.RegisterArray, MachineRegs.None);
         Row(IlWalkSubOrMissMethod, MachineRegs.HeapArray, MachineRegs.None);
         Row(PreferRationalsGetter, MachineRegs.None, MachineRegs.None);
         return t;

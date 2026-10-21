@@ -36,7 +36,10 @@ internal static partial class IlInlineTable
         ["Shumway.Compiler.Il.IlPredicateCompiler+IlMetaCallHelper::ReadIntRegister(Shumway.Core.Activation,System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Compiler.Il.IlProfileCounters::Bump(System.Int32,System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Compiler.Il.IlRegisterCheck::Mismatch(System.String)"] = 0,   // unprofitable inline
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::GetBlit(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // too many il bytes
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::GetBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 1,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::GetPstr(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // unprofitable inline
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::IsCopied(Shumway.Core.Activation,System.Int32)"] = 3,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlit(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutPstr(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // unprofitable inline

@@ -324,6 +324,11 @@ public sealed partial class Activation
         for (int i = 0; i < holes.Length; i++)
         {
             var h = holes[i];
+            if (h.IsSentinel)
+            {
+                SetRegister(h.Slot, CopiedMark);
+                continue;
+            }
             int idx = start + h.Offset;
             if (h.IsOut)
             {
@@ -336,6 +341,45 @@ public sealed partial class Activation
                 _heap[idx] = v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v;
             }
         }
+    }
+
+    /// <summary>The cell a copied argument's deferred temporaries hold, for
+    /// <c>skip_if_copied</c>: a raw integer, which the collector knows is no
+    /// reference and which no matching stream leaves in a register.</summary>
+    public static readonly Cell CopiedMark = Cell.RawInt(0x5C0D1E);
+
+    public static bool IsCopiedMark(Cell c) => c.Data == CopiedMark.Data;
+
+    /// <summary>ADR-063, heads: <c>get_blit</c>. The argument unbound, the
+    /// image is built (holes filled, deferred temporaries marked) and the
+    /// variable bound to it, as <c>get_structure</c> binds one in write mode,
+    /// an attributed one with its wakeups queued: true, and the caller skips
+    /// the matching stream. Bound, or no variable: false, and the stream
+    /// matches as it always did.</summary>
+    public bool GetBlit(TermImage image, int regIdx)
+    {
+        Cell c = _registers[regIdx];
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return false;
+        int addr = Deref(c.AsHeapIndex);
+        Cell v = _heap[addr];
+        if (v.Tag == Tag.Ref)
+        {
+            if (v.AsHeapIndex != addr) return false;   // bound through the chain: the stream matches it
+            Bind(addr, BuildImage(image));
+            return true;
+        }
+        if (v.Tag == Tag.AttVar)
+        {
+            // As GetStructureSlow: the value needs an address of its own for
+            // the hooks, so the root cell goes on the heap before the copy.
+            int h = AllocateHeap(1);
+            Cell root = BuildImage(image);
+            _heap[h] = root;
+            QueueAttrWakeups(addr, h);
+            BindAttVarToValue(addr, h, root);
+            return true;
+        }
+        return false;
     }
 
     public int MakePstr(string value, TextKind kind)

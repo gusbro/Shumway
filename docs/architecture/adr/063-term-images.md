@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted (2026-10-19). Extends the instruction set (ADR-006) with one
-instruction and the literal pools (ADR-015) with one pool. No cell tag, no
+Accepted (2026-10-19). Extends the instruction set (ADR-006) with three
+instructions and the literal pools (ADR-015) with one pool. No cell tag, no
 heap layout and no collector change (ADR-002, ADR-016).
 
 ## Context
@@ -143,14 +143,61 @@ by the build's environment, not by a running engine's switch
 (`SHUMWAY_IMAGE_HOLES`, 0 for off), which governs the code compiled after
 it.
 
+## Heads: the copy before the matching
+
+A census of head argument compounds at or past the threshold, over the
+same corpus, found them 42% of the head cells in the clpz library, 58% to
+75% in the application modules, and most of a data fact's cells in the
+Van Roy programs that carry one. A head's stream may run in read mode,
+matching a bound argument cell by cell, so an image cannot replace it;
+but the argument comes unbound as often as it comes bound, and then the
+stream builds, one instruction per cell, what a copy would give at once.
+
+`get_blit image, Ai, skip` goes before the argument's stream. The argument
+unbound, it builds the image (holes filled from the registers the stream
+would have used, an attributed variable's wakeups queued), binds the
+variable as `get_structure` binds one in write mode, and jumps past the
+stream; bound, or no variable at all, the stream matches as it always
+did. The stream keeps its breadth-first order across arguments, which
+fails fast on a principal functor that does not match: the prefix covers
+the argument's own stream, contiguous by that order, and each part the
+order defers (a nested compound not in last position) gets a
+`skip_if_copied Xk, L` before it. The copy sets the temporaries of those
+parts to a mark, a raw integer no stream leaves in a register, and the
+skip jumps when it finds the mark; the stream, in read mode, overwrites
+the temporaries with cells before any skip looks.
+
+Which variables the copy can serve is a matter of stream order: every
+plain argument binds to its register in the head loop first, then each
+compound argument's own stream runs, then the deferred parts. A variable
+first met as a plain argument is a hole filled from that register, there
+throughout the head; one first met in this argument's own stream or
+deferred parts is a hole the copy points the register at, the one the
+stream assigned; one first met in an earlier argument's own stream is
+filled from the register that stream gave it. A variable first captured
+in a later argument's stream, or in an earlier argument's deferred part,
+has no register when the copy runs and the stream would overwrite the one
+the copy gave: such an argument keeps the stream alone. The census put
+these at 9% of the candidates in clpz and 22% in the Scryer libraries. So
+does an argument with a sub-term equal to another argument's compound:
+the stream shares it through that argument's register (CSE), a copy would
+build it again.
+
+Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
+the wasm tier copies and binds in the module, steps aside to the
+interpreter for an attributed variable, and branches on the mark. The
+switch is `SHUMWAY_IMAGE_HEADS`, 0 for off.
+
 ## Not in this decision
 
-Heads keep their `get_*` matching: a `get_blit` (unify against the image in
-read mode, copy and bind in write mode) is a later extension. Big
-integers and rationals stay out of images while their payloads name a
-per-activation table. A clause asserted at run time interns its images in
-the pool as it interns its string literals, and the pool does not free; the
-threshold keeps small terms out of it.
+A matcher that unifies a bound argument against the image, without the
+stream, would spare Tier-0 its dispatch per cell; in the IL tier it would
+compete with the specialised code the stream compiles to. It is a later
+measurement, behind a switch of its own. Big integers and rationals stay
+out of images while their payloads name a per-activation table. A clause
+asserted at run time interns its images in the pool as it interns its
+string literals, and the pool does not free; the threshold keeps small
+terms out of it.
 
 ## Expected gain (before measuring)
 
@@ -180,14 +227,19 @@ such terms on its hot path. The mechanism itself, one build with the holes
 switched off against on, a loop building the census's three shapes (22
 cells with three variables seen before, 12 with one first seen and
 repeated, 40 of anonymous variables): 0.66 at the minimum and 0.60 at the
-median on the IL tier, 0.72 and 0.76 on Tier-0.
+median on the IL tier, 0.80 and 0.83 on Tier-0.
 
-A first form took images in heads too: a fact with a thirty-element list
-in its head got a copy before its `get_list`, and nreverse, which calls
-such a fact in write mode inside a region, ran 6 to 8% slower in both
-orders, while flatten and qsort, whose data facts build through helper
-calls, ran faster by a third. Heads are out until an instruction that
-matches in read mode and copies in write mode exists.
+Heads, one build with the switch off against on, eight rounds ABBA over
+two copies, heap cells identical: a loop that looks a data fact up
+unbound, then bound, a list of eight elements and a tree of eleven cells,
+0.87 at the minimum and 0.86 at the median on the IL tier, 0.96 and 0.88
+on Tier-0; lists of 32 elements and trees of eight leaves, 0.76 and 0.79
+(0.86 and 0.83 on Tier-0); lists of 100 elements and trees of sixteen
+leaves, 0.71 and 0.74 (0.77 and 0.76). The copy pays from the threshold
+on and more as the term grows. Over the corpus, nreverse, whose data fact
+is a thirty-element list, 0.92 at the minimum and 0.98 at the median;
+the other programs within the noise of the run, clpz at 1.02 and 0.98
+over eight rounds.
 
 ## Risks
 

@@ -301,7 +301,7 @@ public sealed class ModuleCompiler
                     or (byte)Opcode.UnifyRational
                     or (byte)Opcode.GetPstr or (byte)Opcode.PutPstr
                     // ADR-063: the image pool is one more of the same kind.
-                    or (byte)Opcode.PutBlit;
+                    or (byte)Opcode.PutBlit or (byte)Opcode.GetBlit;
                 for (int i = 0; i < info.OperandKinds.Length; i++)
                 {
                     if (info.OperandKinds[i] == OperandKind.LiteralId && !stableLiteralOp)

@@ -62,6 +62,25 @@ public static class IlRuntimeHelpers
     public static void PutBlitGlobal(Activation engine, int imageId, int argReg)
         => engine.SetRegister(argReg, engine.BuildImage(TermImageTable.Get(imageId)));
 
+    /// <summary>ADR-063, heads: true when the argument was unbound and now
+    /// holds the copy; the caller then skips the matching stream.</summary>
+    public static bool GetBlit(Activation engine, int imageId, int argReg)
+    {
+        var pool = engine.CurrentImages
+            ?? throw new InvalidOperationException(
+                "IL get_blit: engine.CurrentImages is null. The embedding layer must populate it at query setup.");
+        if (imageId < 0 || imageId >= pool.Count)
+            throw new InvalidOperationException($"IL get_blit: image id {imageId} is out of range [0, {pool.Count}).");
+        return engine.GetBlit(pool[imageId], argReg);
+    }
+
+    public static bool GetBlitGlobal(Activation engine, int imageId, int argReg)
+        => engine.GetBlit(TermImageTable.Get(imageId), argReg);
+
+    /// <summary>ADR-063, heads: whether the register holds the copy mark.</summary>
+    public static bool IsCopied(Activation engine, int reg)
+        => Activation.IsCopiedMark(engine.GetRegister(reg));
+
     private static TextLiteral ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals

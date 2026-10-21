@@ -507,6 +507,7 @@ public static class WasmPredicateCompiler
                         if (nm.Contains("$catchgoal_")) _sureExits[sec] += 2;
                     }
                     return;
+                case Opcode.GetBlit:
                 case Opcode.PutBlit:
                     // ADR-063: the work of one store per cell, as the unify
                     // stream the image stands for; as one op, a body that
@@ -633,8 +634,11 @@ public static class WasmPredicateCompiler
                         throw new WasmCompileException($"{ins.Op} without a float pool at {ins.Pc}");
                     return;
                 case Opcode.PutBlit:   // ADR-063
+                case Opcode.GetBlit:
                     if (Sec(ins).ImageLiterals is null)
-                        throw new WasmCompileException($"put_blit without an image pool at {ins.Pc}");
+                        throw new WasmCompileException($"{ins.Op} without an image pool at {ins.Pc}");
+                    return;
+                case Opcode.SkipIfCopied:
                     return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
@@ -731,6 +735,12 @@ public static class WasmPredicateCompiler
                         break;
                     case Opcode.Jump:
                         _leaders.Add(b + ins.I0);
+                        break;
+                    case Opcode.GetBlit:
+                        _leaders.Add(b + ins.I2);
+                        break;
+                    case Opcode.SkipIfCopied:
+                        _leaders.Add(b + ins.I1);
                         break;
                 }
             }
@@ -2797,6 +2807,8 @@ public static class WasmPredicateCompiler
                 case Opcode.GetFloat: EmitGetFloat(ins); return false;
                 case Opcode.PutFloat: EmitPutFloat(ins); return false;
                 case Opcode.PutBlit: EmitPutBlit(ins); return false;   // ADR-063
+                case Opcode.GetBlit: EmitGetBlit(ins); return false;
+                case Opcode.SkipIfCopied: EmitSkipIfCopied(ins); return false;
                 case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
                 case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
                 case Opcode.TrustMe: EmitTrustMe(ins); return false;
@@ -10648,6 +10660,62 @@ public static class WasmPredicateCompiler
         {
             int imageId = ins.I0, reg = ins.I1, pc = ins.Pc;
             TermImage image = Sec(ins).ImageLiterals![imageId];
+            EmitImageCells(pc, image);
+            RegStore(reg, () =>
+            {
+                Op(new Int64Constant((long)image.Root << Cell.TagShift));
+                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+            });
+            Op(new LocalGet(LH)); Op(new Int32Constant(image.Length)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        /// <summary>ADR-063, heads: the argument unbound, the image's cells
+        /// go to the heap top, the variable binds to them (trailed when
+        /// old) and the matching stream is skipped; an attributed one steps
+        /// aside to the interpreter, whose get_blit queues its wakeups;
+        /// anything else falls through to the stream.</summary>
+        private void EmitGetBlit(Instr ins)
+        {
+            int imageId = ins.I0, reg = ins.I1, pc = ins.Pc;
+            int skip = Bias(ins) + ins.I2;
+            TermImage image = Sec(ins).ImageLiterals![imageId];
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0)); Op(new Int32Constant(0)); Op(new Int32Equal());
+            OpenIf();
+            {
+                EmitImageCells(pc, image);
+                EmitBindDa(pc, () => PushTaggedH(image.Root));
+                Op(new LocalGet(LH)); Op(new Int32Constant(image.Length)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+                GoTo(skip);
+            }
+            CloseNested();
+            Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+            OpenIf();
+            EmitDeopt(pc, 30);
+            CloseNested();
+        }
+
+        /// <summary>ADR-063, heads: the deferred part of a copied argument is
+        /// on the heap already: its temporary holds the mark.</summary>
+        private void EmitSkipIfCopied(Instr ins)
+        {
+            int target = Bias(ins) + ins.I1;
+            RegLoad(ins.I0);
+            Op(new Int64Constant(Activation.CopiedMark.Data));
+            Op(new Int64Equal());
+            OpenIf();
+            GoTo(target);
+            CloseNested();
+        }
+
+        /// <summary>The image's cells at the heap top, relocated, the holes
+        /// filled and the deferred temporaries marked; H stays at the base.</summary>
+        private void EmitImageCells(int pc, TermImage image)
+        {
             int n = image.Length;
             var bytes = new byte[n * 8];
             for (int i = 0; i < n; i++)
@@ -10689,11 +10757,16 @@ public static class WasmPredicateCompiler
             CloseNested();
             // The holes, in their order (Activation.FillHoles is the mirror):
             // a register's cell into the image, a bare ATTVAR as a REF to its
-            // home; or the register at the image's unbound cell.
+            // home; or the register at the image's unbound cell; or the mark.
             var holes = image.Holes;
             for (int k = 0; k < holes.Length; k++)
             {
                 var h = holes[k];
+                if (h.IsSentinel)
+                {
+                    RegStore(h.Slot, () => Op(new Int64Constant(Activation.CopiedMark.Data)));
+                    continue;
+                }
                 if (h.IsOut)
                 {
                     void Ref()
@@ -10721,14 +10794,6 @@ public static class WasmPredicateCompiler
                     CellStoreDyn(LHeapB, LH, h.Offset, () => Op(new LocalGet(LC0)));
                 }
             }
-            RegStore(reg, () =>
-            {
-                Op(new Int64Constant((long)image.Root << Cell.TagShift));
-                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
-                Op(new Int64Or());
-            });
-            Op(new LocalGet(LH)); Op(new Int32Constant(n)); Op(new Int32Add());
-            Op(new LocalSet(LH));
         }
 
         // ---- a_eval: the RPN stack simulated at compile time (ADR-018) ----

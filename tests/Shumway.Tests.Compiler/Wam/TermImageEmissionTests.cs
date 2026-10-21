@@ -143,13 +143,84 @@ public class TermImageEmissionTests
     [Fact]
     public void AHeadKeepsItsMatching()
     {
-        // A head's stream may run in read mode: an image there would allocate
-        // and unify where the stream matches in place.
+        // A head's stream may run in read mode: no put, and the matching
+        // stream stays behind the get_blit prefix for the bound case.
         string text = Dis("p([a, b, c, d, e, f, g, h, i, j]).");
         Assert.DoesNotContain("put_blit", text);
+        Assert.Contains("get_blit", text);
         Assert.Contains("get_list", text);
         string inline = Dis("p(X) :- X = [a, b, c, d, e, f, g, h, i, j].");
         Assert.DoesNotContain("put_blit", inline);
+    }
+
+    private static int Count(string text, string word)
+        => (text.Length - text.Replace(word, "").Length) / word.Length;
+
+    [Fact]
+    public void AHeadArgumentGetsItsImageBeforeItsStreamAndItsDeferredPartsASkip()
+    {
+        // Two arguments past the threshold; the first has two deferred parts
+        // (non-last nested compounds), the second none. The stream order
+        // stays breadth-first: both prefixes, both streams, then the parts.
+        string src = "p(a(b(c, d), e)-f(g), h-i(j, k(l(m))), OUT) :- q(OUT).";
+        string text = Dis(src);
+        Assert.Equal(2, Count(text, "get_blit"));
+        Assert.Equal(2, Count(text, "skip_if_copied"));
+        Assert.Contains("get_structure", text);
+        var images = Images(src);
+        Assert.Equal(2, images.Count);
+        Assert.Equal(2, images[0].Holes.ToArray().Count(h => h.IsSentinel));
+        Assert.False(images[1].HasHoles);
+    }
+
+    [Fact]
+    public void AHeadVariableFirstCapturedInALaterArgumentKeepsTheStream()
+    {
+        // X is first met, in stream order, inside the second argument's own
+        // stream: the first argument's copy could not know its register and
+        // the stream would overwrite it. The second argument has its image.
+        string src = "p(f(h(X), a, b, c, d, e, f), g(X, a, b, c, d, e, f)).";
+        Assert.Equal(1, Count(Dis(src), "get_blit"));
+        var image = Assert.Single(Images(src));
+        var hole = Assert.Single(image.Holes.ToArray());
+        Assert.True(hole.IsOut);
+    }
+
+    [Fact]
+    public void AHeadVariableMetAsAPlainArgumentIsAHoleFromItsRegister()
+    {
+        // X is the second argument itself: its register holds the call's
+        // argument throughout the head, before or after the compound.
+        var image = Assert.Single(Images("p(f(X, a, b, c, d, e, f), X)."));
+        Assert.Equal(new ImageHole(1, ImageHole.In, 1), Assert.Single(image.Holes.ToArray()));
+        image = Assert.Single(Images("p(X, f(X, a, b, c, d, e, f))."));
+        Assert.Equal(new ImageHole(1, ImageHole.In, 0), Assert.Single(image.Holes.ToArray()));
+    }
+
+    [Fact]
+    public void AHeadSubTermSharedWithAnArgumentKeepsTheStream()
+    {
+        // The second argument holds a copy of the first: the stream references
+        // the first's register (CSE) where an image would build it again.
+        string src = "p(f(a, b, c, d, e, f, g, h), g(f(a, b, c, d, e, f, g, h), x)) :- q.";
+        string text = Dis(src);
+        Assert.Equal(1, Count(text, "get_blit"));
+        Assert.Contains("unify_value_x", text);
+        Assert.Single(Images(src));
+    }
+
+    [Fact]
+    public void TheHeadsSwitchKeepsTheStreamAlone()
+    {
+        bool prev = ClauseCompiler.ImageHeads;
+        ClauseCompiler.ImageHeads = false;
+        try
+        {
+            string text = Dis("p([a, b, c, d, e, f, g, h, i, j]).");
+            Assert.DoesNotContain("get_blit", text);
+            Assert.Contains("get_list", text);
+        }
+        finally { ClauseCompiler.ImageHeads = prev; }
     }
 
     [Fact]
