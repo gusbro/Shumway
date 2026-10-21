@@ -67,6 +67,23 @@ public sealed partial class ClauseCompiler
     public static int ImageThreshold { get; set; } =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_THRESHOLD"), out int t) ? t : 8;
 
+    private static int? _headThreshold =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_HEAD_THRESHOLD"), out int h) ? h : null;
+
+    /// <summary>ADR-063, heads: a head argument of at least this many cells
+    /// gets an image before its stream; 0 keeps every head to its stream.
+    /// The body's threshold unless set (<c>SHUMWAY_IMAGE_HEAD_THRESHOLD</c>):
+    /// a head's image is read more often than copied, and the read-only
+    /// form of its stream pays off under the copy's size.</summary>
+    public static int HeadThreshold
+    {
+        get => _headThreshold ?? ImageThreshold;
+        set => _headThreshold = value;
+    }
+
+    /// <summary>Back to the body's threshold.</summary>
+    public static void ResetHeadThreshold() => _headThreshold = null;
+
     /// <summary>ADR-063: whether an image may hold variables, as holes the
     /// copy fills from registers or points registers at; off, images are
     /// ground terms alone. <c>SHUMWAY_IMAGE_HOLES</c>, 0 for off: the

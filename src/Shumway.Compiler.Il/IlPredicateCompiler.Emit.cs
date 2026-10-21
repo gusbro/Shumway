@@ -1533,6 +1533,29 @@ public sealed partial class IlPredicateCompiler
                 int imageId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 int skip = BytecodeIO.ReadInt32(code, pc + 9);
+                jumpLabels ??= new Dictionary<int, IlLabel>();
+                if (!jumpLabels.TryGetValue(skip, out var skipLabel))
+                {
+                    skipLabel = emit.DefineLabel($"blit_skip_{skip}_{NextLabelSeq()}");
+                    jumpLabels[skip] = skipLabel;
+                }
+                // The register holding the term itself, the common case of a
+                // read: the stream at once, the helper for the rest (a
+                // reference to follow, a variable to bind to the copy).
+                IlLabel? bound = null;
+                var blitRf = RegisterFileOf(emit);
+                if (blitRf is not null && _ilImagePool is not null && (uint)imageId < (uint)_ilImagePool.Count)
+                {
+                    bound = emit.DefineLabel($"blit_bound_{NextLabelSeq()}");
+                    var bits = blitRf.Temp(typeof(long), KU + 3);
+                    EmitLoadEngineField(emit, EngRegisters);
+                    emit.LoadConstant(arg);
+                    emit.LoadElement<Cell>();
+                    emit.LoadField(CellDataField);
+                    emit.StoreLocal(bits);
+                    EmitTagIs(emit, bits, _ilImagePool[imageId].Root);
+                    emit.BranchIfTrue(bound);
+                }
                 emit.LoadArgument(0);
                 if (_persistPatches is null)
                 {
@@ -1546,13 +1569,8 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadConstant(arg);
                     EmitHelperCall(emit, IlGetBlitGlobalHelperMethod);
                 }
-                jumpLabels ??= new Dictionary<int, IlLabel>();
-                if (!jumpLabels.TryGetValue(skip, out var skipLabel))
-                {
-                    skipLabel = emit.DefineLabel($"blit_skip_{skip}_{NextLabelSeq()}");
-                    jumpLabels[skip] = skipLabel;
-                }
                 emit.BranchIfTrue(skipLabel);
+                if (bound is not null) emit.MarkLabel(bound);
                 TryBeginReadUnit(emit, code, pc, skipLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
