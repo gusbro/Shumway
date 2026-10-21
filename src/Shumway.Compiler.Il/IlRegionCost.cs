@@ -40,11 +40,13 @@ internal static class IlRegionCost
     /// JIT's count: the locals it declares and the temporaries of the
     /// inlines the JIT would make into it (<see cref="Locals"/>); 0 plans by
     /// local references alone. <c>SHUMWAY_REGION_LOCALS</c>. The JIT stops
-    /// inlining into a method once the count reaches
-    /// <see cref="IlJitLimits.InlineLocals"/>, and from there on every
-    /// helper of the method is a call. The target is the cap less the
-    /// estimate's slack: measured on Blint, 1,000 runs 5% ahead of 1,100
-    /// and 4% ahead of 900. A program whose members declare few locals and
+    /// inlining into a method once its own count reaches nine tenths of
+    /// <see cref="IlJitLimits.InlineLocals"/>
+    /// (<see cref="IlJitLimits.InliningCutoff"/>), and from there on every
+    /// helper of the method is a call. The target is in the planner's
+    /// count (<see cref="Locals"/>), which is not the JIT's, and fitted to
+    /// the cutoff: measured on Blint, 1,000 runs 5% ahead of 1,100 and 4%
+    /// ahead of 900. A program whose members declare few locals and
     /// call few helpers keeps its regions whole: boyer's largest comes to
     /// 1,041 and stays, being under the floor of references.</summary>
     public static int LocalsTarget { get; set; } =

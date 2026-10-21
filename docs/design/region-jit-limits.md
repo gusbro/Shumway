@@ -9,7 +9,9 @@ The runtime's JIT compiles a method without optimization once it is past
 fixed sizes, tested on the IL as emitted: 60,000 bytes, 20,000 instructions,
 2,000 locals, 8,000 references to locals and arguments, 2,000 basic blocks
 (the emitter counts them as the JIT finds them: the entry, every label,
-the instruction after every branch). Such a method gets no
+the instruction after every branch). The section *Where the limits come
+from* says which runtime they were read from and how they are reviewed.
+Such a method gets no
 inlining and no register allocation; every accessor is a call. The knobs that
 raise the sizes exist only in checked builds of the JIT.
 
@@ -280,3 +282,48 @@ sensible range, and the planner follows.
 Not mirrored: the wasm tier emits one function per predicate and the browser
 engines tier their own code up; no size at which they stop optimizing is
 known. Recorded here as a divergence of the backends, not of the design.
+
+## Where the limits come from
+
+The limits are constants of RyuJIT, the runtime's JIT, read from its
+source for .NET 10 (the dotnet/runtime repository, branch `release/10.0`)
+and kept in one place, `IlJitLimits` (`src/Shumway.Compiler.Il/IlJitLimits.cs`),
+with the major they were read from. The runtime's documentation does not
+publish them; the source is the reference.
+
+- The five sizes past which a method is compiled without optimization:
+  `DEFAULT_MIN_OPTS_CODE_SIZE` (60,000), `_INSTR_COUNT` (20,000),
+  `_BB_COUNT` (2,000), `_LV_NUM_COUNT` (2,000), `_LV_REF_COUNT` (8,000) in
+  [compiler.h](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/compiler.h),
+  tested by `Compiler::compSetOptimizationLevel` in
+  [compiler.cpp](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/compiler.cpp)
+  against the IL as imported, before any inlining. A release JIT has no
+  knob for them; ahead-of-time compilation never takes the switch.
+- `JitMaxLocalsToTrack` (0x400) in
+  [jitconfigvalues.h](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/jitconfigvalues.h),
+  the one knob a host can set (`DOTNET_JitMaxLocalsToTrack`, in the
+  environment the process starts with). The JIT stops inlining into a
+  method whose locals, its own and its inlinees' so far, reach nine tenths
+  of it: `lvaHaveManyLocals(0.9f)` at the candidate's check in
+  [fginline.cpp](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/fginline.cpp),
+  the rule in
+  [compiler.hpp](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/compiler.hpp).
+- `DEFAULT_MAX_INLINE_SIZE` (100 bytes of IL, never inlined past it) in
+  compiler.h and `ALWAYS_INLINE_SIZE` (16, always inlined up to it) in
+  [inline.h](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/jit/inline.h).
+
+None of these is conditioned on the target architecture: the values are
+the same on x64, x86 and Arm64. What the JIT decides in between, which
+call it inlines and how many temporaries an inline brings, depends on the
+target (its size estimates do), so the inline table
+(`IlInlineTable.Generated.cs`) is measured on the architecture that runs
+the tests and records the runtime and the architecture in its header.
+
+Review at every major of the runtime: `JitLimitCanaryTests` probes each
+of the five switches against the JIT of the build (a method a little
+under the limit is optimized, one a little past it is not), and
+`IlInlineTableTests` compares the table with the JIT and refuses a table
+measured with another major. A canary that fails on a new runtime means
+the constant moved: update it in `IlJitLimits`, then look again at what
+was fitted to it (the locals target and its slack, the temporaries per
+inline, the opcode models) with the measurements this document records.
