@@ -317,35 +317,50 @@ public class TermImageTests
     }
 
     [Fact]
-    public void AVariablesFirstCellIsMetBeforeItsOthers()
+    public void TheMatcherTakesTheBlocksInTheOrderTheStreamsRun()
     {
-        // f(g(X), h(X)): h's block is laid first, so X's first cell is in it
-        // and g's cell refers back; the matcher takes the blocks in that order.
-        var cells = new Cell[7];
-        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 2));
-        cells[1] = Cell.Str(5);
-        cells[2] = Cell.Str(3);
-        cells[3] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1));
-        cells[4] = Cell.Ref(4);
-        cells[5] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
-        cells[6] = Cell.Ref(4);
-        var image = new TermImage(cells, Tag.Str, new[] { new ImageHole(4, ImageHole.Out, 1) });
+        // f(g(X), h(X), i(Z)): the builder lays i, h, g after the root; the
+        // stream runs i inline (the last argument), then g, then h. X's Out
+        // hole is g's cell, met before h's In hole whatever the layout.
+        var cells = new Cell[10];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 3));
+        cells[1] = Cell.Str(8);
+        cells[2] = Cell.Str(6);
+        cells[3] = Cell.Str(4);
+        cells[4] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("i", permanent: true).Id, 1));
+        cells[5] = Cell.Ref(5);
+        cells[6] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1));
+        cells[7] = Cell.Ref(7);
+        cells[8] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[9] = Cell.Ref(9);
+        var image = new TermImage(cells, Tag.Str, new[]
+        {
+            new ImageHole(5, ImageHole.Out, 2),
+            new ImageHole(9, ImageHole.Out, 1),
+            new ImageHole(7, ImageHole.In, 1),
+        });
         var engine = new Activation();
-        // f(g(P), h(Q)), P and Q unbound.
-        int t = engine.AllocateHeap(3);
+        // f(g(P), h(Q), i(R)), all unbound; X's register holds a stale cell.
+        int t = engine.AllocateHeap(4);
         int gp = engine.AllocateHeap(2);
         int hq = engine.AllocateHeap(2);
+        int ir = engine.AllocateHeap(2);
         engine.SetHeap(t, cells[0]);
         engine.SetHeap(t + 1, Cell.Str(gp));
         engine.SetHeap(t + 2, Cell.Str(hq));
-        engine.SetHeap(gp, cells[5]);
+        engine.SetHeap(t + 3, Cell.Str(ir));
+        engine.SetHeap(gp, cells[8]);
         engine.SetHeap(gp + 1, Cell.Ref(gp + 1));
-        engine.SetHeap(hq, cells[3]);
+        engine.SetHeap(hq, cells[6]);
         engine.SetHeap(hq + 1, Cell.Ref(hq + 1));
+        engine.SetHeap(ir, cells[4]);
+        engine.SetHeap(ir + 1, Cell.Ref(ir + 1));
         engine.SetRegister(0, Cell.Str(t));
+        engine.SetRegister(1, Cell.Int(77));
         Assert.True(engine.UnifyBlit(image, 0));
-        Assert.Equal(Cell.Ref(hq + 1), engine.GetRegister(1));
-        Assert.Equal(engine.Deref(gp + 1), engine.Deref(hq + 1));   // P and Q, one variable now
+        Assert.Equal(Cell.Ref(gp + 1), engine.GetRegister(1));              // X, from g's cell
+        Assert.Equal(Cell.Ref(ir + 1), engine.GetRegister(2));              // Z
+        Assert.Equal(engine.Deref(gp + 1), engine.Deref(hq + 1));          // P and Q, one variable now
         // P bound: Q takes its value; both bound and different: no match.
         engine.SetHeap(gp + 1, Cell.Int(1));
         engine.SetHeap(hq + 1, Cell.Ref(hq + 1));
@@ -353,6 +368,64 @@ public class TermImageTests
         Assert.Equal(Cell.Int(1), engine.GetHeap(engine.Deref(hq + 1)));
         engine.SetHeap(hq + 1, Cell.Int(2));
         Assert.False(engine.UnifyBlit(image, 0));
+    }
+
+    [Fact]
+    public void ACopiedBlockFillsACellOfAVariableMetOutsideItFromItsRegister()
+    {
+        // f(X, g(X)): X's first cell is the root's, g's cell is an In hole.
+        // The heap holds f(a, Z), Z unbound: g's block is copied, its X is
+        // a, from the register, not a cell at the relocated distance.
+        var cells = new Cell[5];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 2));
+        cells[1] = Cell.Ref(1);
+        cells[2] = Cell.Str(3);
+        cells[3] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[4] = Cell.Ref(4);
+        var image = new TermImage(cells, Tag.Str, new[]
+        {
+            new ImageHole(1, ImageHole.Out, 1),
+            new ImageHole(4, ImageHole.In, 1),
+        });
+        var engine = new Activation();
+        int a = AtomTable.Intern("a", permanent: true).Id;
+        int t = engine.AllocateHeap(3);
+        engine.SetHeap(t, cells[0]);
+        engine.SetHeap(t + 1, Cell.Atom(a));
+        engine.SetHeap(t + 2, Cell.Ref(t + 2));
+        int gap = engine.AllocateHeap(4);   // where a relocated reference would land
+        for (int i = 0; i < 4; i++) engine.SetHeap(gap + i, Cell.Int(99));
+        engine.SetRegister(0, Cell.Str(t));
+        int top = engine.HeapTop;
+        Assert.True(engine.UnifyBlit(image, 0));
+        Assert.Equal(Cell.Atom(a), engine.GetRegister(1));
+        Assert.Equal(Cell.Str(top), engine.GetHeap(t + 2));
+        Assert.Equal(cells[3], engine.GetHeap(top));
+        Assert.Equal(Cell.Atom(a), engine.GetHeap(engine.Deref(top + 1)));
+    }
+
+    [Fact]
+    public void UnderTheOccursCheckTheCopiesStepAside()
+    {
+        // g(X), X from register 1, which holds the variable the copy would
+        // bind: V = g(V). The stream matches for get_blit, the general
+        // unification for unify_blit; both say no.
+        var cells = new Cell[2];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1));
+        cells[1] = Cell.Ref(1);
+        var image = new TermImage(cells, Tag.Str, new[] { new ImageHole(1, ImageHole.In, 1) });
+        var engine = new Activation();
+        int v = engine.AllocateHeap(1);
+        engine.SetHeap(v, Cell.Ref(v));
+        engine.SetRegister(0, Cell.Ref(v));
+        engine.SetRegister(1, Cell.Ref(v));
+        engine.OccursMode = 1;
+        Assert.False(engine.GetBlit(image, 0));
+        Assert.Equal(Cell.Ref(v), engine.GetHeap(v));   // left to the stream
+        Assert.False(engine.UnifyBlit(image, 0));
+        engine.OccursMode = 0;
+        engine.SetHeap(v, Cell.Ref(v));
+        Assert.True(engine.UnifyBlit(image, 0));
     }
 
     [Fact]

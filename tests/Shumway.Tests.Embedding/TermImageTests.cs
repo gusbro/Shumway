@@ -49,6 +49,10 @@ public sealed class TermImageTests
         ppart(K, N) :- part(K, N).
         ppv(P, Y) :- pv(P, Y).
         nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
+        pv2(f(t(X, u(X, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 13), z), X).
+        ord(k(f(g(X), h(X), i(Z, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), R) :- R = X-Z.
+        occ(V, f(V, 1, 2, 3, 4, 5, 6, 7)).
+        pocc(V, k(f(V, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), z)).
         ptbl(K, L) :- tbl(K, L).
         ptree(A, B) :- tree(A, B).
         ppatt(F, Y, H) :- patt(F, Y, H).
@@ -105,6 +109,18 @@ public sealed class TermImageTests
         ("nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N).", "N"),
         ("nest(k(q(Q2, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), R = Q2-N.", "R"),
         ("nest(k(Q, z), N), Q = q(Q2, B, _, _, _, _, _, _, _, _, _, _, _, _, _), R = Q2-B-N.", "R"),
+        ("T = f(t(a, U, 13), z), P = pad(p, q, r), pv2(T, X), R = U-X-P.", "R"),
+        ("T = f(t(a, u(V, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 13), z), pv2(T, X), R = V-X.", "R"),
+        ("ord(k(f(g(P), h(Q), i(R1, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), P = 1, R1 = 2, R = Q-W.", "R"),
+        ("ord(k(f(g(1), h(1), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), R).", "R"),
+        ("\\+ ord(k(f(g(1), h(2), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), _), R = yes.", "R"),
+        ("ord(k(f(G, h(1), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), R = G-W.", "R"),
+        ("ord(k(f(g(1), H, i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), R = H-W.", "R"),
+        ("ord(k(F, z), W), F = f(g(1), _, i(2, _, _, _, _, _, _, _, _, _)), R = F-W.", "R"),
+        ("set_prolog_flag(occurs_check, true), ( occ(W, W) -> R = yes ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
+        ("set_prolog_flag(occurs_check, true), ( pocc(W, k(W, z)) -> R = yes ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
+        ("set_prolog_flag(occurs_check, true), ( occ(1, F) -> R = F ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
+        ("set_prolog_flag(occurs_check, true), ( pocc(1, K) -> R = K ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
         ("\\+ nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _), R = yes.", "R"),
     };
 

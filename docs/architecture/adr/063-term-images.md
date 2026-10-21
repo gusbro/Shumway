@@ -102,22 +102,28 @@ variables in the median, 23% in clpz, 4% in Blint. So an image holds
 variables too:
 
 1. An anonymous variable is a REF cell to its own offset: relocated, an
-   unbound variable, and nothing more. A variable repeated inside the image
-   is a REF to the offset of its first occurrence. Neither needs a word at
-   copy time: the image is what the heap would hold after building the
-   term with its variables unbound.
+   unbound variable, and nothing more. It needs no word at copy time: the
+   image is what the heap would hold after building the term with its
+   variables unbound.
 
-2. A named variable's first occurrence in the image is a hole, decided by
-   the compiler exactly as the unify stream would decide the occurrence: a
-   variable seen before (a permanent of the frame already initialised, a
-   temporary in a register) is a hole the copy fills from that register,
-   as `unify_value` writes one in write mode, a bare attributed variable as
-   a REF to its home; a variable first seen here is a hole the copy points
-   the register at, as `unify_variable` does, the image's cell being the
-   variable. The hole table lives in the image, so the literal id names the
-   site: two sites with the same term and the same registers share one
-   image, two with different registers are two entries. `put_blit` keeps
-   its shape, and so does the bundle, cell by cell with the holes after.
+2. Every cell of a named variable is a hole. The cell the stream meets
+   first (in the order the streams run: a compound's arguments, the last
+   one inline when the stream builds it so, the other compounds after it
+   first in first out) is decided by the compiler exactly as the unify
+   stream would decide the occurrence: a variable seen before (a permanent
+   of the frame already initialised, a temporary in a register) is a hole
+   the copy fills from that register, as `unify_value` writes one in write
+   mode, a bare attributed variable as a REF to its home; a variable first
+   seen here is a hole the copy points the register at, as
+   `unify_variable` does, the image's cell being the variable. The
+   variable's other cells are holes the copy fills from that register,
+   after the first in the table: a copy of one block of the image (a
+   sub-term the matcher or a part copies alone) finds in the register what
+   the stream, or the first cell's copy, put there. The hole table lives in
+   the image, so the literal id names the site: two sites with the same
+   term and the same registers share one image, two with different
+   registers are two entries. `put_blit` keeps its shape, and so does the
+   bundle, cell by cell with the holes after.
 
 3. A compound is imaged when it has at least the threshold's cells and
    holes for at most half of them. The copy of such an image is one
@@ -188,12 +194,16 @@ of its own and `unify_blit image, Xk, L` in place of the skip; its stream
 stays after the instruction. The temporary holds the mark: the part is on
 the heap already, and every tier goes on at L. Otherwise a tier runs the
 stream, or unifies the term with the image in one pass of the engine
-(`Activation.UnifyBlit`: a bound cell against the image's cell by cell,
-an unbound one bound to a copy of the image from that cell down, the
-holes read and written as the stream would read and write them, the
-temporaries of the parts nested under it marked) and goes on at L. The
-part's variables are all there when it runs: every stream before it has
-run, and one first met inside the part is the part's own.
+(`Activation.UnifyBlit`: the blocks taken in the order the streams run
+them, a bound cell against the image's cell by cell, an unbound one bound
+to a copy of the image from that cell down, the holes read and written as
+the stream would read and write them, the temporaries of the parts nested
+under it marked) and goes on at L. The part's variables are all there
+when it runs: every stream before it has run, and one first met inside
+the part is the part's own. Under the occurs check the copies step aside:
+a hole may hold the variable the copy binds, so `get_blit` leaves the
+stream to match, which tests every cell it stores, and the matcher
+unifies a copy of the image by the general unification, which tests too.
 
 The pass is slower than the stream's code on the IL tier, where the JIT
 inlines the stream's helpers into straight-line code with the constants

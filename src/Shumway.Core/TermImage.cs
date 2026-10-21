@@ -4,8 +4,8 @@ namespace Shumway.Core;
 /// index in them relative to the image's first cell. Immutable and shared by
 /// every activation: <c>put_blit</c> copies it to the heap top and relocates
 /// (<see cref="CopyTo"/>). A variable of the term is a REF cell to its own
-/// offset (unbound once relocated) or to the offset of its first occurrence;
-/// the <see cref="Holes"/> say which cells the copy fills from a register
+/// offset, unbound once relocated; every cell of a named one is among the
+/// <see cref="Holes"/>, which say which cells the copy fills from a register
 /// and which registers it points at a cell. Equal by content, holes
 /// included, so a literal pool interns one image per distinct term and
 /// register assignment.</summary>
@@ -96,6 +96,7 @@ public sealed class TermImage : IEquatable<TermImage>
 
     private int[]? _blockEnd;
     private int[]? _blockArity;
+    private bool[]? _blockBoxed;
 
     /// <summary>The end of the sub-term whose block (a structure's functor and
     /// arguments, a list's pair) starts at <paramref name="offset"/>: the
@@ -115,6 +116,15 @@ public sealed class TermImage : IEquatable<TermImage>
         }
     }
 
+    /// <summary>Whether an argument of the block at <paramref name="offset"/>
+    /// is a boxed literal, a float or a packed string: a matching stream
+    /// takes such a compound apart from its parent's, never inline.</summary>
+    public bool BlockHasBoxedArgument(int offset)
+    {
+        if (_blockBoxed is null) ComputeBlockEnds();
+        return _blockBoxed![offset];
+    }
+
     // Plain arrays, no delegate: the IL tier's helper analysis descends
     // into this code. Each block is laid once, so a block count bounds the
     // stack and the order.
@@ -124,6 +134,7 @@ public sealed class TermImage : IEquatable<TermImage>
         int n = cells.Length;
         var ends = new int[n];
         var arity = new int[n];
+        var boxed = new bool[n];
         var order = new int[n];     // the blocks as found, a parent before its children
         var isList = new bool[n];
         var stack = new int[n];
@@ -145,6 +156,10 @@ public sealed class TermImage : IEquatable<TermImage>
                     int sub = c.AsHeapIndex;
                     isList[sub] = c.Tag == Tag.Lis;
                     stack[sp++] = sub;
+                }
+                else if (c.Tag == Tag.Ref && cells[c.AsHeapIndex].Tag is Tag.Float or Tag.Pstr)
+                {
+                    boxed[bo] = true;
                 }
             }
         }
@@ -174,6 +189,7 @@ public sealed class TermImage : IEquatable<TermImage>
             ends[bo] = end;
         }
         _blockArity = arity;
+        _blockBoxed = boxed;
         _blockEnd = ends;
         return ends;
     }

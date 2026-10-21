@@ -37,6 +37,7 @@ public sealed class TermImageTests
         pv(p(q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), r(X, Y)), Y).
         frzp(V, R) :- freeze(V, R = woke), part(k(V, z), _).
         nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
+        ord(k(f(g(X), h(X), i(Z, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), R) :- R = X-Z.
         """;
 
     private static readonly string[] Goals =
@@ -78,6 +79,11 @@ public sealed class TermImageTests
         "nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), N == 1.",
         "nest(k(q(Q2, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _), Q2 == q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o).",
         "\\+ nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _).",
+        "ord(k(f(g(P), h(Q), i(R, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), P = 1, R = 2, Q == 1, W == 1-2.",
+        "ord(k(f(G, h(1), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), G == g(1), W == 1-2.",
+        "ord(k(f(g(1), H, i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), H == h(1), W == 1-2.",
+        "ord(k(F, z), W), F = f(g(1), _, i(2, _, _, _, _, _, _, _, _, _)), F == f(g(1), h(1), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), W == 1-2.",
+        "\\+ ord(k(f(g(1), h(2), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), _).",
     };
 
     // By name, module prefix stripped: a consulted predicate's functor carries its module.

@@ -5,19 +5,20 @@ namespace Shumway.Compiler.Wam;
 
 /// <summary>ADR-063: lays a compound out as the heap would hold it, every
 /// index relative to the first cell (<see cref="TermImage"/>). A variable is
-/// a REF to its own cell, or to the cell of its first occurrence; a named
-/// one is also a hole the <see cref="HoleClassifier"/> decides (the register
-/// it comes from or goes to), an anonymous one is a fresh cell and nothing
-/// more. Null for a term an image cannot carry: a big integer or a rational
-/// (their cells name a table of the activation), a text past the packed
-/// string's length, a named variable with no classifier. No recursion: the
-/// compounds still to lay wait on a stack, so a long list's spine or a long
-/// left-nested chain is a loop.</summary>
+/// a REF to its own cell; every cell of a named one is a hole, the cell the
+/// stream meets first as the <see cref="HoleClassifier"/> decides (the
+/// register it comes from or goes to), the others from that register; an
+/// anonymous one is a fresh cell and nothing more. Null for a term an image
+/// cannot carry: a big integer or a rational (their cells name a table of
+/// the activation), a text past the packed string's length, a named
+/// variable with no classifier. No recursion: the compounds still to lay
+/// wait on a stack, so a long list's spine or a long left-nested chain is a
+/// loop.</summary>
 internal static class TermImageBuilder
 {
-    /// <summary>The hole for the first occurrence of a named variable in
-    /// the image, at <c>offset</c>: which register, in or out. Called once
-    /// per variable, in the image's order, and may take registers.</summary>
+    /// <summary>The hole for the cell of a named variable the stream meets
+    /// first, at <c>offset</c>: which register, in or out. Called once per
+    /// variable, in the image's order, and may take registers.</summary>
     public delegate ImageHole HoleClassifier(string name, int offset);
 
     /// <summary>The holes the image of <paramref name="term"/> would need:
@@ -88,7 +89,11 @@ internal static class TermImageBuilder
     // packed string's cells go at the end as they are met.
     private static bool Lay(CompoundTerm root, List<Cell> cells, List<ImageHole> holes, HoleClassifier? classify)
     {
-        Dictionary<string, int>? first = null;   // a named variable's first cell
+        // A named variable's cells as laid, and the one the stream meets first.
+        Dictionary<string, List<int>>? named = null;
+        List<string>? names = null;
+        Dictionary<string, int>? firstCell = null;
+        Dictionary<string, (CompoundTerm Owner, int Index)>? streamFirst = null;
         var pending = new Stack<(int Slot, CompoundTerm Term)>();
         pending.Push((-1, root));
         while (pending.Count > 0)
@@ -146,17 +151,21 @@ internal static class TermImageBuilder
                         break;
                     case VarTerm v:
                     {
-                        int at = argBase + i;
-                        first ??= new Dictionary<string, int>();
-                        if (first.TryGetValue(v.Name, out int firstAt))
-                        {
-                            cells[at] = Cell.Ref(firstAt);
-                            break;
-                        }
                         if (classify is null) return false;
-                        first[v.Name] = at;
+                        int at = argBase + i;
                         cells[at] = Cell.Ref(at);
-                        holes.Add(classify(v.Name, at));
+                        named ??= new Dictionary<string, List<int>>();
+                        names ??= new List<string>();
+                        firstCell ??= new Dictionary<string, int>();
+                        streamFirst ??= StreamFirst(root);
+                        if (!named.TryGetValue(v.Name, out var its))
+                        {
+                            named[v.Name] = its = new List<int>();
+                            names.Add(v.Name);
+                        }
+                        its.Add(at);
+                        var sf = streamFirst[v.Name];
+                        if (ReferenceEquals(sf.Owner, c) && sf.Index == i) firstCell[v.Name] = at;
                         break;
                     }
                     default:
@@ -164,7 +173,61 @@ internal static class TermImageBuilder
                 }
             }
         }
+        if (named is not null)
+        {
+            // The cell the stream meets first as the classifier says, the
+            // others from the same register, after every first: the copy
+            // applies the holes in order.
+            var others = new List<ImageHole>();
+            foreach (string name in names!)
+            {
+                int first = firstCell![name];
+                var hole = classify!(name, first);
+                holes.Add(hole);
+                byte kind = (byte)(hole.Kind & ImageHole.Y);   // In, of the frame or not
+                foreach (int at in named[name])
+                    if (at != first) others.Add(new ImageHole(at, kind, hole.Slot));
+            }
+            holes.AddRange(others);
+        }
         return true;
+    }
+
+    // The argument the stream meets first for each named variable: the order
+    // the streams run (ADR-063), a compound's arguments in order, the last
+    // one inline when it is a compound the stream builds inline, the other
+    // compounds after it first in first out. The matcher takes the blocks in
+    // this order (Activation.MatchImage).
+    private static Dictionary<string, (CompoundTerm Owner, int Index)> StreamFirst(CompoundTerm root)
+    {
+        var first = new Dictionary<string, (CompoundTerm Owner, int Index)>();
+        var queue = new Queue<CompoundTerm>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var c = queue.Dequeue();
+            while (true)
+            {
+                int n = c.Args.Length;
+                CompoundTerm? inline = null;
+                for (int i = 0; i < n; i++)
+                {
+                    switch (c.Args[i])
+                    {
+                        case VarTerm v when v.Name != "_":
+                            if (!first.ContainsKey(v.Name)) first[v.Name] = (c, i);
+                            break;
+                        case CompoundTerm sub:
+                            if (i == n - 1 && ClauseCompiler.CanInlineCompound(sub)) inline = sub;
+                            else queue.Enqueue(sub);
+                            break;
+                    }
+                }
+                if (inline is null) break;
+                c = inline;
+            }
+        }
+        return first;
     }
 
     // The packed string as Activation.MakePstr lays it: the header, the

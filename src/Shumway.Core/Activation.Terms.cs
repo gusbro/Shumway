@@ -359,6 +359,9 @@ public sealed partial class Activation
     /// matches as it always did.</summary>
     public bool GetBlit(TermImage image, int regIdx)
     {
+        // A hole may hold the variable the copy binds: under the occurs
+        // check the stream, which tests every cell it stores, matches.
+        if (OccursMode != 0) return false;
         Cell c = _registers[regIdx];
         if (c.Tag is not (Tag.Ref or Tag.AttVar)) return false;
         int addr = Deref(c.AsHeapIndex);
@@ -389,24 +392,25 @@ public sealed partial class Activation
         BindAttVarToValue(addr, h, root);
     }
 
-    // The matcher's work stack, pairs of an image offset and a heap index;
-    // a plain array, grown by hand: the IL tier's helper analysis descends
-    // into this code, and a generic collection's methods are not all its.
-    private int[]? _matchStack;
+    // The matcher's queue of the blocks still to take, pairs of an image
+    // offset and a heap index of the cell that names one; a plain array,
+    // grown by hand: the IL tier's helper analysis descends into this code,
+    // and a generic collection's methods are not all its.
+    private int[]? _matchQueue;
 
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private void PushMatchPair(ref int sp, int offset, int at)
+    private void EnqueueMatchPair(ref int tail, int offset, int at)
     {
-        var stack = _matchStack!;
-        if (sp + 2 > stack.Length)
+        var queue = _matchQueue!;
+        if (tail + 2 > queue.Length)
         {
-            var bigger = new int[stack.Length * 2];
-            for (int i = 0; i < stack.Length; i++) bigger[i] = stack[i];
-            _matchStack = stack = bigger;
+            var bigger = new int[queue.Length * 2];
+            for (int i = 0; i < queue.Length; i++) bigger[i] = queue[i];
+            _matchQueue = queue = bigger;
         }
-        stack[sp++] = offset;
-        stack[sp++] = at;
+        queue[tail++] = offset;
+        queue[tail++] = at;
     }
 
     /// <summary>ADR-063, heads: <c>unify_blit</c>. The register holds the copy
@@ -429,6 +433,9 @@ public sealed partial class Activation
             addr = Deref(c.AsHeapIndex);
             c = _heap[addr];
         }
+        // A hole may hold the variable the match binds: under the occurs
+        // check the general unification, which tests for that, takes a copy.
+        if (OccursMode != 0) return UnifyCells(addr >= 0 ? Cell.Ref(addr) : c, BuildImage(image));
         if (c.Tag == Tag.Ref)
         {
             Bind(addr, BuildImage(image));
@@ -440,15 +447,19 @@ public sealed partial class Activation
             return true;
         }
         if (c.Tag != image.Root) return false;
-        _matchStack ??= new int[64];
+        _matchQueue ??= new int[64];
         var cells = image.Cells;
         var arities = image.BlockArities;
-        int sp = 0;
-        if (!MatchBlock(image, cells, arities, 0, image.Root == Tag.Lis, c.AsHeapIndex, ref sp)) return false;
-        while (sp > 0)
+        int head = 0, tail = 0;
+        if (!MatchBlock(image, cells, arities, 0, image.Root == Tag.Lis, c.AsHeapIndex, ref tail, out int next, out int nextAt)) return false;
+        while (true)
         {
-            int at = _matchStack[--sp];
-            int offset = _matchStack[--sp];
+            // The block the stream takes next: the last argument's, inline,
+            // else the oldest in the queue.
+            int offset, at;
+            if (next >= 0) { offset = next; at = nextAt; next = -1; }
+            else if (head < tail) { offset = _matchQueue[head++]; at = _matchQueue[head++]; }
+            else break;
             Cell ic = cells[offset];
             int a = Deref(at);
             Cell v = _heap[a];
@@ -463,7 +474,7 @@ public sealed partial class Activation
                 continue;
             }
             if (v.Tag != ic.Tag) return false;
-            if (!MatchBlock(image, cells, arities, ic.AsHeapIndex, ic.Tag == Tag.Lis, v.AsHeapIndex, ref sp)) return false;
+            if (!MatchBlock(image, cells, arities, ic.AsHeapIndex, ic.Tag == Tag.Lis, v.AsHeapIndex, ref tail, out next, out nextAt)) return false;
         }
         // The parts nested under the term are on the heap, matched or
         // copied: their streams skip on the mark, as after a copy.
@@ -473,12 +484,16 @@ public sealed partial class Activation
         return true;
     }
 
-    // A block's own cells in order, its nested blocks left for the loop, the
-    // last pushed first: the order the builder laid them in, so a variable's
-    // first cell is met before its other occurrences.
+    // A block's own cells in order; its nested blocks are left for the loop
+    // in the order the streams run them (ADR-063): the last argument's
+    // inline when the stream builds it so, the others first in first out.
+    // So a variable's Out hole is met before its In holes, as the stream
+    // meets its first cell before the others.
     private bool MatchBlock(TermImage image, ReadOnlySpan<Cell> cells, ReadOnlySpan<int> arities,
-        int offset, bool list, int at, ref int sp)
+        int offset, bool list, int at, ref int tail, out int next, out int nextAt)
     {
+        next = -1;
+        nextAt = -1;
         int first = offset, n = 2;
         if (!list)
         {
@@ -507,7 +522,15 @@ public sealed partial class Activation
                 }
                 case Tag.Str:
                 case Tag.Lis:
-                    PushMatchPair(ref sp, first + i, at + i);
+                    if (i == n - 1 && !image.BlockHasBoxedArgument(ic.AsHeapIndex))
+                    {
+                        next = first + i;
+                        nextAt = at + i;
+                    }
+                    else
+                    {
+                        EnqueueMatchPair(ref tail, first + i, at + i);
+                    }
                     break;
                 case Tag.Ref:
                 {
@@ -522,7 +545,7 @@ public sealed partial class Activation
                         if (!UnifyCells(Cell.Ref(at + i), Cell.Ref(h))) return false;
                         break;
                     }
-                    if (!MatchVariable(image, p, p == first + i, at + i)) return false;
+                    if (!MatchVariable(image, p, at + i)) return false;
                     break;
                 }
                 default:
@@ -532,18 +555,19 @@ public sealed partial class Activation
         return true;
     }
 
-    // A named variable's cell: its hole names the register. Its first cell
-    // takes the heap cell into the register (as unify_variable does in read
-    // mode) or unifies the register with it; a later cell unifies with the
-    // register, set by then. A self-reference with no hole is anonymous.
-    private bool MatchVariable(TermImage image, int p, bool first, int at)
+    // A named variable's cell is a hole naming its register: an Out hole,
+    // the cell the stream meets first, takes the heap cell into the register
+    // (as unify_variable does in read mode); an In hole unifies the
+    // register, set by then, with the heap cell. A cell with no hole is an
+    // anonymous variable.
+    private bool MatchVariable(TermImage image, int p, int at)
     {
         var holes = image.Holes;
         for (int i = 0; i < holes.Length; i++)
         {
             var h = holes[i];
             if (h.Offset != p || h.IsSentinel) continue;
-            if (first && h.IsOut)
+            if (h.IsOut)
             {
                 Cell src = _heap[at];
                 Cell v = src.Tag == Tag.AttVar ? Cell.Ref(at) : src;

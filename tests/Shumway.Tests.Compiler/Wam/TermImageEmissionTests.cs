@@ -75,13 +75,40 @@ public class TermImageEmissionTests
     }
 
     [Fact]
-    public void ARepeatedVariableIsOneHoleAndAReferenceToItsFirstCell()
+    public void ARepeatedVariableIsAnOutHoleAndInHolesAtItsOtherCells()
     {
         var image = Assert.Single(Images("p :- q(f(X, X, a, b, c, d, X))."));
-        Assert.Single(image.Holes.ToArray());
-        Assert.Equal(Cell.Ref(1), image.Cells[1]);
-        Assert.Equal(Cell.Ref(1), image.Cells[2]);
-        Assert.Equal(Cell.Ref(1), image.Cells[7]);
+        var holes = image.Holes.ToArray();
+        Assert.Equal(3, holes.Length);
+        Assert.True(holes[0].IsOut);
+        Assert.Equal(1, holes[0].Offset);
+        Assert.All(holes.Skip(1), h => Assert.False(h.IsOut));
+        Assert.All(holes, h => Assert.Equal(holes[0].Slot, h.Slot));
+        Assert.Equal(new[] { 2, 7 }, holes.Skip(1).Select(h => h.Offset).OrderBy(o => o));
+        foreach (int at in new[] { 1, 2, 7 })
+            Assert.Equal(Cell.Ref(at), image.Cells[at]);
+    }
+
+    [Fact]
+    public void AVariablesOutHoleIsAtTheCellTheStreamMeetsFirst()
+    {
+        // The builder lays i, h, g after the root; the stream runs i inline,
+        // then the deferred parts g and h. X's Out hole is g's cell (9), h's
+        // cell (7) an In hole after it; Z's is i's (5).
+        string src = "p(f(g(X), h(X), i(Z))) :- q(X, Z).";
+        Assert.Contains("get_blit", Dis(src));
+        var image = Assert.Single(Images(src));
+        var holes = image.Holes.ToArray().Where(h => !h.IsSentinel).ToArray();
+        Assert.Equal(3, holes.Length);
+        var x = holes.Where(h => h.Offset is 7 or 9).ToArray();
+        Assert.Equal(2, x.Length);
+        Assert.Equal(x[0].Slot, x[1].Slot);
+        Assert.True(Assert.Single(x, h => h.Offset == 9).IsOut);
+        Assert.False(Assert.Single(x, h => h.Offset == 7).IsOut);
+        Assert.True(Assert.Single(holes, h => h.Offset == 5).IsOut);
+        int lastOut = Array.FindLastIndex(holes, h => h.IsOut);
+        int firstIn = Array.FindIndex(holes, h => !h.IsOut);
+        Assert.True(lastOut < firstIn);
     }
 
     [Fact]

@@ -572,7 +572,7 @@ public sealed partial class ClauseCompiler
     /// and so break the contiguous-allocation invariant mid-stream. Such a
     /// compound falls back to the BFS (temp + <c>get_structure</c>), which
     /// pre-emits the literal at a clean point.</summary>
-    private static bool CanInlineCompound(CompoundTerm c)
+    internal static bool CanInlineCompound(CompoundTerm c)
     {
         foreach (Term a in c.Args)
             if (a is FloatTerm or StringTerm) return false;
