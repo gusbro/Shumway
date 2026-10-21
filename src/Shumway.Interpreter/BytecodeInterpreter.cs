@@ -2690,6 +2690,16 @@ public sealed partial class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.UnifyBlit:   // ADR-063, heads: the mark skips the stream, which matches otherwise
+                {
+                    int reg = ReadI32(code, codeArr, pc + 5);
+                    _engine.SetPc(Activation.IsCopiedMark(_engine.GetRegister(reg))
+                        ? ReadI32(code, codeArr, pc + 9)
+                        : pc + 13);
+                    inClause = true;
+                    break;
+                }
+
                 // ---------- Float literal opcodes ----------
 
                 case Opcode.GetFloat:

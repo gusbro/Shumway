@@ -83,7 +83,7 @@ internal static class IlRegionCost
     /// the cap, loses 5% cut; sendmore's hold a single member each past the
     /// cap, which a cut cannot mend. Blint's and the clpz puzzles' regions,
     /// at the reference target, gain from the cut.</summary>
-    public const int LocalsFloorRefs = 4000;
+    public static int LocalsFloorRefs { get; set; } = 4000;
 
     /// <summary>The shared tail of a region with that many resume entries and
     /// ladder entries.</summary>
@@ -120,6 +120,7 @@ internal static class IlRegionCost
     public static int EstimateLocals(byte[] code, IReadOnlyList<(int Start, int End)>? clauseRanges)
     {
         long sum16 = 0, bytes = 0;
+        var matched = MatcherSites(code);
         void Walk(int start, int end)
         {
             for (int pc = start; pc < end;)
@@ -129,12 +130,115 @@ internal static class IlRegionCost
                 if (size <= 0) return;
                 sum16 += LocalsWeight16(op);
                 bytes += size;
-                pc += size;
+                // ADR-063: a stream the matcher stands in for is not emitted.
+                pc = op == Opcode.UnifyBlit && matched.Contains(pc) ? BytecodeIO.ReadInt32(code, pc + 9) : pc + size;
             }
         }
         if (clauseRanges is null) Walk(0, code.Length);
         else foreach (var (s, e) in clauseRanges) Walk(s, e);
         return (int)Math.Max((sum16 + 8) / 16, bytes * 4 / 16);
+    }
+
+    /// <summary>ADR-063: the <c>unify_blit</c> sites of a code whose streams
+    /// the IL tier leaves to the matcher (<c>Activation.UnifyBlit</c>). None
+    /// at first: a stream's code, inlined by the JIT, is faster than the
+    /// matcher's pass. A region measured past the cap on locals sends the
+    /// largest streams it emitted there (<see cref="CompactStreams"/>), and
+    /// they stay there for the code's later emissions. The set is replaced,
+    /// never changed: a reader holds a consistent one.</summary>
+    public static HashSet<int> MatcherSites(byte[] code)
+    {
+        if (MatchEveryPart) return AllSites.GetValue(code, EverySite);
+        return Sites.TryGetValue(code, out var s) ? s : NoSites;
+    }
+
+    private static readonly ConditionalWeakTable<byte[], HashSet<int>> Sites = new();
+    private static readonly ConditionalWeakTable<byte[], HashSet<int>> AllSites = new();
+    private static readonly HashSet<int> NoSites = new();
+
+    /// <summary>Every part to the matcher, whatever the region: the
+    /// measurement's switch, <c>SHUMWAY_IMAGE_MATCH_ALL=1</c>.</summary>
+    public static bool MatchEveryPart { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_MATCH_ALL") == "1";
+
+    /// <summary>The locals a part's stream must cost for a compaction to
+    /// take it; a smaller stream stays. <c>SHUMWAY_IMAGE_MATCH_LOCALS</c>.</summary>
+    public static int MatcherStreamMin { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_MATCH_LOCALS"), out var m) && m >= 0
+            ? m : 32;
+
+    /// <summary>Streams sent to the matcher by compactions, over the process.</summary>
+    public static int Compactions => _compactions;
+    private static int _compactions;
+
+    /// <summary>A region measured past a limit of the JIT: of the streams it
+    /// emitted (<paramref name="streams"/>, a code and the site in it), those
+    /// at or past <see cref="MatcherStreamMin"/> whose argument every local
+    /// caller passes fresh (<see cref="IlColdArguments"/>) go to the matcher.
+    /// True when any did. Every one of them, not an overshoot's worth: the
+    /// measure that let the region past the limit is not one to meter them
+    /// by. A stream of an argument some caller may pass bound stays: read in
+    /// a loop, the stream's code beats the matcher's pass.</summary>
+    public static bool CompactStreams(IReadOnlyList<(byte[] Code, int Pc)> streams,
+        IReadOnlyDictionary<int, CompiledPredicate>? callers)
+    {
+        if (streams is null || streams.Count == 0 || callers is null) return false;
+        var fresh = IlColdArguments.FreshArguments(callers);
+        if (fresh.Count == 0) return false;
+        var byCode = new Dictionary<byte[], CompiledPredicate>(ReferenceEqualityComparer.Instance);
+        foreach (var p in callers.Values) byCode[p.BytecodeUnfused] = p;
+        var parts = new Dictionary<byte[], Dictionary<int, int>>(ReferenceEqualityComparer.Instance);
+        long min16 = (long)MatcherStreamMin * 16;
+        int taken = 0;
+        lock (Sites)
+        {
+            foreach (var (code, pc) in streams)
+            {
+                if (MatcherSites(code).Contains(pc) || StreamWeight16(code, pc) < min16) continue;
+                if (!byCode.TryGetValue(code, out var pred) || !fresh.TryGetValue(pred.FunctorId, out long mask)) continue;
+                if (!parts.TryGetValue(code, out var owners))
+                    parts[code] = owners = IlColdArguments.PartArguments(code, pred.Arity);
+                if (!owners.TryGetValue(pc, out int arg) || arg < 0 || arg >= 63 || ((mask >> arg) & 1) == 0) continue;
+                var next = Sites.TryGetValue(code, out var current) ? new HashSet<int>(current) : new HashSet<int>();
+                next.Add(pc);
+                Sites.Remove(code);
+                Sites.Add(code, next);
+                taken++;
+            }
+        }
+        if (taken > 0) Interlocked.Add(ref _compactions, taken);
+        return taken > 0;
+    }
+
+    /// <summary>The locals of the stream after the <c>unify_blit</c> at
+    /// <paramref name="pc"/>, in sixteenths.</summary>
+    private static long StreamWeight16(byte[] code, int pc)
+    {
+        int target = BytecodeIO.ReadInt32(code, pc + 9);
+        long w = 0;
+        for (int q = pc + OpcodeTable.Get((byte)Opcode.UnifyBlit).Size; q < target;)
+        {
+            var o = (Opcode)code[q];
+            int sz = o == Opcode.Meta ? 6 : OpcodeTable.Get((byte)o).Size;
+            if (sz <= 0) break;
+            w += LocalsWeight16(o);
+            q += sz;
+        }
+        return w;
+    }
+
+    private static HashSet<int> EverySite(byte[] code)
+    {
+        var sites = new HashSet<int>();
+        for (int pc = 0; pc < code.Length;)
+        {
+            var op = (Opcode)code[pc];
+            int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+            if (size <= 0) break;
+            if (op == Opcode.UnifyBlit) sites.Add(pc);
+            pc += size;
+        }
+        return sites;
     }
 
     /// <summary>JIT locals per opcode in sixteenths, fitted; the opcodes not
@@ -174,6 +278,7 @@ internal static class IlRegionCost
         Opcode.PutVariableY => 26,
         Opcode.PutBlit => 13,
         Opcode.GetBlit => 13,
+        Opcode.UnifyBlit => 13,
         Opcode.SkipIfCopied => 4,
         Opcode.UnifyList => 10,
         Opcode.UnifyStructure => 9,

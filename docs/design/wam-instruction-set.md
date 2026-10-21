@@ -871,6 +871,23 @@ temporary holds the copy mark, the part is on the heap already and control
 continues at `target`; otherwise the part's `get_structure` matches it as
 before.
 
+### unify_blit (0x6D)
+
+Operands: `int image_literal_id`, `reg temp`, `addr target`
+Total size: 13 bytes
+
+Before a deferred part at or past `PartThreshold`; the part's stream
+follows the instruction. The temporary holds the copy mark: control
+continues at `target`. Otherwise a tier runs the stream, or unifies the
+term with the image in one pass (a bound cell against the image's cell by
+cell, an unbound one bound to a copy of the image from that cell down,
+trailed when older than HB, an attributed one with its wakeups queued;
+the holes read from and written to their registers; the temporaries of
+the parts nested under the part set to the mark) and continues at
+`target`, or backtracks on a mismatch. Tier-0 and the wasm module run the
+stream; the IL tier takes the pass at the sites a region measured past
+the JIT's cap on locals compacted (ADR-063).
+
 ---
 
 ## Halt and reserved opcodes

@@ -207,6 +207,11 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The IL of bytecode [start, end). In a continuation method with
     /// a resume point (ADR-061, CpsResumePoint), only the emission that holds
     /// the point runs, and from the point on.</summary>
+    /// <summary>ADR-063: the <c>unify_blit</c> sites a region's emission gave
+    /// their streams, for the compaction when the region measures past the
+    /// cap (<see cref="IlRegionCost.CompactStreams"/>).</summary>
+    [ThreadStatic] private static List<(byte[] Code, int Pc)>? _streamSites;
+
     private static void EmitClauseBody(
         IlEmit emit, byte[] code, int start, int end,
         IlLabel failLabel, IReadOnlyList<CallSite> callSites,
@@ -1531,6 +1536,48 @@ public sealed partial class IlPredicateCompiler
                     jumpLabels[skip] = skipLabel;
                 }
                 emit.BranchIfTrue(skipLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyBlit)   // ADR-063, heads
+            {
+                int imageId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                int target = BytecodeIO.ReadInt32(code, pc + 9);
+                if (IlRegionCost.MatcherSites(code).Contains(pc))
+                {
+                    // The matcher does the part's whole stream: the IL goes on
+                    // at the target, and the stream between is not emitted.
+                    emit.LoadArgument(0);
+                    if (_persistPatches is null)
+                    {
+                        emit.LoadConstant(imageId);
+                        emit.LoadConstant(arg);
+                        EmitHelperCall(emit, IlUnifyBlitHelperMethod);
+                    }
+                    else
+                    {
+                        EmitImageId(emit, imageId);
+                        emit.LoadConstant(arg);
+                        EmitHelperCall(emit, IlUnifyBlitGlobalHelperMethod);
+                    }
+                    emit.BranchIfFalse(failLabel);
+                    pc = target;
+                    continue;
+                }
+                // The stream's code: the mark skips it, as skip_if_copied does.
+                // The site is noted for the region's compaction.
+                _streamSites?.Add((code, pc));
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                EmitHelperCall(emit, IlIsCopiedHelperMethod);
+                jumpLabels ??= new Dictionary<int, IlLabel>();
+                if (!jumpLabels.TryGetValue(target, out var streamEnd))
+                {
+                    streamEnd = emit.DefineLabel($"part_skip_{target}_{NextLabelSeq()}");
+                    jumpLabels[target] = streamEnd;
+                }
+                emit.BranchIfTrue(streamEnd);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

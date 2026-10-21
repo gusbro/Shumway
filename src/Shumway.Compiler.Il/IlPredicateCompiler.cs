@@ -525,6 +525,10 @@ public sealed partial class IlPredicateCompiler
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetBlitGlobal))!;
     private static readonly MethodInfo IlIsCopiedHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.IsCopied))!;
+    private static readonly MethodInfo IlUnifyBlitHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.UnifyBlit))!;
+    private static readonly MethodInfo IlUnifyBlitGlobalHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.UnifyBlitGlobal))!;
 #if DEBUG
     // Debug-mode marker methods. Reflection lookups stripped
     // from Release — no static init cost, no field, no IL site.
@@ -835,8 +839,9 @@ public sealed partial class IlPredicateCompiler
         Opcode.UnifyVoid => true,
         Opcode.UnifyStructure => true,   // ADR-019
         Opcode.UnifyList => true,        // ADR-019
-        // ADR-063, heads: the prefix and the skips are head matching too.
+        // ADR-063, heads: the prefixes and the skips are head matching too.
         Opcode.GetBlit => _persistPatches is null || _ilImagePool is not null,
+        Opcode.UnifyBlit => _persistPatches is null || _ilImagePool is not null,
         Opcode.SkipIfCopied => true,
         _ => false,
     };
@@ -918,6 +923,7 @@ public sealed partial class IlPredicateCompiler
         // ADR-063: persisted, the image goes in the patch, so the pool is needed.
         Opcode.PutBlit => _persistPatches is null || _ilImagePool is not null,
         Opcode.GetBlit => _persistPatches is null || _ilImagePool is not null,
+        Opcode.UnifyBlit => _persistPatches is null || _ilImagePool is not null,
         Opcode.SkipIfCopied => true,
         Opcode.Call => true,
         // ADR-018 arithmetic instruction set. a_eval_bin / a_eval_un /

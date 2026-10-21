@@ -78,6 +78,111 @@ public sealed class TermImage : IEquatable<TermImage>
     /// <summary>The cell that names the copy at <paramref name="start"/>.</summary>
     public Cell RootCell(int start) => Root == Tag.Lis ? Cell.Lis(start) : Cell.Str(start);
 
+    /// <summary>Copies the cells from <paramref name="offset"/> to
+    /// <paramref name="end"/> into <paramref name="heap"/> at
+    /// <paramref name="start"/>, every index in them relocated so that the
+    /// block's own cells land where they are copied. The caller has reserved
+    /// the cells there.</summary>
+    public void CopyBlockTo(Cell[] heap, int start, int offset, int end)
+    {
+        var src = _cells;
+        long b = start - offset;
+        for (int i = offset; i < end; i++)
+        {
+            long d = src[i].Data;
+            heap[start + i - offset] = new Cell(d + b * Step[(int)(d >> Cell.TagShift) & 0xF]);
+        }
+    }
+
+    private int[]? _blockEnd;
+    private int[]? _blockArity;
+
+    /// <summary>The end of the sub-term whose block (a structure's functor and
+    /// arguments, a list's pair) starts at <paramref name="offset"/>: the
+    /// builder lays a sub-term as one run, its literals and nested blocks
+    /// after its own cells, so the cells from the offset to the end are the
+    /// sub-term and nothing else.</summary>
+    public int BlockEnd(int offset) => (_blockEnd ?? ComputeBlockEnds())[offset];
+
+    /// <summary>By block start: the number of argument cells of the block
+    /// (two for a list's pair).</summary>
+    public ReadOnlySpan<int> BlockArities
+    {
+        get
+        {
+            if (_blockArity is null) ComputeBlockEnds();
+            return _blockArity!;
+        }
+    }
+
+    // Plain arrays, no delegate: the IL tier's helper analysis descends
+    // into this code. Each block is laid once, so a block count bounds the
+    // stack and the order.
+    private int[] ComputeBlockEnds()
+    {
+        var cells = _cells;
+        int n = cells.Length;
+        var ends = new int[n];
+        var arity = new int[n];
+        var order = new int[n];     // the blocks as found, a parent before its children
+        var isList = new bool[n];
+        var stack = new int[n];
+        int count = 0, sp = 0;
+        stack[sp++] = 0;
+        isList[0] = Root == Tag.Lis;
+        while (sp > 0)
+        {
+            int bo = stack[--sp];
+            order[count++] = bo;
+            int first = isList[bo] ? bo : bo + 1;
+            int k = isList[bo] ? 2 : FunctorTable.Lookup(cells[bo].AsFunctorId).Arity;
+            arity[bo] = k;
+            for (int i = 0; i < k; i++)
+            {
+                Cell c = cells[first + i];
+                if (c.Tag is Tag.Str or Tag.Lis)
+                {
+                    int sub = c.AsHeapIndex;
+                    isList[sub] = c.Tag == Tag.Lis;
+                    stack[sp++] = sub;
+                }
+            }
+        }
+        for (int j = count - 1; j >= 0; j--)   // the children before their parent
+        {
+            int bo = order[j];
+            int first = isList[bo] ? bo : bo + 1;
+            int k = arity[bo];
+            int end = first + k;
+            for (int i = 0; i < k; i++)
+            {
+                Cell c = cells[first + i];
+                int e = 0;
+                if (c.Tag is Tag.Str or Tag.Lis)
+                {
+                    e = ends[c.AsHeapIndex];
+                }
+                else if (c.Tag == Tag.Ref)
+                {
+                    int p = c.AsHeapIndex;
+                    Cell t = cells[p];
+                    if (t.Tag == Tag.Float) e = p + 2;
+                    else if (t.Tag == Tag.Pstr) e = PstrBlockEnd(p, t);
+                }
+                if (e > end) end = e;
+            }
+            ends[bo] = end;
+        }
+        _blockArity = arity;
+        _blockEnd = ends;
+        return ends;
+    }
+
+    /// <summary>The end of a packed string's block: the header at
+    /// <paramref name="header"/>, its buffer cells, the tail cell.</summary>
+    public static int PstrBlockEnd(int header, Cell headerCell)
+        => header + 2 + (headerCell.AsPstrLength + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
+
     public bool Equals(TermImage? other)
         => other is not null && Root == other.Root && _cells.AsSpan().SequenceEqual(other._cells)
             && _holes.AsSpan().SequenceEqual(other._holes);

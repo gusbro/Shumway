@@ -198,6 +198,59 @@ public class TermImageEmissionTests
     }
 
     [Fact]
+    public void ADeferredPartPastTheThresholdGetsItsOwnImageAndMatcher()
+    {
+        // k's first argument is a sixteen-cell part in a non-last position: a
+        // unify_blit before its stream; the argument itself has its get_blit,
+        // and its image marks the part's temporary.
+        string src = "p(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N) :- r(N).";
+        string text = Dis(src);
+        Assert.Equal(1, Count(text, "get_blit"));
+        Assert.Equal(1, Count(text, "unify_blit"));
+        Assert.Equal(0, Count(text, "skip_if_copied"));
+        var images = Images(src);
+        Assert.Equal(2, images.Count);
+        Assert.Single(images[0].Holes.ToArray(), h => h.IsSentinel);
+        Assert.False(images[1].HasHoles);
+    }
+
+    [Fact]
+    public void APartsVariablesAreHolesOfItsOwnOrOfAnEarlierStream()
+    {
+        // X is first met in the argument's own stream (r(X, Y) is inline), so
+        // the part q reads it from the register that stream gave it; Y is a
+        // plain argument. The argument's image writes X and reads Y.
+        string src = "p(p(q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), r(X, Y)), Y) :- s(Y).";
+        string text = Dis(src);
+        Assert.Equal(1, Count(text, "get_blit"));
+        Assert.Equal(1, Count(text, "unify_blit"));
+        var images = Images(src);
+        Assert.Equal(2, images.Count);
+        var arg = images[0].Holes.ToArray();
+        Assert.Contains(arg, h => h.IsOut && !h.IsSentinel);
+        Assert.Contains(arg, h => !h.IsOut && !h.IsSentinel);
+        Assert.Contains(arg, h => h.IsSentinel);
+        var part = Assert.Single(images[1].Holes.ToArray());
+        Assert.False(part.IsOut);
+    }
+
+    [Fact]
+    public void APartIsMatchedUnderAnArgumentThatKeepsItsStream()
+    {
+        // X is first met in the second argument's own stream, after the first
+        // argument's prefix would run: that argument keeps its stream. The
+        // part q runs after both streams and reads X from its register.
+        string src = "p(p(q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), w), g(X)) :- s(X).";
+        string text = Dis(src);
+        Assert.Equal(0, Count(text, "get_blit"));
+        Assert.Equal(1, Count(text, "unify_blit"));
+        Assert.Equal(0, Count(text, "skip_if_copied"));
+        var image = Assert.Single(Images(src));
+        var hole = Assert.Single(image.Holes.ToArray());
+        Assert.False(hole.IsOut);
+    }
+
+    [Fact]
     public void AHeadSubTermSharedWithAnArgumentKeepsTheStream()
     {
         // The second argument holds a copy of the first: the stream references

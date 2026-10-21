@@ -33,6 +33,10 @@ public sealed class TermImageTests
         patt(f(X, g(X, Y), [a, b, c]), Y, h(Y, X)).
         hd(V, f(V, [1, 2, 3], V)).
         frz(V, R) :- freeze(V, R = woke), tbl(2, V).
+        part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
+        pv(p(q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), r(X, Y)), Y).
+        frzp(V, R) :- freeze(V, R = woke), part(k(V, z), _).
+        nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
         """;
 
     private static readonly string[] Goals =
@@ -61,6 +65,19 @@ public sealed class TermImageTests
         "patt(f(1, g(1, 2), [a, b, c]), Y, H), Y == 2, H == h(2, 1).",
         "hd(7, T), T == f(7, [1, 2, 3], 7).",
         "frz(V, R), R == woke, V == [i, j, k, l, m, n, o, p].",
+        "part(K, N), K == k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N == 1.",
+        "part(k(Q, z), N), Q == q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), N == 1.",
+        "part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), N == 1.",
+        "part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, H), z), _), H == o.",
+        "\\+ part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), z), _).",
+        "pv(p(q(1, b, c, d, e, f, g, h, i, j, k, l, m, n, o), S), Y), S == r(1, Y).",
+        "pv(p(Q, r(2, w)), Y), Q == q(2, b, c, d, e, f, g, h, i, j, k, l, m, n, o), Y == w.",
+        "pv(P, y), P = p(Q, S), Q = q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), S == r(X, y).",
+        "frzp(V, R), R == woke, V == q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o).",
+        "nest(K, 1), K == k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z).",
+        "nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), N == 1.",
+        "nest(k(q(Q2, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _), Q2 == q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o).",
+        "\\+ nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _).",
     };
 
     // By name, module prefix stripped: a consulted predicate's functor carries its module.
@@ -88,7 +105,7 @@ public sealed class TermImageTests
             Assert.True(tiered.Query(goal).Success, goal + " on the tier");
         }
         // ANTI-VACUITY: the predicates with images did promote to the tier.
-        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "tbl/2", "tree/2", "patt/3", "hd/2" })
+        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "tbl/2", "tree/2", "patt/3", "hd/2", "part/2", "pv/2", "nest/2" })
             Assert.True(Promoted(tiered, indicator),
                 $"{indicator} was not promoted\n" + tiered.IlPromotion.DescribePromotionState());
         foreach (string goal in Goals)

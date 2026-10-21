@@ -610,6 +610,18 @@ public sealed class BytecodeEmitter
         return pos;
     }
 
+    /// <summary>ADR-063, heads. Returns the instruction's position: the image
+    /// id (at +1) and the target (at +9) are patched after the part's stream.</summary>
+    public int EmitUnifyBlit(int imageLitId, int slot)
+    {
+        int pos = Position;
+        _bytes.Add((byte)Opcode.UnifyBlit);
+        EmitInt(imageLitId);
+        EmitInt(slot);
+        EmitInt(0);
+        return pos;
+    }
+
     public void EmitPutVariableY(int destPermSlot, int argSlot)
     {
         _bytes.Add((byte)Opcode.PutVariableY);

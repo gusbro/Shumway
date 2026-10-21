@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Compiler.Il;
 using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
 using Shumway.Embedding;
@@ -11,11 +12,14 @@ namespace Shumway.Tests.Embedding;
 /// a repeated one, an anonymous one, an attributed one), on both tiers,
 /// after a collection, after failing back past it, from a bundle, and in a
 /// clause asserted at run time.</summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class TermImageTests
 {
     private const string Program = """
         :- public lookup/2, mixed/1, text/1, loop/1, all/1, pair/3, fresh/2, perm/2, attv/1, back/1.
         :- public tbl/2, tree/2, patt/3, hd/2, frz/2, ptbl/2, ptree/2, ppatt/3, phd/2.
+        :- public part/2, pv/2, frzp/2, ppart/2, ppv/2, nest/2.
         :- use_module(library(coroutining)).
         id(X, X).
         lookup(K, V) :- t([k(a, 1), k(b, 2), k(c, 3), k(d, 4), k(e, 5), k(f, 6)], K, V).
@@ -39,6 +43,12 @@ public sealed class TermImageTests
         patt(f(X, g(X, Y), [a, b, c]), Y, h(Y, X)).
         hd(V, f(V, [1, 2, 3], V)).
         frz(V, R) :- freeze(V, R = woke), tbl(2, V).
+        part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
+        pv(p(q(X, b, c, d, e, f, g, h, i, j, k, l, m, n, o), r(X, Y)), Y).
+        frzp(V, R) :- freeze(V, R = woke), part(k(V, z), _).
+        ppart(K, N) :- part(K, N).
+        ppv(P, Y) :- pv(P, Y).
+        nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
         ptbl(K, L) :- tbl(K, L).
         ptree(A, B) :- tree(A, B).
         ppatt(F, Y, H) :- patt(F, Y, H).
@@ -76,6 +86,26 @@ public sealed class TermImageTests
         ("tree(A, B), patt(F, y, H), hd(7, T), R = A-B-F-H-T.", "R"),
         ("frz(V, R).", "R"),
         ("tree(A, _), garbage_collect, A = t(l(P, _), _), R = P.", "R"),
+        ("part(K, N), R = K-N.", "R"),
+        ("part(k(Q, z), N), R = Q-N.", "R"),
+        ("part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N).", "N"),
+        ("part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, H), z), N), R = H-N.", "R"),
+        ("\\+ part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), z), _), R = yes.", "R"),
+        ("ppart(k(Q, Z), N), R = Q-Z-N.", "R"),
+        ("ppart(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N).", "N"),
+        ("pv(p(q(1, b, c, d, e, f, g, h, i, j, k, l, m, n, o), S), Y), R = S-Y.", "R"),
+        ("pv(p(Q, r(2, w)), Y), R = Q-Y.", "R"),
+        ("pv(P, y), R = P.", "R"),
+        ("ppv(p(q(1, b, c, d, e, f, g, h, i, j, k, l, m, n, o), S), Y), R = S-Y.", "R"),
+        ("ppv(p(Q, r(2, w)), Y), R = Q-Y.", "R"),
+        ("findall(N, part(k(q(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), Ns).", "Ns"),
+        ("frzp(V, R).", "R"),
+        ("part(k(Q, z), _), garbage_collect, Q = q(A, _, _, _, _, _, _, _, _, _, _, _, _, _, _), R = A.", "R"),
+        ("nest(K, N), R = K-N.", "R"),
+        ("nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N).", "N"),
+        ("nest(k(q(Q2, b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), N), R = Q2-N.", "R"),
+        ("nest(k(Q, z), N), Q = q(Q2, B, _, _, _, _, _, _, _, _, _, _, _, _, _), R = Q2-B-N.", "R"),
+        ("\\+ nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _), R = yes.", "R"),
     };
 
     private static string Answer(PrologEngine e, string goal, string var)
@@ -125,8 +155,11 @@ public sealed class TermImageTests
                 pred + " copies no image:\n" + string.Join("\n", own.Select(e => e.Name + "\n" + e.Text)));
         }
         // ...and the heads with large arguments carry the prefix.
-        foreach (string pred in new[] { "tbl", "tree", "patt", "hd" })
+        foreach (string pred in new[] { "tbl", "tree", "patt", "hd", "part", "pv" })
             Assert.True(entries.Any(e => e.Name.Contains(pred) && e.Text.Contains("get_blit")), pred + " has no get_blit");
+        // ...and the ones with large deferred parts carry the matcher.
+        foreach (string pred in new[] { "part", "pv" })
+            Assert.True(entries.Any(e => e.Name.Contains(pred) && e.Text.Contains("unify_blit")), pred + " has no unify_blit");
         // ...and the ones with variables carry images with holes of every kind.
         var pools = new LiteralPools();
         var compiler = new ClauseCompiler();
@@ -160,11 +193,35 @@ public sealed class TermImageTests
         }
         // The head-image predicates themselves, not only their wrappers: a
         // get_blit the IL pre-scan does not know leaves them on Tier-0.
-        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "ptbl/2", "ptree/2", "ppatt/3", "phd/2", "tbl/2", "tree/2", "patt/3", "hd/2" })
+        foreach (string pi in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "ptbl/2", "ptree/2", "ppatt/3", "phd/2", "tbl/2", "tree/2", "patt/3", "hd/2", "part/2", "pv/2", "ppart/2", "ppv/2" })
             Assert.True(Promoted(tiered, pi), $"{pi} did not promote\n{tiered.IlPromotion.DescribePromotionState()}");
         // Promoted, the answers are the compiled code's.
         foreach (var (goal, v) in Goals)
             Assert.Equal(Answer(reference, goal, v), Answer(tiered, goal, v));
+    }
+
+    [Fact]
+    public void TheMatcherGivesTheStreamsAnswers()
+    {
+        // The IL tier matches every part from its image: the switch.
+        bool prev = IlRegionCost.MatchEveryPart;
+        IlRegionCost.MatchEveryPart = true;
+        try
+        {
+            var reference = Reference();
+            var tiered = new PrologEngine();
+            tiered.IlPromotion.Threshold = 1;
+            tiered.IlPromotion.BackgroundCompilation = false;
+            tiered.ConsultString(Program);
+            foreach (var (goal, v) in Goals)
+                Assert.Equal(Answer(reference, goal, v), Answer(tiered, goal, v));
+            foreach (string pi in new[] { "part/2", "pv/2", "nest/2" })
+                Assert.True(Promoted(tiered, pi), $"{pi} did not promote\n{tiered.IlPromotion.DescribePromotionState()}");
+            // ANTI-VACUITY: under the switch the parts' sites go to the matcher.
+            var code = new PredicateCompiler().Compile(new ClauseReader("nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).").ReadAll().ToList()).BytecodeUnfused;
+            Assert.Equal(2, IlRegionCost.MatcherSites(code).Count);
+        }
+        finally { IlRegionCost.MatchEveryPart = prev; }
     }
 
     [Fact]

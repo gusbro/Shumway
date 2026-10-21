@@ -81,6 +81,19 @@ public sealed partial class ClauseCompiler
     public static bool ImageHeads { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_HEADS") != "0";
 
+    /// <summary>ADR-063: whether a deferred part of a head argument past the
+    /// threshold is matched from its image (<c>unify_blit</c>) instead of
+    /// its stream. <c>SHUMWAY_IMAGE_PARTS</c>, 0 for off: the measurement's
+    /// switch, within one build.</summary>
+    public static bool ImageParts { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_PARTS") != "0";
+
+    /// <summary>ADR-063: a deferred part of a head argument with at least
+    /// this many cells carries an image (<c>unify_blit</c>); a part below it
+    /// keeps its stream and the skip. <c>SHUMWAY_IMAGE_PART_THRESHOLD</c>.</summary>
+    public static int PartThreshold { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_PART_THRESHOLD"), out int t) ? t : 16;
+
     /// <summary>ADR-035 debug codegen (<c>compile_mode=debug</c>). Two changes,
     /// both in service of a debuggable call stack:
     /// <list type="bullet">

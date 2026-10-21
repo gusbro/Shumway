@@ -364,6 +364,14 @@ public enum Opcode : byte
     //   skip_if_copied <reg:int32> <target:addr>   9 bytes
     SkipIfCopied = 0x6C,
 
+    /// <summary>ADR-063, heads: <c>unify_blit image, Xk, L</c>. The temporary
+    /// of a deferred part holds the copy mark: the part is on the heap, jump
+    /// to L. Otherwise its term is unified with the image, a bound cell against
+    /// the image's and an unbound one bound to a copy from there down, and
+    /// the jump follows; failure backtracks. The part's stream stays after
+    /// it for a tier without the matcher.</summary>
+    UnifyBlit = 0x6D,
+
     // 0x67-0x70 once parked a "reserved specialised-builtin" family
     // (unify_eq, is_op, the comparison ops) that predated ADR-018's
     // arithmetic instruction set and the phase-26 inline `=/2`. Never
