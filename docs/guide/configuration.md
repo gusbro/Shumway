@@ -66,6 +66,7 @@ is what ships. Any build honors them.
 | `SHUMWAY_IMAGE_PART_THRESHOLD` | 16 | The cells a deferred part of a head argument needs to carry an image of its own. |
 | `SHUMWAY_IMAGE_MATCH_LOCALS` | 32 | The locals a head part's matching stream must cost for a region past the JIT's cap to match the part by the engine instead of by the stream. |
 | `SHUMWAY_IMAGE_MATCH_ALL` | off | `=1` matches every such part by the engine, whatever the region; a measurement's switch. |
+| `SHUMWAY_IL_READ_STREAM` | on | `=0` keeps the engine's helpers for the head streams under an image on the IL tier, instead of the read-only form; a measurement's switch. |
 | `DOTNET_JitMaxLocalsToTrack` | the runtime's `0x400` | The runtime's own cap on the locals the JIT tracks in one method, past which it inlines nothing more into it. A hexadecimal number, read by the runtime once from the environment the process starts with: set it in the shell or launcher, not from the program or `runtimeconfig.json`. The engine reads the same value and plans its regions to it. Raising it to `0xC00` measured no gain on the corpus; if you try it, `0xC00` to `0x1600` is the sensible range. |
 | `SHUMWAY_CPFREE_IDXBUCKET` | on | `=0` disables the lazy choice-point in indexed-bucket dispatch (ADR-031). |
 | `SHUMWAY_CPFREE_GUARD` | on | `=0` disables CP-free guard-commit (ADR-031). |

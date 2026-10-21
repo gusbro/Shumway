@@ -44,9 +44,11 @@ public sealed partial class IlPredicateCompiler
     public static void EndFloatPool(System.Collections.Generic.IReadOnlyList<double>? restore)
         => _ilFloatPool = restore;
 
-    /// <summary>ADR-063: the image pool a persisted emit reads, to put each
-    /// image of a <c>put_blit</c> in its patch site. A run-time emit needs
-    /// none: its id indexes the activation's pool.</summary>
+    /// <summary>ADR-063: the image pool an emit reads: a persisted one puts
+    /// each image of a <c>put_blit</c> in its patch site, a run-time one
+    /// follows an image's cells for the read-only form of a head stream and
+    /// keeps the stream's helpers without it (its ids index the activation's
+    /// pool).</summary>
     [System.ThreadStaticAttribute]
     private static System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? _ilImagePool;
 
@@ -286,6 +288,7 @@ public sealed partial class IlPredicateCompiler
         // region method, or an inlined callee body (whose callee-relative pcs
         // collide with the caller's own pc-named locals).
         string lt = regionCtx is null ? localSalt : $"_rm{regionCtx.CurrentMemberIndex}";
+        _readUnit = null;   // ADR-063: no read-only unit spans an emission
         int pc = resumeFrom is null ? start
             : CpsEnterResumePoint(emit, resumeFrom, callSiteIndexCounter, resumeLabels);
         // ADR-022 item 2 — the atom most recently put into argument register 0, or
@@ -332,6 +335,20 @@ public sealed partial class IlPredicateCompiler
                 // emitting any IL.
                 pc += 6;
                 continue;
+            }
+            if (_readUnit is not null)   // ADR-063: a stream under an image, in the read-only form
+            {
+                if (pc >= _readUnit.EndPc)
+                {
+                    _readUnit = null;
+                }
+                else
+                {
+                    if (!TryEmitReadOp(emit, code, pc, op, failLabel))
+                        throw new InvalidOperationException(DescribeReadFailure(code, pc, op));
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
             }
             if (op == Opcode.GetAtom)
             {
@@ -1536,6 +1553,7 @@ public sealed partial class IlPredicateCompiler
                     jumpLabels[skip] = skipLabel;
                 }
                 emit.BranchIfTrue(skipLabel);
+                TryBeginReadUnit(emit, code, pc, skipLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1568,16 +1586,23 @@ public sealed partial class IlPredicateCompiler
                 // The stream's code: the mark skips it, as skip_if_copied does.
                 // The site is noted for the region's compaction.
                 _streamSites?.Add((code, pc));
-                emit.LoadArgument(0);
-                emit.LoadConstant(arg);
-                EmitHelperCall(emit, IlIsCopiedHelperMethod);
                 jumpLabels ??= new Dictionary<int, IlLabel>();
                 if (!jumpLabels.TryGetValue(target, out var streamEnd))
                 {
                     streamEnd = emit.DefineLabel($"part_skip_{target}_{NextLabelSeq()}");
                     jumpLabels[target] = streamEnd;
                 }
-                emit.BranchIfTrue(streamEnd);
+                if (TryBeginReadUnit(emit, code, pc, streamEnd))
+                {
+                    EmitReadMarkTest(emit);
+                }
+                else
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlIsCopiedHelperMethod);
+                    emit.BranchIfTrue(streamEnd);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1585,16 +1610,23 @@ public sealed partial class IlPredicateCompiler
             {
                 int reg = BytecodeIO.ReadInt32(code, pc + 1);
                 int target = BytecodeIO.ReadInt32(code, pc + 5);
-                emit.LoadArgument(0);
-                emit.LoadConstant(reg);
-                EmitHelperCall(emit, IlIsCopiedHelperMethod);
                 jumpLabels ??= new Dictionary<int, IlLabel>();
                 if (!jumpLabels.TryGetValue(target, out var partLabel))
                 {
                     partLabel = emit.DefineLabel($"part_skip_{target}_{NextLabelSeq()}");
                     jumpLabels[target] = partLabel;
                 }
-                emit.BranchIfTrue(partLabel);
+                if (TryBeginReadUnit(emit, code, pc, partLabel))
+                {
+                    EmitReadMarkTest(emit);
+                }
+                else
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(reg);
+                    EmitHelperCall(emit, IlIsCopiedHelperMethod);
+                    emit.BranchIfTrue(partLabel);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

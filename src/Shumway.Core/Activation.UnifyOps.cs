@@ -18,6 +18,14 @@ public sealed partial class Activation
         _registers[idx] = value;
     }
 
+    /// <summary>The register bank wide enough for <paramref name="count"/>
+    /// registers: a stream emitted in the IL tier's read-only form grows it
+    /// before its first temporary, where the helpers would have.</summary>
+    public void EnsureRegisters(int count)
+    {
+        if (count > _registers.Length) EnsureRegisterCapacity(count);
+    }
+
     /// <summary>Ensures the X-register bank can hold at least
     /// <paramref name="required"/> registers, doubling the backing
     /// array if needed. The initial register count

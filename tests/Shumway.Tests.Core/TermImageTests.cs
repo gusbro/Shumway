@@ -405,6 +405,88 @@ public class TermImageTests
     }
 
     [Fact]
+    public void ReadNestedMatchesABoundCellAndCopiesTheBlockForAnUnboundOne()
+    {
+        // f(X, g(X)), X from register 1 (an Out hole at the root, an In hole
+        // in g): the read-only stream asks for g's block at the second cell.
+        var cells = new Cell[5];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 2));
+        cells[1] = Cell.Ref(1);
+        cells[2] = Cell.Str(3);
+        int g = FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1);
+        cells[3] = Cell.Functor(g);
+        cells[4] = Cell.Ref(4);
+        var image = new TermImage(cells, Tag.Str, new[]
+        {
+            new ImageHole(1, ImageHole.Out, 1),
+            new ImageHole(4, ImageHole.In, 1),
+        });
+        var engine = new Activation();
+        int a = AtomTable.Intern("a", permanent: true).Id;
+        engine.SetRegister(1, Cell.Atom(a));
+        // Bound to g(7): the pointer past the functor; another functor: no.
+        int gp = engine.AllocateHeap(2);
+        engine.SetHeap(gp, cells[3]);
+        engine.SetHeap(gp + 1, Cell.Int(7));
+        int cell = engine.AllocateHeap(1);
+        engine.SetHeap(cell, Cell.Str(gp));
+        Assert.Equal(gp + 1, engine.ReadNested(engine.GetHeap(cell).Data, g, image, 3));
+        Assert.Equal(-1, engine.ReadNested(engine.GetHeap(cell).Data, FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1), image, 3));
+        Assert.Equal(-1, engine.ReadNestedList(engine.GetHeap(cell).Data, image, 3));
+        // A reference to an unbound variable: bound to a copy of the block,
+        // its hole from the register; the pointer is the copy's.
+        int v = engine.AllocateHeap(1);
+        engine.SetHeap(v, Cell.Ref(v));
+        engine.SetHeap(cell, Cell.Ref(v));
+        int top = engine.HeapTop;
+        Assert.Equal(top + 1, engine.ReadNested(engine.GetHeap(cell).Data, g, image, 3));
+        Assert.Equal(Cell.Str(top), engine.GetHeap(v));
+        Assert.Equal(cells[3], engine.GetHeap(top));
+        Assert.Equal(Cell.Atom(a), engine.GetHeap(top + 1));
+        // An atom where a structure is expected: no.
+        Assert.Equal(-1, engine.ReadNested(Cell.Atom(a).Data, g, image, 3));
+    }
+
+    [Fact]
+    public void ACopyOfABlockMarksTheTemporariesOfThePartsUnderIt()
+    {
+        // f(g(h(1)), k(2)): the marks of g (at 7), of h under it (at 9) and
+        // of k (at 4). A copy of g's block marks g and h, not k.
+        var cells = new Cell[11];
+        cells[0] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("f", permanent: true).Id, 2));
+        cells[1] = Cell.Str(7);
+        cells[2] = Cell.Str(4);
+        cells[3] = Cell.Int(0);   // unused, keeps k's block where the builder would lay it
+        cells[4] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("k", permanent: true).Id, 1));
+        cells[5] = Cell.Int(2);
+        cells[6] = Cell.Int(0);
+        int g = FunctorTable.Intern(AtomTable.Intern("g", permanent: true).Id, 1);
+        cells[7] = Cell.Functor(g);
+        cells[8] = Cell.Str(9);
+        cells[9] = Cell.Functor(FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1));
+        cells[10] = Cell.Int(1);
+        var image = new TermImage(cells, Tag.Str, new[]
+        {
+            new ImageHole(7, ImageHole.Sentinel, 5),
+            new ImageHole(9, ImageHole.Sentinel, 6),
+            new ImageHole(4, ImageHole.Sentinel, 7),
+        });
+        var engine = new Activation();
+        engine.SetRegister(5, Cell.Int(55));
+        engine.SetRegister(6, Cell.Int(66));
+        engine.SetRegister(7, Cell.Int(77));
+        int v = engine.AllocateHeap(1);
+        engine.SetHeap(v, Cell.Ref(v));
+        Assert.True(engine.ReadNested(Cell.Ref(v).Data, g, image, 7) >= 0);
+        Assert.True(Activation.IsCopiedMark(engine.GetRegister(5)));
+        Assert.True(Activation.IsCopiedMark(engine.GetRegister(6)));
+        Assert.Equal(Cell.Int(77), engine.GetRegister(7));
+        // The whole image marks every part.
+        engine.BuildImage(image);
+        Assert.True(Activation.IsCopiedMark(engine.GetRegister(7)));
+    }
+
+    [Fact]
     public void UnderTheOccursCheckTheCopiesStepAside()
     {
         // g(X), X from register 1, which holds the variable the copy would

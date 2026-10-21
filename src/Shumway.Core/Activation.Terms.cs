@@ -312,24 +312,24 @@ public sealed partial class Activation
         return image.RootCell(start);
     }
 
-    // The holes, in their order: a register's cell into the image (a bare
-    // ATTVAR as a REF to its home, as unify_value writes one: the attribute
-    // table keys on a cell's own address) or the register at the image's
-    // unbound cell. The cells are the youngest on the heap, so nothing is
-    // bound and nothing is trailed; the occurs check has nothing to find in
-    // a term that did not exist before the copy.
+    // The holes in the range, in their order: a register's cell into the
+    // image (a bare ATTVAR as a REF to its home, as unify_value writes one:
+    // the attribute table keys on a cell's own address), the register at
+    // the image's unbound cell, or the mark in the temporary of a part
+    // whose block is in the range. The cells are the youngest on the heap,
+    // so nothing is bound and nothing is trailed.
     private void FillHoles(TermImage image, int start, int from, int to, bool marks)
     {
         var holes = image.Holes;
         for (int i = 0; i < holes.Length; i++)
         {
             var h = holes[i];
+            if (h.Offset < from || h.Offset >= to) continue;
             if (h.IsSentinel)
             {
                 if (marks) SetRegister(h.Slot, CopiedMark);
                 continue;
             }
-            if (h.Offset < from || h.Offset >= to) continue;
             int idx = start + h.Offset;
             if (h.IsOut)
             {
@@ -383,13 +383,14 @@ public sealed partial class Activation
     // As GetStructureSlow: the value needs an address of its own for the
     // hooks, so the root cell goes on the heap before the copy; the whole
     // image when the block cell's tag is REF, else the block it names.
-    private void BindAttVarToCopy(int addr, TermImage image, int offset, Tag block)
+    private Cell BindAttVarToCopy(int addr, TermImage image, int offset, Tag block)
     {
         int h = AllocateHeap(1);
         Cell root = block == Tag.Ref ? BuildImage(image) : CopyBlock(image, offset, block);
         _heap[h] = root;
         QueueAttrWakeups(addr, h);
         BindAttVarToValue(addr, h, root);
+        return root;
     }
 
     // The matcher's queue of the blocks still to take, pairs of an image
@@ -580,14 +581,82 @@ public sealed partial class Activation
     }
 
     // A copy of the sub-term whose block starts at the offset, at the heap
-    // top, its holes applied; the cell that names it.
+    // top, its holes applied and the parts under it marked; the cell that
+    // names it.
     private Cell CopyBlock(TermImage image, int offset, Tag block)
     {
         int end = image.BlockEnd(offset);
         int h = AllocateHeap(end - offset);
         image.CopyBlockTo(_heap, h, offset, end);
-        if (image.HasHoles) FillHoles(image, h - offset, offset, end, marks: false);
+        if (image.HasHoles) FillHoles(image, h - offset, offset, end, marks: true);
         return block == Tag.Lis ? Cell.Lis(h) : Cell.Str(h);
+    }
+
+    /// <summary>ADR-063, the read-only stream: <paramref name="cell"/>, a
+    /// cell of the term, dereferenced, as a structure of
+    /// <paramref name="functorId"/>: the index past its functor cell.
+    /// Unbound, the variable is bound to a copy of the image's block at
+    /// <paramref name="offset"/>, an attributed one with its wakeups queued,
+    /// and the index is the copy's: the stream reads the copy as it reads
+    /// any term. Anything else is -1.</summary>
+    public int ReadNested(long cell, int functorId, TermImage image, int offset)
+    {
+        var c = new Cell(cell);
+        if (c.Tag == Tag.Str) return _heap[c.AsHeapIndex].AsFunctorId == functorId ? c.AsHeapIndex + 1 : -1;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return -1;
+        int a = Deref(c.AsHeapIndex);
+        Cell v = _heap[a];
+        if (v.Tag == Tag.Str)
+        {
+            int f = v.AsHeapIndex;
+            return _heap[f].AsFunctorId == functorId ? f + 1 : -1;
+        }
+        return ReadNestedSlow(a, v, image, offset, Tag.Str);
+    }
+
+    /// <summary>As <see cref="ReadNested"/> for a list: the index of its pair.</summary>
+    public int ReadNestedList(long cell, TermImage image, int offset)
+    {
+        var c = new Cell(cell);
+        if (c.Tag == Tag.Lis) return c.AsHeapIndex;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return -1;
+        int a = Deref(c.AsHeapIndex);
+        Cell v = _heap[a];
+        if (v.Tag == Tag.Lis) return v.AsHeapIndex;
+        return ReadNestedSlow(a, v, image, offset, Tag.Lis);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private int ReadNestedSlow(int a, Cell v, TermImage image, int offset, Tag block)
+    {
+        Cell copy;
+        if (v.Tag == Tag.Ref)
+        {
+            copy = CopyBlock(image, offset, block);
+            // A hole may hold the variable itself: under the occurs check
+            // the general unification, which tests for that, takes the copy.
+            if (OccursMode == 0) Bind(a, copy);
+            else if (!UnifyCells(Cell.Ref(a), copy)) return -1;
+        }
+        else if (v.Tag == Tag.AttVar)
+        {
+            copy = BindAttVarToCopy(a, image, offset, block);
+        }
+        else
+        {
+            return -1;
+        }
+        return block == Tag.Lis ? copy.AsHeapIndex : copy.AsHeapIndex + 1;
+    }
+
+    /// <summary>ADR-063, the read-only stream: <c>unify_variable_y</c> in
+    /// read mode, the heap cell at <paramref name="at"/> into the frame
+    /// slot, a bare attributed variable as a REF to its home.</summary>
+    public void UnifyVariableYAt(int slot, int at)
+    {
+        Cell src = _heap[at];
+        SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(at) : src);
     }
 
     public int MakePstr(string value, TextKind kind)

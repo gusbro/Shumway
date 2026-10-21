@@ -12,8 +12,11 @@ namespace Shumway.Compiler.Il;
 /// (regenerated with <c>SHUMWAY_INLINE_TABLE_OUT</c>). The planner sums it
 /// per member against the JIT's cap on locals
 /// (<see cref="IlJitLimits.InlineLocals"/>). A callee the table does not
-/// name is judged by its metadata: a body of at most 100 bytes of IL or
-/// marked for aggressive inlining counts one, the rest none.</summary>
+/// name is judged by its metadata: a body of at most
+/// <see cref="IlJitLimits.MaxInlineIlBytes"/> of IL or marked for aggressive
+/// inlining counts one, the rest none. The generated half records the
+/// runtime and the architecture it was measured on
+/// (<see cref="MeasuredMajor"/>, <see cref="MeasuredArchitecture"/>).</summary>
 internal static partial class IlInlineTable
 {
     private static readonly ConcurrentDictionary<MethodBase, int> Memo = new();
@@ -79,6 +82,6 @@ internal static partial class IlInlineTable
         byte[]? il;
         try { il = m.GetMethodBody()?.GetILAsByteArray(); }
         catch (Exception) { return 0; }
-        return il is not null && il.Length <= 100 ? 1 : 0;
+        return il is not null && il.Length <= IlJitLimits.MaxInlineIlBytes ? 1 : 0;
     }
 }

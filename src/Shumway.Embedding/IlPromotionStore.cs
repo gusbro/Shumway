@@ -515,16 +515,23 @@ public sealed class IlPromotionStore
     /// bake ldc.r8 constants from it. Null → predicates with float literals stay Tier-0.</summary>
     public Func<int, System.Collections.Generic.IReadOnlyList<double>?>? FloatPoolProvider { get; set; }
 
-    /// <summary>ADR-063: supplies the image pool a predicate's <c>put_blit</c>
-    /// indexes, for the wasm tier, which bakes each image into its module.
-    /// Null, predicates with images stay Tier-0 there.</summary>
+    /// <summary>ADR-063: supplies the image pool a predicate's images index:
+    /// the wasm tier bakes each image into its module, the IL tier follows
+    /// an image's cells for the read-only form of a head stream. Null,
+    /// predicates with images stay Tier-0 on wasm and keep the stream's
+    /// helpers on IL.</summary>
     public Func<int, System.Collections.Generic.IReadOnlyList<TermImage>?>? ImagePoolProvider { get; set; }
 
     private T WithFloatPool<T>(int functorId, Func<T> compile)
     {
         var prev = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
+        var prevImages = IlPredicateCompiler.BeginImagePool(ImagePoolProvider?.Invoke(functorId));
         try { return compile(); }
-        finally { IlPredicateCompiler.EndFloatPool(prev); }
+        finally
+        {
+            IlPredicateCompiler.EndImagePool(prevImages);
+            IlPredicateCompiler.EndFloatPool(prev);
+        }
     }
 
     // The predicates whose code a bundle carries, bound or offered. A region
@@ -1164,6 +1171,7 @@ public sealed class IlPromotionStore
             // thread, and their values captured — the worker must not touch engine
             // state (List<T> reads racing an Add are unsafe).
             var floatPool = FloatPoolProvider?.Invoke(functorId);
+            var imagePool = ImagePoolProvider?.Invoke(functorId);
             var nativeCtx = NativeInlineProvider?.Invoke();
             _mutationStamp.TryGetValue(functorId, out int stamp);
             var capturedTarget = target;
@@ -1180,11 +1188,13 @@ public sealed class IlPromotionStore
             T WithContexts<T>(Func<T> body)
             {
                 var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
+                var prevI = IlPredicateCompiler.BeginImagePool(imagePool);
                 var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
                 try { return WithRoots(roots, body); }
                 finally
                 {
                     IlPredicateCompiler.EndNativeInline(prevN);
+                    IlPredicateCompiler.EndImagePool(prevI);
                     IlPredicateCompiler.EndFloatPool(prevF);
                 }
             }
@@ -1351,6 +1361,7 @@ public sealed class IlPromotionStore
                 // setup that finds it ready swaps it in, where this one would
                 // have. The providers read engine state, so they run here.
                 var floatPool = FloatPoolProvider?.Invoke(functorId);
+                var imagePool = ImagePoolProvider?.Invoke(functorId);
                 var nativeCtx = NativeInlineProvider?.Invoke();
                 var pgoRoots = BundleRoots(functorId);
                 _mutationStamp.TryGetValue(functorId, out int stamp);
@@ -1359,6 +1370,7 @@ public sealed class IlPromotionStore
                     () =>
                     {
                         var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
+                        var prevI = IlPredicateCompiler.BeginImagePool(imagePool);
                         var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
                         try
                         {
@@ -1368,6 +1380,7 @@ public sealed class IlPromotionStore
                         finally
                         {
                             IlPredicateCompiler.EndNativeInline(prevN);
+                            IlPredicateCompiler.EndImagePool(prevI);
                             IlPredicateCompiler.EndFloatPool(prevF);
                         }
                     },

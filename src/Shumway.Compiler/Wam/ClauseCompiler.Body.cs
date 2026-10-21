@@ -261,10 +261,10 @@ public sealed partial class ClauseCompiler
         public HeadImage? Parent { get; set; }
         /// <summary>The prefix instruction's position, -1 until its stream runs.</summary>
         public int Pos { get; set; } = -1;
-        /// <summary>The temporaries of the parts the streams defer under this
-        /// term, at every depth: the copy and the match mark them, and their
-        /// streams skip.</summary>
-        public List<int> DeferredSlots { get; } = new();
+        /// <summary>The parts the streams defer under this term, at every
+        /// depth, with their temporaries: a copy of the term, or of a block
+        /// holding the part, marks the temporary, and the part's stream skips.</summary>
+        public List<(int Slot, CompoundTerm Term)> DeferredSlots { get; } = new();
     }
 
     // ADR-063, heads. The arguments an image may stand in for, decided before
@@ -433,9 +433,11 @@ public sealed partial class ClauseCompiler
         foreach (var hi in images)
         {
             if (hi.Pos < 0) continue;   // its stream never ran: nothing to patch
-            var image = TermImageBuilder.Build(hi.Term, (name, offset) => HeadHoleFor(s, name, offset, hi))!;
+            var blocks = new Dictionary<CompoundTerm, int>(ReferenceEqualityComparer.Instance);
+            var image = TermImageBuilder.Build(hi.Term, (name, offset) => HeadHoleFor(s, name, offset, hi), blocks)!;
             var holes = new List<ImageHole>(image.Holes.ToArray());
-            foreach (int t in hi.DeferredSlots) holes.Add(new ImageHole(0, ImageHole.Sentinel, t));
+            // A part's mark names its block: a copy of one block marks the parts under it.
+            foreach (var (t, part) in hi.DeferredSlots) holes.Add(new ImageHole(blocks[part], ImageHole.Sentinel, t));
             int id = _imageLiterals!.Intern(new TermImage(image.Cells.ToArray(), image.Root,
                 holes.Count == 0 ? null : holes.ToArray()));
             s.Emitter.PatchInt32(hi.Pos + 1, id);
@@ -848,7 +850,7 @@ public sealed partial class ClauseCompiler
                 s.Emitter.EmitUnifyVariableX(temp);
                 s.Pending.Enqueue((temp, c, s.Building, s.CurrentHeadImage));
                 // ADR-063, heads: every image above marks the part's temporary.
-                for (var o = s.CurrentHeadImage; o is not null; o = o.Parent) o.DeferredSlots.Add(temp);
+                for (var o = s.CurrentHeadImage; o is not null; o = o.Parent) o.DeferredSlots.Add((temp, c));
                 break;
 
             // FloatTerm and StringTerm are handled upstream by

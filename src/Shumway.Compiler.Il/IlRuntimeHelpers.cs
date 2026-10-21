@@ -95,6 +95,30 @@ public static class IlRuntimeHelpers
     public static bool UnifyBlitGlobal(Activation engine, int imageId, int reg)
         => engine.UnifyBlit(TermImageTable.Get(imageId), reg);
 
+    /// <summary>ADR-063, the read-only stream: <see cref="Activation.ReadNested"/>
+    /// on the image <paramref name="imageId"/> names in the engine's pool.</summary>
+    public static int ReadNested(Activation engine, long cell, int functorId, int imageId, int offset)
+        => engine.ReadNested(cell, functorId, Image(engine, imageId), offset);
+
+    public static int ReadNestedGlobal(Activation engine, long cell, int functorId, int imageId, int offset)
+        => engine.ReadNested(cell, functorId, TermImageTable.Get(imageId), offset);
+
+    public static int ReadNestedList(Activation engine, long cell, int imageId, int offset)
+        => engine.ReadNestedList(cell, Image(engine, imageId), offset);
+
+    public static int ReadNestedListGlobal(Activation engine, long cell, int imageId, int offset)
+        => engine.ReadNestedList(cell, TermImageTable.Get(imageId), offset);
+
+    private static TermImage Image(Activation engine, int imageId)
+    {
+        var pool = engine.CurrentImages
+            ?? throw new InvalidOperationException(
+                "IL read stream: engine.CurrentImages is null. The embedding layer must populate it at query setup.");
+        if (imageId < 0 || imageId >= pool.Count)
+            throw new InvalidOperationException($"IL read stream: image id {imageId} is out of range [0, {pool.Count}).");
+        return pool[imageId];
+    }
+
     private static TextLiteral ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals
