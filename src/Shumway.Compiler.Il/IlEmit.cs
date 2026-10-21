@@ -131,6 +131,17 @@ public sealed class IlEmit
     /// <summary>Locals declared so far.</summary>
     public int LocalCount { get; private set; }
 
+    /// <summary>The basic blocks of the IL emitted so far, as the JIT finds
+    /// them before it inlines anything: one at the entry, one at every
+    /// label, one after every branch, return or throw (a label there is
+    /// the same block). The JIT stops optimizing a method past
+    /// <see cref="IlJitLimits.BasicBlocks"/> of them.</summary>
+    public int BlockCount { get; private set; } = 1;
+
+    // The instruction after a branch, a return or a throw begins a block,
+    // unless a label begins it first.
+    private bool _blockPending;
+
     /// <summary>The inlines the JIT will make for the calls and the struct
     /// constructors emitted so far (<see cref="IlInlineTable"/>). Each adds
     /// temporaries to the method's locals, whose count the JIT caps for
@@ -172,6 +183,8 @@ public sealed class IlEmit
         label.Marked = true;
         _il.MarkLabel(label.Label);
         _unreachable = false;
+        BlockCount++;
+        _blockPending = false;
         _text?.Append(label.Name).Append(":\n");
     }
 
@@ -190,6 +203,11 @@ public sealed class IlEmit
         Flush();
         if (_unreachable) throw Fail("Unreachable code detected");
         InstructionCount++;
+        if (_blockPending)
+        {
+            BlockCount++;
+            _blockPending = false;
+        }
     }
 
     private IlEmitException Fail(string message) => new(message, Instructions());
@@ -448,6 +466,7 @@ public sealed class IlEmit
         label.Used = true;
         _il.Emit(op, label.Label);
         Text(op.Name!, label.Name);
+        _blockPending = true;
     }
 
     public void Branch(IlLabel label)
@@ -475,6 +494,7 @@ public sealed class IlEmit
         foreach (var l in labels) { Own(l); l.Used = true; }
         _il.Emit(OpCodes.Switch, labels.Select(l => l.Label).ToArray());
         if (_text is not null) Text("switch", string.Join(", ", labels.Select(l => l.Name)));
+        _blockPending = true;
     }
 
     // ---- calls and returns ----
@@ -539,12 +559,14 @@ public sealed class IlEmit
         InstructionCount++;
         Text("ret");
         _unreachable = true;
+        _blockPending = true;
     }
 
     public void Throw()
     {
         Op(OpCodes.Throw);
         _unreachable = true;
+        _blockPending = true;
     }
 
     /// <summary>The built method compiles with full optimization at its first

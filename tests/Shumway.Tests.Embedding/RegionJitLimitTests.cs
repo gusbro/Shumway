@@ -191,6 +191,7 @@ public sealed class RegionJitLimitTests
                 Assert.True(r.LocalRefs <= IlJitLimits.LocalRefs, $"root {r.RootFid}: {r.LocalRefs} local refs");
                 Assert.True(r.IlBytes <= IlJitLimits.IlBytes, $"root {r.RootFid}: {r.IlBytes} IL bytes");
                 Assert.True(r.Instructions <= IlJitLimits.Instructions, $"root {r.RootFid}: {r.Instructions} instructions");
+                Assert.True(r.Blocks <= IlJitLimits.BasicBlocks, $"root {r.RootFid}: {r.Blocks} basic blocks");
             }
             Assert.True(e.Query("run(30).").Success);
 #if !NETFRAMEWORK

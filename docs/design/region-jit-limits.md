@@ -7,7 +7,9 @@
 
 The runtime's JIT compiles a method without optimization once it is past
 fixed sizes, tested on the IL as emitted: 60,000 bytes, 20,000 instructions,
-2,000 locals, 8,000 references to locals and arguments. Such a method gets no
+2,000 locals, 8,000 references to locals and arguments, 2,000 basic blocks
+(the emitter counts them as the JIT finds them: the entry, every label,
+the instruction after every branch). Such a method gets no
 inlining and no register allocation; every accessor is a call. The knobs that
 raise the sizes exist only in checked builds of the JIT.
 

@@ -349,7 +349,7 @@ internal static class IlRegionCost
 
     /// <summary>One region emission, for diagnostics and tests.</summary>
     public readonly record struct Emission(int RootFid, int Members, int LocalRefs, int IlBytes,
-        int Instructions, int Locals, int Attempt, bool Persisted, int Inlines)
+        int Instructions, int Locals, int Attempt, bool Persisted, int Inlines, int Blocks)
     {
         /// <summary>The method's locals in the JIT's count (<see cref="IlRegionCost.Locals"/>).</summary>
         public int JitLocals => IlRegionCost.Locals(Locals, Inlines);

@@ -13,6 +13,9 @@ internal static class IlJitLimits
     /// <summary>Arguments included.</summary>
     public const int Locals = 2000;
     public const int LocalRefs = 8000;
+    /// <summary>As the JIT finds them in the IL, before inlining
+    /// (<see cref="IlEmit.BlockCount"/>).</summary>
+    public const int BasicBlocks = 2000;
 
     /// <summary>The locals, arguments and temporaries included, past which
     /// the JIT inlines nothing more into a method: every later call site of
@@ -60,6 +63,7 @@ internal static class IlJitLimits
         if (emit.Size > IlBytes) { what = $"IL bytes {emit.Size} > {IlBytes}"; return true; }
         if (emit.InstructionCount > Instructions) { what = $"instructions {emit.InstructionCount} > {Instructions}"; return true; }
         if (emit.LocalCount + 2 > Locals) { what = $"locals {emit.LocalCount + 2} > {Locals}"; return true; }
+        if (emit.BlockCount > BasicBlocks) { what = $"basic blocks {emit.BlockCount} > {BasicBlocks}"; return true; }
         what = "";
         return false;
     }

@@ -383,13 +383,14 @@ public sealed partial class Activation
     // As GetStructureSlow: the value needs an address of its own for the
     // hooks, so the root cell goes on the heap before the copy; the whole
     // image when the block cell's tag is REF, else the block it names.
-    private void BindAttVarToCopy(int addr, TermImage image, int offset, Tag block)
+    private Cell BindAttVarToCopy(int addr, TermImage image, int offset, Tag block)
     {
         int h = AllocateHeap(1);
         Cell root = block == Tag.Ref ? BuildImage(image) : CopyBlock(image, offset, block);
         _heap[h] = root;
         QueueAttrWakeups(addr, h);
         BindAttVarToValue(addr, h, root);
+        return root;
     }
 
     // The matcher's queue of the blocks still to take, pairs of an image
@@ -591,15 +592,19 @@ public sealed partial class Activation
         return block == Tag.Lis ? Cell.Lis(h) : Cell.Str(h);
     }
 
-    /// <summary>ADR-063, the read-only stream: the cell at <paramref name="at"/>,
-    /// dereferenced, as a structure of <paramref name="functorId"/>: the
-    /// index past its functor cell. Unbound, the variable is bound to a copy
-    /// of the image's block at <paramref name="offset"/>, an attributed one
-    /// with its wakeups queued, and the result is -2: the block is on the
-    /// heap whole and the stream goes on past it. Anything else is -1.</summary>
-    public int ReadNested(int at, int functorId, TermImage image, int offset)
+    /// <summary>ADR-063, the read-only stream: <paramref name="cell"/>, a
+    /// cell of the term, dereferenced, as a structure of
+    /// <paramref name="functorId"/>: the index past its functor cell.
+    /// Unbound, the variable is bound to a copy of the image's block at
+    /// <paramref name="offset"/>, an attributed one with its wakeups queued,
+    /// and the index is the copy's: the stream reads the copy as it reads
+    /// any term. Anything else is -1.</summary>
+    public int ReadNested(long cell, int functorId, TermImage image, int offset)
     {
-        int a = Deref(at);
+        var c = new Cell(cell);
+        if (c.Tag == Tag.Str) return _heap[c.AsHeapIndex].AsFunctorId == functorId ? c.AsHeapIndex + 1 : -1;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return -1;
+        int a = Deref(c.AsHeapIndex);
         Cell v = _heap[a];
         if (v.Tag == Tag.Str)
         {
@@ -610,9 +615,12 @@ public sealed partial class Activation
     }
 
     /// <summary>As <see cref="ReadNested"/> for a list: the index of its pair.</summary>
-    public int ReadNestedList(int at, TermImage image, int offset)
+    public int ReadNestedList(long cell, TermImage image, int offset)
     {
-        int a = Deref(at);
+        var c = new Cell(cell);
+        if (c.Tag == Tag.Lis) return c.AsHeapIndex;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return -1;
+        int a = Deref(c.AsHeapIndex);
         Cell v = _heap[a];
         if (v.Tag == Tag.Lis) return v.AsHeapIndex;
         return ReadNestedSlow(a, v, image, offset, Tag.Lis);
@@ -622,20 +630,24 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private int ReadNestedSlow(int a, Cell v, TermImage image, int offset, Tag block)
     {
+        Cell copy;
         if (v.Tag == Tag.Ref)
         {
+            copy = CopyBlock(image, offset, block);
             // A hole may hold the variable itself: under the occurs check
             // the general unification, which tests for that, takes the copy.
-            if (OccursMode != 0) return UnifyCells(Cell.Ref(a), CopyBlock(image, offset, block)) ? -2 : -1;
-            Bind(a, CopyBlock(image, offset, block));
-            return -2;
+            if (OccursMode == 0) Bind(a, copy);
+            else if (!UnifyCells(Cell.Ref(a), copy)) return -1;
         }
-        if (v.Tag == Tag.AttVar)
+        else if (v.Tag == Tag.AttVar)
         {
-            BindAttVarToCopy(a, image, offset, block);
-            return -2;
+            copy = BindAttVarToCopy(a, image, offset, block);
         }
-        return -1;
+        else
+        {
+            return -1;
+        }
+        return block == Tag.Lis ? copy.AsHeapIndex : copy.AsHeapIndex + 1;
     }
 
     /// <summary>ADR-063, the read-only stream: <c>unify_variable_y</c> in

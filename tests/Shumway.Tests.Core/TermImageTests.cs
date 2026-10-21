@@ -430,22 +430,21 @@ public class TermImageTests
         engine.SetHeap(gp + 1, Cell.Int(7));
         int cell = engine.AllocateHeap(1);
         engine.SetHeap(cell, Cell.Str(gp));
-        Assert.Equal(gp + 1, engine.ReadNested(cell, g, image, 3));
-        Assert.Equal(-1, engine.ReadNested(cell, FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1), image, 3));
-        Assert.Equal(-1, engine.ReadNestedList(cell, image, 3));
+        Assert.Equal(gp + 1, engine.ReadNested(engine.GetHeap(cell).Data, g, image, 3));
+        Assert.Equal(-1, engine.ReadNested(engine.GetHeap(cell).Data, FunctorTable.Intern(AtomTable.Intern("h", permanent: true).Id, 1), image, 3));
+        Assert.Equal(-1, engine.ReadNestedList(engine.GetHeap(cell).Data, image, 3));
         // A reference to an unbound variable: bound to a copy of the block,
-        // its hole from the register; the stream goes on past the block.
+        // its hole from the register; the pointer is the copy's.
         int v = engine.AllocateHeap(1);
         engine.SetHeap(v, Cell.Ref(v));
         engine.SetHeap(cell, Cell.Ref(v));
         int top = engine.HeapTop;
-        Assert.Equal(-2, engine.ReadNested(cell, g, image, 3));
+        Assert.Equal(top + 1, engine.ReadNested(engine.GetHeap(cell).Data, g, image, 3));
         Assert.Equal(Cell.Str(top), engine.GetHeap(v));
         Assert.Equal(cells[3], engine.GetHeap(top));
         Assert.Equal(Cell.Atom(a), engine.GetHeap(top + 1));
         // An atom where a structure is expected: no.
-        engine.SetHeap(cell, Cell.Atom(a));
-        Assert.Equal(-1, engine.ReadNested(cell, g, image, 3));
+        Assert.Equal(-1, engine.ReadNested(Cell.Atom(a).Data, g, image, 3));
     }
 
     [Fact]
@@ -478,7 +477,7 @@ public class TermImageTests
         engine.SetRegister(7, Cell.Int(77));
         int v = engine.AllocateHeap(1);
         engine.SetHeap(v, Cell.Ref(v));
-        Assert.Equal(-2, engine.ReadNested(v, g, image, 7));
+        Assert.True(engine.ReadNested(Cell.Ref(v).Data, g, image, 7) >= 0);
         Assert.True(Activation.IsCopiedMark(engine.GetRegister(5)));
         Assert.True(Activation.IsCopiedMark(engine.GetRegister(6)));
         Assert.Equal(Cell.Int(77), engine.GetRegister(7));

@@ -237,12 +237,15 @@ the stream never builds. The unify pointer lives in a local and no
 instruction tests the mode: `unify_variable` is a load and a store, a
 constant compares its bits before the unifier is asked, a nested cell of
 the inline chain or a part's cell that comes unbound is bound to a copy of
-its block of the image (`Activation.ReadNested`, the parts under the block
-marked through their holes, which name their blocks) and the stream goes
-on past the block. The emitter maps the instructions to the image's cells
-by walking both in the order the streams run; a unit it cannot follow
-keeps the helpers, as does a method with no register file. The switch is
-`SHUMWAY_IL_READ_STREAM`, 0 for off.
+its block of the image (`Activation.ReadNested`) which the stream then
+reads as it reads any term. A part's mark names its block in the hole
+table, so a copy of one block marks the parts under it, for the matcher.
+The emitter maps the instructions to the image's cells by walking both in
+the order the streams run; a unit it cannot follow keeps the helpers, as
+does a method with no register file. The form spends basic blocks where
+the helpers spent calls, and the region planner counts them against the
+JIT's limit of two thousand (`docs/design/region-jit-limits.md`). The
+switch is `SHUMWAY_IL_READ_STREAM`, 0 for off.
 
 Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
 the wasm tier copies and binds in the module and steps aside to the

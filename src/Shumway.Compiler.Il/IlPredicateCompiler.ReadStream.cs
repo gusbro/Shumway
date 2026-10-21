@@ -10,7 +10,9 @@ namespace Shumway.Compiler.Il;
 // cell is whatever the heap holds: the stream never builds. Its
 // instructions are emitted for read mode alone, the unify pointer in a
 // local and no mode test; a nested cell that comes unbound is bound to a
-// copy of its block of the image, and the stream goes on past the block.
+// copy of its block of the image, which the stream then reads. The form
+// spends basic blocks where the helpers spent calls, and the planner
+// counts them (IlJitLimits.BasicBlocks).
 // The emitter maps the instructions to the image's cells by walking both
 // in the order the streams run (ReadPlan); a unit the walk cannot follow
 // keeps the helpers.
@@ -445,24 +447,23 @@ public sealed partial class IlPredicateCompiler
         EmitReadBlock(emit, unit, functorId, offset, list, failLabel);
     }
 
-    // The cell in Bits as the block at offset: a structure of the functor (a
-    // list) sets the pointer past its functor (at its pair); a reference or
-    // an attributed variable goes to the helper, which follows the chain,
-    // matches a bound cell, or binds an unbound one to a copy of the block
-    // and says so, the unit then ending; anything else fails.
+    // The cell in Bits as the block at offset: a structure of the functor
+    // (a list) sets the pointer past its functor (at its pair) inline;
+    // anything else goes to the helper, which follows a reference, matches
+    // a bound cell, binds an unbound one to a copy of the block the stream
+    // then reads, and answers the pointer, or -1 to fail. Two labels and
+    // four branches: the form's blocks count against the JIT's limit.
     private static void EmitReadBlock(IlEmit emit, ReadUnit unit, int functorId, int offset, bool list, IlLabel failLabel)
     {
         var other = emit.DefineLabel($"rs_other_{NextLabelSeq()}");
-        var slow = emit.DefineLabel($"rs_slow_{NextLabelSeq()}");
-        var set = emit.DefineLabel($"rs_set_{NextLabelSeq()}");
         var done = emit.DefineLabel($"rs_done_{NextLabelSeq()}");
-        emit.LoadLocal(unit.Bits);
-        emit.Convert<int>();
-        emit.StoreLocal(unit.P);
         EmitTagIs(emit, unit.Bits, list ? Tag.Lis : Tag.Str);
         emit.BranchIfFalse(other);
         if (!list)
         {
+            emit.LoadLocal(unit.Bits);
+            emit.Convert<int>();
+            emit.StoreLocal(unit.P);
             emit.LoadLocal(unit.Heap);
             emit.LoadLocal(unit.P);
             emit.LoadElement<Cell>();
@@ -481,18 +482,15 @@ public sealed partial class IlPredicateCompiler
         }
         else
         {
-            emit.LoadLocal(unit.P);
+            emit.LoadLocal(unit.Bits);
+            emit.Convert<int>();
             emit.StoreLocal(unit.S);
         }
         emit.Branch(done);
 
         emit.MarkLabel(other);
-        EmitBranchIfTagIn(emit, unit.Bits, 1 << (int)Tag.Ref | 1 << (int)Tag.AttVar, slow);
-        emit.Branch(failLabel);
-
-        emit.MarkLabel(slow);
         emit.LoadArgument(0);
-        emit.LoadLocal(unit.P);
+        emit.LoadLocal(unit.Bits);
         if (!list) EmitFunctorId(emit, functorId);
         if (_persistPatches is null)
         {
@@ -506,18 +504,11 @@ public sealed partial class IlPredicateCompiler
             emit.LoadConstant(offset);
             EmitHelperCall(emit, list ? IlReadNestedListGlobalHelperMethod : IlReadNestedGlobalHelperMethod);
         }
-        emit.StoreLocal(unit.P);
-        EmitReadReload(emit, unit);
-        emit.LoadLocal(unit.P);
-        emit.LoadConstant(0);
-        emit.BranchIfGreaterOrEqual(set);
-        emit.LoadLocal(unit.P);
-        emit.LoadConstant(-2);
-        emit.BranchIfEqual(unit.End!);
-        emit.Branch(failLabel);
-        emit.MarkLabel(set);
-        emit.LoadLocal(unit.P);
         emit.StoreLocal(unit.S);
+        EmitReadReload(emit, unit);
+        emit.LoadLocal(unit.S);
+        emit.LoadConstant(0);
+        emit.BranchIfLess(failLabel);
         emit.MarkLabel(done);
     }
 

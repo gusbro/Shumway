@@ -1129,7 +1129,7 @@ public sealed partial class IlPredicateCompiler
                 }
                 IlRegionCost.Log(new IlRegionCost.Emission(predicate.FunctorId, region.MemberCount,
                     emit.LocalRefCount, emit.Size, emit.InstructionCount, emit.LocalCount, 1, Persisted: true,
-                    emit.InlineCount));
+                    emit.InlineCount, emit.BlockCount));
                 return FinishPersistedEmit(emit,
                     $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
                     + $"/{predicate.Arity} members={region.MemberCount} "

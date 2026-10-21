@@ -97,17 +97,17 @@ public static class IlRuntimeHelpers
 
     /// <summary>ADR-063, the read-only stream: <see cref="Activation.ReadNested"/>
     /// on the image <paramref name="imageId"/> names in the engine's pool.</summary>
-    public static int ReadNested(Activation engine, int at, int functorId, int imageId, int offset)
-        => engine.ReadNested(at, functorId, Image(engine, imageId), offset);
+    public static int ReadNested(Activation engine, long cell, int functorId, int imageId, int offset)
+        => engine.ReadNested(cell, functorId, Image(engine, imageId), offset);
 
-    public static int ReadNestedGlobal(Activation engine, int at, int functorId, int imageId, int offset)
-        => engine.ReadNested(at, functorId, TermImageTable.Get(imageId), offset);
+    public static int ReadNestedGlobal(Activation engine, long cell, int functorId, int imageId, int offset)
+        => engine.ReadNested(cell, functorId, TermImageTable.Get(imageId), offset);
 
-    public static int ReadNestedList(Activation engine, int at, int imageId, int offset)
-        => engine.ReadNestedList(at, Image(engine, imageId), offset);
+    public static int ReadNestedList(Activation engine, long cell, int imageId, int offset)
+        => engine.ReadNestedList(cell, Image(engine, imageId), offset);
 
-    public static int ReadNestedListGlobal(Activation engine, int at, int imageId, int offset)
-        => engine.ReadNestedList(at, TermImageTable.Get(imageId), offset);
+    public static int ReadNestedListGlobal(Activation engine, long cell, int imageId, int offset)
+        => engine.ReadNestedList(cell, TermImageTable.Get(imageId), offset);
 
     private static TermImage Image(Activation engine, int imageId)
     {

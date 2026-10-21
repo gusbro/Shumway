@@ -126,7 +126,7 @@ public sealed partial class IlPredicateCompiler
           .Append($" bytes={emit.Size} locals={emit.LocalCount} resume={t.ResumeCursors} ladder={t.LadderEntries} attempt={t.Attempt}")
           .Append($" inlines={emit.InlineCount} blockinlines={blockInlines} tailinlines={emit.InlineCount - t.MembersEndInlines}")
           .Append($" prologuelocals={t.PrologueLocals} blocklocals={blockLocals} taillocals={emit.LocalCount - t.MembersEndLocals}")
-          .Append($" jitlocals={IlRegionCost.Locals(emit.LocalCount, emit.InlineCount)}\n");
+          .Append($" jitlocals={IlRegionCost.Locals(emit.LocalCount, emit.InlineCount)} bbs={emit.BlockCount}\n");
         foreach (var (m, refs, instrs, inlines, locals, ops) in t.Members)
             sb.Append($";;; member-cost root={t.RootFid} fid={m.FunctorId} name={FidName(m.FunctorId)}/{m.Arity}")
               .Append($" clauses={m.ClauseCount} bytes={m.BytecodeUnfused.Length} calls={m.CallSites.Count}")
@@ -620,7 +620,7 @@ public sealed partial class IlPredicateCompiler
             }
             int regionFid = region.Root.FunctorId;
             IlRegionCost.Log(new IlRegionCost.Emission(regionFid, region.MemberCount, emit.LocalRefCount,
-                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false, emit.InlineCount));
+                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false, emit.InlineCount, emit.BlockCount));
             finalPlan = plan;
             return FinishEmit(emit,
                 $"region root={regionFid} {FidName(regionFid)} members=["
