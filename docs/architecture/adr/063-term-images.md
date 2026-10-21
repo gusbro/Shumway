@@ -247,13 +247,15 @@ the helpers spent calls, and the region planner counts them against the
 JIT's limit of two thousand (`docs/design/region-jit-limits.md`). The
 switch is `SHUMWAY_IL_READ_STREAM`, 0 for off.
 
-Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
-the wasm tier copies and binds in the module and steps aside to the
+Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`),
+the IL tier calling it only when the register does not hold the term
+already; the wasm tier copies and binds in the module and steps aside to the
 interpreter for an attributed variable, and at every entry under the
 occurs check (`Activation.WasmModeCompatible`), so its copies never meet
 the flag. The switches are
 `SHUMWAY_IMAGE_HEADS` and `SHUMWAY_IMAGE_PARTS`, 0 for off;
-`SHUMWAY_IMAGE_PART_THRESHOLD` is the part's cells,
+`SHUMWAY_IMAGE_HEAD_THRESHOLD` is the cells a head argument needs, the
+body's threshold unless set; `SHUMWAY_IMAGE_PART_THRESHOLD` is the part's cells,
 `SHUMWAY_IMAGE_MATCH_LOCALS` the locals a stream must cost for a
 compaction to take it, and `SHUMWAY_IMAGE_MATCH_ALL=1` sends every part
 to the matcher, for measuring.
@@ -331,6 +333,17 @@ and 0.81; Blint 1.00 and 0.97, clpz 1.00 and 0.95, flatten 1.02 and
 1.04, qsort 0.86 and 0.97, the other Van Roy programs 0.99 to 1.03 at
 the minimum. The regions' IL grows by one to two percent and the JIT's
 refusals for too many locals fall by two percent on Blint.
+
+The head threshold, 8 against 6 and against 4, ten rounds ABBA over two
+copies, heap identical: at 6 every program within 3% at the minimum; at
+4 clpz 0.93 and boyer 0.94, the rest within the noise, and a loop reading
+heads of four to seven cells bound 1.27: under eight cells the read-only
+unit costs more than the stream's inlined code. So the default stays the
+body's threshold, and a program whose heads are mid-sized sets its own.
+The IL tier's test of the register before the copy's call, at the
+threshold of 4 where it acts: the same loop 0.97, the lookups 0.98, the
+rest within the noise. The opcode model of the planner's locals, refitted
+on the corpus with the read-only form, keeps its median error of 21%.
 
 ## Risks
 

@@ -63,6 +63,7 @@ is what ships. Any build honors them.
 | `SHUMWAY_REGION_BUDGET`, `SHUMWAY_REGION_ROOT_MINSAVE` | tuned | Size/benefit thresholds bounding which predicates become regions. |
 | `SHUMWAY_REGION_LVREFS`, `SHUMWAY_REGION_LOCALS` | 7200, 1000 | The local references and the JIT locals a region is planned to stay under; `=0` plans by size alone. |
 | `SHUMWAY_IMAGE_HOLES`, `SHUMWAY_IMAGE_HEADS`, `SHUMWAY_IMAGE_PARTS` | on | `=0` keeps images to ground terms, keeps head arguments to their matching streams, or keeps the deferred parts of a head argument to theirs; the measurement's switches. |
+| `SHUMWAY_IMAGE_HEAD_THRESHOLD` | the image threshold | The cells a head argument needs to get an image before its matching stream; 0 keeps every head to its stream. |
 | `SHUMWAY_IMAGE_PART_THRESHOLD` | 16 | The cells a deferred part of a head argument needs to carry an image of its own. |
 | `SHUMWAY_IMAGE_MATCH_LOCALS` | 32 | The locals a head part's matching stream must cost for a region past the JIT's cap to match the part by the engine instead of by the stream. |
 | `SHUMWAY_IMAGE_MATCH_ALL` | off | `=1` matches every such part by the engine, whatever the region; a measurement's switch. |

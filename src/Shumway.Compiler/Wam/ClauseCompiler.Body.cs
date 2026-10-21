@@ -282,7 +282,7 @@ public sealed partial class ClauseCompiler
         s.HeadImages = null;
         s.HeadImageByTerm = null;
         s.CurrentHeadImage = null;
-        if (!ImageHeads || _imageLiterals is null || ImageThreshold <= 0) return;
+        if (!ImageHeads || _imageLiterals is null || HeadThreshold <= 0) return;
         // Where each named variable is first met in stream order: as a plain
         // argument (kind 0), in an argument's own stream (1) or in a deferred
         // part (2). A unit is one stream, numbered in the order they run:
@@ -378,7 +378,7 @@ public sealed partial class ClauseCompiler
         // stream.
         for (int a = 0; a < headArgs.Length; a++)
         {
-            if (headArgs[a] is not CompoundTerm c || !Carries(c, ImageThreshold)) continue;
+            if (headArgs[a] is not CompoundTerm c || !Carries(c, HeadThreshold)) continue;
             int arg = a;
             if (!Available(c, site => site.Arg == arg || site.Kind == 0 || (site.Arg < arg && site.Kind == 1))) continue;
             var hi = new HeadImage { Term = c, IsArg = true, ArgSlot = a };
