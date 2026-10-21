@@ -90,6 +90,19 @@ public class TermImageEmissionTests
     }
 
     [Fact]
+    public void ADeferredPartsMarkNamesItsBlock()
+    {
+        // The builder lays i, h, g after the root: g's block at 11, h's at 8.
+        string src = "p(f(g(a, b), h(c, d), i(e, f, g))).";
+        Assert.Contains("get_blit", Dis(src));
+        var image = Assert.Single(Images(src));
+        var marks = image.Holes.ToArray().Where(h => h.IsSentinel).Select(h => h.Offset).OrderBy(o => o).ToArray();
+        Assert.Equal(new[] { 8, 11 }, marks);
+        Assert.Equal(Cell.Str(11), image.Cells[1]);
+        Assert.Equal(Cell.Str(8), image.Cells[2]);
+    }
+
+    [Fact]
     public void AVariablesOutHoleIsAtTheCellTheStreamMeetsFirst()
     {
         // The builder lays i, h, g after the root; the stream runs i inline,

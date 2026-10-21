@@ -71,12 +71,14 @@ internal static class TermImageBuilder
 
     public static TermImage? Build(Term term) => Build(term, null);
 
-    public static TermImage? Build(Term term, HoleClassifier? classify)
+    /// <summary><paramref name="blocks"/>, when given, takes the offset of
+    /// each compound's block, by the compound.</summary>
+    public static TermImage? Build(Term term, HoleClassifier? classify, IDictionary<CompoundTerm, int>? blocks = null)
     {
         if (term is not CompoundTerm root) return null;
         var cells = new List<Cell>();
         var holes = new List<ImageHole>();
-        if (!Lay(root, cells, holes, classify)) return null;
+        if (!Lay(root, cells, holes, classify, blocks)) return null;
         return new TermImage(cells.ToArray(), IsCons(root) ? Tag.Lis : Tag.Str,
             holes.Count == 0 ? null : holes.ToArray());
     }
@@ -87,7 +89,8 @@ internal static class TermImageBuilder
     // and the argument cell that refers to it is written then, with the
     // index the block starts at. Scalars go in place; a float's pair and a
     // packed string's cells go at the end as they are met.
-    private static bool Lay(CompoundTerm root, List<Cell> cells, List<ImageHole> holes, HoleClassifier? classify)
+    private static bool Lay(CompoundTerm root, List<Cell> cells, List<ImageHole> holes, HoleClassifier? classify,
+        IDictionary<CompoundTerm, int>? blocks)
     {
         // A named variable's cells as laid, and the one the stream meets first.
         Dictionary<string, List<int>>? named = null;
@@ -100,6 +103,7 @@ internal static class TermImageBuilder
         {
             var (slot, c) = pending.Pop();
             int start = cells.Count;
+            if (blocks is not null) blocks[c] = start;
             if (slot >= 0) cells[slot] = IsCons(c) ? Cell.Lis(start) : Cell.Str(start);
             int argBase;
             if (IsCons(c))

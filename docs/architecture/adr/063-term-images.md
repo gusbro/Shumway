@@ -230,6 +230,20 @@ compaction sticks to the code, and a persisted bundle, whose regions are
 never emitted twice, carries no matcher site. Tier-0 and the wasm module
 test the mark and run the stream.
 
+On the IL tier the streams under an image are emitted for read mode
+alone (`IlPredicateCompiler.ReadStream`): after `get_blit` the argument is
+bound, after a part's skip the part's cell is whatever the heap holds, and
+the stream never builds. The unify pointer lives in a local and no
+instruction tests the mode: `unify_variable` is a load and a store, a
+constant compares its bits before the unifier is asked, a nested cell of
+the inline chain or a part's cell that comes unbound is bound to a copy of
+its block of the image (`Activation.ReadNested`, the parts under the block
+marked through their holes, which name their blocks) and the stream goes
+on past the block. The emitter maps the instructions to the image's cells
+by walking both in the order the streams run; a unit it cannot follow
+keeps the helpers, as does a method with no register file. The switch is
+`SHUMWAY_IL_READ_STREAM`, 0 for off.
+
 Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
 the wasm tier copies and binds in the module and steps aside to the
 interpreter for an attributed variable. The switches are
@@ -241,10 +255,8 @@ to the matcher, for measuring.
 
 ## Not in this decision
 
-A read-only form of the stream on the IL tier, the unify pointer in a
-local and no mode test, an unbound nested cell served by a copy of its
-sub-image, is a later measurement; so is a matcher in the wasm module.
-Big integers and rationals stay
+A matcher in the wasm module, and the read-only form of the stream
+there, are later measurements. Big integers and rationals stay
 out of images while their payloads name a per-activation table. A clause
 asserted at run time interns its images in the pool as it interns its
 string literals, and the pool does not free; the threshold keeps small
@@ -303,6 +315,17 @@ region's locals from 1,454 to 945 and the JIT's refusals from 896 to
 none; the trees and lists read bound 0.99 to 1.04 (their callers read
 them bound, so their streams stay); clpz 0.98, Blint 0.98, the other Van
 Roy programs 0.95 to 1.03.
+
+The read-only form of the stream, off against on, twelve rounds ABBA
+over two copies, heap identical, serialize as the control (no image in
+it, the same code on both sides: 1.02 at the minimum, 1.16 at the median,
+the noise of the run): the trees of 45 cells and the nested lists of the
+same size read bound in a loop 0.45 and 0.44 at the minimum, 0.38 and
+0.46 at the median; the lookups of 64 and 200 cells 0.83 and 0.82, 0.80
+and 0.81; Blint 1.00 and 0.97, clpz 1.00 and 0.95, flatten 1.02 and
+1.04, qsort 0.86 and 0.97, the other Van Roy programs 0.99 to 1.03 at
+the minimum. The regions' IL grows by one to two percent and the JIT's
+refusals for too many locals fall by two percent on Blint.
 
 ## Risks
 

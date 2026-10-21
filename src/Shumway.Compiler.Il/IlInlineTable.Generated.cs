@@ -43,6 +43,10 @@ internal static partial class IlInlineTable
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlit(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::PutPstr(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // unprofitable inline
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::ReadNested(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32)"] = 1,   // inlined
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::ReadNestedGlobal(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32)"] = 1,   // inlined
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::ReadNestedList(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32)"] = 7,   // inlined
+        ["Shumway.Compiler.Il.IlRuntimeHelpers::ReadNestedListGlobal(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32)"] = 7,   // inlined
         ["Shumway.Compiler.Il.IlRuntimeHelpers::UnifyBlit(Shumway.Core.Activation,System.Int32,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlRuntimeHelpers::UnifyBlitGlobal(Shumway.Core.Activation,System.Int32,System.Int32)"] = 2,   // inlined
         ["Shumway.Core.Activation::Allocate(System.Int32)"] = 0,   // too many il bytes
@@ -62,6 +66,7 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Activation::DeoptTo(System.Int32,System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Core.Activation::Deref(System.Int32)"] = 3,   // inlined
         ["Shumway.Core.Activation::DropUndoneWakes()"] = 1,   // inlined
+        ["Shumway.Core.Activation::EnsureRegisters(System.Int32)"] = 1,   // inlined
         ["Shumway.Core.Activation::EnvPrev(System.Int32)"] = 1,   // inlined
         ["Shumway.Core.Activation::FailIlGuard(System.Int32,System.Int32,System.Int32,System.Int32)"] = 2,   // inlined
         ["Shumway.Core.Activation::FlushWakeupsForIlCut()"] = 3,   // inlined
@@ -119,6 +124,7 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Activation::UnifyHeapWithCell(System.Int32,Shumway.Core.Cell)"] = 0,   // too many basic blocks
         ["Shumway.Core.Activation::UnifyList()"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::UnifyPermanentWithCell(System.Int32,Shumway.Core.Cell)"] = 1,   // inlined
+        ["Shumway.Core.Activation::UnifyPermanentWithHeapAt(System.Int32,System.Int32)"] = 3,   // inlined
         ["Shumway.Core.Activation::UnifyRegisterWithCell(System.Int32,Shumway.Core.Cell)"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::UnifyRegisterWithHeapAt(System.Int32,System.Int32)"] = 3,   // inlined
         ["Shumway.Core.Activation::UnifyRegisters(System.Int32,System.Int32)"] = 1,   // inlined
@@ -127,6 +133,7 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Activation::UnifyValueY(System.Int32)"] = 9,   // inlined
         ["Shumway.Core.Activation::UnifyVariableX(System.Int32)"] = 4,   // inlined
         ["Shumway.Core.Activation::UnifyVariableY(System.Int32)"] = 5,   // inlined
+        ["Shumway.Core.Activation::UnifyVariableYAt(System.Int32,System.Int32)"] = 5,   // inlined
         ["Shumway.Core.Activation::UnifyVoid(System.Int32)"] = 0,   // unprofitable inline
         ["Shumway.Core.Activation::UnwindTrails(System.Int32,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::WakeScratch(System.Int32)"] = 2,   // inlined
