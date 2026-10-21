@@ -249,7 +249,9 @@ switch is `SHUMWAY_IL_READ_STREAM`, 0 for off.
 
 Tier-0 and the IL tier share the copy and the bind (`Activation.GetBlit`);
 the wasm tier copies and binds in the module and steps aside to the
-interpreter for an attributed variable. The switches are
+interpreter for an attributed variable, and at every entry under the
+occurs check (`Activation.WasmModeCompatible`), so its copies never meet
+the flag. The switches are
 `SHUMWAY_IMAGE_HEADS` and `SHUMWAY_IMAGE_PARTS`, 0 for off;
 `SHUMWAY_IMAGE_PART_THRESHOLD` is the part's cells,
 `SHUMWAY_IMAGE_MATCH_LOCALS` the locals a stream must cost for a

@@ -38,6 +38,8 @@ public sealed class TermImageTests
         frzp(V, R) :- freeze(V, R = woke), part(k(V, z), _).
         nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
         ord(k(f(g(X), h(X), i(Z, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), R) :- R = X-Z.
+        occ(V, f(V, 1, 2, 3, 4, 5, 6, 7)).
+        pocc(V, k(f(V, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), z)).
         """;
 
     private static readonly string[] Goals =
@@ -84,6 +86,12 @@ public sealed class TermImageTests
         "ord(k(f(g(1), H, i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), W), H == h(1), W == 1-2.",
         "ord(k(F, z), W), F = f(g(1), _, i(2, _, _, _, _, _, _, _, _, _)), F == f(g(1), h(1), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), W == 1-2.",
         "\\+ ord(k(f(g(1), h(2), i(2, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), _).",
+        // Under the occurs check the tier steps aside at every entry: the
+        // copies of the bytecode leave the stream, which refuses the cycle.
+        "set_prolog_flag(occurs_check, true), \\+ occ(W, W), set_prolog_flag(occurs_check, false).",
+        "set_prolog_flag(occurs_check, true), \\+ pocc(W, k(W, z)), set_prolog_flag(occurs_check, false).",
+        "set_prolog_flag(occurs_check, true), occ(1, F), F == f(1, 1, 2, 3, 4, 5, 6, 7), set_prolog_flag(occurs_check, false).",
+        "set_prolog_flag(occurs_check, true), pocc(1, K), K == k(f(1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), z), set_prolog_flag(occurs_check, false).",
     };
 
     // By name, module prefix stripped: a consulted predicate's functor carries its module.
@@ -111,7 +119,7 @@ public sealed class TermImageTests
             Assert.True(tiered.Query(goal).Success, goal + " on the tier");
         }
         // ANTI-VACUITY: the predicates with images did promote to the tier.
-        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "tbl/2", "tree/2", "patt/3", "hd/2", "part/2", "pv/2", "nest/2" })
+        foreach (string indicator in new[] { "lookup/2", "mixed/1", "text/1", "pair/3", "fresh/2", "perm/2", "attv/1", "tbl/2", "tree/2", "patt/3", "hd/2", "part/2", "pv/2", "nest/2", "ord/2", "occ/2", "pocc/2" })
             Assert.True(Promoted(tiered, indicator),
                 $"{indicator} was not promoted\n" + tiered.IlPromotion.DescribePromotionState());
         foreach (string goal in Goals)
