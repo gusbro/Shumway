@@ -283,6 +283,10 @@ public sealed partial class ClauseCompiler
         s.HeadImageByTerm = null;
         s.CurrentHeadImage = null;
         if (!ImageHeads || _imageLiterals is null || HeadThreshold <= 0) return;
+        // The plan keys a term by its object, so a head holding one object in
+        // two places (an AST may share a sub-term) gets no images: the two
+        // would share one prefix and one set of marks.
+        if (SharesACompound(headArgs)) return;
         // Where each named variable is first met in stream order: as a plain
         // argument (kind 0), in an argument's own stream (1) or in a deferred
         // part (2). A unit is one stream, numbered in the order they run:
@@ -412,6 +416,22 @@ public sealed partial class ClauseCompiler
         s.HeadImageByTerm = byTerm;
         s.HeadFirstSites = first;
         s.HeadUnitParent = unitParent;
+    }
+
+    private static bool SharesACompound(Term[] headArgs)
+    {
+        var seen = new HashSet<CompoundTerm>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<CompoundTerm>();
+        foreach (var a in headArgs)
+            if (a is CompoundTerm c) pending.Push(c);
+        while (pending.Count > 0)
+        {
+            var c = pending.Pop();
+            if (!seen.Add(c)) return true;
+            foreach (var x in c.Args)
+                if (x is CompoundTerm k) pending.Push(k);
+        }
+        return false;
     }
 
     private static bool InUnit(List<int> unitParent, int unit, int ancestor)
