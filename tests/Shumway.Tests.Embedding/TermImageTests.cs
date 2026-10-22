@@ -19,7 +19,7 @@ public sealed class TermImageTests
     private const string Program = """
         :- public lookup/2, mixed/1, text/1, loop/1, all/1, pair/3, fresh/2, perm/2, attv/1, back/1.
         :- public tbl/2, tree/2, patt/3, hd/2, frz/2, ptbl/2, ptree/2, ppatt/3, phd/2.
-        :- public part/2, pv/2, frzp/2, ppart/2, ppv/2, nest/2.
+        :- public part/2, pv/2, frzp/2, ppart/2, ppv/2, nest/2, lpart/2, plpart/2.
         :- use_module(library(coroutining)).
         id(X, X).
         lookup(K, V) :- t([k(a, 1), k(b, 2), k(c, 3), k(d, 4), k(e, 5), k(f, 6)], K, V).
@@ -49,6 +49,8 @@ public sealed class TermImageTests
         ppart(K, N) :- part(K, N).
         ppv(P, Y) :- pv(P, Y).
         nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).
+        lpart(k([a, b, c, d, e, f, g, h, i, j, k, l], z), 1).
+        plpart(K, N) :- lpart(K, N).
         pv2(f(t(X, u(X, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 13), z), X).
         ord(k(f(g(X), h(X), i(Z, 1, 2, 3, 4, 5, 6, 7, 8, 9)), z), R) :- R = X-Z.
         occ(V, f(V, 1, 2, 3, 4, 5, 6, 7)).
@@ -122,6 +124,11 @@ public sealed class TermImageTests
         ("set_prolog_flag(occurs_check, true), ( occ(1, F) -> R = F ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
         ("set_prolog_flag(occurs_check, true), ( pocc(1, K) -> R = K ; R = no ), set_prolog_flag(occurs_check, false).", "R"),
         ("\\+ nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, x), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), _), R = yes.", "R"),
+        // A part's list against packed text, which is a list (ADR-047).
+        ("lpart(k(\"abcdefghijkl\", z), N).", "N"),
+        ("atom_chars(abcdefghijkl, L), plpart(k(L, z), N).", "N"),
+        ("lpart(k([a, b|\"cdefghijkl\"], z), N).", "N"),
+        ("\\+ lpart(k(\"abcdefghijkx\", z), _), R = yes.", "R"),
     };
 
     private static string Answer(PrologEngine e, string goal, string var)
@@ -231,7 +238,7 @@ public sealed class TermImageTests
             tiered.ConsultString(Program);
             foreach (var (goal, v) in Goals)
                 Assert.Equal(Answer(reference, goal, v), Answer(tiered, goal, v));
-            foreach (string pi in new[] { "part/2", "pv/2", "nest/2" })
+            foreach (string pi in new[] { "part/2", "pv/2", "nest/2", "lpart/2" })
                 Assert.True(Promoted(tiered, pi), $"{pi} did not promote\n{tiered.IlPromotion.DescribePromotionState()}");
             // ANTI-VACUITY: under the switch the parts' sites go to the matcher.
             var code = new PredicateCompiler().Compile(new ClauseReader("nest(k(q(q2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o), b, c, d, e, f, g, h, i, j, k, l, m, n, o), z), 1).").ReadAll().ToList()).BytecodeUnfused;

@@ -447,6 +447,10 @@ public sealed partial class Activation
             BindAttVarToCopy(addr, image, 0, Tag.Ref);
             return true;
         }
+        // Packed text is a list (ADR-047), and no image cell is: the image's
+        // list meets it in the general unification, on a copy.
+        if (c.Tag == Tag.Pstr && image.Root == Tag.Lis)
+            return UnifyCells(addr >= 0 ? Cell.Ref(addr) : c, BuildImage(image));
         if (c.Tag != image.Root) return false;
         _matchQueue ??= new int[64];
         var cells = image.Cells;
@@ -472,6 +476,11 @@ public sealed partial class Activation
             if (v.Tag == Tag.AttVar)
             {
                 BindAttVarToCopy(a, image, ic.AsHeapIndex, ic.Tag);
+                continue;
+            }
+            if (v.Tag == Tag.Pstr && ic.Tag == Tag.Lis)
+            {
+                if (!UnifyCells(Cell.Ref(a), CopyBlock(image, ic.AsHeapIndex, ic.Tag))) return false;
                 continue;
             }
             if (v.Tag != ic.Tag) return false;
