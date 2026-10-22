@@ -835,6 +835,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal IReadOnlyList<Shumway.Core.TermImage> ImagePoolForFid(int fid)
         => _literalPools.Images.Items;
 
+    /// <summary>The packed-text pool a predicate's <c>get_pstr</c> /
+    /// <c>put_pstr</c> ids index: the live pool, as the images'.</summary>
+    internal IReadOnlyList<Shumway.Core.TextLiteral> StringPoolForFid(int fid)
+        => _literalPools.Strings.Items;
+
 
     /// <summary>Remaps a source-less precompiled module's float / string / bigint
     /// literal ids from its module-local pools into this engine's shared
@@ -903,7 +908,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     {
         int oldId = Shumway.Core.BytecodeIO.ReadInt32(code, off);
         if ((uint)oldId >= (uint)srcPool.Count) return;   // defensive
-        int newId = dstPool.Intern(srcPool[oldId]);
+        // A loaded module's code is static: its literals stay.
+        int newId = dstPool.InternPinned(srcPool[oldId]);
         if (newId != oldId) Shumway.Core.BytecodeIO.WriteInt32(code, off, newId);
     }
 
@@ -1063,6 +1069,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
+        IlPromotion.StringPoolProvider = StringPoolForFid;
         IlPromotion.OnDelegateEvicted = ClearLiveIlSlots;
 
         if (consultPrelude) InstallPrelude();

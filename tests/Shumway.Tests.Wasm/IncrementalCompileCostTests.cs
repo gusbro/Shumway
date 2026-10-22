@@ -73,8 +73,9 @@ public sealed class IncrementalCompileCostTests(ITestOutputHelper o)
         o.WriteLine($"  per predicate  : median {median:F2} ms, max {each[^1]:F2} ms");
 
         // The gate. What would sink the arc is a large fixed cost per module,
-        // and that shows up as a byte ratio in the tens. Measured 1.67x
-        // (about 3.6 KB per module over the shared code of the batch).
+        // and that shows up as a byte ratio in the tens. Measured 1.48x
+        // (about 3.4 KB per module over the shared code of the batch): a
+        // module carries a helper's body only when its code calls it.
         double bytesRatio = (double)separateBytes / batch.Module.Length;
         double fixedBytesPerModule = (separateBytes - batch.Module.Length) / (double)members.Count;
         Assert.True(bytesRatio <= 2.0,

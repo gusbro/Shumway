@@ -282,16 +282,15 @@ public sealed partial class Activation
         }
     }
 
-    /// <summary>Per-query string literal pool. Set by the embedding
-    /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
-    /// opcodes can resolve a literal id to its string at
-    /// runtime — same lookup the bytecode interpreter does, but
-    /// accessible from the Activation surface so Tier-1 IL doesn't need
-    /// to carry its own pool reference.</summary>
+    /// <summary>The activation's copy of the packed-text literal pool, set
+    /// by the embedding layer at query setup and refreshed with the pool.
+    /// Persisted IL's <c>get_pstr</c> / <c>put_pstr</c> read it by the id
+    /// the bundle's module gave the text; IL emitted at run time holds its
+    /// packed text itself.</summary>
     public IReadOnlyList<TextLiteral>? CurrentStringLiterals { get; set; }
 
-    /// <summary>ADR-063: the image pool of the current program, for the
-    /// <c>put_blit</c> of both tiers; set beside the string literals.</summary>
+    /// <summary>ADR-063: the activation's copy of the image pool, for the
+    /// interpreter's <c>put_blit</c>; set beside the packed-text literals.</summary>
     public IReadOnlyList<TermImage>? CurrentImages { get; set; }
 
     /// <summary>Per-query bytecode program, set alongside

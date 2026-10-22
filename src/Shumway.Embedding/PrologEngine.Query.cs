@@ -1433,6 +1433,9 @@ public sealed partial class PrologEngine
         }.Compile(
             queryClauses, cache: null, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
+        // The versions the query module's copies of the pools were taken at.
+        var poolVersions = new int[4];
+        RecordPoolVersions(poolVersions);
         RegisterLateHelpers(queryModule.Predicates);
 
         var staticPreds = product.StaticPreds;
@@ -1474,6 +1477,8 @@ public sealed partial class PrologEngine
         if (staticLink is null)
         {
             staticLink = _staticLink = GetOrLinkStatic(staticPreds, prefix.Length);
+            // Static code: its literals stay for the engine's life.
+            _literalPools.Pin(staticLink.Bytecode);
             // A bundle's wasm modules bind to linked addresses: install them
             // against this fresh link, before any site below is rewritten.
             if (IlPromotion.PendingWasmModules.Count > 0)
@@ -1879,18 +1884,10 @@ public sealed partial class PrologEngine
             engine.CurrentStringLiterals = s;
             engine.CurrentImages = _literalPools.Images.Snapshot();   // ADR-063
         };
-        // record the pool lengths the interpreter was built
-        // with; RefreshLiteralPoolsIfGrown compares against these so the
-        // per-assert refresh (three Snapshot() array copies) only runs
-        // when a compile actually interned a new literal. per
-        // engine (see _interpPoolCounts).
-        _interpPoolCounts.AddOrUpdate(engine, new[]
-        {
-            queryModule.StringLiterals.Count,
-            queryModule.FloatLiterals.Count,
-            queryModule.BigIntLiterals.Count,
-            queryModule.ImageLiterals.Count,   // ADR-063
-        });
+        // The versions the interpreter's copies were taken at, so the
+        // per-assert refresh (four Snapshot() copies) runs only when a pool
+        // changed since. Per activation (see _interpPoolVersions).
+        _interpPoolVersions.AddOrUpdate(engine, poolVersions);
 
         // lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
@@ -1981,6 +1978,8 @@ public sealed partial class PrologEngine
             // (nested-query) engines still running on their buffers.
             ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
+            // The dynamic region: a unit of the new buffer.
+            ChainPatcher.NoteCodeUnit(DynChains, _dynamicLink!.Bytecode);
         }
         // associate this engine with the table describing the
         // buffer it runs on: every in-place dynamic mutation this engine
@@ -1991,6 +1990,10 @@ public sealed partial class PrologEngine
         // from a nested query must also reach the buffers of suspended
         // outer engines — see _liveEngines).
         RegisterLiveEngine(engine);
+        // The query's region: a unit of the query. Every unit of this setup
+        // holds its references now, so what nothing names can go.
+        ChainPatcher.NoteQueryUnit(engine, queryBytes);
+        _literalPools.SweepIfDue();
         // The precise GC register bound assumes the interpreter's caller-saved
         // discipline; promoted IL regions break it (see GcPreciseRegisterBounds).
         // Promotion can also install MID-query, so the flag is decided by

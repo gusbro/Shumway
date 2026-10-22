@@ -104,12 +104,19 @@ public sealed class CompiledPredicate
 
     /// <summary>The <see cref="LiteralPools"/> instance this predicate's
     /// bytecode was compiled against, when the caller supplied a persistent
-    /// (engine-lifetime, append-only) pool set — literal ids are stable
-    /// there, so the predicate is skip-cache-reusable against the same pools
+    /// (engine-lifetime) pool set — a literal id is stable there while code
+    /// names it, so the predicate is skip-cache-reusable against the same pools
     /// even when its bytecode references pool literals (the pool-free test
     /// is only needed for a foreign-pool predicate, e.g. one decoded from a
     /// bundle). Null when compiled against a method-local pool set.</summary>
     public object? PoolsRef;
+
+    /// <summary>The literals this predicate's bytecode names, frozen when it
+    /// was built (<see cref="LiteralPools.ViewsFor"/>): set on a snapshot of
+    /// a dynamic predicate, whose compile to IL may run on another thread
+    /// while the pools are swept. Null for a predicate whose literals are
+    /// pinned or referenced for as long as it exists.</summary>
+    public LiteralViews? LiteralView;
 
     /// <summary>memoized Tier-1 IL shape analyses (the
     /// <see cref="PoolFreeMemo"/> precedent). Each slot holds the IL

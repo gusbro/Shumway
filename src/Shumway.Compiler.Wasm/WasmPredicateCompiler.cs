@@ -266,6 +266,19 @@ public static class WasmPredicateCompiler
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
+        private const int HelperCount = 6;              // K+2 .. K+7
+
+        // The helpers the emitted code calls. A helper no call names keeps
+        // its slot with a stub: the fixed cost of a module is what it uses
+        // (IncrementalCompileCostTests gates it).
+        private readonly bool[] _helperUsed = new bool[HelperCount];
+
+        /// <summary>The index of a helper, which a call is about to name.</summary>
+        private uint UseHelper(int index)
+        {
+            _helperUsed[index - UnifierIndex] = true;
+            return (uint)index;
+        }
         private int RouterIndex => _parts.Count + 8;    // CPS only: K+8 the cursor router
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
@@ -518,7 +531,6 @@ public static class WasmPredicateCompiler
                 case Opcode.ExecuteBuiltin:
                     if (BuiltinHasInlineForm(ins.I0)) _compilable[sec]++;
                     else _sureExits[sec]++;      // a guaranteed host crossing
-                    if (_env.IsInlineSort(ins.I0)) _usesSort = true;
                     return;
                 default:
                     _compilable[sec]++;          // runs in the module
@@ -847,7 +859,6 @@ public static class WasmPredicateCompiler
 
         private List<Instruction> _code = new();
         private int _extraDepth;    // If/Block/Loop opened inside the current case
-        private bool _usesSort;     // a member calls sort/2: the comparator is emitted, not its stub
         private int _caseIndex;     // which case body is being emitted
 
         private void Op(Instruction i) => _code.Add(i);
@@ -1197,71 +1208,23 @@ public static class WasmPredicateCompiler
             foreach (var part in _parts)
                 module.Codes.Add(BuildPartitionBody(part, addrsInOrder));
             module.Codes.Add(BuildResolverBody());
-            module.Codes.Add(new FunctionBody
+            // Every call into a helper is emitted by now. A helper's body is
+            // built when a call names it, and a body that calls another marks
+            // it in turn, until none is left; the others keep their slots
+            // with a stub that traps, since nothing reaches it.
+            var helpers = new FunctionBody?[HelperCount];
+            for (bool more = true; more;)
             {
-                Locals =
-                [
-                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = BuildUnifierBody(),
-            });
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = BuildIdentityBody(),
-            });
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
-                    new Local { Count = 2, Type = WebAssemblyValueType.Float64 },
-                ],
-                Code = BuildArithBody(),
-            });
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 8, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = BuildGroundBody(),
-            });
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 9, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = BuildAcyclicBody(),
-            });
-            // The comparator is furniture only a module that sorts needs;
-            // every other module carries a stub in its slot, so the fixed
-            // cost of a one-predicate module does not grow for a builtin
-            // it never calls (IncrementalCompileCostTests gates that).
-            module.Codes.Add(_usesSort
-                ? new FunctionBody
-                {
-                    Locals =
-                    [
-                        new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
-                        new Local { Count = 5, Type = WebAssemblyValueType.Int64 },
-                    ],
-                    Code = BuildCompareBody(),
-                }
-                : new FunctionBody
-                {
-                    Locals = [],
-                    Code = [new Int32Constant(3), new End()],
-                });
+                more = false;
+                for (int h = 0; h < HelperCount; h++)
+                    if (_helperUsed[h] && helpers[h] is null)
+                    {
+                        helpers[h] = BuildHelper(h);
+                        more = true;
+                    }
+            }
+            for (int h = 0; h < HelperCount; h++)
+                module.Codes.Add(helpers[h] ?? new FunctionBody { Locals = [], Code = [new Unreachable(), new End()] });
             if (_cps)
             {
                 module.Functions.Add(new Function { Type = 3 });
@@ -1281,6 +1244,67 @@ public static class WasmPredicateCompiler
             module.WriteToBinary(ms);
             return _images.Count == 0 ? ms.ToArray() : WithDataCount(ms.ToArray(), _images.Count);
         }
+
+        /// <summary>The body of helper <paramref name="h"/>, counted from the
+        /// unifier (<see cref="UnifierIndex"/>).</summary>
+        private FunctionBody BuildHelper(int h) => h switch
+        {
+            0 => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildUnifierBody(),
+            },
+            1 => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildIdentityBody(),
+            },
+            2 => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                    new Local { Count = 2, Type = WebAssemblyValueType.Float64 },
+                ],
+                Code = BuildArithBody(),
+            },
+            3 => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 8, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildGroundBody(),
+            },
+            4 => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 9, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildAcyclicBody(),
+            },
+            _ => new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 11, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 5, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildCompareBody(),
+            },
+        };
 
         /// <summary>ADR-063: a module with passive data segments carries a
         /// data count section (id 12) before its code section, which a
@@ -6198,7 +6222,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalGet(LC2));
                 Op(new LocalGet(LC0));
                 Op(new LocalGet(0));
-                Op(new WebAssembly.Instructions.Call((uint)IdentityIndex));
+                Op(new WebAssembly.Instructions.Call(UseHelper(IdentityIndex)));
                 Op(new LocalSet(LT0));
                 Op(new LocalGet(LT0));
                 Op(new Int32Constant(2));
@@ -7977,7 +8001,7 @@ public static class WasmPredicateCompiler
                 Op(new LocalGet(leftAddr)); Op(new Int64Load());
                 Op(new LocalGet(rightAddr)); Op(new Int64Load());
                 Op(new LocalGet(0));
-                Op(new WebAssembly.Instructions.Call((uint)CompareIndex));
+                Op(new WebAssembly.Instructions.Call(UseHelper(CompareIndex)));
                 Op(new LocalSet(LT0));
                 Op(new LocalGet(LT0)); Op(new Int32Constant(3)); Op(new Int32Equal());
                 OpenIf(); GoSlow(); CloseNested();
@@ -8156,7 +8180,7 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.StackTop, LST);
             RegLoad(0);
             Op(new LocalGet(0));
-            Op(new WebAssembly.Instructions.Call((uint)walker));
+            Op(new WebAssembly.Instructions.Call(UseHelper(walker)));
             Op(new LocalSet(LT0));
             Op(new LocalGet(LT0));
             Op(new Int32Constant(2));
@@ -9637,7 +9661,7 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LC2));
                         Op(new LocalGet(LC0));
                         Op(new LocalGet(0));
-                        Op(new WebAssembly.Instructions.Call((uint)UnifierIndex));
+                        Op(new WebAssembly.Instructions.Call(UseHelper(UnifierIndex)));
                         Op(new LocalSet(LT0));
                         LoadSlot32(WasmAbi.TrailTop); Op(new LocalSet(LTR));
                         Op(new LocalGet(LT0)); Op(new Int32Constant(0)); Op(new Int32Equal());
@@ -11121,7 +11145,7 @@ public static class WasmPredicateCompiler
                         StoreSlotFromI32Local(WasmAbi.StackTop, LST);
                         Op(new LocalGet(LC0));
                         Op(new LocalGet(0));
-                        Op(new WebAssembly.Instructions.Call((uint)ArithIndex));
+                        Op(new WebAssembly.Instructions.Call(UseHelper(ArithIndex)));
                         Op(new Int32EqualZero());
                         OpenIf();
                         {

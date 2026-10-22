@@ -360,6 +360,15 @@ public static partial class MetaBuiltins
         return TermReader.Materialize(engine, slot);
     }
 
+    /// <summary>The register's term for the clause store: packed text stays
+    /// packed (<see cref="TermReader.MaterializeForClause"/>).</summary>
+    private static Term MaterializeClauseRegister(Activation engine, int regIdx)
+    {
+        int slot = engine.AllocateHeap(1);
+        engine.SetHeap(slot, engine.GetRegister(regIdx));
+        return TermReader.MaterializeForClause(engine, slot);
+    }
+
     /// <summary><c>'$tbl_seen'/1</c> — succeeds, recording the
     /// argument, the first time it is called with a given (structurally
     /// canonicalised) ground term; fails on every later call with an

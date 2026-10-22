@@ -62,6 +62,21 @@ public class BakedPreludeTests
         Assert.False(e.IlPromotion.HasOffers);
     }
 
+    // A literal assert in a consulted body marks its target dynamic ahead of
+    // time, but never a predicate the baked prelude defines: asserting a
+    // clause for one is a permission error from a clause as from the top level.
+    [Theory]
+    [InlineData("false", "false/0")]
+    [InlineData("catch(_, _, _)", "catch/3")]
+    public void AnAssertInAConsultedClauseRefusesAPreludePredicate(string head, string indicator)
+    {
+        var e = new PrologEngine();
+        Assert.True(e._precompiledModules.ContainsKey(Prelude.ModuleName));
+        e.ConsultString($"t(E) :- catch(asserta(({head} :- true)), E, true).");
+        var sol = e.Query($"t(E), nonvar(E), E = error(permission_error(modify, static_procedure, {indicator}), _).");
+        Assert.True(sol.Success, $"asserta(({head} :- true)) from a consulted clause was not refused");
+    }
+
     // Compiled code counts no inferences: on Tier-0 time/1 reports them,
     // the prelude's compiled code notwithstanding.
     [Fact]

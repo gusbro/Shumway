@@ -591,7 +591,8 @@ public static class BundleWriter
                 emitOnly.Contains(f)
                     ? ic.RegionMemberFids(predicates[f], predicates, ex)
                     : new[] { f };
-            ic.WarmRegionCosts(predicates);
+            ic.WarmRegionCosts(predicates, fid => new(
+                engine.FloatPoolForFid(fid), engine.ImagePoolForFid(fid), engine.StringPoolForFid(fid)));
             var forcedRoots = Shumway.Compiler.Il.RegionRootSelector.ComputeForcedRoots(
                 predicates.Keys,
                 (f, ex) => MembersForAnalysis(f, ex),
@@ -786,8 +787,11 @@ public static class BundleWriter
                 kept.Add(pred);
         if (kept.Count == module.Predicates.Count)
             return compiledModuleBytes;   // nothing stripped
+        // Every pool, the images' too (ADR-063): the kept predicates' ids
+        // index them, and the loader remaps what the module brings.
         var stripped = new Shumway.Compiler.Wam.CompiledModule(
-            kept, module.StringLiterals, module.FloatLiterals, module.BigIntLiterals);
+            kept, module.StringLiterals, module.FloatLiterals, module.BigIntLiterals,
+            module.ImageLiterals);
         return CompiledModuleCodec.Encode(stripped);
     }
 

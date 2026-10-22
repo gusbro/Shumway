@@ -494,7 +494,8 @@ public sealed partial class IlPredicateCompiler
     /// selects roots: a member costs the same in every region, so from here
     /// on the membership the selector computes is the membership the emission
     /// produces, and the emission needs no second plan.</summary>
-    public void WarmRegionCosts(IReadOnlyDictionary<int, CompiledPredicate> predicates)
+    public void WarmRegionCosts(IReadOnlyDictionary<int, CompiledPredicate> predicates,
+        Func<int, LiteralPoolSet>? pools = null)
     {
         ArgumentNullException.ThrowIfNull(predicates);
         if (IlRegionCost.Target <= 0 || !EffectiveRegionCompile || CpsMode) return;
@@ -515,6 +516,7 @@ public sealed partial class IlPredicateCompiler
                 if (measured) continue;
                 var emit = IlEmit.NewDynamicMethod(
                     $"ShumwayIlRegionScratch_{root.FunctorId}_{root.Arity}", record: false);
+                var prevPools = BeginPools(pools?.Invoke(root.FunctorId) ?? default);
                 try
                 {
                     EmitRegionInto(emit, SelfFromHolder(0), region, PlanCursors(region, predicates),
@@ -522,6 +524,7 @@ public sealed partial class IlPredicateCompiler
                     EmitRegionTail(emit);
                 }
                 catch (Exception ex) when (ex is NotSupportedException or IlEmitException) { }
+                finally { EndPools(prevPools); }
                 _regionTrace = null;
             }
         }

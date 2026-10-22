@@ -135,6 +135,12 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   at one of the predicate's entries. A goal that began before a retract sees
   the clause until it ends, and a query nested in another shares its
   buffer. (ADR-015, addendum on unlinking dead entries.)
+- **A literal id is reused only once no live code names it.** Static code
+  pins its literals for the engine's life; every other code unit (a clause
+  chunk, a dynamic region, a query's region) references them for as long as
+  it can run, and the sweep frees what nothing references. IL emitted at run
+  time holds its literals as objects, never as ids. (ADR-015, addendum on
+  the literal pools.)
 
 ## Compilation tiers
 

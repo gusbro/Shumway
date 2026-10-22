@@ -511,22 +511,26 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(
             nameof(Activation.UnifyRegisterWithHeapAt),
             new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo IlGetPstrLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstrLiteral))!;
+    private static readonly MethodInfo IlPutPstrLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstrLiteral))!;
     private static readonly MethodInfo IlGetPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstr))!;
     private static readonly MethodInfo IlPutPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
-    private static readonly MethodInfo IlPutBlitHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutBlit))!;
+    private static readonly MethodInfo IlPutBlitLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutBlitLiteral))!;
     private static readonly MethodInfo IlPutBlitGlobalHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutBlitGlobal))!;
-    private static readonly MethodInfo IlGetBlitHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetBlit))!;
+    private static readonly MethodInfo IlGetBlitLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetBlitLiteral))!;
     private static readonly MethodInfo IlGetBlitGlobalHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetBlitGlobal))!;
     private static readonly MethodInfo IlIsCopiedHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.IsCopied))!;
-    private static readonly MethodInfo IlUnifyBlitHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.UnifyBlit))!;
+    private static readonly MethodInfo IlUnifyBlitLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.UnifyBlitLiteral))!;
     private static readonly MethodInfo IlUnifyBlitGlobalHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.UnifyBlitGlobal))!;
 #if DEBUG
@@ -840,8 +844,10 @@ public sealed partial class IlPredicateCompiler
         Opcode.UnifyStructure => true,   // ADR-019
         Opcode.UnifyList => true,        // ADR-019
         // ADR-063, heads: the prefixes and the skips are head matching too.
-        Opcode.GetBlit => _persistPatches is null || _ilImagePool is not null,
-        Opcode.UnifyBlit => _persistPatches is null || _ilImagePool is not null,
+        // The emit puts the image in the method's table or in the patch,
+        // so it needs the pool either way.
+        Opcode.GetBlit => _ilImagePool is not null,
+        Opcode.UnifyBlit => _ilImagePool is not null,
         Opcode.SkipIfCopied => true,
         _ => false,
     };
@@ -917,13 +923,14 @@ public sealed partial class IlPredicateCompiler
         Opcode.TrustMe => true,
         Opcode.Jump => true,
         Opcode.GetLevelB => true,
-        // PSTR + Call.
-        Opcode.GetPstr => true,
-        Opcode.PutPstr => true,
-        // ADR-063: persisted, the image goes in the patch, so the pool is needed.
-        Opcode.PutBlit => _persistPatches is null || _ilImagePool is not null,
-        Opcode.GetBlit => _persistPatches is null || _ilImagePool is not null,
-        Opcode.UnifyBlit => _persistPatches is null || _ilImagePool is not null,
+        // PSTR + Call. Run-time IL holds the string itself, so the emit
+        // needs the pool; persisted IL bakes the bundle's id.
+        Opcode.GetPstr => _persistPatches is not null || _ilStringPool is not null,
+        Opcode.PutPstr => _persistPatches is not null || _ilStringPool is not null,
+        // ADR-063: the image goes in the method's table or in the patch.
+        Opcode.PutBlit => _ilImagePool is not null,
+        Opcode.GetBlit => _ilImagePool is not null,
+        Opcode.UnifyBlit => _ilImagePool is not null,
         Opcode.SkipIfCopied => true,
         Opcode.Call => true,
         // ADR-018 arithmetic instruction set. a_eval_bin / a_eval_un /

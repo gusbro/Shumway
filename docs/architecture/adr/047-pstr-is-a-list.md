@@ -156,6 +156,13 @@ make the representation observable through the back door.
 `Term.TryAsText` exists for reading text cheaply without materializing nodes, as
 an *optimization the caller opts into*, not as a different type.
 
+The clause store is not a boundary. `assert/1` reads its clause with the
+store's reader, which keeps a packed run, closed by `[]` or by the next segment
+of its kind, as one string, and the compiled clause holds it as it holds a
+source literal (`get_pstr`). Expanded, every call of the clause would build the
+text one cons cell per character. A list of characters stays a list: the store
+keeps what was packed and packs nothing (decision 8).
+
 ### 6b. …except at the zero-copy tier, where there is no boundary
 
 Decision 6 governs the three tiers that *have* a boundary: typed foreign

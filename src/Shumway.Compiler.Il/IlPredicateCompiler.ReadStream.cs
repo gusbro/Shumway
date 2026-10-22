@@ -26,12 +26,12 @@ public sealed partial class IlPredicateCompiler
     /// <summary>The units emitted in the read-only form, over the process.</summary>
     internal static int ReadStreamUnits;
 
-    private static readonly MethodInfo IlReadNestedHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNested))!;
+    private static readonly MethodInfo IlReadNestedLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNestedLiteral))!;
     private static readonly MethodInfo IlReadNestedGlobalHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNestedGlobal))!;
-    private static readonly MethodInfo IlReadNestedListHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNestedList))!;
+    private static readonly MethodInfo IlReadNestedListLiteralHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNestedListLiteral))!;
     private static readonly MethodInfo IlReadNestedListGlobalHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadNestedListGlobal))!;
     private static readonly MethodInfo EngineUnifyVariableYAtMethod =
@@ -494,9 +494,9 @@ public sealed partial class IlPredicateCompiler
         if (!list) EmitFunctorId(emit, functorId);
         if (_persistPatches is null)
         {
-            emit.LoadConstant(unit.ImageId);
+            emit.LoadLiteral(_ilImagePool![unit.ImageId]);
             emit.LoadConstant(offset);
-            EmitHelperCall(emit, list ? IlReadNestedListHelperMethod : IlReadNestedHelperMethod);
+            EmitHelperCall(emit, list ? IlReadNestedListLiteralHelperMethod : IlReadNestedLiteralHelperMethod);
         }
         else
         {

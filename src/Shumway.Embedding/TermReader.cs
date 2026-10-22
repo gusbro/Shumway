@@ -97,6 +97,15 @@ public static class TermReader
     public static Term Materialize(Activation engine, int heapIdx)
         => Materialize(engine, heapIdx, limit: 0);
 
+    /// <summary>Materializes for the clause store: a closed run of packed
+    /// text stays a <see cref="StringTerm"/>, which the clause compiler
+    /// keeps packed (<c>get_pstr</c> / <c>put_pstr</c>) as it keeps a
+    /// source literal; expanded, an asserted clause's text would be built
+    /// one cons cell per character at every call. The C# boundary still
+    /// reads a packed list as the list it is (ADR-047 decision 6).</summary>
+    public static Term MaterializeForClause(Activation engine, int heapIdx)
+        => Materialize(engine, heapIdx, limit: 0, packedText: true);
+
     /// <summary>Materializes at most <paramref name="limit"/> nodes, standing
     /// in <c>'...'</c> for everything past that; <c>0</c> means all of it.
     ///
@@ -112,6 +121,9 @@ public static class TermReader
     /// runs out reads as <c>[a, b|...]</c>, which is what a top level shows
     /// anyway.</para></summary>
     public static Term Materialize(Activation engine, int heapIdx, int limit)
+        => Materialize(engine, heapIdx, limit, packedText: false);
+
+    private static Term Materialize(Activation engine, int heapIdx, int limit, bool packedText)
     {
         int budget = limit > 0 ? limit : int.MaxValue;
         bool pooled = !_tlBusy;
@@ -191,7 +203,25 @@ public static class TermReader
                         Term tail = results[results.Count - 1];
                         results.RemoveAt(results.Count - 1);
                         string run = f.Name!;
-                        bool chars = (TextKind)f.Arity == TextKind.Chars;
+                        var kind = (TextKind)f.Arity;
+                        // For the clause store, a run closed by [] or by the
+                        // next segment of its kind stays one packed string.
+                        if (packedText)
+                        {
+                            if (tail is AtomTerm { Name: "[]" })
+                            {
+                                active.Remove(f.A);
+                                results.Add(new StringTerm(run, kind));
+                                break;
+                            }
+                            if (tail is StringTerm next && next.Kind == kind)
+                            {
+                                active.Remove(f.A);
+                                results.Add(new StringTerm(run + next.Content, kind));
+                                break;
+                            }
+                        }
+                        bool chars = kind == TextKind.Chars;
                         for (int i = run.Length - 1; i >= 0; i--)
                         {
                             Term head = chars

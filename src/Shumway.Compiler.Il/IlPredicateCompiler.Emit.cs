@@ -45,10 +45,10 @@ public sealed partial class IlPredicateCompiler
         => _ilFloatPool = restore;
 
     /// <summary>ADR-063: the image pool an emit reads: a persisted one puts
-    /// each image of a <c>put_blit</c> in its patch site, a run-time one
-    /// follows an image's cells for the read-only form of a head stream and
-    /// keeps the stream's helpers without it (its ids index the activation's
-    /// pool).</summary>
+    /// each image of a <c>put_blit</c> in its patch site, a run-time one in
+    /// the method's literal table, and follows an image's cells for the
+    /// read-only form of a head stream. Null, predicates with images stay
+    /// Tier-0.</summary>
     [System.ThreadStaticAttribute]
     private static System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? _ilImagePool;
 
@@ -62,6 +62,42 @@ public sealed partial class IlPredicateCompiler
 
     public static void EndImagePool(System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? restore)
         => _ilImagePool = restore;
+
+    /// <summary>The packed-text pool a run-time emit reads: each <c>get_pstr</c> /
+    /// <c>put_pstr</c> puts its text in the method's literal table. Null, a
+    /// predicate with packed text stays Tier-0. A persisted emit bakes the
+    /// bundle's id and needs none.</summary>
+    [System.ThreadStaticAttribute]
+    private static System.Collections.Generic.IReadOnlyList<Shumway.Core.TextLiteral>? _ilStringPool;
+
+    public static System.Collections.Generic.IReadOnlyList<Shumway.Core.TextLiteral>? BeginStringPool(
+        System.Collections.Generic.IReadOnlyList<Shumway.Core.TextLiteral>? pool)
+    {
+        var prev = _ilStringPool;
+        _ilStringPool = pool;
+        return prev;
+    }
+
+    public static void EndStringPool(System.Collections.Generic.IReadOnlyList<Shumway.Core.TextLiteral>? restore)
+        => _ilStringPool = restore;
+
+    /// <summary>The pools one compile reads, established together.</summary>
+    public readonly record struct LiteralPoolSet(
+        System.Collections.Generic.IReadOnlyList<double>? Floats,
+        System.Collections.Generic.IReadOnlyList<Shumway.Core.TermImage>? Images,
+        System.Collections.Generic.IReadOnlyList<Shumway.Core.TextLiteral>? Strings);
+
+    /// <summary>Establishes <paramref name="pools"/> on this thread; returns
+    /// the set to restore with <see cref="EndPools"/>.</summary>
+    public static LiteralPoolSet BeginPools(LiteralPoolSet pools)
+        => new(BeginFloatPool(pools.Floats), BeginImagePool(pools.Images), BeginStringPool(pools.Strings));
+
+    public static void EndPools(LiteralPoolSet restore)
+    {
+        EndStringPool(restore.Strings);
+        EndImagePool(restore.Images);
+        EndFloatPool(restore.Floats);
+    }
 
     /// <summary>True iff a <c>get_float</c>/<c>put_float</c> at <paramref name="pc"/>
     /// can be resolved against the current <see cref="_ilFloatPool"/> — the gate the
@@ -1488,9 +1524,18 @@ public sealed partial class IlPredicateCompiler
                 int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
-                emit.LoadConstant(literalId);
-                emit.LoadConstant(arg);
-                EmitHelperCall(emit, IlGetPstrHelperMethod);
+                if (_persistPatches is null)
+                {
+                    emit.LoadLiteral(_ilStringPool![literalId]);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlGetPstrLiteralHelperMethod);
+                }
+                else
+                {
+                    emit.LoadConstant(literalId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlGetPstrHelperMethod);
+                }
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1500,9 +1545,18 @@ public sealed partial class IlPredicateCompiler
                 int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
-                emit.LoadConstant(literalId);
-                emit.LoadConstant(arg);
-                EmitHelperCall(emit, IlPutPstrHelperMethod);
+                if (_persistPatches is null)
+                {
+                    emit.LoadLiteral(_ilStringPool![literalId]);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlPutPstrLiteralHelperMethod);
+                }
+                else
+                {
+                    emit.LoadConstant(literalId);
+                    emit.LoadConstant(arg);
+                    EmitHelperCall(emit, IlPutPstrHelperMethod);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1513,10 +1567,10 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 if (_persistPatches is null)
                 {
-                    // The activation's pool, by the bytecode's id.
-                    emit.LoadConstant(imageId);
+                    // The image itself, in the method's table.
+                    emit.LoadLiteral(_ilImagePool![imageId]);
                     emit.LoadConstant(arg);
-                    EmitHelperCall(emit, IlPutBlitHelperMethod);
+                    EmitHelperCall(emit, IlPutBlitLiteralHelperMethod);
                 }
                 else
                 {
@@ -1559,9 +1613,9 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadArgument(0);
                 if (_persistPatches is null)
                 {
-                    emit.LoadConstant(imageId);
+                    emit.LoadLiteral(_ilImagePool![imageId]);
                     emit.LoadConstant(arg);
-                    EmitHelperCall(emit, IlGetBlitHelperMethod);
+                    EmitHelperCall(emit, IlGetBlitLiteralHelperMethod);
                 }
                 else
                 {
@@ -1587,9 +1641,9 @@ public sealed partial class IlPredicateCompiler
                     emit.LoadArgument(0);
                     if (_persistPatches is null)
                     {
-                        emit.LoadConstant(imageId);
+                        emit.LoadLiteral(_ilImagePool![imageId]);
                         emit.LoadConstant(arg);
-                        EmitHelperCall(emit, IlUnifyBlitHelperMethod);
+                        EmitHelperCall(emit, IlUnifyBlitLiteralHelperMethod);
                     }
                     else
                     {

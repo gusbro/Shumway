@@ -65,6 +65,9 @@ public sealed partial class IlPredicateCompiler
         public required MethodInfo Jump, Fail;
         // The generation's code by cursor, which its choice points carry.
         public required FieldBuilder Alt;
+        // The unit's literal table, a static field its methods read.
+        public required FieldBuilder Literals;
+        public readonly List<object> LiteralTable = new();
         public int Cursor;
         public readonly List<(int Cursor, string Name)> Methods = new();
         // The cold method: the cursor is its argument; its slow paths call.
@@ -182,9 +185,11 @@ public sealed partial class IlPredicateCompiler
     {
         if (!CpsMode || DebugMode) return null;
         var type = CpsTypeBuilder(predicate.FunctorId);
-        var layout = EmitCps(type, predicate, calleeMap, baseDelegate, "Alt", (CpsStubs.Jump, CpsStubs.Fail));
+        var layout = EmitCps(type, predicate, calleeMap, baseDelegate, "Alt", (CpsStubs.Jump, CpsStubs.Fail),
+            out object[] literals);
         if (layout is null) return null;
         var created = type.CreateType()!;
+        created.GetField(LiteralsFieldOf(layout.AltField))!.SetValue(null, literals);
         var code = BindCps(created, layout, predicate.FunctorId);
         lock (CpsGenerations) CpsGenerations.Add(created);
         return code;
@@ -210,7 +215,7 @@ public sealed partial class IlPredicateCompiler
             // call the real pass cannot make.
             var scratch = CpsTypeBuilder(predicate.FunctorId);
             trial = EmitCps(scratch, predicate, calleeMap,
-                static (_, _) => false, "Alt", CpsStubs.Define(scratch, PersistedStubPrefix));
+                static (_, _) => false, "Alt", CpsStubs.Define(scratch, PersistedStubPrefix), out _);
         }
         catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or IlEmitException)
         {
@@ -230,7 +235,7 @@ public sealed partial class IlPredicateCompiler
             _persistedStubs = stubs = (type, jump, fail);
         }
         return EmitCps(type, predicate, calleeMap, static (_, _) => false, $"Alt_{slot}",
-            (stubs.Jump, stubs.Fail));
+            (stubs.Jump, stubs.Fail), out _);
     }
 
     /// <summary>Where a predicate's continuation methods are in their type: a
@@ -259,17 +264,24 @@ public sealed partial class IlPredicateCompiler
     [ThreadStatic] private static (TypeBuilder Type, MethodInfo Jump, MethodInfo Fail)? _persistedStubs;
     private const string PersistedStubPrefix = "Cps";
 
+    /// <summary>The static field beside <paramref name="altField"/> that
+    /// holds the unit's literal table.</summary>
+    private static string LiteralsFieldOf(string altField) => altField + "_literals";
+
     private CpsLayout? EmitCps(TypeBuilder type, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate baseDelegate,
-        string altField, (MethodInfo Jump, MethodInfo Fail) stubs)
+        string altField, (MethodInfo Jump, MethodInfo Fail) stubs, out object[] literals)
     {
+        literals = Array.Empty<object>();
         // Each predicate is emitted two or more extra times, the cold method
         // with a label per instruction: a large one stays on its delegate.
         if (predicate.BytecodeUnfused.Length > CpsMaxBytecodeBytes) return null;
         var alt = type.DefineField(altField, typeof(nint[]), FieldAttributes.Public | FieldAttributes.Static);
+        var lits = type.DefineField(LiteralsFieldOf(altField), typeof(object[]),
+            FieldAttributes.Public | FieldAttributes.Static);
         var ctx = new CpsEmitContext
         {
-            Type = type, Base = baseDelegate, Alt = alt, Jump = stubs.Jump, Fail = stubs.Fail,
+            Type = type, Base = baseDelegate, Alt = alt, Literals = lits, Jump = stubs.Jump, Fail = stubs.Fail,
         };
         var prev = _cps;
         _cps = ctx;
@@ -310,6 +322,7 @@ public sealed partial class IlPredicateCompiler
         }
         finally { _cps = prev; }
         CpsPrunedMethods[predicate.FunctorId] = ctx.Pruned;
+        literals = ctx.LiteralTable.ToArray();
         return new CpsLayout
         {
             Methods = ctx.Methods.ToArray(),
@@ -436,7 +449,7 @@ public sealed partial class IlPredicateCompiler
         var emit = IlEmit.BuildMethod(cps.Type,
             cps.Cold ? $"{name}_cold" : cps.IsAlt ? $"{name}_alt" : $"{name}_c{cps.Cursor}",
             MethodAttributes.Public | MethodAttributes.Static, CallingConventions.Standard,
-            record: IlDumpPath is not null);
+            record: IlDumpPath is not null, cps.Literals, cps.LiteralTable);
         if (cps.Cold)
         {
             cps.ColdEmit = emit;
