@@ -825,7 +825,7 @@ public static partial class MetaBuiltins
     private static (int Fid, Clause Clause) AssertCore(
         Activation engine, PrologEngine host, bool prepend)
     {
-        Term clauseTerm = MaterializeRegister(engine, 0);
+        Term clauseTerm = MaterializeClauseRegister(engine, 0);
         clauseTerm = StripAssertQualifiers(clauseTerm);
         ValidateAssertClause(clauseTerm, engine);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);

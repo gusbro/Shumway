@@ -11,9 +11,9 @@ namespace Shumway.Tests.Embedding;
 /// freed id is reused with every copy of the pool refreshed first.</summary>
 public sealed class LiteralPoolLifetimeTests
 {
-    // A term asserted from the heap carries its floats (and big integers)
-    // as pool literals; its packed text it asserts as a list. The churn
-    // asserts and retracts a distinct float each time.
+    // A term asserted from the heap carries its packed text, floats and big
+    // integers as pool literals. The churn asserts and retracts a distinct
+    // float each time.
     private const string Churn = """
         :- dynamic item/1, other/1, seen/1, fresh/1.
         churn(N) :- between(1, N, I), F is I + 0.5, assertz(other(F)), retract(other(F)), fail.
