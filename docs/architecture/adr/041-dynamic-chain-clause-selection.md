@@ -64,6 +64,13 @@ The lookup is keyed by the chain-head address the trampoline's `execute`
 targets (the trampoline carries no functor id), via a per-engine map
 maintained alongside `DynChainTable`.
 
+The functor of a trampoline address comes from the address map of the setup
+that linked the running program, then from the activation's own chain table,
+where a trampoline materialised mid-query is recorded. Never from the
+engine's current map: a query nested in this one (a directive of a file it
+consults) links a program of its own and replaces that map, and there the
+same address can be another predicate's trampoline.
+
 ## Consequences
 
 - `call_det`/`deterministic` answers become a property of the program, not
