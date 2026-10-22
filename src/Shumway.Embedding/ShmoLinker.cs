@@ -613,11 +613,19 @@ public static class ShmoLinker
         if (config.RegionPruneReport)
         {
             var predicates = new Dictionary<int, CompiledPredicate>();
+            // Each predicate's literal ids index its own module's pools.
+            var pools = new Dictionary<int, IlPredicateCompiler.LiteralPoolSet>();
             foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName) || obj.Bytecode.Length == 0) continue;
-                foreach (var p in CompiledModuleCodec.Decode(obj.Bytecode).Predicates)
+                var decoded = CompiledModuleCodec.Decode(obj.Bytecode);
+                var modulePools = new IlPredicateCompiler.LiteralPoolSet(
+                    decoded.FloatLiterals, decoded.ImageLiterals, decoded.StringLiterals);
+                foreach (var p in decoded.Predicates)
+                {
                     predicates[p.FunctorId] = p;
+                    pools[p.FunctorId] = modulePools;
+                }
             }
             if (predicates.Count > 0)
             {
@@ -629,7 +637,7 @@ public static class ShmoLinker
                 }
                 var seedFids = ResolveSeedFids(stage9Seeds, byName);
                 var ic = new IlPredicateCompiler();
-                ic.WarmRegionCosts(predicates);
+                ic.WarmRegionCosts(predicates, fid => pools.TryGetValue(fid, out var set) ? set : default);
 
                 // Stage 9c: cost-based root selection. Promote shared members to their own
                 // roots (excluded from absorption) to cut inter-root duplication; passed

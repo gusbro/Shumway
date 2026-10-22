@@ -26,14 +26,91 @@ internal sealed class DynamicCodePatcher
     public DynChainTable Chains => _dynChainTable;
 
     /// <summary>Replaces the chain table outright — the persistent buffer was
-    /// rebuilt or invalidated, so every recorded position is stale.</summary>
-    public void ResetChains() => _dynChainTable = new DynChainTable();
+    /// rebuilt or invalidated, so every recorded position is stale. The old
+    /// table lives on for the activations still on its buffer; with none,
+    /// its code is dead and its literals go.</summary>
+    public void ResetChains()
+    {
+        var old = _dynChainTable;
+        old.Current = false;
+        _dynChainTable = new DynChainTable();
+        if (old.Attached == 0) ReleaseTableLiterals(old);
+    }
 
     /// <summary>Associates <paramref name="engine"/> with the current chain
     /// table — every in-place mutation that engine performs resolves chain
     /// state through this association.</summary>
     public void AssociateEngineWithCurrentChains(Activation engine)
-        => _engineChainTables.AddOrUpdate(engine, _dynChainTable);
+    {
+        if (_engineChainTables.TryGetValue(engine, out var prev))
+        {
+            if (ReferenceEquals(prev, _dynChainTable)) return;
+            _engineChainTables.Remove(engine);
+            Detach(prev);
+        }
+        _dynChainTable.Attached++;
+        _engineChainTables.Add(engine, _dynChainTable);
+    }
+
+    // ----- the literals a buffer's code names -----
+    //
+    // A code unit appended to a buffer (the dynamic region linked at setup, a
+    // clause chunk, an assert helper, a shadow snapshot) adds a reference per
+    // literal operand when it lands and releases them when it dies: a clause
+    // chunk when the chain reclaim bypasses it, the rest with the buffer, which
+    // dies when the host has replaced its table and no activation runs on it.
+
+    private void Detach(DynChainTable table)
+    {
+        if (--table.Attached == 0 && !table.Current) ReleaseTableLiterals(table);
+    }
+
+    private void ReleaseTableLiterals(DynChainTable table)
+    {
+        if (table.LiteralUnits is { } units)
+        {
+            foreach (var code in units) E._literalPools.Release(code);
+            table.LiteralUnits = null;
+        }
+        if (table.LiteralChunks is { } chunks)
+        {
+            foreach (var code in chunks.Values) E._literalPools.Release(code);
+            table.LiteralChunks = null;
+        }
+    }
+
+    /// <summary>A code unit appended to <paramref name="table"/>'s buffer for
+    /// the buffer's life.</summary>
+    internal void NoteCodeUnit(DynChainTable table, byte[] code)
+    {
+        if (E._literalPools.AddRefs(code)) (table.LiteralUnits ??= new()).Add(code);
+    }
+
+    /// <summary>A clause's chunk at <paramref name="chunkAddr"/>, whose body
+    /// is <paramref name="body"/>: released when the chain reclaim bypasses
+    /// it (<see cref="ReleaseChunk"/>), else with the buffer. A unit still
+    /// recorded at the address is dead code being overwritten.</summary>
+    internal void NoteClauseChunk(DynChainTable table, int chunkAddr, byte[] body)
+    {
+        ReleaseChunk(table, chunkAddr);
+        if (E._literalPools.AddRefs(body)) (table.LiteralChunks ??= new())[chunkAddr] = body;
+    }
+
+    internal void ReleaseChunk(DynChainTable table, int chunkAddr)
+    {
+        if (table.LiteralChunks is { } chunks && chunks.Remove(chunkAddr, out var body))
+            E._literalPools.Release(body);
+    }
+
+    /// <summary>The code of each open query (its transient region), released
+    /// when the query ends.</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, List<byte[]>>
+        _activationUnits = new();
+
+    internal void NoteQueryUnit(Activation engine, byte[] code)
+    {
+        if (E._literalPools.AddRefs(code)) _activationUnits.GetValue(engine, static _ => new()).Add(code);
+    }
     public DynamicCodePatcher(PrologEngine engine) => E = engine;
 
     // ====================================================================
@@ -369,6 +446,9 @@ internal sealed class DynamicCodePatcher
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
         int bodyAddr = engine.AppendCode(bodyChunk);
+        // The indexed layout unlinks its dead entries without a reclaim the
+        // chunk could be released at: a unit of the buffer.
+        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode);
         prog = engine.CurrentProgram!;
 
         // Patch call sites inside the body to absolute targets.
@@ -456,7 +536,7 @@ internal sealed class DynamicCodePatcher
 
         // Refresh interpreter pools — the clause may have interned new
         // literals (skipped when the pools didn't grow).
-        E.RefreshLiteralPoolsIfGrown(engine);
+        E.RefreshLiteralPoolsIfChanged(engine);
         return true;
     }
 
@@ -792,6 +872,9 @@ internal sealed class DynamicCodePatcher
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
         int bodyAddr = engine.AppendCode(bodyChunk);
+        // The indexed layout unlinks its dead entries without a reclaim the
+        // chunk could be released at: a unit of the buffer.
+        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode);
         prog = engine.CurrentProgram!;
 
         // Patch call sites in the body to absolute targets.
@@ -858,7 +941,7 @@ internal sealed class DynamicCodePatcher
 
         SyncOrInvalidateAfterMutation(engine, ownsHost);
         // refresh skipped when the pools didn't grow.
-        E.RefreshLiteralPoolsIfGrown(engine);
+        E.RefreshLiteralPoolsIfChanged(engine);
         return true;
     }
 
@@ -1570,7 +1653,7 @@ internal sealed class DynamicCodePatcher
     }
 
     internal DynChainTable GetOrCreateChainTable(Activation engine)
-        => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
+        => _engineChainTables.GetValue(engine, static _ => new DynChainTable { Current = false, Attached = 1 });
 
     /// <summary>every engine born via SetupQueryFromTerm, weakly
     /// held (in birth order). Backs the dynamic-mutation broadcast: with
@@ -1617,6 +1700,19 @@ internal sealed class DynamicCodePatcher
             if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
                 _liveEngines.RemoveAt(i);
         }
+        // Its code is dead: the query's region, and the buffer when it was
+        // the last activation on a table the host has replaced.
+        if (_activationUnits.TryGetValue(engine, out var units))
+        {
+            _activationUnits.Remove(engine);
+            foreach (var code in units) E._literalPools.Release(code);
+        }
+        if (_engineChainTables.TryGetValue(engine, out var table))
+        {
+            _engineChainTables.Remove(engine);
+            Detach(table);
+        }
+        E._literalPools.SweepIfDue();
     }
 
     /// <summary>Live engines other than <paramref name="except"/>, at most
@@ -2054,6 +2150,16 @@ internal sealed class DynChainTable
     /// PredicatesByAddress map; these are appended after setup, so the clause
     /// selector needs its own lookup.</summary>
     public readonly Dictionary<int, int> TrampolineFids = new();
+
+    /// <summary>The code units of this buffer that name pool literals, the
+    /// clause chunks by address (DynamicCodePatcher.NoteCodeUnit).</summary>
+    public List<byte[]>? LiteralUnits;
+    public Dictionary<int, byte[]>? LiteralChunks;
+
+    /// <summary>Activations running on this buffer, and whether the host
+    /// still starts queries on it: with neither, the buffer is dead.</summary>
+    public int Attached;
+    public bool Current = true;
 }
 
 /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state

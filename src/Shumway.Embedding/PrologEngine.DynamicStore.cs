@@ -121,6 +121,10 @@ public sealed partial class PrologEngine
                 snap.SnapshotHasRules = true;
                 break;
             }
+        // The snapshot's bytecode is only a compile's input, so nothing
+        // keeps its literals referenced while it compiles on the worker:
+        // it carries their values, taken here on the engine's thread.
+        snap.LiteralView = _literalPools.ViewsFor(snap.Bytecode);
         return snap;
     }
 
@@ -174,9 +178,10 @@ public sealed partial class PrologEngine
             externalSymbols: addrMap,
             switchTableIdBase: switchTables.Count);
         int at = engine.AppendCode(link.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), link.Bytecode);
         switchTables.AddRange(link.SwitchTables);
         SyncOrInvalidateAfterMutation(engine, ownsHost);
-        RefreshLiteralPoolsIfGrown(engine);
+        RefreshLiteralPoolsIfChanged(engine);
         engine.BumpProgramGeneration();
         return new DynamicShadow(snap, at);
     }
@@ -195,17 +200,17 @@ public sealed partial class PrologEngine
     /// normally. Returns null exactly when not safe to persist.</summary>
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildPersistableDynamicSnapshot(int fid)
     {
-        int s0 = _literalPools.Strings.Count;
-        int b0 = _literalPools.BigInts.Count;
-        int i0 = _literalPools.Images.Count;
+        int s0 = _literalPools.Strings.Version;
+        int b0 = _literalPools.BigInts.Version;
+        int i0 = _literalPools.Images.Version;
         var snap = BuildDynamicSnapshot(fid);
         if (snap is null) return null;
         // Float literals are value-baked into the IL (ldc.r8), so a snapshot-only
         // float is fine. Strings / bigints are still index-addressed and would
         // mis-read at runtime, so a snapshot that introduces one stays Tier-0.
-        if (_literalPools.Strings.Count != s0
-            || _literalPools.BigInts.Count != b0
-            || _literalPools.Images.Count != i0)
+        if (_literalPools.Strings.Version != s0
+            || _literalPools.BigInts.Version != b0
+            || _literalPools.Images.Version != i0)
             return null;
         return snap;
     }
@@ -927,7 +932,10 @@ public sealed partial class PrologEngine
                 reclaimed += length;
             }
         }
+        // Bypassed, a dead chunk's code never runs again: its literals go.
+        foreach (var (addr, _) in chain.DeadChunks) ChainPatcher.ReleaseChunk(tbl, addr);
         chain.DeadChunks.Clear();
+        _literalPools.SweepIfDue();
         return reclaimed;
     }
 
@@ -1482,6 +1490,7 @@ public sealed partial class PrologEngine
             imageLiterals: _literalPools.Images);
 
         int trampolineAddr = engine.AppendCode(predicate.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), predicate.Bytecode);
         // ADR-041 — mid-query trampolines are invisible to the per-query
         // PredicatesByAddress map; register the address→fid here so the
         // dispatch-time clause selector covers live-linked chains too.
@@ -1800,6 +1809,7 @@ public sealed partial class PrologEngine
         List<Shumway.Core.SwitchTable> switchTables, bool ownsHost)
     {
         engine.AppendCode(link.Bytecode);
+        _literalPools.Pin(link.Bytecode);
         byte[] prog = engine.CurrentProgram!;
 
         // Merge new addresses + bare-name aliases so both direct calls in
@@ -1862,7 +1872,7 @@ public sealed partial class PrologEngine
         // the program generation so the dispatch loop refreshes its
         // cached view over the grown buffer.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
-        RefreshLiteralPoolsIfGrown(engine);
+        RefreshLiteralPoolsIfChanged(engine);
         engine.BumpProgramGeneration();
     }
 
@@ -2239,6 +2249,7 @@ public sealed partial class PrologEngine
                 enableIndexing: false,
                 isDynamic: false);
             int addr = engine.AppendCode(pred.Bytecode);
+            ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode);
             // Relocate predicate-local dispatch targets (try_me_else /
             // retry_me_else chain operands) to absolute addresses — the
             // mid-query append bypasses ModuleCompiler's link step, same
@@ -2337,6 +2348,8 @@ public sealed partial class PrologEngine
                 || !IsMetaHelperFunctorName(p.FunctorId))
                 continue;
             _runtimeAssertHelperPreds[p.FunctorId] = p;
+            // Kept for the engine's life, to be linked into any activation.
+            _literalPools.Pin(p.Bytecode);
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
             string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
             // The mangled form is '<module>$' + the helper's own '$'-leading
@@ -2405,6 +2418,7 @@ public sealed partial class PrologEngine
                 enableIndexing: false,
                 isDynamic: false);
             _runtimeAssertHelperPreds[fid] = pred;
+            _literalPools.Pin(pred.Bytecode);
         }
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
@@ -2415,6 +2429,7 @@ public sealed partial class PrologEngine
             return existing;
 
         int addr = engine.AppendCode(pred.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode);
         foreach (int siteRel in pred.DispatchSites)
         {
             int operandAbsPos = addr + siteRel;
@@ -2437,36 +2452,38 @@ public sealed partial class PrologEngine
             Shumway.Core.BytecodeIO.WriteInt32(
                 engine.CurrentProgram!, addr + site.OpcodeOffset + 1, target);
         }
-        RefreshLiteralPoolsIfGrown(engine);
+        RefreshLiteralPoolsIfChanged(engine);
         return addr;
     }
 
-    /// <summary>refreshes the interpreter's literal pools only
-    /// when the engine pools actually grew past what the interpreter holds
-    /// (recorded at query setup / last refresh). The pools are append-only
-    /// with stable ids (<see cref="Shumway.Compiler.Wam.LiteralPool{T}"/>),
-    /// so unchanged counts mean the interpreter's snapshot is already
-    /// complete and the three per-assert <c>Snapshot()</c> array copies can
-    /// be skipped — the common case: an asserted fact like
+    /// <summary>Refreshes the activation's copies of the literal pools when
+    /// a pool's version moved since they were taken (query setup or the last
+    /// refresh): a new or reused id, a sweep. Unchanged versions skip the
+    /// four <c>Snapshot()</c> copies, the common case: an asserted fact like
     /// <c>next_char_i(42)</c> interns nothing.</summary>
-    internal void RefreshLiteralPoolsIfGrown(Activation engine)
+    internal void RefreshLiteralPoolsIfChanged(Activation engine)
     {
-        // per-engine counters (an engine with no record refreshes
-        // unconditionally; refresh is idempotent).
-        var counts = _interpPoolCounts.GetValue(engine, static _ => new int[4]);
-        if (_literalPools.Strings.Count == counts[0]
-            && _literalPools.Floats.Count == counts[1]
-            && _literalPools.BigInts.Count == counts[2]
-            && _literalPools.Images.Count == counts[3])
+        // Per engine (one with no record refreshes unconditionally; a
+        // refresh is idempotent).
+        var versions = _interpPoolVersions.GetValue(engine, static _ => new int[4] { -1, -1, -1, -1 });
+        if (_literalPools.Strings.Version == versions[0]
+            && _literalPools.Floats.Version == versions[1]
+            && _literalPools.BigInts.Version == versions[2]
+            && _literalPools.Images.Version == versions[3])
             return;
         engine.RefreshLiteralPoolsCallback?.Invoke(
             _literalPools.Strings.Snapshot(),
             _literalPools.Floats.Snapshot(),
             _literalPools.BigInts.Snapshot());
-        counts[0] = _literalPools.Strings.Count;
-        counts[1] = _literalPools.Floats.Count;
-        counts[2] = _literalPools.BigInts.Count;
-        counts[3] = _literalPools.Images.Count;
+        RecordPoolVersions(versions);
+    }
+
+    private void RecordPoolVersions(int[] versions)
+    {
+        versions[0] = _literalPools.Strings.Version;
+        versions[1] = _literalPools.Floats.Version;
+        versions[2] = _literalPools.BigInts.Version;
+        versions[3] = _literalPools.Images.Version;
     }
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
@@ -2810,6 +2827,7 @@ public sealed partial class PrologEngine
             chunkAddr: chunkAddr,
             chunkLength: chunk.Length));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
+        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, compiledClause.Bytecode);
 
         // AppendCode may have reallocated the buffer;
         // refresh PrologEngine's reference so the next query sees the
@@ -2824,7 +2842,7 @@ public sealed partial class PrologEngine
         // interpreter so check_visible isn't running against a stale
         // pool snapshot for any subsequent call (skipped
         // when the pools didn't grow).
-        RefreshLiteralPoolsIfGrown(engine);
+        RefreshLiteralPoolsIfChanged(engine);
     }
 
     /// <summary>Test hook: returns the chain's current tail-next address
@@ -3010,6 +3028,7 @@ public sealed partial class PrologEngine
             next: chunkAddr + NextOperandLocal,
             chunkAddr: chunkAddr,
             chunkLength: chunk.Length), oldHead);
+        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, compiledClause.Bytecode);
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
@@ -3021,7 +3040,7 @@ public sealed partial class PrologEngine
 
         // Refresh interpreter pools — same reasoning as the assertz path
         // (skipped when the pools didn't grow).
-        RefreshLiteralPoolsIfGrown(engine);
+        RefreshLiteralPoolsIfChanged(engine);
     }
 
     /// <summary>ADR-015 chunk C: recompiles a dynamic predicate from its

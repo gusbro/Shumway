@@ -32,20 +32,13 @@ public sealed partial class PrologEngine
     private Shumway.Compiler.Wam.ClauseCompiler? _assertClauseCompiler;
     private ModuleRewrite.Context? _assertDynCtx;
 
-    /// <summary>the literal-pool lengths the live query's
-    /// interpreter currently holds; recorded at query setup and after each
-    /// refresh. <see cref="RefreshLiteralPoolsIfGrown"/> compares against
-    /// these (not "did this one compile grow the pool") so a compile that
-    /// interned a literal and then bailed to a fallback path can't leave a
-    /// later same-literal compile thinking the interpreter is current.</summary>
-    /// <summary>The literal-pool lengths each
-    /// engine's interpreter was built (or last refreshed) with, per
-    /// engine. Host-level counters broke under the mutation broadcast:
-    /// refreshing engine A updated them, so engine B's refresh compared
-    /// equal and skipped — leaving B's interpreter on a stale (possibly
-    /// empty) pool snapshot ("Float literal id N is out of range").</summary>
+    /// <summary>The literal pools' versions each activation's copies were
+    /// taken at (query setup, or the last refresh), per activation:
+    /// <see cref="RefreshLiteralPoolsIfChanged"/> compares against these.
+    /// Per activation, not per host: under the mutation broadcast a refresh
+    /// of one activation must not make another's look current.</summary>
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, int[]>
-        _interpPoolCounts = new();
+        _interpPoolVersions = new();
 
     /// <summary>The static program, linked once and reused across queries
     /// (ADR-015 chunk B). Null until the first query builds it; nulled

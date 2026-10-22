@@ -282,8 +282,9 @@ public sealed class ModuleCompiler
             if (info.OperandKinds is not null)
             {
                 // every literal pool (float, bigint, string/PSTR)
-                // is a per-engine LiteralPool<T>: append-only and deduplicating,
-                // so the value at a given id never moves, and the only flow that
+                // is a per-engine LiteralPool<T>, deduplicating, whose id's
+                // value never moves while live code names it (the static
+                // region pins its literals), and the only flow that
                 // consults the cross-query caches (query setup) always compiles
                 // against the engine's persistent `_literalPools` instances.
                 // A literal id is therefore as stable as an atom/functor id

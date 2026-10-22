@@ -363,6 +363,62 @@ and were fixed with the sweep:
   (`RebuildEngineFidChainView`), and compiled indexed again at the next
   query's setup.
 
+## Addendum: the literal pools are released with the code
+
+The pools of packed text (PSTR), floats, big integers and images (ADR-063)
+give a literal a stable id for the engine's life, which the bytecode embeds. They
+used to grow only: a program that asserts and retracts clauses with
+distinct literals for as long as it runs kept every literal it ever
+named. Now an entry is pinned or counted, and the counted ones go when
+nothing names them.
+
+**Pinned.** Static code keeps its literals for the engine's life: the
+static region as it is linked, a loaded module's as its ids are remapped
+into the pools, a consult linked live into a running query, and the
+helper predicates the engine keeps to link into any activation. A pinned
+entry is never counted and never freed; a second consult of the same text
+interns nothing.
+
+**Counted.** Every other code unit adds one reference per literal operand
+when it enters the live code, by a walk of its bytecode, and releases them
+when it leaves. The units of a buffer are the dynamic region linked at
+setup, each clause chunk an assert appends, an assert's helpers, a
+trampoline and a wasm shadow snapshot (ADR-054); they are recorded on the
+buffer's chain table and released when the buffer dies, which is when the
+host has replaced its table and no activation runs on it. A clause chunk
+goes earlier: when the chain reclaim bypasses it (the addendum above), its
+code cannot run again, so its literals go then; this is what bounds the
+one query that never ends. A query's transient region is a unit of the
+query, released when the query ends.
+
+**The compiled tiers.** The IL emitted at run time holds its packed text
+and images as objects in a table the delegate closes over (a static field for
+continuation methods), never as ids: a snapshot of a dynamic predicate may
+be evicted and still running when its clauses' chunks die, and no sweep
+can reach what it holds. Its compile may run on the worker while the
+engine's thread sweeps, so a snapshot carries the values its ids name,
+frozen when it was built. Floats are baked as values; persisted IL keeps
+the ids a bundle's module gave it, whose entries are pinned at load; the
+wasm tier bakes its images into the module.
+
+**The sweep.** An entry released to zero waits for the sweep, which frees
+every waiting entry still at zero and lists its id for reuse. The sweep is
+proportional: due when the entries at zero are at least 32 and an eighth
+of the pool, so a same-literal churn keeps its entry and a distinct-literal
+churn pays amortised constant work; it runs at the chain reclaim, at a
+query's end and at the end of a query's setup, after every unit of the
+setup holds its references. Every pool has a version, moved by a new or
+reused id and by a sweep that freed something: an activation's copies of
+the pools (the interpreter's, the images') refresh when a version differs
+from the one they were taken at, where they used to refresh when a count
+grew. A freed id is reused only once no live code names it, so a copy is
+stale only at ids nothing reads.
+
+**What stays.** A clause of the dynamic region retracted inside a query
+keeps its literals until the buffer dies, as the indexed layout's chunks
+do (neither is reclaimed in place); the helper registry pins the literals
+of an asserted clause's control constructs, as it keeps their code.
+
 ## Consequences
 
 - Per-query overhead drops from O(program) to O(query goal).

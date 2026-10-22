@@ -522,17 +522,34 @@ public sealed class IlPromotionStore
     /// helpers on IL.</summary>
     public Func<int, System.Collections.Generic.IReadOnlyList<TermImage>?>? ImagePoolProvider { get; set; }
 
-    private T WithFloatPool<T>(int functorId, Func<T> compile)
+    /// <summary>Supplies the packed-text pool a predicate's <c>get_pstr</c> /
+    /// <c>put_pstr</c> index; the emit puts each text in the method's literal
+    /// table. Null, predicates with packed text stay Tier-0.</summary>
+    public Func<int, System.Collections.Generic.IReadOnlyList<TextLiteral>?>? StringPoolProvider { get; set; }
+
+    /// <summary>The pools a compile of <paramref name="target"/> reads. A
+    /// snapshot of a dynamic predicate carries its own, frozen when it was
+    /// built: the pools may be swept while it compiles on the worker.</summary>
+    private IlPredicateCompiler.LiteralPoolSet PoolsFor(int functorId, CompiledPredicate? target)
+        => target?.LiteralView is { } view
+            ? new(view.FloatView, view.ImageView, view.StringView)
+            : new(FloatPoolProvider?.Invoke(functorId), ImagePoolProvider?.Invoke(functorId),
+                StringPoolProvider?.Invoke(functorId));
+
+    private static IlPredicateCompiler.LiteralPoolSet EnterPools(IlPredicateCompiler.LiteralPoolSet pools)
+        => IlPredicateCompiler.BeginPools(pools);
+
+    private static void LeavePools(IlPredicateCompiler.LiteralPoolSet prev)
+        => IlPredicateCompiler.EndPools(prev);
+
+    private static T WithPools<T>(IlPredicateCompiler.LiteralPoolSet pools, Func<T> compile)
     {
-        var prev = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
-        var prevImages = IlPredicateCompiler.BeginImagePool(ImagePoolProvider?.Invoke(functorId));
+        var prev = EnterPools(pools);
         try { return compile(); }
-        finally
-        {
-            IlPredicateCompiler.EndImagePool(prevImages);
-            IlPredicateCompiler.EndFloatPool(prev);
-        }
+        finally { LeavePools(prev); }
     }
+
+    private T WithFloatPool<T>(int functorId, Func<T> compile) => WithPools(PoolsFor(functorId, null), compile);
 
     // The predicates whose code a bundle carries, bound or offered. A region
     // compiled at run time calls them: absorbing one would compile its body
@@ -1147,9 +1164,10 @@ public sealed class IlPromotionStore
             return null;
         }
 
-        // CanCompile consults the float pool, so establish it on this thread too
+        // CanCompile consults the pools, so establish them on this thread too
         // (the worker-thread emit sets its own).
-        var prevFloatPool = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
+        var targetPools = PoolsFor(functorId, target);
+        var prevPools = EnterPools(targetPools);
         bool canCompile;
         string? rejection = null;
         try
@@ -1157,7 +1175,7 @@ public sealed class IlPromotionStore
             canCompile = Compiler.CanCompile(target, calleeMap);
             if (!canCompile) rejection = Compiler.DescribeRejection(target, calleeMap);
         }
-        finally { IlPredicateCompiler.EndFloatPool(prevFloatPool); }
+        finally { LeavePools(prevPools); }
         if (!canCompile)
         {
             MarkUnpromotable(functorId, "cannot-compile:" + rejection);
@@ -1170,8 +1188,7 @@ public sealed class IlPromotionStore
             // The engine-state-reading providers are invoked here, on the engine
             // thread, and their values captured — the worker must not touch engine
             // state (List<T> reads racing an Add are unsafe).
-            var floatPool = FloatPoolProvider?.Invoke(functorId);
-            var imagePool = ImagePoolProvider?.Invoke(functorId);
+            var pools = targetPools;
             var nativeCtx = NativeInlineProvider?.Invoke();
             _mutationStamp.TryGetValue(functorId, out int stamp);
             var capturedTarget = target;
@@ -1187,15 +1204,13 @@ public sealed class IlPromotionStore
             if (wantCps) _pendingCps.Add(functorId);
             T WithContexts<T>(Func<T> body)
             {
-                var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
-                var prevI = IlPredicateCompiler.BeginImagePool(imagePool);
+                var prevPools = EnterPools(pools);
                 var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
                 try { return WithRoots(roots, body); }
                 finally
                 {
                     IlPredicateCompiler.EndNativeInline(prevN);
-                    IlPredicateCompiler.EndImagePool(prevI);
-                    IlPredicateCompiler.EndFloatPool(prevF);
+                    LeavePools(prevPools);
                 }
             }
             IlCompileWorker.RunAsync(
@@ -1237,7 +1252,7 @@ public sealed class IlPromotionStore
         var syncRoots = BundleRoots(functorId);
         var syncCallees = Recording(calleeMap);
         var syncResult = RunOnLargeStack(() =>
-            WithFloatPool(functorId, () =>
+            WithPools(targetPools, () =>
                 WithNativeInline(() => WithRoots(syncRoots, () =>
                 {
                     using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
@@ -1255,7 +1270,7 @@ public sealed class IlPromotionStore
         InstallDelegate(functorId, installedDel);
         RecordCopies(functorId, syncCallees);
         var syncCpsCallees = Recording(calleeMap);
-        if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithFloatPool(functorId, () =>
+        if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithPools(targetPools, () =>
                 WithNativeInline(() => WithRoots(syncRoots,
                     () => TryCompileCps(target, syncCpsCallees, syncResult.Delegate))))) is { } syncCps)
         {
@@ -1360,8 +1375,7 @@ public sealed class IlPromotionStore
                 // Compiled on the worker, the engine not waiting: the query
                 // setup that finds it ready swaps it in, where this one would
                 // have. The providers read engine state, so they run here.
-                var floatPool = FloatPoolProvider?.Invoke(functorId);
-                var imagePool = ImagePoolProvider?.Invoke(functorId);
+                var pgoPools = PoolsFor(functorId, predicate);
                 var nativeCtx = NativeInlineProvider?.Invoke();
                 var pgoRoots = BundleRoots(functorId);
                 _mutationStamp.TryGetValue(functorId, out int stamp);
@@ -1369,8 +1383,7 @@ public sealed class IlPromotionStore
                 IlCompileWorker.RunAsync(
                     () =>
                     {
-                        var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
-                        var prevI = IlPredicateCompiler.BeginImagePool(imagePool);
+                        var prevPools = EnterPools(pgoPools);
                         var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
                         try
                         {
@@ -1380,8 +1393,7 @@ public sealed class IlPromotionStore
                         finally
                         {
                             IlPredicateCompiler.EndNativeInline(prevN);
-                            IlPredicateCompiler.EndImagePool(prevI);
-                            IlPredicateCompiler.EndFloatPool(prevF);
+                            LeavePools(prevPools);
                         }
                     },
                     (result, _) => _pgoReady.Enqueue((functorId, result as PredicateDelegate, stamp)),
@@ -1467,10 +1479,7 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        var warmPrevPool = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
-        bool warmCanCompile;
-        try { warmCanCompile = Compiler.CanCompile(predicate, calleeMap); }
-        finally { IlPredicateCompiler.EndFloatPool(warmPrevPool); }
+        bool warmCanCompile = WithFloatPool(functorId, () => Compiler.CanCompile(predicate, calleeMap));
         if (!warmCanCompile)
         {
             _unpromotable.Add(functorId);

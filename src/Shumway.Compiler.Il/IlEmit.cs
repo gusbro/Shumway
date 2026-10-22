@@ -68,6 +68,11 @@ public sealed class IlEmit
     private static readonly Type ReturnType = typeof(bool);
     private static readonly Type[] ParameterTypes =
         typeof(PredicateDelegate).GetMethod("Invoke")!.GetParameters().Select(p => p.ParameterType).ToArray();
+    // A dynamic method takes its literal table first; the delegate closes
+    // over it, so a caller sees the delegate's own signature.
+    private static readonly Type[] LiteralParameterTypes =
+        new[] { typeof(object[]) }.Concat(ParameterTypes).ToArray();
+    private static readonly object[] NoLiterals = Array.Empty<object>();
 
     // Dynamic methods live in a module of their own.
     private static readonly Module DynamicModule =
@@ -78,6 +83,13 @@ public sealed class IlEmit
     private readonly DynamicMethod? _dynamic;
     private readonly MethodBuilder? _method;
     private readonly StringBuilder? _text;
+    // The literal table the method reads: a dynamic method's first argument
+    // (the delegate's target), a built method's static field. The table is
+    // the unit's: methods built into one type share it.
+    private readonly int _argShift;
+    private readonly FieldInfo? _literalsField;
+    private readonly List<object>? _literals;
+    private readonly Dictionary<object, int>? _literalIndex;
     private readonly List<IlLabel> _labels = new();
     private int _localSeq, _labelSeq;
     // After a br, ret or throw, until a label: nothing can reach what follows.
@@ -90,28 +102,50 @@ public sealed class IlEmit
     private bool _pendingBuilt;
     private int _pendingTextAt;
 
-    private IlEmit(ILGenerator il, DynamicMethod? dynamic, MethodBuilder? method, bool record)
+    private IlEmit(ILGenerator il, DynamicMethod? dynamic, MethodBuilder? method, bool record,
+        int argShift, FieldInfo? literalsField, List<object>? literals)
     {
         _il = il;
         _dynamic = dynamic;
         _method = method;
         _text = record ? new StringBuilder() : null;
+        _argShift = argShift;
+        _literalsField = literalsField;
+        _literals = literals;
+        if (literals is not null)
+        {
+            _literalIndex = new Dictionary<object, int>(ReferenceComparer.Instance);
+            for (int i = 0; i < literals.Count; i++) _literalIndex[literals[i]] = i;
+        }
     }
 
     /// <summary>A method of its own (a <see cref="DynamicMethod"/>), which may
-    /// reach any member.</summary>
+    /// reach any member. Its delegate closes over the method's literal table.</summary>
     public static IlEmit NewDynamicMethod(string name, bool record)
     {
-        var dm = new DynamicMethod(name, ReturnType, ParameterTypes, DynamicModule, skipVisibility: true);
-        return new IlEmit(dm.GetILGenerator(), dm, null, record);
+        var dm = new DynamicMethod(name, ReturnType, LiteralParameterTypes, DynamicModule, skipVisibility: true);
+        return new IlEmit(dm.GetILGenerator(), dm, null, record, argShift: 1, null, new List<object>());
     }
 
-    /// <summary>A static method of <paramref name="type"/>.</summary>
+    /// <summary>A static method of <paramref name="type"/>. With
+    /// <paramref name="literalsField"/>, a static field of the type holding
+    /// <paramref name="literals"/>, the method may load literals.</summary>
     public static IlEmit BuildMethod(TypeBuilder type, string name, MethodAttributes attributes,
-        CallingConventions callingConvention, bool record)
+        CallingConventions callingConvention, bool record,
+        FieldInfo? literalsField = null, List<object>? literals = null)
     {
         var mb = type.DefineMethod(name, attributes, callingConvention, ReturnType, ParameterTypes);
-        return new IlEmit(mb.GetILGenerator(), null, mb, record);
+        return new IlEmit(mb.GetILGenerator(), null, mb, record, argShift: 0, literalsField, literals);
+    }
+
+    /// <summary>The literal table the method reads, as loaded so far.</summary>
+    public IReadOnlyList<object> Literals => _literals ?? (IReadOnlyList<object>)NoLiterals;
+
+    private sealed class ReferenceComparer : IEqualityComparer<object>
+    {
+        public static readonly ReferenceComparer Instance = new();
+        public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+        public int GetHashCode(object obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
     }
 
     /// <summary>The method's instructions as text; empty unless recorded.</summary>
@@ -240,6 +274,7 @@ public sealed class IlEmit
     {
         Begin();
         LocalRefCount++;
+        index += _argShift;
         switch (index)
         {
             case 0: _il.Emit(OpCodes.Ldarg_0); Text("ldarg.0"); return;
@@ -255,6 +290,7 @@ public sealed class IlEmit
     {
         Begin();
         LocalRefCount++;
+        index += _argShift;
         if (index <= 255) { _il.Emit(OpCodes.Starg_S, (byte)index); Text("starg.s", index.ToString()); }
         else { _il.Emit(OpCodes.Starg, (short)index); Text("starg", index.ToString()); }
     }
@@ -355,6 +391,32 @@ public sealed class IlEmit
         Begin();
         _il.Emit(OpCodes.Ldstr, value);
         Text("ldstr", $"'{value}'");
+    }
+
+    /// <summary>Loads <paramref name="value"/> from the method's literal
+    /// table: a reference the method keeps, never an id into a pool that
+    /// may reuse it. A value the table holds already is loaded by reference.</summary>
+    public void LoadLiteral(object value)
+    {
+        if (_literals is null || _literalIndex is null)
+            throw Fail("a literal load in a method with no literal table");
+        if (!_literalIndex.TryGetValue(value, out int index))
+        {
+            index = _literals.Count;
+            _literals.Add(value);
+            _literalIndex[value] = index;
+        }
+        if (_literalsField is { } field)
+        {
+            Begin();
+            _il.Emit(OpCodes.Ldsfld, field);
+            Text("ldsfld", field.Name);
+        }
+        else LoadArgument(-_argShift);   // the table: the first argument
+        LoadConstant(index);
+        Begin();
+        _il.Emit(OpCodes.Ldelem_Ref);
+        Text("ldelem.ref", $"// literal {index}: {value}");
     }
 
     // ---- fields, elements, conversions ----
@@ -631,13 +693,14 @@ public sealed class IlEmit
                 throw Fail($"label [{l.Name}] is used but never marked");
     }
 
-    /// <summary>The dynamic method's delegate.</summary>
+    /// <summary>The dynamic method's delegate, closed over its literal table.</summary>
     public PredicateDelegate CreateDelegate(bool initLocals)
     {
         Finish();
         var dm = _dynamic ?? throw new InvalidOperationException("not a dynamic method");
         dm.InitLocals = initLocals;
-        return (PredicateDelegate)dm.CreateDelegate(typeof(PredicateDelegate));
+        object[] table = _literals is { Count: > 0 } ? _literals.ToArray() : NoLiterals;
+        return (PredicateDelegate)dm.CreateDelegate(typeof(PredicateDelegate), table);
     }
 
     /// <summary>The built method, its body complete.</summary>

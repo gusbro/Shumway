@@ -265,9 +265,10 @@ to the matcher, for measuring.
 A matcher in the wasm module, and the read-only form of the stream
 there, are later measurements. Big integers and rationals stay
 out of images while their payloads name a per-activation table. A clause
-asserted at run time interns its images in the pool as it interns its
-string literals, and the pool does not free; the threshold keeps small
-terms out of it.
+asserted at run time carries no images (its floats and big integers are
+its pool literals); the images of consulted clauses and of a dynamic
+predicate's snapshot are released with their code (ADR-015); the
+threshold keeps small terms out of the pool.
 
 ## Expected gain (before measuring)
 
