@@ -778,7 +778,43 @@ internal sealed class ConsultPipeline
         // another module would hijack the context.
         if (moduleName != PrologEngine.DefaultModuleName && !isMultifile)
             E._dynamicSeedModule[fid] = moduleName;
+        if (isMultifile && _multifileSource is { } source)
+        {
+            if (!E._multifileClauses.TryGetValue(source, out var given))
+                E._multifileClauses[source] = given = new List<(int, Clause)>();
+            given.Add((fid, c));
+        }
         return at;
+    }
+
+    /// <summary>A stored clause of this consult replaced by its expansion: the
+    /// record of what the source gave a multifile predicate follows it.</summary>
+    private void NoteMultifileReplaced(int fid, Clause old, Clause replacement)
+    {
+        if (_multifileSource is null
+            || !E._multifileClauses.TryGetValue(_multifileSource, out var given)) return;
+        for (int i = given.Count - 1; i >= 0; i--)
+            if (ReferenceEquals(given[i].Clause, old))
+            {
+                given[i] = (fid, replacement);
+                return;
+            }
+    }
+
+    /// <summary>A reload takes back what its source gave multifile predicates
+    /// the last time, and only that: the clauses other sources gave and the
+    /// asserted ones stay, and the reloaded clauses land after them. Inside a
+    /// query through retract's path, so the rest of the query stops seeing
+    /// them too.</summary>
+    private void WithdrawMultifileClauses(string? source)
+    {
+        if (source is null || !E._multifileClauses.TryGetValue(source, out var given)) return;
+        E._multifileClauses.Remove(source);
+        foreach (var (fid, c) in given)
+        {
+            if (E._liveConsultEngine is { } live) E.RemoveDynamicByReference(live, fid, c);
+            else E.RemoveDynamicClause(fid, c);
+        }
     }
 
     private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
@@ -913,8 +949,9 @@ internal sealed class ConsultPipeline
                     if (ReferenceEquals(ge, slot[slotIdx])) continue;
                     // A hook can leave a non-goal (a number, a naked var) in a
                     // control position — the stored form stays converted.
-                    E._dynStore.ReplaceClauseAt(fid, slotIdx,
-                        Shumway.Compiler.Ast.ClauseBodyConversion.Convert(ge));
+                    Clause stored = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(ge);
+                    NoteMultifileReplaced(fid, slot[slotIdx], stored);
+                    E._dynStore.ReplaceClauseAt(fid, slotIdx, stored);
                     E.InvalidateDynamicCache(fid);
                 }
             }
@@ -1239,12 +1276,14 @@ internal sealed class ConsultPipeline
             // during this source's parse is attributed to the module it
             // commits (nested use_module loads get their own frame).
             E.PushOpCollection();
+            string? prevMultifileSource = _multifileSource;
             try
             {
                 ConsultStringLocked(source, recordInHistory, moduleNameFallback, reconsult);
             }
             finally
             {
+                _multifileSource = prevMultifileSource;
                 E.PopOpCollection();
                 E._currentLoadModule = prevLoadModule;
                 if (--E._consultDepth == 0)
@@ -1256,6 +1295,11 @@ internal sealed class ConsultPipeline
     // Set (and consumed) by ConsultStringInner for shim/compat sources —
     // single-threaded under DebugArmGate, cleared when the consult completes.
     private bool _pendingLibrarySource;
+
+    // The key the consult in progress records its multifile clauses under
+    // (_multifileClauses); null for the prelude and the library shims, which
+    // no reload withdraws.
+    private string? _multifileSource;
 
     private void ConsultStringLocked(string source, bool recordInHistory,
         string? moduleNameFallback, bool reconsult)
@@ -2042,6 +2086,9 @@ internal sealed class ConsultPipeline
         // see them just like runtime-asserted clauses do. Without this
         // routing, source-declared facts for a `:- dynamic foo/N.`
         // predicate would be invisible to retract/2 and clause/2.
+        _multifileSource = preludeSource || librarySource ? null
+            : ForeignSourceKey(moduleName,
+                moduleDirectiveSeen || moduleName != PrologEngine.DefaultModuleName);
         if (E._dynStore.FunctorCount > 0)
         {
             // A multifile predicate accumulates clauses from several modules,
@@ -2068,6 +2115,10 @@ internal sealed class ConsultPipeline
             // that directive has put `ins` and `#=` in the operator table.
             // (An explicit `:- module` file already replaces its previous load;
             // this is what makes a module-less buffer behave the same way.)
+            // A multifile predicate loses only the clauses this source gave it,
+            // on a module file's reload as on a reconsult.
+            if (reconsult || moduleDirectiveSeen || moduleName != PrologEngine.DefaultModuleName)
+                WithdrawMultifileClauses(_multifileSource);
             if (reconsult)
             {
                 // HeadFunctorIdOf, not TryExtractHead: a DCG rule's real head
@@ -2080,6 +2131,7 @@ internal sealed class ConsultPipeline
                         redefined.Add(HeadFunctorIdOf(c0));
                 foreach (int fid in redefined)
                 {
+                    if (pendingMultifile?.Contains(fid) == true) continue;
                     // A `:- dynamic` in this source has already run; abolishing
                     // would undo the declaration the file just made and route
                     // its own clauses as static. Only the clauses go — including

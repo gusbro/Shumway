@@ -158,11 +158,10 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(sub_atom(abc, a, _, _, _), error(type_error(integer, a), _), true).");
         Succeeds("catch(sub_atom(abc, -2, _, _, _), "
             + "error(domain_error(not_less_than_zero, -2), _), true).");
-        // §8.16.8.3.d — a codes element that is not a character code is
-        // representation_error(character_code) (the chars side keeps
-        // type_error(character, E); the asymmetry is the standard's).
+        // Cor.2 8.16.8.3 f — a codes element that is not an integer is
+        // type_error(integer, E).
         Succeeds("catch(number_codes(_, [0'4, a]), "
-            + "error(representation_error(character_code), _), true).");
+            + "error(type_error(integer, a), _), true).");
         Succeeds("catch(set_prolog_flag(5, x), error(type_error(atom, 5), _), true).");
         Succeeds("catch(set_prolog_flag(unknown, foo), "
             + "error(domain_error(flag_value, unknown+foo), _), true).");
@@ -276,18 +275,23 @@ public class BatteryRoundTwoConformance
         // With both arguments bound the list is still type-checked
         // (§8.16.4/8.16.5) — but only when it is fully ground: a partial
         // list, or one holding unbound elements, is the generate
-        // direction and must unify. A bad element is
-        // representation_error(character_code) in both codes predicates, the
-        // first argument bound or not (8.16.5.3, 8.16.8.3; Neumerkel's
-        // number_codes(1, [[]])): ISO names no type_error(integer, E) here.
+        // direction and must unify. In both codes predicates, the first
+        // argument bound or not, an element that is not an integer is
+        // type_error(integer, E) and an integer that is no character code is
+        // representation_error(character_code) (Cor.2 8.16.5.3 e, f and
+        // 8.16.8.3 f, g).
         Succeeds("catch(atom_codes(abc, [a,b,c]), "
-            + "error(representation_error(character_code), _), true).");
+            + "error(type_error(integer, a), _), true).");
         Succeeds("catch(atom_codes(abc, [-1]), "
             + "error(representation_error(character_code), _), true).");
         Succeeds("catch(atom_codes(_, [a]), "
-            + "error(representation_error(character_code), _), true).");
+            + "error(type_error(integer, a), _), true).");
+        Succeeds("catch(atom_codes(_, [0'a, f(x)]), "
+            + "error(type_error(integer, f(x)), _), true).");
         Succeeds("catch(number_codes(123, [0'1, 0'2, 0'3, '4']), "
-            + "error(representation_error(character_code), _), true).");
+            + "error(type_error(integer, '4'), _), true).");
+        Succeeds("catch(number_codes(1, [[]]), "
+            + "error(type_error(integer, []), _), true).");
         Succeeds("catch(number_codes(12, [0'1, -1]), "
             + "error(representation_error(character_code), _), true).");
         Succeeds("catch(atom_codes('ABC', [66|67]), "
@@ -295,6 +299,20 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(atom_chars(abc, ['A'|'B']), "
             + "error(type_error(list, ['A'|'B']), _), true).");
         Succeeds("catch(atom_codes(f(a), _), error(type_error(atom, f(a)), _), true).");
+        // A partial list, or one with unbound elements, unifies only after
+        // the bound elements of its prefix pass the check (Cor.2 8.16.4.3,
+        // 8.16.5.3): an error, not a failure.
+        Succeeds("catch(atom_codes(abc, [a|_]), "
+            + "error(type_error(integer, a), _), true).");
+        Succeeds("catch(atom_codes(abc, [0'a, _, a]), "
+            + "error(type_error(integer, a), _), true).");
+        Succeeds("catch(atom_codes(abc, [0'x, _, -1]), "
+            + "error(representation_error(character_code), _), true).");
+        Succeeds("catch(atom_chars(abc, [x, 1|_]), error(type_error(character, 1), _), true).");
+        Succeeds("catch(atom_chars(abc, [a, _, 1]), error(type_error(character, 1), _), true).");
+        Succeeds("atom_codes(abc, [0'a, X, 0'c]), X == 0'b.");
+        Succeeds("(atom_codes(abc, [0'x|_]) -> fail ; true).");
+        Succeeds("atom_chars(abc, [a|T]), T == [b, c].");
         // Generate directions still work.
         Succeeds("atom_codes(abc, [0'a|T]), T == [0'b, 0'c].");
         Succeeds("atom_codes(A, [0'a]), atom_codes(A, [Y]), Y == 0'a.");

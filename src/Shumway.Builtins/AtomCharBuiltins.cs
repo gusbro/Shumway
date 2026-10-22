@@ -110,9 +110,12 @@ public static class AtomCharBuiltins
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // Both bound: the char list is still type-checked (§8.16.4.3).
             // Only a proper list is validated-and-compared: a partial
-            // one (atom_codes(abc, [0'a|T])) must still unify.
+            // one (atom_chars(abc, [a|T])) must still unify, after the bound
+            // elements of its prefix pass the same check (Cor.2 8.16.4.3 e).
             if (ListCursor.IsProperListCell(engine, charsCell))
                 return ReadCharAtomsToString(engine, charsCell) == name;
+            if (charsCell.Tag is not (Tag.Ref or Tag.AttVar))
+                CheckTextListPrefix(engine, charsCell, asCodes: false);
             int listIdx = BuildCharAtomList(engine, name);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
@@ -894,6 +897,34 @@ public static class AtomCharBuiltins
     /// element (a bad bound element wins over instantiation). The returned
     /// string is meaningful only when <paramref name="hasUnbound"/> is
     /// false.</summary>
+    /// <summary>Cor.2 8.16.5.3 e, f and 8.16.8.3 f, g: a bound element of a
+    /// codes list that is not an integer is type_error(integer, E), Number or
+    /// Atom bound or not; an integer that names no character is
+    /// representation_error(character_code). Returns the code.</summary>
+    internal static int CodeOfElement(Activation engine, Cell head)
+    {
+        if (head.Tag is not (Tag.Int or Tag.BigInt))
+            throw new PrologRuntimeException("type_error", "integer", engine, head);
+        if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
+            throw new PrologRuntimeException("representation_error", "character_code");
+        return (int)head.AsInt;
+    }
+
+    /// <summary>Raises the error a text list the caller unifies with a list it
+    /// generates calls for: type_error(list, L) for a cyclic or improper spine,
+    /// whatever its elements, then the error of a bound element of its prefix.
+    /// Unbound elements and an unbound tail pass.</summary>
+    internal static void CheckTextListPrefix(Activation engine, Cell listCell, bool asCodes)
+    {
+        Cell end = ListCursor.SkipSpine(engine, listCell, out _);
+        if (ListCursor.TryUncons(engine, end, out _, out _))
+            throw ListCursor.CyclicList(engine, listCell);
+        if (end.Tag is not (Tag.Ref or Tag.AttVar)
+            && !(end.Tag == Tag.Atom && end.AsAtomId == AtomTable.EmptyListId))
+            throw new PrologRuntimeException("type_error", "list", engine, listCell);
+        AnalyzeCharList(engine, listCell, asCodes, numberBound: true, out _);
+    }
+
     private static string AnalyzeCharList(
         Activation engine, Cell listCell, bool asCodes, bool numberBound, out bool hasUnbound)
     {
@@ -955,16 +986,8 @@ public static class AtomCharBuiltins
             }
             else if (asCodes)
             {
-                // ISO §8.16.8.3.d: an element that is not a character code —
-                // an atom, a compound, an out-of-range integer alike — is
-                // representation_error(character_code), Number bound or not
-                // (Schimpf's number_codes(1, [[]])). The chars side keeps
-                // its own type_error(character, E) (§8.16.7.3): the standard
-                // is asymmetric here on purpose.
-                if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
-                    throw new PrologRuntimeException(
-                        "representation_error", "character_code");
-                if (!hasUnbound) Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
+                int code = CodeOfElement(engine, head);
+                if (!hasUnbound) Utf16Text.AppendCodePoint(sb, code);
             }
             else
             {
@@ -985,53 +1008,6 @@ public static class AtomCharBuiltins
             // Culprit is the whole list argument (§8.16.7.3), not the
             // improper tail alone.
             throw new PrologRuntimeException("type_error", "list", engine, listCell);
-        return sb.ToString();
-    }
-
-    private static string ReadCodesToString(Activation engine, Cell codesCell, string builtinName)
-    {
-        var sb = new StringBuilder();
-        Cell listStart = Resolve(engine, codesCell);
-        Cell cursor = listStart;
-        // A bound non-list argument is type_error(list, L) up front.
-        if (cursor.Tag is not (Tag.Lis or Tag.Pstr or Tag.Ref or Tag.AttVar)
-            && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
-            throw new PrologRuntimeException("type_error", "list", engine, listStart);
-        var guard = new SpineGuard(cursor);
-        while (true)
-        {
-            // A packed run of codes is consumed in bulk; a packed run of chars
-            // falls through to the element loop, where its one-character atom
-            // heads raise the ISO element error like any other non-integer.
-            if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
-                && cursor.AsPstrLength > 0)
-            {
-                sb.Append(engine.ReadPstrChain(cursor, out cursor));
-                if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
-                continue;
-            }
-            if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell cTail)) break;
-            Cell head = Resolve(engine, rawHead);
-            // ISO §8.16.5.3.d: an unbound element is instantiation_error
-            // (precedence rule applies); any bound element that is not a
-            // character code — wrong type or out of range alike — is
-            // representation_error(character_code). An astral code appends
-            // its surrogate pair.
-            if (head.Tag is Tag.Ref or Tag.AttVar)
-                throw new PrologRuntimeException("instantiation_error");
-            if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
-                throw new PrologRuntimeException(
-                    "representation_error", "character_code");
-            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
-            cursor = ListCursor.Resolve(engine, cTail);
-            if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
-        }
-        // A non-nil tail is a partial / non-proper list — ISO reports this
-        // as a type_error(list, _) (the entire arg, not just the tail).
-        if (cursor.Tag is Tag.Ref or Tag.AttVar)
-            throw new PrologRuntimeException("instantiation_error");
-        if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         return sb.ToString();
     }
 

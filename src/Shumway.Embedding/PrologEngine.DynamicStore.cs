@@ -66,6 +66,19 @@ public sealed partial class PrologEngine
         return false;
     }
 
+    /// <summary>Removes <paramref name="clause"/>, by identity, from the store
+    /// alone: for a load outside any query, whose code the next setup links
+    /// from the store. False when it is no longer there.</summary>
+    internal bool RemoveDynamicClause(int fid, Clause clause)
+    {
+        if (!_dynStore.HasClauses(fid)) return false;
+        int idx = _dynStore.PhysicalClauses(fid).IndexOf(clause);
+        if (idx < 0) return false;
+        _dynStore.RemoveClauseAt(fid, idx);
+        InvalidateDynamicCache(fid);
+        return true;
+    }
+
     /// <summary>Snapshot of currently asserted clauses for a given functor —
     /// used by the runtime <c>retract/1</c> path to enumerate candidates
     /// before unifying with the user's pattern.</summary>

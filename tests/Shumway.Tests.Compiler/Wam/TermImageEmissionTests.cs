@@ -302,6 +302,37 @@ public class TermImageEmissionTests
         Assert.Single(Images(src));
     }
 
+    /// <summary>A head that holds one compound object in two places (an AST
+    /// may share a sub-term) gets no image: the plan keys a term by its
+    /// object, and the two places took one prefix, the first naming
+    /// whatever image the pool held at id 0.</summary>
+    [Fact]
+    public void AHeadHoldingOneObjectTwiceKeepsItsStreams()
+    {
+        static Term A(string name) => new AtomTerm(name);
+        var shared = new CompoundTerm("f", new Term[] { A("a"), A("b"), A("c"), A("d"), A("e"), A("f"), A("g"), A("h"), A("i") });
+        var heads = new Term[]
+        {
+            new CompoundTerm("p", new Term[] { shared, shared }),
+            new CompoundTerm("p", new Term[]
+            {
+                new CompoundTerm("k", new Term[] { shared, A("z") }),
+                new CompoundTerm("k", new Term[] { shared, A("y") }),
+            }),
+        };
+        foreach (var head in heads)
+        {
+            var pools = new LiteralPools();
+            var compiler = new ClauseCompiler();
+            // Another image at id 0, as a program's pool has.
+            compiler.Compile(new ClauseReader("o :- q(g(a, b, c, d, e, f, g, h, i)).").ReadAll().First(),
+                pools.Strings, pools.Floats, pools.BigInts, pools.Images);
+            var clause = compiler.Compile(Clause.From(head), pools.Strings, pools.Floats, pools.BigInts, pools.Images);
+            foreach (var ins in Disassembler.Iterate(clause.Bytecode, 0, clause.Bytecode.Length))
+                Assert.False(ins.Op is Opcode.GetBlit or Opcode.UnifyBlit, $"{head}: {ins}");
+        }
+    }
+
     [Fact]
     public void TheHeadsSwitchKeepsTheStreamAlone()
     {

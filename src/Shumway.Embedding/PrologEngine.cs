@@ -396,6 +396,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// entries other sources gave it.</summary>
     internal readonly List<(string Source, string Target, Clause Clause)> _foreignClauses = new();
 
+    /// <summary>The clauses each source gave its multifile predicates, keyed as
+    /// <see cref="_foreignClauses"/> is. <c>:- multifile</c> makes a predicate
+    /// dynamic, so they all sit in the dynamic store; a reload of the source
+    /// withdraws its own and leaves the other sources' and the asserted ones.</summary>
+    internal readonly Dictionary<string, List<(int Fid, Clause Clause)>> _multifileClauses =
+        new(StringComparer.Ordinal);
+
     /// <summary>The control constructs' meta-templates. They are not
     /// predicates, so no <c>:- meta_predicate</c> directive can name them
     /// (`','(0,0)` in a directive reads as the conjunction-of-specs form),

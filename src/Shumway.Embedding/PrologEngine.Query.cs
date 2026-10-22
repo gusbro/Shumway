@@ -1834,9 +1834,14 @@ public sealed partial class PrologEngine
         engine.JitFormControl = IlPromotion.SetJitForm;
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads
-        // _currentPredicatesByAddress at call time (set later in this setup).
+        // this setup's address map, set later in it, not the host's current
+        // one: a query nested in this one (a directive of a file it consults)
+        // links a program of its own and replaces that, while this query goes
+        // on in its own program, where the same address can be another
+        // predicate's trampoline.
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? selectMap = null;
         engine.DynChainSelect = (e, pc) =>
-            ChainPatcher.SelectDynChainCandidate(e, pc, _currentPredicatesByAddress);
+            ChainPatcher.SelectDynChainCandidate(e, pc, selectMap);
         // ISO number_chars/number_codes fall back to the full term reader for the
         // operator/quoting cases the token parser can't cover (`'-'1` → -1).
         MetaBuiltins.WireNumberFromChars(engine);
@@ -2050,6 +2055,7 @@ public sealed partial class PrologEngine
         // reporting can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
         _currentPredicatesByAddress = linkResult.PredicatesByAddress;
+        selectMap = linkResult.PredicatesByAddress;
 
         // ADR-035 — which source sites this engine's code actually contains (what a
         // breakpoint can bind to), then (re)apply the armed ones to the program this
