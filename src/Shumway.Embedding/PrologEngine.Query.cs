@@ -131,6 +131,18 @@ public sealed partial class PrologEngine
         Func<InterpreterResult> action)
     {
         Func<InterpreterResult> step = action;
+        EnterRun(engine);
+        try
+        {
+            return RunSteps(interp, program, engine, step);
+        }
+        finally { LeaveRun(); }
+    }
+
+    private InterpreterResult RunSteps(
+        BytecodeInterpreter interp, Shumway.Core.ProgramView program, Activation engine,
+        Func<InterpreterResult> step)
+    {
         while (true)
         {
             try
@@ -664,7 +676,7 @@ public sealed partial class PrologEngine
         // under a debug session: this renders a term, and nobody else is looking. A host that
         // wrapped the goal says so with QueryLabel — rendering its wrapper back would name
         // the frame after machinery the user never wrote.
-        CurrentQueryText = DebugSession is null
+        string? queryText = DebugSession is null
             ? null
             : QueryLabel ?? AstTermRenderer.Render(queryTerm, 999, _operators);
 
@@ -2051,11 +2063,30 @@ public sealed partial class PrologEngine
         // meta-CP backtrack-driver / floor pin
         // were all replaced by threaded resume-marker dispatch
         //.
-        // Remember the per-query address → predicate map so error
-        // reporting can translate the engine's PC and env-
-        // chain return addresses into Name/Arity stack frames.
-        _currentPredicatesByAddress = linkResult.PredicatesByAddress;
+        // The program this activation runs: its address map (error reporting
+        // translates the engine's PC and return addresses into Name/Arity frames
+        // with it) and the debugger's tables. Current from here; a setup inside a
+        // running query hands that query's back at its end (EnterRun / LeaveRun).
         selectMap = linkResult.PredicatesByAddress;
+        if (builtPersistentNow) _persistentBreakpoints = new BreakpointRecord();
+        var tablesFrom = _debugTablesOwner;
+        _cur = new LinkedProgram(_persistentBreakpoints)
+        {
+            Map = linkResult.PredicatesByAddress,
+            Engine = engine,
+            QueryText = queryText,
+        };
+        engine.HostProgram = _cur;
+        if (tablesFrom is not null)
+        {
+            // The tables stand until a layout change rebuilds them.
+            _cur.CompiledSites = tablesFrom.CompiledSites;
+            _cur.StopPcs = tablesFrom.StopPcs;
+            _cur.StopSiteIds = tablesFrom.StopSiteIds;
+            _cur.ClauseStarts = tablesFrom.ClauseStarts;
+            _cur.ClauseFrames = tablesFrom.ClauseFrames;
+            _cur.ClauseLines = tablesFrom.ClauseLines;
+        }
 
         // ADR-035 — which source sites this engine's code actually contains (what a
         // breakpoint can bind to), then (re)apply the armed ones to the program this
@@ -2063,9 +2094,7 @@ public sealed partial class PrologEngine
         // truth, and the code space it maps into can be relinked or compacted
         // between queries. Both loops are skipped entirely unless something was
         // compiled debuggable, so release queries pay nothing.
-        _sortedPredEntries = null;             // the layout may have moved
-        _fidMemoLo = _fidMemoHi = int.MaxValue;   // and with it the address→functor memo
-        if (_flags.DebugCodegen || _compiledSites.Count > 0)
+        if (_flags.DebugCodegen || _cur.CompiledSites.Count > 0)
         {
             // Scale guard: this rebuild costs O(every stop site + clause frame in the
             // program) — for a codebase of hundreds of modules, paying it at every query
@@ -2075,9 +2104,9 @@ public sealed partial class PrologEngine
             // query between consults/asserts — the previous tables stand. The check is
             // an O(predicates) reference walk, exact by construction.
             bool layoutUnchanged = _debugTablesBuiltFor is { } prev
-                && prev.Count == _currentPredicatesByAddress.Count;
+                && prev.Count == _cur.Map.Count;
             if (layoutUnchanged)
-                foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+                foreach (var (predAddr, pred) in _cur.Map)
                 {
                     if (_debugTablesBuiltFor!.TryGetValue(predAddr, out var old)
                         && ReferenceEquals(old, pred)) continue;
@@ -2088,38 +2117,30 @@ public sealed partial class PrologEngine
             {
                 RebuildDebugTables();
                 _debugTablesBuiltFor =
-                    CollectionsCompat.Copy(_currentPredicatesByAddress);
+                    CollectionsCompat.Copy(_cur.Map);
+                _debugTablesOwner = _cur;
             }
         }
-        // A freshly-rebuilt persistent buffer carries no Break bytes and the recorded originals
-        // belong to the now-dead one; a reused buffer still carries them. Only un-patch when the
-        // buffer actually holds our patches. (RefreshBreakpoints, mid-query, follows the live
-        // activation via _lastQueryEngine — set just below — so a realloc is tracked there.)
+        // A freshly-rebuilt persistent buffer carries no Break bytes and starts a breakpoint
+        // record of its own: the old record stays with the old buffer, which a query this one
+        // is nested in still runs. A reused buffer still carries the patches in its record.
+        // (RefreshBreakpoints, mid-query, follows the current program's activation, so a
+        // realloc is tracked there.)
         //
         // ADR-035 D5 — a debug EVALUATION's nested query does not touch the sync at all: the
         // armed table describes the outer query's buffer, which is where the machine returns
-        // when the evaluation is done, and re-deriving it here would point it at the eval's.
-        // The usual case reuses the outer's buffer anyway (patches in place, table already
-        // right); in the rare rebuilt-under-eval case the fresh buffer simply runs without
-        // Break bytes — an eval's stops are suppressed regardless — and the flag below tells
-        // the next real setup that this persistent buffer never received its patches, so its
-        // per-byte un-patch must not expect to find them (a false "drift" alarm otherwise).
+        // when the evaluation is done. The usual case reuses the outer's buffer anyway (patches
+        // in place, record already right); in the rare rebuilt-under-eval case the fresh buffer
+        // simply runs without Break bytes (an eval's stops are suppressed regardless) and its
+        // record is empty, so the next real setup has nothing to un-patch in it.
         if (_debugEvalDepth == 0)
-        {
-            SyncBreakpoints(program,
-                bufferCarriesOurPatches: !builtPersistentNow && !_persistentRebuiltPatchFree);
-            _persistentRebuiltPatchFree = false;
-        }
-        else if (builtPersistentNow)
-        {
-            _persistentRebuiltPatchFree = true;
-        }
+            SyncBreakpoints(program, bufferCarriesOurPatches: !builtPersistentNow);
         // Shared by reference, and shared even when it is empty: a breakpoint can be armed
         // on a query that is already running (F9 during a long goal), and the Break byte it
         // patches into the program is reached by an activation that was set up before the
         // table had anything in it. Handing over null when the table happened to be empty
         // would leave that activation with a Break it cannot decode.
-        engine.BreakpointOriginals = _breakpointPatches;
+        engine.BreakpointOriginals = _cur.Breakpoints.Patches;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)
@@ -2184,6 +2205,11 @@ public sealed partial class PrologEngine
             engine.TrailEverything = true;
             engine.LastCallOptimisation = DebugLcoWhenArmed;
         }
+        // A setup inside a running query (a directive of a file it consults): that query
+        // runs on until this one starts.
+        if (_running.Count > 0 && _running[^1].HostProgram is LinkedProgram outer
+            && !ReferenceEquals(outer, _cur))
+            SwitchTo(outer);
         if (LoadProfEnabled)
             ProfActivationTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;
         return (programView, varNames, varHeapIndices, engine, interp);
