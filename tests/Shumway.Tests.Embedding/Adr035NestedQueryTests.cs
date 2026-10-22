@@ -176,4 +176,30 @@ public sealed class Adr035NestedQueryTests : IDisposable
             Assert.True(stops == 1, $"m = {m}: {stops} stops at after/1");
         }
     }
+
+    /// <summary>A breakpoint set before its file is loaded binds when a query consults the
+    /// file: the rebind links the new code in a query nested in that one.</summary>
+    [Fact]
+    public void APendingBreakpointBindsWhenAQueryConsultsItsFile()
+    {
+        //  1: mid(X) :-
+        //  2:     after(X),
+        //  3:     atom(X).
+        string live = Path.Combine(_dir, "live.pl").Replace(Path.DirectorySeparatorChar, '/');
+        File.WriteAllText(live, "mid(X) :-\n    after(X),\n    atom(X).\n");
+        var engine = new PrologEngine();
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\nafter(X) :- X = done.\n");
+        Assert.Equal(0, engine.AddBreakpoint(live, 2));   // nothing loaded there yet
+
+        var rec = new Recorder(engine);
+        engine.AttachDebugSession(rec);
+        engine.QueryAll($"consult('{live}').").ToList();
+        var sols = engine.QueryAll("mid(X).").ToList();
+        engine.AttachDebugSession(null);
+        _log.WriteLine(string.Join(" | ", rec.Stops));
+
+        Assert.Single(sols);
+        Assert.NotEmpty(rec.Stops);
+        Assert.StartsWith("line 2: mid/1:2", rec.Stops[0]);
+    }
 }

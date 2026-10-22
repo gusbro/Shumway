@@ -115,7 +115,7 @@ public sealed partial class PrologEngine
             int bound = 0;
             foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
             {
-                if (!_cur.CompiledSites.Contains(id)) continue;
+                if (!IsBindable(id)) continue;
                 _breakpointSites.Add(id);
                 _breakpointRequests[id] = (fileId, line);
                 bound++;
@@ -166,11 +166,12 @@ public sealed partial class PrologEngine
     {
         if (_requestedBreakpoints.Count == 0) return;
 
-        // Relink first. The set of sites a breakpoint may bind to (_cur.CompiledSites) is rebuilt
+        // Relink first. The set of sites a breakpoint may bind to (BindablePrograms) is rebuilt
         // when a query is set up, not when a file is consulted — so right after a consult it
         // still describes the program as it was before, and the clauses that just arrived are
         // invisible. EnsureCodeLinked would not do it: it sees a linked code space and returns
-        // happy. A trivial query is what actually rebuilds the map.
+        // happy. A trivial query is what actually rebuilds the map; inside a running query (a
+        // consult goal) it is a nested one, and the running query stays current.
         foreach (var _ in QueryAll("true.")) break;
 
         // A copy: AddBreakpoint writes to the set (idempotently — it is a set), and
@@ -214,21 +215,39 @@ public sealed partial class PrologEngine
     /// was not looking at.</para></summary>
     private int SnapToCompiledLine(int fileId, int line)
     {
-        foreach (int id in _cur.CompiledSites)
-        {
-            var site = Shumway.Core.DebugSiteTable.Get(id);
-            if (site.FileId == fileId && site.Line == line) return line;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (int id in p.CompiledSites)
+            {
+                var site = Shumway.Core.DebugSiteTable.Get(id);
+                if (site.FileId == fileId && site.Line == line) return line;
+            }
 
         int best = -1;
-        foreach (var clause in _cur.ClauseLines)
-        {
-            if (clause.FileId != fileId) continue;
-            if (line < clause.HeadLine || line > clause.LastLine) continue;
-            int target = FirstSiteLineAtOrAfter(fileId, Math.Max(line, clause.FirstLine));
-            if (target > 0 && (best < 0 || target < best)) best = target;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (var clause in p.ClauseLines)
+            {
+                if (clause.FileId != fileId) continue;
+                if (line < clause.HeadLine || line > clause.LastLine) continue;
+                int target = FirstSiteLineAtOrAfter(fileId, Math.Max(line, clause.FirstLine));
+                if (target > 0 && (best < 0 || target < best)) best = target;
+            }
         return best;
+    }
+
+    /// <summary>The programs a breakpoint binds against: the current one, and the one whose
+    /// tables were built last. A consult inside a running query links the new code into a
+    /// query nested in it (a directive, <see cref="RebindPendingBreakpoints"/>'s), and the
+    /// running query stays current; the armed sites apply to every program that has them.</summary>
+    private LinkedProgram[] BindablePrograms()
+        => _debugTablesOwner is { } last && !ReferenceEquals(last, _cur)
+            ? new[] { _cur, last }
+            : new[] { _cur };
+
+    private bool IsBindable(int siteId)
+    {
+        foreach (var p in BindablePrograms())
+            if (p.CompiledSites.Contains(siteId)) return true;
+        return false;
     }
 
     /// <summary>ADR-035 D5+ (Set Next Statement) — every stop site of the clause that
@@ -318,12 +337,13 @@ public sealed partial class PrologEngine
     private int FirstSiteLineAtOrAfter(int fileId, int line)
     {
         int best = -1;
-        foreach (int id in _cur.CompiledSites)
-        {
-            var site = Shumway.Core.DebugSiteTable.Get(id);
-            if (site.FileId != fileId || site.Line < line) continue;
-            if (best < 0 || site.Line < best) best = site.Line;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (int id in p.CompiledSites)
+            {
+                var site = Shumway.Core.DebugSiteTable.Get(id);
+                if (site.FileId != fileId || site.Line < line) continue;
+                if (best < 0 || site.Line < best) best = site.Line;
+            }
         return best;
     }
 

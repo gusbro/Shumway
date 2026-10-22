@@ -399,6 +399,10 @@ The host now keeps a record per linked program, and the activation carries its o
 - Making a program current repeats the arm check of query setup (the D5+ pair of
   fences): an activation that was not running when the debugger armed is armed
   at its next goal.
+- A breakpoint binds against the current program and the program linked last. A
+  consult inside a running query links the new code in a query nested in it (a
+  directive, or the trivial query that binds pending breakpoints), and the running
+  query stays current.
 
 The other readers of the address map take the activation's too: the caller's
 dialect (ADR-040) and the stack trace of an error. The cost is one small object
