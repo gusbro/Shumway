@@ -2013,8 +2013,9 @@ public sealed partial class PrologEngine
         foreach (int fid in seen)
         {
             if (_dynStore.IsDynamic(fid)) continue;
-            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
-            if (HasStaticClauses(fid)) continue;
+            // A builtin, static clauses, or a precompiled predicate (the
+            // baked prelude's false/0 and catch/3): the assert must refuse it.
+            if (HasStaticDefinition(fid)) continue;
             // Also skip if the same consult is about to define this
             // functor as a public (static) predicate — caught by
             // looking at publics + the about-to-be-added clauses.
