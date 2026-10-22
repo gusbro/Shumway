@@ -392,10 +392,11 @@ The host now keeps a record per linked program, and the activation carries its o
   running activation's program current when it starts or resumes, and the
   program of the activation it runs inside of current again when it stops. A
   setup inside a running query hands the running query's program back at its end.
-- The breakpoint table belongs to a persistent buffer. A rebuilt buffer starts a
-  table of its own, and the old one stays with the old buffer, which the outer
-  query still runs. Sites armed while another program was current are applied
-  when this one is current again; a version number says whether any changed.
+- The breakpoint table belongs to a code array (below). A rebuilt buffer is a new
+  array with a table of its own, and the old one stays with the old array, which
+  the outer query still runs. Sites armed while another program was current are
+  applied when this one is current again; a version number says whether any
+  changed.
 - Making a program current repeats the arm check of query setup (the D5+ pair of
   fences): an activation that was not running when the debugger armed is armed
   at its next goal.
@@ -409,3 +410,23 @@ dialect (ADR-040) and the stack trace of an error. The cost is one small object
 per query setup and a push and pop per run; on the A/B harness the trivial-query
 ratio against main (median 1.005) stayed within main against itself (0.994).
 Tests: `Adr035NestedQueryTests`, `NestedQueryAddressMapTests`.
+
+Code linked into a running query (a consult or a library load in the query) joins
+that query's program: its predicates go into the address map, and debuggable ones
+into the debugger's tables, so a stop or a step in them shows where it is and a
+breakpoint binds there and stops that same query.
+
+The breakpoint table belongs to a code array, not to a persistent buffer's
+lineage. The activations on one array share its table, and the code each linked
+into it while running is listed there, so a sync patches all of it. An activation
+that outgrows its array moves to a larger copy (`Activation.AppendCode`), and the
+copy gets a copy of the table at that moment (`Activation.ProgramMoved`); an
+activation still on the old array keeps the old table. Two arrays with different
+code at one address never share a table. Tests: `LiveLinkAddressMapTests`,
+`Adr035LiveLinkTests`.
+
+A stop site's file comes from its clause's position. File id 0 is reserved for no
+file: the first file interned used to get it, so the clauses of a `ConsultString`
+source took the name of whatever file was loading when they were recompiled, and a
+breakpoint on that file's line also stopped on the string's same line
+(`Adr035BreakTests.ABreakpointInAFile_DoesNotStopOnTheSameLineOfAnotherSource`).

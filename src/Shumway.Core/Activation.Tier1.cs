@@ -373,6 +373,12 @@ public sealed partial class Activation
         tables[id] = table;
     }
 
+    /// <summary>Called when <see cref="AppendCode"/> moves the program to a larger array,
+    /// a copy of the first <c>copied</c> bytes of the old one, before anything runs on it:
+    /// the host keeps state per array, the debugger's breakpoint table among it
+    /// (ADR-035).</summary>
+    public Action<Activation, int>? ProgramMoved { get; set; }
+
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
     /// and returns its start offset. Existing offsets stay valid — the
     /// content is only ever appended, never moved. Capacity doubling keeps
@@ -393,6 +399,7 @@ public sealed partial class Activation
             // (in-place) byte writes don't change the array reference,
             // so they don't need a bump; only a reallocation does.
             _programGeneration++;
+            ProgramMoved?.Invoke(this, offset);
         }
         Array.Copy(chunk, 0, program, offset, chunk.Length);
         _programLength = needed;

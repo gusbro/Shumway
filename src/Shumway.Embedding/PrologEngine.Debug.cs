@@ -419,61 +419,57 @@ public sealed partial class PrologEngine
         _breakpointSitesVersion++;
         byte[]? live = _cur.Engine?.CurrentProgram ?? _cur.Breakpoints.Program;
         if (live is null) return;
-        // A live buffer already carries our Break bytes (a realloc copies them), so un-patching
-        // it must find a Break at every recorded pc — anything else is real drift, not the
-        // routine fresh-rebuild case (which only happens at query setup).
-        SyncBreakpoints(live, bufferCarriesOurPatches: true);
+        SyncBreakpoints(_cur, live);
     }
 
-    /// <summary>ADR-035 — makes <paramref name="program"/>'s patched bytes agree with the armed
-    /// sites. First removes the patches this engine applied before, then patches what is armed
-    /// now, recording each original byte for the interpreter to re-dispatch a <c>Break</c>.
-    ///
-    /// <para><paramref name="bufferCarriesOurPatches"/> says whether <paramref name="program"/>
-    /// is the buffer our recorded patches live in — true for the buffer the activation runs
-    /// (same array or a grow-and-copy of it, which carries the <c>Break</c> bytes) and for a
-    /// reused persistent buffer at setup; false only for a freshly-rebuilt one, which was linked
-    /// clean from the compiled predicates and never carried a Break, so there is nothing to
-    /// remove and the recorded originals (from the now-dead buffer) must not be written into
-    /// it.</para></summary>
-    private void SyncBreakpoints(byte[] program, bool bufferCarriesOurPatches)
+    /// <summary>ADR-035 — makes the Break bytes in <paramref name="program"/>, the array
+    /// <paramref name="p"/>'s activation runs, agree with the armed sites. Removes the patches
+    /// the array's record holds, then patches what is armed now in the code setup linked and in
+    /// the code linked into the array while queries ran (the activations on the array share its
+    /// bytes), recording each original byte for the interpreter to re-dispatch a
+    /// <c>Break</c>.</summary>
+    private void SyncBreakpoints(LinkedProgram p, byte[] program)
     {
-        if (bufferCarriesOurPatches)
-            foreach (var (pc, original) in _cur.Breakpoints.Patches)
-            {
-                if ((uint)pc < (uint)program.Length
-                    && program[pc] == (byte)Shumway.Core.Opcode.Break)
-                    program[pc] = original;
-                else
-                {
-                    // We recorded a Break at this pc but the buffer the activation runs has none.
-                    // The guard above keeps us from writing a stale original over live code, but
-                    // this should never happen — it means the breakpoint table drifted from the
-                    // executed buffer, exactly the class of bug this design exists to prevent, so
-                    // surface it loudly for investigation rather than papering over it.
-                    string msg = $"breakpoint table out of step: recorded a Break at pc={pc} but "
-                        + $"the live buffer holds 0x{(pc < program.Length ? program[pc] : 0):X2}";
-                    Debugging.ShumwayDebugHelper.DiagLine("[Shumway diag] " + msg);
-                    System.Diagnostics.Debug.Fail(msg);
-                }
-            }
-        _cur.Breakpoints.Patches.Clear();
-        _cur.Breakpoints.Program = program;
-        _cur.Breakpoints.SitesVersion = _breakpointSitesVersion;
-
-        if (_breakpointSites.Count == 0 || _cur.Map is null) return;
-        foreach (var (predAddr, pred) in _cur.Map)
+        var record = p.Breakpoints;
+        foreach (var (pc, original) in record.Patches)
         {
+            if ((uint)pc < (uint)program.Length
+                && program[pc] == (byte)Shumway.Core.Opcode.Break)
+                program[pc] = original;
+            else
+            {
+                // We recorded a Break at this pc but the buffer the activation runs has none.
+                // The guard above keeps us from writing a stale original over live code, but
+                // this should never happen — it means the breakpoint table drifted from the
+                // executed buffer, exactly the class of bug this design exists to prevent, so
+                // surface it loudly for investigation rather than papering over it.
+                string msg = $"breakpoint table out of step: recorded a Break at pc={pc} but "
+                    + $"the live buffer holds 0x{(pc < program.Length ? program[pc] : 0):X2}";
+                Debugging.ShumwayDebugHelper.DiagLine("[Shumway diag] " + msg);
+                System.Diagnostics.Debug.Fail(msg);
+            }
+        }
+        record.Patches.Clear();
+        record.SitesVersion = _breakpointSitesVersion;
+
+        if (_breakpointSites.Count == 0) return;
+        if (p.Map is not null) PatchArmedSites(record, program, p.Map);
+        if (record.LiveCode is not null) PatchArmedSites(record, program, record.LiveCode);
+    }
+
+    private void PatchArmedSites(BreakpointRecord record, byte[] program,
+        IEnumerable<KeyValuePair<int, Shumway.Compiler.Wam.CompiledPredicate>> preds)
+    {
+        foreach (var (predAddr, pred) in preds)
             foreach (var stop in pred.DebugStops)
             {
                 if (!_breakpointSites.Contains(stop.SiteId)) continue;
                 int pc = predAddr + stop.Offset;
                 if ((uint)pc >= (uint)program.Length) continue;
-                if (_cur.Breakpoints.Patches.ContainsKey(pc)) continue;   // one site, many clauses
-                _cur.Breakpoints.Patches[pc] = program[pc];
+                if (record.Patches.ContainsKey(pc)) continue;   // one site, many clauses
+                record.Patches[pc] = program[pc];
                 program[pc] = (byte)Shumway.Core.Opcode.Break;
             }
-        }
     }
 
     /// <summary>ADR-035 — the source site at this program address, or -1 if the
@@ -1888,12 +1884,78 @@ public sealed partial class PrologEngine
         var sites = new HashSet<int>();
         var byPc = new SortedDictionary<int, int>();
         var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
-        _cur.ClauseLines = new();
-        foreach (var (predAddr, pred) in _cur.Map!)
+        var lines = new List<(int FileId, int HeadLine, int FirstLine, int LastLine)>();
+        CollectDebugTables(_cur.Map!, sites, byPc, frames, lines);
+        _cur.ClauseLines = lines;
+        _cur.CompiledSites = sites;
+        _cur.StopPcs = new int[byPc.Count];
+        _cur.StopSiteIds = new int[byPc.Count];
+        byPc.Keys.CopyTo(_cur.StopPcs, 0);
+        byPc.Values.CopyTo(_cur.StopSiteIds, 0);
+
+        _cur.ClauseStarts = new int[frames.Count];
+        _cur.ClauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
+        frames.Keys.CopyTo(_cur.ClauseStarts, 0);
+        frames.Values.CopyTo(_cur.ClauseFrames, 0);
+    }
+
+    /// <summary>Code linked into a running activation (a consult or a library load in the
+    /// query) joins its program: the address map and, for debuggable code, the debugger's
+    /// tables (where it stops, what a breakpoint binds to) and the armed breakpoints.</summary>
+    internal void NoteLiveLinked(
+        Activation engine, IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> preds)
+    {
+        if (engine.HostProgram is not LinkedProgram p) return;
+        p.AddLinked(preds);
+        if (!_flags.DebugCodegen) return;
+        var sites = new HashSet<int>();
+        var byPc = new SortedDictionary<int, int>();
+        var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
+        var lines = new List<(int FileId, int HeadLine, int FirstLine, int LastLine)>();
+        CollectDebugTables(preds, sites, byPc, frames, lines);
+        if (byPc.Count == 0 && frames.Count == 0) return;
+
+        var record = p.Breakpoints;
+        var live = record.LiveCode ??= new();
+        foreach (var entry in preds)
+            if (entry.Value.DebugStops.Count > 0) live.Add(entry);
+        if (_debugEvalDepth == 0 && _breakpointSites.Count > 0
+            && engine.CurrentProgram is { } program && ReferenceEquals(program, record.Program))
+            PatchArmedSites(record, program, preds);
+
+        // The tables can be another program's too: new ones.
+        sites.UnionWith(p.CompiledSites);
+        p.CompiledSites = sites;
+        lines.InsertRange(0, p.ClauseLines);
+        p.ClauseLines = lines;
+        for (int i = 0; i < p.StopPcs.Length; i++) byPc[p.StopPcs[i]] = p.StopSiteIds[i];
+        for (int i = 0; i < p.ClauseStarts.Length; i++) frames[p.ClauseStarts[i]] = p.ClauseFrames[i];
+        p.StopPcs = new int[byPc.Count];
+        p.StopSiteIds = new int[byPc.Count];
+        byPc.Keys.CopyTo(p.StopPcs, 0);
+        byPc.Values.CopyTo(p.StopSiteIds, 0);
+        p.ClauseStarts = new int[frames.Count];
+        p.ClauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
+        frames.Keys.CopyTo(p.ClauseStarts, 0);
+        frames.Values.CopyTo(p.ClauseFrames, 0);
+        // The next setup starts from these tables when its layout is unchanged; they now
+        // hold addresses past this program's setup.
+        if (ReferenceEquals(p, _debugTablesOwner)) _debugTablesBuiltFor = null;
+    }
+
+    /// <summary>The stops, clause frames and clause spans of <paramref name="preds"/>, by
+    /// program address.</summary>
+    private static void CollectDebugTables(
+        IEnumerable<KeyValuePair<int, Shumway.Compiler.Wam.CompiledPredicate>> preds,
+        HashSet<int>? sites, SortedDictionary<int, int> byPc,
+        SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame> frames,
+        List<(int FileId, int HeadLine, int FirstLine, int LastLine)>? lines)
+    {
+        foreach (var (predAddr, pred) in preds)
         {
             foreach (var stop in pred.DebugStops)
             {
-                sites.Add(stop.SiteId);
+                sites?.Add(stop.SiteId);
                 byPc[predAddr + stop.Offset] = stop.SiteId;
             }
             // The clause frame maps take the same second relocation as the stop
@@ -1929,19 +1991,9 @@ public sealed partial class PrologEngine
                 int headLine = i < pred.ClauseSourcePositions.Count
                     ? pred.ClauseSourcePositions[i].Line
                     : first;
-                _cur.ClauseLines.Add((fileId, Math.Min(headLine, first), first, last));
+                lines?.Add((fileId, Math.Min(headLine, first), first, last));
             }
         }
-        _cur.CompiledSites = sites;
-        _cur.StopPcs = new int[byPc.Count];
-        _cur.StopSiteIds = new int[byPc.Count];
-        byPc.Keys.CopyTo(_cur.StopPcs, 0);
-        byPc.Values.CopyTo(_cur.StopSiteIds, 0);
-
-        _cur.ClauseStarts = new int[frames.Count];
-        _cur.ClauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
-        frames.Keys.CopyTo(_cur.ClauseStarts, 0);
-        frames.Values.CopyTo(_cur.ClauseFrames, 0);
     }
 
     private int? FunctorAtAddress(int address)

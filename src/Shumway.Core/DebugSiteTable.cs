@@ -47,8 +47,11 @@ public static class DebugSiteTable
         new(StringComparer.OrdinalIgnoreCase);
 
     // Indexed by id: the fullest name we have been given for the file, which is what a
-    // debugger needs in order to open it. The key identifies; this one navigates.
-    private static readonly List<string> _fileNames = new();
+    // debugger needs in order to open it. The key identifies; this one navigates. Id 0 is
+    // no file: a position that carries it takes the file being compiled
+    // (SourcePosition.FileId), so a real file holding it would lose its clauses to whatever
+    // file is loading when they are recompiled.
+    private static readonly List<string> _fileNames = new() { "<unknown>" };
 
     private static readonly ConcurrentDictionary<DebugSite, int> _siteIds = new();
     private static readonly List<DebugSite> _sites = new();

@@ -112,6 +112,38 @@ public class Adr035BreakTests
         Assert.Equal(new[] { 4 }, hits);
     }
 
+    /// <summary>A file's directive runs a query, whose setup recompiles the module the file
+    /// adds to, the string's clauses with it. They keep the string as their file: a
+    /// breakpoint on the file's line 2 does not stop on the string's line 2.</summary>
+    [Fact]
+    public void ABreakpointInAFile_DoesNotStopOnTheSameLineOfAnotherSource()
+    {
+        //  2: after(X) :- X = done.
+        var engine = DebugEngine("after(X) :- X = done.\n");
+        //  1: mid(X) :-
+        //  2:     after(X),
+        //  3:     atom(X).
+        //  4: :- atom(a).
+        string dir = Path.Combine(Path.GetTempPath(), $"shumway-bpfile-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string file = Path.Combine(dir, "mid.pl");
+            File.WriteAllText(file, "mid(X) :-\n    after(X),\n    atom(X).\n:- atom(a).\n");
+            engine.ConsultFile(file);
+            Assert.True(engine.AddBreakpoint(file, 2) > 0);
+
+            var hits = HitsFor(engine, "mid(X).", out int solutions);
+
+            Assert.Equal(1, solutions);
+            Assert.Equal(new[] { 2 }, hits);   // mid's call to after/1, once
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
     [Fact]
     public void NoBreakpoints_MeansNoStops_AndNoCost()
     {

@@ -171,6 +171,7 @@ public sealed partial class PrologEngine
     // code address back to its predicate.
     private int[]? _sortedPredAddrs;
     private object? _sortedPredAddrsFor;
+    private int _sortedPredAddrsCount;
 
     /// <summary>ADR-040 — the source dialect of the nearest caller (the running
     /// goal, else an ancestor on the call-return chain) that lives in a dialected
@@ -192,11 +193,13 @@ public sealed partial class PrologEngine
     private string? DialectAtAddress(
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr)
     {
-        if (!ReferenceEquals(_sortedPredAddrsFor, map))
+        // A running query's map grows when code is linked into it (a consult in the query).
+        if (!ReferenceEquals(_sortedPredAddrsFor, map) || _sortedPredAddrsCount != map.Count)
         {
             _sortedPredAddrs = System.Linq.Enumerable.ToArray(map.Keys);
             System.Array.Sort(_sortedPredAddrs);
             _sortedPredAddrsFor = map;
+            _sortedPredAddrsCount = map.Count;
         }
         int[] keys = _sortedPredAddrs!;
         int idx = System.Array.BinarySearch(keys, addr);

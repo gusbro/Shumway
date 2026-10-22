@@ -47,27 +47,76 @@ public sealed partial class PrologEngine
         public int FidMemoFid;
 
         public BreakpointRecord Breakpoints;
+
+        /// <summary>Predicates linked into the activation's code while it runs (a consult
+        /// or a library load in the query). Setup builds the map per query, a layer over
+        /// the persistent base, so they go into it.</summary>
+        public void AddLinked(IReadOnlyDictionary<int, CompiledPredicate> preds)
+        {
+            if (Map is not LayeredIntMap<CompiledPredicate> map) return;
+            foreach (var (addr, pred) in preds) map[addr] = pred;
+            SortedEntries = null;
+            FidMemoLo = FidMemoHi = int.MaxValue;
+        }
     }
 
-    /// <summary>The Break bytes patched into one persistent buffer and the bytes they
-    /// replaced, shared by every activation on that buffer (a grow-and-copy carries the
-    /// patches along). A rebuilt buffer starts a record of its own, so a query nested
-    /// in another and rebuilding it leaves the outer one's record as it was.</summary>
+    /// <summary>The Break bytes patched into one code array and the bytes they replaced,
+    /// shared by every activation that runs on the array. A rebuilt buffer is a new array
+    /// with a record of its own; an array an activation outgrows is copied, and the copy
+    /// gets a copy of the record (<see cref="OnProgramMoved"/>), so two arrays never share
+    /// one.</summary>
     internal sealed class BreakpointRecord
     {
+        public BreakpointRecord(byte[]? program) => Program = program;
+
         public readonly Dictionary<int, byte> Patches = new();
-        public byte[]? Program;
+        public readonly byte[]? Program;
         public int SitesVersion;
+
+        /// <summary>The debuggable predicates linked into the array while queries ran, by
+        /// entry address. Each activation on the array linked its own; they share the
+        /// bytes, so a sync patches all of them.</summary>
+        public List<KeyValuePair<int, CompiledPredicate>>? LiveCode;
     }
 
-    private LinkedProgram _cur = new(new BreakpointRecord());
+    private LinkedProgram _cur = new(new BreakpointRecord(null));
 
     /// <summary>The program whose debugger tables were built last: the next setup
     /// starts from them, and rebuilds them only when the layout changed.</summary>
     private LinkedProgram? _debugTablesOwner;
 
-    /// <summary>The record of the persistent buffer the next setup links into.</summary>
-    private BreakpointRecord _persistentBreakpoints = new();
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], BreakpointRecord>
+        _breakpointRecords = new();
+
+    private Action<Activation, int>? _onProgramMoved;
+
+    /// <summary>The record of <paramref name="program"/>'s Break bytes; a new, empty one for
+    /// an array not seen before (a rebuilt buffer).</summary>
+    private BreakpointRecord RecordFor(byte[] program)
+        => _breakpointRecords.GetValue(program, static a => new BreakpointRecord(a));
+
+    /// <summary>An activation's code moved to a larger array holding a copy of the old one's
+    /// first <paramref name="copied"/> bytes. The new array gets a copy of the old record,
+    /// the patches and the live code inside what was copied, before anything runs on it;
+    /// an activation still on the old array keeps the old record.</summary>
+    private void OnProgramMoved(Activation engine, int copied)
+    {
+        byte[] program = engine.CurrentProgram!;
+        var old = (engine.HostProgram as LinkedProgram)?.Breakpoints;
+        var moved = new BreakpointRecord(program) { SitesVersion = old?.SitesVersion ?? 0 };
+        if (old is not null)
+        {
+            foreach (var (pc, original) in old.Patches)
+                if (pc < copied) moved.Patches[pc] = original;
+            if (old.LiveCode is { } live)
+                foreach (var entry in live)
+                    if (entry.Key < copied) (moved.LiveCode ??= new()).Add(entry);
+        }
+        _breakpointRecords.Remove(program);
+        _breakpointRecords.Add(program, moved);
+        if (engine.HostProgram is LinkedProgram p) p.Breakpoints = moved;
+        if (engine.BreakpointOriginals is not null) engine.BreakpointOriginals = moved.Patches;
+    }
 
     /// <summary>Bumped whenever the armed breakpoint sites change, so a program whose
     /// buffer was last synced before knows it is behind.</summary>
@@ -98,12 +147,11 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Makes <paramref name="p"/> the current program and its activation the
-    /// live one. Its buffer's breakpoints are brought up to date when the armed sites
+    /// live one. Its array's breakpoints are brought up to date when the armed sites
     /// changed since they were synced (while another program was current), unless a
     /// debug evaluation is running (its setup leaves them alone, ADR-035 D5); and the
-    /// activation is armed if the debugger armed in the meantime. Programs on one
-    /// persistent buffer share its stop sites (the query's own code is past the
-    /// buffer), so a sync for one is right for the others.</summary>
+    /// activation is armed if the debugger armed in the meantime. A sync patches all the
+    /// code in the array, so a sync for one program on it is right for the others.</summary>
     private void SwitchTo(LinkedProgram p)
     {
         _cur = p;
@@ -111,7 +159,7 @@ public sealed partial class PrologEngine
         var record = p.Breakpoints;
         if (_debugEvalDepth == 0 && record.SitesVersion != _breakpointSitesVersion
             && p.Engine?.CurrentProgram is { } live && ReferenceEquals(live, record.Program))
-            SyncBreakpoints(live, bufferCarriesOurPatches: true);
+            SyncBreakpoints(p, live);
         // ADR-035 D5+: the arm-publish pair, as at query setup. The activation applies
         // the arm at its next goal, on its own thread.
         System.Threading.Interlocked.MemoryBarrier();
