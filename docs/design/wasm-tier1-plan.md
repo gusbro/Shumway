@@ -643,6 +643,14 @@ every Proceed site paid (the 529-member module shrank 5.5 MB → 2.9 MB).
 Nothing outside the compiler changed: same export, same mailbox
 contract, same global cursors and markers.
 
+The helpers came to six, functions K+2 to K+7: the general unifier, term
+identity, arithmetic evaluation, the walks of `ground/1` and
+`acyclic_term/1`, and the standard order. A module carries a helper's body
+only when its code calls it, and a stub that traps in the slot otherwise,
+so a one-predicate module's fixed cost is what it uses: 3.4 KB on average
+over clpfd's thousand predicates, against 7.2 KB with every helper in every
+module.
+
 ## The prebaked prelude — a relocatable module in the bundle
 
 `shumway-link --wasm` compiles the linked bundle's static predicates
