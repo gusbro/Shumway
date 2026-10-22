@@ -87,8 +87,9 @@ Shumway; only that one selector borrows SWI's name.
   compiler needs, is native.
 
 - **The `tests/prolog` ISO conformity battery** (192 testers, 4,304
-  counted tests): **4,258 passed / 46 failed**, every tester reporting
-  (measured 2026-09; baseline before the 2026-08 campaign: 2,096 / 933).
+  counted tests): **4,261 passed / 43 failed**, every tester reporting
+  (measured 2026-09, `atom_codes_2` and `number_codes_2` again 2026-10;
+  baseline before the 2026-08 campaign: 2,096 / 933).
   The five `unicode/` testers run with no skips: `directives/encoding_1`
   3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
   `encodings` 41/8, above the SWI oracle on every tester (SWI: 2/1, 11/1,
@@ -132,13 +133,6 @@ Shumway; only that one selector borrows SWI's name.
     `at_end_of_stream_1` (2): asking about a closed stream, or asking
     whether an output stream is at its end, fails; the error tables of
     8.11 list no error for those cases.
-  - `atom_codes_2` (2) and `number_codes_2` (1): a list element that is
-    not a character code is `representation_error(character_code)`, the
-    error 8.16.5.3 and 8.16.8.3 name, whether or not the first argument
-    is bound. The tests expect `type_error(integer, E)`; the battery's
-    own note in `number_codes_2` says the standard specifies the
-    representation error, and its `lgt_number_codes_2_26` and `_28`
-    accept either.
 
   The one `syntax/numbers` failure is the lone `0''` above
   (`lgt_number_30`, which the battery itself marks de facto rather than

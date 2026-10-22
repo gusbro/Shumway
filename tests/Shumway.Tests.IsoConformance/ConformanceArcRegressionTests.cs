@@ -73,11 +73,13 @@ public sealed class ConformanceArcRegressionTests
         // The genuine enumeration, two distinct variables, still runs and
         // still stops at a safe point when asked to.
         True("time_out(length(_L, _N), 300, R), R == time_out.");
-    [Fact] public void AtomChars_CyclicListFailsInsteadOfLooping() =>
+    [Fact] public void AtomChars_CyclicListIsATypeErrorInsteadOfLooping() =>
         // IsProperListCell's exhausted guard read as "proper": a cyclic list
-        // took the check direction and was walked as text.
-        True("X = [a|X], \\+ atom_chars(abc, X), \\+ atom_codes(abc, X), "
-           + "Y = [0'a|Y], \\+ atom_codes(abc, Y).");
+        // took the check direction and was walked as text. It is neither a
+        // list nor a partial list (Cor.2 8.16.4.3 c, 8.16.5.3 c).
+        True("X = [a|X], catch(atom_chars(abc, X), error(type_error(list, _), _), true), "
+           + "catch(atom_codes(abc, X), error(type_error(list, _), _), true), "
+           + "Y = [0'a|Y], catch(atom_codes(abc, Y), error(type_error(list, _), _), true).");
     [Fact] public void Length_HugeCountFailsWithoutTruncation() =>
         // 2^64: a silent (int) cast once made this allocate a wrong-sized list.
         False("length(_, 18446744073709551616).");

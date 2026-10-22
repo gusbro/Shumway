@@ -348,13 +348,17 @@ public static class AtomListBuiltins
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // With both arguments bound the list is still type-checked
-            // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
-            // representation_error(character_code), not a silent failure,
-            // as number_codes/2 is with its Number bound.
+            // (Cor.2 8.16.5.3): atom_codes(abc, [a,b,c]) is
+            // type_error(integer, a), not a silent failure, as
+            // number_codes/2 is with its Number bound.
             // Only a proper list is validated-and-compared: a partial
-            // one (atom_codes(abc, [0'a|T])) must still unify.
+            // one (atom_codes(abc, [0'a|T])) must still unify, after the
+            // bound elements of its prefix pass the same check (Cor.2
+            // 8.16.5.3 e, f): atom_codes(abc, [a|_]) is an error, not a failure.
             if (ListCursor.IsProperListCell(engine, codesCell))
                 return ReadCodesString(engine, codesCell) == name;
+            if (codesCell.Tag is not (Tag.Ref or Tag.AttVar))
+                AtomCharBuiltins.CheckTextListPrefix(engine, codesCell, asCodes: true);
             int listIdx = BuildIntCodesList(engine, name);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
@@ -404,15 +408,8 @@ public static class AtomListBuiltins
             Cell head = Resolve(engine, rawHead);
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
-            // ISO §8.16.5.3.d: any bound element that is not a character
-            // code — wrong type or out of range alike — is
-            // representation_error(character_code). An astral code appends
-            // its surrogate pair. Not type_error(integer, E): ISO names no
-            // such error for a codes list, whatever other systems raise.
-            if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
-                throw new PrologRuntimeException(
-                    "representation_error", "character_code");
-            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
+            // An astral code appends its surrogate pair.
+            Utf16Text.AppendCodePoint(sb, AtomCharBuiltins.CodeOfElement(engine, head));
             cursor = ListCursor.Resolve(engine, rTail);
             if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
