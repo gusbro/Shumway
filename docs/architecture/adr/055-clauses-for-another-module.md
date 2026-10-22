@@ -62,7 +62,9 @@ module is `S`:
    several sources contribute clauses to it, as in SICStus; Scryer rejects
    that declaration and so cannot. A module file loaded again withdraws
    its previous contributions before adding the new ones, and so does a
-   reconsulted module-less source. A module replaced by a reload of its own
+   reconsulted module-less source. The clauses a source gives a multifile
+   predicate (point 4) go the same way: a reload withdraws its own, and the
+   other sources' clauses and the asserted ones stay. A module replaced by a reload of its own
    file keeps what other sources contributed to it, except the predicates
    the reload now defines itself.
 7. The expansion hooks keep their own path (stripped, kept in `S`), which

@@ -428,8 +428,13 @@
 % compiles internally, so loading IS the compilation step.
 '$lgt_compile_prolog_code'(_, _, _).
 
+% Reloading an entity replaces its code, as the other back ends do: the
+% intermediate file is loaded with reconsult/1, which takes back what the
+% file gave the runtime's multifile tables the last time and keeps the
+% entries of every other file. consult/1 appends, so a tester loading the
+% same entity twice in one query would see both copies.
 '$lgt_load_prolog_code'(File, _, _) :-
-	consult(File).
+	reconsult(File).
 
 '$lgt_load_prolog_file'(File) :-
 	consult(File).

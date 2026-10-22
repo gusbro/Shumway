@@ -430,7 +430,7 @@ public static partial class MetaBuiltins
         // not append to it — otherwise the stale clauses stay and the file is
         // effectively loaded twice, which is the one thing this predicate
         // exists to prevent.
-        if (host.WasConsulted(path)) host.ReconsultFile(path);
+        if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine);
         else host.ConsultFileLive(path, engine);
         return true;
     }
