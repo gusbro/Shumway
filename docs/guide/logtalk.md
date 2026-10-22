@@ -144,5 +144,8 @@ Shumway; only that one selector borrows SWI's name.
   written against Logtalk's backend-adapter interface. Upstreaming it to the
   Logtalk distribution is a possible future step.
 - Logtalk compiles each entity to an intermediate `.pl` in its scratch
-  directory and consults it; Shumway's consult-time machinery (live linking,
-  dynamic registrations, IL promotion) handles that pipeline.
+  directory and the adapter loads it with `reconsult/1`: loading an entity
+  again replaces its code, and takes back only the entries that file gave
+  the runtime's multifile tables, so the other entities keep theirs.
+  Shumway's consult-time machinery (live linking, dynamic registrations, IL
+  promotion) handles that pipeline.
