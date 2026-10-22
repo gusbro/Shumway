@@ -561,7 +561,9 @@ internal sealed class DapConnection
                 w.WriteStartObject();
                 w.WriteNumber("id", i + 1);
                 w.WriteString("name",
-                    f.HeadArgs.Length > 0 ? f.Name + f.HeadArgs : f.Name + "/" + f.Arity);
+                    f.HeadArgs.Length > 0 ? f.Name + f.HeadArgs
+                        : f.Arity < 0 ? f.Name   // the query, a dynamic clause: no Name/Arity
+                        : f.Name + "/" + f.Arity);
                 if (f.File.Length > 0)
                 {
                     w.WriteStartObject("source");

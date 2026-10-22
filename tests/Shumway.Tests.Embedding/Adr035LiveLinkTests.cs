@@ -122,6 +122,24 @@ public sealed class Adr035LiveLinkTests : IDisposable
         Assert.Equal(new[] { "after/1:2 < mid/1:2" }, rec.Stops);
     }
 
+    /// <summary>A clause the query asserted has no predicate linked for it and no source:
+    /// its frame is a dynamic clause, not the predicate linked before it.</summary>
+    [Fact]
+    public void AStopUnderAClauseTheQueryAsserted_ShowsADynamicClauseFrame()
+    {
+        var engine = Engine();
+        Assert.True(engine.AddBreakpoint("<string>", 2) > 0);
+
+        var rec = new Recorder(engine);
+        engine.AttachDebugSession(rec);
+        var sols = engine.QueryAll("assertz((am(X) :- after(X), atom(X))), am(X).").ToList();
+        engine.AttachDebugSession(null);
+        _log.WriteLine(string.Join(" | ", rec.Stops));
+
+        Assert.Single(sols);
+        Assert.Equal(new[] { "after/1:2 < <dynamic clause>/-1:0" }, rec.Stops);
+    }
+
     /// <summary>The breakpoint is set before its file is loaded; the query loads the file
     /// and calls into it.</summary>
     [Fact]

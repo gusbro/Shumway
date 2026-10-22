@@ -1974,6 +1974,8 @@ public sealed partial class PrologEngine
                 int entryAddr = sortedAddrs[idx];
                 if (!resolverMap.TryGetValue(entryAddr, out var pred))
                     return null;
+                if (PastPredicate(pred, entryAddr, addr, engine.CurrentQuerySplit))
+                    return DynamicClauseFrame;
                 var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
                 string name = AtomTable.GetById(atomId)?.Name ?? "?";
                 return $"{name}/{arity}@+{addr - entryAddr}";

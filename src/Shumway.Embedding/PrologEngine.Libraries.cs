@@ -180,18 +180,22 @@ public sealed partial class PrologEngine
     internal string? CallerDialect(Activation engine)
     {
         if (!_anyDialectedModule || PredicatesByAddressOf(engine) is not { } map) return null;
-        string? d = DialectAtAddress(map, engine.P);
+        int split = engine.CurrentQuerySplit;
+        string? d = DialectAtAddress(map, engine.P, split);
         if (d is not null) return d;
         foreach (int addr in engine.EnumerateCallReturnAddresses())
         {
-            d = DialectAtAddress(map, addr);
+            d = DialectAtAddress(map, addr, split);
             if (d is not null) return d;
         }
         return null;
     }
 
+    /// <summary>The dialect of the module whose predicate holds <paramref name="addr"/>; null
+    /// for none, and for a dynamic clause added while queries ran, whose module goes unsaid:
+    /// its caller's decides (<see cref="PastPredicate"/>).</summary>
     private string? DialectAtAddress(
-        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr)
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr, int split)
     {
         // A running query's map grows when code is linked into it (a consult in the query).
         if (!ReferenceEquals(_sortedPredAddrsFor, map) || _sortedPredAddrsCount != map.Count)
@@ -205,7 +209,9 @@ public sealed partial class PrologEngine
         int idx = System.Array.BinarySearch(keys, addr);
         if (idx < 0) idx = ~idx - 1;   // nearest entry at or below addr
         if (idx < 0) return null;
-        int fid = map[keys[idx]].FunctorId;
+        var pred = map[keys[idx]];
+        if (PastPredicate(pred, keys[idx], addr, split)) return null;
+        int fid = pred.FunctorId;
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
         string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
         int dollar = name.IndexOf('$');

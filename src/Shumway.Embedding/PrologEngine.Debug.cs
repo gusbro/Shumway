@@ -1031,12 +1031,15 @@ public sealed partial class PrologEngine
     {
         int i = IndexOfPredicateAt(pc);
         if (i < 0) return false;
+        int entry = SortedPredicateEntries()[i];
+        var pred = _cur.Map![entry];
         // ADR-035 fully-transparent control: a ,/;/-> construct (or its lowered
         // $disj_N / $call_* plumbing) is flow, not a goal — it takes no frame in
         // the call stack. Skip it but keep walking; the caller advances envIndex
         // regardless, so the next real frame still pairs with its own environment.
-        if (IsTransparentControlFunctor(
-                _cur.Map![SortedPredicateEntries()[i]].FunctorId))
+        // A dynamic clause past it is not its code.
+        if (IsTransparentControlFunctor(pred.FunctorId)
+            && !PastPredicate(pred, entry, pc, _cur.Engine?.CurrentQuerySplit ?? 0))
             return false;
         sites.Add((pc, env));
         return IsQueryEntry(i);
@@ -1068,6 +1071,20 @@ public sealed partial class PrologEngine
         Shumway.Compiler.Wam.CompiledPredicate pred, int predicateAddress, int pc)
         => pc >= predicateAddress && pc < predicateAddress + pred.Bytecode.Length;
 
+    /// <summary>The name of a frame in code added to an activation's array while queries
+    /// ran: an asserted clause, a dynamic clause a consult in the query added, and the chain
+    /// code that holds them. No predicate is linked there, so which one it is goes unsaid
+    /// rather than wrong; arity -1 says the frame is not a Name/Arity.</summary>
+    internal const string DynamicClauseFrame = "<dynamic clause>";
+
+    /// <summary>Whether <paramref name="pc"/>, which the search for the nearest entry placed
+    /// in <paramref name="pred"/> at <paramref name="entry"/>, lies past that predicate's
+    /// code and below the query's region (<paramref name="querySplit"/>): in code added to
+    /// the array while queries ran. The query's region is linked in one piece.</summary>
+    internal static bool PastPredicate(
+        Shumway.Compiler.Wam.CompiledPredicate pred, int entry, int pc, int querySplit)
+        => pc >= entry + pred.Bytecode.Length && (querySplit <= 0 || pc < querySplit);
+
     /// <summary>A call stack is a column, not a page: a query long enough to wrap turns the
     /// whole stack unreadable, and the tail of a goal is not what identifies it.</summary>
     private static string Ellipsize(string text, int max)
@@ -1089,6 +1106,12 @@ public sealed partial class PrologEngine
         if (i < 0) i = ~i - 1;
         if (i < 0) return false;
         var pred = _cur.Map[entries[i]];
+        if (PastPredicate(pred, entries[i], pc, engine.CurrentQuerySplit))
+        {
+            frames.Add(new DebugFrame(DynamicClauseFrame, -1, "", 0, pc,
+                Array.Empty<(string, string)>()));
+            return false;
+        }
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
 
@@ -2004,11 +2027,18 @@ public sealed partial class PrologEngine
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
+        var pred = _cur.Map[entries[i]];
+        int split = _cur.Engine?.CurrentQuerySplit ?? 0;
+        if (PastPredicate(pred, entries[i], address, split)) return null;
         // The memo range reproduces the search's clamp semantics exactly: everything
-        // from this predicate's start to the next predicate's start resolves here.
+        // from this predicate's start to the next predicate's start resolves here, except
+        // past the end of a predicate below the query's region.
+        int hi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
+        int end = entries[i] + pred.Bytecode.Length;
+        if (split <= 0 || end < split) hi = Math.Min(hi, end);
         _cur.FidMemoLo = entries[i];
-        _cur.FidMemoHi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
-        _cur.FidMemoFid = _cur.Map[entries[i]].FunctorId;
+        _cur.FidMemoHi = hi;
+        _cur.FidMemoFid = pred.FunctorId;
         return _cur.FidMemoFid;
     }
 
@@ -2101,7 +2131,8 @@ public sealed partial class PrologEngine
         addresses.Add(engine.P);
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
             addresses.Add(retAddr);
-        return ResolveAddressesWithPositions(addresses, PredicatesByAddressOf(engine));
+        return ResolveAddressesWithPositions(
+            addresses, PredicatesByAddressOf(engine), engine.CurrentQuerySplit);
     }
 
     /// <summary>Translates each address to the predicate that contains it (the
@@ -2112,7 +2143,8 @@ public sealed partial class PrologEngine
     private (IReadOnlyList<(string Name, int Arity)> Plain,
              IReadOnlyList<StackFrame> WithPositions)
         ResolveAddressesWithPositions(IEnumerable<int> addresses,
-            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map)
+            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map,
+            int querySplit)
     {
         if (map is null)
             return (Array.Empty<(string, int)>(), Array.Empty<StackFrame>());
@@ -2151,8 +2183,18 @@ public sealed partial class PrologEngine
             if (idx < 0) idx = ~idx - 1;
             if (idx < 0) continue;
             int entryAddr = sortedEntries[idx];
-            if (!seen.Add(entryAddr)) continue;
             var pred = map[entryAddr];
+            if (PastPredicate(pred, entryAddr, addr, querySplit))
+            {
+                // One frame for a run of them: which clauses they are is not known.
+                if (plain.Count == 0 || plain[^1].Item1 != DynamicClauseFrame)
+                {
+                    plain.Add((DynamicClauseFrame, -1));
+                    frames.Add(new StackFrame(DynamicClauseFrame, -1, SourcePosition.Start));
+                }
+                continue;
+            }
+            if (!seen.Add(entryAddr)) continue;
             var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
             string name = AtomTable.GetById(atomId)?.Name ?? "?";
             if (name == "__query__") continue;

@@ -425,6 +425,14 @@ activation still on the old array keeps the old table. Two arrays with different
 code at one address never share a table. Tests: `LiveLinkAddressMapTests`,
 `Adr035LiveLinkTests`.
 
+A clause asserted while a query runs is not linked as a predicate: its code is a
+chunk past the end of the predicates setup linked, below the query's region. An
+address there reads as a dynamic clause (`<dynamic clause>`, arity -1) in the
+debugger's frames and in an error's stack trace, and the dialect check asks its
+caller. Naming the predicate would need a record per chunk, which an
+assert/retract loop would grow without end; the debugger has no source to show
+for it anyway. The next query links the clause, and it is named from then on.
+
 A stop site's file comes from its clause's position. File id 0 is reserved for no
 file: the first file interned used to get it, so the clauses of a `ConsultString`
 source took the name of whatever file was loading when they were recompiled, and a
