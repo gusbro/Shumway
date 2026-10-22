@@ -185,6 +185,13 @@ public sealed partial class Activation
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
 
+    /// <summary>The host's record of the program this activation runs (its
+    /// address map and what the host derives from it), set when the host links
+    /// it; opaque here, as <see cref="Host"/> is. A query nested in this one
+    /// links a program of its own, so the host's current one need not be this
+    /// one's.</summary>
+    public object? HostProgram { get; set; }
+
     /// <summary>Set by the host: whether compiled code (Tier-1) may run for this
     /// activation. Compiled code counts no inferences, so <c>time/1</c> then
     /// reports none and <c>statistics(inferences, _)</c> counts its own call.</summary>

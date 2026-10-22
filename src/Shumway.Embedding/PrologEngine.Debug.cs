@@ -24,7 +24,7 @@ public sealed partial class PrologEngine
     /// downstream of compilation knows what it says; a call stack whose top frame is a bare
     /// <c>?-</c> tells the user nothing. Captured at query setup (debug sessions only —
     /// rendering a term is not free, and an undebugged engine has no one to tell).</summary>
-    internal string? CurrentQueryText { get; private set; }
+    internal string? CurrentQueryText => _cur.QueryText;
 
     /// <summary>What to CALL the running query in a debugger, when the goal the engine was
     /// handed is not the goal the user typed. A top level wraps what you type (Shumway's own
@@ -49,9 +49,6 @@ public sealed partial class PrologEngine
     // address.
 
     private readonly HashSet<int> _breakpointSites = new();
-    private readonly Dictionary<int, byte> _breakpointPatches = new();
-    private HashSet<int> _compiledSites = new();
-    private byte[]? _patchedProgram;
 
     /// <summary>ADR-035 — the source sites currently armed
     /// (<see cref="Shumway.Core.DebugSiteTable"/> ids).</summary>
@@ -118,7 +115,7 @@ public sealed partial class PrologEngine
             int bound = 0;
             foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
             {
-                if (!_compiledSites.Contains(id)) continue;
+                if (!IsBindable(id)) continue;
                 _breakpointSites.Add(id);
                 _breakpointRequests[id] = (fileId, line);
                 bound++;
@@ -169,11 +166,12 @@ public sealed partial class PrologEngine
     {
         if (_requestedBreakpoints.Count == 0) return;
 
-        // Relink first. The set of sites a breakpoint may bind to (_compiledSites) is rebuilt
+        // Relink first. The set of sites a breakpoint may bind to (BindablePrograms) is rebuilt
         // when a query is set up, not when a file is consulted — so right after a consult it
         // still describes the program as it was before, and the clauses that just arrived are
         // invisible. EnsureCodeLinked would not do it: it sees a linked code space and returns
-        // happy. A trivial query is what actually rebuilds the map.
+        // happy. A trivial query is what actually rebuilds the map; inside a running query (a
+        // consult goal) it is a nested one, and the running query stays current.
         foreach (var _ in QueryAll("true.")) break;
 
         // A copy: AddBreakpoint writes to the set (idempotently — it is a set), and
@@ -205,11 +203,6 @@ public sealed partial class PrologEngine
         return SnapToCompiledLine(Shumway.Core.DebugSiteTable.InternFile(file), line);
     }
 
-    // The source span of every debuggable clause: where its head is written, and the
-    // first and last lines it can be stopped at. Built alongside _stopPcs.
-    private readonly List<(int FileId, int HeadLine, int FirstLine, int LastLine)>
-        _clauseLines = new();
-
     /// <summary>ADR-035 — the line a breakpoint on <paramref name="line"/> binds at, or
     /// -1 for a hollow one.
     ///
@@ -222,21 +215,39 @@ public sealed partial class PrologEngine
     /// was not looking at.</para></summary>
     private int SnapToCompiledLine(int fileId, int line)
     {
-        foreach (int id in _compiledSites)
-        {
-            var site = Shumway.Core.DebugSiteTable.Get(id);
-            if (site.FileId == fileId && site.Line == line) return line;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (int id in p.CompiledSites)
+            {
+                var site = Shumway.Core.DebugSiteTable.Get(id);
+                if (site.FileId == fileId && site.Line == line) return line;
+            }
 
         int best = -1;
-        foreach (var clause in _clauseLines)
-        {
-            if (clause.FileId != fileId) continue;
-            if (line < clause.HeadLine || line > clause.LastLine) continue;
-            int target = FirstSiteLineAtOrAfter(fileId, Math.Max(line, clause.FirstLine));
-            if (target > 0 && (best < 0 || target < best)) best = target;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (var clause in p.ClauseLines)
+            {
+                if (clause.FileId != fileId) continue;
+                if (line < clause.HeadLine || line > clause.LastLine) continue;
+                int target = FirstSiteLineAtOrAfter(fileId, Math.Max(line, clause.FirstLine));
+                if (target > 0 && (best < 0 || target < best)) best = target;
+            }
         return best;
+    }
+
+    /// <summary>The programs a breakpoint binds against: the current one, and the one whose
+    /// tables were built last. A consult inside a running query links the new code into a
+    /// query nested in it (a directive, <see cref="RebindPendingBreakpoints"/>'s), and the
+    /// running query stays current; the armed sites apply to every program that has them.</summary>
+    private LinkedProgram[] BindablePrograms()
+        => _debugTablesOwner is { } last && !ReferenceEquals(last, _cur)
+            ? new[] { _cur, last }
+            : new[] { _cur };
+
+    private bool IsBindable(int siteId)
+    {
+        foreach (var p in BindablePrograms())
+            if (p.CompiledSites.Contains(siteId)) return true;
+        return false;
     }
 
     /// <summary>ADR-035 D5+ (Set Next Statement) — every stop site of the clause that
@@ -245,21 +256,21 @@ public sealed partial class PrologEngine
     /// clause.</summary>
     internal IReadOnlyList<(int Pc, int Line)> ClauseSites(int pc)
     {
-        if (_clauseStarts.Length == 0 || _stopPcs.Length == 0 || pc < 0)
+        if (_cur.ClauseStarts.Length == 0 || _cur.StopPcs.Length == 0 || pc < 0)
             return Array.Empty<(int, int)>();
-        int i = Array.BinarySearch(_clauseStarts, pc);
+        int i = Array.BinarySearch(_cur.ClauseStarts, pc);
         if (i < 0) i = ~i - 1;
         if (i < 0) return Array.Empty<(int, int)>();
-        int start = _clauseStarts[i];
-        int end = i + 1 < _clauseStarts.Length ? _clauseStarts[i + 1] : int.MaxValue;
+        int start = _cur.ClauseStarts[i];
+        int end = i + 1 < _cur.ClauseStarts.Length ? _cur.ClauseStarts[i + 1] : int.MaxValue;
 
         var result = new List<(int, int)>();
-        int j = Array.BinarySearch(_stopPcs, start);
+        int j = Array.BinarySearch(_cur.StopPcs, start);
         if (j < 0) j = ~j;
-        for (; j < _stopPcs.Length && _stopPcs[j] < end; j++)
+        for (; j < _cur.StopPcs.Length && _cur.StopPcs[j] < end; j++)
         {
-            var site = Shumway.Core.DebugSiteTable.Get(_stopSiteIds[j]);
-            result.Add((_stopPcs[j], site.Line));
+            var site = Shumway.Core.DebugSiteTable.Get(_cur.StopSiteIds[j]);
+            result.Add((_cur.StopPcs[j], site.Line));
         }
         return result;
     }
@@ -273,18 +284,18 @@ public sealed partial class PrologEngine
     {
         var result = new List<(int, int, int, int)>();
         int i = IndexOfPredicateAt(pc);
-        if (i < 0 || _clauseStarts.Length == 0) return result;
+        if (i < 0 || _cur.ClauseStarts.Length == 0) return result;
         var entries = SortedPredicateEntries();
         int predStart = entries[i];
-        var pred = _currentPredicatesByAddress![predStart];
+        var pred = _cur.Map![predStart];
         if (!WithinPredicate(pred, predStart, pc)) return result;
         int predEnd = predStart + pred.Bytecode.Length;
 
-        int j = Array.BinarySearch(_clauseStarts, predStart);
+        int j = Array.BinarySearch(_cur.ClauseStarts, predStart);
         if (j < 0) j = ~j;
-        for (; j < _clauseStarts.Length && _clauseStarts[j] < predEnd; j++)
+        for (; j < _cur.ClauseStarts.Length && _cur.ClauseStarts[j] < predEnd; j++)
         {
-            int clauseStart = _clauseStarts[j];
+            int clauseStart = _cur.ClauseStarts[j];
             var sites = ClauseSites(clauseStart);
             if (sites.Count == 0) continue;
             int firstSite = SiteAt(sites[0].Pc);
@@ -303,7 +314,7 @@ public sealed partial class PrologEngine
         int i = IndexOfPredicateAt(pc);
         if (i < 0) return -1;
         int predStart = SortedPredicateEntries()[i];
-        return WithinPredicate(_currentPredicatesByAddress![predStart], predStart, pc)
+        return WithinPredicate(_cur.Map![predStart], predStart, pc)
             ? predStart : -1;
     }
 
@@ -314,7 +325,7 @@ public sealed partial class PrologEngine
     /// clause spans the line.</summary>
     internal (int HeadLine, int FirstLine, int LastLine)? ClauseLineSpan(int fileId, int line)
     {
-        foreach (var c in _clauseLines)
+        foreach (var c in _cur.ClauseLines)
         {
             if (c.FileId != fileId) continue;
             if (line >= c.HeadLine && line <= c.LastLine)
@@ -326,12 +337,13 @@ public sealed partial class PrologEngine
     private int FirstSiteLineAtOrAfter(int fileId, int line)
     {
         int best = -1;
-        foreach (int id in _compiledSites)
-        {
-            var site = Shumway.Core.DebugSiteTable.Get(id);
-            if (site.FileId != fileId || site.Line < line) continue;
-            if (best < 0 || site.Line < best) best = site.Line;
-        }
+        foreach (var p in BindablePrograms())
+            foreach (int id in p.CompiledSites)
+            {
+                var site = Shumway.Core.DebugSiteTable.Get(id);
+                if (site.FileId != fileId || site.Line < line) continue;
+                if (best < 0 || site.Line < best) best = site.Line;
+            }
         return best;
     }
 
@@ -363,7 +375,7 @@ public sealed partial class PrologEngine
     /// to ask for exactly the work a query's setup does.</summary>
     private void EnsureCodeLinked()
     {
-        if (_currentPredicatesByAddress is not null) return;
+        if (_cur.Map is not null) return;
         foreach (var _ in QueryAll("true.")) break;
     }
 
@@ -401,10 +413,11 @@ public sealed partial class PrologEngine
     /// it is the same array, and if it did, it is the new one.</para></summary>
     private void RefreshBreakpoints()
     {
-        // _lastQueryEngine is the activation of the query in flight (or the one just stopped),
-        // and it is saved/restored around an Immediate-window evaluation, so this is the buffer
-        // the code the user is looking at actually runs — following a mid-query realloc.
-        byte[]? live = _lastQueryEngine?.CurrentProgram ?? _patchedProgram;
+        // The current program's activation is the query in flight (or the one just stopped):
+        // the one running, a query nested in it switching back when it stops, so this is the
+        // buffer the code the user is looking at actually runs — following a mid-query realloc.
+        _breakpointSitesVersion++;
+        byte[]? live = _cur.Engine?.CurrentProgram ?? _cur.Breakpoints.Program;
         if (live is null) return;
         // A live buffer already carries our Break bytes (a realloc copies them), so un-patching
         // it must find a Break at every recorded pc — anything else is real drift, not the
@@ -426,7 +439,7 @@ public sealed partial class PrologEngine
     private void SyncBreakpoints(byte[] program, bool bufferCarriesOurPatches)
     {
         if (bufferCarriesOurPatches)
-            foreach (var (pc, original) in _breakpointPatches)
+            foreach (var (pc, original) in _cur.Breakpoints.Patches)
             {
                 if ((uint)pc < (uint)program.Length
                     && program[pc] == (byte)Shumway.Core.Opcode.Break)
@@ -444,36 +457,32 @@ public sealed partial class PrologEngine
                     System.Diagnostics.Debug.Fail(msg);
                 }
             }
-        _breakpointPatches.Clear();
-        _patchedProgram = program;
+        _cur.Breakpoints.Patches.Clear();
+        _cur.Breakpoints.Program = program;
+        _cur.Breakpoints.SitesVersion = _breakpointSitesVersion;
 
-        if (_breakpointSites.Count == 0 || _currentPredicatesByAddress is null) return;
-        foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+        if (_breakpointSites.Count == 0 || _cur.Map is null) return;
+        foreach (var (predAddr, pred) in _cur.Map)
         {
             foreach (var stop in pred.DebugStops)
             {
                 if (!_breakpointSites.Contains(stop.SiteId)) continue;
                 int pc = predAddr + stop.Offset;
                 if ((uint)pc >= (uint)program.Length) continue;
-                if (_breakpointPatches.ContainsKey(pc)) continue;   // one site, many clauses
-                _breakpointPatches[pc] = program[pc];
+                if (_cur.Breakpoints.Patches.ContainsKey(pc)) continue;   // one site, many clauses
+                _cur.Breakpoints.Patches[pc] = program[pc];
                 program[pc] = (byte)Shumway.Core.Opcode.Break;
             }
         }
     }
-
-    // Every stop site in the loaded program, by program address, sorted. Built
-    // alongside _compiledSites; empty unless something was compiled debuggable.
-    private int[] _stopPcs = Array.Empty<int>();
-    private int[] _stopSiteIds = Array.Empty<int>();
 
     /// <summary>ADR-035 — the source site at this program address, or -1 if the
     /// address is not a stop site. What a session that receives <c>OnBreak(pc)</c>
     /// uses to say where it stopped.</summary>
     public int SiteAt(int pc)
     {
-        int i = Array.BinarySearch(_stopPcs, pc);
-        return i >= 0 ? _stopSiteIds[i] : -1;
+        int i = Array.BinarySearch(_cur.StopPcs, pc);
+        return i >= 0 ? _cur.StopSiteIds[i] : -1;
     }
 
     /// <summary>ADR-035 — the source site this program address is inside: the last
@@ -482,10 +491,10 @@ public sealed partial class PrologEngine
     /// precedes it. Returns -1 before the first site in the program.</summary>
     public int SiteAtOrBefore(int pc)
     {
-        if (_stopPcs.Length == 0) return -1;
-        int i = Array.BinarySearch(_stopPcs, pc);
+        if (_cur.StopPcs.Length == 0) return -1;
+        int i = Array.BinarySearch(_cur.StopPcs, pc);
         if (i < 0) i = ~i - 1;
-        return i >= 0 ? _stopSiteIds[i] : -1;
+        return i >= 0 ? _cur.StopSiteIds[i] : -1;
     }
 
     /// <summary>As <see cref="SiteAtOrBefore"/>, but only within the predicate that
@@ -496,20 +505,14 @@ public sealed partial class PrologEngine
     /// blames an unrelated file, line and all, with complete confidence.</summary>
     public int SiteWithinPredicate(int pc)
     {
-        if (_stopPcs.Length == 0) return -1;
-        int i = Array.BinarySearch(_stopPcs, pc);
+        if (_cur.StopPcs.Length == 0) return -1;
+        int i = Array.BinarySearch(_cur.StopPcs, pc);
         if (i < 0) i = ~i - 1;
         if (i < 0) return -1;
         int predIdx = IndexOfPredicateAt(pc);
-        if (predIdx >= 0 && _stopPcs[i] < SortedPredicateEntries()[predIdx]) return -1;
-        return _stopSiteIds[i];
+        if (predIdx >= 0 && _cur.StopPcs[i] < SortedPredicateEntries()[predIdx]) return -1;
+        return _cur.StopSiteIds[i];
     }
-
-    // Every debuggable clause in the loaded program, by program address, sorted.
-    // Built alongside _stopPcs; empty unless something was compiled debuggable.
-    private int[] _clauseStarts = Array.Empty<int>();
-    private Shumway.Compiler.Wam.DebugClauseFrame[] _clauseFrames
-        = Array.Empty<Shumway.Compiler.Wam.DebugClauseFrame>();
 
     /// <summary>ADR-035 — the first clause at or after a predicate's entry address. A
     /// predicate does not begin with its clause: the dispatch prologue comes first, and the
@@ -517,20 +520,20 @@ public sealed partial class PrologEngine
     /// only thing we know about it.</summary>
     private int FirstClauseStartAtOrAfter(int predicateAddress)
     {
-        if (_clauseStarts.Length == 0) return -1;
-        int i = Array.BinarySearch(_clauseStarts, predicateAddress);
+        if (_cur.ClauseStarts.Length == 0) return -1;
+        int i = Array.BinarySearch(_cur.ClauseStarts, predicateAddress);
         if (i < 0) i = ~i;                       // the first clause that starts after it
-        return i < _clauseStarts.Length ? _clauseStarts[i] : -1;
+        return i < _cur.ClauseStarts.Length ? _cur.ClauseStarts[i] : -1;
     }
 
     /// <summary>ADR-035 — the clause executing at this program address.</summary>
     private Shumway.Compiler.Wam.DebugClauseFrame? ClauseAt(int pc)
     {
-        if (_clauseStarts.Length == 0 || pc < 0) return null;
-        int i = Array.BinarySearch(_clauseStarts, pc);
+        if (_cur.ClauseStarts.Length == 0 || pc < 0) return null;
+        int i = Array.BinarySearch(_cur.ClauseStarts, pc);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
-        var clause = _clauseFrames[i];
+        var clause = _cur.ClauseFrames[i];
         return pc < clause.End ? clause : null;
     }
 
@@ -786,50 +789,23 @@ public sealed partial class PrologEngine
         return (BuildList(infos), BuildList(roots), attvars);
     }
 
-    /// <summary>ADR-035 — everything a nested Immediate-window evaluation clobbers.
+    /// <summary>ADR-035 — what a nested Immediate-window evaluation brackets itself with.
     ///
     /// <para>An evaluated goal runs as a real query — <c>SetupQueryFromTerm</c>, a fresh
     /// activation, the live database — which is exactly the semantics asked for
-    /// (an <c>assertz</c> persists like any mid-query nested activation's). But query setup
-    /// also rebuilds the per-query debug tables and the address→predicate map, and the
-    /// suspended query — the one the user is stopped in, and will resume with F5 — still
-    /// needs its own: its wrapper's addresses are not in the new map, and a stack walk
-    /// through them after the eval would mislabel the bottom of the user's stack. So the
-    /// eval brackets itself: save these, run, put them back. The code space itself is
-    /// append-only; nothing the eval linked invalidates the suspended query's
-    /// addresses.</para></summary>
+    /// (an <c>assertz</c> persists like any mid-query nested activation's). Its setup links
+    /// a program of its own and makes it current; the suspended query — the one the user is
+    /// stopped in, and will resume with F5 — keeps its own (<see cref="LinkedProgram"/>),
+    /// and the scope names it, with the label the host gave the query, to put back.</para></summary>
     internal sealed class DebugEvalScope
     {
-        public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? Predicates;
-        public int[]? SortedEntries;
-        public HashSet<int> CompiledSites = new();
-        public int[] StopPcs = Array.Empty<int>();
-        public int[] StopSiteIds = Array.Empty<int>();
-        public int[] ClauseStarts = Array.Empty<int>();
-        public Shumway.Compiler.Wam.DebugClauseFrame[] ClauseFrames
-            = Array.Empty<Shumway.Compiler.Wam.DebugClauseFrame>();
-        public (int, int, int, int)[] ClauseLines = Array.Empty<(int, int, int, int)>();
-        public string? QueryText;
+        public LinkedProgram Program = null!;
         public string? Label;
-        public Activation? LastEngine;
     }
 
     internal DebugEvalScope BeginDebugEvaluation()
     {
-        var scope = new DebugEvalScope
-        {
-            Predicates = _currentPredicatesByAddress,
-            SortedEntries = _sortedPredEntries,
-            CompiledSites = _compiledSites,
-            StopPcs = _stopPcs,
-            StopSiteIds = _stopSiteIds,
-            ClauseStarts = _clauseStarts,
-            ClauseFrames = _clauseFrames,
-            ClauseLines = _clauseLines.ToArray(),
-            QueryText = CurrentQueryText,
-            Label = QueryLabel,
-            LastEngine = _lastQueryEngine,
-        };
+        var scope = new DebugEvalScope { Program = _cur, Label = QueryLabel };
         _debugEvalDepth++;
         return scope;
     }
@@ -837,18 +813,9 @@ public sealed partial class PrologEngine
     internal void EndDebugEvaluation(DebugEvalScope scope)
     {
         _debugEvalDepth--;
-        _currentPredicatesByAddress = scope.Predicates;
-        _sortedPredEntries = scope.SortedEntries;
-        _compiledSites = scope.CompiledSites;
-        _stopPcs = scope.StopPcs;
-        _stopSiteIds = scope.StopSiteIds;
-        _clauseStarts = scope.ClauseStarts;
-        _clauseFrames = scope.ClauseFrames;
-        _clauseLines.Clear();
-        _clauseLines.AddRange(scope.ClauseLines);
-        CurrentQueryText = scope.QueryText;
+        _cur = scope.Program;
         QueryLabel = scope.Label;
-        _lastQueryEngine = scope.LastEngine;
+        _lastQueryEngine = scope.Program.Engine;
     }
 
     /// <summary>ADR-035 D5 — how many debug evaluations (Immediate-window goals, breakpoint
@@ -860,13 +827,6 @@ public sealed partial class PrologEngine
     /// next real query), and no breakpoint re-sync (the armed table describes the outer
     /// query's buffer and must keep doing so).</summary>
     private int _debugEvalDepth;
-
-    /// <summary>ADR-035 D5 — the persistent buffer was rebuilt by a debug evaluation's
-    /// nested setup (the outer query had already invalidated it), which skips the breakpoint
-    /// sync: the fresh buffer never received the armed Break bytes. The next real setup
-    /// consumes this to pass <c>bufferCarriesOurPatches: false</c> for a buffer it would
-    /// otherwise assume it had patched.</summary>
-    private bool _persistentRebuiltPatchFree;
 
     /// <summary>How many frames a stop carries before it starts leaving some out, and how
     /// they are divided when it does: the innermost <see cref="HeadFrames"/> — where the
@@ -1080,7 +1040,7 @@ public sealed partial class PrologEngine
         // the call stack. Skip it but keep walking; the caller advances envIndex
         // regardless, so the next real frame still pairs with its own environment.
         if (IsTransparentControlFunctor(
-                _currentPredicatesByAddress![SortedPredicateEntries()[i]].FunctorId))
+                _cur.Map![SortedPredicateEntries()[i]].FunctorId))
             return false;
         sites.Add((pc, env));
         return IsQueryEntry(i);
@@ -1090,7 +1050,7 @@ public sealed partial class PrologEngine
     /// <see cref="SortedPredicateEntries"/>; -1 when the address names none.</summary>
     private int IndexOfPredicateAt(int pc)
     {
-        if (_currentPredicatesByAddress is null || pc < 0) return -1;
+        if (_cur.Map is null || pc < 0) return -1;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, pc);
         if (i < 0) i = ~i - 1;
@@ -1099,7 +1059,7 @@ public sealed partial class PrologEngine
 
     private bool IsQueryEntry(int entryIndex)
     {
-        var pred = _currentPredicatesByAddress![SortedPredicateEntries()[entryIndex]];
+        var pred = _cur.Map![SortedPredicateEntries()[entryIndex]];
         var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
         return DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?") == "__query__";
     }
@@ -1127,12 +1087,12 @@ public sealed partial class PrologEngine
     private bool AddFrame(
         Activation engine, List<DebugFrame> frames, int pc, int env, DebugValueBag bag)
     {
-        if (_currentPredicatesByAddress is null || pc < 0) return false;
+        if (_cur.Map is null || pc < 0) return false;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, pc);
         if (i < 0) i = ~i - 1;
         if (i < 0) return false;
-        var pred = _currentPredicatesByAddress[entries[i]];
+        var pred = _cur.Map[entries[i]];
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
 
@@ -1417,7 +1377,7 @@ public sealed partial class PrologEngine
     /// </summary>
     internal int RetryClauseSite(int retryPc)
     {
-        var program = _patchedProgram;
+        var program = _cur.Breakpoints.Program;
         if (program is null || retryPc < 0 || retryPc >= program.Length) return retryPc;
 
         byte opByte = OpcodeAt(program, retryPc);
@@ -1437,17 +1397,17 @@ public sealed partial class PrologEngine
         // end of the predicate, or a clause with no site of its own (one the compiler
         // built, or a predicate compiled without debug) would borrow the next
         // predicate's line.
-        if (_stopPcs.Length == 0) return body;
-        int i = Array.BinarySearch(_stopPcs, body);
+        if (_cur.StopPcs.Length == 0) return body;
+        int i = Array.BinarySearch(_cur.StopPcs, body);
         if (i < 0) i = ~i;
-        if (i >= _stopPcs.Length) return body;
+        if (i >= _cur.StopPcs.Length) return body;
 
         var entries = SortedPredicateEntries();
         int j = Array.BinarySearch(entries, body);
         if (j < 0) j = ~j - 1;
         int endOfPredicate = j >= 0 && j + 1 < entries.Length ? entries[j + 1] : int.MaxValue;
 
-        return _stopPcs[i] < endOfPredicate ? _stopPcs[i] : body;
+        return _cur.StopPcs[i] < endOfPredicate ? _cur.StopPcs[i] : body;
     }
 
     /// <summary>The opcode really at <paramref name="pc"/> — an armed breakpoint has
@@ -1456,7 +1416,7 @@ public sealed partial class PrologEngine
     {
         byte b = program[pc];
         return b == (byte)Shumway.Core.Opcode.Break
-               && _breakpointPatches.TryGetValue(pc, out byte original)
+               && _cur.Breakpoints.Patches.TryGetValue(pc, out byte original)
             ? original
             : b;
     }
@@ -1467,12 +1427,12 @@ public sealed partial class PrologEngine
     /// of a clause chain, never at its head.</summary>
     internal (string Name, int Arity)? PredicateContaining(int address)
     {
-        if (_currentPredicatesByAddress is null || address < 0) return null;
+        if (_cur.Map is null || address < 0) return null;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
-        var pred = _currentPredicatesByAddress[entries[i]];
+        var pred = _cur.Map[entries[i]];
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
         return name == "__query__" ? null : (name, arity);
@@ -1486,12 +1446,12 @@ public sealed partial class PrologEngine
     /// does not depend on how that string was derived at compile time.</summary>
     internal string? ModulePrefixAt(int address)
     {
-        if (_currentPredicatesByAddress is null || address < 0) return null;
+        if (_cur.Map is null || address < 0) return null;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
-        var pred = _currentPredicatesByAddress[entries[i]];
+        var pred = _cur.Map[entries[i]];
         var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
         string mangled = AtomTable.GetById(atomId)?.Name ?? "";
         int sep = mangled.IndexOf('$');
@@ -1545,8 +1505,8 @@ public sealed partial class PrologEngine
     /// before falling back to the plain (global / builtin) name.</summary>
     internal bool HasDefinedPredicate(string mangledName, int arity)
     {
-        if (_currentPredicatesByAddress is null) return false;
-        foreach (var pred in _currentPredicatesByAddress.Values)
+        if (_cur.Map is null) return false;
+        foreach (var pred in _cur.Map.Values)
         {
             var (atomId, ar) = FunctorTable.Lookup(pred.FunctorId);
             if (ar != arity) continue;
@@ -1561,8 +1521,8 @@ public sealed partial class PrologEngine
     internal HashSet<string> DefinedModulePrefixes()
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
-        if (_currentPredicatesByAddress is not null)
-            foreach (var pred in _currentPredicatesByAddress.Values)
+        if (_cur.Map is not null)
+            foreach (var pred in _cur.Map.Values)
             {
                 var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
                 string mangled = AtomTable.GetById(atomId)?.Name ?? "";
@@ -1664,16 +1624,14 @@ public sealed partial class PrologEngine
             => s.EndsWith(".pl", StringComparison.OrdinalIgnoreCase) ? s.Substring(0, s.Length - 3) : s;
     }
 
-    private int[]? _sortedPredEntries;
-
     private int[] SortedPredicateEntries()
     {
-        if (_sortedPredEntries is not null) return _sortedPredEntries;
-        var keys = new int[_currentPredicatesByAddress!.Count];
+        if (_cur.SortedEntries is not null) return _cur.SortedEntries;
+        var keys = new int[_cur.Map!.Count];
         int n = 0;
-        foreach (int addr in _currentPredicatesByAddress.Keys) keys[n++] = addr;
+        foreach (int addr in _cur.Map.Keys) keys[n++] = addr;
         Array.Sort(keys);
-        return _sortedPredEntries = keys;
+        return _cur.SortedEntries = keys;
     }
 
     /// <summary>ADR-035 — attaches a debug session (or <c>null</c> to detach).
@@ -1893,7 +1851,7 @@ public sealed partial class PrologEngine
     /// a goal worth reporting".</summary>
     internal (string Name, int Arity)? LookupPredicateByAddress(int address)
     {
-        var map = _currentPredicatesByAddress;
+        var map = _cur.Map;
         if (map is null || !map.TryGetValue(address, out var pred)) return null;
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = AtomTable.GetById(atomId)?.Name ?? "?";
@@ -1930,8 +1888,8 @@ public sealed partial class PrologEngine
         var sites = new HashSet<int>();
         var byPc = new SortedDictionary<int, int>();
         var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
-        _clauseLines.Clear();
-        foreach (var (predAddr, pred) in _currentPredicatesByAddress!)
+        _cur.ClauseLines = new();
+        foreach (var (predAddr, pred) in _cur.Map!)
         {
             foreach (var stop in pred.DebugStops)
             {
@@ -1971,44 +1929,35 @@ public sealed partial class PrologEngine
                 int headLine = i < pred.ClauseSourcePositions.Count
                     ? pred.ClauseSourcePositions[i].Line
                     : first;
-                _clauseLines.Add((fileId, Math.Min(headLine, first), first, last));
+                _cur.ClauseLines.Add((fileId, Math.Min(headLine, first), first, last));
             }
         }
-        _compiledSites = sites;
-        _stopPcs = new int[byPc.Count];
-        _stopSiteIds = new int[byPc.Count];
-        byPc.Keys.CopyTo(_stopPcs, 0);
-        byPc.Values.CopyTo(_stopSiteIds, 0);
+        _cur.CompiledSites = sites;
+        _cur.StopPcs = new int[byPc.Count];
+        _cur.StopSiteIds = new int[byPc.Count];
+        byPc.Keys.CopyTo(_cur.StopPcs, 0);
+        byPc.Values.CopyTo(_cur.StopSiteIds, 0);
 
-        _clauseStarts = new int[frames.Count];
-        _clauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
-        frames.Keys.CopyTo(_clauseStarts, 0);
-        frames.Values.CopyTo(_clauseFrames, 0);
+        _cur.ClauseStarts = new int[frames.Count];
+        _cur.ClauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
+        frames.Keys.CopyTo(_cur.ClauseStarts, 0);
+        frames.Values.CopyTo(_cur.ClauseFrames, 0);
     }
-
-    // The last predicate range this resolved — a one-entry memo. Ports ask about the
-    // same few addresses in a loop (the same call sites, over and over), so the answer
-    // is almost always the memo, not the binary search. Reset wherever the predicate
-    // layout is rebuilt (_sortedPredEntries invalidation). Engine-thread only, like
-    // every port-path structure (func-evals hijack the same thread).
-    private int _fidMemoLo = int.MaxValue;
-    private int _fidMemoHi = int.MaxValue;
-    private int _fidMemoFid;
 
     private int? FunctorAtAddress(int address)
     {
-        if (address >= _fidMemoLo && address < _fidMemoHi) return _fidMemoFid;
-        if (_currentPredicatesByAddress is null || address < 0) return null;
+        if (address >= _cur.FidMemoLo && address < _cur.FidMemoHi) return _cur.FidMemoFid;
+        if (_cur.Map is null || address < 0) return null;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
         // The memo range reproduces the search's clamp semantics exactly: everything
         // from this predicate's start to the next predicate's start resolves here.
-        _fidMemoLo = entries[i];
-        _fidMemoHi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
-        _fidMemoFid = _currentPredicatesByAddress[entries[i]].FunctorId;
-        return _fidMemoFid;
+        _cur.FidMemoLo = entries[i];
+        _cur.FidMemoHi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
+        _cur.FidMemoFid = _cur.Map[entries[i]].FunctorId;
+        return _cur.FidMemoFid;
     }
 
     /// <summary>ADR-035 — should a CALL landing at <paramref name="address"/> stop? Unlike
@@ -2084,41 +2033,6 @@ public sealed partial class PrologEngine
         return i >= 0 && IsQueryEntry(i);
     }
 
-    /// <summary>Translates each address in <paramref name="addresses"/>
-    /// to the <c>Name/Arity</c> of the predicate that *contains* it
-    /// (the largest predicate-entry address ≤ the given address) via
-    /// the current query's link-time predicates-by-address map.
-    /// Used by the runtime error path to assemble a Prolog-side stack
-    /// trace.</summary>
-    private IReadOnlyList<(string Name, int Arity)> ResolveAddressesToFunctors(
-        IEnumerable<int> addresses)
-    {
-        var map = _currentPredicatesByAddress;
-        if (map is null) return Array.Empty<(string, int)>();
-        // Sort predicate-entry addresses once so we can binary-search
-        // each query for its containing predicate.
-        int[] sortedEntries = map.Keys.OrderBy(a => a).ToArray();
-        var result = new List<(string, int)>();
-        var seen = new HashSet<int>();
-        foreach (int addr in addresses)
-        {
-            int idx = Array.BinarySearch(sortedEntries, addr);
-            if (idx < 0) idx = ~idx - 1;
-            if (idx < 0) continue;
-            int entryAddr = sortedEntries[idx];
-            if (!seen.Add(entryAddr)) continue;
-            var pred = map[entryAddr];
-            var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            // Hide the synthetic __query__ predicate from user-visible
-            // stack traces — it's an implementation detail of how the
-            // engine wraps queries in a top-level clause.
-            if (name == "__query__") continue;
-            result.Add((name, arity));
-        }
-        return result;
-    }
-
     /// <summary>Captures the current call stack as a list of
     /// <c>Name/Arity</c> entries — the innermost active predicate is
     /// at index 0, its caller at index 1, and so on. Exposed for
@@ -2135,20 +2049,19 @@ public sealed partial class PrologEngine
         addresses.Add(engine.P);
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
             addresses.Add(retAddr);
-        return ResolveAddressesWithPositions(addresses);
+        return ResolveAddressesWithPositions(addresses, PredicatesByAddressOf(engine));
     }
 
-    /// <summary>Variant of <see cref="ResolveAddressesToFunctors"/>
-    /// that also returns each frame's source position.
-    /// Returned as a pair: the legacy <c>(name, arity)</c> tuples for
-    /// <see cref="LastErrorStackTrace"/> back-compat, plus the
-    /// position-enriched <see cref="StackFrame"/> list for the new
-    /// surface.</summary>
+    /// <summary>Translates each address to the predicate that contains it (the
+    /// largest predicate-entry address at or below it) in
+    /// <paramref name="map"/>, the program the addresses belong to: the
+    /// <c>(name, arity)</c> tuples of <see cref="LastErrorStackTrace"/> and
+    /// the position-enriched <see cref="StackFrame"/> list.</summary>
     private (IReadOnlyList<(string Name, int Arity)> Plain,
              IReadOnlyList<StackFrame> WithPositions)
-        ResolveAddressesWithPositions(IEnumerable<int> addresses)
+        ResolveAddressesWithPositions(IEnumerable<int> addresses,
+            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map)
     {
-        var map = _currentPredicatesByAddress;
         if (map is null)
             return (Array.Empty<(string, int)>(), Array.Empty<StackFrame>());
         int[] sortedEntries = map.Keys.OrderBy(a => a).ToArray();

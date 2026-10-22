@@ -373,3 +373,39 @@ Compiler 351 / Embedding 3275 / ISO 277. Beyond the D0–D4 sketch, the arc grew
 - **Not done**: the VS project system (Open-Folder launch profiles) — the one
   D5 item left, unpursued for lack of demand. The VS Code exploration became
   **ADR-036**.
+
+## Amendment (2026-10-22): each running query keeps its own program
+
+A query can run inside another: the directives of a file a running query consults
+run as queries of their own, inside the consult builtin. The nested query links a
+program of its own: its address map, the debugger tables derived from it and, when
+the consult changed the dynamic set, a rebuilt persistent buffer. The engine held
+one of each, so the outer query resumed with the nested one's. A stop reported the
+other program's line and frames, an arm sent while the nested query ran never
+reached the outer one, and a rebuilt buffer emptied the breakpoint table the outer
+query's `Break` bytes decode from ("break opcode with no breakpoint recorded").
+
+The host now keeps a record per linked program, and the activation carries its own
+(`Activation.HostProgram`):
+
+- The current program follows the activation that runs. The run loop makes the
+  running activation's program current when it starts or resumes, and the
+  program of the activation it runs inside of current again when it stops. A
+  setup inside a running query hands the running query's program back at its end.
+- The breakpoint table belongs to a persistent buffer. A rebuilt buffer starts a
+  table of its own, and the old one stays with the old buffer, which the outer
+  query still runs. Sites armed while another program was current are applied
+  when this one is current again; a version number says whether any changed.
+- Making a program current repeats the arm check of query setup (the D5+ pair of
+  fences): an activation that was not running when the debugger armed is armed
+  at its next goal.
+- A breakpoint binds against the current program and the program linked last. A
+  consult inside a running query links the new code in a query nested in it (a
+  directive, or the trivial query that binds pending breakpoints), and the running
+  query stays current.
+
+The other readers of the address map take the activation's too: the caller's
+dialect (ADR-040) and the stack trace of an error. The cost is one small object
+per query setup and a push and pop per run; on the A/B harness the trivial-query
+ratio against main (median 1.005) stayed within main against itself (0.994).
+Tests: `Adr035NestedQueryTests`, `NestedQueryAddressMapTests`.

@@ -178,21 +178,20 @@ public sealed partial class PrologEngine
     /// on its would-raise path.</summary>
     internal string? CallerDialect(Activation engine)
     {
-        if (!_anyDialectedModule || _currentPredicatesByAddress is null) return null;
-        string? d = DialectAtAddress(engine.P);
+        if (!_anyDialectedModule || PredicatesByAddressOf(engine) is not { } map) return null;
+        string? d = DialectAtAddress(map, engine.P);
         if (d is not null) return d;
         foreach (int addr in engine.EnumerateCallReturnAddresses())
         {
-            d = DialectAtAddress(addr);
+            d = DialectAtAddress(map, addr);
             if (d is not null) return d;
         }
         return null;
     }
 
-    private string? DialectAtAddress(int addr)
+    private string? DialectAtAddress(
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr)
     {
-        var map = _currentPredicatesByAddress;
-        if (map is null) return null;
         if (!ReferenceEquals(_sortedPredAddrsFor, map))
         {
             _sortedPredAddrs = System.Linq.Enumerable.ToArray(map.Keys);

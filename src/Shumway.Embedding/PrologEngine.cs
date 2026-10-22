@@ -1022,12 +1022,17 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         }
     }
 
-    private IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _currentPredicatesByAddress;
+    /// <summary>The address map of the program <paramref name="engine"/>
+    /// runs; the host's current one only for an activation the host did not
+    /// link. A query nested in another replaces the host's current map.</summary>
+    internal IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? PredicatesByAddressOf(
+        Shumway.Core.Activation engine)
+        => (engine.HostProgram as LinkedProgram)?.Map ?? _cur.Map;
 
     /// <summary>Diagnostic access for the <c>'$cp_owners'/0</c> builtin (CP-owner
     /// attribution by nearest-predicate-below floor search).</summary>
     internal IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? PredicatesByAddressForDiag
-        => _currentPredicatesByAddress;
+        => _cur.Map;
 
     /// <summary>Diagnostic accessor for the most recently linked query's
     /// address → predicate map. Used by tests that need to verify which
@@ -1036,7 +1041,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/> by reference).
     /// Returns <c>null</c> before the first query runs.</summary>
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? CurrentPredicatesByAddressForTest
-        => _currentPredicatesByAddress;
+        => _cur.Map;
 
     public PrologEngine() : this(consultPrelude: true) { }
 
