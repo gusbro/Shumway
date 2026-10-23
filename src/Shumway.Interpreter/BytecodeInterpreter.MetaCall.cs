@@ -445,8 +445,7 @@ public sealed partial class BytecodeInterpreter
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-            _engine.CurrentBuiltinName = entry.Name;
-            _engine.CurrentBuiltinArity = entry.Arity;
+            _engine.CurrentBuiltinId = builtinId;
             Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
             try { return entry.Impl(_engine); }
             catch (PrologRuntimeException re)
@@ -843,8 +842,7 @@ public sealed partial class BytecodeInterpreter
     private bool InvokeBuiltinGoal(int builtinId)
     {
         var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-        _engine.CurrentBuiltinName = builtin.Name;
-        _engine.CurrentBuiltinArity = builtin.Arity;
+        _engine.CurrentBuiltinId = builtinId;
         bool ok;
         Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
         try { ok = builtin.Impl(_engine); }
@@ -911,7 +909,7 @@ public sealed partial class BytecodeInterpreter
                 }
                 if (qc.Tag != Tag.Atom)
                     throw new Shumway.Core.PrologRuntimeException(
-                        "type_error", "atom", _engine, qc);
+                        "type_error", "atom", _engine, qc) { Origin = Shumway.Core.ErrorOrigin.Outside };
             }
             else break;
             Cell mCell = DerefCell(_engine.GetHeap(fidx + 1));

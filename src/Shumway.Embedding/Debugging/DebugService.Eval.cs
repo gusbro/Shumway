@@ -137,7 +137,7 @@ public sealed partial class DebugService
             if (k >= clauseCode.Count) return false;   // clauses exhausted: fail onward
             if (k + 1 < clauseCode.Count)
                 eng.PushIlChoicePoint(resume, k + 1, arity);
-            eng.ResumeAtReturnPc(clauseCode[k]);
+            eng.ResumeAt(clauseCode[k]);
             return true;
         };
 

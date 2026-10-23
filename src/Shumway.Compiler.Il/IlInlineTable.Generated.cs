@@ -178,7 +178,7 @@ internal static partial class IlInlineTable
         ["Shumway.Embedding.MetaBuiltins::CatchBegin(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Embedding.MetaBuiltins::CatchEnd(Shumway.Core.Activation)"] = 1,   // inlined
         ["Shumway.Embedding.MetaBuiltins::FindallCollect(Shumway.Core.Activation)"] = 0,   // unprofitable inline
-        ["Shumway.Embedding.MetaBuiltins::FindallPush(Shumway.Core.Activation)"] = 3,   // inlined
+        ["Shumway.Embedding.MetaBuiltins::FindallPush(Shumway.Core.Activation)"] = 4,   // inlined
         ["Shumway.Embedding.MetaBuiltins::FindallRecordSnapshot(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Embedding.MetaBuiltins::Functor(Shumway.Core.Activation)"] = 0,   // too many il bytes
         ["Shumway.Embedding.MetaBuiltins::Retract(Shumway.Core.Activation)"] = 0,   // unprofitable inline

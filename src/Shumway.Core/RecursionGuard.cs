@@ -25,11 +25,11 @@ public static class RecursionGuard
         try { System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack(); }
         catch (InsufficientExecutionStackException)
         {
-            throw new PrologRuntimeException("resource_error", "term_nesting");
+            throw new PrologRuntimeException("resource_error", "term_nesting") { Origin = ErrorOrigin.Engine };
         }
 #else
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            throw new PrologRuntimeException("resource_error", "term_nesting");
+            throw new PrologRuntimeException("resource_error", "term_nesting") { Origin = ErrorOrigin.Engine };
 #endif
     }
 }

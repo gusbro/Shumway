@@ -203,7 +203,7 @@ public sealed partial class Activation
         // A bare ball, not an error/2: call_with_timeout/2 in the prelude
         // catches it and rethrows it as timeout(Goal), which is the only
         // shape a program should ever see.
-        throw new PrologRuntimeException("$timeout_expired");
+        throw new PrologRuntimeException("$timeout_expired") { Origin = ErrorOrigin.Engine };
     }
 
     /// <summary>Cheap cancellation poll for the backtrackable-builtin resume

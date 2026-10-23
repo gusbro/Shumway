@@ -69,11 +69,11 @@ public sealed partial class PrologEngine
             // A ball raised outside any builtin must not be named after the
             // last builtin a previous query ran: the name lives only while
             // this query runs.
-            engine.CurrentBuiltinName = null;
+            engine.CurrentBuiltinId = -1;
             try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
             catch (ShumwayPrologException pex) { pex.CloseContext(engine); if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
-            catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+            catch (PrologRuntimeException pre) { MetaBuiltins.StampContext(pre, engine); { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
 
             while (!halted && result == InterpreterResult.Halted)
             {
@@ -90,7 +90,7 @@ public sealed partial class PrologEngine
                 try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
                 catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
                 catch (ShumwayPrologException pex) { pex.CloseContext(engine); if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
-                catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+                catch (PrologRuntimeException pre) { MetaBuiltins.StampContext(pre, engine); { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
             }
         }
         finally
@@ -165,6 +165,7 @@ public sealed partial class PrologEngine
             }
             catch (PrologRuntimeException ex)
             {
+                MetaBuiltins.StampContext(ex, engine);
                 Term ball = MetaBuiltins.TranslateRuntimeError(ex);
                 int addr = TryCatch(engine, ball, out bool insideCatch,
                     lowMemory: ex.Kind == "resource_error");
@@ -347,8 +348,10 @@ public sealed partial class PrologEngine
             // is type_error(callable, Recovery); an unbound one is
             // instantiation_error.
             if (goal.Tag == Tag.Ref)
-                throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-            throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error")
+                { Origin = Shumway.Core.ErrorOrigin.Outside };
+            throw new Shumway.Core.PrologRuntimeException("type_error", "callable")
+            { Origin = Shumway.Core.ErrorOrigin.Outside };
         }
 
         for (int i = 0; i < arity; i++)
@@ -1919,6 +1922,8 @@ public sealed partial class PrologEngine
         // Activation.NestedCatchResolver.
         engine.NestedCatchResolver = (ex, minFrameIndex) =>
         {
+            if (ex is Shumway.Core.PrologRuntimeException unstamped)
+                MetaBuiltins.StampContext(unstamped, engine);
             Term? nestedBall = ex switch
             {
                 ShumwayPrologException spe => spe.Term,

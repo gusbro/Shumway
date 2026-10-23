@@ -440,20 +440,15 @@ public sealed partial class Activation
     }
     [EditorBrowsable(EditorBrowsableState.Never)] public long _currentViewGen;
 
-    /// <summary>Name of the builtin currently executing, set by the
-    /// <c>CallBuiltin</c> dispatch right before invoking the impl. Read
-    /// by <c>IsoError</c> when constructing an <c>error/2</c> term so the
-    /// Context slot reports the offending builtin as <c>Name/Arity</c>
-    /// rather than a fresh anonymous variable (the impl-defined identity
-    /// ISO §7.12.2 calls for). Never reset on impl return — the next
-    /// builtin dispatch overwrites it, and on an exception unwind the
-    /// last-set value is exactly the one we want. <c>null</c> outside
-    /// any builtin (during interpreter-emitted opcodes, IL-compiled
-    /// bodies, or the embedding-layer query plumbing).</summary>
-    public string? CurrentBuiltinName { get; set; }
+    /// <summary>The registry id of the builtin the engine called last, -1
+    /// before any: every tier stores it as it calls one, and an error a
+    /// builtin raises names it as its context, <c>Name/Arity</c>, looked up
+    /// only then. A builtin's return does not clear it; an error that may
+    /// arise outside a builtin says so (<see cref="ErrorOrigin"/>).</summary>
+    public int CurrentBuiltinId { get => _currentBuiltinId; set => _currentBuiltinId = value; }
 
-    /// <summary>Arity companion to <see cref="CurrentBuiltinName"/>.</summary>
-    public int CurrentBuiltinArity { get; set; }
+    // A field: compiled code stores it without a call.
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _currentBuiltinId = -1;
 
     /// <summary>Per-engine stream registry. Wired by the
     /// embedding layer at query setup; <c>StreamBuiltins</c> uses it
@@ -823,10 +818,21 @@ public sealed partial class Activation
     // dispatch picks up at the target rather than returning to the
     // caller's continuation immediately. Cleared by the handler that
     // observes it.
-    public bool IlTailCallPending { get => _ilTailCallPending; set => _ilTailCallPending = value; }
+    public bool IlTailCallPending
+    {
+        get => _ilTailCallPending != 0;
+        set => _ilTailCallPending = value ? (byte)1 : (byte)0;
+    }
 
     // A field: a continuation method sets it without a call (ADR-061 item 6).
-    [EditorBrowsable(EditorBrowsableState.Never)] public bool _ilTailCallPending;
+    // A byte, not a bool: ResumeFromBuiltin is the resume a builtin's retry leaves.
+    [EditorBrowsable(EditorBrowsableState.Never)] public byte _ilTailCallPending;
+
+    /// <summary>The <see cref="_ilTailCallPending"/> a builtin's retry leaves
+    /// (<see cref="ResumeAtReturnPc"/>): Pc is the instruction after the
+    /// builtin's call, never a predicate's entry, and the interpreter resumes
+    /// there without the dispatcher's lookup.</summary>
+    public const byte ResumeFromBuiltin = 2;
 
     // A deopt rides the same two signals as a tail call (Pc + the flag
     // above) and means the opposite: a tail call says "continue at this
@@ -1675,6 +1681,16 @@ public sealed partial class Activation
     {
         if (TrapPc >= 0 && returnPc == TrapPc) SetPc(returnPc);
         _p = returnPc;
+        _ilTailCallPending = ResumeFromBuiltin;
+    }
+
+    /// <summary><see cref="ResumeAtReturnPc"/> for a <paramref name="pc"/>
+    /// that may be a predicate's entry, which the interpreter then
+    /// dispatches like a call.</summary>
+    public void ResumeAt(int pc)
+    {
+        if (TrapPc >= 0 && pc == TrapPc) SetPc(pc);
+        _p = pc;
         IlTailCallPending = true;
     }
 

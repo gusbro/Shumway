@@ -763,8 +763,7 @@ public sealed class WasmTierDelegate
                 // so any choice point it pushes lands at the trimmed top
                 // (execute_builtin, ret -1, never trims).
                 if (ret >= 0) engine.TrimEnv(trim);
-                engine.CurrentBuiltinName = entry.Name;
-                engine.CurrentBuiltinArity = entry.Arity;
+                engine.CurrentBuiltinId = builtinId;
                 engine.BuiltinReturnPc = ret >= 0
                     ? Activation.EncodeResumeMarker(currentFid, ret)
                     : engine.Cp;

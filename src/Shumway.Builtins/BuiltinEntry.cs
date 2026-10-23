@@ -47,6 +47,10 @@ public sealed class BuiltinEntry
     /// of unifications (ADR-049 point 11), so no wake runs in front of it.</summary>
     public bool IsUnification { get; }
 
+    /// <summary>True for <c>fail/0</c> and <c>false/0</c>: the interpreter
+    /// backtracks at the call, with no builtin call around it.</summary>
+    public bool IsFail { get; }
+
     /// <summary>True for builtins that push a choice point and resume via
     /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
@@ -74,6 +78,7 @@ public sealed class BuiltinEntry
         IsCall = name == "call";
         IsDollarCall = name == "$call";
         IsUnification = name == "=" && arity == 2;
+        IsFail = arity == 0 && name is "fail" or "false";
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

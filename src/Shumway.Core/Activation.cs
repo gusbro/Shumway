@@ -181,6 +181,27 @@ public sealed partial class Activation
         _topSolutions = _allSolutions.Count > 0 ? _allSolutions[^1] : null;
         return buffer;
     }
+
+    // A buffer a findall call collected and gave back, for the next call.
+    private SolutionBuffer? _spareSolutions;
+
+    /// <summary>An empty solution buffer: the one the last findall call gave
+    /// back, or a new one.</summary>
+    public SolutionBuffer NewSolutions()
+    {
+        var buffer = _spareSolutions ?? new SolutionBuffer();
+        _spareSolutions = null;
+        return buffer;
+    }
+
+    /// <summary>Takes back a buffer whose solutions are on the heap and that
+    /// nothing else holds, for <see cref="NewSolutions"/>.</summary>
+    public void RecycleSolutions(SolutionBuffer buffer)
+    {
+        buffer.Reset();
+        _spareSolutions = buffer;
+    }
+
     // pooled scratch for the iterative structural-compare walk
     // (==/2, \==/2). The work-stack holds cell pairs still to compare; the
     // visited set holds (aAddr,bAddr) structure-pairs already in progress so a
@@ -377,14 +398,14 @@ public sealed partial class Activation
             if (required > maxSize)
             {
                 LastExhausted = name;
-                throw new PrologRuntimeException("resource_error", "memory");
+                throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
             }
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
         {
             LastExhausted = name;
-            throw new PrologRuntimeException("resource_error", "memory");
+            throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
         }
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         // A machine that cannot hold the doubled buffer raises .NET's OOM
@@ -397,7 +418,7 @@ public sealed partial class Activation
         catch (OutOfMemoryException)
         {
             LastExhausted = name;
-            throw new PrologRuntimeException("resource_error", "memory");
+            throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
         }
     }
 

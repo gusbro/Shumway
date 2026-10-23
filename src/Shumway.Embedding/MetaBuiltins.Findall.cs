@@ -40,14 +40,20 @@ public static partial class MetaBuiltins
     /// <summary><c>'$findall_collect'(List)</c> — closes the open solution buffer
     /// and unifies <c>List</c> with the list of its solutions.</summary>
     public static bool FindallCollect(Activation engine)
-        => engine.UnifyRegisterWithCell(0,
-            CloseSolutions(engine).EmitList(engine, openTail: false, out _));
+    {
+        var solutions = CloseSolutions(engine);
+        Cell list = solutions.EmitList(engine, openTail: false, out _);
+        engine.RecycleSolutions(solutions);
+        return engine.UnifyRegisterWithCell(0, list);
+    }
 
     /// <summary><c>'$findall_collect'(List, Tail)</c> — findall/4's collect:
     /// the solutions, then <c>Tail</c>.</summary>
     public static bool FindallCollectWithTail(Activation engine)
     {
-        Cell list = CloseSolutions(engine).EmitList(engine, openTail: true, out Cell tail);
+        var solutions = CloseSolutions(engine);
+        Cell list = solutions.EmitList(engine, openTail: true, out Cell tail);
+        engine.RecycleSolutions(solutions);
         return engine.UnifyRegisterWithCell(0, list) && engine.UnifyRegisterWithCell(1, tail);
     }
 

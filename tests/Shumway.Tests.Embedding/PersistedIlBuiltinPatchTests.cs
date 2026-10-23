@@ -7,11 +7,13 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Persisted IL carries no builtin registry id: ids follow
-/// registration order, which differs from one process to another. An engine
-/// builtin is a direct call to its method; any other builtin is a name-relative
-/// <see cref="IlPatchKind.Builtin"/> patch site, resolved against the loading
-/// process's registry like atoms and functors.</summary>
+/// <summary>Persisted IL carries no builtin registry id as a constant: ids
+/// follow registration order, which differs from one process to another, so
+/// each is a name-relative <see cref="IlPatchKind.Builtin"/> patch site,
+/// resolved against the loading process's registry like atoms and functors.
+/// Every call stores the id of the builtin an error names; an engine builtin
+/// is then a direct call to its method, and any other builtin a lookup of its
+/// entry through a second patch.</summary>
 public sealed class PersistedIlBuiltinPatchTests
 {
     private static int _probeCalls;
@@ -44,8 +46,8 @@ public sealed class PersistedIlBuiltinPatchTests
             IlPersistedEntryCodec.Decode(entry.CompiledIlEntries!).Select(pe => (pe.Name, pe.Arity)));
         var named = IlPatchSiteCodec.Decode(entry.CompiledIlPatches!)
             .Where(s => s.Kind == IlPatchKind.Builtin).Select(s => s.Name + "/" + s.Arity).ToList();
-        Assert.Contains("$persisted_builtin_probe/1", named);
-        Assert.DoesNotContain("atom_length/2", named);
+        Assert.Equal(1, named.Count(n => n == "atom_length/2"));
+        Assert.Equal(2, named.Count(n => n == "$persisted_builtin_probe/1"));
 
         var engine = PrologEngine.FromBundle(BundleReader.FromBytes(result.Bytes!));
         int before = _probeCalls;

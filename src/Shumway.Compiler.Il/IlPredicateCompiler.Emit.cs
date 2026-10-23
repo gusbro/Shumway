@@ -260,6 +260,18 @@ public sealed partial class IlPredicateCompiler
         EmitHelperCall(emit, BuiltinImplInvokeMethod);
     }
 
+    private static readonly FieldInfo CurrentBuiltinIdField =
+        typeof(Activation).GetField(nameof(Activation._currentBuiltinId))!;
+
+    /// <summary>The store a builtin call makes before it runs: the builtin an
+    /// error it raises names (<see cref="Activation.CurrentBuiltinId"/>).</summary>
+    private static void EmitCurrentBuiltin(IlEmit emit, int builtinId)
+    {
+        emit.LoadArgument(0);
+        EmitBuiltinId(emit, builtinId);
+        emit.StoreField(CurrentBuiltinIdField);
+    }
+
     private static void EmitBuiltinId(IlEmit emit, int builtinId)
     {
         if (_persistPatches is null) { emit.LoadConstant(builtinId); return; }
@@ -1244,6 +1256,7 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                     CpsRecordContinuation(resumeCursor);   // ADR-061
                 }
+                if (!builtinEntry.IsFail) EmitCurrentBuiltin(emit, builtinId);
                 EmitBuiltinImplCall(emit, builtinId);
                 emit.BranchIfFalse(failLabel);
                 if (isBacktrackable)
@@ -1287,6 +1300,7 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineCpGetter);
                     EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                 }
+                if (!tailEntry.IsFail) EmitCurrentBuiltin(emit, tailBuiltinId);
                 EmitBuiltinImplCall(emit, tailBuiltinId);
                 emit.BranchIfFalse(failLabel);
                 // Proceed. A builtin that itself threaded a tail dispatch set

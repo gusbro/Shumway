@@ -12,7 +12,7 @@ namespace Shumway.Embedding;
 /// <para>The <c>Context</c> slot is impl-defined (§7.12.2) and holds the
 /// <c>Name/Arity</c> indicator of the builtin that raised the error. A
 /// factory called with an <see cref="Activation"/> fills it at once from
-/// <see cref="Activation.CurrentBuiltinName"/>; one called without leaves
+/// <see cref="Activation.CurrentBuiltinId"/>; one called without leaves
 /// <see cref="OpenContext"/>, which the engine fills the same way when the
 /// ball surfaces (<see cref="CloseContext"/>), so a builtin need not thread
 /// its engine through every check to be named.</para>
@@ -125,14 +125,15 @@ public static class IsoError
     /// and is what catchers using <c>error(_, Name/Arity)</c> patterns
     /// expect.</summary>
     private static Term BuildContext(Activation? engine)
+        => engine is not null && Indicator(engine.CurrentBuiltinId) is { } pi ? pi : OpenContext;
+
+    /// <summary><c>Name/Arity</c> of the builtin with registry id
+    /// <paramref name="builtinId"/>, or null for none (-1).</summary>
+    private static Term? Indicator(int builtinId)
     {
-        if (engine?.CurrentBuiltinName is string name)
-            return new CompoundTerm("/", new Term[]
-            {
-                new AtomTerm(name),
-                new IntTerm(engine.CurrentBuiltinArity),
-            });
-        return OpenContext;
+        if (builtinId < 0) return null;
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return new CompoundTerm("/", new Term[] { new AtomTerm(entry.Name), new IntTerm(entry.Arity) });
     }
 
     /// <summary>The context of a ball built with no engine in hand: one
@@ -150,16 +151,8 @@ public static class IsoError
     {
         if (ball is not CompoundTerm { Functor: "error", Args.Length: 2 } e
             || !ReferenceEquals(e.Args[1], OpenContext)
-            || engine.CurrentBuiltinName is not string name)
+            || Indicator(engine.CurrentBuiltinId) is not { } pi)
             return ball;
-        return new CompoundTerm("error", new Term[]
-        {
-            e.Args[0],
-            new CompoundTerm("/", new Term[]
-            {
-                new AtomTerm(name),
-                new IntTerm(engine.CurrentBuiltinArity),
-            }),
-        }) { Position = e.Position };
+        return new CompoundTerm("error", new Term[] { e.Args[0], pi }) { Position = e.Position };
     }
 }
