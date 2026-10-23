@@ -57,9 +57,10 @@ public static class ErrorRendering
             // there points nowhere. Report the predicate alone.
             bool positionless = f.IsInternal
                 || (f.Position.Line <= 1 && f.Position.Column <= 1 && f.Position.Offset == 0);
+            string indicator = f.Arity < 0 ? shown : $"{shown}/{f.Arity}";
             lines.Add(positionless
-                ? $"  at {shown}/{f.Arity}"
-                : $"  at {shown}/{f.Arity} ({f.Position})");
+                ? $"  at {indicator}"
+                : $"  at {indicator} ({f.Position})");
         }
         return lines;
     }

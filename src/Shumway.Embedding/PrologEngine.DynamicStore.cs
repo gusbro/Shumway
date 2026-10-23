@@ -1823,6 +1823,7 @@ public sealed partial class PrologEngine
     {
         engine.AppendCode(link.Bytecode);
         _literalPools.Pin(link.Bytecode);
+        NoteLiveLinked(engine, link.PredicatesByAddress);
         byte[] prog = engine.CurrentProgram!;
 
         // Merge new addresses + bare-name aliases so both direct calls in

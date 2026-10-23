@@ -87,4 +87,14 @@ public class StackTraceFramePresentationTests
         Assert.False(divider.IsInternal);
         Assert.Equal(2, divider.Position.Line);
     }
+
+    /// <summary>A clause asserted by the running query has no predicate linked for it, and
+    /// no Name/Arity to show.</summary>
+    [Fact]
+    public void AClauseTheQueryAssertedReadsAsADynamicClause()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        var lines = DescribeFailure(e, "assertz((ap(X) :- atom_length(X, _))), ap(_).");
+        Assert.Contains("  at <dynamic clause>", lines);
+    }
 }

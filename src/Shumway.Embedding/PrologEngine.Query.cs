@@ -1964,7 +1964,9 @@ public sealed partial class PrologEngine
             int[]? sortedAddrs = null;
             engine.ResolveAddressToLabel = addr =>
             {
-                sortedAddrs ??= resolverMap.Keys.OrderBy(a => a).ToArray();
+                // The map grows when code is linked into the running query.
+                if (sortedAddrs is null || sortedAddrs.Length != resolverMap.Count)
+                    sortedAddrs = resolverMap.Keys.OrderBy(a => a).ToArray();
                 if (sortedAddrs.Length == 0) return null;
                 int idx = Array.BinarySearch(sortedAddrs, addr);
                 if (idx < 0) idx = ~idx - 1;
@@ -1972,6 +1974,8 @@ public sealed partial class PrologEngine
                 int entryAddr = sortedAddrs[idx];
                 if (!resolverMap.TryGetValue(entryAddr, out var pred))
                     return null;
+                if (PastPredicate(pred, entryAddr, addr, engine.CurrentQuerySplit))
+                    return DynamicClauseFrame;
                 var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
                 string name = AtomTable.GetById(atomId)?.Name ?? "?";
                 return $"{name}/{arity}@+{addr - entryAddr}";
@@ -2068,15 +2072,15 @@ public sealed partial class PrologEngine
         // with it) and the debugger's tables. Current from here; a setup inside a
         // running query hands that query's back at its end (EnterRun / LeaveRun).
         selectMap = linkResult.PredicatesByAddress;
-        if (builtPersistentNow) _persistentBreakpoints = new BreakpointRecord();
         var tablesFrom = _debugTablesOwner;
-        _cur = new LinkedProgram(_persistentBreakpoints)
+        _cur = new LinkedProgram(RecordFor(program))
         {
             Map = linkResult.PredicatesByAddress,
             Engine = engine,
             QueryText = queryText,
         };
         engine.HostProgram = _cur;
+        engine.ProgramMoved = _onProgramMoved ??= OnProgramMoved;
         if (tablesFrom is not null)
         {
             // The tables stand until a layout change rebuilds them.
@@ -2121,11 +2125,9 @@ public sealed partial class PrologEngine
                 _debugTablesOwner = _cur;
             }
         }
-        // A freshly-rebuilt persistent buffer carries no Break bytes and starts a breakpoint
-        // record of its own: the old record stays with the old buffer, which a query this one
-        // is nested in still runs. A reused buffer still carries the patches in its record.
-        // (RefreshBreakpoints, mid-query, follows the current program's activation, so a
-        // realloc is tracked there.)
+        // The record belongs to the array: a reused buffer still carries the patches in it, a
+        // rebuilt one is a new array with an empty record, and the old record stays with the
+        // old array, which a query this one is nested in still runs.
         //
         // ADR-035 D5 — a debug EVALUATION's nested query does not touch the sync at all: the
         // armed table describes the outer query's buffer, which is where the machine returns
@@ -2134,7 +2136,7 @@ public sealed partial class PrologEngine
         // simply runs without Break bytes (an eval's stops are suppressed regardless) and its
         // record is empty, so the next real setup has nothing to un-patch in it.
         if (_debugEvalDepth == 0)
-            SyncBreakpoints(program, bufferCarriesOurPatches: !builtPersistentNow);
+            SyncBreakpoints(_cur, program);
         // Shared by reference, and shared even when it is empty: a breakpoint can be armed
         // on a query that is already running (F9 during a long goal), and the Break byte it
         // patches into the program is reached by an activation that was set up before the
