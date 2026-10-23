@@ -144,14 +144,43 @@ public sealed partial class Activation
     public Dictionary<int, Cell>? CopyVarScratch;
     public Dictionary<int, Cell>? CopyStructScratch;
     public int CopyTermDepth;
-    // Pooled scratch for the findall solution snapshot
-    // (FindallSnapshot): the working cell image and the var / struct identity
-    // maps, cleared on use. Snapshots never nest (a findall's records run
-    // sequentially, and a snapshot never re-enters snapshotting), so no depth
-    // guard is needed. Only the detached ToArray() per solution allocates.
-    public List<Cell>? FindallSnapCells;
-    public Dictionary<int, int>? FindallSnapVarMap;
-    public Dictionary<int, int>? FindallSnapStructMap;
+    // Pooled scratch for copying a solution off the heap (the host's
+    // SolutionBuffer): the var and block identity maps and the work stack,
+    // cleared on use. Copies never nest, so no depth guard is needed.
+    public AddressMap? SolutionCopyVars;
+    public AddressMap? SolutionCopyBlocks;
+    public List<(Cell Value, int Addr, int Dest)>? SolutionCopyWork;
+    // And for bagof/setof's witness key, built before the copy.
+    public HashSet<int>? SolutionKeyPath;
+    public List<(Cell Cell, char Close, int PathAddr)>? SolutionKeyWork;
+    public System.Text.StringBuilder? SolutionKeyText;
+
+    /// <summary>The solutions of the findall/bagof/setof calls in progress,
+    /// innermost last, and the innermost one's at hand. A caught throw drops the
+    /// calls its guarded goal opened (<see cref="UnwindToCatchFrame"/>).</summary>
+    private List<SolutionBuffer>? _allSolutions;
+    private SolutionBuffer? _topSolutions;
+
+    /// <summary>The solution buffer of the innermost findall/bagof/setof call in
+    /// progress, or null.</summary>
+    public SolutionBuffer? TopSolutions => _topSolutions;
+
+    public int SolutionsInProgress => _allSolutions?.Count ?? 0;
+
+    public void PushSolutions(SolutionBuffer buffer)
+    {
+        (_allSolutions ??= new List<SolutionBuffer>()).Add(buffer);
+        _topSolutions = buffer;
+    }
+
+    public SolutionBuffer PopSolutions()
+    {
+        var buffer = _topSolutions
+            ?? throw new InvalidOperationException("No findall/bagof/setof call is collecting.");
+        _allSolutions!.RemoveAt(_allSolutions.Count - 1);
+        _topSolutions = _allSolutions.Count > 0 ? _allSolutions[^1] : null;
+        return buffer;
+    }
     // pooled scratch for the iterative structural-compare walk
     // (==/2, \==/2). The work-stack holds cell pairs still to compare; the
     // visited set holds (aAddr,bAddr) structure-pairs already in progress so a

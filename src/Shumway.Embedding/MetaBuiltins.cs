@@ -53,14 +53,15 @@ public static partial class MetaBuiltins
         // In-engine findall plumbing — MetaTransform rewrites
         // findall/3 with a callable goal into a goal sequence using these.
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
-        BuiltinsRegistry.Register("$findall_record",  1, FindallRecord);
         BuiltinsRegistry.Register("$te_after",        1, TeAfter);
         BuiltinsRegistry.Register("$findall_record_s", 1, FindallRecordSnapshot);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
+        BuiltinsRegistry.Register("$findall_collect", 2, FindallCollectWithTail);
+        BuiltinsRegistry.Register("$findall_collect", 2, FindallCollectWithTail);
         BuiltinsRegistry.Register("$check_partial_list", 3, CheckPartialList);
-        // In-engine bagof/setof plumbing — reuse the findall
-        // frame stack ('$findall_push' / '$findall_record'); only the
-        // collect step differs (it groups the solutions by witness).
+        // In-engine bagof/setof plumbing — reuse findall's solution
+        // buffer ('$findall_push'); the record step adds the witness key and
+        // the collect step groups the solutions by it.
         BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
         BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates

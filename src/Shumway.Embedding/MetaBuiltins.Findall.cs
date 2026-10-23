@@ -6,10 +6,6 @@ namespace Shumway.Embedding;
 
 public static partial class MetaBuiltins
 {
-    /// <summary><c>'$findall_collect'(List)</c> — closes the
-    /// open findall buffer and unifies <c>List</c> with its collected
-    /// solutions. Each solution is materialised with its own variable map
-    /// so distinct solutions never accidentally share a variable.</summary>
     /// <summary><c>'$check_partial_list'(L, Name, Arity)</c> — succeeds when
     /// L is a partial list (a variable, or a list ending in [] or a variable)
     /// and raises <c>type_error(list, L)</c> otherwise. The solutions argument
@@ -41,50 +37,36 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary><c>'$findall_collect'(List)</c> — closes the open solution buffer
+    /// and unifies <c>List</c> with the list of its solutions.</summary>
     public static bool FindallCollect(Activation engine)
+        => engine.UnifyRegisterWithCell(0,
+            CloseSolutions(engine).EmitList(engine, openTail: false, out _));
+
+    /// <summary><c>'$findall_collect'(List, Tail)</c> — findall/4's collect:
+    /// the solutions, then <c>Tail</c>.</summary>
+    public static bool FindallCollectWithTail(Activation engine)
     {
-        var frame = FindallHost(engine).PopFindallFrame();
-        Cell list = Cell.Atom(AtomTable.EmptyListId);
-        for (int i = frame.Count - 1; i >= 0; i--)
-        {
-            // Each entry is a cell image or an AST term
-            // (value-leaf fallback); re-emit it onto the heap either way.
-            Cell elem = frame[i] is Cell[] snap
-                ? FindallSnapshot.EmitSnapshot(engine, snap)
-                : Materializer.MaterializeAsCell(engine, (Term)frame[i]);
-            int cons = engine.AllocateHeap(2);
-            engine.SetHeap(cons, elem);
-            engine.SetHeap(cons + 1, list);
-            list = Cell.Lis(cons);
-        }
-        return engine.UnifyRegisterWithCell(0, list);
+        Cell list = CloseSolutions(engine).EmitList(engine, openTail: true, out Cell tail);
+        return engine.UnifyRegisterWithCell(0, list) && engine.UnifyRegisterWithCell(1, tail);
     }
 
-    private static PrologEngine FindallHost(Activation engine) =>
-        engine.Host as PrologEngine
-        ?? throw new InvalidOperationException(
-            "The in-engine findall builtins require a PrologEngine host.");
+    /// <summary>The solution buffer of the innermost findall/bagof/setof call in
+    /// progress. A throw out of a call drops its buffer at the catch/3 that
+    /// takes the ball, so the innermost one is always the caller's.</summary>
+    private static SolutionBuffer OpenSolutions(Activation engine)
+        => engine.TopSolutions
+            ?? throw new InvalidOperationException("No findall/bagof/setof call is collecting.");
 
-    /// <summary>One recorded bagof/setof solution: the witness's canonical
-    /// key (computed on the live heap at record time — variants share a key)
-    /// and the <c>Witness-Template</c> pair as a backtrack-safe payload (a
-    /// cell image, or an AST term when the image path cannot carry a value
-    /// leaf).</summary>
-    private sealed class BagofPair
-    {
-        public readonly string Key;
-        public readonly object Payload;
-        public BagofPair(string key, object payload) { Key = key; Payload = payload; }
-    }
+    private static SolutionBuffer CloseSolutions(Activation engine) => engine.PopSolutions();
 
     /// <summary><c>'$bagof_record'(Witness-Template)</c> — the bagof/setof
     /// record step. Walks the witness on the live heap to build its
     /// canonical grouping key (variable identity by deref address in
     /// first-occurrence order, so variant witnesses key identically), then
-    /// snapshots the whole pair the same way findall/3 snapshots a solution
-    /// — witness/template variable sharing survives inside one image. Cost
-    /// per solution is a heap walk plus the findall-grade snapshot; no
-    /// managed AST is built on this path.</summary>
+    /// copies the whole pair into the solution buffer as findall/3 copies a
+    /// solution: witness/template variable sharing survives inside one
+    /// solution.</summary>
     public static bool BagofRecord(Activation engine)
     {
         Cell pair = ResolveLocal(engine, engine.GetRegister(0));
@@ -92,15 +74,16 @@ public static partial class MetaBuiltins
         Cell witness = pair.Tag == Tag.Str
             ? engine.GetHeap(pair.AsHeapIndex + 1)
             : pair;
-        var sb = new System.Text.StringBuilder(64);
-        AppendHeapWitnessKey(engine, witness,
-            new Dictionary<int, int>(), new HashSet<int>(), sb);
-        Cell[]? snap = FindallSnapshot.TrySnapshotRegister(engine, 0);
-        object payload = snap is not null
-            ? snap
-            : MaterializeRegister(engine, 0);
-        FindallHost(engine).RecordFindallEntry(
-            new BagofPair(sb.ToString(), payload));
+        var vars = engine.SolutionCopyVars ??= new AddressMap();
+        var path = engine.SolutionKeyPath ??= new HashSet<int>();
+        var sb = engine.SolutionKeyText ??= new System.Text.StringBuilder(64);
+        vars.Clear();
+        path.Clear();
+        sb.Clear();
+        AppendHeapWitnessKey(engine, witness, vars, path, sb);
+        var solutions = OpenSolutions(engine);
+        (solutions.Keys ??= new List<string>()).Add(sb.ToString());
+        solutions.Add(engine, engine.GetRegister(0));
         return true;
     }
 
@@ -117,16 +100,15 @@ public static partial class MetaBuiltins
     /// overflows the C# stack in a recursive walk, which kills the process
     /// instead of raising anything catchable.</para></summary>
     private static void AppendHeapWitnessKey(
-        Activation engine, Cell root, Dictionary<int, int> varSlots,
+        Activation engine, Cell root, AddressMap varSlots,
         HashSet<int> onPath, System.Text.StringBuilder sb)
     {
         // A step either keys a cell (close == none) or closes the compound
         // it belongs to, lifting that address back off the cycle path.
         const char none = '\0';
-        var work = new List<(Cell Cell, char Close, int PathAddr)>(32)
-        {
-            (root, none, -1),
-        };
+        var work = engine.SolutionKeyWork ??= new List<(Cell, char, int)>(32);
+        work.Clear();
+        work.Add((root, none, -1));
         while (work.Count > 0)
         {
             var (cell, close, pathAddr) = work[^1];
@@ -146,7 +128,7 @@ public static partial class MetaBuiltins
                     if (!varSlots.TryGetValue(addr, out int refSlot))
                     {
                         refSlot = varSlots.Count;
-                        varSlots[addr] = refSlot;
+                        varSlots.Add(addr, refSlot);
                     }
                     sb.Append('v').Append(refSlot).Append(';');
                     continue;
@@ -161,7 +143,7 @@ public static partial class MetaBuiltins
                     if (!varSlots.TryGetValue(home, out int slot))
                     {
                         slot = varSlots.Count;
-                        varSlots[home] = slot;
+                        varSlots.Add(home, slot);
                     }
                     sb.Append('v').Append(slot).Append(';');
                     break;
@@ -228,12 +210,12 @@ public static partial class MetaBuiltins
     /// solution buffer, splits the recorded pairs into witness groups by the
     /// keys '$bagof_record' computed (linear — a hash probe per solution),
     /// and enumerates the groups on backtracking in standard order of the
-    /// witness. Each group is materialised only when demanded: its pair
-    /// images are emitted onto the heap and every pair's witness is unified
+    /// witness. Each group is materialised only when demanded: its pairs
+    /// are copied onto the heap and every pair's witness is unified
     /// with the group representative's — which is exactly the
     /// bind-bagof-keys step, aliasing witness variables shared with the
     /// templates — so a caller that cuts after the first group never pays
-    /// for the rest. The cursor holds images (managed data), never heap
+    /// for the rest. The cursor holds the solution buffer, never heap
     /// addresses, so a heap collection between two groups moves nothing it
     /// relies on. Kind <c>setof</c> sorts and de-duplicates each bag;
     /// <c>bagof</c> keeps generation order. Fails when the goal produced no
@@ -243,21 +225,21 @@ public static partial class MetaBuiltins
         Cell kindCell = ResolveLocal(engine, engine.GetRegister(0));
         bool sortBags = kindCell.Tag == Tag.Atom
             && AtomTable.GetById(kindCell.AsAtomId)?.Name == "setof";
-        var frame = FindallHost(engine).PopFindallFrame();
-        if (frame.Count == 0) return false;
+        var solutions = CloseSolutions(engine);
+        if (solutions.Count == 0) return false;
 
-        var byKey = new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        var groups = new List<List<object>>();
-        foreach (object entry in frame)
+        var byKey = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        var groups = new List<List<int>>();
+        for (int s = 0; s < solutions.Count; s++)
         {
-            var rec = (BagofPair)entry;
-            if (!byKey.TryGetValue(rec.Key, out List<object>? group))
+            string key = solutions.Keys![s];
+            if (!byKey.TryGetValue(key, out List<int>? group))
             {
-                group = new List<object>();
-                byKey[rec.Key] = group;
+                group = new List<int>();
+                byKey[key] = group;
                 groups.Add(group);
             }
-            group.Add(rec.Payload);
+            group.Add(s);
         }
 
         // Standard order of the witness: emit each group's representative
@@ -267,25 +249,18 @@ public static partial class MetaBuiltins
         // ordinary garbage.
         var reps = new Cell[groups.Count];
         for (int i = 0; i < groups.Count; i++)
-            reps[i] = WitnessOf(engine, EmitPair(engine, groups[i][0]));
+            reps[i] = WitnessOf(engine, solutions.Emit(engine, groups[i][0]));
         var order = new int[groups.Count];
         for (int i = 0; i < order.Length; i++) order[i] = i;
         System.Array.Sort(order, (x, y) =>
             StandardOrderComparator.Compare(engine, reps[x], reps[y]));
-        var ordered = new List<object>[groups.Count];
+        var ordered = new List<int>[groups.Count];
         for (int i = 0; i < order.Length; i++) ordered[i] = groups[order[i]];
 
         int returnPc = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ordered.Length, arity: 2, returnPc,
-            (e, i) => UnifyGroup(e, ordered[i], sortBags));
+            (e, i) => UnifyGroup(e, solutions, ordered[i], sortBags));
     }
-
-    /// <summary>Emits one recorded pair (image or AST fallback) onto the
-    /// heap.</summary>
-    private static Cell EmitPair(Activation engine, object payload)
-        => payload is Cell[] snap
-            ? FindallSnapshot.EmitSnapshot(engine, snap)
-            : Materializer.MaterializeAsCell(engine, (Term)payload);
 
     private static Cell WitnessOf(Activation engine, Cell pair)
     {
@@ -301,9 +276,10 @@ public static partial class MetaBuiltins
 
     /// <summary>Materialises one witness group and unifies register 1 with
     /// its <c>Witness-Bag</c> pair.</summary>
-    private static bool UnifyGroup(Activation engine, List<object> group, bool sortBags)
+    private static bool UnifyGroup(
+        Activation engine, SolutionBuffer solutions, List<int> group, bool sortBags)
     {
-        Cell repPair = EmitPair(engine, group[0]);
+        Cell repPair = solutions.Emit(engine, group[0]);
         Cell witness = WitnessOf(engine, repPair);
         int witnessSlot = engine.AllocateHeap(1);
         engine.SetHeap(witnessSlot, witness);
@@ -311,7 +287,7 @@ public static partial class MetaBuiltins
         var bag = new List<Cell>(group.Count) { TemplateOf(engine, repPair) };
         for (int i = 1; i < group.Count; i++)
         {
-            Cell p = EmitPair(engine, group[i]);
+            Cell p = solutions.Emit(engine, group[i]);
             // bind_bagof_keys: aliasing this pair's witness into the shared
             // one also aliases the witness variables its template shares.
             // Variant witnesses always unify.

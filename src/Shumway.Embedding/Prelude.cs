@@ -2048,8 +2048,8 @@ internal static class Prelude
         findall(Template, Goal, List, Tail) :-
             '$check_partial_list'(List, findall, 4),
             '$check_partial_list'(Tail, findall, 4),
-            findall(Template, Goal, List0),
-            append(List0, Tail, List).
+            ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
+            ; '$findall_collect'(List, Tail) ).
 
 
         %! retractall(+Head) | Database | iso | Removes every clause whose head unifies with Head.

@@ -30,6 +30,11 @@ public sealed class TermImage : IEquatable<TermImage>
         return s;
     }
 
+    /// <summary><paramref name="c"/> with the heap index in it, if any, moved by
+    /// <paramref name="delta"/>.</summary>
+    public static Cell Relocate(Cell c, long delta)
+        => new(c.Data + delta * Step[(int)(c.Data >> Cell.TagShift) & 0xF]);
+
     public TermImage(Cell[] cells, Tag root) : this(cells, root, null) { }
 
     public TermImage(Cell[] cells, Tag root, ImageHole[]? holes)

@@ -363,3 +363,22 @@ ground literals; a bundle round-trips the pool; a collection after the copy
 keeps the term; failing back past the copy frees it. Counter-proof: the
 copy without relocation gives wrong terms. Measurement: one process, two
 builds, eight rounds, Blint and the corpus.
+
+## Amendment (2026-10-22): solutions kept as images
+
+findall/3, findall/4, bagof/3, setof/3 and the non-backtrackable global
+variables keep a term off the heap as the same kind of image: the heap's
+cells with every index relative to the start of a buffer
+(`SolutionBuffer`), copied back by one delta with `TermImage.Relocate`. A
+float and a packed string are blocks of it, as in a term image. A big
+integer, a rational and a foreign object, whose payloads name a table of
+the activation, keep their value beside the cells and are made again on the
+heap they are copied to. The copy is iterative, so a term of any depth
+goes through it.
+
+It replaced an array per solution that sent any solution holding a float, a
+big integer, a string or a foreign object through an AST, and a stack on the
+engine that a throw out of a call left open, so that the next solution went
+into the wrong call. The buffers live on the activation, and a catch/3 that
+takes a ball drops the ones its guarded goal opened
+(`CatchFrame.SnapAllSolutions`). Tests: `SolutionBufferTests`.
