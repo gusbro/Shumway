@@ -184,6 +184,57 @@ public static partial class MetaBuiltins
                 new Term[] { new AtomTerm(name), new IntTerm(re.BuiltinArity) })
             : null;
 
+    /// <summary>Stamps an error no builtin stamped with the builtin it names,
+    /// by where it arose (<see cref="ErrorOrigin"/>): a builtin's own code
+    /// names the builtin the engine called last; the engine's machinery, the
+    /// builtin whose code is on the stack where it was thrown; anything else,
+    /// none. Every tier stores the builtin it calls, and the interpreter
+    /// stamps what leaves a builtin; compiled code stamps nothing, so this is
+    /// where its errors get the context the interpreter gives them.</summary>
+    internal static void StampContext(PrologRuntimeException ex, Activation engine)
+    {
+        if (ex.BuiltinName is not null) return;
+        int id = ex.Origin switch
+        {
+            ErrorOrigin.Builtin => engine.CurrentBuiltinId,
+            ErrorOrigin.Engine => BuiltinOnStack(ex),
+            _ => -1,
+        };
+        if (id < 0) return;
+        var entry = BuiltinsRegistry.GetById(id);
+        ex.StampBuiltin(entry.Name, entry.Arity);
+    }
+
+    // StackFrame.GetMethod is trim-unsafe (IL2026). Only compiled code leaves
+    // an error unstamped, and a trimmed app (the browser, a native build) runs
+    // none: Tier-1 needs dynamic code.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Reached for errors compiled code raised, and a trimmed app compiles none.")]
+    private static int BuiltinOnStack(Exception ex)
+    {
+        var byMethod = BuiltinsByMethod();
+        var frames = new System.Diagnostics.StackTrace(ex, false).GetFrames();
+        foreach (var frame in frames)
+            if (frame?.GetMethod() is { } m && byMethod.TryGetValue(m, out int id))
+                return id;
+        return -1;
+    }
+
+    /// <summary>Each registered builtin's implementation method, to its id;
+    /// made again when the registry has grown.</summary>
+    private static Dictionary<System.Reflection.MethodBase, int> BuiltinsByMethod()
+    {
+        var entries = BuiltinsRegistry.AllEntries();
+        if (_builtinsByMethod is { } known && known.Count == entries.Count) return known.Map;
+        var map = new Dictionary<System.Reflection.MethodBase, int>();
+        foreach (var e in entries)
+            if (e.Impl.GetInvocationList().Length == 1) map.TryAdd(e.Impl.Method, e.Id);
+        _builtinsByMethod = (map, entries.Count);
+        return map;
+    }
+
+    private static (Dictionary<System.Reflection.MethodBase, int> Map, int Count)? _builtinsByMethod;
+
     /// <summary>Constructs <c>error(Inner, Context)</c> with the
     /// stamped Context if one is available, falling back to a fresh
     /// anonymous variable when the exception predates any builtin

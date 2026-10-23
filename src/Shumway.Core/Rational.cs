@@ -28,7 +28,7 @@ public readonly struct Rational : IEquatable<Rational>
     public static Rational Create(BigInteger num, BigInteger den)
     {
         if (den.IsZero)
-            throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            throw new PrologRuntimeException("evaluation_error", "zero_divisor") { Origin = ErrorOrigin.Engine };
         if (den.Sign < 0) { num = -num; den = -den; }
         BigInteger g = BigInteger.GreatestCommonDivisor(BigInteger.Abs(num), den);
         if (!g.IsOne && !g.IsZero) { num /= g; den /= g; }

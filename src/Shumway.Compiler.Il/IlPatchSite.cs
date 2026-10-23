@@ -24,9 +24,9 @@ public enum IlPatchKind : byte
     ResumeMarker = 3,
 
     /// <summary>Builtin registry id — emitted by the <c>CallBuiltin</c> /
-    /// <c>ExecuteBuiltin</c> dispatch (<c>GetById(id).Impl</c>) of a builtin
-    /// that is not the engine's own; an engine builtin is a direct call to its
-    /// method, with no id. Registry
+    /// <c>ExecuteBuiltin</c> dispatch: the store of the builtin an error names,
+    /// and the lookup (<c>GetById(id).Impl</c>) of a builtin that is not the
+    /// engine's own; an engine builtin is a direct call to its method. Registry
     /// ids are assigned in registration order, which concurrent engine
     /// construction in the building process can shuffle — a baked absolute
     /// id then dispatches a different builtin in the loading process (the

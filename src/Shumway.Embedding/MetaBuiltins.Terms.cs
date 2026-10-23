@@ -1085,10 +1085,16 @@ public static partial class MetaBuiltins
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
         // An error names op/3: the program wrote op/3, not this rewrite.
-        engine.CurrentBuiltinName = "op";
-        engine.CurrentBuiltinArity = 3;
+        engine.CurrentBuiltinId = BuiltinIdOf("op", 3);
         return OpCore(engine, host, regBase: 1, host.ModuleOperatorLayer(mod));
     }
+
+    /// <summary>The registry id of builtin <paramref name="name"/>/<paramref
+    /// name="arity"/>, or -1.</summary>
+    private static int BuiltinIdOf(string name, int arity)
+        => BuiltinsRegistry.TryGetByFunctor(
+            FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity), out int id)
+            ? id : -1;
 
     /// <summary>ADR-046 — <c>'$current_op_ctx'(Module, P, T, N)</c>: the
     /// compile-time rewrite of <c>current_op/3</c> inside module code —
@@ -1103,8 +1109,7 @@ public static partial class MetaBuiltins
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
         // An error names current_op/3, as '$op_ctx' names op/3.
-        engine.CurrentBuiltinName = "current_op";
-        engine.CurrentBuiltinArity = 3;
+        engine.CurrentBuiltinId = BuiltinIdOf("current_op", 3);
         ValidateCurrentOpArgs(engine, regBase: 1);
         var ops = FilterOpsByBoundArgs(
             engine, host.ModuleOperatorLayer(mod).Enumerate().ToArray(), regBase: 1);

@@ -690,7 +690,7 @@ public sealed partial class Activation
         // layout and reaches a user as a .NET exception nothing can handle
         // (issue #112: capturing the output of a looping goal).
         if (codeUnits > Cell.MaxPstrLength)
-            throw new PrologRuntimeException("resource_error", "text_length");
+            throw new PrologRuntimeException("resource_error", "text_length") { Origin = ErrorOrigin.Engine };
         int bufferCellCount = (codeUnits + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
         int totalCells = 1 + bufferCellCount + 1;
 
@@ -1146,7 +1146,7 @@ public sealed partial class Activation
         {
             // ISO shape: the embedding layer renders Detail as the
             // expected-type atom, so error(type_error(var, _), _).
-            throw new PrologRuntimeException("type_error", "var");
+            throw new PrologRuntimeException("type_error", "var") { Origin = ErrorOrigin.Engine };
         }
 
         int oldValue = AttrValueAt(addr, moduleId);
@@ -1509,7 +1509,7 @@ public sealed partial class Activation
     private void OccursViolation()
     {
         if (_occursThrow)
-            throw new PrologRuntimeException("representation_error", "term");
+            throw new PrologRuntimeException("representation_error", "term") { Origin = ErrorOrigin.Engine };
     }
 
     [System.Runtime.CompilerServices.MethodImpl(
@@ -2167,7 +2167,7 @@ public sealed partial class Activation
     {
         if (OccursMode == 0 || !SlotOccursInValue(slotAddr, value)) return true;
         if (OccursMode == 2)
-            throw new PrologRuntimeException("representation_error", "term");
+            throw new PrologRuntimeException("representation_error", "term") { Origin = ErrorOrigin.Engine };
         return false;
     }
 

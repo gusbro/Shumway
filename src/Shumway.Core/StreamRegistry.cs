@@ -176,14 +176,14 @@ public sealed class StreamRegistry
     public void SetCurrentInput(StreamHandle h)
     {
         if (!h.IsReader)
-            throw new PrologRuntimeException("permission_error", "input,stream");
+            throw new PrologRuntimeException("permission_error", "input,stream") { Origin = ErrorOrigin.Engine };
         CurrentInput = h;
     }
 
     public void SetCurrentOutput(StreamHandle h)
     {
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream") { Origin = ErrorOrigin.Engine };
         CurrentOutput = h;
     }
 }

@@ -20,7 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// <c>catch/3</c> handler runs.</item>
 /// <item>For a direct <c>throw new ShumwayPrologException(IsoError.X(...,
 /// engine))</c> from inside an impl, the <see cref="IsoError"/> factory
-/// reads <see cref="Activation.CurrentBuiltinName"/> (set by the same
+/// reads <see cref="Activation.CurrentBuiltinId"/> (set by the same
 /// dispatch right before calling the impl) and emits the indicator
 /// inline.</item>
 /// </list>
@@ -92,23 +92,21 @@ public class Chunk130Tests
         // ShumwayPrologException(IsoError.X(..., engine)). Simulate by
         // priming the engine fields manually.
         var pe = new PrologEngine();
-        // Run any query that dispatches a builtin so CurrentBuiltinName
+        // Run any query that dispatches a builtin so CurrentBuiltinId
         // is set, then read the IsoError construction outside dispatch.
         pe.Query("X = 1.");  // unification — no builtin dispatch.
-        // Build a synthetic engine with CurrentBuiltinName primed to
+        // Build a synthetic engine with CurrentBuiltinId primed to
         // exercise the factory directly.
-        var raw = new Activation
-        {
-            CurrentBuiltinName = "frobnicate",
-            CurrentBuiltinArity = 3,
-        };
+        Assert.True(Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
+            FunctorTable.Intern(AtomTable.Intern("atom_length", permanent: true).Id, 2), out int id));
+        var raw = new Activation { CurrentBuiltinId = id };
         var err = IsoError.TypeError("integer", Atom("nope"), raw);
         var ct = Assert.IsType<CompoundTerm>(err);
         Assert.Equal("error", ct.Functor);
         var ctx = Assert.IsType<CompoundTerm>(ct.Args[1]);
         Assert.Equal("/", ctx.Functor);
-        Assert.Equal(Atom("frobnicate"), ctx.Args[0]);
-        Assert.Equal(Int(3), ctx.Args[1]);
+        Assert.Equal(Atom("atom_length"), ctx.Args[0]);
+        Assert.Equal(Int(2), ctx.Args[1]);
     }
 
     [Fact]
@@ -128,7 +126,7 @@ public class Chunk130Tests
         // factory still gets to fall through to the var. The
         // current-builtin field is null on a fresh engine.
         var raw = new Activation();
-        Assert.Null(raw.CurrentBuiltinName);
+        Assert.Equal(-1, raw.CurrentBuiltinId);
         var err = IsoError.InstantiationError(raw);
         var ct = Assert.IsType<CompoundTerm>(err);
         Assert.IsType<VarTerm>(ct.Args[1]);

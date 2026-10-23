@@ -1208,8 +1208,7 @@ public sealed partial class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.CurrentBuiltinName = entry.Name;
-                    _engine.CurrentBuiltinArity = entry.Arity;
+                    _engine._currentBuiltinId = builtinId;
                     // Tail-call return: a backtrackable builtin's
                     // ResumeAtReturnPc must land at the caller's
                     // continuation (our Cp), not at the instruction
@@ -1438,7 +1437,8 @@ public sealed partial class BytecodeInterpreter
                     if (nextClause == pc)
                         throw new Shumway.Core.PrologRuntimeException(
                             "system_error",
-                            $"corrupted dynamic chain: retry_me_else at {pc} points at itself");
+                            $"corrupted dynamic chain: retry_me_else at {pc} points at itself")
+                        { Origin = Shumway.Core.ErrorOrigin.Outside };
                     _engine.RetryMeElse(nextClause);
                     // A demoted chain head (asserta's in-place
                     // try_me_else -> retry_me_else demotion) is a 5-byte
@@ -2577,7 +2577,7 @@ public sealed partial class BytecodeInterpreter
                         break;
                     // thread the offending builtin's identity
                     // so a thrown error term reports the right culprit.
-                    //   * engine.CurrentBuiltinName for direct
+                    //   * engine.CurrentBuiltinId for direct
                     //     ShumwayPrologException(IsoError.X(..., engine))
                     //     throws from inside the impl;
                     //   * StampBuiltin on a PrologRuntimeException as it
@@ -2586,8 +2586,7 @@ public sealed partial class BytecodeInterpreter
                     //     PrologEngine after a meta-call) still sees the
                     //     Name/Arity. Idempotent — outer dispatch can't
                     //     overwrite the innermost throw's identity.
-                    _engine.CurrentBuiltinName = entry.Name;
-                    _engine.CurrentBuiltinArity = entry.Arity;
+                    _engine._currentBuiltinId = builtinId;
                     // the post-call_builtin address — backtrackable
                     // builtins (between, append, atom_concat, repeat, retract,
                     // …) capture this on first invocation and pass it to

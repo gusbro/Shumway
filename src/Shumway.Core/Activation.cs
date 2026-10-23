@@ -398,14 +398,14 @@ public sealed partial class Activation
             if (required > maxSize)
             {
                 LastExhausted = name;
-                throw new PrologRuntimeException("resource_error", "memory");
+                throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
             }
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
         {
             LastExhausted = name;
-            throw new PrologRuntimeException("resource_error", "memory");
+            throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
         }
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         // A machine that cannot hold the doubled buffer raises .NET's OOM
@@ -418,7 +418,7 @@ public sealed partial class Activation
         catch (OutOfMemoryException)
         {
             LastExhausted = name;
-            throw new PrologRuntimeException("resource_error", "memory");
+            throw new PrologRuntimeException("resource_error", "memory") { Origin = ErrorOrigin.Engine };
         }
     }
 

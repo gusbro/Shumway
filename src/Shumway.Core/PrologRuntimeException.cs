@@ -34,6 +34,10 @@ public sealed class PrologRuntimeException : Exception
     /// <summary>Arity companion to <see cref="BuiltinName"/>.</summary>
     public int BuiltinArity { get; private set; }
 
+    /// <summary>Where the error arose, which decides the builtin it names
+    /// when none stamped it.</summary>
+    public ErrorOrigin Origin { get; init; }
+
     /// <summary>The offending value an <c>error/2</c> term should
     /// report — the X in <c>type_error(integer, X)</c>, the Y in
     /// <c>domain_error(not_less_than_zero, Y)</c>. This lets the
@@ -101,6 +105,24 @@ public sealed class PrologRuntimeException : Exception
     {
         var (atomId, arity) = FunctorTable.Lookup(functorId);
         return new PrologRuntimeException("existence_error",
-            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity);
+            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity)
+        { Origin = ErrorOrigin.Outside };
     }
+}
+
+/// <summary>Where a <see cref="PrologRuntimeException"/> arose, for the
+/// builtin its error term names when no builtin stamped it.</summary>
+public enum ErrorOrigin
+{
+    /// <summary>A builtin's own code: the builtin the engine called last.</summary>
+    Builtin,
+
+    /// <summary>The engine's machinery, which runs inside a builtin and
+    /// outside any: the builtin whose code is on the stack where it was
+    /// raised, if one is.</summary>
+    Engine,
+
+    /// <summary>Outside any builtin (the resolution of a call, an instruction
+    /// of the machine, the catch machinery): no builtin.</summary>
+    Outside,
 }

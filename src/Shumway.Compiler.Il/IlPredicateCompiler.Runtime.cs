@@ -246,14 +246,23 @@ public sealed partial class IlPredicateCompiler
                         FunctorTable.Lookup(engine.GetHeap(functorIdx).AsFunctorId);
                     argBase = functorIdx + 1;
                     break;
+                // Named call/1, as the interpreter's DispatchCall names them.
                 case Tag.Ref:
                 case Tag.AttVar:
-                    throw new PrologRuntimeException("instantiation_error");
+                {
+                    var ie = new PrologRuntimeException("instantiation_error");
+                    ie.StampBuiltin("call", 1);
+                    throw ie;
+                }
                 default:
+                {
                     // §7.8.3.3: call(3, X) is type_error(callable, 3) — the
                     // closure itself is the culprit, not an anonymous slot.
-                    throw new PrologRuntimeException(
+                    var ce = new PrologRuntimeException(
                         "type_error", "callable", engine, goal);
+                    ce.StampBuiltin("call", 1);
+                    throw ce;
+                }
             }
 
             int totalArity = goalArity + extraCount;
@@ -461,8 +470,7 @@ public sealed partial class IlPredicateCompiler
         private static int InvokeBuiltinGoal(Activation engine, int builtinId)
         {
             var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-            engine.CurrentBuiltinName = builtin.Name;
-            engine.CurrentBuiltinArity = builtin.Arity;
+            engine.CurrentBuiltinId = builtinId;
             try
             {
                 return builtin.Impl(engine) ? SyncSuccess : SyncFail;
@@ -494,9 +502,14 @@ public sealed partial class IlPredicateCompiler
                 {
                     Cell qc = DerefCell(engine, engine.GetHeap(fidx + 1));
                     if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
-                        throw new PrologRuntimeException("instantiation_error");
+                    {
+                        var qe = new PrologRuntimeException("instantiation_error");
+                        qe.StampBuiltin("call", 1);
+                        throw qe;
+                    }
                     if (qc.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("type_error", "atom", engine, qc);
+                        throw new PrologRuntimeException("type_error", "atom", engine, qc)
+                        { Origin = ErrorOrigin.Outside };
                 }
                 else break;
                 Cell mCell = DerefCell(engine, engine.GetHeap(fidx + 1));
