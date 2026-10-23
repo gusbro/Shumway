@@ -48,6 +48,11 @@ public struct CatchFrame
     /// functor id). The restore truncates the queue back to this depth.</summary>
     public int SnapPendingWakeups;
 
+    /// <summary>How many findall/bagof/setof calls were collecting at frame creation:
+    /// a call the throw leaves never collects, and its solutions are dropped with
+    /// it.</summary>
+    public int SnapAllSolutions;
+
     // ----- Recovery continuation: where the enclosing clause resumes -----
     public int RecoveryE;
     public int RecoveryCp;

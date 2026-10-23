@@ -2181,26 +2181,16 @@ public static partial class MetaBuiltins
     }
 
 
-    /// <summary><c>'$findall_push'/0</c> — opens a fresh
-    /// solution buffer on the engine's findall stack. Emitted by the
-    /// MetaTransform rewrite of <c>findall/3</c> as the first goal of the
-    /// collect loop.</summary>
+    /// <summary><c>'$findall_push'/0</c> — opens a solution buffer for the
+    /// findall/bagof/setof call about to run its goal. The first goal of the
+    /// collect loop MetaTransform emits, and of the prelude's runtime
+    /// drivers.</summary>
     public static bool FindallPush(Activation engine)
     {
-        FindallHost(engine).PushFindallFrame();
+        engine.PushSolutions(new SolutionBuffer());
         return true;
     }
 
-    /// <summary><c>'$findall_record'(Template)</c> — copies the
-    /// current value of <c>Template</c> (a snapshot AST term, off the WAM
-    /// heap so backtracking can't unwind it) into the open findall
-    /// buffer, then succeeds so the trailing <c>fail</c> drives
-    /// enumeration on to the goal's next solution.</summary>
-    public static bool FindallRecord(Activation engine)
-    {
-        FindallHost(engine).RecordFindallSolution(MaterializeRegister(engine, 0));
-        return true;
-    }
 
     /// <summary><c>'$te_after'(HookIndex)</c> — the in-file term_expansion order
     /// guard. An in-file hook's clause is committed as
@@ -2217,21 +2207,13 @@ public static partial class MetaBuiltins
             && host._consultExpandPos > (int)n.Value;
     }
 
-    /// <summary><c>'$findall_record_s'(Template)</c> — the
-    /// findall/3 record path. Snapshots the solution straight into a
-    /// backtrack-safe <see cref="Cell"/> image (no per-node managed AST). A
-    /// value-leaf template (float / bigint / string / pstr / foreign) can't be
-    /// imaged flatly, so <see cref="FindallSnapshot.TrySnapshotRegister"/>
-    /// returns null and we fall back to the AST path. bagof/setof keep the
-    /// AST-only <see cref="FindallRecord"/> because they inspect the recorded
-    /// terms for witness grouping.</summary>
+    /// <summary><c>'$findall_record_s'(Template)</c> — copies the current value
+    /// of <c>Template</c> into the open solution buffer, off the heap the
+    /// trailing <c>fail</c> takes back, and succeeds so the fail drives the
+    /// enumeration on to the goal's next solution.</summary>
     public static bool FindallRecordSnapshot(Activation engine)
     {
-        Cell[]? snap = FindallSnapshot.TrySnapshotRegister(engine, 0);
-        if (snap != null)
-            FindallHost(engine).RecordFindallSnapshot(snap);
-        else
-            FindallHost(engine).RecordFindallSolution(MaterializeRegister(engine, 0));
+        OpenSolutions(engine).AddToList(engine, engine.GetRegister(0));
         return true;
     }
 

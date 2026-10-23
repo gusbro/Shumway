@@ -12,11 +12,11 @@ namespace Shumway.Tests.Embedding;
 ///
 /// <para>Chunk 83 makes <c>findall/3</c> with a callable goal a compile
 /// transform instead: <c>findall(T, G, L)</c> becomes
-/// <c>('$findall_push', G, '$findall_record'(T), fail ; '$findall_collect'(L))</c>.
+/// <c>('$findall_push', G, '$findall_record_s'(T), fail ; '$findall_collect'(L))</c>.
 /// G is spliced in as an ordinary body goal, so it compiles inline with
 /// real choice points and runs in the live engine — the <c>fail</c>
-/// enumerates its solutions, a per-engine frame stack collects the
-/// templates off-heap, and side effects persist. A bare-variable goal
+/// enumerates its solutions, a solution buffer collects the templates
+/// off-heap, and side effects persist. A bare-variable goal
 /// still falls through to the runtime builtin.</para>
 /// </summary>
 public class Chunk83Tests

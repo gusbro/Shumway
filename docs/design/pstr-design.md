@@ -201,7 +201,7 @@ scans a list to discover it is text (ADR-047, decision 8).
   through one helper, `MakeTextList(string, TextKind)`.
 
 **Explicitly not producers:** `GetList`, `UnifyList`, `Bind`, `CopyLis`,
-`HeapTermCopy`, `FindallSnapshot`, `assertz`, and the generic cons loop in the
+`HeapTermCopy`, `SolutionBuffer`, `assertz`, and the generic cons loop in the
 materializer. They build whatever list they were asked to build.
 
 **Not `phrase/2,3` either.** Converting the input list to a PSTR before feeding

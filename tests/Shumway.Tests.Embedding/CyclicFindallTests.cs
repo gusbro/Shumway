@@ -3,16 +3,12 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>findall/3 over a cyclic solution. FindallSnapshot's spine walk
-/// consulted structMap to stop, but the current spine's conses are only
-/// registered after the walk — so a list cycling back into its own spine
-/// (L = [a|L]) re-walked itself until the image overflowed: an
-/// engine-killing OutOfMemoryException, where HeapTermCopy (copy_term's
-/// path) had already fixed the very same walk. The snapshot now marks the
-/// in-progress spine and closes the cycle in the image; the AST fallback
-/// leg (value leaves) preserves cycles via the TermReader/Materializer
-/// knots. ISO: an answer is a copy, and copying a rational tree yields
-/// that rational tree.</summary>
+/// <summary>findall/3 over a cyclic solution. The copy that takes a solution
+/// off the heap registers each structure and list pair before it copies what is
+/// inside, so a term that cycles back into itself (L = [a|L]) closes the cycle in
+/// the copy instead of walking it until memory runs out, an
+/// OutOfMemoryException that kills the engine. ISO: an answer is a copy, and
+/// copying a rational tree yields that rational tree.</summary>
 public class CyclicFindallTests
 {
     private static PrologEngine NewEngine()

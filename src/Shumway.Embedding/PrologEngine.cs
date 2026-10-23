@@ -54,33 +54,20 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <summary>Per-engine global-variable store backing
     /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
     /// Survives across queries on this engine.</summary>
-    /// <summary>The image a non-backtrackable global keeps: the cell picture
-    /// when the value has no side-table leaf in it, and the term otherwise.
-    /// Both are the shapes findall/3 already records between solutions, for
-    /// the same reason -- they have to outlive the heap they came from.
-    /// </summary>
+    /// <summary>The image a non-backtrackable global keeps: a solution buffer of
+    /// one, for the reason findall/3 keeps its solutions in one -- the value has
+    /// to outlive the heap it came from.</summary>
     object Shumway.Builtins.IGlobalVarHost.SnapshotValue(
         Shumway.Core.Activation engine, int registerIndex)
-        => FindallSnapshot.TrySnapshotRegister(engine, registerIndex)
-           ?? (object)MaterializeToTerm(engine, registerIndex);
-
-    /// <summary>The register's value as an AST term. The cell goes onto the
-    /// heap for a moment so the reader's REF-chasing works uniformly, which
-    /// is the same one-cell price findall/3's fallback pays.</summary>
-    private static Shumway.Compiler.Ast.Term MaterializeToTerm(
-        Shumway.Core.Activation engine, int registerIndex)
     {
-        int slot = engine.AllocateHeap(1);
-        engine.SetHeap(slot, engine.GetRegister(registerIndex));
-        return TermReader.Materialize(engine, slot);
+        var value = new SolutionBuffer();
+        value.Add(engine, engine.GetRegister(registerIndex));
+        return value;
     }
 
     Shumway.Core.Cell Shumway.Builtins.IGlobalVarHost.EmitValue(
         Shumway.Core.Activation engine, object payload)
-        => payload is Shumway.Core.Cell[] snap
-            ? FindallSnapshot.EmitSnapshot(engine, snap)
-            : Materializer.MaterializeAsCell(
-                  engine, (Shumway.Compiler.Ast.Term)payload);
+        => ((SolutionBuffer)payload).Emit(engine, 0);
 
     public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
         new Shumway.Builtins.GlobalVarStore();

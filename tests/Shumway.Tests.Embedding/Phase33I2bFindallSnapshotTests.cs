@@ -6,11 +6,10 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Phase 33 I2b — findall/3,4 records each solution as a backtrack-safe cell
-/// image (<see cref="FindallSnapshot"/>) instead of a managed AST, with an AST
-/// fallback for value-leaf templates. The collected list must be identical to
-/// what the AST round-trip produced: right values, right order, fresh
-/// independent variables per solution, preserved intra-solution sharing, and
-/// correct handling of lists / nested compounds / value leaves / nesting.
+/// image (a solution buffer) instead of a managed AST. The collected list must
+/// be identical to what the AST round-trip produced: right values, right order,
+/// fresh independent variables per solution, preserved intra-solution sharing,
+/// and correct handling of lists / nested compounds / value leaves / nesting.
 /// </summary>
 public class Phase33I2bFindallSnapshotTests
 {

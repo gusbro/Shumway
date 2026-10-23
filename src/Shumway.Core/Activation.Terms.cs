@@ -246,6 +246,17 @@ public sealed partial class Activation
         throw new InvalidCastException($"Foreign value of type {value.GetType()} is not assignable to {typeof(T)}.");
     }
 
+    /// <summary>Copies <paramref name="cells"/> to the heap at
+    /// <paramref name="start"/>, every heap index in them moved by
+    /// <paramref name="delta"/> (<see cref="TermImage.Relocate"/>). The caller has
+    /// reserved the cells.</summary>
+    public void CopyRelocated(ReadOnlySpan<Cell> cells, int start, int delta)
+    {
+        var heap = _heap;
+        for (int i = 0; i < cells.Length; i++)
+            heap[start + i] = TermImage.Relocate(cells[i], delta);
+    }
+
     /// <summary>
     /// Allocates a float header cell and its paired INT cell contiguously on the heap
     /// and returns the heap index of the header. Together they encode the 64-bit double

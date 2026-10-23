@@ -283,63 +283,6 @@ public sealed partial class PrologEngine
     /// (<c>abolish_all_tables/0</c>).</summary>
     internal void ClearTablingKeys() => _tablingSeen.Clear();
 
-    /// <summary>Stack of in-flight findall solution buffers.
-    /// MetaTransform rewrites <c>findall/3</c> with a callable goal into a
-    /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
-    /// in this engine: <c>'$findall_push'</c> pushes a frame here,
-    /// <c>'$findall_record'</c> appends a template copy to the top frame,
-    /// <c>'$findall_collect'</c> pops it. Solutions must survive the
-    /// <c>fail</c>-driven backtracking that enumerates the goal, so they are
-    /// held off the WAM heap. Each frame entry is one of two backtrack-safe
-    /// forms: a <see cref="Cell"/>[] cell image (the fast
-    /// findall path, no per-node managed object) or a managed <see cref="Term"/>
-    /// AST (bagof/setof, which inspect the terms for witness grouping, and the
-    /// findall value-leaf fallback). A stack so nested findall calls each get
-    /// their own frame.</summary>
-    private readonly List<List<object>> _findallStack = new();
-
-    internal void PushFindallFrame() => _findallStack.Add(new List<object>());
-
-    /// <summary>Records a solution as a managed AST term (bagof/setof, and the
-    /// findall value-leaf fallback).</summary>
-    internal void RecordFindallSolution(Term solution)
-    {
-        if (_findallStack.Count == 0)
-            throw new InvalidOperationException(
-                "'$findall_record' invoked with no active findall frame.");
-        _findallStack[^1].Add(solution);
-    }
-
-    /// <summary>Records an opaque frame entry (the bagof/setof record step
-    /// stores key+payload pairs the lazy enumerator groups later).</summary>
-    internal void RecordFindallEntry(object entry)
-    {
-        if (_findallStack.Count == 0)
-            throw new InvalidOperationException(
-                "'$bagof_record' invoked with no active findall frame.");
-        _findallStack[^1].Add(entry);
-    }
-
-    /// <summary>Records a solution as a backtrack-safe cell image
-    /// (the fast findall path).</summary>
-    internal void RecordFindallSnapshot(Cell[] snapshot)
-    {
-        if (_findallStack.Count == 0)
-            throw new InvalidOperationException(
-                "'$findall_record' invoked with no active findall frame.");
-        _findallStack[^1].Add(snapshot);
-    }
-
-    internal List<object> PopFindallFrame()
-    {
-        if (_findallStack.Count == 0)
-            throw new InvalidOperationException(
-                "'$findall_collect' invoked with no active findall frame.");
-        var frame = _findallStack[^1];
-        _findallStack.RemoveAt(_findallStack.Count - 1);
-        return frame;
-    }
-
     /// <summary>Drops the cached compiled predicate for
     /// <paramref name="functorId"/>. Called by every mutation path
     /// (<see cref="Assertz"/>, <see cref="Asserta"/>,

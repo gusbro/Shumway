@@ -263,7 +263,7 @@ public static class MetaTransform
 
         // findall(Template, Goal, List) with a syntactically-callable
         // Goal — rewrite to an in-engine collect loop:
-        //   ( '$findall_push', Goal, '$findall_record'(Template), fail
+        //   ( '$findall_push', Goal, '$findall_record_s'(Template), fail
         //   ; '$findall_collect'(List) )
         // Goal is spliced in as a body goal, so it compiles inline with
         // real choice points and runs in the live engine — no sub-engine,
@@ -1148,7 +1148,7 @@ public static class MetaTransform
 
         string kind = functor;   // '$bagof_next'(setof|bagof, Witness-Bag)
 
-        // '$findall_push', Goal', '$findall_record'(Wt-T), fail
+        // '$findall_push', Goal', '$bagof_record'(Wt-T), fail
         Term splicedGoal = GoalHasLocalCut(goal)
             ? SynthesizeCutBarrierHelper(goal, ref counter, helpers)
             : goal;

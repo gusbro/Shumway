@@ -380,6 +380,7 @@ public sealed partial class Activation
             SnapExtraTrailTop = _extraTrailTop,
             SnapGuardContTop = _guardContTop,
             SnapPendingWakeups = _pendingWakeups.Count,
+            SnapAllSolutions = _allSolutions?.Count ?? 0,
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
             PushRecord = _extraTrailTop,
@@ -603,6 +604,13 @@ public sealed partial class Activation
         // Wakeups queued by the guarded goal reference heap cells the
         // truncation above just discarded — drop them with it.
         _pendingWakeups.Truncate(f.SnapPendingWakeups);
+        // And the findall/bagof/setof calls the guarded goal opened, which will
+        // not collect: a later call would record into one.
+        if (_allSolutions is { } open && open.Count > f.SnapAllSolutions)
+        {
+            open.RemoveRange(f.SnapAllSolutions, open.Count - f.SnapAllSolutions);
+            _topSolutions = open.Count > 0 ? open[^1] : null;
+        }
         _b = f.SnapB;
         // ADR-033 — drop guard-continuation entries the guarded goal pushed.
         _guardContTop = f.SnapGuardContTop;
