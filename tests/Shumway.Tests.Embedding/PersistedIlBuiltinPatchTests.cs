@@ -1,45 +1,56 @@
 using System.Linq;
+using Shumway.Builtins;
+using Shumway.Compiler.Il;
+using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>The cross-process bundle flake's root cause, pinned: persisted
-/// IL used to bake builtin registry IDS as immediates, and registry ids are
-/// assigned in registration order — which concurrent engine construction in
-/// the building process can shuffle. A child process then dispatched a
-/// different builtin (the type_error(evaluable) / fd_bound / '$native_run'
-/// error zoo). Builtin references now travel as name-relative
-/// <see cref="Shumway.Compiler.Il.IlPatchKind.Builtin"/> patch sites,
-/// resolved against the loading process's registry like atoms and functors
-/// always were.</summary>
+/// <summary>Persisted IL carries no builtin registry id: ids follow
+/// registration order, which differs from one process to another. An engine
+/// builtin is a direct call to its method; any other builtin is a name-relative
+/// <see cref="IlPatchKind.Builtin"/> patch site, resolved against the loading
+/// process's registry like atoms and functors.</summary>
 public sealed class PersistedIlBuiltinPatchTests
 {
+    private static int _probeCalls;
+
     [Fact]
-    public void BuiltinDispatchIsNameRelativeInPersistedIl()
+    public void AnEngineBuiltinIsCalledDirectlyAndAHostBuiltinByName()
     {
-        byte[] bytes = ShmoLinker.Link(new LinkConfig
+        _ = new PrologEngine();   // registers the engine's builtins
+        int probeId = BuiltinsRegistry.Register("$persisted_builtin_probe", 1,
+            engine => engine.UnifyRegisterWithCell(0, Cell.Int(++_probeCalls)));
+        Assert.NotNull(BuiltinsRegistry.GetById(probeId).Impl.Target);
+
+        var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[]
             {
                 ShmoCompiler.CompileSource(
-                    "measure(A, N) :- atom_length(A, N).\n"
-                    + "scenario :- measure(abcde, N), N =:= 5.\n", "app"),
+                    "measure(A, N, K) :- atom_length(A, N), '$persisted_builtin_probe'(K).\n", "app"),
             },
-            EntryPoints = new[] { new PredicateRef("scenario", 0) },
+            EntryPoints = new[] { new PredicateRef("measure", 3) },
             IncludeCompiledIl = true,
-        }).Bytes!;
+            // No bytecode to fall back on: the bundle runs its IL.
+            StripWam = true,
+        });
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
 
-        var bundle = BundleReader.FromBytes(bytes);
+        var bundle = BundleReader.FromBytes(result.Bytes!);
         var entry = bundle.Entries.Single(e => e.ModuleName == "app");
-        Assert.NotNull(entry.CompiledIlPatches);
-        var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(entry.CompiledIlPatches!);
-        Assert.Contains(sites,
-            s => s.Kind == Shumway.Compiler.Il.IlPatchKind.Builtin);
+        Assert.Contains(("measure", 3),
+            IlPersistedEntryCodec.Decode(entry.CompiledIlEntries!).Select(pe => (pe.Name, pe.Arity)));
+        var named = IlPatchSiteCodec.Decode(entry.CompiledIlPatches!)
+            .Where(s => s.Kind == IlPatchKind.Builtin).Select(s => s.Name + "/" + s.Arity).ToList();
+        Assert.Contains("$persisted_builtin_probe/1", named);
+        Assert.DoesNotContain("atom_length/2", named);
 
-        // And the patched bundle still runs in a fresh engine.
-        var engine = new PrologEngine();
-        engine.LoadBundle(BundleReader.FromBytes(bytes));
-        Assert.True(engine.Query("scenario.").Success);
+        var engine = PrologEngine.FromBundle(BundleReader.FromBytes(result.Bytes!));
+        int before = _probeCalls;
+        Assert.True(engine.Query("measure(abcde, N, K), N == 5, integer(K).").Success);
+        Assert.False(engine.Query("measure(abc, 4, _).").Success);
+        Assert.True(_probeCalls > before, "the host builtin did not run");
     }
 }

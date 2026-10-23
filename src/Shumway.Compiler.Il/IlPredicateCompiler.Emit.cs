@@ -123,8 +123,12 @@ public sealed partial class IlPredicateCompiler
     /// bytecode the bundle carries, the only ones a wake may hand the
     /// activation to (ADR-049); null for all. <paramref name="compiledByWorker"/>:
     /// the loader's worker compiles each method before it first runs, so it is
-    /// optimized at once, like code emitted at run time.</summary>
-    public List<IlPatchSite> BeginPersistEmit(ISet<int>? bytecodeShipped = null, bool compiledByWorker = false)
+    /// optimized at once, like code emitted at run time.
+    /// <paramref name="builtinAssemblies"/>: the assemblies whose builtins the IL
+    /// calls directly, the engine's own, which load wherever a bundle does; any
+    /// other builtin is named, and the loading process resolves it.</summary>
+    public List<IlPatchSite> BeginPersistEmit(ISet<int>? bytecodeShipped = null, bool compiledByWorker = false,
+        ISet<Assembly>? builtinAssemblies = null)
     {
         var list = new List<IlPatchSite>();
         _persistPatches = list;
@@ -132,6 +136,7 @@ public sealed partial class IlPredicateCompiler
         _bytecodeEntered = new HashSet<int>();
         _bytecodeShipped = bytecodeShipped;
         _persistOptimized = compiledByWorker;
+        _persistBuiltinAssemblies = builtinAssemblies;
         return list;
     }
 
@@ -144,6 +149,7 @@ public sealed partial class IlPredicateCompiler
         _bytecodeShipped = null;
         _persistOptimized = false;
         _persistedStubs = null;
+        _persistBuiltinAssemblies = null;
     }
 
     private static void EmitAtomId(IlEmit emit, int atomId)
@@ -225,6 +231,33 @@ public sealed partial class IlPredicateCompiler
             Image = pool[imageId],
         });
         emit.LoadConstant(sentinel);
+    }
+
+    /// <summary>The call to a builtin's implementation, its result on the stack:
+    /// a direct call to the static method it is, when the method being emitted
+    /// can reach it and, in a persisted bundle, it is one of the engine's own;
+    /// the lookup of the entry and a call through its delegate otherwise (a
+    /// lambda, a method out of reach, and in a bundle a host's builtin, which the
+    /// loading process resolves by name).</summary>
+    private static void EmitBuiltinImplCall(IlEmit emit, int builtinId)
+    {
+        var impl = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Impl;
+        var method = impl.Method;
+        if (impl.Target is null && method.IsStatic && impl.GetInvocationList().Length == 1
+            && (_persistPatches is null
+                ? emit.ReachesAnyMember || (method.IsPublic && method.DeclaringType!.IsVisible)
+                : method.IsPublic && method.DeclaringType!.IsVisible
+                    && _persistBuiltinAssemblies?.Contains(method.Module.Assembly) == true))
+        {
+            emit.LoadArgument(0);
+            EmitHelperCall(emit, method);
+            return;
+        }
+        EmitBuiltinId(emit, builtinId);
+        EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
+        EmitHelperCall(emit, BuiltinEntryImplGetter);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, BuiltinImplInvokeMethod);
     }
 
     private static void EmitBuiltinId(IlEmit emit, int builtinId)
@@ -1211,11 +1244,7 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                     CpsRecordContinuation(resumeCursor);   // ADR-061
                 }
-                EmitBuiltinId(emit, builtinId);
-                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
-                EmitHelperCall(emit, BuiltinEntryImplGetter);
-                emit.LoadArgument(0);
-                EmitHelperCall(emit, BuiltinImplInvokeMethod);
+                EmitBuiltinImplCall(emit, builtinId);
                 emit.BranchIfFalse(failLabel);
                 if (isBacktrackable)
                 {
@@ -1258,11 +1287,7 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineCpGetter);
                     EmitHelperCall(emit, EngineBuiltinReturnPcSetter);
                 }
-                EmitBuiltinId(emit, tailBuiltinId);
-                EmitHelperCall(emit, BuiltinsRegistryGetByIdMethod);
-                EmitHelperCall(emit, BuiltinEntryImplGetter);
-                emit.LoadArgument(0);
-                EmitHelperCall(emit, BuiltinImplInvokeMethod);
+                EmitBuiltinImplCall(emit, tailBuiltinId);
                 emit.BranchIfFalse(failLabel);
                 // Proceed. A builtin that itself threaded a tail dispatch set
                 // IlTailCallPending + Pc; returning true defers to the outer

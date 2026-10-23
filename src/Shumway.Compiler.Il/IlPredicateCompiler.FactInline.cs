@@ -776,6 +776,7 @@ public sealed partial class IlPredicateCompiler
     /// needed.</summary>
     [System.ThreadStaticAttribute] private static List<IlPatchSite>? _persistPatches;
     [System.ThreadStaticAttribute] private static int _persistNextSentinel;
+    [System.ThreadStaticAttribute] private static ISet<System.Reflection.Assembly>? _persistBuiltinAssemblies;
 
     // ADR-022 item 2 — set (by Shumway.Embedding, which owns the block table and
     // interop class) while compiling, so a `'$native_run'('$nb$…', regs)` call is

@@ -117,6 +117,9 @@ public static class PersistedIlBuilder
     /// <param name="compiledByWorker">The bundle keeps its predicates' bytecode:
     /// the engine runs it until a predicate is hot, and the loader's worker
     /// compiles its method then. Such a method is optimized at once.</param>
+    /// <param name="builtinAssemblies">The assemblies whose builtins the IL calls
+    /// directly: the engine's own, which load wherever the bundle does. Any other
+    /// builtin travels by name. Null for none.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
@@ -126,7 +129,8 @@ public static class PersistedIlBuilder
         Func<int, IReadOnlyList<TermImage>?>? imagePoolProvider = null,
         ISet<int>? emitOnly = null,
         ISet<int>? bytecodeShipped = null,
-        bool compiledByWorker = false)
+        bool compiledByWorker = false,
+        ISet<Assembly>? builtinAssemblies = null)
     {
 #if NETFRAMEWORK
         // Framework's native persisted emit: AssemblyBuilder in Save mode —
@@ -203,7 +207,7 @@ public static class PersistedIlBuilder
         // routes through a sentinel + records the IlPatchSite. After
         // psab.Save() below we scan the resulting PE for each
         // sentinel to fill in AbsoluteByteOffset.
-        var patches = ic.BeginPersistEmit(bytecodeShipped, compiledByWorker);
+        var patches = ic.BeginPersistEmit(bytecodeShipped, compiledByWorker, builtinAssemblies);
         var entries = new List<Entry>();
         int slot = 0;
         int ordinal = 0;
