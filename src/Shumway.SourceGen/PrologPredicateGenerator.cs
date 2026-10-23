@@ -149,8 +149,11 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 paramElementType = typeName.Substring(0, typeName.Length - 1);
                 isValueTypeNullable = true;
             }
+            var shape = mode == ParamMode.Bidirectional
+                ? null : CellShapes.Of(p.Type, ctx.SemanticModel.Compilation);
             typedParams.Add(new TypedParam(
-                p.Name, typeName, paramElementType, i, mode, isValueTypeNullable));
+                p.Name, typeName, paramElementType, i, mode, isValueTypeNullable,
+                shape?.ReadType, shape?.Read, shape?.Write));
         }
 
         // out/ref are incompatible with a non-bool /
@@ -179,6 +182,8 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         ReturnShape returnShape;
         string? returnTypeName = null;
         string? elementTypeName = null;
+        string? returnWrite = null;
+        string? elementWrite = null;
         if (nonDeterministic)
         {
             // Validate: must return IEnumerable<T>.
@@ -187,6 +192,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 && named.ConstructedFrom.ToDisplayString() == "System.Collections.Generic.IEnumerable<T>")
             {
                 elementTypeName = named.TypeArguments[0].ToDisplayString();
+                elementWrite = CellShapes.Of(named.TypeArguments[0], ctx.SemanticModel.Compilation)?.Write;
             }
             else
             {
@@ -206,6 +212,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         {
             returnShape = ReturnShape.Encode;
             returnTypeName = method.ReturnType.ToDisplayString();
+            returnWrite = CellShapes.Of(method.ReturnType, ctx.SemanticModel.Compilation)?.Write;
         }
 
         var ns = containing.ContainingNamespace.IsGlobalNamespace
@@ -238,7 +245,9 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             EngineParamIndex: engineParamIndex,
             ReturnShape: returnShape,
             ReturnTypeName: returnTypeName,
-            ElementTypeName: elementTypeName);
+            ElementTypeName: elementTypeName,
+            ReturnWrite: returnWrite,
+            ElementWrite: elementWrite);
     }
 
     private static string EmitGroup(
@@ -332,21 +341,39 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                           .Append(i).AppendLine(");");
                         break;
                     }
+                    // A shape with a direct form is read off the heap; the
+                    // Term way below runs when it says no (a term of another
+                    // shape, or converters registered by the host), so every
+                    // error is still the converter's.
+                    string tw = indent;
+                    if (p.Read is not null)
+                    {
+                        sb.Append(indent).Append("    ").Append(p.TypeName).Append(" __arg").Append(i).AppendLine(";");
+                        sb.Append(indent).Append("    if (!host.HasUserConverters && ")
+                          .Append(CellShapes.Fill(p.Read, cell: "engine.GetRegister(" + i + ")",
+                              @out: "out " + p.ReadType + " __d" + i))
+                          .AppendLine(")");
+                        sb.Append(indent).Append("        __arg").Append(i).Append(" = __d").Append(i).AppendLine(";");
+                        sb.Append(indent).AppendLine("    else");
+                        sb.Append(indent).AppendLine("    {");
+                        tw = indent + "    ";
+                    }
                     // Explicit instantiation_error for
                     // + mode lets the user see an ISO-shaped Prolog
                     // error rather than the InvalidCastException
                     // the converter would raise on a VarTerm.
-                    sb.Append(indent).Append("    var __t").Append(i)
+                    sb.Append(tw).Append("    var __t").Append(i)
                       .Append(" = global::Shumway.Embedding.RegisterMarshalling.ReadRegisterAsTerm(engine, ")
                       .Append(i).AppendLine(");");
-                    sb.Append(indent).Append("    if (__t").Append(i)
+                    sb.Append(tw).Append("    if (__t").Append(i)
                       .AppendLine(" is global::Shumway.Compiler.Ast.VarTerm)");
-                    sb.Append(indent).AppendLine("        throw new global::Shumway.Core.PrologRuntimeException(\"instantiation_error\");");
-                    sb.Append(indent).Append("    var __arg")
+                    sb.Append(tw).AppendLine("        throw new global::Shumway.Core.PrologRuntimeException(\"instantiation_error\");");
+                    sb.Append(tw).Append(p.Read is null ? "    var __arg" : "    __arg")
                       .Append(i)
                       .Append(" = host.FromTerm<")
                       .Append(p.TypeName)
                       .Append(">(__t").Append(i).AppendLine(");");
+                    if (p.Read is not null) sb.Append(indent).AppendLine("    }");
                     break;
                 case ParamMode.Output:
                     // The user method writes via `out`; just declare
@@ -419,6 +446,13 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 break;
             case ReturnShape.Encode:
                 sb.Append(indent).Append("    var __result = ").Append(call).AppendLine(";");
+                if (b.ReturnWrite is not null)
+                {
+                    sb.Append(indent).AppendLine("    if (!host.HasUserConverters)");
+                    sb.Append(indent).Append("        return engine.UnifyRegisterWithCell(")
+                      .Append(b.TypedParameters.Count).Append(", ")
+                      .Append(CellShapes.Fill(b.ReturnWrite, value: "__result")).AppendLine(");");
+                }
                 sb.Append(indent).Append("    return global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
                   .Append("engine, ")
                   .Append(b.TypedParameters.Count)
@@ -467,6 +501,15 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             switch (p.Mode)
             {
                 case ParamMode.Output:
+                    if (p.Write is not null)
+                    {
+                        sb.Append(indent).Append("    if (!(host.HasUserConverters ? ")
+                          .Append("global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(engine, ").Append(i)
+                          .Append(", host.ToTerm<").Append(p.TypeName).Append(">(__arg").Append(i).Append("))")
+                          .Append(" : engine.UnifyRegisterWithCell(").Append(i).Append(", ")
+                          .Append(CellShapes.Fill(p.Write, value: "__arg" + i)).AppendLine("))) return false;");
+                        break;
+                    }
                     sb.Append(indent).Append("    if (!global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
                       .Append("engine, ").Append(i)
                       .Append(", host.ToTerm<").Append(p.TypeName).Append(">(__arg")
@@ -508,6 +551,13 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("{");
         // Unify the current value with the register right after the typed
         // input args.
+        if (b.ElementWrite is not null)
+        {
+            sb.Append(indent).AppendLine("    if (!host.HasUserConverters)");
+            sb.Append(indent).Append("        return engine.UnifyRegisterWithCell(")
+              .Append(b.TypedParameters.Count).Append(", ")
+              .Append(CellShapes.Fill(b.ElementWrite, value: "__current")).AppendLine(");");
+        }
         sb.Append(indent).Append("    return global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
           .Append("engine, ").Append(b.TypedParameters.Count)
           .Append(", host.ToTerm<").Append(b.ElementTypeName).AppendLine(">(__current));");
@@ -526,7 +576,9 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         int EngineParamIndex,
         ReturnShape ReturnShape,
         string? ReturnTypeName,
-        string? ElementTypeName);
+        string? ElementTypeName,
+        string? ReturnWrite,
+        string? ElementWrite);
 
     private enum ParamMode { Input, Output, Bidirectional }
 
@@ -536,7 +588,10 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         string ElementTypeName,
         int OriginalIndex,
         ParamMode Mode,
-        bool IsValueTypeNullable);
+        bool IsValueTypeNullable,
+        string? ReadType,
+        string? Read,
+        string? Write);
 
     private readonly record struct TypeRing(string Name, string Kind, bool IsStatic);
 }

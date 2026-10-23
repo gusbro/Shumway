@@ -127,7 +127,7 @@ reverse-P/Invoke).
   `FromTerm`/`ToTerm`) loses to P/Invoke marshalling by 3–34× on composites,
   because it decodes through an intermediate Term-AST. The **zero-copy** path —
   a raw `bool(Activation)` foreign walking and building the engine's heap cells
-  directly — wins by 3–180×, and list/term traversal is essentially free. A
+  directly — wins by 3–30×, and list/term traversal is essentially free. A
   native engine embedded over P/Invoke *structurally cannot* match that: its
   cells are unmanaged, so it must copy where Shumway does not.
 - Documented in `docs/guide/interop.md` (the four mechanisms, with worked

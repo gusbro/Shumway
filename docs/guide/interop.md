@@ -9,7 +9,7 @@ mechanisms (their own documents) fit.
 
 | Mechanism | Direction | Cost | Use when |
 |---|---|---|---|
-| [Typed foreign predicates](#1-typed-foreign-predicates-convenience) | Prolog → C# | Allocates (Term-AST) | Convenience, cold paths |
+| [Typed foreign predicates](#1-typed-foreign-predicates-convenience) | Prolog → C# | Low for the common shapes; a Term tree for the rest | Most foreign predicates |
 | [Typed queries](#2-typed-queries) | C# → Prolog | Allocates (Term-AST) | Driving the engine from a host |
 | [Re-entrant `SolveOnce`](#3-re-entrant-solveonce) | C# → Prolog, mid-query | Low | A foreign method calling back into Prolog |
 | [**Zero-copy cell access**](#4-zero-copy-cell-access-hot-path) | both | **Lowest** | **Hot paths: traversing/building terms** |
@@ -53,10 +53,17 @@ Parameter modes map from C# modifiers: plain → `+`, `out T` → `-`, `ref T?` 
 `?`. Return `IEnumerable<T>` with `NonDeterministic = true` for a backtrackable
 predicate. Errors: throw `PrologRuntimeException` to raise a catchable `error/2`.
 
-**Advantage:** you write plain C#; no knowledge of the WAM. **Disadvantage:**
-each composite argument/return is decoded through an intermediate `Term` tree;
-`List<long>` means one `IntTerm` object per element, plus the `List`. That is
-real GC traffic. Fine off the hot path; see §4 for the inner loop.
+**Advantage:** you write plain C#; no knowledge of the WAM. The common shapes
+go straight between the heap and C# values, with no intermediate tree: the
+scalars, `string`, lists and arrays of them, and `[PrologTerm]` types of the
+same project (the generator gives each one methods that read and write its
+cells). On integer lists that costs about what P/Invoke marshalling into a
+native engine costs; on atom lists, less (§Performance). **Disadvantage:** the
+method still receives a `List<long>` allocated per call, and the other shapes
+(dictionaries, tuples, `Nullable<T>`, `BigInteger`, a type the host registered
+a converter for) are decoded through an intermediate `Term` tree, one object per
+element. A term of the wrong shape raises the same error either way. For the
+inner loop, see §4.
 
 ---
 
@@ -133,9 +140,10 @@ The change is effective immediately, **visible to later goals of the same query*
 dynamic store lives on the engine, shared with the activation.
 
 **Advantage:** ~60× cheaper per call than a top-level `QueryAll` (reuses the
-linked program); nests correctly (`C# → Prolog → C# → Prolog`). **Disadvantage:**
-building the goal `Term` and reading a composite output still go through the
-Term-AST tier, for scalar in/out this is light, for large lists prefer §4.
+linked program); nests correctly (`C# → Prolog → C# → Prolog`). The output is
+read straight off the heap when it is a scalar, a `string`, or a list or array
+of those. **Disadvantage:** the goal is a `Term` you build, and an output of any
+other type goes through a `Term` tree; for large terms, prefer §4.
 
 ---
 
@@ -339,7 +347,7 @@ public static bool MakeRec(Activation e)
 
 **Advantage:** the fastest interop there is; you read and write the engine's own
 memory, so there is nothing to copy and nothing for the GC to collect. In the
-benchmarks (§below) it beats a native engine embedded over P/Invoke by 3–180× on
+benchmarks (§below) it beats a native engine embedded over P/Invoke by 3–30× on
 list and term work, precisely because the native engine *must* copy where Shumway
 does not. **Disadvantage:** you are writing at the level of the abstract machine;
 you must respect the cell layout, deref before inspecting, and get unification
@@ -360,32 +368,44 @@ tier (`:- native`, `:- c`, the `reftype` cursor). That is its own subject; see
 
 ## Performance
 
-Measured Prolog→C# per crossing, marshalling only (loop/dispatch baseline
-subtracted), against **GNU Prolog embedded in the same C# host via P/Invoke** (a
-native engine: every crossing must marshal). Oracle-verified; representative
-figures, ns/call.
+Measured Prolog→C# per crossing against **GNU Prolog embedded in the same C# host
+via P/Invoke** (a native engine: every crossing must marshal), both engines in
+one process. Each figure is the marshalling only: a call with the data minus an
+empty call of the same mechanism, timed over two run lengths so that starting
+the query and building the input cancel. Oracle-verified; the median of eight
+processes, ns/call, October 2026.
 
 | Operation | GProlog (P/Invoke) | Shumway convenience (§1) | Shumway zero-copy (§4) |
 |---|---:|---:|---:|
-| integer scalar | ~95 | ~30 | (n/a: scalars don't copy) |
-| int list, read (len 100) | ~700 | ~24000 | **~190** |
-| int list, build (len 100) | ~1400 | ~11500 | **~750** |
-| atom list, read (len 50) | ~3400 | ~12000 | **~20** |
-| atom list, build (len 50) | ~5100 | ~10900 | **~280** |
-| compound, traverse | ~800 | - | **~free** |
-| compound, build | ~680 | - | **~290** |
+| empty call, an integer in and out (not subtracted) | ~43 | ~25 | ~24 |
+| int list, read (len 100) | ~620 | ~880 | **~230** |
+| int list, read (len 1000) | ~5800 | ~7500 | **~2100** |
+| int list, build (len 100) | ~1200 | ~830 | **~270** |
+| int list, build (len 1000) | ~12500 | ~8600 | **~3000** |
+| atom list, read (len 50) | ~2800 | ~830 | **~120** |
+| atom list, read (len 1000) | ~55000 | ~12000 | **~2200** |
+| atom list, build (len 50) | ~4000 | ~1100 | **~130** |
+| atom list, build (len 1000) | ~78000 | ~22000 | **~2700** |
+| `rec(Id, Atoms, Name)`, read (10 atoms) | ~640 | ~250 | **~24** |
+| `rec(Id, Atoms, Name)`, read (100 atoms) | ~5800 | ~1500 | **~220** |
+| `rec(Id, Atoms, Name)`, build (10 atoms) | ~550 | ~290 | **~27** |
+| `rec(Id, Atoms, Name)`, build (100 atoms) | ~3600 | ~2200 | **~260** |
 
 Two honest readings:
 
-- The **convenience** path (§1–2) is **3–34× slower** than P/Invoke marshalling
-  on composites: the Term-AST intermediate is pure overhead here. It buys
-  ergonomics, not speed. Use it where the crossing is not the bottleneck.
-- The **zero-copy** path (§4) is **3–180× faster** than P/Invoke marshalling, and
-  list/term *traversal* is essentially free (just chasing the engine's own
-  pointers). This is the case a native embedded engine structurally cannot match,
-  and the reason to run Prolog in-process.
+- The **convenience** path (§1) reads and writes the common shapes straight off
+  the heap. On integer lists it costs about what P/Invoke marshalling costs
+  (reading is 1.3× slower, building 1.5× faster); on atom lists and compounds it
+  is 1.6 to 4.7× faster, since a native engine converts every atom to a string
+  and back. Shapes outside that set still pay a `Term` tree per crossing.
+- The **zero-copy** path (§4) is **3–30× faster** than P/Invoke marshalling, at 2
+  to 3 ns per list element. The gap is narrowest on integer lists, which the
+  native engine copies as a flat array, and widest on atoms and compounds, whose
+  text it has to copy and decode. This is the case a native embedded engine
+  structurally cannot match, and the reason to run Prolog in-process.
 
-Scalars are a wash (both cheap; convenience even edges ahead). The takeaway is not
+An empty call costs less in Shumway than over P/Invoke. The takeaway is not
 "Shumway is faster at interop" flatly. It is that, **for hot-path term manipulation,
-touching the engine's cells directly wins decisively; for everything else, the
-convenience API is there and its cost doesn't matter.**
+touching the engine's cells directly wins decisively; the convenience API costs
+about what marshalling into a native engine costs, which suits most foreign
+predicates.**

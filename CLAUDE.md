@@ -16,7 +16,7 @@ Shumway implements a **Prolog compiler and interpreter that runs on .NET**, inte
 - **Embedded rules engines** in .NET applications.
 - **Symbolic reasoning** within larger .NET systems.
 
-**Performance target**: comparable to or better than GNU Prolog in real-world scenarios. On interop-heavy workloads (where the cost of crossing the C# ↔ Prolog boundary matters more than raw Prolog throughput) this is **measured, not aspirational**: the zero-copy path wins 3–180× over P/Invoke-embedded GNU Prolog — [`docs/benchmarks/cross-engine-comparison.md`](docs/benchmarks/cross-engine-comparison.md) is the source of truth for all performance claims; when this file and that one disagree, that one wins.
+**Performance target**: comparable to or better than GNU Prolog in real-world scenarios. On interop-heavy workloads (where the cost of crossing the C# ↔ Prolog boundary matters more than raw Prolog throughput) this is **measured, not aspirational**: the zero-copy path wins 3–30× over P/Invoke-embedded GNU Prolog — [`docs/benchmarks/cross-engine-comparison.md`](docs/benchmarks/cross-engine-comparison.md) is the source of truth for all performance claims; when this file and that one disagree, that one wins.
 
 ---
 
@@ -250,7 +250,7 @@ entries here, grow the closure docs.
 | 34 | Source-level debugger: ADR-035 VS/Concord + ADR-036 VS Code/DAP over one engine debug core; conditional bps, live eval, Set Next Statement, `:- disable_debug` | [doc](docs/history/phase-34-closure.md) |
 | 35 | Neumerkel-driven ISO reader/writer conformance, ADR-037 soft cut end to end (+ latent `->` fix), module-local meta-calls (`$mqual`), REPL fresh-line + default Tier-1 | [doc](docs/history/phase-35-closure.md) |
 | 36 | Third-party ecosystem (145 commits): ADR-038 library loading + scoped `:- module/2`, ADR-039 rationals, ADR-040 multi-dialect shims, ADR-041 dispatch-time clause selection; SWI/Scryer/Logtalk library campaigns; debugger residual-constraints round | [doc](docs/history/phase-36-closure.md) |
-| 37 | Documentation truth (guide/history split, invariants.md, ADR audit), MIT licensing + adapter rewrite, `--consult` incremental toolchain, bundle helper-id collision fixes, `SolveOnce` + first interop benchmark vs GNU (zero-copy wins 3–180×) | [doc](docs/history/phase-37-closure.md) |
+| 37 | Documentation truth (guide/history split, invariants.md, ADR audit), MIT licensing + adapter rewrite, `--consult` incremental toolchain, bundle helper-id collision fixes, `SolveOnce` + first interop benchmark vs GNU (zero-copy wins 3–30×) | [doc](docs/history/phase-37-closure.md) |
 | 38 | WebShumway (ADR-042): the full engine on browser-wasm as a static site — Tier-0 via `RuntimeCaps`, threads + COOP/COEP, MEMFS↔OPFS, `Shumway.TopLevel` extraction, libraries as dialect-tagged collections | [doc](docs/history/phase-38-closure.md) |
 | 39 | ADR-043 .NET Framework 4.8 opt-in multi-target (net48 + 32-bit, Tier-1 unchanged, persisted IL native on Framework), 3-lane CI, debugger VSIX 0.30 round | [doc](docs/history/phase-39-closure.md) |
 | 40 | Version 1.0 + the ecosystem campaigns: ADR-044/045 host-boundary conventions, ADR-046 module-scoped ops, ADR-047 packed-string-is-a-list (default `chars`, lazy `phrase_from_file`), full Neumerkel suites (365/365), Logtalk libraries 100% + ISO battery 3,219/70, Trealla corpus + Triska clpz/clpb certified from their tree, SSU aligned with SWI, WebShumway debug mode, bounded memory (dead-CP reclamation + attr-log hygiene, ~14% faster) | [doc](docs/history/phase-40-closure.md) |

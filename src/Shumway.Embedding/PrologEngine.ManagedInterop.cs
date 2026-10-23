@@ -31,6 +31,12 @@ public sealed partial class PrologEngine
     /// scalar mappings.</summary>
     private Dictionary<Type, (object ToTerm, object FromTerm)>? _userConverters;
 
+    /// <summary>Whether the host registered a converter
+    /// (<see cref="RegisterConverter{T}"/>). Generated bridges read and write
+    /// a value's cells directly only when it did not: a registered converter
+    /// takes precedence over every built-in mapping, and it sees terms.</summary>
+    public bool HasUserConverters => _userConverters is { Count: > 0 };
+
     /// <summary>register a custom C#-type ↔ Prolog-term
     /// pair for <typeparamref name="T"/>. Takes precedence over the
     /// built-in scalar conversions (so a host can override the

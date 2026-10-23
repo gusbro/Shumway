@@ -11,16 +11,17 @@ and **faster than SWI** on allocation-heavy work. It **loses to all three on
 naive-reverse** (a pure allocation micro-benchmark) and to Scryer on the most
 propagation-heavy `clp(Z)` model (`all_distinct` + a wide linear equation). On
 the **interop-heavy embedding** case (§[Interop](#interop-embedding)) the
-picture splits by mechanism: the convenience API loses to a P/Invoke-embedded
-native engine, but Shumway's zero-copy hot-path — C# touching the engine's own
-heap cells, which a native engine structurally cannot offer — wins by 3–180×.
+picture splits by mechanism: the convenience API costs about what a
+P/Invoke-embedded native engine costs, and Shumway's zero-copy hot-path (C#
+touching the engine's own heap cells, which a native engine structurally cannot
+offer) wins by 3–30×.
 Nothing here is marketing: every table is measured and the losses are called
 out.
 
 ## Environment
 
 _Measured_: July–August 2026 (clp(Z) and Logtalk suites July 2026, interop
-August 2026), on the same machine as [the baseline](baseline.md): GUSBRO-NB,
+October 2026), on the same machine as [the baseline](baseline.md): GUSBRO-NB,
 8 cores, Windows 10 (10.0.19044), .NET 10.0.10.
 
 | Engine | Version | Mode |
@@ -153,34 +154,45 @@ engine, crossing the C# ↔ Prolog boundary. The comparison is against **GNU Pro
 embedded in the same C# host via P/Invoke** — a native engine, so every crossing
 marshals data across the managed/native boundary (C# cannot touch GProlog's
 unmanaged cells). Shumway runs in-process on a managed `Cell[]` heap, so it has a
-choice of two mechanisms — and they land on opposite sides of the result.
+choice of two mechanisms.
 
-Prolog→C# per crossing, **marshalling only** (loop/dispatch baseline subtracted),
-oracle-verified, ns/call; full write-up in the [interop guide](../guide/interop.md):
+Prolog→C# per crossing, **marshalling only** (a call with the data minus an
+empty call of the same mechanism, timed over two run lengths so that starting the
+query cancels), both engines in one process, oracle-verified, the median of eight
+processes, ns/call; full write-up in the [interop guide](../guide/interop.md):
 
 | Operation | GProlog (P/Invoke) | Shumway convenience | Shumway zero-copy |
 |-----------|-------------------:|--------------------:|------------------:|
-| integer scalar          | ~95  | ~30    | (scalars don't copy) |
-| int list, read (100)    | ~700 | ~24000 | **~190 (3.5× win)** |
-| int list, build (100)   | ~1400| ~11500 | **~750 (1.8× win)** |
-| atom list, read (50)    | ~3400| ~12000 | **~20 (≈free)** |
-| atom list, build (50)   | ~5100| ~10900 | **~280 (18× win)** |
-| compound, traverse      | ~800 | —      | **≈free** |
-| compound, build         | ~680 | —      | **~290 (2.3× win)** |
+| empty call (not subtracted) | ~43 | ~25 | ~24 |
+| int list, read (100)    | ~620  | ~880   | **~230 (2.7× win)** |
+| int list, read (1000)   | ~5800 | ~7500  | **~2100 (2.7× win)** |
+| int list, build (100)   | ~1200 | ~830   | **~270 (4.4× win)** |
+| int list, build (1000)  | ~12500| ~8600  | **~3000 (4.2× win)** |
+| atom list, read (50)    | ~2800 | ~830   | **~120 (23× win)** |
+| atom list, read (1000)  | ~55000| ~12000 | **~2200 (26× win)** |
+| atom list, build (50)   | ~4000 | ~1100  | **~130 (32× win)** |
+| atom list, build (1000) | ~78000| ~22000 | **~2700 (29× win)** |
+| compound, read (10)     | ~640  | ~250   | **~24 (26× win)** |
+| compound, read (100)    | ~5800 | ~1500  | **~220 (27× win)** |
+| compound, build (10)    | ~550  | ~290   | **~27 (20× win)** |
+| compound, build (100)   | ~3600 | ~2200  | **~260 (14× win)** |
 
-- **Convenience** (`[PrologPredicate]` typed args, `Query<T>`, `SolveOnce<List>`):
-  decodes each composite through an intermediate `Term` tree, so it is **3–34×
-  slower** than P/Invoke marshalling on lists. It buys ergonomics — plain C#
-  values, no WAM knowledge — not speed. Correct choice off the hot path.
+- **Convenience** (`[PrologPredicate]` typed args, `SolveOnce<List>`): reads and
+  writes scalars, strings, lists and arrays of them and `[PrologTerm]` types
+  straight off the heap, so it costs about what P/Invoke marshalling costs on
+  integer lists (1.3× slower to read, 1.5× faster to build) and less on atom
+  lists and compounds (1.6 to 4.7× faster). Other shapes, and `Query<T>`'s
+  answers, still go through an intermediate `Term` tree.
 - **Zero-copy** (raw `bool(Activation)` foreign predicates walking/building the
-  engine's heap cells directly): **3–180× faster** than P/Invoke marshalling;
-  list and term *traversal* is essentially free. A P/Invoke-embedded native
-  engine cannot match this — its cells are unmanaged, so it must copy where
-  Shumway does not. This is the concrete payoff of an in-process engine.
+  engine's heap cells directly): **3–30× faster** than P/Invoke marshalling, at 2
+  to 3 ns per list element. A P/Invoke-embedded native engine cannot match this:
+  its cells are unmanaged, so it must copy where Shumway does not. This is the
+  concrete payoff of an in-process engine.
 
-Scalars are a wash. The honest statement is not "Shumway wins interop" flatly, but:
-**for hot-path term manipulation the zero-copy mechanism wins decisively; for
-everything else the convenience API is there and its overhead doesn't matter.**
+An empty call costs less in Shumway than over P/Invoke. The honest statement is
+not "Shumway wins interop" flatly, but: **for hot-path term manipulation the
+zero-copy mechanism wins decisively; the convenience API costs about what
+marshalling into a native engine costs.**
 
 ## Summary
 

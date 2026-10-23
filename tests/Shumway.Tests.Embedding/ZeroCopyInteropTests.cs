@@ -15,9 +15,8 @@ namespace Shumway.Tests.Embedding;
 /// <list type="bullet">
 ///   <item>correctness — the raw cell walking/building produces the right terms;</item>
 ///   <item>allocation — the zero-copy path allocates ~nothing per call, where the
-///     convenience path (a <c>List&lt;long&gt;</c> foreign, decoded through the Term-AST
-///     tier) allocates per element. That delta is deterministic (GC byte counts), unlike
-///     timing.</item>
+///     convenience path (a <c>List&lt;long&gt;</c> foreign) allocates the list it hands
+///     the method. That delta is deterministic (GC byte counts), unlike timing.</item>
 /// </list>
 /// Benchmark-derived and iteration-heavy, so it is gated to the pre-phase-close full run.
 /// The GProlog side of the original comparison needs a native toolchain and lives only in
@@ -85,7 +84,7 @@ public partial class ZeroCopyInteropTests
             return e.UnifyRegisterWithCell(2, Cell.Str(sb));
         }
 
-        // --- convenience: same work, but decoded through the Term-AST tier (allocates) ---
+        // --- convenience: same work, decoded into the List<long> the method takes (allocates) ---
         [PrologPredicate("cv_intlist_in/2")]
         public static long CvIntIn(List<long> xs) { long s = 0; for (int i = 0; i < xs.Count; i++) s += xs[i]; return s; }
     }
@@ -135,7 +134,7 @@ public partial class ZeroCopyInteropTests
         Assert.True(Ok(e, "zc_term_out(5,2,T), T == rec(5,[item,item],name_atom)."));
 
         // --- allocation guardrail: zero-copy allocates ~nothing per call; the
-        //     convenience List<long> path allocates per element (Term-AST + List). ---
+        //     convenience List<long> path allocates the List. ---
         const long K = 50_000;
         // oracle: both loops compute the same sum (100*101/2 * K)
         long want = 5050 * K;
