@@ -30,9 +30,16 @@ internal static partial class IlInlineTable
         ["Shumway.Builtins.ArithEvalStack::TryFusedCmpInt(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 24,   // inlined
         ["Shumway.Builtins.ArithEvalStack::Un(System.Int32)"] = 1,   // inlined
         ["Shumway.Builtins.ArithEvalStack::get_IsEmpty()"] = 1,   // inlined
+        ["Shumway.Builtins.AtomCharBuiltins::AtomLength(Shumway.Core.Activation)"] = 0,   // too many il bytes
         ["Shumway.Builtins.BuiltinEntry::get_Impl()"] = 1,   // inlined
         ["Shumway.Builtins.BuiltinImpl::Invoke(Shumway.Core.Activation)"] = 0,   // has no body
         ["Shumway.Builtins.BuiltinsRegistry::GetById(System.Int32)"] = 0,   // unprofitable inline
+        ["Shumway.Builtins.ControlBuiltins::Fail(Shumway.Core.Activation)"] = 1,   // inlined
+        ["Shumway.Builtins.TypeBuiltins::IsAtom(Shumway.Core.Activation)"] = 1,   // inlined
+        ["Shumway.Builtins.TypeBuiltins::IsCompound(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Builtins.TypeBuiltins::IsInteger(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Builtins.TypeBuiltins::IsVar(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Builtins.UnifyBuiltins::Unify(Shumway.Core.Activation)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::IsNonEmptyPstr(Shumway.Core.Cell)"] = 3,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::ResolveEntryByFunctorId(Shumway.Core.Activation,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlIndexedDispatch::WalkSubOrMiss(Shumway.Core.Activation,Shumway.Core.Cell,System.Int32,System.Int32)"] = 4,   // inlined
@@ -167,6 +174,15 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Cell::get_AsInt()"] = 1,   // inlined
         ["Shumway.Core.Cell::get_Tag()"] = 1,   // inlined
         ["Shumway.Core.Cell::get_TagId()"] = 1,   // inlined
+        ["Shumway.Embedding.MetaBuiltins::Assertz(Shumway.Core.Activation)"] = 1,   // inlined
+        ["Shumway.Embedding.MetaBuiltins::CatchBegin(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Embedding.MetaBuiltins::CatchEnd(Shumway.Core.Activation)"] = 1,   // inlined
+        ["Shumway.Embedding.MetaBuiltins::FindallCollect(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Embedding.MetaBuiltins::FindallPush(Shumway.Core.Activation)"] = 3,   // inlined
+        ["Shumway.Embedding.MetaBuiltins::FindallRecordSnapshot(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Embedding.MetaBuiltins::Functor(Shumway.Core.Activation)"] = 0,   // too many il bytes
+        ["Shumway.Embedding.MetaBuiltins::Retract(Shumway.Core.Activation)"] = 0,   // unprofitable inline
+        ["Shumway.Embedding.MetaBuiltins::Throw(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["System.Func`3[Shumway.Core.Activation,System.Int32,System.Boolean]::Invoke(Shumway.Core.Activation,System.Int32)"] = 0,   // has no body
         ["System.InvalidOperationException::.ctor(System.String)"] = 8,   // inlined
     };

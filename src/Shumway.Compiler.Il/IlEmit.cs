@@ -127,6 +127,10 @@ public sealed class IlEmit
         return new IlEmit(dm.GetILGenerator(), dm, null, record, argShift: 1, null, new List<object>());
     }
 
+    /// <summary>The method is a <see cref="DynamicMethod"/>, which may reach any
+    /// member; a method built into a type reaches what its assembly may.</summary>
+    public bool ReachesAnyMember => _dynamic is not null;
+
     /// <summary>A static method of <paramref name="type"/>. With
     /// <paramref name="literalsField"/>, a static field of the type holding
     /// <paramref name="literals"/>, the method may load literals.</summary>

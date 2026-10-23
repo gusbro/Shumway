@@ -411,6 +411,13 @@ public static class BundleWriter
         return true;
     }
 
+    // The assemblies of the engine's builtins, which persisted IL calls directly:
+    // they load wherever a bundle does. A host's builtin travels by name.
+    private static readonly HashSet<System.Reflection.Assembly> EngineBuiltinAssemblies = new()
+    {
+        typeof(Shumway.Builtins.BuiltinsRegistry).Assembly, typeof(BundleWriter).Assembly,
+    };
+
     private static byte[] CompileEntryToIl(BundleEntry entry,
         IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds,
         Shumway.Embedding.PrologEngine engine, ISet<int> bytecodeShipped, bool stripWam)
@@ -669,7 +676,8 @@ public static class BundleWriter
                 bytecodeShipped: bytecodeShipped,
                 // Without --strip-wam every predicate keeps its bytecode, and
                 // the loader's worker compiles its method when it is hot.
-                compiledByWorker: !stripWam);
+                compiledByWorker: !stripWam,
+                builtinAssemblies: EngineBuiltinAssemblies);
         }
         finally
         {
