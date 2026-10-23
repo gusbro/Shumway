@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Core;
 
 namespace Shumway.Embedding;
 
@@ -20,7 +21,7 @@ namespace Shumway.Embedding;
 /// <c>erase</c> followed by a stale <c>instance</c> on the same ref
 /// simply fails — it never resurrects another entry).</para>
 /// </summary>
-public sealed class RecordedDatabase
+internal sealed class RecordedDatabase
 {
     private long _nextRef = 1;
     private readonly Dictionary<Term, LinkedList<RecordEntry>> _byKey = new();
@@ -42,18 +43,20 @@ public sealed class RecordedDatabase
     {
         public long Ref { get; }
         public Term Key { get; }
-        public Term Term { get; internal set; }
+        // The value, held off the heap as an image (SolutionBuffer, one
+        // solution): a record costs its cells, not a tree of objects.
+        public SolutionBuffer Value { get; internal set; }
         // The atom-id this entry is keyed under (>= 0), or -1 when the entry
         // lives in the structural (compound-key) store. Selects which
         // dictionary <c>Erase</c> cleans up when the chain empties.
         internal int AtomId = -1;
         internal LinkedListNode<RecordEntry>? Node;
 
-        internal RecordEntry(long @ref, Term key, Term term)
+        internal RecordEntry(long @ref, Term key, SolutionBuffer value)
         {
             Ref = @ref;
             Key = key;
-            Term = term;
+            Value = value;
         }
     }
 
@@ -62,14 +65,14 @@ public sealed class RecordedDatabase
     /// reference. <paramref name="atomId"/> is the key atom's integer id
     /// (>= 0) for the fast integer-keyed store, or -1 for a compound key
     /// routed to the structural store.</summary>
-    public long Recorda(int atomId, Term key, Term term) => AddInternal(atomId, key, term, atFront: true);
+    public long Recorda(int atomId, Term key, SolutionBuffer value) => AddInternal(atomId, key, value, atFront: true);
 
     /// <summary>Adds <paramref name="term"/> to the end of the chain
     /// of records under <paramref name="key"/>. Returns the fresh
     /// reference. See <see cref="Recorda"/> for <paramref name="atomId"/>.</summary>
-    public long Recordz(int atomId, Term key, Term term) => AddInternal(atomId, key, term, atFront: false);
+    public long Recordz(int atomId, Term key, SolutionBuffer value) => AddInternal(atomId, key, value, atFront: false);
 
-    private long AddInternal(int atomId, Term key, Term term, bool atFront)
+    private long AddInternal(int atomId, Term key, SolutionBuffer value, bool atFront)
     {
         long @ref = _nextRef++;
         LinkedList<RecordEntry> list;
@@ -82,7 +85,7 @@ public sealed class RecordedDatabase
         {
             _byKey[key] = list = new LinkedList<RecordEntry>();
         }
-        var entry = new RecordEntry(@ref, key, term) { AtomId = atomId };
+        var entry = new RecordEntry(@ref, key, value) { AtomId = atomId };
         entry.Node = atFront ? list.AddFirst(entry) : list.AddLast(entry);
         _byRef[@ref] = entry;
         return @ref;
@@ -120,10 +123,10 @@ public sealed class RecordedDatabase
         _byAtom.Remove(atomId);
     }
 
-    /// <summary>Returns the term stored under <paramref name="ref"/>, or
+    /// <summary>Returns the value stored under <paramref name="ref"/>, or
     /// <c>null</c> when no such entry exists.</summary>
-    public Term? Instance(long @ref)
-        => _byRef.TryGetValue(@ref, out var e) ? e.Term : null;
+    public SolutionBuffer? Instance(long @ref)
+        => _byRef.TryGetValue(@ref, out var e) ? e.Value : null;
 
     /// <summary>Returns the key the entry with this ref was recorded
     /// under, or <c>null</c> if the ref doesn't exist.</summary>
@@ -133,19 +136,11 @@ public sealed class RecordedDatabase
     /// <summary>Replaces the term in the entry with reference
     /// <paramref name="ref"/>. Returns false on an unknown ref. The
     /// list position and the ref itself are preserved.</summary>
-    public bool Replace(long @ref, Term newTerm)
+    public bool Replace(long @ref, SolutionBuffer value)
     {
         if (!_byRef.TryGetValue(@ref, out var entry)) return false;
-        entry.Term = newTerm;
+        entry.Value = value;
         return true;
-    }
-
-    /// <summary>Returns the (ref, term) pairs currently stored under
-    /// <paramref name="key"/>, in chain order.</summary>
-    public IEnumerable<(long Ref, Term Term)> Recorded(Term key)
-    {
-        if (!_byKey.TryGetValue(key, out var list)) yield break;
-        foreach (var e in list) yield return (e.Ref, e.Term);
     }
 
     /// <summary>The raw chain for <paramref name="key"/>, or null when the
@@ -214,11 +209,11 @@ public sealed class RecordedDatabase
     /// <paramref name="afterRef"/>. Used by <c>record_after/3</c>.
     /// Returns the new ref, or null when <paramref name="afterRef"/>
     /// doesn't exist.</summary>
-    public long? RecordAfter(long afterRef, Term term)
+    public long? RecordAfter(long afterRef, SolutionBuffer value)
     {
         if (!_byRef.TryGetValue(afterRef, out var anchor)) return null;
         long @ref = _nextRef++;
-        var entry = new RecordEntry(@ref, anchor.Key, term) { AtomId = anchor.AtomId };
+        var entry = new RecordEntry(@ref, anchor.Key, value) { AtomId = anchor.AtomId };
         entry.Node = anchor.Node!.List!.AddAfter(anchor.Node, entry);
         _byRef[@ref] = entry;
         return @ref;
@@ -226,11 +221,11 @@ public sealed class RecordedDatabase
 
     /// <summary>Inserts a term immediately before
     /// <paramref name="beforeRef"/>. Used by <c>record_before/3</c>.</summary>
-    public long? RecordBefore(long beforeRef, Term term)
+    public long? RecordBefore(long beforeRef, SolutionBuffer value)
     {
         if (!_byRef.TryGetValue(beforeRef, out var anchor)) return null;
         long @ref = _nextRef++;
-        var entry = new RecordEntry(@ref, anchor.Key, term) { AtomId = anchor.AtomId };
+        var entry = new RecordEntry(@ref, anchor.Key, value) { AtomId = anchor.AtomId };
         entry.Node = anchor.Node!.List!.AddBefore(anchor.Node, entry);
         _byRef[@ref] = entry;
         return @ref;
