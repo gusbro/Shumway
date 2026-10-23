@@ -823,10 +823,21 @@ public sealed partial class Activation
     // dispatch picks up at the target rather than returning to the
     // caller's continuation immediately. Cleared by the handler that
     // observes it.
-    public bool IlTailCallPending { get => _ilTailCallPending; set => _ilTailCallPending = value; }
+    public bool IlTailCallPending
+    {
+        get => _ilTailCallPending != 0;
+        set => _ilTailCallPending = value ? (byte)1 : (byte)0;
+    }
 
     // A field: a continuation method sets it without a call (ADR-061 item 6).
-    [EditorBrowsable(EditorBrowsableState.Never)] public bool _ilTailCallPending;
+    // A byte, not a bool: ResumeFromBuiltin is the resume a builtin's retry leaves.
+    [EditorBrowsable(EditorBrowsableState.Never)] public byte _ilTailCallPending;
+
+    /// <summary>The <see cref="_ilTailCallPending"/> a builtin's retry leaves
+    /// (<see cref="ResumeAtReturnPc"/>): Pc is the instruction after the
+    /// builtin's call, never a predicate's entry, and the interpreter resumes
+    /// there without the dispatcher's lookup.</summary>
+    public const byte ResumeFromBuiltin = 2;
 
     // A deopt rides the same two signals as a tail call (Pc + the flag
     // above) and means the opposite: a tail call says "continue at this
@@ -1675,6 +1686,16 @@ public sealed partial class Activation
     {
         if (TrapPc >= 0 && returnPc == TrapPc) SetPc(returnPc);
         _p = returnPc;
+        _ilTailCallPending = ResumeFromBuiltin;
+    }
+
+    /// <summary><see cref="ResumeAtReturnPc"/> for a <paramref name="pc"/>
+    /// that may be a predicate's entry, which the interpreter then
+    /// dispatches like a call.</summary>
+    public void ResumeAt(int pc)
+    {
+        if (TrapPc >= 0 && pc == TrapPc) SetPc(pc);
+        _p = pc;
         IlTailCallPending = true;
     }
 

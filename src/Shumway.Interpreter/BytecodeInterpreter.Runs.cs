@@ -403,6 +403,12 @@ public sealed partial class BytecodeInterpreter
     /// Pc runs as bytecode, as before: debuggable code is Tier-0.</summary>
     private bool ContinueIlTailCallOnRedo()
     {
+        if (_engine._ilTailCallPending == Activation.ResumeFromBuiltin)
+        {
+            _engine._ilTailCallPending = 0;
+            _engine.TakeIlDeopt();
+            return true;
+        }
         while (true)
         {
             _engine.IlTailCallPending = false;

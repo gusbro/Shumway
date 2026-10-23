@@ -2187,7 +2187,7 @@ public static partial class MetaBuiltins
     /// drivers.</summary>
     public static bool FindallPush(Activation engine)
     {
-        engine.PushSolutions(new SolutionBuffer());
+        engine.PushSolutions(engine.NewSolutions());
         return true;
     }
 

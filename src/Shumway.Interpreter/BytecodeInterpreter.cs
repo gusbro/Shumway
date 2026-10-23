@@ -1200,6 +1200,14 @@ public sealed partial class BytecodeInterpreter
                         && TryInlineThrow(dispatchCatchFloor))
                         break;
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                    // fail/0 backtracks here. A debug session takes the
+                    // builtin call, whose call port it shows.
+                    if (entry.IsFail && _engine.Debug is null)
+                    {
+                        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
                     // Tail-call return: a backtrackable builtin's
@@ -2513,6 +2521,13 @@ public sealed partial class BytecodeInterpreter
                     int builtinId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                    // fail/0 backtracks here (see ExecuteBuiltin).
+                    if (entry.IsFail && _engine.Debug is null)
+                    {
+                        Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     // Env trimming: shrink the current frame before
                     // the builtin runs, so any choice point the builtin pushes
                     // (e.g. multi-solution call/N, non-deterministic

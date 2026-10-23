@@ -32,6 +32,9 @@ public sealed class SolutionBuffer
 {
     private const int ChunkBits = 12;
     private const int ChunkSize = 1 << ChunkBits;
+    // The chunks Reset keeps for the next call: the activation keeps the
+    // buffer for its life, so a large one is not kept whole.
+    private const int RetainedChunks = 16;
     private Cell[] _first = new Cell[16];
     private List<Cell[]>? _chunks;
     private int _length;
@@ -53,6 +56,23 @@ public sealed class SolutionBuffer
     public List<string>? Keys;
 
     public int Count => _count;
+
+    /// <summary>Empties the buffer for another call, keeping its first part and
+    /// up to <see cref="RetainedChunks"/> chunks.</summary>
+    public void Reset()
+    {
+        _length = 0;
+        _count = 0;
+        _lastPair = -1;
+        _lastTail = null;
+        _lastTailAt = 0;
+        _payloadSites = null;
+        _payloads = null;
+        _payloadFrom = null;
+        Keys = null;
+        if (_chunks is { Count: > RetainedChunks } chunks)
+            chunks.RemoveRange(RetainedChunks, chunks.Count - RetainedChunks);
+    }
 
     /// <summary>findall: copies the term <paramref name="value"/> names (a
     /// register's cell) in as the next pair of the list <see cref="EmitList"/>
