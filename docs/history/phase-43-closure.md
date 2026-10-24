@@ -169,8 +169,6 @@ a head argument, a solution of findall, a record and a value crossing to C#.
   exception and crosses C# frames.
 - The IL meta-call compares control-construct names as strings, where the
   interpreter compares atom ids; the expected gain is nil.
-- A clpz-heavy process spends about 55 s of JIT CPU per engine, noted for a
-  later look.
 - A pool of solution buffers shared across queries.
 - Per-register lattice analysis and pre-resolved heads in guards were
   measured (a census and a spike) and closed: within the noise.
