@@ -182,6 +182,10 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(
             nameof(Activation.UnifyRegisters),
             new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyValuesMethod =
+        typeof(Activation).GetMethod(
+            nameof(Activation.UnifyValues),
+            new[] { typeof(Cell), typeof(Cell) })!;
     private static readonly MethodInfo EngineGetRegisterMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetRegister), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetHeapMethod =

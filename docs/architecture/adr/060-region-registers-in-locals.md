@@ -353,6 +353,20 @@ and `crypt` within noise. A failure-driven loop over the region's own choice
 points with no other safe point (`IlLocalBacktrackTests`) stays interruptible;
 without the countdown `time_out/3` never fires.
 
+A call of `=/2` (the clause compiler leaves it a call when a side is a
+permanent variable) unifies its two cells inline, the mirror of the wasm
+tier's open-coded `=/2`: both sides dereferenced; the same cell succeeds; a
+plain unbound variable binds to the other side, between two the younger to
+the older as the unifier does, with the trail when the home is older than
+HB; two distinct immediates fail. An attributed variable, a packed string,
+two compounds, two boxed numbers and the occurs check call `UnifyValues`,
+whose answer is the same. No current builtin is stored: unification raises
+no error. In one process, four copies, against the previous step: `tak`
+(`Z = A` on its exit clause, both permanent) -14% minimum and -14% median;
+`serialize` and Blint unchanged; `zebra`, whose one site runs once per
+solution, +3%, the placement of the code. `IlInlineUnifyTests` runs every
+shape on Tier-0 and on a promoted engine.
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

@@ -39,7 +39,6 @@ internal static partial class IlInlineTable
         ["Shumway.Builtins.TypeBuiltins::IsCompound(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Builtins.TypeBuiltins::IsInteger(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Builtins.TypeBuiltins::IsVar(Shumway.Core.Activation)"] = 0,   // unprofitable inline
-        ["Shumway.Builtins.UnifyBuiltins::Unify(Shumway.Core.Activation)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::IsNonEmptyPstr(Shumway.Core.Cell)"] = 3,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::ResolveEntryByFunctorId(Shumway.Core.Activation,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlIndexedDispatch::WalkSubOrMiss(Shumway.Core.Activation,Shumway.Core.Cell,System.Int32,System.Int32)"] = 4,   // inlined
@@ -145,6 +144,7 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Activation::UnifyStructure(System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::UnifyValueX(System.Int32)"] = 8,   // inlined
         ["Shumway.Core.Activation::UnifyValueY(System.Int32)"] = 9,   // inlined
+        ["Shumway.Core.Activation::UnifyValues(Shumway.Core.Cell,Shumway.Core.Cell)"] = 1,   // inlined
         ["Shumway.Core.Activation::UnifyVariableX(System.Int32)"] = 4,   // inlined
         ["Shumway.Core.Activation::UnifyVariableY(System.Int32)"] = 5,   // inlined
         ["Shumway.Core.Activation::UnifyVariableYAt(System.Int32,System.Int32)"] = 5,   // inlined

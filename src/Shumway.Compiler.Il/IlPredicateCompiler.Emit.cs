@@ -1235,6 +1235,20 @@ public sealed partial class IlPredicateCompiler
 
                 // ==/2 and \==/2 without the builtin dispatch, as the wasm tier
                 // decides them in the module (EmitInlineCompare).
+                if (builtinEntry.IsUnification && InlineUnify && InlineUnifyTwoCells
+                    && _cps is null && RegisterFileOf(emit) is { } unifyRf)
+                {
+                    // =/2 over X0 and X1 inline, as the wasm tier's EmitInlineUnify.
+                    // No error names it, so no current builtin is stored.
+                    System.Threading.Interlocked.Increment(ref InlineUnifySites);
+                    EmitUnifyTwoCells(emit, unifyRf,
+                        () => { EmitLoadEngineField(emit, EngRegisters); emit.LoadConstant(0); emit.LoadElement<Cell>(); },
+                        () => { EmitLoadEngineField(emit, EngRegisters); emit.LoadConstant(1); emit.LoadElement<Cell>(); });
+                    emit.BranchIfFalse(failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 if (builtinArity == 2 && builtinEntry.Name is "==" or "\\==")
                 {
                     emit.LoadArgument(0);
