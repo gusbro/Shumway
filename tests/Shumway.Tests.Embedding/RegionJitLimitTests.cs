@@ -12,6 +12,8 @@ namespace Shumway.Tests.Embedding;
 /// locals target, so the JIT's cap on locals does not stop its inlining
 /// partway through. The runtime's JIT events say what tier each region
 /// method got and which inlines it declined.</summary>
+// Sets the planner statics: alone, like every class that does.
+[Collection("exclusive")]
 public sealed class RegionJitLimitTests
 {
     // A program whose local closure, absorbed whole, is a region far past the

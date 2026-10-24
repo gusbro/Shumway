@@ -811,7 +811,9 @@ of the generated methods:
 | continuation methods: cold | 97 | 0.41 MB | 1.63 s |
 
 A runtime region holds its root's closure, and the closures of the roots
-overlap: 202 predicates appear 962 times. Twenty-nine regions passed the
+overlap: 202 predicates appear 962 times (since then a callee with code of
+its own is called rather than copied past a size limit; see
+`docs/design/region-jit-limits.md`, "What a region copies"). Twenty-nine regions passed the
 JIT's size limits and ran without optimization. Continuation methods
 repeat each predicate instead: its delegate, its cold method and its
 alternatives method are each about the whole body.

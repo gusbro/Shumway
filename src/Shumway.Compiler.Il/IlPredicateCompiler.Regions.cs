@@ -66,6 +66,53 @@ public sealed partial class IlPredicateCompiler
     [System.ThreadStatic]
     public static ISet<int>? RegionForcedRootFids;
 
+    /// <summary>The functor ids with compiled code of their own when this
+    /// compile began: installed, or on the worker. A region copies one of
+    /// them only under <see cref="IlRegionCost.ReinlineLimit"/> or when it
+    /// owns it (every caller a member), and calls it otherwise. Set by the
+    /// promotion store around each compile; null = none. ThreadStatic as
+    /// <see cref="RegionForcedRootFids"/> is.</summary>
+    [System.ThreadStatic]
+    public static ISet<int>? RegionInstalledFids;
+
+    /// <summary>A query's stub or one of its helpers (<c>__query__</c>,
+    /// <c>$q$kind_N</c>, module-mangled <c>mod$$q$kind_N</c>): one body per
+    /// query under one functor, never compiled, and not a caller a region
+    /// counts.</summary>
+    public static bool IsQueryStubHelper(string name)
+        => name == "__query__"
+           || name.StartsWith("$q$", StringComparison.Ordinal)
+           || name.Contains("$$q$", StringComparison.Ordinal);
+
+    // The static callers of each predicate of the map, built once per map
+    // (the query's view of the program, as the pure-eligibility cache).
+    private Dictionary<int, List<int>>? _callersIndex;
+    private IReadOnlyDictionary<int, CompiledPredicate>? _callersIndexMap;
+
+    private IReadOnlyCollection<int>? CallersOf(int fid, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        var map = CalleeRecorder.Underlying(calleeMap);
+        if (map is null) return null;
+        if (!ReferenceEquals(_callersIndexMap, map) || _callersIndex is null)
+        {
+            var index = new Dictionary<int, List<int>>();
+            foreach (var pred in map.Values)
+            {
+                if (IsQueryStubHelper(FidName(pred.FunctorId))) continue;
+                foreach (var cs in pred.CallSites)
+                {
+                    if (!index.TryGetValue(cs.CalleeFunctorId, out var callers))
+                        index[cs.CalleeFunctorId] = callers = new List<int>();
+                    // One predicate's sites come together: the last entry is it.
+                    if (callers.Count == 0 || callers[^1] != pred.FunctorId) callers.Add(pred.FunctorId);
+                }
+            }
+            _callersIndex = index;
+            _callersIndexMap = map;
+        }
+        return _callersIndex.TryGetValue(fid, out var list) ? list : null;
+    }
+
     /// <summary>When non-null, region
     /// membership is restricted to these functor ids (the bundle entry's own
     /// predicates). The persisted build sets it (save/restore) so an entry
@@ -434,11 +481,23 @@ public sealed partial class IlPredicateCompiler
     {
         bool Eligible(CompiledPredicate p)
             => IsRegionMemberEligible(p, calleeMap) && extraExcluded?.Contains(p.FunctorId) != true;
+        // Code there is already is called, not copied, past the size limit,
+        // unless the region owns it.
+        Func<CompiledPredicate, bool>? callUnlessOwned = null;
+        Func<int, IReadOnlyCollection<int>?>? callersOf = null;
+        if (RegionInstalledFids is { } installed)
+        {
+            callUnlessOwned = p => installed.Contains(p.FunctorId)
+                && RegionMemberCost(p, calleeMap) >= IlRegionCost.ReinlineLimit;
+            callersOf = fid => CallersOf(fid, calleeMap);
+        }
         if (IlRegionCost.Target <= 0)
-            return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible);
+            return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
+                callUnlessOwned: callUnlessOwned, callersOf: callersOf);
         if (costBudget < 0) costBudget = IlRegionCost.PlanBudget;
         var byRefs = IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
-            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget);
+            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget,
+            callUnlessOwned: callUnlessOwned, callersOf: callersOf);
         if (localsBudget < 0) localsBudget = IlRegionCost.LocalsTarget > 0 ? IlRegionCost.LocalsPlanBudget : 0;
         if (localsBudget <= 0) return byRefs;
         // The locals budget applies to a large region only (IlRegionCost.LocalsFloorRefs).
@@ -447,7 +506,8 @@ public sealed partial class IlPredicateCompiler
         if (refs < IlRegionCost.LocalsFloorRefs) return byRefs;
         return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
             memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget,
-            memberLocals: m => RegionMemberLocals(m, calleeMap), localsBudget: localsBudget);
+            memberLocals: m => RegionMemberLocals(m, calleeMap), localsBudget: localsBudget,
+            callUnlessOwned: callUnlessOwned, callersOf: callersOf);
     }
 
     /// <summary>What <paramref name="m"/> adds to a region in the JIT's

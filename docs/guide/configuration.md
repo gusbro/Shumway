@@ -62,6 +62,7 @@ is what ships. Any build honors them.
 | `SHUMWAY_REGION` | on | `=0` disables region compilation (each local predicate emitted inline in the caller's IL method). |
 | `SHUMWAY_REGION_BUDGET`, `SHUMWAY_REGION_ROOT_MINSAVE` | tuned | Size/benefit thresholds bounding which predicates become regions. |
 | `SHUMWAY_REGION_LVREFS`, `SHUMWAY_REGION_LOCALS` | 7200, 1000 | The local references and the JIT locals a region is planned to stay under; `=0` plans by size alone. |
+| `SHUMWAY_REGION_REINLINE` | 150 | A callee that has compiled code already is copied into a new region only when its block costs under this many local references, or when every caller of it is in the region; otherwise the region calls the code there is. `=0` copies only the owned; a very large value copies every callee. |
 | `SHUMWAY_IMAGE_HOLES`, `SHUMWAY_IMAGE_HEADS`, `SHUMWAY_IMAGE_PARTS` | on | `=0` keeps images to ground terms, keeps head arguments to their matching streams, or keeps the deferred parts of a head argument to theirs; the measurement's switches. |
 | `SHUMWAY_IMAGE_HEAD_THRESHOLD` | the image threshold | The cells a head argument needs to get an image before its matching stream; 0 keeps every head to its stream. |
 | `SHUMWAY_IMAGE_PART_THRESHOLD` | 16 | The cells a deferred part of a head argument needs to carry an image of its own. |
