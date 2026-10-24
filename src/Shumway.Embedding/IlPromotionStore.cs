@@ -301,6 +301,7 @@ public sealed class IlPromotionStore
         offer.Requested = true;
         _persistedTaken += offer.Cost;
         _pendingCompiles.Add(offer.FunctorId);
+        NoteCode(offer.FunctorId, CodePending);
         int functorId = offer.FunctorId;
         IlCompileWorker.RunAsync(
             () => (object?)Prepare(offer),
@@ -413,6 +414,7 @@ public sealed class IlPromotionStore
     private void InstallDelegate(int functorId, PredicateDelegate del)
     {
         _delegates[functorId] = del;
+        NoteCode(functorId, CodeInstalled);
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
         if (PromotionDiag)
@@ -556,29 +558,118 @@ public sealed class IlPromotionStore
     // again, and the calls inside the region would bypass the bundle's code.
     private readonly HashSet<int> _bundleCode = new();
 
-    // On the engine's thread: what the compile of functorId keeps as roots.
-    private ISet<int>? BundleRoots(int functorId)
+    // What a compile keeps out of its region: the bundle's code (forced
+    // roots) and, past IlRegionCost.ReinlineLimit, the code there is when the
+    // compile begins, which the region calls instead.
+    private sealed class CompileRoots
     {
-        if (_bundleCode.Count == 0) return null;
-        var roots = new HashSet<int>(_bundleCode);
-        roots.Remove(functorId);
-        return roots;
+        public int Fid;
+        public ISet<int>? Forced;
+        // Read once, on the compiling thread: a root's continuation methods
+        // (ADR-061) plan against the set its delegate planned against.
+        public ISet<int>? Installed;
+        public bool Resolved;
+    }
+
+    // On the engine's thread.
+    private CompileRoots RootsFor(int functorId)
+    {
+        ISet<int>? forced = null;
+        if (_bundleCode.Count > 0)
+        {
+            forced = new HashSet<int>(_bundleCode);
+            forced.Remove(functorId);
+        }
+        return new CompileRoots { Fid = functorId, Forced = forced };
+    }
+
+    // The functor ids with code, or with code coming, and how: a delegate
+    // installed, a compile in flight, a member of a region the worker has
+    // emitted and the drain has not installed yet (its alias comes with the
+    // region). _delegates is the engine thread's; this is what the worker reads.
+    private readonly Dictionary<int, byte> _withCode = new();
+    private const byte CodeInstalled = 1, CodePending = 2, CodeAsMember = 4;
+
+    private void NoteCode(int functorId, byte how)
+    {
+        lock (_withCode) _withCode[functorId] = (byte)(_withCode.GetValueOrDefault(functorId) | how);
+    }
+
+    private void ForgetCode(int functorId, byte how)
+    {
+        lock (_withCode)
+        {
+            if (!_withCode.TryGetValue(functorId, out var f)) return;
+            f &= (byte)~how;
+            if (f == 0) _withCode.Remove(functorId); else _withCode[functorId] = f;
+        }
+    }
+
+    // On the worker, after an emission: the members get aliases at the drain.
+    private void NoteMembersEmitted(CalleeRecorder? callees)
+    {
+        if (callees?.RegionMembers is not { Count: > 0 } members) return;
+        foreach (var (member, _) in members)
+            if (!IsExcludedFromPromotion(member)) NoteCode(member, CodeAsMember);
+    }
+
+    // On the worker, before a compile: a predicate that became a region's
+    // member since it was queued runs that region, entered at its block; code
+    // of its own would be the same code again, never called.
+    private bool HasCodeComing(int functorId)
+    {
+        lock (_withCode)
+            return _withCode.TryGetValue(functorId, out var f) && (f & (CodeInstalled | CodeAsMember)) != 0;
+    }
+
+    // At the drain: the shadow follows what was installed.
+    private void ReconcileCode(int functorId, CalleeRecorder? callees)
+    {
+        lock (_withCode)
+        {
+            Reconcile(functorId);
+            if (callees?.RegionMembers is { Count: > 0 } members)
+                foreach (var (member, _) in members) Reconcile(member);
+        }
+        void Reconcile(int fid)
+        {
+            byte f = (byte)((_delegates.ContainsKey(fid) ? CodeInstalled : 0)
+                            | (_pendingCompiles.Contains(fid) ? CodePending : 0));
+            if (f == 0) _withCode.Remove(fid); else _withCode[fid] = f;
+        }
+    }
+
+    private ISet<int>? InstalledFor(CompileRoots roots)
+    {
+        if (roots.Resolved) return roots.Installed;
+        HashSet<int> s;
+        lock (_withCode) s = new HashSet<int>(_withCode.Keys);
+        s.Remove(roots.Fid);
+        roots.Installed = s.Count > 0 ? s : null;
+        roots.Resolved = true;
+        return roots.Installed;
     }
 
     // On the compiling thread.
-    private static T WithRoots<T>(ISet<int>? roots, Func<T> compile)
+    private T WithRoots<T>(CompileRoots roots, Func<T> compile)
     {
-        if (roots is null) return compile();
         var prev = IlPredicateCompiler.RegionForcedRootFids;
-        if (prev is not null)
+        var prevInstalled = IlPredicateCompiler.RegionInstalledFids;
+        var forced = roots.Forced;
+        if (forced is not null && prev is not null)
         {
             var both = new HashSet<int>(prev);
-            both.UnionWith(roots);
-            roots = both;
+            both.UnionWith(forced);
+            forced = both;
         }
-        IlPredicateCompiler.RegionForcedRootFids = roots;
+        if (forced is not null) IlPredicateCompiler.RegionForcedRootFids = forced;
+        IlPredicateCompiler.RegionInstalledFids = InstalledFor(roots);
         try { return compile(); }
-        finally { IlPredicateCompiler.RegionForcedRootFids = prev; }
+        finally
+        {
+            IlPredicateCompiler.RegionForcedRootFids = prev;
+            IlPredicateCompiler.RegionInstalledFids = prevInstalled;
+        }
     }
 
     /// <summary>ADR-023 — builds a static-style snapshot of a dynamic predicate's
@@ -647,6 +738,7 @@ public sealed class IlPromotionStore
                 EvictDelegate(member, mutation: false);
             }
         if (!_delegates.Remove(functorId)) return;
+        ForgetCode(functorId, CodeInstalled);
         OnDelegateEvicted?.Invoke(functorId);
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
@@ -811,7 +903,7 @@ public sealed class IlPromotionStore
         if (callees?.RegionMembers is not { Count: > 0 } members) return;
         foreach (var (member, cursor) in members)
         {
-            if (_delegates.ContainsKey(member) || _pendingCompiles.Contains(member)
+            if (_delegates.ContainsKey(member)
                 || _offers.ContainsKey(member) || _unpromotable.Contains(member)
                 || IsExcludedFromPromotion(member)
                 || !callees.Inner.TryGetValue(member, out var memberCode) || memberCode.IsDebuggable)
@@ -857,42 +949,49 @@ public sealed class IlPromotionStore
                 continue;
             }
             _pendingCompiles.Remove(c.Fid);
-            // An installed delegate is never replaced: the choice points it
-            // pushed resume through the functor's current delegate, at cursors
-            // of its own code.
-            bool installed = _delegates.ContainsKey(c.Fid);
-            // A bundle's code that came from an offer: one compiled without
-            // wake points wakes at its returns.
-            if (_offers.TryGetValue(c.Fid, out var offered))
+            try
             {
-                Withdraw(offered);
-                if (c.Error is not null) offered.Failed?.Invoke(c.Error);
-                else if (!offered.Wakes && !installed) _bound.Add(c.Fid);
+                // An installed delegate is never replaced: the choice points it
+                // pushed resume through the functor's current delegate, at cursors
+                // of its own code.
+                bool installed = _delegates.ContainsKey(c.Fid);
+                // A bundle's code that came from an offer: one compiled without
+                // wake points wakes at its returns.
+                if (_offers.TryGetValue(c.Fid, out var offered))
+                {
+                    Withdraw(offered);
+                    if (c.Error is not null) offered.Failed?.Invoke(c.Error);
+                    else if (!offered.Wakes && !installed) _bound.Add(c.Fid);
+                }
+                if (installed) continue;
+                if (c.Error is not null)
+                {
+                    MarkUnpromotable(c.Fid, "compile-failed:" + c.Error);
+                    continue;
+                }
+                // Skipped on the worker: a region's member since it was queued.
+                // Its alias is in, or the region was not installed and it re-warms.
+                if (c.Result is null) continue;
+                _mutationStamp.TryGetValue(c.Fid, out int now);
+                if (now != c.Stamp) continue;   // mutated mid-compile: stale, re-warm
+                if (ChangedSince(c.Callees, c.Epoch))
+                {
+                    // A callee it copied changed after its view was built.
+                    _staleForView[c.Fid] = c.Epoch;
+                    continue;
+                }
+                var drainDel = c.IsDynamicSnapshot
+                    ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
+                    : c.Result!.Value.Delegate;
+                InstallDelegate(c.Fid, drainDel);
+                RecordCopies(c.Fid, c.Callees);
+                if (c.Result.Value.Cps is { } drainCps) _cpsCode[c.Fid] = drainCps;
+                if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
+                OnPromotionInstalled?.Invoke(c.Fid, drainDel);
+                // A dynamic snapshot goes at its next mutation, and its aliases with it.
+                if (!c.IsDynamicSnapshot) InstallMemberAliases(c.Fid, drainDel, c.Callees);
             }
-            if (installed) continue;
-            if (c.Error is not null)
-            {
-                MarkUnpromotable(c.Fid, "compile-failed:" + c.Error);
-                continue;
-            }
-            _mutationStamp.TryGetValue(c.Fid, out int now);
-            if (now != c.Stamp) continue;   // mutated mid-compile: stale, re-warm
-            if (ChangedSince(c.Callees, c.Epoch))
-            {
-                // A callee it copied changed after its view was built.
-                _staleForView[c.Fid] = c.Epoch;
-                continue;
-            }
-            var drainDel = c.IsDynamicSnapshot
-                ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
-                : c.Result!.Value.Delegate;
-            InstallDelegate(c.Fid, drainDel);
-            RecordCopies(c.Fid, c.Callees);
-            if (c.Result.Value.Cps is { } drainCps) _cpsCode[c.Fid] = drainCps;
-            if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
-            OnPromotionInstalled?.Invoke(c.Fid, drainDel);
-            // A dynamic snapshot goes at its next mutation, and its aliases with it.
-            if (!c.IsDynamicSnapshot) InstallMemberAliases(c.Fid, drainDel, c.Callees);
+            finally { ReconcileCode(c.Fid, c.Callees); }
         }
     }
 
@@ -1195,8 +1294,9 @@ public sealed class IlPromotionStore
             var capturedCallees = calleeMap;
             var callees = Recording(calleeMap);
             int epoch = viewEpoch;
-            var roots = BundleRoots(functorId);
+            var roots = RootsFor(functorId);
             _pendingCompiles.Add(functorId);
+            NoteCode(functorId, CodePending);
             // An instrumented (PGO) delegate has its own cursor layout:
             // continuation methods compiled from the plain form would push
             // choice points it cannot resume.
@@ -1218,8 +1318,11 @@ public sealed class IlPromotionStore
                 {
                     // ADR-061: the delegate and its continuation methods push
                     // the same choice points (WAM, with resume markers).
+                    if (HasCodeComing(functorId)) return null;
                     using var wam = IlPredicateCompiler.WamChoicePoints(wantCps);
-                    return Compiled(Compiler.CompileInstrumented(capturedTarget, callees));
+                    var compiled = Compiled(Compiler.CompileInstrumented(capturedTarget, callees));
+                    NoteMembersEmitted(callees);
+                    return (object?)compiled;
                 }),
                 (result, error) =>
                 {
@@ -1249,7 +1352,7 @@ public sealed class IlPromotionStore
             return null;
         }
 
-        var syncRoots = BundleRoots(functorId);
+        var syncRoots = RootsFor(functorId);
         var syncCallees = Recording(calleeMap);
         var syncResult = RunOnLargeStack(() =>
             WithPools(targetPools, () =>
@@ -1377,7 +1480,7 @@ public sealed class IlPromotionStore
                 // have. The providers read engine state, so they run here.
                 var pgoPools = PoolsFor(functorId, predicate);
                 var nativeCtx = NativeInlineProvider?.Invoke();
-                var pgoRoots = BundleRoots(functorId);
+                var pgoRoots = RootsFor(functorId);
                 _mutationStamp.TryGetValue(functorId, out int stamp);
                 _pgoProfileKeys.Remove(functorId);
                 IlCompileWorker.RunAsync(
@@ -1400,7 +1503,7 @@ public sealed class IlPromotionStore
                     lowPriority: true);
                 continue;
             }
-            var syncPgoRoots = BundleRoots(functorId);
+            var syncPgoRoots = RootsFor(functorId);
             var optimized = RunOnLargeStack(
                 () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
                     () => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap))))));
@@ -1436,8 +1539,7 @@ public sealed class IlPromotionStore
     /// <summary>A helper synthesised for the current query's stub: named
     /// <c>$q$kind_N</c>, module-mangled to <c>mod$$q$kind_N</c>.</summary>
     public static bool IsQueryStubHelper(string name)
-        => name.StartsWith("$q$", System.StringComparison.Ordinal)
-           || name.Contains("$$q$", System.StringComparison.Ordinal);
+        => IlPredicateCompiler.IsQueryStubHelper(name);
 
     // A bytecode body opening with enter_dynamic is mutation-driven dispatch
     // (per-clause check_visible + in-place chain patches, ADR-015): a cached IL
@@ -1485,7 +1587,7 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        var warmRoots = BundleRoots(functorId);
+        var warmRoots = RootsFor(functorId);
         var warmCallees = Recording(calleeMap);
         var del = RunOnLargeStack(() =>
             WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>

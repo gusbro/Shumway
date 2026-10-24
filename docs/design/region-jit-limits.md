@@ -277,6 +277,100 @@ the background compilation overlaps, say so. Nothing in the toolchain
 sets the variable; a host that tries it has `0xC00` to `0x1600` as the
 sensible range, and the planner follows.
 
+## What a region copies
+
+A region holds its root's local closure: the callees only the root reaches,
+copied into the one method so the JIT inlines across them. Two roots that
+reach the same callee each copy it, and in a large program that is most of
+the IL. The clpz puzzles compiled on today's planner emit 583 regions per
+engine, 3.9 million IL instructions of member blocks, of which 74% are a
+block already emitted for another root: `must_be/3` 53 times, `maplist/2`
+115 times. The leaf utilities get hot first, are promoted on their own, and
+are then copied into every caller's region as well. Blint: 120 regions,
+54% of the member IL repeated.
+
+The rule since: a callee that has compiled code when the root's compile
+begins is called through the cross-region trampoline, not copied, unless
+its block costs under `IlRegionCost.ReinlineLimit` local references
+(`SHUMWAY_REGION_REINLINE`, 150, about 300 IL instructions) or the region
+owns it. Code there is means a delegate of its own, a region's alias (a
+member runs its root's method, entered where the member starts), a
+bundle's method, a compile on the worker, or a member of a region the
+worker has emitted and the engine has not installed yet. The set is read on
+the compiling thread when the compile starts, from a shadow of the delegate
+table the worker keeps current with the members it emits, and the engine's
+drain reconciles. Read when the compile was queued instead, it misses what
+the compiles ahead in the queue install, and 37% of the member IL was still
+a copy of a block emitted for an earlier root.
+
+Owned means: every static caller of the callee is the root or a member the
+region owns in turn, the largest such set (`IlRegionBuilder.Build`, from a
+callers index built once per program view). The case it keeps is the small
+program's one hot loop, `bench/1` calling `bench/0` calling `crypt/1`
+calling `digit/1`: the leaf gets hot first and is promoted on its own, then
+its caller, then that one's. Without ownership each outer region calls the
+inner code through the trampoline and the loop crosses one per call: crypt
+1.58 times slower, queens 1.29, nreverse 1.27, zebra 1.22. With it the
+outer regions copy the chain, as before, since nothing else calls it. A
+utility called from fifty places is owned by none of them, and the helper
+of a disjunction in a member that is copied everywhere (small, or not
+owned) is not owned either: the set is closed under callers.
+
+The other half of the saving is on the queue. A root's compile takes long
+enough for its callees to cross the threshold on the interpreter, so a
+chain of helpers each with one caller queues one compile per helper behind
+the root's; each would emit the subtree below it again, into a method
+nothing ever enters (the root's region reaches them by `br`). The worker
+skips a compile whose predicate became a member of an emitted region since
+it was queued, and the drain gives such a member the region's alias as it
+does any other; the member's callers, if any, enter the region at its
+block. On clpz, `do_queue/2` and the six helpers under it each emitted the
+chain below them; with the skip, the root alone does. Ownership alone left
+463 regions per engine, the skip 233.
+
+Measured in one process per form, two engines on it, the clpz puzzles and
+Blint, the JIT's own compilation time and the IL it was given:
+
+| | clpz puzzles, JIT | IL | regions | Blint, JIT | IL | regions |
+|---|---|---|---|---|---|---|
+| every callee copied (before) | 109 s | 23.9 MB | 583 | 50 s | 7.3 MB | 120 |
+| installed callees called, nothing owned | 44 s | 8.0 MB | 283 | 16 s | 3.1 MB | 33 |
+| the owned copied, member compiles skipped (now) | 51 s | 8.6 MB | 233 | 18 s | 3.4 MB | 42 |
+
+Regions per engine. In the last two rows no member block is emitted twice;
+what remains is each block's first emission and the roots' own code. The
+middle row is the form that lost the small programs their loop.
+
+The run time in regime, the same programs plus the ten Van Roy programs,
+A the old form and B the rule, in one process ABBA over two copies of the
+build, eight rounds (six on clpz), the minimum and the median of each:
+
+| program | B/A minimum | B/A median |
+|---|---|---|
+| clpz puzzles (13, over the Scryer library) | 0.98 | 0.99 |
+| Blint | 1.03 | 1.01 |
+| tak | 0.97 | 0.95 |
+| crypt | 0.96 | 0.96 |
+| sendmore | 0.92 | 0.89 |
+| queens | 1.02 | 1.03 |
+| nreverse | 0.98 | 1.02 |
+| qsort | 0.81 | 0.83 |
+| zebra | 0.97 | 0.97 |
+| boyer | 1.00 | 1.02 |
+| flatten | 1.01 | 1.02 |
+| serialize | 0.91 | 0.95 |
+
+Heap cells identical throughout. None is slower past the noise: the hot
+loops are a root's own clauses, its small callees and the chains it owns,
+all still copied. Three are faster at the minimum, qsort by 19%, sendmore
+and serialize by 8 to 9%, not pinned down to a difference in the regions
+they end with.
+
+The limit is in local references, the planner's measure
+(`RegionMemberCost`): 150 is about 300 IL instructions, under which a
+block is cheaper to copy than to call through. Setting it very large
+restores the old form; 0 copies only the owned.
+
 ## The wasm tier
 
 Not mirrored: the wasm tier emits one function per predicate and the browser

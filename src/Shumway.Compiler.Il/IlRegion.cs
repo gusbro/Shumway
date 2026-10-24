@@ -87,6 +87,12 @@ internal static class IlRegionBuilder
     /// <param name="memberLocals">What a member adds in the JIT's locals
     /// (<see cref="IlRegionCost.MemberLocals"/>), under
     /// <paramref name="localsBudget"/> the same way.</param>
+    /// <param name="callUnlessOwned">A callee that has code of its own the
+    /// region calls rather than copies, unless the region owns it: every
+    /// caller of it (<paramref name="callersOf"/>) is the root or a member
+    /// the region owns in turn. A leaf hot before its one caller is still
+    /// copied into the caller's region; a utility called from everywhere is
+    /// copied nowhere, and neither is the helper of a small member that is.</param>
     public static IlRegion Build(
         CompiledPredicate root,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -95,7 +101,9 @@ internal static class IlRegionBuilder
         Func<CompiledPredicate, int>? memberCost = null,
         int costBudget = 0,
         Func<CompiledPredicate, int>? memberLocals = null,
-        int localsBudget = 0)
+        int localsBudget = 0,
+        Func<CompiledPredicate, bool>? callUnlessOwned = null,
+        Func<int, IReadOnlyCollection<int>?>? callersOf = null)
     {
         ArgumentNullException.ThrowIfNull(root);
         if (budgetBytes < 0) budgetBytes = DefaultBudgetBytes;
@@ -109,33 +117,84 @@ internal static class IlRegionBuilder
         int localsSum = memberLocals?.Invoke(root) ?? 0;
         CompiledPredicate? firstRefused = null;   // by the locals budget, with the root alone
         var queue = new Queue<CompiledPredicate>();
+        List<CompiledPredicate>? deferred = null;   // with code of their own, not yet owned
+        HashSet<int>? deferredFids = null;
         queue.Enqueue(root);
-        while (queue.Count > 0)
+        while (true)
         {
-            var pred = queue.Dequeue();
-            foreach (var cs in pred.CallSites)
+            while (queue.Count > 0)
             {
-                int fid = cs.CalleeFunctorId;
-                if (memberFids.Contains(fid)) continue;          // cycle / shared → br to existing block
-                if (!calleeMap.TryGetValue(fid, out var callee)) continue;   // builtin / external / uncompiled
-                if (!IsStructurallyEligible(callee)) continue;   // dynamic / empty
-                if (extraEligible is not null && !extraEligible(callee)) continue;  // caller filter
-                if (sizeSum + callee.BytecodeUnfused.Length > budgetBytes) continue;       // budget → stays trampoline
-                int cost = memberCost?.Invoke(callee) ?? 0;
-                if (costBudget > 0 && costSum + cost > costBudget) continue;               // JIT limit → stays trampoline
-                int locals = memberLocals?.Invoke(callee) ?? 0;
-                if (localsBudget > 0 && localsSum + locals > localsBudget)                  // inline cap → stays trampoline
+                var pred = queue.Dequeue();
+                foreach (var cs in pred.CallSites)
                 {
-                    if (members.Count == 1) firstRefused ??= callee;
-                    continue;
+                    int fid = cs.CalleeFunctorId;
+                    if (memberFids.Contains(fid)) continue;          // cycle / shared → br to existing block
+                    if (!calleeMap.TryGetValue(fid, out var callee)) continue;   // builtin / external / uncompiled
+                    if (!IsStructurallyEligible(callee)) continue;   // dynamic / empty
+                    if (extraEligible is not null && !extraEligible(callee)) continue;  // caller filter
+                    if (callUnlessOwned is not null && callUnlessOwned(callee))
+                    {
+                        // Met from several callers: once in the list.
+                        if ((deferredFids ??= new HashSet<int>()).Add(fid))
+                            (deferred ??= new List<CompiledPredicate>()).Add(callee);
+                        continue;
+                    }
+                    Admit(callee);
                 }
-                members.Add(callee);
-                memberFids.Add(fid);
-                sizeSum += callee.BytecodeUnfused.Length;
-                costSum += cost;
-                localsSum += locals;
-                queue.Enqueue(callee);
             }
+            if (deferred is null || deferred.Count == 0) break;
+            // What the region owns: the largest set of members and deferred
+            // callees, with the root, whose every caller is in the set. A
+            // member copied everywhere (small, or not owned itself) keeps its
+            // callees out of it.
+            var owned = new HashSet<int>(memberFids);
+            foreach (var d in deferred) owned.Add(d.FunctorId);
+            for (bool changed = true; changed;)
+            {
+                changed = false;
+                foreach (int fid in owned.ToArray())
+                {
+                    if (fid == root.FunctorId || callersOf?.Invoke(fid) is not { } callers) continue;
+                    foreach (int c in callers)
+                        if (c != fid && !owned.Contains(c))
+                        {
+                            owned.Remove(fid);
+                            changed = true;
+                            break;
+                        }
+                }
+            }
+            bool admitted = false;
+            for (int i = deferred.Count - 1; i >= 0; i--)
+            {
+                var d = deferred[i];
+                if (!owned.Contains(d.FunctorId)) continue;
+                deferred.RemoveAt(i);
+                deferredFids!.Remove(d.FunctorId);
+                admitted |= Admit(d);
+            }
+            if (!admitted) break;   // what is left is called
+        }
+
+        bool Admit(CompiledPredicate callee)
+        {
+            if (memberFids.Contains(callee.FunctorId)) return false;                       // a member already
+            if (sizeSum + callee.BytecodeUnfused.Length > budgetBytes) return false;       // budget → stays trampoline
+            int cost = memberCost?.Invoke(callee) ?? 0;
+            if (costBudget > 0 && costSum + cost > costBudget) return false;               // JIT limit → stays trampoline
+            int locals = memberLocals?.Invoke(callee) ?? 0;
+            if (localsBudget > 0 && localsSum + locals > localsBudget)                  // inline cap → stays trampoline
+            {
+                if (members.Count == 1) firstRefused ??= callee;
+                return false;
+            }
+            members.Add(callee);
+            memberFids.Add(callee.FunctorId);
+            sizeSum += callee.BytecodeUnfused.Length;
+            costSum += cost;
+            localsSum += locals;
+            queue.Enqueue(callee);
+            return true;
         }
         // A root alone is a method, not a region: two members past the cap
         // beat two methods and a trampoline between them.

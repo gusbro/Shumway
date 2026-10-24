@@ -87,6 +87,17 @@ internal static class IlRegionCost
     /// at the reference target, gain from the cut.</summary>
     public static int LocalsFloorRefs { get; set; } = 4000;
 
+    /// <summary>A callee that has compiled code already (installed, or on the
+    /// worker) is copied into a new region only when its block costs under
+    /// this many local references or the region owns it (every caller of it
+    /// a member); otherwise the region calls the code there is. A copy per
+    /// caller made two thirds of a large program's region IL repeated.
+    /// <c>SHUMWAY_REGION_REINLINE</c>; a very large value copies every
+    /// callee, 0 copies none but the owned.</summary>
+    public static int ReinlineLimit { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_REINLINE"), out var r) && r >= 0
+            ? r : 150;
+
     /// <summary>The shared tail of a region with that many resume entries and
     /// ladder entries.</summary>
     public static int TailCost(int resumeCursors, int ladderEntries)

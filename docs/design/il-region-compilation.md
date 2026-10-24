@@ -63,6 +63,20 @@ flat local code space, within an IL method.
   must keep its standalone delegate; it stays a trampoline target. A local member
   may ALSO be compiled standalone (for callers outside this region) — its block
   here is a per-region copy, but bounded (one per region that reaches it).
+- **Code there is already**: a callee that has compiled code when the root's
+  compile begins (its own method, a region's alias, a bundle's method, a
+  compile on the worker, or a member of a region the worker emitted and the
+  engine has not installed yet) is called through the trampoline, not
+  copied, unless its block costs under `IlRegionCost.ReinlineLimit` local
+  references (`SHUMWAY_REGION_REINLINE`, 150) or the region owns it: every
+  static caller of it is a member. A leaf that got hot before its one
+  caller is still copied into the caller's region, so a program's one hot
+  loop ends up in one method as before; a utility called from everywhere
+  is copied nowhere. The leaf utilities of a large program get
+  hot first and were then copied into every caller's region: two thirds of
+  the clpz puzzles' region IL. A member that gets no code of its own keeps
+  running its root's (the alias), so nothing is compiled twice in either
+  order. See `region-jit-limits.md`, "What a region copies".
 
 ## Cursor space
 
