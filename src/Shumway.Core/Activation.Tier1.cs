@@ -1013,6 +1013,49 @@ public sealed partial class Activation
         return true;
     }
 
+    /// <summary>Interns the pairs (<paramref name="functorId"/>,
+    /// <paramref name="firstCursor"/> .. +<paramref name="count"/>-1) as one run
+    /// of consecutive ids and returns the marker of the first: a region tells
+    /// a marker of its own run from any other with one subtraction and one
+    /// unsigned compare, the cursor being the difference. -1 when the run
+    /// cannot be consecutive (a pair of it was interned alone, or by a region of
+    /// another shape compiled earlier for the same predicate); the region then
+    /// decodes through the pairs table. Asking again for a run, or for a prefix
+    /// of it, answers the same base.</summary>
+    public static int ReserveResumeMarkerRange(int functorId, int firstCursor, int count)
+    {
+        if (firstCursor < 0 || count <= 0) return -1;
+        long Key(int cursor) => ((long)functorId << 32) | (uint)cursor;
+        lock (_resumeMarkerLock)
+        {
+            if (_resumeMarkerByPair.TryGetValue(Key(firstCursor), out int id0))
+            {
+                for (int i = 1; i < count; i++)
+                    if (!_resumeMarkerByPair.TryGetValue(Key(firstCursor + i), out int id) || id != id0 + i)
+                        return -1;
+                return ResumeMarkerBase + id0;
+            }
+            for (int i = 1; i < count; i++)
+                if (_resumeMarkerByPair.ContainsKey(Key(firstCursor + i))) return -1;
+            int first = _resumeMarkerCount;
+            var pairs = _resumeMarkerPairs;
+            if (first + count > pairs.Length)
+            {
+                int n = pairs.Length;
+                while (n < first + count) n *= 2;
+                var grown = new (int, int)[n];
+                Array.Copy(pairs, grown, pairs.Length);
+                System.Threading.Volatile.Write(ref _resumeMarkerPairs, grown);
+                pairs = grown;
+            }
+            for (int i = 0; i < count; i++) pairs[first + i] = (functorId, firstCursor + i);
+            _resumeMarkerCount = first + count;
+            // Published after the pair writes, as EncodeResumeMarker does.
+            for (int i = 0; i < count; i++) _resumeMarkerByPair[Key(firstCursor + i)] = first + i;
+            return ResumeMarkerBase + first;
+        }
+    }
+
     public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
         => System.Threading.Volatile.Read(ref _resumeMarkerPairs)[address - ResumeMarkerBase];
 

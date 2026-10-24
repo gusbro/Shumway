@@ -25,8 +25,12 @@ internal static class IlRegionCost
 
     /// <summary>The prologue of a region method (registers into locals).</summary>
     public const int Prologue = 20;
-    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch.</summary>
-    public const int TailBase = 181;
+    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch;
+    /// the decode of the region's own run of markers in both handlers is 11.</summary>
+    public const int TailBase = 192;
+    /// <summary>Per member, its return's compares with the sites that call it:
+    /// two references per compare, up to <see cref="IlPredicateCompiler.RegionReturnCompares"/>.</summary>
+    public static int PerMemberReturn => 2 * Math.Max(0, IlPredicateCompiler.RegionReturnCompares);
     /// <summary>Per resume entry (a clause alternative or an index node).</summary>
     public const int PerResumeCursor = 23;
     /// <summary>Per entry of the push ladder, one per arity up to the largest.</summary>
@@ -296,7 +300,9 @@ internal static class IlRegionCost
     };
 
     /// <summary>What the member would add to a region: its block, measured or
-    /// estimated, and the tail's resume entries its clauses bring.</summary>
+    /// estimated, and the tail's resume entries its clauses bring. The planner
+    /// adds <see cref="PerMemberReturn"/> to the budget's count, not to the
+    /// copy-or-call limit.</summary>
     public static int MemberCost(CompiledPredicate member,
         IReadOnlyList<(int Start, int End)>? clauseRanges, int resumeCursors)
     {

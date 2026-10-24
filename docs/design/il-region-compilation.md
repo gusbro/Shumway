@@ -120,6 +120,31 @@ One shared `ret`/`dispatch` tail handles every member's proceed. The intra-regio
 case is a `br`; only a return whose continuation lives in another method falls back
 to the loop.
 
+**The region's run of markers.** The test `IsRegionMarker` and the decode cost a
+call and a lookup in the marker table per return. A region now reserves its
+markers, cursors 1 onwards, as one run of consecutive ids
+(`Activation.ReserveResumeMarkerRange`) before it emits any of them, so a return
+inside the region is `cur = Cp - base + 1` under `(uint)(Cp - base) < count`, and
+the fail handler finds the cursor of one of the region's own choice points the same
+way (ADR-060 describes that handler). The base is a constant of the method: the
+value reserved at compile time, or a patch (`IlPatchKind.ResumeMarkerRange`) the
+loader resolves after reserving every run of the module, before any marker of it
+is interned alone. When the run cannot be consecutive, because a marker of it was
+interned apart (a region of another shape compiled earlier for the same
+predicate), the base is -1: the test of its sign folds in the JIT and the handler
+keeps the helper and the table. The run is reserved with headroom (a multiple of
+16 cursors) so a recompile of a region that grew a little keeps it.
+
+**A member's own return.** Before the shared handler, a member's proceed compares
+`Cp` with the markers of the sites that call it, a direct branch per site to the
+site's continuation; the sites of the members from which it is reached by tail
+calls count too (a tail call hands the caller's `Cp` on), to a fixpoint. A member
+with more sites than `IlPredicateCompiler.RegionReturnCompares` (4), or none, uses
+the shared handler alone. The direct branches are predicted per site; the dispatch
+switch is one indirect jump for every return of the region. In one process, tak
+(three recursive sites and the driver's) -24% on both minimum and median; crypt
+and sendmore, whose facts return to more sites than the cap, unchanged.
+
 **Cross-region call / backtrackable builtin**: unchanged — the Phase-16 threaded
 trampoline (set `Cp` = region resume marker, set `Pc` = callee marker, return to
 loop), with the resume cursor in this region's space. **Deterministic builtin**:
@@ -236,7 +261,10 @@ WAM state.
      the region method — a `cur` local seeded from `arg1`; a `dispatch` IL `switch`
      over the plan's cursor space (0 = root entry); each member as a labeled block;
      a shared `ret` handler (`cur = RegionReturnCursor(e, fid); if ≥0 br dispatch;
-     else return true`). The body emit reuses `EmitClauseBody` with a
+     else return true`; today the handler first tests `Cp` against the region's
+     own run of markers, see *The region's run of markers* under *Call and return
+     mechanism*, and calls the helper only when it is not one of them). The body
+     emit reuses `EmitClauseBody` with a
      `RegionEmitContext`: `TryEmitRegionOpcode` rewrites proceed/deallocate_proceed →
      `br ret`, an intra-region non-tail `Call` → `SetB0` + `SetCp(return marker)` +
      `br member` + the return-continuation label, an intra-region tail `Execute` →

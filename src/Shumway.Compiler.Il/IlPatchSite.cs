@@ -41,6 +41,13 @@ public enum IlPatchKind : byte
     /// interns it in the engine's image pool and bakes the id it gets, the
     /// id the bytecode's remap gives the same image.</summary>
     Image = 5,
+
+    /// <summary>The first marker of a region's run of cursors, <see
+    /// cref="IlPatchSite.Cursor"/> onwards, <see cref="IlPatchSite.Count"/> of
+    /// them: <c>Activation.ReserveResumeMarkerRange</c> at load, -1 when the run
+    /// is not consecutive in the loading process. The loader reserves every run
+    /// of a module before it interns any marker of it.</summary>
+    ResumeMarkerRange = 6,
 }
 
 /// <summary>
@@ -76,6 +83,10 @@ public sealed class IlPatchSite
     /// functor id via <c>Activation.EncodeResumeMarker</c> to compute the
     /// runtime marker value.</summary>
     public int Cursor { get; init; }
+
+    /// <summary>The number of cursors of a <see cref="IlPatchKind.ResumeMarkerRange"/>
+    /// run, from <see cref="Cursor"/> on.</summary>
+    public int Count { get; init; }
 
     /// <summary>The image, for <see cref="IlPatchKind.Image"/> (ADR-063).</summary>
     public Shumway.Core.TermImage? Image { get; init; }
@@ -312,6 +323,7 @@ public static class IlPatchSiteCodec
             bw.Write((uint)nameBytes.Length);
             bw.Write(nameBytes);
             if (s.Kind == IlPatchKind.Image) Shumway.Core.TermImageCodec.Write(bw, s.Image!);
+            if (s.Kind == IlPatchKind.ResumeMarkerRange) bw.Write(s.Count);
         }
         bw.Flush();
         return ms.ToArray();
@@ -340,6 +352,7 @@ public static class IlPatchSiteCodec
             byte[] nameBytes = br.ReadBytes((int)nameLength);
             string name = System.Text.Encoding.UTF8.GetString(nameBytes);
             Shumway.Core.TermImage? image = kind == IlPatchKind.Image ? Shumway.Core.TermImageCodec.Read(br) : null;
+            int rangeCount = kind == IlPatchKind.ResumeMarkerRange ? br.ReadInt32() : 0;
             result.Add(new IlPatchSite
             {
                 AbsoluteByteOffset = offset,
@@ -348,6 +361,7 @@ public static class IlPatchSiteCodec
                 Name = name,
                 Arity = arity,
                 Cursor = cursor,
+                Count = rangeCount,
                 Image = image,
             });
         }

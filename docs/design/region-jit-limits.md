@@ -44,7 +44,7 @@ make the prediction cheap:
 |---|---|
 | a member's block, from one region to the next | the same to within 2% for 90% of the members, 28% at worst |
 | a member never emitted, estimated from its opcodes | median error 21%, with a heavy tail where guards inline their callees |
-| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57 |
+| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57; 192 since the return path decodes the region's own run of markers (+11 on every region measured), plus the members' return compares, up to 8 each, counted with the member |
 
 So a member that was ever emitted predicts itself, the opcode model serves
 the first emission, and the tail follows from the plan.

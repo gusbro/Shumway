@@ -21,6 +21,11 @@ public sealed partial class IlPredicateCompiler
     /// locals, over every region compiled in this process.</summary>
     public static int InlineFrameSites;
 
+    /// <summary>Regions compiled in this process whose markers form one run
+    /// (a return or a fail decodes its own by subtraction), and those whose
+    /// markers were interned apart before (the pairs table decodes).</summary>
+    public static int RegionMarkerRuns, RegionMarkerRunMisses;
+
     private static FieldInfo EngineField(string name) => typeof(Activation).GetField(name)!;
 
     private static readonly FieldInfo FrameHooksField = EngineField(nameof(Activation.FrameHooks));
@@ -411,9 +416,13 @@ public sealed partial class IlPredicateCompiler
     /// not be looked at. Reaches <paramref name="resumeCheck"/> with the
     /// marker's cursor in <paramref name="cur"/>, or <paramref name="failOut"/>
     /// when the top is another code's marker; anything else (a hook or a debug
-    /// session on, the floor, BP not a marker) falls through to the call.</summary>
+    /// session on, the floor, BP not a marker) falls through to the call. A
+    /// marker of the region's own run (<paramref name="emitRunBase"/>, the base,
+    /// <paramref name="runCount"/> cursors from 1) gives its cursor by
+    /// subtraction; the pairs table decodes the rest.</summary>
     private static void EmitResumeOwnFast(IlEmit emit, FrameLocals l,
-        int regionFid, IlLocal cur, IlLabel resumeCheck, IlLabel failOut)
+        int regionFid, Action<IlEmit> emitRunBase, int runCount,
+        IlLocal cur, IlLabel resumeCheck, IlLabel failOut)
     {
         var rf = RegisterFileOf(emit)!;
         var b = Reg(emit, MachineRegs.B);
@@ -448,7 +457,28 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(bp);
         emit.LoadConstant(Activation.ResumeMarkerBase);
         emit.BranchIfLess(callMethod);
-        // The marker's (functor, cursor).
+        // The region's own run (the base a constant, -1 for no run: the test
+        // of its sign folds): the cursor by subtraction.
+        var byTable = emit.DefineLabel($"rfail_table_{NextLabelSeq()}");
+        var own = emit.DefineLabel($"rfail_own_{NextLabelSeq()}");
+        emitRunBase(emit);
+        emit.LoadConstant(0);
+        emit.BranchIfLess(byTable);
+        emit.LoadLocal(bp);
+        emitRunBase(emit);
+        emit.Subtract();
+        emit.StoreLocal(cur);
+        emit.LoadLocal(cur);
+        emit.LoadConstant(runCount);
+        emit.UnsignedBranchIfGreaterOrEqual(byTable);
+        emit.LoadLocal(cur);
+        emit.LoadConstant(1);
+        emit.Add();
+        emit.StoreLocal(cur);
+        emit.Branch(own);
+        // The marker's (functor, cursor) from the pairs table: a wake
+        // alternative's cursor, or another code's marker.
+        emit.MarkLabel(byTable);
         emit.LoadField(ResumeMarkerPairsField);
         emit.LoadLocal(bp);
         emit.LoadConstant(Activation.ResumeMarkerBase);
@@ -459,6 +489,10 @@ public sealed partial class IlPredicateCompiler
         emit.LoadField(typeof((int, int)).GetField("Item1")!);
         EmitFunctorId(emit, regionFid);
         emit.UnsignedBranchIfNotEqual(failOut);
+        emit.LoadLocal(pair);
+        emit.LoadField(typeof((int, int)).GetField("Item2")!);
+        emit.StoreLocal(cur);
+        emit.MarkLabel(own);
         // BacktrackSafePoint: the countdown here, the rest when it runs out.
         emit.LoadArgument(0);
         emit.LoadField(EngCancelCountdown);
@@ -474,9 +508,6 @@ public sealed partial class IlPredicateCompiler
         emit.LoadArgument(0);
         EmitHelperCall(emit, EngineBacktrackSafePointDueMethod);
         emit.MarkLabel(safe);
-        emit.LoadLocal(pair);
-        emit.LoadField(typeof((int, int)).GetField("Item2")!);
-        emit.StoreLocal(cur);
         emit.Branch(resumeCheck);
         emit.MarkLabel(callMethod);
     }

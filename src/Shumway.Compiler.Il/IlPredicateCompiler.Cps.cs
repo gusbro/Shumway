@@ -944,7 +944,8 @@ public sealed partial class IlPredicateCompiler
         var no = emit.DefineLabel($"cps_own_no_{NextLabelSeq()}");
         var slow = emit.DefineLabel($"cps_own_slow_{NextLabelSeq()}");
         var go = emit.DefineLabel($"cps_own_go_{NextLabelSeq()}");
-        EmitResumeOwnFast(emit, l, _emitOwnerFid, cur, own, no);
+        // A continuation method has no run of its own: the pairs table decodes.
+        EmitResumeOwnFast(emit, l, _emitOwnerFid, static e => e.LoadConstant(-1), 0, cur, own, no);
         emit.Branch(no);
         emit.MarkLabel(own);
         emit.LoadLocal(l.Slow);

@@ -189,12 +189,48 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
+    /// <summary>The first marker of the run (<paramref name="functorId"/>,
+    /// <paramref name="firstCursor"/> .. +<paramref name="count"/>-1), -1 when
+    /// the run is not consecutive: <paramref name="runtimeBase"/>, reserved
+    /// before the region emitted a marker, when the IL runs in this process; a
+    /// patch the loader resolves otherwise. A constant either way, so the JIT
+    /// folds the test of its sign.</summary>
+    private static void EmitResumeMarkerRunBase(
+        IlEmit emit, int functorId, int firstCursor, int count, int runtimeBase)
+    {
+        if (_persistPatches is null)
+        {
+            emit.LoadConstant(runtimeBase);
+            return;
+        }
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is null)
+            throw new InvalidOperationException(
+                $"Persisted IL emit: resume marker functor id {functorId} has no name.");
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.ResumeMarkerRange,
+            Name = name,
+            Arity = arity,
+            Cursor = firstCursor,
+            Count = count,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
     private static void EmitResumeMarker(
         IlEmit emit, int functorId, int cursor)
     {
         if (_persistPatches is null)
         {
-            emit.LoadConstant(Shumway.Core.Activation.EncodeResumeMarker(functorId, cursor));
+            // The linker's warm pass emits a scratch method nobody runs: it mints
+            // no marker, or the loader could not reserve the region's run later.
+            emit.LoadConstant(_persistScratch
+                ? Shumway.Core.Activation.ResumeMarkerBase
+                : Shumway.Core.Activation.EncodeResumeMarker(functorId, cursor));
             return;
         }
         var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);

@@ -898,9 +898,11 @@ internal sealed class BundleLoader
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], PersistedIlIndex>
         _persistedIndexes = new();
 
-    private static PersistedIlIndex ReadPersistedIndex(byte[] table) =>
-        _persistedIndexes.GetValue(table, static bytes =>
+    private static PersistedIlIndex ReadPersistedIndex(byte[] table, byte[]? patches) =>
+        _persistedIndexes.GetValue(table, bytes =>
         {
+            // Before the member aliases intern a marker of a region alone.
+            ReserveMarkerRuns(patches);
             var index = new PersistedIlIndex { Predicates = new() };
             foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
             {
@@ -1344,6 +1346,9 @@ internal sealed class BundleLoader
                 case Shumway.Compiler.Il.IlPatchKind.Builtin:
                     expect = ResolveBuiltinPatch(s.Name, s.Arity);
                     break;
+                case Shumway.Compiler.Il.IlPatchKind.ResumeMarkerRange:
+                    expect = ResolveMarkerRun(s);
+                    break;
                 default: continue;
             }
             if (written != expect)
@@ -1377,9 +1382,31 @@ internal sealed class BundleLoader
         return builtinId;
     }
 
+    /// <summary>Reserves every run of markers a region of the module decodes by
+    /// subtraction, before a marker of the run is interned alone (by the index's
+    /// member aliases, by the patches in their own order): interned one by one
+    /// the run would not be consecutive.</summary>
+    private static void ReserveMarkerRuns(byte[]? patchTable)
+    {
+        if (patchTable is not { Length: > 0 }) return;
+        foreach (var s in Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable))
+            if (s.Kind == Shumway.Compiler.Il.IlPatchKind.ResumeMarkerRange)
+                ResolveMarkerRun(s);
+    }
+
+    private static int ResolveMarkerRun(Shumway.Compiler.Il.IlPatchSite s)
+    {
+        int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+        int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
+        return Shumway.Core.Activation.ReserveResumeMarkerRange(fid, s.Cursor, s.Count);
+    }
+
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
         var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
+        foreach (var s in sites)
+            if (s.Kind == Shumway.Compiler.Il.IlPatchKind.ResumeMarkerRange)
+                ResolveMarkerRun(s);
         foreach (var s in sites)
         {
             int runtimeValue;
@@ -1406,6 +1433,9 @@ internal sealed class BundleLoader
                     break;
                 case Shumway.Compiler.Il.IlPatchKind.Builtin:
                     runtimeValue = ResolveBuiltinPatch(s.Name, s.Arity);
+                    break;
+                case Shumway.Compiler.Il.IlPatchKind.ResumeMarkerRange:
+                    runtimeValue = ResolveMarkerRun(s);
                     break;
                 default:
                     throw new InvalidDataException(
@@ -1485,7 +1515,7 @@ internal sealed class BundleLoader
                     E.IlPromotion.RegisterBoundDelegate(functorId, del, wakes, fromBundle: true);
             return;
         }
-        var index = ReadPersistedIndex(table);
+        var index = ReadPersistedIndex(table, entry.CompiledIlPatches);
         // Nothing is compiled at load, nor is the image loaded when no
         // predicate needs it yet. A predicate whose bytecode the engine has
         // runs on it until it has earned its code (ADR-061), and the compile

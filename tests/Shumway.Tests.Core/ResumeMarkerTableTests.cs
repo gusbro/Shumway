@@ -61,4 +61,48 @@ public class ResumeMarkerTableTests
         Assert.False(Activation.IsResumeMarker(Activation.ResumeMarkerBase - 1));
         Assert.False(Activation.IsResumeMarker(0));
     }
+
+    // A region reserves its markers as one run of consecutive ids and decodes
+    // its own by subtraction: marker(fid, 1 + i) == base + i.
+    [Fact]
+    public void ARun_IsConsecutive_AndAnsweredAgain()
+    {
+        const int fid = 9_500_001;
+        int entry = Activation.EncodeResumeMarker(fid, 0);     // the entry marker, minted by a caller
+        int b = Activation.ReserveResumeMarkerRange(fid, 1, 8);
+        Assert.True(b >= Activation.ResumeMarkerBase);
+        Assert.NotEqual(entry, b);
+        for (int i = 0; i < 8; i++)
+        {
+            Assert.Equal(b + i, Activation.EncodeResumeMarker(fid, 1 + i));
+            Assert.Equal((fid, 1 + i), Activation.DecodeResumeMarker(b + i));
+        }
+        Assert.Equal(b, Activation.ReserveResumeMarkerRange(fid, 1, 8));   // the same run
+        Assert.Equal(b, Activation.ReserveResumeMarkerRange(fid, 1, 3));   // a prefix of it
+        Assert.Equal(-1, Activation.ReserveResumeMarkerRange(fid, 1, 9));  // longer than it
+    }
+
+    [Fact]
+    public void ARun_IsRefused_WhenAPairOfItWasMintedAlone()
+    {
+        const int fid = 9_500_002;
+        int alone = Activation.EncodeResumeMarker(fid, 3);
+        Assert.Equal(-1, Activation.ReserveResumeMarkerRange(fid, 1, 8));
+        // Refusing changes nothing: the pair keeps its marker, the others mint one by one.
+        Assert.Equal(alone, Activation.EncodeResumeMarker(fid, 3));
+        Assert.Equal((fid, 1), Activation.DecodeResumeMarker(Activation.EncodeResumeMarker(fid, 1)));
+    }
+
+    [Fact]
+    public void ARun_OfOneFunctor_LeavesAnotherAlone()
+    {
+        const int fid = 9_500_003, other = 9_500_004;
+        int b = Activation.ReserveResumeMarkerRange(fid, 1, 4);
+        int o = Activation.ReserveResumeMarkerRange(other, 1, 4);
+        Assert.True(b >= Activation.ResumeMarkerBase && o >= Activation.ResumeMarkerBase);
+        Assert.True(o >= b + 4 || b >= o + 4, "the two runs overlap");
+        Assert.Equal(-1, Activation.ReserveResumeMarkerRange(fid, 0, 2));     // cursor 0 is not in the run
+        Assert.Equal(-1, Activation.ReserveResumeMarkerRange(fid, -1, 2));
+        Assert.Equal(-1, Activation.ReserveResumeMarkerRange(fid, 1, 0));
+    }
 }

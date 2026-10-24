@@ -341,7 +341,8 @@ The fail handler's common case is now emitted before its call to
 resume marker of the region. BP is read first. A choice point of the IL side
 stack always has BP -1, never a marker, so the side stack is not looked at.
 The region reads the floor, the debug session and the frame's BP, finds the
-marker's cursor in the marker table, decrements the backtrack safe point's
+marker's cursor (by subtraction when the marker is in the region's own run,
+in the marker table otherwise), decrements the backtrack safe point's
 countdown and calls the rest of the safe point (`BacktrackSafePointDue`)
 only when it runs out. A hook, a debug session, the floor or any other BP
 takes the call. The reserved surface grows by the backtrack floor, the debug
