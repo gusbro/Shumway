@@ -485,7 +485,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>
     private RecordedDatabase? _records;
-    public RecordedDatabase Records => _records ??= new RecordedDatabase();
+    internal RecordedDatabase Records => _records ??= new RecordedDatabase();
 
     /// <summary>per-engine pseudo-random generator
     /// behind <c>random/1</c>, <c>random_between/3</c> and

@@ -169,7 +169,7 @@ Decision 6 governs the three tiers that *have* a boundary: typed foreign
 predicates, typed queries, and the `Term` tree. The fourth tier — a raw
 `bool(Activation)` foreign that reads and writes the live `Cell[]` — exists
 precisely so that there is nothing in between, and it is where the engine wins
-3–180× over a P/Invoke-embedded native Prolog. It cannot hide the
+3–30× over a P/Invoke-embedded native Prolog. It cannot hide the
 representation, and pretending otherwise would be worse than useless: code
 written against a hidden model that turns out to be wrong is exactly how a
 silent defect gets in.

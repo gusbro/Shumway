@@ -21,10 +21,10 @@ public static partial class MetaBuiltins
         // Atom key: materialise the AtomTerm once, here on the (cooler) write
         // path, so the entry carries a Key for introspection (keys/1, KeyOf).
         keyTerm ??= MaterializeRegister(engine, 0);
-        Term term = MaterializeRegister(engine, 1);
+        var value = RecordValue(engine, 1);
         long @ref = atFront
-            ? host.Records.Recorda(atomId, keyTerm, term)
-            : host.Records.Recordz(atomId, keyTerm, term);
+            ? host.Records.Recorda(atomId, keyTerm, value)
+            : host.Records.Recordz(atomId, keyTerm, value);
         return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
     }
 
@@ -68,7 +68,7 @@ public static partial class MetaBuiltins
         private LinkedList<RecordedDatabase.RecordEntry>? _chain;
         private bool _chainResolved;
         // Built on the first resume (lazy tail snapshot); null before that.
-        private List<(long Ref, Term Term)>? _snapshot;
+        private List<(long Ref, SolutionBuffer Value)>? _snapshot;
         private int _snapIdx;
         private long _lastYieldedRef = -1;
         public readonly Func<Activation, int, bool> Resume;
@@ -107,7 +107,7 @@ public static partial class MetaBuiltins
                 // same (CP-restored) pattern, so re-offering them is at worst
                 // a cheap re-rejection, never a wrong answer. Walk the node
                 // spine directly (no iterator allocation).
-                _snapshot = new List<(long, Term)>();
+                _snapshot = new List<(long, SolutionBuffer)>();
                 var chain = Chain();
                 if (chain is not null)
                 {
@@ -115,7 +115,7 @@ public static partial class MetaBuiltins
                     for (var n = chain.First; n is not null; n = n.Next)
                         if (n.Value.Ref == _lastYieldedRef) { start = n.Next; break; }
                     for (var n = start; n is not null; n = n.Next)
-                        _snapshot.Add((n.Value.Ref, n.Value.Term));
+                        _snapshot.Add((n.Value.Ref, n.Value.Value));
                 }
                 _snapIdx = 0;
             }
@@ -135,7 +135,7 @@ public static partial class MetaBuiltins
                 for (var n = chain?.First; n is not null; n = n.Next)
                 {
                     var cand = n.Value;
-                    if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
+                    if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Value)) continue;
                     _lastYieldedRef = cand.Ref;
                     // Look ahead with the same rolled-back trial: a choice
                     // point is only worth pushing when a later candidate can
@@ -144,9 +144,9 @@ public static partial class MetaBuiltins
                     // a dead CP around.
                     bool more = false;
                     for (var m = n.Next; m is not null; m = m.Next)
-                        if (patIsVar || TrialUnifies(engine, patSlot, m.Value.Term))
+                        if (patIsVar || TrialUnifies(engine, patSlot, m.Value.Value))
                         { more = true; break; }
-                    return YieldCandidate(engine, (cand.Ref, cand.Term), isResume, more);
+                    return YieldCandidate(engine, (cand.Ref, cand.Value), isResume, more);
                 }
                 return false;
             }
@@ -154,10 +154,10 @@ public static partial class MetaBuiltins
             while (_snapIdx < _snapshot.Count)
             {
                 var cand = _snapshot[_snapIdx++];
-                if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
+                if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Value)) continue;
                 bool more = false;
                 for (int j = _snapIdx; j < _snapshot.Count; j++)
-                    if (patIsVar || TrialUnifies(engine, patSlot, _snapshot[j].Term))
+                    if (patIsVar || TrialUnifies(engine, patSlot, _snapshot[j].Value))
                     { more = true; break; }
                 return YieldCandidate(engine, cand, isResume, more);
             }
@@ -166,15 +166,15 @@ public static partial class MetaBuiltins
 
         /// <summary>Prefilter + rolled-back trial unify of the V pattern
         /// against a stored term — the FindRetractMatch shape.</summary>
-        private static bool TrialUnifies(Activation engine, int patSlot, Term stored)
+        private static bool TrialUnifies(Activation engine, int patSlot, SolutionBuffer stored)
         {
-            if (DefiniteMismatch(engine, patSlot, stored, depth: 6)) return false;
+            if (stored.DefiniteMismatch(engine, 0, patSlot, depth: 6)) return false;
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
             int savedExtraTrail = engine.ExtraTrailTop;
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
-            Cell candCell = Materializer.MaterializeAsCell(engine, stored);
+            Cell candCell = stored.Emit(engine, 0);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candCell);
             bool ok = engine.Unify(patSlot, candSlot);
@@ -185,14 +185,14 @@ public static partial class MetaBuiltins
         }
 
         private bool YieldCandidate(
-            Activation engine, (long Ref, Term Term) cand, bool isResume, bool more)
+            Activation engine, (long Ref, SolutionBuffer Value) cand, bool isResume, bool more)
         {
             // Push the re-satisfaction CP first so the real bindings roll
             // back cleanly on backtrack (arity 3 — the registers must be
             // restored for the next attempt's pattern; the CP-arity lesson),
             // and only when the lookahead found a further match.
             if (more) engine.PushBuiltinChoicePoint(Resume, arity: 3);
-            Cell termCell = Materializer.MaterializeAsCell(engine, cand.Term);
+            Cell termCell = cand.Value.Emit(engine, 0);
             if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
             if (!engine.UnifyRegisterWithCell(2, Cell.Int(cand.Ref))) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
@@ -228,10 +228,9 @@ public static partial class MetaBuiltins
     {
         PrologEngine host = RequireHost(engine, "instance/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "instance/2");
-        Term? stored = host.Records.Instance(@ref);
+        var stored = host.Records.Instance(@ref);
         if (stored is null) return false;
-        Cell c = Materializer.MaterializeAsCell(engine, stored);
-        return engine.UnifyRegisterWithCell(1, c);
+        return engine.UnifyRegisterWithCell(1, stored.Emit(engine, 0));
     }
 
     public static bool KeyCount2(Activation engine)
@@ -281,8 +280,7 @@ public static partial class MetaBuiltins
     {
         PrologEngine host = RequireHost(engine, "replace/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "replace/2");
-        Term newTerm = MaterializeRegister(engine, 1);
-        return host.Records.Replace(@ref, newTerm);
+        return host.Records.Replace(@ref, RecordValue(engine, 1));
     }
 
     public static bool Nref2(Activation engine)
@@ -307,8 +305,7 @@ public static partial class MetaBuiltins
     {
         PrologEngine host = RequireHost(engine, "record_after/3");
         long @ref = RequireIntRef(engine, register: 0, builtin: "record_after/3");
-        Term term = MaterializeRegister(engine, 1);
-        long? newRef = host.Records.RecordAfter(@ref, term);
+        long? newRef = host.Records.RecordAfter(@ref, RecordValue(engine, 1));
         if (newRef is null) return false;
         return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
     }
@@ -317,10 +314,20 @@ public static partial class MetaBuiltins
     {
         PrologEngine host = RequireHost(engine, "record_before/3");
         long @ref = RequireIntRef(engine, register: 0, builtin: "record_before/3");
-        Term term = MaterializeRegister(engine, 1);
-        long? newRef = host.Records.RecordBefore(@ref, term);
+        long? newRef = host.Records.RecordBefore(@ref, RecordValue(engine, 1));
         if (newRef is null) return false;
         return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
+    }
+
+    /// <summary>The term in register <paramref name="register"/>, copied off
+    /// the heap as a record keeps it.</summary>
+    private static SolutionBuffer RecordValue(Activation engine, int register)
+    {
+        var scratch = engine.NewSolutions();
+        scratch.Add(engine, engine.GetRegister(register));
+        var value = scratch.Compact();
+        if (!ReferenceEquals(value, scratch)) engine.RecycleSolutions(scratch);
+        return value;
     }
 
     // ---- shared validation helpers ----

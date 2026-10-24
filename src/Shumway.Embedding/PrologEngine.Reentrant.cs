@@ -83,7 +83,9 @@ public sealed partial class PrologEngine
             if (!varMap.TryGetValue(outVar, out int heapIdx))
                 throw new ArgumentException(
                     $"goal has no variable named '{outVar}'", nameof(outVar));
-            value = FromTerm<T>(TermReader.Materialize(engine, heapIdx));
+            if (HasUserConverters
+                || !RegisterMarshalling.TryReadAs(engine, this, Cell.Ref(heapIdx), out value))
+                value = FromTerm<T>(TermReader.Materialize(engine, heapIdx));
             return true;
         }
         finally { engine.ReturnReentrantVarMap(varMap); }

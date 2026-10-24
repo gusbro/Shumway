@@ -382,3 +382,9 @@ engine that a throw out of a call left open, so that the next solution went
 into the wrong call. The buffers live on the activation, and a catch/3 that
 takes a ball drops the ones its guarded goal opened
 (`CatchFrame.SnapAllSolutions`). Tests: `SolutionBufferTests`.
+
+The recorded database keeps each record as the same image, compacted to
+its exact size when it is stored. recorded/3, instance/2 and the
+enumeration cursor copy it back by the delta, and a record whose cells
+cannot unify with the pattern (`SolutionBuffer.DefiniteMismatch`) is
+skipped before any trial unification.

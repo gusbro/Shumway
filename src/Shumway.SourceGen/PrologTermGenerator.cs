@@ -89,8 +89,8 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
                 a.AttributeClass?.ToDisplayString() == "Shumway.Embedding.PrologTermIgnoreAttribute"))
             .Select(m => m switch
             {
-                IPropertySymbol p => new TermMember(p.Name, p.Type.ToDisplayString(), p.IsReadOnly),
-                IFieldSymbol f => new TermMember(f.Name, f.Type.ToDisplayString(), f.IsReadOnly),
+                IPropertySymbol p => Member(p.Name, p.Type, p.IsReadOnly, ctx.SemanticModel.Compilation),
+                IFieldSymbol f => Member(f.Name, f.Type, f.IsReadOnly, ctx.SemanticModel.Compilation),
                 _ => default!,
             })
             .ToArray();
@@ -140,6 +140,13 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
             HasPositionalCtor: hasPositionalCtor);
     }
 
+    private static TermMember Member(string name, ITypeSymbol type, bool isReadOnly, Compilation compilation)
+    {
+        string typeName = type.ToDisplayString();
+        var shape = CellShapes.Of(type, compilation) ?? CellShapes.ViaTerm(typeName);
+        return new TermMember(name, typeName, isReadOnly, shape.ReadType, shape.Read, shape.Write);
+    }
+
     private static string Emit(TermModel model)
     {
         var sb = new StringBuilder();
@@ -157,10 +164,12 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         // body emits at `i` (one level past the innermost partial's
         // opening brace).
         string i = "";
-        foreach (var ring in model.TypeChain)
+        for (int r = 0; r < model.TypeChain.Count; r++)
         {
-            sb.Append(i).Append("partial ").Append(ring.Kind).Append(' ')
-              .Append(ring.Name).AppendLine();
+            var ring = model.TypeChain[r];
+            sb.Append(i).Append("partial ").Append(ring.Kind).Append(' ').Append(ring.Name);
+            if (r == model.TypeChain.Count - 1) sb.Append(" : global::Shumway.Embedding.IPrologCell");
+            sb.AppendLine();
             sb.Append(i).AppendLine("{");
             i += "    ";
         }
@@ -273,6 +282,97 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
             }
         }
         sb.Append(i).AppendLine("}");
+        EmitCellMethods(sb, model, i);
+    }
+
+    /// <summary>The cell forms: the term read from and written to the heap
+    /// with no Term tree, its functor's id resolved once.</summary>
+    private static void EmitCellMethods(StringBuilder sb, TermModel model, string i)
+    {
+        string i1 = i + "    ";
+        const string cellT = "global::Shumway.Core.Cell";
+        const string rm = "global::Shumway.Embedding.RegisterMarshalling";
+        int n = model.Members.Length;
+        string name = EscapeCs(model.Functor);
+
+        sb.AppendLine();
+        sb.Append(i).AppendLine("private static int __prologCellId = -1;");
+        sb.Append(i).AppendLine("private static int PrologCellId => __prologCellId >= 0 ? __prologCellId");
+        sb.Append(i).Append("    : (__prologCellId = ");
+        if (n == 0)
+            sb.Append("global::Shumway.Core.AtomTable.Intern(\"").Append(name).Append("\", permanent: true).Id");
+        else
+            sb.Append("global::Shumway.Core.FunctorTable.Intern(global::Shumway.Core.AtomTable.Intern(\"")
+              .Append(name).Append("\", permanent: true).Id, ").Append(n).Append(')');
+        sb.AppendLine(");");
+        sb.AppendLine();
+
+        // TryFromPrologCell
+        sb.Append(i).AppendLine("/// <summary>Generated — reads this type off the heap without a Term");
+        sb.Append(i).AppendLine("/// tree; false for a term of another shape, which the caller converts");
+        sb.Append(i).AppendLine("/// the Term way.</summary>");
+        sb.Append(i).Append("public static bool TryFromPrologCell(global::Shumway.Core.Activation engine, ")
+          .Append("global::Shumway.Embedding.PrologEngine host, ").Append(cellT).Append(" cell, out ")
+          .Append(model.TypeName).AppendLine(" value)");
+        sb.Append(i).AppendLine("{");
+        sb.Append(i1).AppendLine("value = default!;");
+        sb.Append(i1).Append("var c = ").Append(rm).AppendLine(".DerefCell(engine, cell);");
+        if (n == 0)
+        {
+            sb.Append(i1).AppendLine("if (c.Tag != global::Shumway.Core.Tag.Atom || c.AsAtomId != PrologCellId) return false;");
+            sb.Append(i1).Append("value = new ").Append(model.TypeName).AppendLine("();");
+            sb.Append(i1).AppendLine("return true;");
+        }
+        else
+        {
+            sb.Append(i1).AppendLine("if (c.Tag != global::Shumway.Core.Tag.Str) return false;");
+            sb.Append(i1).AppendLine("int f = c.AsHeapIndex;");
+            sb.Append(i1).AppendLine("var fc = engine.GetHeap(f);");
+            sb.Append(i1).AppendLine("if (fc.Tag != global::Shumway.Core.Tag.Functor || fc.AsFunctorId != PrologCellId) return false;");
+            for (int k = 0; k < n; k++)
+            {
+                var m = model.Members[k];
+                sb.Append(i1).Append("if (!").Append(CellShapes.Fill(m.Read,
+                    cell: "engine.GetHeap(f + " + (k + 1) + ")",
+                    @out: "out " + m.ReadType + " __m" + k)).AppendLine(") return false;");
+            }
+            if (model.HasPositionalCtor)
+            {
+                sb.Append(i1).Append("value = new ").Append(model.TypeName).Append('(');
+                for (int k = 0; k < n; k++) sb.Append(k == 0 ? "" : ", ").Append("__m").Append(k);
+                sb.AppendLine(");");
+            }
+            else
+            {
+                sb.Append(i1).Append("var instance = new ").Append(model.TypeName).AppendLine("();");
+                for (int k = 0; k < n; k++)
+                    sb.Append(i1).Append("instance.").Append(model.Members[k].Name).Append(" = __m").Append(k).AppendLine(";");
+                sb.Append(i1).AppendLine("value = instance;");
+            }
+            sb.Append(i1).AppendLine("return true;");
+        }
+        sb.Append(i).AppendLine("}");
+        sb.AppendLine();
+
+        // ToPrologCell
+        sb.Append(i).AppendLine("/// <summary>Generated — writes this instance as a term on the heap");
+        sb.Append(i).AppendLine("/// without a Term tree and returns its cell.</summary>");
+        sb.Append(i).Append("public ").Append(cellT).Append(" ToPrologCell(global::Shumway.Core.Activation engine, ")
+          .AppendLine("global::Shumway.Embedding.PrologEngine host)");
+        sb.Append(i).AppendLine("{");
+        if (n == 0)
+            sb.Append(i1).Append("return ").Append(cellT).AppendLine(".Atom(PrologCellId);");
+        else
+        {
+            sb.Append(i1).Append("int h = engine.AllocateHeap(").Append(n + 1).AppendLine(");");
+            sb.Append(i1).Append("engine.SetHeap(h, ").Append(cellT).AppendLine(".Functor(PrologCellId));");
+            for (int k = 0; k < n; k++)
+                sb.Append(i1).Append("engine.SetHeap(h + ").Append(k + 1).Append(", ")
+                  .Append(CellShapes.Fill(model.Members[k].Write, value: "this." + model.Members[k].Name))
+                  .AppendLine(");");
+            sb.Append(i1).Append("return ").Append(cellT).AppendLine(".Str(h);");
+        }
+        sb.Append(i).AppendLine("}");
     }
 
     private static string EscapeCs(string s) =>
@@ -288,7 +388,8 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         TermMember[] Members,
         bool HasPositionalCtor);
 
-    private readonly record struct TermMember(string Name, string TypeName, bool IsReadOnly);
+    private readonly record struct TermMember(
+        string Name, string TypeName, bool IsReadOnly, string ReadType, string Read, string Write);
 
     private readonly record struct TypeRing(string Name, string Kind);
 }

@@ -16,7 +16,7 @@ Shumway implements a **Prolog compiler and interpreter that runs on .NET**, inte
 - **Embedded rules engines** in .NET applications.
 - **Symbolic reasoning** within larger .NET systems.
 
-**Performance target**: comparable to or better than GNU Prolog in real-world scenarios. On interop-heavy workloads (where the cost of crossing the C# ↔ Prolog boundary matters more than raw Prolog throughput) this is **measured, not aspirational**: the zero-copy path wins 3–180× over P/Invoke-embedded GNU Prolog — [`docs/benchmarks/cross-engine-comparison.md`](docs/benchmarks/cross-engine-comparison.md) is the source of truth for all performance claims; when this file and that one disagree, that one wins.
+**Performance target**: comparable to or better than GNU Prolog in real-world scenarios. On interop-heavy workloads (where the cost of crossing the C# ↔ Prolog boundary matters more than raw Prolog throughput) this is **measured, not aspirational**: the zero-copy path wins 3–30× over P/Invoke-embedded GNU Prolog — [`docs/benchmarks/cross-engine-comparison.md`](docs/benchmarks/cross-engine-comparison.md) is the source of truth for all performance claims; when this file and that one disagree, that one wins.
 
 ---
 
@@ -205,7 +205,7 @@ implementing**.
 
 ## Phase Roadmap
 
-Shumway is designed in phases; all of 1–42 are ✅ complete and tagged
+Shumway is designed in phases; all of 1–43 are ✅ complete and tagged
 (`phase-N`). **The canonical record of each phase is its closure doc in
 [`docs/history/`](docs/history/)** — what shipped, the decisions, the gate at
 close. This table is the index, one line of essence per phase; do not grow
@@ -250,12 +250,13 @@ entries here, grow the closure docs.
 | 34 | Source-level debugger: ADR-035 VS/Concord + ADR-036 VS Code/DAP over one engine debug core; conditional bps, live eval, Set Next Statement, `:- disable_debug` | [doc](docs/history/phase-34-closure.md) |
 | 35 | Neumerkel-driven ISO reader/writer conformance, ADR-037 soft cut end to end (+ latent `->` fix), module-local meta-calls (`$mqual`), REPL fresh-line + default Tier-1 | [doc](docs/history/phase-35-closure.md) |
 | 36 | Third-party ecosystem (145 commits): ADR-038 library loading + scoped `:- module/2`, ADR-039 rationals, ADR-040 multi-dialect shims, ADR-041 dispatch-time clause selection; SWI/Scryer/Logtalk library campaigns; debugger residual-constraints round | [doc](docs/history/phase-36-closure.md) |
-| 37 | Documentation truth (guide/history split, invariants.md, ADR audit), MIT licensing + adapter rewrite, `--consult` incremental toolchain, bundle helper-id collision fixes, `SolveOnce` + first interop benchmark vs GNU (zero-copy wins 3–180×) | [doc](docs/history/phase-37-closure.md) |
+| 37 | Documentation truth (guide/history split, invariants.md, ADR audit), MIT licensing + adapter rewrite, `--consult` incremental toolchain, bundle helper-id collision fixes, `SolveOnce` + first interop benchmark vs GNU (zero-copy wins 3–30×) | [doc](docs/history/phase-37-closure.md) |
 | 38 | WebShumway (ADR-042): the full engine on browser-wasm as a static site — Tier-0 via `RuntimeCaps`, threads + COOP/COEP, MEMFS↔OPFS, `Shumway.TopLevel` extraction, libraries as dialect-tagged collections | [doc](docs/history/phase-38-closure.md) |
 | 39 | ADR-043 .NET Framework 4.8 opt-in multi-target (net48 + 32-bit, Tier-1 unchanged, persisted IL native on Framework), 3-lane CI, debugger VSIX 0.30 round | [doc](docs/history/phase-39-closure.md) |
 | 40 | Version 1.0 + the ecosystem campaigns: ADR-044/045 host-boundary conventions, ADR-046 module-scoped ops, ADR-047 packed-string-is-a-list (default `chars`, lazy `phrase_from_file`), full Neumerkel suites (365/365), Logtalk libraries 100% + ISO battery 3,219/70, Trealla corpus + Triska clpz/clpb certified from their tree, SSU aligned with SWI, WebShumway debug mode, bounded memory (dead-CP reclamation + attr-log hygiene, ~14% faster) | [doc](docs/history/phase-40-closure.md) |
 | 41 | Conformance rounds + backtrackable wakeups: ADR-048 full Unicode, Schimpf ISO 926/945 and the Neumerkel rounds (the bar a default operator, #131), ADR-049 woken goals backtrack on both tiers + the coroutining PR (#134, memory bounded with attvars), `library(quads)`, CLP(R) simplex, deep walks off the C# stack, linear catch/cleanup/retract scans, stable static layout (#116), the ADR-050 wasm Tier-1 spike (#117, opt-in); back to 0.9.x | [doc](docs/history/phase-41-closure.md) |
 | 42 | The WebAssembly tier ships (PR #128): modules that call each other inside wasm, baked into bundles, most of the work inside the module (ADR-051 FD domains on the heap, ADR-054 dynamics as snapshots); WebShumway on the tier by default, libraries compiled on demand, `jit_compile/1`; Tier-1 IL: ADR-057/058 region choice points, ADR-060 registers in locals, ADR-061 continuation methods (behind a switch), ADR-062 own IL emitter (Sigil gone); ADR-052/053 side tables, ADR-055/056/059 modules; 0.9.3 | [doc](docs/history/phase-42-closure.md) |
+| 43 | Term images (ADR-063): body, head and matcher images, read-only head streams, literal pools released with the code, findall/bagof/setof/nb_setval and recorded/3 as images, typed C# interop off the Term tree (zero-copy re-measured: 3–30×); Tier-1 on by default with the prelude and engine libraries shipping IL, regions planned under the JIT's limits, builtins called directly; clpfd globals, `cumulative`, `@L`, `library(reif)` | [doc](docs/history/phase-43-closure.md) |
 
 
 ---
@@ -337,7 +338,7 @@ When proposing changes:
 | A region holds the machine registers in locals (accepted in part) | ADR-060 |
 | Tier-1 as continuation methods per predicate (proposed) | ADR-061 |
 | Shumway's own IL emitter | ADR-062 |
-| A ground term of a clause body is copied from an image (proposed) | ADR-063 |
+| A ground term of a clause body is copied from an image | ADR-063 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

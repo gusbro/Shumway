@@ -137,6 +137,92 @@ public sealed class SolutionBuffer
         Copy(engine, value, root);
     }
 
+    /// <summary>A buffer with this one's solutions that holds exactly their
+    /// cells: what a value kept for long (a record) holds, while this one goes
+    /// back to be reused. A buffer past its first part is returned as it is.</summary>
+    public SolutionBuffer Compact()
+    {
+        if (_chunks is not null) return this;
+        var copy = new SolutionBuffer
+        {
+            _first = new Cell[System.Math.Max(_length, 1)],
+            _length = _length,
+            _count = _count,
+            _lastPair = _lastPair,
+        };
+        System.Array.Copy(_first, copy._first, _length);
+        if (_starts is not null)
+        {
+            copy._starts = new int[System.Math.Max(_count, 1)];
+            System.Array.Copy(_starts, copy._starts, _count);
+        }
+        if (_payloadSites is not null)
+        {
+            copy._payloadSites = new List<int>(_payloadSites);
+            copy._payloads = new List<object?>(_payloads!);
+            if (_payloadFrom is not null)
+            {
+                copy._payloadFrom = new int[System.Math.Max(_count, 1)];
+                System.Array.Copy(_payloadFrom, copy._payloadFrom, _count);
+            }
+        }
+        return copy;
+    }
+
+    /// <summary>True when solution <paramref name="i"/>, added on its own,
+    /// certainly does not unify with the term at heap cell <paramref
+    /// name="heapIdx"/>: they differ in an atom, an integer, a functor or a
+    /// list cell within <paramref name="depth"/> levels. False when they may;
+    /// a variable, a float, a packed string or a side-table value on either
+    /// side is a may.</summary>
+    public bool DefiniteMismatch(Activation engine, int i, int heapIdx, int depth)
+        => Mismatch(engine, heapIdx, At(_starts![i]), depth);
+
+    private bool Mismatch(Activation engine, int heapIdx, Cell b, int depth)
+    {
+        if (depth <= 0) return false;
+        int idx = engine.Deref(heapIdx);
+        Cell h = engine.GetHeap(idx);
+        switch (h.Tag)
+        {
+            case Tag.Atom:
+                return b.Tag switch
+                {
+                    Tag.Atom => b.AsAtomId != h.AsAtomId,
+                    Tag.Int or Tag.Str or Tag.Lis => true,
+                    _ => false,
+                };
+            case Tag.Int:
+                return b.Tag switch
+                {
+                    Tag.Int => b.AsInt != h.AsInt,
+                    Tag.Atom or Tag.Str or Tag.Lis => true,
+                    _ => false,
+                };
+            case Tag.Str:
+            {
+                if (b.Tag is Tag.Atom or Tag.Int) return true;
+                if (b.Tag != Tag.Str) return false;
+                Cell f = engine.GetHeap(h.AsHeapIndex);
+                Cell bf = At(b.AsHeapIndex);
+                if (f.Tag != Tag.Functor || bf.Tag != Tag.Functor) return false;
+                if (f.AsFunctorId != bf.AsFunctorId) return true;
+                int arity = FunctorTable.Lookup(f.AsFunctorId).Arity;
+                for (int k = 1; k <= arity; k++)
+                    if (Mismatch(engine, h.AsHeapIndex + k, At(b.AsHeapIndex + k), depth - 1))
+                        return true;
+                return false;
+            }
+            case Tag.Lis:
+                if (b.Tag is Tag.Atom or Tag.Int) return true;
+                if (b.Tag != Tag.Lis) return false;
+                return Mismatch(engine, h.AsHeapIndex, At(b.AsHeapIndex), depth - 1)
+                    || Mismatch(engine, h.AsHeapIndex + 1, At(b.AsHeapIndex + 1), depth - 1);
+            default:
+                return false;
+        }
+    }
+
     /// <summary>Copies the term <paramref name="value"/> names into cell
     /// <paramref name="root"/> and the cells it reserves after it. Iterative: a
     /// solution is user data of any depth.</summary>
