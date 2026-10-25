@@ -260,7 +260,9 @@ internal static class IlRegionCost
 
     /// <summary>JIT locals per opcode in sixteenths, fitted on the corpus
     /// with the head streams in their read-only form (ADR-063); the opcodes
-    /// not listed fitted at zero. Median error 21%.</summary>
+    /// not listed fitted at zero. Median error 21%. get_value_x and
+    /// get_value_y, fitted at zero as helper calls, carry the change their
+    /// two-cell unify made, measured per site over the corpus.</summary>
     private static int LocalsWeight16(Opcode op) => op switch
     {
         Opcode.AIntBin => 981,
@@ -274,6 +276,7 @@ internal static class IlRegionCost
         Opcode.DeallocateProceed => 211,
         Opcode.UnifyNil => 203,
         Opcode.UnifyInteger => 186,
+        Opcode.GetValueX => 172,
         Opcode.AEvalBin => 170,
         Opcode.GetInteger => 170,
         Opcode.UnifyValueX => 164,
@@ -287,6 +290,7 @@ internal static class IlRegionCost
         Opcode.UnifyValueY => 94,
         Opcode.Call => 90,
         Opcode.GetStructure => 84,
+        Opcode.GetValueY => 81,
         Opcode.PutNil => 63,
         Opcode.UnifyVoid => 63,
         Opcode.CallBuiltin => 51,
@@ -314,7 +318,9 @@ internal static class IlRegionCost
 
     /// <summary>The opcode model: local references per opcode, fitted; the
     /// opcodes not listed fitted at zero. Floored at a per-byte rate, so a
-    /// body of unlisted opcodes is not free.</summary>
+    /// body of unlisted opcodes is not free. get_value_x and get_value_y
+    /// carry the change their two-cell unify made, as in
+    /// <see cref="LocalsWeight16"/>.</summary>
     public static int Estimate(byte[] code, IReadOnlyList<(int Start, int End)>? clauseRanges)
     {
         long sum = 0, bytes = 0;
@@ -342,10 +348,12 @@ internal static class IlRegionCost
         Opcode.DeallocateProceed => 115,
         Opcode.PutList => 88,
         Opcode.Deallocate => 85,
+        Opcode.GetValueX => 84,
         Opcode.AEvalCmp => 80,
         Opcode.GetList => 73,
         Opcode.Allocate => 47,
         Opcode.UnifyStructure => 45,
+        Opcode.GetValueY => 44,
         Opcode.GetInteger => 40,
         Opcode.NeckCut => 39,
         Opcode.GetAtom => 36,

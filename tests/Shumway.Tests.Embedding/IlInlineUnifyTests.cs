@@ -9,12 +9,13 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>A =/2 call in compiled code unifies its two cells inline (the
-/// mirror of the wasm tier's open-coded =/2): the same cell, a plain variable
-/// against a value or another variable, two distinct immediates; the rest
-/// through the unifier. Every case below has permanent variables on both
-/// sides, which the clause compiler does not inline, so each is a builtin
-/// site; the answers must be Tier-0's.</summary>
+/// <summary>A =/2 in compiled code unifies its two cells inline (the mirror
+/// of the wasm tier's open-coded =/2): the same cell, a plain variable against
+/// a value or another variable, two distinct immediates; the rest through the
+/// unifier. The clause compiler compiles most of the cases below to
+/// get_value_y / get_value_x (a permanent through a scratch register), which
+/// take the same code; two non-variables and a variable without a cell
+/// against `_` stay a call of the builtin. The answers must be Tier-0's.</summary>
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
 public sealed class IlInlineUnifyTests : IDisposable
@@ -53,6 +54,21 @@ public sealed class IlInlineUnifyTests : IDisposable
         ("backtrack", "p(X), q(_), ( X = 1, fail ; X = 2 ), R = X"),
         ("trail_undo", "p(X), q(_), ( X = 1, fail ; true ), ( var(X) -> R = ok ; R = bad )"),
         ("occurs", "p(X), q(_), set_prolog_flag(occurs_check, true), ( X = f(X) -> R = bad ; R = ok ), set_prolog_flag(occurs_check, false)"),
+        // The shapes of a permanent the clause compiler compiles inline: its
+        // first cell from a built term, from the other side's cell, shared
+        // with another variable without one; a bound one matched.
+        ("perm_first_built", "p(_), X = f(A, [1,2]), q(X), A = 3, R = X"),
+        ("perm_first_cyclic", "p(_), X = f(X), q(X), X = f(Y), ( Y == X -> R = ok ; R = bad )"),
+        ("perm_first_from_perm", "p(X), Y = X, q(Y), X = 4, R = Y"),
+        ("perm_first_two", "p(_), X = Y, q(X), q(Y), X = 5, R = Y"),
+        ("perm_first_from_temp", "p(_), B = 7, X = B, q(X), R = X"),
+        ("perm_first_to_temp", "p(_), X = B, B = 8, q(X), R = X"),
+        ("perm_seen_from_temp", "p(X), q(_), B = 9, X = B, R = X"),
+        ("perm_seen_to_temp", "p(X), q(_), X = B, B = 10, R = X"),
+        ("perm_seen_struct_fail", "p(X), q(_), X = f(1), ( X = g(_) -> R = bad ; R = ok )"),
+        ("perm_anon_no_cell", "p(_), q(_), Z = _, Z = 3, R = Z"),
+        ("perm_anon", "p(X), q(_), X = _, X = 11, R = X"),
+        ("both_nonvar", "p(_), q(_), f(P, b) = f(a, Q), R = P-Q"),
     };
 
     private static string Program(string tag)
@@ -87,6 +103,7 @@ public sealed class IlInlineUnifyTests : IDisposable
         Assert.Contains("occurs=ok", expected);
 
         int sites = IlPredicateCompiler.InlineUnifySites;
+        int getValueSites = IlPredicateCompiler.InlineGetValueSites;
         var tiered = new PrologEngine { Out = new StringWriter() };
         tiered.IlPromotion.Threshold = 1;
         tiered.ConsultString(Program("iu"));
@@ -95,7 +112,7 @@ public sealed class IlInlineUnifyTests : IDisposable
             Answers(tiered, "iu");
             Assert.True(tiered.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         }
-        // ANTI-VACUITY: every case compiled, with its =/2 inline.
+        // ANTI-VACUITY: every case compiled; the two paths emitted.
         var promoted = new HashSet<string>(tiered.IlPromotion.PromotedFunctorIds().Select(fid =>
         {
             var (atom, arity) = FunctorTable.Lookup(fid);
@@ -105,6 +122,7 @@ public sealed class IlInlineUnifyTests : IDisposable
         foreach (var (name, _) in Cases)
             Assert.True(promoted.Contains($"iu_{name}/1"), $"iu_{name}/1 did not promote");
         Assert.True(IlPredicateCompiler.InlineUnifySites > sites, "no =/2 site was emitted inline");
+        Assert.True(IlPredicateCompiler.InlineGetValueSites > getValueSites, "no get_value site was emitted inline");
 
         Assert.Equal(expected, Answers(tiered, "iu"));
     }

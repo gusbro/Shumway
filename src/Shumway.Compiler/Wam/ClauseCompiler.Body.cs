@@ -56,12 +56,13 @@ public sealed partial class ClauseCompiler
 
     /// <summary>tries to compile <c>A = B</c> inline as head-style
     /// get / unify instead of a call to the <c>=/2</c> builtin. Handles the case
-    /// where one side is a temporary (X-register) variable: a seen temp unifies
-    /// the other side against its register (via <see cref="CompileHeadArg"/>); a
-    /// first-occurrence temp is bound to the other side (built with
-    /// <see cref="CompileBodyArg"/> for a non-var, aliased for a seen var).
-    /// Returns false — fall back to the builtin call — for permanent (Y)
-    /// variables, both-first-occurrence vars, the anonymous variable, and
+    /// where one side is a variable: a seen temp unifies the other side against
+    /// its register (via <see cref="CompileHeadArg"/>); a first-occurrence temp
+    /// is bound to the other side (built with <see cref="CompileBodyArg"/> for a
+    /// non-var, aliased for a seen var); a permanent goes through a scratch
+    /// register (<see cref="TryUnifyPermanentWithPattern"/>). Returns false —
+    /// fall back to the builtin call — for both-first-occurrence temporaries,
+    /// the anonymous variable against a variable without a cell, and
     /// both-non-var goals.</summary>
     private bool TryCompileUnifyInline(CompileState s, Term a, Term b)
         => TryUnifyVarWithPattern(s, a, b) || TryUnifyVarWithPattern(s, b, a);
@@ -69,7 +70,7 @@ public sealed partial class ClauseCompiler
     private bool TryUnifyVarWithPattern(CompileState s, Term vTerm, Term p)
     {
         if (vTerm is not VarTerm v || v.Name == "_") return false;
-        if (s.Ys.ContainsKey(v.Name)) return false;   // permanent var — fall back
+        if (s.Ys.TryGetValue(v.Name, out int vY)) return TryUnifyPermanentWithPattern(s, v.Name, vY, p);
 
         if (!s.Xs.IsNewName(v.Name))
         {
@@ -96,6 +97,113 @@ public sealed partial class ClauseCompiler
                 CompileBodyArg(s, p, slot);
                 DrainPendingCompounds(s);
                 return true;
+        }
+    }
+
+    /// <summary><c>V = P</c> for a permanent <c>V</c>. A <c>V</c> with a cell
+    /// copies it to a scratch register and matches <c>P</c> against that as a
+    /// head argument is matched; a first-occurrence <c>V</c> takes the term
+    /// built for it, or the other side's cell, with <c>get_variable_y</c>. A
+    /// temporary on the other side keeps its own register. False for
+    /// <c>V = _</c> before <c>V</c> has a cell.</summary>
+    private bool TryUnifyPermanentWithPattern(CompileState s, string name, int y, Term p)
+    {
+        bool init = s.YsInitialized.Contains(name);
+        switch (p)
+        {
+            case VarTerm { Name: "_" }:
+                return init;   // nothing to match; the builtin gives an unseen V its cell
+            case VarTerm pv when s.Ys.TryGetValue(pv.Name, out int pY):
+            {
+                if (pY == y) return true;
+                bool pInit = s.YsInitialized.Contains(pv.Name);
+                int scratch = s.Xs.AllocateAnonymousSlot();
+                if (init && pInit)
+                {
+                    s.Emitter.EmitPutValueY(pY, scratch);
+                    s.Emitter.EmitGetValueY(y, scratch);
+                    return true;
+                }
+                // One cell at most: the other variable becomes it; with none,
+                // both become one fresh variable.
+                (int from, int to, string toName) = init ? (y, pY, pv.Name) : (pY, y, name);
+                if (init || pInit)
+                    s.Emitter.EmitPutValueY(from, scratch);
+                else
+                {
+                    s.Emitter.EmitPutVariableY(from, scratch);
+                    s.YsInitialized.Add(pv.Name);
+                }
+                s.Emitter.EmitGetVariableY(to, scratch);
+                s.YsInitialized.Add(toName);
+                return true;
+            }
+            case VarTerm pv when !s.Xs.IsNewName(pv.Name):
+            {
+                // A seen temporary: V against its register.
+                int slot = s.Xs.GetSlot(pv.Name);
+                if (init)
+                    s.Emitter.EmitGetValueY(y, slot);
+                else
+                {
+                    s.Emitter.EmitGetVariableY(y, slot);
+                    s.YsInitialized.Add(name);
+                }
+                return true;
+            }
+            case VarTerm pv:
+            {
+                // A first-occurrence temporary takes V's cell, or the two are
+                // one fresh variable.
+                int slot = s.Xs.AllocateFresh(pv.Name);
+                if (init)
+                    s.Emitter.EmitPutValueY(y, slot);
+                else
+                {
+                    s.Emitter.EmitPutVariableY(y, slot);
+                    s.YsInitialized.Add(name);
+                }
+                return true;
+            }
+            default:
+            {
+                int scratch = s.Xs.AllocateAnonymousSlot();
+                if (!init)
+                {
+                    // V := P built. Not when P holds V: the build would read
+                    // V's cell before this writes it, so V = f(V) takes a
+                    // fresh cell first and matches, as a bound V does.
+                    var names = new HashSet<string>();
+                    CollectVarNames(p, names);
+                    if (!names.Contains(name))
+                    {
+                        CompileBodyArg(s, p, scratch);
+                        DrainPendingCompounds(s);
+                        s.Emitter.EmitGetVariableY(y, scratch);
+                        s.YsInitialized.Add(name);
+                        return true;
+                    }
+                    s.Emitter.EmitPutVariableY(y, scratch);
+                    s.YsInitialized.Add(name);
+                }
+                else
+                {
+                    // A term with an image is copied from it and unified with
+                    // V, as the builtin's argument was built (ADR-063).
+                    s.Building = true;
+                    if (TryImage(s, p, scratch) is { } image)
+                    {
+                        s.Emitter.EmitPutBlit(image, scratch);
+                        s.Emitter.EmitGetValueY(y, scratch);
+                        return true;
+                    }
+                    s.Emitter.EmitPutValueY(y, scratch);
+                }
+                // V's cell matched against P as a head argument is.
+                CompileHeadArg(s, p, scratch);
+                DrainPendingCompounds(s);
+                return true;
+            }
         }
     }
 
@@ -952,10 +1060,10 @@ public sealed partial class ClauseCompiler
         // inline `=/2` unification. Compile `Var = Term` with the
         // head-matching machinery (get_* / unify_*) instead of a call to the
         // =/2 builtin (which builds the term separately and dispatches). Mirrors
-        // GProlog (`X = [A|B]` → get_list + unify). Only the safe temp-X-var
-        // cases are inlined here; permanent (Y) vars and both-non-var goals fall
-        // back to the builtin path below. This is a pure codegen change — it does
-        // not affect the permanent/temporary classification.
+        // GProlog (`X = [A|B]` → get_list + unify). A permanent variable
+        // reaches a scratch register first; both-non-var goals fall back to
+        // the builtin path below. This is a pure codegen change — it does not
+        // affect the permanent/temporary classification.
         if (fName == "=" && gArgs.Length == 2
             && TryCompileUnifyInline(s, gArgs[0], gArgs[1]))
         {

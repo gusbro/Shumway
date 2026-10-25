@@ -527,6 +527,17 @@ public sealed partial class IlPredicateCompiler
             {
                 int srcReg = BytecodeIO.ReadInt32(code, pc + 1);
                 int argReg = BytecodeIO.ReadInt32(code, pc + 5);
+                if (InlineUnify && InlineUnifyTwoCells && InlineGetValueTwoCells && _cps is null && RegisterFileOf(emit) is { } gvxRf)
+                {
+                    // The two cells inline, as the wasm tier's EmitUnifyTwo.
+                    System.Threading.Interlocked.Increment(ref InlineGetValueSites);
+                    EmitUnifyTwoCells(emit, gvxRf,
+                        () => EmitLoadRegisterConst(emit, srcReg),
+                        () => EmitLoadRegisterConst(emit, argReg));
+                    emit.BranchIfFalse(failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant(srcReg);
                 emit.LoadConstant(argReg);
@@ -590,6 +601,20 @@ public sealed partial class IlPredicateCompiler
                 // unify(Y[slot], X[arg])
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                if (InlineUnify && InlineUnifyTwoCells && InlineGetValueTwoCells && _cps is null && RegisterFileOf(emit) is { } gvyRf)
+                {
+                    // The two cells inline, as the wasm tier's EmitUnifyTwo;
+                    // the register-with-cell fast path below binds the
+                    // register's variable only, and the clause compiler puts
+                    // either side of a V = W of permanents in the register.
+                    System.Threading.Interlocked.Increment(ref InlineGetValueSites);
+                    EmitUnifyTwoCells(emit, gvyRf,
+                        () => EmitLoadY(emit, slot),
+                        () => EmitLoadRegisterConst(emit, arg));
+                    emit.BranchIfFalse(failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 EmitLoadY(emit, slot);
@@ -1242,8 +1267,8 @@ public sealed partial class IlPredicateCompiler
                     // No error names it, so no current builtin is stored.
                     System.Threading.Interlocked.Increment(ref InlineUnifySites);
                     EmitUnifyTwoCells(emit, unifyRf,
-                        () => { EmitLoadEngineField(emit, EngRegisters); emit.LoadConstant(0); emit.LoadElement<Cell>(); },
-                        () => { EmitLoadEngineField(emit, EngRegisters); emit.LoadConstant(1); emit.LoadElement<Cell>(); });
+                        () => EmitLoadRegisterConst(emit, 0),
+                        () => EmitLoadRegisterConst(emit, 1));
                     emit.BranchIfFalse(failLabel);
                     pc += OpcodeTable.Get(op).Size;
                     continue;

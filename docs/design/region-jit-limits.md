@@ -180,6 +180,18 @@ estimated from its opcodes, fitted like the reference model (median error
 far more per reference than the rest). The prologue, the tail and the two
 arguments add 25.
 
+When an opcode's emission changes, its weight moves by the change and the
+rest of the fit stays. `get_value_x` and `get_value_y` were fitted at zero
+as helper calls; emitted as the two-cell unify (ADR-060), each site costs
+84 and 44 more references and 11 and 5 more locals, measured over the
+corpus with the emission on and off (the residual per member is under 2
+references), and the weights carry that. On the members with such sites
+the model's median error falls from 22% to 16% in references and from 25%
+to 19% in locals; over every member, from 24% to 23% and from 26% to 24%.
+The unify's four binding shapes share one bind block: in line, each was a
+`TrailBind` inline of its own, 23 locals per site, and a region at the
+cap on locals lost more of its tail to them than the sites gained.
+
 `IlRegionBuilder.Build` holds the sum under the locals budget beside the
 reference budget, and a region emitted past the target is planned again
 like one past a limit. The target, `SHUMWAY_REGION_LOCALS`, 0 for off, is

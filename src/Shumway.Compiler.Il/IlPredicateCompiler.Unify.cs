@@ -102,13 +102,22 @@ public sealed partial class IlPredicateCompiler
     internal static bool InlineUnifyRegisterWithCell { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_URC") != "0";
 
-    /// <summary>Whether =/2 unifies its two cells inline
-    /// (<see cref="EmitUnifyTwoCells"/>). An off switch for measuring it.</summary>
+    /// <summary>Whether =/2, get_value_x and get_value_y unify their two cells
+    /// inline (<see cref="EmitUnifyTwoCells"/>). An off switch for measuring it.</summary>
     internal static bool InlineUnifyTwoCells { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_UNIFY2") != "0";
 
+    /// <summary>Whether get_value_x and get_value_y take the two-cell unify
+    /// (<see cref="EmitUnifyTwoCells"/>) rather than the register-with-cell
+    /// path and the register helper. An off switch for measuring it.</summary>
+    internal static bool InlineGetValueTwoCells { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_GETVALUE") != "0";
+
     /// <summary>=/2 sites emitted inline, over every method compiled in this process.</summary>
     public static int InlineUnifySites;
+    /// <summary>get_value_x and get_value_y sites emitted inline, over every
+    /// method compiled in this process.</summary>
+    public static int InlineGetValueSites;
 
     private const int KU = 60;
 
@@ -135,6 +144,13 @@ public sealed partial class IlPredicateCompiler
         var ha = rf.Temp(typeof(int), KU + 2);
         var hb = rf.Temp(typeof(int), KU + 3);
         var heap = rf.Temp(typeof(Cell[]), KU + 2);
+        // One bind for the four shapes: the home that takes the bits, the
+        // value's bits and home. Four binds in line cost the method four
+        // TrailBind inlines per site, and a region at the cap on locals lost
+        // its tail to them.
+        var bindHome = rf.Temp(typeof(int), KU + 4);
+        var valueHome = rf.Temp(typeof(int), KU + 5);
+        var valueBits = rf.Temp(typeof(long), KU + 5);
         int n = NextLabelSeq();
         var slow = emit.DefineLabel($"u2_slow_{n}");
         var yes = emit.DefineLabel($"u2_yes_{n}");
@@ -142,8 +158,10 @@ public sealed partial class IlPredicateCompiler
         var done = emit.DefineLabel($"u2_done_{n}");
         var aValue = emit.DefineLabel($"u2_avalue_{n}");
         var bothBound = emit.DefineLabel($"u2_bound_{n}");
-        var bindAToB = emit.DefineLabel($"u2_bind_ab_{n}");
+        var aVarBValue = emit.DefineLabel($"u2_bind_ab_{n}");
         var bindBToA = emit.DefineLabel($"u2_bind_ba_{n}");
+        var bindValue = emit.DefineLabel($"u2_bindv_{n}");
+        var bind = emit.DefineLabel($"u2_bind_{n}");
 
         pushA();
         emit.StoreLocal(ca);
@@ -164,26 +182,47 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfFalse(aValue);
         // a is a plain unbound variable at ha.
         EmitTagIs(emit, b, Tag.Ref);
-        emit.BranchIfFalse(bindAToB);
+        emit.BranchIfFalse(aVarBValue);
         // Both unbound: the younger home takes the reference.
         emit.LoadLocal(ha);
         emit.LoadLocal(hb);
         emit.BranchIfLess(bindBToA);
-        EmitBindBits(emit, heap, ha, () => emit.LoadLocal(b));
-        emit.Branch(yes);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(b);
+        emit.StoreLocal(valueBits);
+        emit.Branch(bind);
         emit.MarkLabel(bindBToA);
-        EmitBindBits(emit, heap, hb, () => emit.LoadLocal(a));
-        emit.Branch(yes);
-        emit.MarkLabel(bindAToB);
+        emit.LoadLocal(hb);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(a);
+        emit.StoreLocal(valueBits);
+        emit.Branch(bind);
+        emit.MarkLabel(aVarBValue);
         EmitBranchIfTagIn(emit, b, AttVarOrPstrTags, slow);
-        EmitBindBits(emit, heap, ha, () => EmitValueBitsToBind(emit, b, hb));
-        emit.Branch(yes);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(b);
+        emit.StoreLocal(valueBits);
+        emit.LoadLocal(hb);
+        emit.StoreLocal(valueHome);
+        emit.Branch(bindValue);
         emit.MarkLabel(aValue);
         EmitTagIs(emit, b, Tag.Ref);
         emit.BranchIfFalse(bothBound);
         // b is a plain unbound variable at hb, a a value.
         EmitBranchIfTagIn(emit, a, AttVarOrPstrTags, slow);
-        EmitBindBits(emit, heap, hb, () => EmitValueBitsToBind(emit, a, ha));
+        emit.LoadLocal(hb);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(a);
+        emit.StoreLocal(valueBits);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(valueHome);
+        emit.MarkLabel(bindValue);
+        EmitValueBitsToBind(emit, valueBits, valueHome);
+        emit.StoreLocal(valueBits);
+        emit.MarkLabel(bind);
+        EmitBindBits(emit, heap, bindHome, () => emit.LoadLocal(valueBits));
         emit.Branch(yes);
         emit.MarkLabel(bothBound);
         // Two values, distinct bits: an immediate on either side is another
@@ -494,6 +533,15 @@ public sealed partial class IlPredicateCompiler
         }
         emit.MarkLabel(done);
         return true;
+    }
+
+    /// <summary>X[index] pushed, for a constant index: a plain element load,
+    /// as the register helpers read the bank.</summary>
+    private static void EmitLoadRegisterConst(IlEmit emit, int index)
+    {
+        EmitLoadEngineField(emit, EngRegisters);
+        emit.LoadConstant(index);
+        emit.LoadElement<Cell>();
     }
 
     /// <summary>X[index] := the cell <paramref name="pushValue"/> leaves, for a

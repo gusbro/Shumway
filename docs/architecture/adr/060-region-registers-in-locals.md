@@ -353,8 +353,8 @@ and `crypt` within noise. A failure-driven loop over the region's own choice
 points with no other safe point (`IlLocalBacktrackTests`) stays interruptible;
 without the countdown `time_out/3` never fires.
 
-A call of `=/2` (the clause compiler leaves it a call when a side is a
-permanent variable) unifies its two cells inline, the mirror of the wasm
+A call of `=/2` (the clause compiler leaves it a call when both sides are
+non-variables) unifies its two cells inline, the mirror of the wasm
 tier's open-coded `=/2`: both sides dereferenced; the same cell succeeds; a
 plain unbound variable binds to the other side, between two the younger to
 the older as the unifier does, with the trail when the home is older than
@@ -362,10 +362,30 @@ HB; two distinct immediates fail. An attributed variable, a packed string,
 two compounds, two boxed numbers and the occurs check call `UnifyValues`,
 whose answer is the same. No current builtin is stored: unification raises
 no error. In one process, four copies, against the previous step: `tak`
-(`Z = A` on its exit clause, both permanent) -14% minimum and -14% median;
-`serialize` and Blint unchanged; `zebra`, whose one site runs once per
-solution, +3%, the placement of the code. `IlInlineUnifyTests` runs every
-shape on Tier-0 and on a promoted engine.
+(`Z = A` on its exit clause, both permanent, then still a call) -14%
+minimum and -14% median; `serialize` and Blint unchanged; `zebra`, whose
+one site runs once per solution, +3%, the placement of the code.
+
+`get_value_x` and `get_value_y` take the same code, as the wasm tier's
+`EmitUnifyTwo` does for both. Before, `get_value_y` went through the
+register-with-cell fast path, which binds the register's variable only, and
+`get_value_x` through a helper. With it the clause compiler compiles `V = P`
+for a permanent `V` inline as well (a scratch register takes `V`'s cell and
+`P` is matched against it as a head argument; a first-occurrence `V` takes
+the term built for it with `get_variable_y`), which Tier-0 gains from too:
+`Z = A` becomes a `put_value_y` and a `get_value_y`, with no builtin
+dispatch. In one process, four copies, against the previous step: on the
+IL tier `qsort` -5% and `flatten` -1% at the minimum (-7% at the median),
+`tak` even (its gain was the previous step's), the rest within the noise
+of a build against a build, which an A/A control puts at 5%; with the
+inline switched by its knob inside one build, `serialize` -4%, `qsort` -8%,
+`nreverse` -5%, `flatten` -2%. On Tier-0, `tak` -12% and Blint -7%. A
+permanent with a cell matched against a compound in read mode builds
+nothing where the call built its argument: Blint allocates 30 heap cells
+fewer and the clpz puzzles 4.5% fewer, every other program the same.
+`IlInlineUnifyTests` runs every shape on Tier-0 and on a promoted engine;
+`InlineUnifyTests` of the compiler pins the code for each shape of
+permanent.
 
 ## Alternatives considered
 
