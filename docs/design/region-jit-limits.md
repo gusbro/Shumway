@@ -192,6 +192,17 @@ The unify's four binding shapes share one bind block: in line, each was a
 `TrailBind` inline of its own, 23 locals per site, and a region at the
 cap on locals lost more of its tail to them than the sites gained.
 
+An opcode whose weight was fitted is fitted again instead when its
+emission changes. `a_int_bin` and `a_int_cmp` called `FusedBin` and
+`FusedCmp`, inlined whole by the JIT, 33 and 24 inlines per site, which
+their weights carried (981 and 632 sixteenths of a local). Emitted on
+method locals (ADR-060), with the helper called through an entry that
+inlines nothing, a site costs 37 and 27 fewer locals than before, measured
+with the lane on and off, and the weights fitted again on the corpus with
+every other weight fixed are 56 and 22 references, 30 and 17 locals. On
+the members with such sites the model's median error in references falls
+from 26% to 21% and in locals stays at 25%.
+
 `IlRegionBuilder.Build` holds the sum under the locals budget beside the
 reference budget, and a region emitted past the target is planned again
 like one past a limit. The target, `SHUMWAY_REGION_LOCALS`, 0 for off, is

@@ -262,15 +262,17 @@ internal static class IlRegionCost
     /// with the head streams in their read-only form (ADR-063); the opcodes
     /// not listed fitted at zero. Median error 21%. get_value_x and
     /// get_value_y, fitted at zero as helper calls, carry the change their
-    /// two-cell unify made, measured per site over the corpus.</summary>
+    /// two-cell unify made, measured per site over the corpus; a_int_bin and
+    /// a_int_cmp, fitted as inlined helper calls, were fitted again with
+    /// their lane, the other weights fixed.</summary>
     private static int LocalsWeight16(Opcode op) => op switch
     {
-        Opcode.AIntBin => 981,
-        Opcode.AIntCmp => 632,
+        Opcode.AIntBin => 477,
         Opcode.AEvalIs => 391,
         Opcode.AEvalPush => 314,
         Opcode.PutInteger => 284,
         Opcode.AllocateGetLevel => 276,
+        Opcode.AIntCmp => 264,
         Opcode.GetAtom => 236,
         Opcode.GetList => 226,
         Opcode.DeallocateProceed => 211,
@@ -351,6 +353,7 @@ internal static class IlRegionCost
         Opcode.GetValueX => 84,
         Opcode.AEvalCmp => 80,
         Opcode.GetList => 73,
+        Opcode.AIntBin => 56,
         Opcode.Allocate => 47,
         Opcode.UnifyStructure => 45,
         Opcode.GetValueY => 44,
@@ -359,7 +362,7 @@ internal static class IlRegionCost
         Opcode.GetAtom => 36,
         Opcode.PutInteger => 33,
         Opcode.GetStructure => 30,
-        Opcode.AIntCmp => 27,
+        Opcode.AIntCmp => 22,
         Opcode.Execute => 21,
         Opcode.PutValueX => 21,
         Opcode.PutValueY => 17,

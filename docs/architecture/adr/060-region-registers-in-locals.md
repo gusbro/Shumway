@@ -387,6 +387,29 @@ fewer and the clpz puzzles 4.5% fewer, every other program the same.
 `InlineUnifyTests` of the compiler pins the code for each shape of
 permanent.
 
+The fused `a_int_bin` and `a_int_cmp` (`T is A op B`, `A rel B` over leaf
+operands, ADR-018) run on method locals as the `a_eval` sequences do: the
+operands read as the sequence lane reads them, the operation with its
+checks, the result delivered by the target's kind (a register or Y slot
+unified, a first-occurrence register or Y slot stored). Before, each site
+called `FusedBin` or `FusedCmp`, which the JIT inlined whole, 33 and 24
+inlines per site, some forty of the method's locals, and reloaded every
+held register after. The slow lane (a non-integer operand, a zero divisor,
+a result past 60 bits) calls the same helper through an entry that inlines
+nothing (`FusedBinCold`, `FusedCmpCold`), so the site costs the method no
+inline it does not run. A literal zero divisor stays the helper's. The
+integer lanes of both tiers and `FusedBin` itself checked no quotient:
+`-(2^59) // -1` is the one that leaves 60 bits, and it threw out of the
+interpreter; the fused helper, the sequence lanes (also `abs`) and the
+wasm tier now check it. `IlFusedArithTests` runs every operand and target
+kind, the lane's operators and what leaves the lane on Tier-0 and on a
+promoted engine. In one process, four copies, against the previous step,
+heap cells identical: `tak` (three fused subtractions into first-occurrence
+Y slots and one comparison per call) -12% at the minimum and the median,
+on every copy; `nreverse` -2% and -6%, `zebra` -3%, `boyer` -4% and -1%,
+`sendmore` and `queens` -2%; the rest within the noise, Blint and the clpz
+puzzles among them. The region of `tak` makes 197 inlines instead of 347.
+
 ## Alternatives considered
 
 - **Leave the registers in the fields.** The state of things. The memory

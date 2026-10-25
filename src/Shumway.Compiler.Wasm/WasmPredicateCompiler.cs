@@ -9900,6 +9900,8 @@ public static class WasmPredicateCompiler
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64DivideSigned());
                     Op(new LocalSet(LC0));
+                    // -(2^59) // -1 is the one quotient that leaves 60 bits.
+                    if (!bounded) FitsCheckC0(pcDeopt);
                     break;
                 case 7:     // Min
                 case 8:     // Max

@@ -26,6 +26,16 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.UnifyPermanentWithCell),
             new[] { typeof(int), typeof(Cell) })!;
 
+    /// <summary>Whether a_int_bin and a_int_cmp run on method locals as the
+    /// a_eval sequences do (<see cref="TryEmitFusedBinLane"/>), with FusedBin
+    /// and FusedCmp as the slow lane. An off switch for measuring it.</summary>
+    internal static bool InlineFusedArith { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_FUSED") != "0";
+
+    /// <summary>a_int_bin and a_int_cmp sites emitted on method locals, over
+    /// every method compiled in this process.</summary>
+    public static int InlineFusedSites;
+
     /// <summary>Emits the a_eval sequence starting at <paramref name="start"/>
     /// on method locals, with the ArithEvalStack form as its slow path.
     /// Declines (returns false, emits nothing) unless the sequence is well
@@ -36,26 +46,38 @@ public sealed partial class IlPredicateCompiler
     {
         end = start;
         int pc = start, depth = 0, maxDepth = 0;
+        // The constants of the RPN stack: a literal zero divisor is the
+        // evaluator's error, not a lane's, and the sequence declines it.
+        var consts = new List<long?>();
         while (true)
         {
             if (pc >= code.Length) return false;
             var op = (Opcode)code[pc];
             if (op == Opcode.AEvalPush)
             {
-                if (BytecodeIO.ReadInt32(code, pc + 1) is not (0 or 3 or 4)) return false;
+                int kind = BytecodeIO.ReadInt32(code, pc + 1);
+                if (kind is not (0 or 3 or 4)) return false;
+                consts.Add(kind == 0 ? BytecodeIO.ReadInt32(code, pc + 5) : null);
                 depth++;
                 if (depth > maxDepth) maxDepth = depth;
             }
             else if (op == Opcode.AEvalBin)
             {
-                if (!ArithBounds.IsLaneBinOp((BinOp)BytecodeIO.ReadInt32(code, pc + 1))) return false;
+                var bin = (BinOp)BytecodeIO.ReadInt32(code, pc + 1);
+                if (!ArithBounds.IsLaneBinOp(bin)) return false;
                 if (depth < 2) return false;
+                long? ac = consts[^2], bc = consts[^1];
+                if (bin is BinOp.IntDiv or BinOp.Mod && bc == 0) return false;
+                consts.RemoveRange(consts.Count - 2, 2);
+                consts.Add(ac is { } av && bc is { } bv ? FoldInt(bin, av, bv) : null);
                 depth--;
             }
             else if (op == Opcode.AEvalUn)
             {
-                if (!ArithBounds.IsLaneUnOp((UnOp)BytecodeIO.ReadInt32(code, pc + 1))) return false;
+                var un = (UnOp)BytecodeIO.ReadInt32(code, pc + 1);
+                if (!ArithBounds.IsLaneUnOp(un)) return false;
                 if (depth < 1) return false;
+                if (un != UnOp.Pos) consts[^1] = consts[^1] is { } c ? FoldUn(un, c) : null;
             }
             else if (op == Opcode.AEvalCmp)
             {
@@ -128,47 +150,7 @@ public sealed partial class IlPredicateCompiler
                     var b = stack[^1];
                     var a = stack[^2];
                     stack.RemoveRange(stack.Count - 2, 2);
-                    var bin = (BinOp)a1;
-                    if (a.Local is null && b.Local is null && FoldInt(bin, a.Constant, b.Constant) is { } folded)
-                    {
-                        stack.Add(ArithValue.Of(folded));
-                        break;
-                    }
-                    if (bin is not (BinOp.Add or BinOp.Sub or BinOp.Mul))
-                    {
-                        // Bounded by the operands: no fit check at any width.
-                        var r2 = Temp();
-                        EmitLaneBinOp(emit, bin, a, b, r2, slow, Load);
-                        Release(a);
-                        Release(b);
-                        stack.Add(new ArithValue(r2, 0, IsTemp: true));
-                        break;
-                    }
-                    if (bin == BinOp.Mul && width == 0)
-                    {
-                        // The product must not wrap 64 bits. Factors within 31
-                        // bits keep it within 62; a constant factor c bounds the
-                        // other to 64 - bitlen(|c|) bits (none for |c| < 16, as
-                        // operands are 60-bit).
-                        if (a.Local is null) EmitFitsForConstantFactor(emit, b.Local!, a.Constant, slow);
-                        else if (b.Local is null) EmitFitsForConstantFactor(emit, a.Local!, b.Constant, slow);
-                        else
-                        {
-                            EmitBranchUnlessFitsBits(emit, a.Local!, 31, slow);
-                            EmitBranchUnlessFitsBits(emit, b.Local!, 31, slow);
-                        }
-                    }
-                    Load(a);
-                    Load(b);
-                    if (bin == BinOp.Add) emit.Add();
-                    else if (bin == BinOp.Sub) emit.Subtract();
-                    else emit.Multiply();
-                    Release(a);
-                    Release(b);
-                    var r = Temp();
-                    emit.StoreLocal(r);
-                    if (width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
-                    stack.Add(new ArithValue(r, 0, IsTemp: true));
+                    stack.Add(EmitLaneBinary(emit, (BinOp)a1, a, b, width, slow, Load, Temp, Release));
                     break;
                 }
                 case Opcode.AEvalUn:
@@ -185,49 +167,20 @@ public sealed partial class IlPredicateCompiler
                     var r = Temp();
                     EmitLaneUnOp(emit, un, a, r, Load);
                     Release(a);
-                    // Only a negation can leave 60 bits: -(-2^59).
-                    if (un == UnOp.Neg && width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
+                    // A negation or an absolute value can leave 60 bits: -(-2^59).
+                    if (un is UnOp.Neg or UnOp.Abs && width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
                     stack.Add(new ArithValue(r, 0, IsTemp: true));
                     break;
                 }
                 case Opcode.AEvalCmp:
-                    Load(stack[0]);
-                    Load(stack[1]);
-                    switch ((RelOp)a1)
-                    {
-                        case RelOp.Eq: emit.UnsignedBranchIfNotEqual(failLabel); break;
-                        case RelOp.Neq: emit.BranchIfEqual(failLabel); break;
-                        case RelOp.Lt: emit.BranchIfGreaterOrEqual(failLabel); break;
-                        case RelOp.Gt: emit.BranchIfLessOrEqual(failLabel); break;
-                        case RelOp.Le: emit.BranchIfGreater(failLabel); break;
-                        default: emit.BranchIfLess(failLabel); break;
-                    }
+                    EmitLaneCompare(emit, (RelOp)a1, stack[0], stack[1], failLabel, Load);
                     break;
                 case Opcode.AEvalIs:
                 {
-                    int target = BytecodeIO.ReadInt32(code, pc + 5);
                     var value = stack[0];
                     if (width > 0 && !resultFits && value.Local is { } result)
                         EmitBranchUnlessFitsBits(emit, result, Cell.TagShift, slow);
-                    void PushResult()
-                    {
-                        emit.LoadConstant((long)Tag.Int << Cell.TagShift);
-                        Load(value);
-                        emit.LoadConstant(Cell.PayloadMask);
-                        emit.And();
-                        emit.Or();
-                        emit.NewObject(CellCtor);
-                    }
-                    if (a1 == 5) EmitSetRegisterConst(emit, target, PushResult);
-                    else if (a1 == 6) EmitStoreY(emit, target, PushResult);
-                    else
-                    {
-                        emit.LoadArgument(0);
-                        emit.LoadConstant(target);
-                        PushResult();
-                        EmitHelperCall(emit, a1 == 4 ? EngineUnifyPermanentMethod : EngineUnifyMethod);
-                        emit.BranchIfFalse(failLabel);
-                    }
+                    EmitDeliverInt(emit, a1, BytecodeIO.ReadInt32(code, pc + 5), value, failLabel, Load);
                     break;
                 }
             }
@@ -248,6 +201,207 @@ public sealed partial class IlPredicateCompiler
             EmitStackArithOp(emit, code, pc, failLabel, wakesFlushed: true);
         emit.MarkLabel(done);
         return true;
+    }
+
+    /// <summary>The fused <c>T is A op B</c> on method locals: the operands
+    /// read as the sequence lane reads them, the operation with its checks,
+    /// the result delivered by the target's kind. A non-integer operand, a
+    /// zero divisor or a result past 60 bits runs FusedBin through a call
+    /// that inlines nothing (FusedBinCold): as an inline, FusedBin cost its
+    /// site some forty of the method's locals. False when the operator has
+    /// no integer form or the method holds no register file.</summary>
+    private static bool TryEmitFusedBinLane(IlEmit emit, byte[] code, int pc, IlLabel failLabel)
+    {
+        int packed = BytecodeIO.ReadInt32(code, pc + 1);
+        var bin = (BinOp)((packed >> 24) & 0xFF);
+        int aKind = packed & 0xFF, bKind = (packed >> 8) & 0xFF, tKind = (packed >> 16) & 0xFF;
+        int aVal = BytecodeIO.ReadInt32(code, pc + 5);
+        int bVal = BytecodeIO.ReadInt32(code, pc + 9);
+        int tVal = BytecodeIO.ReadInt32(code, pc + 13);
+        if (!InlineFusedArith || !ArithBounds.IsLaneBinOp(bin) || RegisterFileOf(emit) is not { } rf) return false;
+        if (aKind is not (0 or 3 or 4) || bKind is not (0 or 3 or 4) || tKind is not (3 or 4 or 5 or 6)) return false;
+        // A literal zero divisor is the evaluator's error, not a lane.
+        if (bin is BinOp.IntDiv or BinOp.Mod && bKind == 0 && bVal == 0) return false;
+        System.Threading.Interlocked.Increment(ref InlineFusedSites);
+        int n = NextLabelSeq();
+        var slow = emit.DefineLabel($"fbl_slow_{n}");
+        var done = emit.DefineLabel($"fbl_done_{n}");
+        var data = rf.Temp(typeof(long), KU + 5);
+        var temps = new Stack<IlLocal>();
+        temps.Push(rf.Temp(typeof(long), KU + 4));
+        temps.Push(rf.Temp(typeof(long), KU + 3));
+        temps.Push(rf.Temp(typeof(long), KU + 2));
+        IlLocal Temp() => temps.Pop();
+        void Release(ArithValue v) { if (v.IsTemp) temps.Push(v.Local!); }
+        void Load(ArithValue v)
+        {
+            if (v.Local is { } l) emit.LoadLocal(l);
+            else emit.LoadConstant(v.Constant);
+        }
+        var a = EmitFusedOperand(emit, aKind, aVal, Temp, data, slow);
+        var b = aKind != 0 && aKind == bKind && aVal == bVal ? a : EmitFusedOperand(emit, bKind, bVal, Temp, data, slow);
+        var r = EmitLaneBinary(emit, bin, a, b, 0, slow, Load, Temp, Release);
+        EmitDeliverInt(emit, tKind, tVal, r, failLabel, Load);
+        emit.Branch(done);
+        emit.MarkLabel(slow);
+        emit.LoadArgument(0);
+        emit.LoadConstant((int)bin);
+        emit.LoadConstant(aKind);
+        emit.LoadConstant(aVal);
+        emit.LoadConstant(bKind);
+        emit.LoadConstant(bVal);
+        emit.LoadConstant(tKind);
+        emit.LoadConstant(tVal);
+        EmitHelperCall(emit, ArithFusedBinColdMethod);
+        emit.BranchIfFalse(failLabel);
+        emit.MarkLabel(done);
+        return true;
+    }
+
+    /// <summary>The fused <c>A rel B</c> on method locals, FusedCmp through
+    /// FusedCmpCold as the slow lane (see <see cref="TryEmitFusedBinLane"/>).</summary>
+    private static bool TryEmitFusedCmpLane(IlEmit emit, byte[] code, int pc, IlLabel failLabel)
+    {
+        int packed = BytecodeIO.ReadInt32(code, pc + 1);
+        var rel = (RelOp)((packed >> 16) & 0xFF);
+        int aKind = packed & 0xFF, bKind = (packed >> 8) & 0xFF;
+        int aVal = BytecodeIO.ReadInt32(code, pc + 5);
+        int bVal = BytecodeIO.ReadInt32(code, pc + 9);
+        if (!InlineFusedArith || RegisterFileOf(emit) is not { } rf) return false;
+        if (aKind is not (0 or 3 or 4) || bKind is not (0 or 3 or 4)) return false;
+        System.Threading.Interlocked.Increment(ref InlineFusedSites);
+        int n = NextLabelSeq();
+        var slow = emit.DefineLabel($"fcl_slow_{n}");
+        var done = emit.DefineLabel($"fcl_done_{n}");
+        var data = rf.Temp(typeof(long), KU + 5);
+        var temps = new Stack<IlLocal>();
+        temps.Push(rf.Temp(typeof(long), KU + 3));
+        temps.Push(rf.Temp(typeof(long), KU + 2));
+        IlLocal Temp() => temps.Pop();
+        void Load(ArithValue v)
+        {
+            if (v.Local is { } l) emit.LoadLocal(l);
+            else emit.LoadConstant(v.Constant);
+        }
+        var a = EmitFusedOperand(emit, aKind, aVal, Temp, data, slow);
+        var b = aKind != 0 && aKind == bKind && aVal == bVal ? a : EmitFusedOperand(emit, bKind, bVal, Temp, data, slow);
+        EmitLaneCompare(emit, rel, a, b, failLabel, Load);
+        emit.Branch(done);
+        emit.MarkLabel(slow);
+        emit.LoadArgument(0);
+        emit.LoadConstant((int)rel);
+        emit.LoadConstant(aKind);
+        emit.LoadConstant(aVal);
+        emit.LoadConstant(bKind);
+        emit.LoadConstant(bVal);
+        EmitHelperCall(emit, ArithFusedCmpColdMethod);
+        emit.BranchIfFalse(failLabel);
+        emit.MarkLabel(done);
+        return true;
+    }
+
+    /// <summary>A fused operand as a lane value: a literal as a constant, a
+    /// register or Y slot read into a temporary (<see cref="EmitReadIntOperand"/>).</summary>
+    private static ArithValue EmitFusedOperand(IlEmit emit, int kind, int val,
+        Func<IlLocal> temp, IlLocal data, IlLabel slow)
+    {
+        if (kind == 0) return ArithValue.Of(val);
+        var loc = temp();
+        EmitReadIntOperand(emit, kind, val, loc, data, slow);
+        return new ArithValue(loc, 0, IsTemp: false);
+    }
+
+    /// <summary>a op b into a temporary of the lane. Two constants fold; +, -
+    /// and * at <paramref name="width"/> 0 check their operands (a product)
+    /// and their result against 60 bits, and at a width the sequence bounds
+    /// check nothing; the other operators are bounded by their operands. The
+    /// operands are released before the result's temporary is taken.</summary>
+    private static ArithValue EmitLaneBinary(IlEmit emit, BinOp bin, ArithValue a, ArithValue b, int width,
+        IlLabel slow, Action<ArithValue> load, Func<IlLocal> temp, Action<ArithValue> release)
+    {
+        if (a.Local is null && b.Local is null && FoldInt(bin, a.Constant, b.Constant) is { } folded)
+            return ArithValue.Of(folded);
+        if (bin is not (BinOp.Add or BinOp.Sub or BinOp.Mul))
+        {
+            // Bounded by the operands, so no fit check at a width the sequence
+            // bounds; at width 0 a quotient is checked, since -(2^59) // -1
+            // is the one that leaves 60 bits.
+            var r2 = temp();
+            EmitLaneBinOp(emit, bin, a, b, r2, slow, load);
+            if (bin == BinOp.IntDiv && width == 0) EmitBranchUnlessFitsBits(emit, r2, 60, slow);
+            release(a);
+            release(b);
+            return new ArithValue(r2, 0, IsTemp: true);
+        }
+        if (bin == BinOp.Mul && width == 0)
+        {
+            // The product must not wrap 64 bits. Factors within 31
+            // bits keep it within 62; a constant factor c bounds the
+            // other to 64 - bitlen(|c|) bits (none for |c| < 16, as
+            // operands are 60-bit).
+            if (a.Local is null) EmitFitsForConstantFactor(emit, b.Local!, a.Constant, slow);
+            else if (b.Local is null) EmitFitsForConstantFactor(emit, a.Local!, b.Constant, slow);
+            else
+            {
+                EmitBranchUnlessFitsBits(emit, a.Local!, 31, slow);
+                EmitBranchUnlessFitsBits(emit, b.Local!, 31, slow);
+            }
+        }
+        load(a);
+        load(b);
+        if (bin == BinOp.Add) emit.Add();
+        else if (bin == BinOp.Sub) emit.Subtract();
+        else emit.Multiply();
+        release(a);
+        release(b);
+        var r = temp();
+        emit.StoreLocal(r);
+        if (width == 0) EmitBranchUnlessFitsBits(emit, r, 60, slow);
+        return new ArithValue(r, 0, IsTemp: true);
+    }
+
+    /// <summary>a rel b of the lane, to <paramref name="failLabel"/> when false.</summary>
+    private static void EmitLaneCompare(IlEmit emit, RelOp rel, ArithValue a, ArithValue b,
+        IlLabel failLabel, Action<ArithValue> load)
+    {
+        load(a);
+        load(b);
+        switch (rel)
+        {
+            case RelOp.Eq: emit.UnsignedBranchIfNotEqual(failLabel); break;
+            case RelOp.Neq: emit.BranchIfEqual(failLabel); break;
+            case RelOp.Lt: emit.BranchIfGreaterOrEqual(failLabel); break;
+            case RelOp.Gt: emit.BranchIfLessOrEqual(failLabel); break;
+            case RelOp.Le: emit.BranchIfGreater(failLabel); break;
+            default: emit.BranchIfLess(failLabel); break;
+        }
+    }
+
+    /// <summary>The lane's integer <paramref name="value"/> as the is/2 target
+    /// of <paramref name="kind"/>: stored into a first-occurrence register (5)
+    /// or Y slot (6), unified with a register (3) or a Y slot (4).</summary>
+    private static void EmitDeliverInt(IlEmit emit, int kind, int target, ArithValue value,
+        IlLabel failLabel, Action<ArithValue> load)
+    {
+        void PushResult()
+        {
+            emit.LoadConstant((long)Tag.Int << Cell.TagShift);
+            load(value);
+            emit.LoadConstant(Cell.PayloadMask);
+            emit.And();
+            emit.Or();
+            emit.NewObject(CellCtor);
+        }
+        if (kind == 5) EmitSetRegisterConst(emit, target, PushResult);
+        else if (kind == 6) EmitStoreY(emit, target, PushResult);
+        else
+        {
+            emit.LoadArgument(0);
+            emit.LoadConstant(target);
+            PushResult();
+            EmitHelperCall(emit, kind == 4 ? EngineUnifyPermanentMethod : EngineUnifyMethod);
+            emit.BranchIfFalse(failLabel);
+        }
     }
 
     /// <summary>An entry of the compile-time RPN stack: a constant, or a local
@@ -323,11 +477,8 @@ public sealed partial class IlPredicateCompiler
             case BinOp.IntDiv:
             case BinOp.Mod:
             {
-                if (b.Local is null)
-                {
-                    if (b.Constant == 0) { emit.Branch(slow); break; }
-                }
-                else
+                // A literal divisor is never zero here: the lanes decline one.
+                if (b.Local is not null)
                 {
                     load(b);
                     emit.BranchIfFalse(slow);

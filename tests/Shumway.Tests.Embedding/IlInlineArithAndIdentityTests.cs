@@ -32,6 +32,8 @@ public sealed class IlInlineArithAndIdentityTests
         dm(X, Y, R) :- R is (X * Y) mod 1000 + X // Y.
         d2(X, Y, R) :- R is (X // Y) + 0.
         md2(X, Y, R) :- R is (X mod Y) + 0.
+        ab1(X, R) :- R is abs(X).
+        dz(X, R) :- R is X // 0.
         """;
 
     // Called from the query, not from a Prolog wrapper: a wrapper would itself
@@ -81,6 +83,11 @@ public sealed class IlInlineArithAndIdentityTests
         Try("md2(7, -2, R0)") + ", X = R0.", Try("md2(-7, -2, R0)") + ", X = R0.",
         Try("d2(1, 0, _)") + ".", Try("md2(1, 0, _)") + ".", Try("dm(1, 0, _)") + ".",
         "M is 2^59 - 1, " + Try("d(M, -1, R0)") + ", X = R0.",
+        // The one quotient past 60 bits, the one absolute value, a literal
+        // zero divisor.
+        "N is -(2^59), " + Try("d(N, -1, R0)") + ", X = R0.",
+        "N is -(2^59), " + Try("ab1(N, R0)") + ", X = R0.",
+        Try("dz(5, R0)") + ", X = R0.",
         "N is -(2^59), " + Try("md(N, 7, R0)") + ", X = R0.",
         Try("mn(3, 5, R0)") + ", X = R0.", Try("mn(-3, -5, R0)") + ", X = R0.",
         Try("ab(-5, R0)") + ", X = R0.", Try("ab(0, R0)") + ", X = R0.", Try("ab(5, R0)") + ", X = R0.",
@@ -131,7 +138,8 @@ public sealed class IlInlineArithAndIdentityTests
         // Promotion is asynchronous: run and drain until every predicate the
         // goals exercise has promoted (ANTI-VACUITY), within a few rounds.
         string[] expected = { "p/3", "q/3", "n/2", "w/3", "v/3", "l/2", "e/2", "id/3", "nid/3",
-            "k/2", "g/2", "m/3", "s/3", "c/2", "d/3", "md/3", "mn/3", "ab/2", "bn/2", "dm/3", "d2/3", "md2/3" };
+            "k/2", "g/2", "m/3", "s/3", "c/2", "d/3", "md/3", "mn/3", "ab/2", "bn/2", "dm/3", "d2/3", "md2/3",
+            "ab1/2", "dz/2" };
         var promoted = new HashSet<string>();
         for (int round = 0; round < 5 && !expected.All(promoted.Contains); round++)
         {
@@ -173,8 +181,14 @@ public sealed class IlInlineArithAndIdentityTests
             "catch(md2(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
             "catch(dm(1, 0, _), error(evaluation_error(zero_divisor), _), true).",
             "M is 2^59 - 1, d(M, -1, X), X =:= -(2^59) + 1.",
+            "N is -(2^59), d(N, -1, X), X =:= 2^59.",
+            "N is -(2^59), ab1(N, X), X =:= 2^59.",
+            "catch(dz(5, _), error(evaluation_error(zero_divisor), _), true).",
             "mn(3, 5, 8).", "ab(-5, 4).", "ab(0, 0).", "bn(5, -6).", "M is 2^59 - 1, bn(M, X), X =:= -(2^59).",
             "B is 2^40, dm(B, B, X), X =:= (2^80 mod 1000) + 1." })
+        {
+            Assert.True(plain.Query(check).Success, "Tier-0: " + check);
             Assert.True(tiered.Query(check).Success, check);
+        }
     }
 }

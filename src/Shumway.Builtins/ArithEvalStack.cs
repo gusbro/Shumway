@@ -309,6 +309,22 @@ public static class ArithEvalStack
         return FusedBinSlow(engine, op, aKind, aVal, bKind, bVal, tKind, tVal);
     }
 
+    /// <summary><see cref="FusedBin"/> as a call that inlines nothing: the
+    /// slow lane of compiled code that read the operands and found one
+    /// outside the integer lane, so the site costs its method none of
+    /// FusedBin's inlines.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining | HelperImpl.Fixed)]
+    public static bool FusedBinCold(Activation engine, int op,
+        int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
+        => FusedBin(engine, op, aKind, aVal, bKind, bVal, tKind, tVal);
+
+    /// <summary><see cref="FusedCmp"/> as a call that inlines nothing, the
+    /// slow lane of compiled code (see <see cref="FusedBinCold"/>).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining | HelperImpl.Fixed)]
+    public static bool FusedCmpCold(Activation engine, int rel,
+        int aKind, int aVal, int bKind, int bVal)
+        => FusedCmp(engine, rel, aKind, aVal, bKind, bVal);
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool FusedBinSlow(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
@@ -464,7 +480,7 @@ public static class ArithEvalStack
             case ArithmeticEvaluator.BinOp.IntDiv:
                 if (b == 0) { r = 0; return false; }
                 r = a / b;                         // ISO //: truncate toward zero
-                return true;
+                return Fits60(r);                  // -(2^59) // -1 leaves the range
             case ArithmeticEvaluator.BinOp.Mod:
                 if (b == 0) { r = 0; return false; }
                 r = a % b;                         // ISO mod: sign of the divisor
@@ -474,7 +490,7 @@ public static class ArithEvalStack
                 if (b == 0) { r = 0; return false; }
                 r = a / b;                         // ISO div: floor division
                 if (a % b != 0 && ((a ^ b) < 0)) r--;
-                return true;
+                return Fits60(r);
             default:
                 r = 0;
                 return false;

@@ -2298,6 +2298,11 @@ public sealed partial class IlPredicateCompiler
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
+                if (TryEmitFusedBinLane(emit, code, pc, failLabel))
+                {
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant((packed >> 24) & 0xFF);               // op
                 emit.LoadConstant(packed & 0xFF);                       // aKind
@@ -2331,6 +2336,11 @@ public sealed partial class IlPredicateCompiler
                 {
                     EmitHotFusedCmp(emit, packed, BytecodeIO.ReadInt32(code, pc + 5),
                         BytecodeIO.ReadInt32(code, pc + 9), failLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+                if (TryEmitFusedCmpLane(emit, code, pc, failLabel))
+                {
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
