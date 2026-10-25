@@ -25,16 +25,19 @@ internal static class IlRegionCost
 
     /// <summary>The prologue of a region method (registers into locals).</summary>
     public const int Prologue = 20;
-    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch;
-    /// the decode of the region's own run of markers in both handlers is 11.</summary>
-    public const int TailBase = 192;
+    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch,
+    /// the common restore; the decode of the region's own run of markers in
+    /// both handlers is 11. Fitted with the resume and ladder terms on the
+    /// corpus with the frames addressed through a reference (mean error 32;
+    /// 192, 23 and 5 with every word indexed).</summary>
+    public const int TailBase = 155;
     /// <summary>Per member, its return's compares with the sites that call it:
     /// two references per compare, up to <see cref="IlPredicateCompiler.RegionReturnCompares"/>.</summary>
     public static int PerMemberReturn => 2 * Math.Max(0, IlPredicateCompiler.RegionReturnCompares);
     /// <summary>Per resume entry (a clause alternative or an index node).</summary>
-    public const int PerResumeCursor = 23;
+    public const int PerResumeCursor = 20;
     /// <summary>Per entry of the push ladder, one per arity up to the largest.</summary>
-    public const int PerLadderEntry = 5;
+    public const int PerLadderEntry = 4;
     private const int LadderReserve = 8 * PerLadderEntry;
 
     /// <summary>What the members may add up to under <see cref="Target"/>.</summary>
@@ -322,7 +325,9 @@ internal static class IlRegionCost
     /// opcodes not listed fitted at zero. Floored at a per-byte rate, so a
     /// body of unlisted opcodes is not free. get_value_x and get_value_y
     /// carry the change their two-cell unify made, as in
-    /// <see cref="LocalsWeight16"/>.</summary>
+    /// <see cref="LocalsWeight16"/>; deallocate and deallocate_proceed carry
+    /// the change the frames addressed through a reference made to a frame
+    /// (every allocate has one of the two: a fit cannot tell them apart).</summary>
     public static int Estimate(byte[] code, IReadOnlyList<(int Start, int End)>? clauseRanges)
     {
         long sum = 0, bytes = 0;
@@ -347,11 +352,11 @@ internal static class IlRegionCost
     {
         Opcode.AllocateGetLevel => 153,
         Opcode.AEvalIs => 148,
-        Opcode.DeallocateProceed => 115,
+        Opcode.DeallocateProceed => 109,
         Opcode.PutList => 88,
-        Opcode.Deallocate => 85,
         Opcode.GetValueX => 84,
         Opcode.AEvalCmp => 80,
+        Opcode.Deallocate => 73,
         Opcode.GetList => 73,
         Opcode.AIntBin => 56,
         Opcode.Allocate => 47,

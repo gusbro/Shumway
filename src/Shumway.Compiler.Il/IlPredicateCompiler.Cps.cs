@@ -952,10 +952,10 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(go);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);
@@ -996,10 +996,10 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rfl, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rfl, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rfl, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(done);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);
@@ -1195,10 +1195,10 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(go);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);

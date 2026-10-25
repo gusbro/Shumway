@@ -88,17 +88,54 @@ public sealed class IlInlineFrameTests : IDisposable
         return Probes.Select(p => (long[])p.Clone()).ToList();
     }
 
+    private static string Name(int fid)
+    {
+        var (atom, arity) = FunctorTable.Lookup(fid);
+        string n = AtomTable.GetById(atom)?.Name ?? "";
+        return $"{n[(n.LastIndexOf('$') + 1)..]}/{arity}";
+    }
+
+    // The frame through a reference to it and through an index per word
+    // (ADR-060): the same cells either way.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void TheInlineFrameIsTheMethodsFrame(bool bundle)
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public void TheInlineFrameIsTheMethodsFrame(bool bundle, bool refs)
+    {
+        bool savedRefs = IlPredicateCompiler.InlineFrameRefs;
+        IlPredicateCompiler.InlineFrameRefs = refs;
+        try
+        {
+            FrameMatchesTheMethods(bundle);
+        }
+        finally
+        {
+            IlPredicateCompiler.InlineFrameRefs = savedRefs;
+        }
+    }
+
+    private static void FrameMatchesTheMethods(bool bundle)
     {
         RegisterProbe();
         int sitesBefore = IlPredicateCompiler.InlineFrameSites;
-        var inline = Run(bundle ? FromBundle() : Runtime());
-        // ANTI-VACUITY: the regions of this program were emitted inline.
+        int refRegionsBefore = IlPredicateCompiler.InlineFrameRefRegions;
+        var engine = bundle ? FromBundle() : Runtime();
+        var inline = Run(engine);
+        // ANTI-VACUITY: the regions of this program were emitted inline, in
+        // the form the switch names, and the root promoted (a region the JIT
+        // rejects throws at its first call; one never emitted runs on Tier-0,
+        // whose frames are the same cells).
         Assert.True(IlPredicateCompiler.InlineFrameSites > sitesBefore,
             "no choice point was emitted inline");
+        Assert.Equal(IlPredicateCompiler.InlineFrameRefs,
+            IlPredicateCompiler.InlineFrameRefRegions > refRegionsBefore);
+        if (!bundle)
+        {
+            var promoted = engine.IlPromotion.PromotedFunctorIds().Select(Name).ToList();
+            Assert.True(promoted.Contains("walk/1"), "walk/1 did not promote: " + string.Join(" ", promoted));
+        }
 
         var hooked = bundle ? FromBundle() : Runtime();
         List<long[]> calls;

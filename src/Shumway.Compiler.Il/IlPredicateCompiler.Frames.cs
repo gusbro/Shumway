@@ -15,11 +15,32 @@ namespace Shumway.Compiler.Il;
 // RestoreCommonFromCurrentCp on the same frame layout. A hook or the
 // debugger's trail-everything mode, read at the region's entry, and a stack
 // that must grow take the methods.
+//
+// The frame is addressed through a reference to its first cell (ldelema,
+// one bounds check), the words at constant offsets from it: an index into
+// the stack array per word costs a bounds check and the address again, and
+// the JIT proves none of them from the headroom check, since the ladder's
+// control words sit at an offset that is the arity, a local. The reference
+// is taken after the headroom check and held across no call that can grow
+// the stack (UnwindTrails and DropUndoneWakes do not).
 public sealed partial class IlPredicateCompiler
 {
     /// <summary>Choice point pushes and restores emitted over the region's
     /// locals, over every region compiled in this process.</summary>
     public static int InlineFrameSites;
+
+    /// <summary>The frames a region writes and reads inline addressed through
+    /// a reference to the frame (one bounds check per frame), as are the
+    /// environments of allocate and deallocate; off, every word indexes the
+    /// stack array. An off switch for measuring it.</summary>
+    internal static bool InlineFrameRefs { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_FRAME_REFS") != "0";
+
+    /// <summary>Regions whose frames were emitted through references, over
+    /// every region compiled in this process.</summary>
+    public static int InlineFrameRefRegions;
+
+    private static readonly System.Type CellRefType = typeof(Cell).MakeByRefType();
 
     /// <summary>Regions compiled in this process whose markers form one run
     /// (a return or a fail decodes its own by subtraction), and those whose
@@ -60,7 +81,14 @@ public sealed partial class IlPredicateCompiler
     private sealed class FrameLocals
     {
         public IlLocal Slow = null!, Marker = null!, Arity = null!, Return = null!,
-            Ctl = null!, Registers = null!, Index = null!, BindingTop = null!, ExtraTop = null!;
+            Registers = null!, Index = null!, BindingTop = null!, ExtraTop = null!;
+        /// <summary>The index of the frame's first control word, when the
+        /// words index the stack array.</summary>
+        public IlLocal? Ctl;
+        /// <summary>References (<c>Cell&amp;</c>) to the frame on top, to its
+        /// first control word and to the register bank's first cell, with
+        /// <see cref="InlineFrameRefs"/>.</summary>
+        public IlLocal? Frame, CtlRef, Regs;
         public readonly Dictionary<int, IlLabel> Entries = new();
         public readonly Dictionary<int, IlLabel> Slows = new();
         public readonly List<IlLabel> Returns = new();
@@ -94,13 +122,23 @@ public sealed partial class IlPredicateCompiler
             Marker = emit.DeclareLocal<int>("frame_marker"),
             Arity = emit.DeclareLocal<int>("frame_arity"),
             Return = emit.DeclareLocal<int>("frame_return"),
-            Ctl = emit.DeclareLocal<int>("frame_ctl"),
             Registers = emit.DeclareLocal<Cell[]>("frame_regs"),
             Index = emit.DeclareLocal<int>("frame_i"),
             BindingTop = emit.DeclareLocal<int>("frame_bt"),
             ExtraTop = emit.DeclareLocal<int>("frame_xt"),
             Restore = emit.DefineLabel($"frame_restore_{NextLabelSeq()}"),
         };
+        if (InlineFrameRefs)
+        {
+            System.Threading.Interlocked.Increment(ref InlineFrameRefRegions);
+            l.Frame = emit.DeclareLocal(CellRefType, "frame_ref");
+            l.CtlRef = emit.DeclareLocal(CellRefType, "frame_ctlref");
+            l.Regs = emit.DeclareLocal(CellRefType, "frame_regsref");
+        }
+        else
+        {
+            l.Ctl = emit.DeclareLocal<int>("frame_ctl");
+        }
         emit.LoadField(FrameHooksField);
         emit.LoadArgument(0);
         emit.LoadField(EngTrailEverything);
@@ -163,6 +201,125 @@ public sealed partial class IlPredicateCompiler
         emit.Convert<int>();
     }
 
+    /// <summary>The reference <paramref name="cells"/> cells past
+    /// <paramref name="byref"/> (a <c>Cell&amp;</c> local) on the stack.</summary>
+    private static void EmitRefOffset(IlEmit emit, IlLocal byref, int cells)
+    {
+        emit.LoadLocal(byref);
+        if (cells != 0)
+        {
+            emit.LoadConstant(cells * 8);
+            emit.Add();
+        }
+    }
+
+    /// <summary>byref[offset].Data := the raw bits <paramref name="pushBits"/>
+    /// leaves on the stack (an int64), through the reference.</summary>
+    private static void EmitStoreRefBits(IlEmit emit, IlLocal byref, int offset, System.Action pushBits)
+    {
+        EmitRefOffset(emit, byref, offset);
+        pushBits();
+        emit.StoreField(CellDataField);
+    }
+
+    /// <summary>byref[offset] := Cell.RawInt(value), the int32 that
+    /// <paramref name="pushValue"/> leaves on the stack.</summary>
+    private static void EmitStoreRefInt(IlEmit emit, IlLocal byref, int offset, System.Action pushValue)
+        => EmitStoreRefBits(emit, byref, offset, () =>
+        {
+            pushValue();
+            emit.Convert<long>();
+            emit.LoadConstant(Cell.PayloadMask);
+            emit.And();
+            emit.LoadConstant(RawIntTag);
+            emit.Or();
+        });
+
+    /// <summary>byref[offset].Data on the stack.</summary>
+    private static void EmitLoadRefBits(IlEmit emit, IlLocal byref, int offset)
+    {
+        EmitRefOffset(emit, byref, offset);
+        emit.LoadField(CellDataField);
+    }
+
+    /// <summary>The reference to <c>array[index]</c> (one bounds check) into
+    /// <paramref name="byref"/>.</summary>
+    private static void EmitTakeRef(IlEmit emit, IlLocal array, System.Action pushIndex, IlLocal byref)
+    {
+        emit.LoadLocal(array);
+        pushIndex();
+        emit.LoadElementAddress(typeof(Cell));
+        emit.StoreLocal(byref);
+    }
+
+    // The control word at offset of the frame the restore or the ladder
+    // addressed: through the reference, or stack[Ctl + offset].
+    private static void EmitStoreCtlInt(IlEmit emit, FrameLocals l, int offset, System.Action pushValue)
+    {
+        if (l.CtlRef is { } r) EmitStoreRefInt(emit, r, offset, pushValue);
+        else EmitStoreCellInt(emit, l.Ctl!, offset, pushValue);
+    }
+
+    private static void EmitStoreCtlBits(IlEmit emit, FrameLocals l, int offset, System.Action pushBits)
+    {
+        if (l.CtlRef is { } r) EmitStoreRefBits(emit, r, offset, pushBits);
+        else EmitStoreCellBits(emit, l.Ctl!, offset, pushBits);
+    }
+
+    private static void EmitLoadCtlBits(IlEmit emit, FrameLocals l, int offset)
+    {
+        if (l.CtlRef is { } r) EmitLoadRefBits(emit, r, offset);
+        else EmitLoadCellBits(emit, l.Ctl!, offset);
+    }
+
+    private static void EmitLoadCtlInt(IlEmit emit, FrameLocals l, int offset)
+    {
+        EmitLoadCtlBits(emit, l, offset);
+        emit.Convert<int>();
+    }
+
+    /// <summary>Ctl, the frame's first control word, from the frame's base
+    /// (<paramref name="frameIndex"/> or <see cref="FrameLocals.Frame"/>) and
+    /// the arity in its local: base + CpArg1Offset + arity.</summary>
+    private static void EmitSetCtl(IlEmit emit, FrameLocals l, IlLocal frameIndex)
+    {
+        if (l.CtlRef is { } r)
+        {
+            emit.LoadLocal(l.Frame!);
+            emit.LoadLocal(l.Arity);
+            emit.LoadConstant(Activation.CpArg1Offset);
+            emit.Add();
+            emit.LoadConstant(8);
+            emit.Multiply();
+            emit.Add();
+            emit.StoreLocal(r);
+            return;
+        }
+        emit.LoadLocal(frameIndex);
+        emit.LoadConstant(Activation.CpArg1Offset);
+        emit.Add();
+        emit.LoadLocal(l.Arity);
+        emit.Add();
+        emit.StoreLocal(l.Ctl!);
+    }
+
+    /// <summary>The arity of the frame at <paramref name="frameIndex"/> into
+    /// its local; with references, the frame's reference first.</summary>
+    private static void EmitReadArity(IlEmit emit, FrameLocals l, IlLocal frameIndex)
+    {
+        if (l.Frame is { } f)
+        {
+            EmitTakeRef(emit, Reg(emit, MachineRegs.StackArray), () => emit.LoadLocal(frameIndex), f);
+            EmitLoadRefBits(emit, f, Activation.CpArityOffset);
+            emit.Convert<int>();
+        }
+        else
+        {
+            EmitLoadCellInt(emit, frameIndex, Activation.CpArityOffset);
+        }
+        emit.StoreLocal(l.Arity);
+    }
+
     /// <summary>A push site: PushChoicePoint(arity, marker), the marker
     /// already in the frame locals. The frame is written by the ladder.</summary>
     private static void EmitFramePushSite(IlEmit emit, FrameLocals l, int arity)
@@ -190,6 +347,9 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLength<Cell>();
         emit.Convert<int>();
         emit.BranchIfGreater(slow);
+        // The frame's reference, after the check: growing replaces the array.
+        if (l.Frame is { } frame)
+            EmitTakeRef(emit, Reg(emit, MachineRegs.StackArray), () => emit.LoadLocal(Reg(emit, MachineRegs.StackTop)), frame);
         if (arity > 0)
         {
             emit.LoadArgument(0);
@@ -204,6 +364,8 @@ public sealed partial class IlPredicateCompiler
                 emit.Convert<int>();
                 emit.BranchIfGreater(slow);
             }
+            if (l.Regs is { } regs)
+                EmitTakeRef(emit, l.Registers, () => emit.LoadConstant(0), regs);
         }
         emit.LoadConstant(arity);
         emit.StoreLocal(l.Arity);
@@ -235,6 +397,13 @@ public sealed partial class IlPredicateCompiler
                 l.Entries[n] = entry = emit.DefineLabel($"cpush_entry{n}_{NextLabelSeq()}");
             emit.MarkLabel(entry);
             if (n == 0) break;
+            if (l.Frame is { } frame)
+            {
+                EmitRefOffset(emit, frame, Activation.CpArg1Offset + n - 1);
+                EmitLoadRefBits(emit, l.Regs!, n - 1);
+                emit.StoreField(CellDataField);
+                continue;
+            }
             emit.LoadLocal(stack);
             emit.LoadLocal(st);
             emit.LoadConstant(Activation.CpArg1Offset + n - 1);
@@ -246,29 +415,26 @@ public sealed partial class IlPredicateCompiler
         }
 
         // The arity is not negative: its cell needs no mask.
-        EmitStoreCellBits(emit, st, Activation.CpArityOffset, () =>
+        void PushArityBits()
         {
             emit.LoadLocal(l.Arity);
             emit.Convert<long>();
             emit.LoadConstant(RawIntTag);
             emit.Or();
-        });
-        emit.LoadLocal(st);
-        emit.LoadConstant(Activation.CpArg1Offset);
-        emit.Add();
-        emit.LoadLocal(l.Arity);
-        emit.Add();
-        emit.StoreLocal(l.Ctl);
-        EmitStoreCellInt(emit, l.Ctl, CtlCe, () => emit.LoadLocal(Reg(emit, MachineRegs.E)));
-        EmitStoreCellInt(emit, l.Ctl, CtlCp, () => emit.LoadLocal(Reg(emit, MachineRegs.Cp)));
-        EmitStoreCellInt(emit, l.Ctl, CtlB, () => emit.LoadLocal(Reg(emit, MachineRegs.B)));
-        EmitStoreCellInt(emit, l.Ctl, CtlBp, () => emit.LoadLocal(l.Marker));
-        EmitStoreCellInt(emit, l.Ctl, CtlBindingTrail, () => EmitLoadEngineField(emit, EngBindingTrailTop));
-        EmitStoreCellInt(emit, l.Ctl, CtlExtraTrail, () => EmitLoadEngineField(emit, EngExtraTrailTop));
-        EmitStoreCellInt(emit, l.Ctl, CtlHeapTop, () => EmitLoadEngineField(emit, EngHeapTop));
-        EmitStoreCellInt(emit, l.Ctl, CtlHb, () => EmitLoadEngineField(emit, EngHb));
+        }
+        if (l.Frame is { } frameRef) EmitStoreRefBits(emit, frameRef, Activation.CpArityOffset, PushArityBits);
+        else EmitStoreCellBits(emit, st, Activation.CpArityOffset, PushArityBits);
+        EmitSetCtl(emit, l, st);
+        EmitStoreCtlInt(emit, l, CtlCe, () => emit.LoadLocal(Reg(emit, MachineRegs.E)));
+        EmitStoreCtlInt(emit, l, CtlCp, () => emit.LoadLocal(Reg(emit, MachineRegs.Cp)));
+        EmitStoreCtlInt(emit, l, CtlB, () => emit.LoadLocal(Reg(emit, MachineRegs.B)));
+        EmitStoreCtlInt(emit, l, CtlBp, () => emit.LoadLocal(l.Marker));
+        EmitStoreCtlInt(emit, l, CtlBindingTrail, () => EmitLoadEngineField(emit, EngBindingTrailTop));
+        EmitStoreCtlInt(emit, l, CtlExtraTrail, () => EmitLoadEngineField(emit, EngExtraTrailTop));
+        EmitStoreCtlInt(emit, l, CtlHeapTop, () => EmitLoadEngineField(emit, EngHeapTop));
+        EmitStoreCtlInt(emit, l, CtlHb, () => EmitLoadEngineField(emit, EngHb));
         // The view generation is a 60-bit long, not an int.
-        EmitStoreCellBits(emit, l.Ctl, CtlViewGen, () =>
+        EmitStoreCtlBits(emit, l, CtlViewGen, () =>
         {
             EmitLoadEngineField(emit, EngViewGen);
             emit.LoadConstant(Cell.PayloadMask);
@@ -276,14 +442,17 @@ public sealed partial class IlPredicateCompiler
             emit.LoadConstant(RawIntTag);
             emit.Or();
         });
-        EmitStoreCellInt(emit, l.Ctl, CtlB0, () => emit.LoadLocal(Reg(emit, MachineRegs.B0)));
+        EmitStoreCtlInt(emit, l, CtlB0, () => emit.LoadLocal(Reg(emit, MachineRegs.B0)));
 
         var rf = RegisterFileOf(emit)!;
         EmitStoreRegister(emit, rf, MachineRegs.B, () => emit.LoadLocal(st));
+        // The frame's size: CpSize(arity) = CpArg1Offset + arity + CtlCount.
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () =>
         {
-            emit.LoadLocal(l.Ctl);
-            emit.LoadConstant(CtlCount);
+            emit.LoadLocal(st);
+            emit.LoadLocal(l.Arity);
+            emit.Add();
+            emit.LoadConstant(Activation.CpArg1Offset + CtlCount);
             emit.Add();
         });
         emit.LoadArgument(0);
@@ -323,14 +492,8 @@ public sealed partial class IlPredicateCompiler
         var unwound = emit.DefineLabel($"crest_unwound_{NextLabelSeq()}");
         var rf = RegisterFileOf(emit)!;
 
-        EmitLoadCellInt(emit, b, Activation.CpArityOffset);
-        emit.StoreLocal(l.Arity);
-        emit.LoadLocal(b);
-        emit.LoadConstant(Activation.CpArg1Offset);
-        emit.Add();
-        emit.LoadLocal(l.Arity);
-        emit.Add();
-        emit.StoreLocal(l.Ctl);
+        EmitReadArity(emit, l, b);
+        EmitSetCtl(emit, l, b);
 
         // registers[i] := stack[B + 1 + i] for i < arity
         emit.LoadArgument(0);
@@ -338,18 +501,39 @@ public sealed partial class IlPredicateCompiler
         emit.StoreLocal(l.Registers);
         emit.LoadConstant(0);
         emit.StoreLocal(l.Index);
-        emit.Branch(loopTest);
-        emit.MarkLabel(loop);
-        emit.LoadLocal(l.Registers);
-        emit.LoadLocal(l.Index);
-        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
-        emit.LoadLocal(b);
-        emit.LoadConstant(Activation.CpArg1Offset);
-        emit.Add();
-        emit.LoadLocal(l.Index);
-        emit.Add();
-        emit.LoadElement<Cell>();
-        emit.StoreElement<Cell>();
+        if (l.Frame is { } frame)
+        {
+            // Two references walk the arguments: the bank's first cell (the
+            // bank holds at least MinRegisterCount) and the frame's.
+            var src = rf.Temp(CellRefType, 0);
+            EmitTakeRef(emit, l.Registers, () => emit.LoadConstant(0), l.Regs!);
+            EmitRefOffset(emit, frame, Activation.CpArg1Offset);
+            emit.StoreLocal(src);
+            emit.Branch(loopTest);
+            emit.MarkLabel(loop);
+            emit.LoadLocal(l.Regs!);
+            EmitLoadRefBits(emit, src, 0);
+            emit.StoreField(CellDataField);
+            EmitRefOffset(emit, l.Regs!, 1);
+            emit.StoreLocal(l.Regs!);
+            EmitRefOffset(emit, src, 1);
+            emit.StoreLocal(src);
+        }
+        else
+        {
+            emit.Branch(loopTest);
+            emit.MarkLabel(loop);
+            emit.LoadLocal(l.Registers);
+            emit.LoadLocal(l.Index);
+            emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
+            emit.LoadLocal(b);
+            emit.LoadConstant(Activation.CpArg1Offset);
+            emit.Add();
+            emit.LoadLocal(l.Index);
+            emit.Add();
+            emit.LoadElement<Cell>();
+            emit.StoreElement<Cell>();
+        }
         emit.LoadLocal(l.Index);
         emit.LoadConstant(1);
         emit.Add();
@@ -359,14 +543,14 @@ public sealed partial class IlPredicateCompiler
         emit.LoadLocal(l.Arity);
         emit.BranchIfLess(loop);
 
-        EmitStoreRegister(emit, rf, MachineRegs.E, () => EmitLoadCellInt(emit, l.Ctl, CtlCe));
-        EmitStoreRegister(emit, rf, MachineRegs.Cp, () => EmitLoadCellInt(emit, l.Ctl, CtlCp));
+        EmitStoreRegister(emit, rf, MachineRegs.E, () => EmitLoadCtlInt(emit, l, CtlCe));
+        EmitStoreRegister(emit, rf, MachineRegs.Cp, () => EmitLoadCtlInt(emit, l, CtlCp));
 
         // The unwind is a call, and only when something was trailed since
         // the push.
-        EmitLoadCellInt(emit, l.Ctl, CtlBindingTrail);
+        EmitLoadCtlInt(emit, l, CtlBindingTrail);
         emit.StoreLocal(l.BindingTop);
-        EmitLoadCellInt(emit, l.Ctl, CtlExtraTrail);
+        EmitLoadCtlInt(emit, l, CtlExtraTrail);
         emit.StoreLocal(l.ExtraTop);
         emit.LoadLocal(l.BindingTop);
         EmitLoadEngineField(emit, EngBindingTrailTop);
@@ -382,7 +566,7 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(unwound);
 
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHeapTop);
+        EmitLoadCtlInt(emit, l, CtlHeapTop);
         EmitStoreEngineField(emit, EngHeapTop);
         // A wake whose binding the unwind undid goes before anything is
         // allocated over its home (ADR-049 §8): a call, only when one pends.
@@ -394,11 +578,11 @@ public sealed partial class IlPredicateCompiler
         EmitHelperCall(emit, EngineDropUndoneWakesMethod);
         emit.MarkLabel(noWakes);
         emit.LoadArgument(0);
-        EmitLoadCellBits(emit, l.Ctl, CtlViewGen);
+        EmitLoadCtlBits(emit, l, CtlViewGen);
         emit.LoadConstant(Cell.PayloadMask);
         emit.And();
         emit.StoreField(EngViewGen);
-        EmitStoreRegister(emit, rf, MachineRegs.B0, () => EmitLoadCellInt(emit, l.Ctl, CtlB0));
+        EmitStoreRegister(emit, rf, MachineRegs.B0, () => EmitLoadCtlInt(emit, l, CtlB0));
     }
 
     private static readonly FieldInfo EngBacktrackFloor = EngineField(nameof(Activation._backtrackFloor));
@@ -442,16 +626,29 @@ public sealed partial class IlPredicateCompiler
         emit.LoadField(EngDebug);
         emit.BranchIfTrue(callMethod);
         // BP of the frame on top: B + 1 + arity + CtlBp.
-        EmitLoadCellInt(emit, b, Activation.CpArityOffset);
-        emit.StoreLocal(l.Arity);
-        emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
-        emit.LoadLocal(b);
-        emit.LoadConstant(Activation.CpArg1Offset + CtlBp);
-        emit.Add();
-        emit.LoadLocal(l.Arity);
-        emit.Add();
-        emit.LoadElement<Cell>();
-        emit.LoadField(CellDataField);
+        EmitReadArity(emit, l, b);
+        if (l.Frame is { } frame)
+        {
+            emit.LoadLocal(frame);
+            emit.LoadLocal(l.Arity);
+            emit.LoadConstant(Activation.CpArg1Offset + CtlBp);
+            emit.Add();
+            emit.LoadConstant(8);
+            emit.Multiply();
+            emit.Add();
+            emit.LoadField(CellDataField);
+        }
+        else
+        {
+            emit.LoadLocal(Reg(emit, MachineRegs.StackArray));
+            emit.LoadLocal(b);
+            emit.LoadConstant(Activation.CpArg1Offset + CtlBp);
+            emit.Add();
+            emit.LoadLocal(l.Arity);
+            emit.Add();
+            emit.LoadElement<Cell>();
+            emit.LoadField(CellDataField);
+        }
         emit.Convert<int>();
         emit.StoreLocal(bp);
         emit.LoadLocal(bp);
@@ -532,15 +729,15 @@ public sealed partial class IlPredicateCompiler
             emit.LoadArgument(0);
             EmitLoadEngineField(emit, EngHeapTop);
             EmitStoreEngineField(emit, EngHb);
-            EmitStoreCellInt(emit, l.Ctl, CtlBp, nextMarker);
+            EmitStoreCtlInt(emit, l, CtlBp, nextMarker);
         }
         else
         {
             emit.LoadArgument(0);
-            EmitLoadCellInt(emit, l.Ctl, CtlHb);
+            EmitLoadCtlInt(emit, l, CtlHb);
             EmitStoreEngineField(emit, EngHb);
             EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
-            EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+            EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         }
         emit.Branch(done);
 

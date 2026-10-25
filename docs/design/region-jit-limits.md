@@ -44,7 +44,7 @@ make the prediction cheap:
 |---|---|
 | a member's block, from one region to the next | the same to within 2% for 90% of the members, 28% at worst |
 | a member never emitted, estimated from its opcodes | median error 21%, with a heavy tail where guards inline their callees |
-| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57; 192 since the return path decodes the region's own run of markers (+11 on every region measured), plus the members' return compares, up to 8 each, counted with the member |
+| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57; 192 since the return path decodes the region's own run of markers (+11 on every region measured), plus the members' return compares, up to 8 each, counted with the member; 155 + 20 per resume entry + 4 per ladder entry, mean error 32, since the frames are addressed through a reference |
 
 So a member that was ever emitted predicts itself, the opcode model serves
 the first emission, and the tail follows from the plan.
@@ -202,6 +202,18 @@ with the lane on and off, and the weights fitted again on the corpus with
 every other weight fixed are 56 and 22 references, 30 and 17 locals. On
 the members with such sites the model's median error in references falls
 from 26% to 21% and in locals stays at 25%.
+
+The frames addressed through a reference (ADR-060 item 6) take references
+out of the tail, not the members: the ladder stores and the restore loads
+address the frame's cells at constant offsets from one reference, and the
+tail fitted again over the corpus is 155 + 20 per resume entry + 4 per
+ladder entry, mean error 32 (192, 23 and 5 with every word indexed, mean
+error 38 on the same regions). In the members, a push site takes the two
+references (5 more of its own) and `allocate` with its `deallocate` or
+`deallocate_proceed` costs 12 and 7 fewer; every allocate has one of the
+two, so a fit cannot tell the three apart and the pair's change goes to
+the deallocate weights, 85 to 73 and 115 to 109. The JIT's locals do not
+move.
 
 `IlRegionBuilder.Build` holds the sum under the locals budget beside the
 reference budget, and a region emitted past the target is planned again

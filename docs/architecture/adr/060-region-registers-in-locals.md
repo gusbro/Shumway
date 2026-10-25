@@ -159,6 +159,18 @@ What the operations of this ADR cost today, in calls per run:
      three stores that tell a retry from a trust. A resumption from outside
      enters the region at a resume cursor and takes the same path: the
      region's entry sends any cursor past the plan's to the restore.
+   - *The frame through a reference.* The push site takes a reference to the
+     frame's first cell (`ldelema`, one bounds check) after its room check,
+     and to the register bank's first cell; the ladder, the control words,
+     the restore and the two or three stores of a resume entry address the
+     words at constant offsets from it, and `allocate` and `deallocate` do
+     the same with the environment. Indexed per word, each store and load
+     paid a bounds check and the address again, and the JIT proved none of
+     them from the room check: the control words sit past the arity, a
+     local in the shared ladder. The reference is taken after the check and
+     held across no call that can grow the stack (the trail unwind and the
+     drop of undone wakes do not). `SHUMWAY_IL_FRAME_REFS=0` indexes per
+     word, for measuring.
 
    Without held registers (item 9, or `SHUMWAY_IL_HELD_REGS=0`) a region
    calls `PushChoicePoint`, `RetryMeElse` and `TrustMe`: the per-site inline
@@ -409,6 +421,24 @@ Y slots and one comparison per call) -12% at the minimum and the median,
 on every copy; `nreverse` -2% and -6%, `zebra` -3%, `boyer` -4% and -1%,
 `sendmore` and `queens` -2%; the rest within the noise, Blint and the clpz
 puzzles among them. The region of `tak` makes 197 inlines instead of 347.
+
+The frames are addressed through a reference (item 6): one bounds check for
+a choice point pushed or restored and one for an environment allocated or
+popped, where every word paid its own and the address again (five
+instructions a word, the JIT proving none of them from the room check).
+The region of `tak` goes from 12,975 to 12,538 bytes of native code and
+from 140 bounds checks to 93. In one process, four copies, against the
+previous step, heap cells identical: `tak` (no choice point, the guard
+commits without one, ADR-031; a frame allocated and popped per call) -14%
+at the minimum and -15% at the median on every copy, `qsort` -11% and
+-10%, `zebra` -10% and -7%, `flatten` -11% and -6%, `queens` -10% and
+-6%, `sendmore` -5% and -2%, `boyer` -2%, Blint -2% and -3%, `crypt` and
+the clpz puzzles even, `nreverse` +3% and `serialize` +2% at the minimum
+but -3% and -10% at the median; the form switched by its knob inside one
+build gives the same order (`qsort` -16%, `tak` -9%, `crypt` -7%, `zebra`
+-6%, `flatten` -10% and -13%, `queens` -8%, Blint -4%, `nreverse` even).
+The JIT takes `ldelema` in a region of any size: the rejection recorded
+in ADR-061 was the previous emitter's.
 
 ## Alternatives considered
 

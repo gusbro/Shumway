@@ -448,6 +448,15 @@ public sealed class IlEmit
         Text(op.Name!, field.ToString());
     }
 
+    /// <summary>The address of an array element (<c>ldelema</c>): one bounds
+    /// check, and the cells at constant offsets from it cost none.</summary>
+    public void LoadElementAddress(Type t)
+    {
+        Begin();
+        _il.Emit(OpCodes.Ldelema, t);
+        Text("ldelema", t.ToString());
+    }
+
     public void LoadElement<T>() => LoadElement(typeof(T));
 
     public void LoadElement(Type t)
