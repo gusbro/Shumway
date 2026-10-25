@@ -21,6 +21,119 @@ public sealed partial class IlPredicateCompiler
     /// debugger.</summary>
     internal static bool WakePoints => !DebugMode;
 
+    /// <summary>A wake test is left out where the queue is known empty: from
+    /// a clause's entry or the last test, along code that binds no existing
+    /// variable and calls nothing (puts, variable reads, frames, arithmetic
+    /// into a first-occurrence variable). A wake enters the queue only when a
+    /// binding meets an attributed variable, in a unification, a builtin or a
+    /// callee, and the test in front of the goal after such code stays. An
+    /// off switch for measuring it.</summary>
+    internal static bool HoistWakeTests { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_HOIST_WAKES") != "0";
+
+    /// <summary>Wake tests left out, over every method compiled in this process.</summary>
+    public static int HoistedWakeTests;
+
+    // The queue is known empty on every path to the instruction being emitted.
+    [ThreadStatic] private static bool _wakeClean;
+
+    /// <summary>What a clause body's emission knows of the queue at its
+    /// start: nothing (an inlined callee, a body whose head matched
+    /// elsewhere); empty (a clause entered by a call or a resume: the
+    /// caller's boundary tested, and a resume drops what the undone bindings
+    /// queued); or what the emission before it left (the next slice of the
+    /// same clause).</summary>
+    internal enum WakeEntry { Dirty, Clean, Carry }
+
+    private static void EnterWakeState(WakeEntry entry)
+    {
+        if (entry == WakeEntry.Clean) _wakeClean = true;
+        else if (entry == WakeEntry.Dirty) _wakeClean = false;
+    }
+
+    /// <summary>Whether the wake test about to be emitted can be left out.
+    /// Not under continuation methods, whose cold method enters at any
+    /// instruction boundary.</summary>
+    private static bool SkipWakeTest()
+    {
+        if (!HoistWakeTests || !WakePoints || !_wakeClean || _cps is not null) return false;
+        System.Threading.Interlocked.Increment(ref HoistedWakeTests);
+        return true;
+    }
+
+    /// <summary>After a wake test that drains or interrupts: the queue is
+    /// empty where the code goes on. Not after an arithmetic wake point,
+    /// which lets a wake on another variable pend.</summary>
+    private static void WakeTested() => _wakeClean = true;
+
+    /// <summary>Whether the opcodes in [from, to) can queue no wake: none
+    /// binds an existing variable and none calls. Everything not listed may.</summary>
+    private static bool WakeNeutral(byte[] code, int from, int to)
+    {
+        for (int p = from; p < to;)
+        {
+            var op = (Opcode)code[p];
+            int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+            if (size <= 0) return false;
+            switch (op)
+            {
+                case Opcode.Meta:
+                case Opcode.Nop:
+                case Opcode.Allocate:
+                case Opcode.AllocateGetLevel:
+                case Opcode.Deallocate:
+                case Opcode.GetLevel:
+                case Opcode.GetLevelB:
+                case Opcode.NeckCut:
+                case Opcode.Cut:
+                case Opcode.SoftCut:
+                case Opcode.GetVariableX:
+                case Opcode.GetVariableY:
+                case Opcode.PutVariableX:
+                case Opcode.PutVariableY:
+                case Opcode.PutValueX:
+                case Opcode.PutValueY:
+                case Opcode.PutConstant:
+                case Opcode.PutInteger:
+                case Opcode.PutAtom:
+                case Opcode.PutNil:
+                case Opcode.PutFloat:
+                case Opcode.PutBigInt:
+                case Opcode.PutRational:
+                case Opcode.PutPstr:
+                case Opcode.PutStructure:
+                case Opcode.PutList:
+                case Opcode.PutStructureR:
+                case Opcode.PutListR:
+                case Opcode.PutConstantA1:
+                case Opcode.PutConstantA2:
+                case Opcode.PutBlit:
+                case Opcode.UnifyVariableX:
+                case Opcode.UnifyVariableY:
+                case Opcode.UnifyVoid:
+                case Opcode.AEvalPush:
+                case Opcode.AEvalBin:
+                case Opcode.AEvalUn:
+                case Opcode.AEvalCmp:
+                case Opcode.AIntCmp:
+                case Opcode.Jump:
+                    break;
+                case Opcode.AEvalIs:
+                    // Kinds 5 and 6 store into a first-occurrence variable;
+                    // 3 and 4 unify with one that may be attributed.
+                    if (BytecodeIO.ReadInt32(code, p + 1) is not (5 or 6)) return false;
+                    break;
+                case Opcode.AIntBin:
+                    if (((BytecodeIO.ReadInt32(code, p + 1) >> 16) & 0xFF) is not (5 or 6)) return false;
+                    break;
+                default:
+                    return false;
+            }
+            p += size;
+        }
+        return true;
+    }
+
     // The predicates whose bytecode the code emitted in a persist batch enters
     // at a wake: a bundle keeps their WAM under --strip-wam.
     [ThreadStatic] private static HashSet<int>? _bytecodeEntered;
@@ -449,7 +562,7 @@ public sealed partial class IlPredicateCompiler
     private static void EmitArithWakePoint(IlEmit emit, IlLabel failLabel, int pc,
         (int Kind, int Val)[] operands, int liveRegs)
     {
-        if (operands.Length == 0) return;   // literals: nothing a wake binds
+        if (operands.Length == 0 || SkipWakeTest()) return;   // literals: nothing a wake binds
         var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
         var wake = emit.DefineLabel($"arith_wake_{NextLabelSeq()}");
         emit.LoadArgument(0);

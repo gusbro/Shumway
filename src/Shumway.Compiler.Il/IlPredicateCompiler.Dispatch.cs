@@ -164,7 +164,8 @@ public sealed partial class IlPredicateCompiler
                             selfTailLabel: selfEntry,
                             resetCursorBeforeSelfTail: true,
                             forceLeafRuleInline: isGuardSlice,
-                            guardContCtx: gcCtx);
+                            guardContCtx: gcCtx,
+                            wakeEntry: s == clauses[i].Start ? WakeEntry.Clean : WakeEntry.Carry);
                     },
                     predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
                     clauseLabels[i + 1], failLabel,
@@ -191,7 +192,8 @@ public sealed partial class IlPredicateCompiler
                         selfFunctorId: predicate.FunctorId,
                         selfTailLabel: selfEntry,
                         resetCursorBeforeSelfTail: true,
-                        localSalt: $"_dynfb{i}");
+                        localSalt: $"_dynfb{i}",
+                        wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
@@ -218,7 +220,8 @@ public sealed partial class IlPredicateCompiler
                 cursorBase: N,
                 selfFunctorId: predicate.FunctorId,
                 selfTailLabel: selfEntry,
-                resetCursorBeforeSelfTail: true);
+                resetCursorBeforeSelfTail: true,
+                wakeEntry: WakeEntry.Clean);
         }
 
         EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033

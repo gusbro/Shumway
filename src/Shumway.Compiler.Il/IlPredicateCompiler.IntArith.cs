@@ -104,7 +104,7 @@ public sealed partial class IlPredicateCompiler
         var done = emit.DefineLabel($"iar_done_{NextLabelSeq()}");
         if (WakePoints)
             EmitArithWakePoint(emit, failLabel, start, ArithGoalOperands(code, start, out int live), live);
-        else
+        else if (!SkipWakeTest())
             EmitArithWakeFlush(emit, failLabel);
         var data = emit.DeclareLocal<long>();
         // The RPN stack, resolved at compile time: a constant, an operand's

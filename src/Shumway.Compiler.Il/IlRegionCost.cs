@@ -267,17 +267,19 @@ internal static class IlRegionCost
     /// get_value_y, fitted at zero as helper calls, carry the change their
     /// two-cell unify made, measured per site over the corpus; a_int_bin and
     /// a_int_cmp, fitted as inlined helper calls, were fitted again with
-    /// their lane, the other weights fixed.</summary>
+    /// their lane, the other weights fixed, and once more with call,
+    /// call_builtin and neck_cut when the wake test in front of a goal was
+    /// left out where the queue is known empty (ADR-049).</summary>
     private static int LocalsWeight16(Opcode op) => op switch
     {
-        Opcode.AIntBin => 477,
         Opcode.AEvalIs => 391,
+        Opcode.AIntBin => 390,
         Opcode.AEvalPush => 314,
         Opcode.PutInteger => 284,
         Opcode.AllocateGetLevel => 276,
-        Opcode.AIntCmp => 264,
         Opcode.GetAtom => 236,
         Opcode.GetList => 226,
+        Opcode.NeckCut => 216,
         Opcode.DeallocateProceed => 211,
         Opcode.UnifyNil => 203,
         Opcode.UnifyInteger => 186,
@@ -285,21 +287,21 @@ internal static class IlRegionCost
         Opcode.AEvalBin => 170,
         Opcode.GetInteger => 170,
         Opcode.UnifyValueX => 164,
-        Opcode.NeckCut => 145,
         Opcode.UnifyVariableX => 133,
         Opcode.PutValueX => 127,
         Opcode.UnifyVariableY => 121,
+        Opcode.Call => 107,
         Opcode.PutVariableX => 105,
         Opcode.AEvalUn => 105,
         Opcode.UnifyAtom => 103,
         Opcode.UnifyValueY => 94,
-        Opcode.Call => 90,
         Opcode.GetStructure => 84,
         Opcode.GetValueY => 81,
+        Opcode.CallBuiltin => 74,
         Opcode.PutNil => 63,
         Opcode.UnifyVoid => 63,
-        Opcode.CallBuiltin => 51,
         Opcode.PutValueY => 49,
+        Opcode.AIntCmp => 42,
         Opcode.GetVariableY => 40,
         Opcode.PutVariableY => 27,
         Opcode.Deallocate => 26,
@@ -327,7 +329,10 @@ internal static class IlRegionCost
     /// carry the change their two-cell unify made, as in
     /// <see cref="LocalsWeight16"/>; deallocate and deallocate_proceed carry
     /// the change the frames addressed through a reference made to a frame
-    /// (every allocate has one of the two: a fit cannot tell them apart).</summary>
+    /// (every allocate has one of the two: a fit cannot tell them apart);
+    /// execute, a_int_bin, a_int_cmp and neck_cut were fitted again when the
+    /// wake test in front of a goal was left out where the queue is known
+    /// empty (ADR-049).</summary>
     public static int Estimate(byte[] code, IReadOnlyList<(int Start, int End)>? clauseRanges)
     {
         long sum = 0, bytes = 0;
@@ -358,23 +363,23 @@ internal static class IlRegionCost
         Opcode.AEvalCmp => 80,
         Opcode.Deallocate => 73,
         Opcode.GetList => 73,
-        Opcode.AIntBin => 56,
         Opcode.Allocate => 47,
+        Opcode.AIntBin => 46,
         Opcode.UnifyStructure => 45,
         Opcode.GetValueY => 44,
         Opcode.GetInteger => 40,
-        Opcode.NeckCut => 39,
         Opcode.GetAtom => 36,
         Opcode.PutInteger => 33,
         Opcode.GetStructure => 30,
-        Opcode.AIntCmp => 22,
-        Opcode.Execute => 21,
         Opcode.PutValueX => 21,
+        Opcode.NeckCut => 17,
         Opcode.PutValueY => 17,
         Opcode.UnifyVoid => 14,
+        Opcode.Execute => 10,
         Opcode.Proceed => 10,
         Opcode.PutAtom => 9,
         Opcode.AEvalPush => 9,
+        Opcode.AIntCmp => 6,
         Opcode.UnifyList => 2,
         _ => 0,
     };

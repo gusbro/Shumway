@@ -215,6 +215,20 @@ two, so a fit cannot tell the three apart and the pair's change goes to
 the deallocate weights, 85 to 73 and 115 to 109. The JIT's locals do not
 move.
 
+A wake test left out where the queue is known empty (ADR-049, stage 2e)
+takes references and locals from the sites it was in front of, measured
+with the tests hoisted and kept: an `execute` costs 16 references fewer
+per site, an `a_int_cmp` 21, an `a_int_bin` 9 and a `cut` 19, and in
+locals an `a_int_cmp` 12 fewer, an `a_int_bin` 7, an `execute` 4 and a
+`cut` 5 (the operand checks of an arithmetic wake point were the JIT's
+inlines). The weights at zero stay at zero; the fitted ones are fitted
+again with the rest fixed: in references `execute` 21 to 10, `a_int_bin`
+56 to 46, `a_int_cmp` 22 to 6 and `neck_cut` 39 to 17; in locals `call` 90
+to 107, `call_builtin` 51 to 74, `a_int_bin` 477 to 390, `a_int_cmp` 264
+to 42 and `neck_cut` 145 to 216. On the members with such sites the
+model's median error in locals falls from 28% to 27% and in references
+stays at 21%; the tail does not move.
+
 `IlRegionBuilder.Build` holds the sum under the locals budget beside the
 reference budget, and a region emitted past the target is planned again
 like one past a limit. The target, `SHUMWAY_REGION_LOCALS`, 0 for off, is

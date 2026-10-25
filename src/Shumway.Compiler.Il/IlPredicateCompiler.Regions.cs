@@ -870,7 +870,7 @@ public sealed partial class IlPredicateCompiler
                 {
                     EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
                         failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
-                        calleeMap: calleeMap, regionCtx: ctx);
+                        calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
                     ops = OpcodeHistogram(member.BytecodeUnfused, null);
                 }
                 else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
@@ -1110,7 +1110,7 @@ public sealed partial class IlPredicateCompiler
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 forceLeafRuleInline: true,
                                 localSalt: $"_rm{mi0}g{i0}",
-                                guardContCtx: gcCtx);
+                                guardContCtx: gcCtx, wakeEntry: WakeEntry.Clean);
                         else
                         {
                             if (dynBody is not null)
@@ -1118,7 +1118,7 @@ public sealed partial class IlPredicateCompiler
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
-                                regionCtx: ctx);
+                                regionCtx: ctx, wakeEntry: WakeEntry.Carry);   // the body after the commit
                         }
                     },
                     member.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
@@ -1160,7 +1160,7 @@ public sealed partial class IlPredicateCompiler
                         clauses[i].Start, guardEnd + cutSz,
                         ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                         calleeMap: calleeMap, regionCtx: ctx,
-                        localSalt: $"_dynfb{mi}_{i}");
+                        localSalt: $"_dynfb{mi}_{i}", wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
@@ -1179,7 +1179,7 @@ public sealed partial class IlPredicateCompiler
             }
             EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
-                calleeMap: calleeMap, regionCtx: ctx);
+                calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
         }
     }
 
@@ -1295,7 +1295,7 @@ public sealed partial class IlPredicateCompiler
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 forceLeafRuleInline: true,
                                 localSalt: $"_ridx{mi}g{i0}",
-                                guardContCtx: gcCtx);
+                                guardContCtx: gcCtx, wakeEntry: WakeEntry.Clean);
                         else
                         {
                             if (dynBody is not null)
@@ -1303,7 +1303,7 @@ public sealed partial class IlPredicateCompiler
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
-                                regionCtx: ctx);
+                                regionCtx: ctx, wakeEntry: WakeEntry.Carry);   // the body after the commit
                         }
                     },
                     member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
@@ -1358,14 +1358,14 @@ public sealed partial class IlPredicateCompiler
                         info.Clauses[i].Start, guardEnd + cutSz,
                         ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                         calleeMap: calleeMap, regionCtx: ctx,
-                        localSalt: $"_ridxfb{mi}_{i}");
+                        localSalt: $"_ridxfb{mi}_{i}", wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
             }
             EmitClauseBody(emit, member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
-                calleeMap: calleeMap, regionCtx: ctx);
+                calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
         }
     }
 
@@ -1533,7 +1533,11 @@ public sealed partial class IlPredicateCompiler
                     EmitResumeMarker(emit, ctx.RegionFid, cursor);
                     EmitHelperCall(emit, EngineSetCpMethod);
                     // ADR-049 stage 2: the interrupt in front of the call.
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
+                        WakeTested();
+                    }
                     if (intra) EmitRegionGcSafePoint(emit, fid);
                     if (intra)
                     {
@@ -1565,7 +1569,11 @@ public sealed partial class IlPredicateCompiler
                 {
                     // Intra-region tail call: Cp already holds this member's caller
                     // continuation, so the callee's proceed returns straight to it.
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                        WakeTested();
+                    }
                     EmitRegionGcSafePoint(emit, fid);
                     emit.Branch(ctx.MemberEntry[fid]);
                 }
@@ -1573,7 +1581,11 @@ public sealed partial class IlPredicateCompiler
                 {
                     // Cross-region tail call: tail-trampoline (Cp unchanged = the
                     // region's caller continuation; the callee's proceed returns to it).
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                        WakeTested();
+                    }
                     EmitContinuationTailCall(emit, ctx.TailCalls, ctx.CursorLocal!,
                         () => EmitResumeMarker(emit, fid, 0));
                     emit.LoadArgument(0);

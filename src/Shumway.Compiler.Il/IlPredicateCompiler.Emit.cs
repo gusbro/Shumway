@@ -348,7 +348,8 @@ public sealed partial class IlPredicateCompiler
         RegionEmitContext? regionCtx = null,
         bool forceLeafRuleInline = false,
         string localSalt = "",
-        GuardContEmitContext? guardContCtx = null)
+        GuardContEmitContext? guardContCtx = null,
+        WakeEntry wakeEntry = WakeEntry.Dirty)
     {
         var rp = _cps?.Prune;
         if (rp is null || rp.State == CpsPruneState.Active)
@@ -356,7 +357,7 @@ public sealed partial class IlPredicateCompiler
             EmitClauseBodyCore(emit, code, start, end, failLabel, callSites, callSiteIndexCounter, resumeLabels,
             emitSelfDelegate, calleeMap, suppressProceedReturn, cursorBase, selfFunctorId, selfTailLabel,
             resetCursorBeforeSelfTail, inlineSites, ruleInlineSites, regionCtx, forceLeafRuleInline,
-            localSalt, guardContCtx, resumeFrom: null);
+            localSalt, guardContCtx, wakeEntry, resumeFrom: null);
             return;
         }
         if (rp.State == CpsPruneState.Done || !ReferenceEquals(code, rp.Code)
@@ -368,7 +369,7 @@ public sealed partial class IlPredicateCompiler
             EmitClauseBodyCore(emit, code, start, end, failLabel, callSites, callSiteIndexCounter, resumeLabels,
             emitSelfDelegate, calleeMap, suppressProceedReturn, cursorBase, selfFunctorId, selfTailLabel,
             resetCursorBeforeSelfTail, inlineSites, ruleInlineSites, regionCtx, forceLeafRuleInline,
-            localSalt, guardContCtx, resumeFrom: rp);
+            localSalt, guardContCtx, wakeEntry, resumeFrom: rp);
         }
         finally { rp.State = CpsPruneState.Done; }
     }
@@ -391,6 +392,7 @@ public sealed partial class IlPredicateCompiler
         bool forceLeafRuleInline,
         string localSalt,
         GuardContEmitContext? guardContCtx,
+        WakeEntry wakeEntry,
         CpsResumePoint? resumeFrom)
     {
         // In region mode every member is emitted into one shared IL method, so a
@@ -408,6 +410,11 @@ public sealed partial class IlPredicateCompiler
         _readUnit = null;   // ADR-063: no read-only unit spans an emission
         int pc = resumeFrom is null ? start
             : CpsEnterResumePoint(emit, resumeFrom, callSiteIndexCounter, resumeLabels);
+        // What the wake queue holds here (a resume point knows nothing), and
+        // the start of the instruction emitted last, whose effect on it the
+        // next one reads.
+        EnterWakeState(resumeFrom is null ? wakeEntry : WakeEntry.Dirty);
+        int wakePrev = -1;
         // ADR-022 item 2 — the atom most recently put into argument register 0, or
         // -1. A `'$native_run'('$nb$…', regs)` goal loads its block-name atom into
         // A0 just before the call (see the disasm in NativeBundleTests); tracking it
@@ -425,6 +432,10 @@ public sealed partial class IlPredicateCompiler
         while (pc < end)
         {
             var op = (Opcode)code[pc];
+            // The instruction before may have queued a wake: a binding, a
+            // builtin, a callee's return. Its test sites read the state first.
+            if (wakePrev >= 0 && !WakeNeutral(code, wakePrev, pc)) _wakeClean = false;
+            wakePrev = pc;
             if (jumpLabels is not null && jumpLabels.Remove(pc, out var joinLabel))
             {
                 // The end join is reachable from the then-branch's jump and by
@@ -432,6 +443,7 @@ public sealed partial class IlPredicateCompiler
                 // across the join is branch-dependent → reset.
                 emit.MarkLabel(joinLabel);
                 regZeroAtom = -1;
+                _wakeClean = false;
                 CloseResumeWindow();
             }
             AdvanceResumeWindow(op);   // ADR-049
@@ -958,6 +970,7 @@ public sealed partial class IlPredicateCompiler
                 }
                 emit.MarkLabel(elseLabel);
                 regZeroAtom = -1;
+                _wakeClean = false;
                 pc += 1;
                 continue;
             }
@@ -980,9 +993,13 @@ public sealed partial class IlPredicateCompiler
             {
                 // Flush pending attribute wakeups before committing — a failed
                 // constraint must backtrack while choice points still exist.
-                emit.LoadArgument(0);
-                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
-                emit.BranchIfFalse(failLabel);
+                if (!SkipWakeTest())
+                {
+                    emit.LoadArgument(0);
+                    EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
+                    emit.BranchIfFalse(failLabel);
+                    WakeTested();
+                }
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineNeckCutMethod);
                 pc += OpcodeTable.Get(op).Size;
@@ -1015,9 +1032,13 @@ public sealed partial class IlPredicateCompiler
                 // constraint that fails can still backtrack into the
                 // about-to-be-pruned choice points.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
-                emit.LoadArgument(0);
-                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
-                emit.BranchIfFalse(failLabel);
+                if (!SkipWakeTest())
+                {
+                    emit.LoadArgument(0);
+                    EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
+                    emit.BranchIfFalse(failLabel);
+                    WakeTested();
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 EmitHelperCall(emit, EngineCutToLevelMethod);
@@ -1030,9 +1051,13 @@ public sealed partial class IlPredicateCompiler
                 // flush pending attribute wakeups first; then neutralise only the
                 // else choice point named by Y[slot], leaving the condition's CPs.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
-                emit.LoadArgument(0);
-                EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
-                emit.BranchIfFalse(failLabel);
+                if (!SkipWakeTest())
+                {
+                    emit.LoadArgument(0);
+                    EmitHelperCall(emit, EngineFlushWakeupsForIlCutMethod);
+                    emit.BranchIfFalse(failLabel);
+                    WakeTested();
+                }
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 EmitHelperCall(emit, EngineSoftCutToLevelMethod);
@@ -1047,8 +1072,11 @@ public sealed partial class IlPredicateCompiler
                 // instead of per-walk name compares.
                 var builtinEntry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                 int builtinArity = builtinEntry.Arity;
-                if (IsWakeBuiltin(builtinEntry))
+                if (IsWakeBuiltin(builtinEntry) && !SkipWakeTest())
+                {
                     EmitWakePoint(emit, builtinArity, failLabel, pc);   // ADR-049
+                    WakeTested();
+                }
 
                 // ADR-022 item 2 — inline an embedded native block directly into
                 // this method's IL instead of dispatching `$native_run`. Declines
@@ -1361,8 +1389,11 @@ public sealed partial class IlPredicateCompiler
                         "ExecuteBuiltin at a proceed-suppressed IL emit site.");
                 int tailBuiltinId = BytecodeIO.ReadInt32(code, pc + 1);
                 var tailEntry = Shumway.Builtins.BuiltinsRegistry.GetById(tailBuiltinId);
-                if (IsWakeBuiltin(tailEntry))
+                if (IsWakeBuiltin(tailEntry) && !SkipWakeTest())
+                {
                     EmitWakePoint(emit, tailEntry.Arity, failLabel, pc);   // ADR-049
+                    WakeTested();
+                }
                 if (tailEntry.IsBacktrackable)
                 {
                     // Tail-return contract (mirrors the interpreter): a
@@ -1835,7 +1866,11 @@ public sealed partial class IlPredicateCompiler
                 // delegate at the alternative cursor → next clause.
                 if (inlineSites is not null && inlineSites.TryGetValue(pc, out var inl))
                 {
-                    EmitWakePoint(emit, FunctorTable.Lookup(siteFunctorId).Arity, failLabel, pc);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitWakePoint(emit, FunctorTable.Lookup(siteFunctorId).Arity, failLabel, pc);   // ADR-049
+                        WakeTested();
+                    }
                     EmitInlinedFact(emit, inl, failLabel, emitSelfDelegate!, calleeMap);
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
@@ -1862,7 +1897,11 @@ public sealed partial class IlPredicateCompiler
                     && ruleInlineSites.TryGetValue(pc, out var ruleCallee)
                     && callSiteIndexCounter is not null && resumeLabels is not null)
                 {
-                    EmitWakePoint(emit, ruleCallee.Arity, failLabel, pc);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitWakePoint(emit, ruleCallee.Arity, failLabel, pc);   // ADR-049
+                        WakeTested();
+                    }
                     emit.LoadArgument(0);                    // engine.SetB0(engine.B)
                     emit.LoadArgument(0);
                     EmitHelperCall(emit, EngineBGetter);
@@ -1907,7 +1946,11 @@ public sealed partial class IlPredicateCompiler
                     && !(IsLeafPredicate(fdCallee) || IsInlinableLeafRule(fdCallee))
                     && TryDescribeFailDirectCallee(fdCallee, calleeMap, out var fdClauses, out _))
                 {
-                    EmitWakePoint(emit, fdCallee.Arity, failLabel, pc);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitWakePoint(emit, fdCallee.Arity, failLabel, pc);   // ADR-049
+                        WakeTested();
+                    }
                     if (CpFreeGuardContinuations && guardContCtx is not null)
                     {
                         var okLbl = emit.DefineLabel($"gc_ok{lt}_{pc}");
@@ -1962,7 +2005,11 @@ public sealed partial class IlPredicateCompiler
                         || ((InlineLeafRules || forceLeafRuleInline)
                             && IsInlinableLeafRule(calleePred))))
                 {
-                    EmitWakePoint(emit, calleePred.Arity, failLabel, pc);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitWakePoint(emit, calleePred.Arity, failLabel, pc);   // ADR-049
+                        WakeTested();
+                    }
                     // The callee's pc-named locals must not collide with the
                     // caller's (both pc spaces start at 0) — salt per site.
                     var leafScope = PushScope(new LeafScope
@@ -2151,7 +2198,11 @@ public sealed partial class IlPredicateCompiler
                     && (IsLeafPredicate(calleePredX)
                         || (InlineLeafRules && IsInlinableLeafRule(calleePredX))))
                 {
-                    EmitWakePoint(emit, calleePredX.Arity, failLabel, pc);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitWakePoint(emit, calleePredX.Arity, failLabel, pc);   // ADR-049
+                        WakeTested();
+                    }
                     var tailScope = PushScope(new LeafScope { Callee = calleePredX, Tail = true });
                     EmitClauseBody(emit, calleePredX.BytecodeUnfused, 0, calleePredX.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
@@ -2191,12 +2242,16 @@ public sealed partial class IlPredicateCompiler
                     // (freeze/2 went silently unhooked once $length_enum
                     // promoted). Inline count gate: one predicted branch per
                     // iteration when no wake pends.
-                    var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
-                    emit.LoadArgument(0);
-                    EmitHasPendingWakeups(emit);
-                    emit.BranchIfFalse(skipWake);
-                    EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
-                    emit.MarkLabel(skipWake);
+                    if (!SkipWakeTest())
+                    {
+                        var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
+                        emit.LoadArgument(0);
+                        EmitHasPendingWakeups(emit);
+                        emit.BranchIfFalse(skipWake);
+                        EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
+                        emit.MarkLabel(skipWake);
+                        WakeTested();
+                    }
                     // engine.SetB0(engine.B);
                     // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);
@@ -2373,6 +2428,9 @@ public sealed partial class IlPredicateCompiler
             throw new NotSupportedException(
                 $"IL emission hit unsupported opcode 0x{(byte)op:X2} at pc={pc}.");
         }
+        // The last instruction's effect on the queue, for what the caller
+        // emits after this slice (a guard's commit, the body after it).
+        if (wakePrev >= 0 && !WakeNeutral(code, wakePrev, end)) _wakeClean = false;
     }
 
     // ============================================================================
@@ -2925,7 +2983,8 @@ public sealed partial class IlPredicateCompiler
                             selfTailLabel: selfEntry,
                             forceLeafRuleInline: isGuardSlice,
                             localSalt: isGuardSlice ? $"_idxg{i}" : "",
-                            guardContCtx: gcCtx);
+                            guardContCtx: gcCtx,
+                            wakeEntry: s == info.Clauses[i].Start ? WakeEntry.Clean : WakeEntry.Carry);
                     },
                     predicate.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                     ginfo,
@@ -2968,7 +3027,8 @@ public sealed partial class IlPredicateCompiler
                         cursorBase: callBase,
                         selfFunctorId: predicate.FunctorId,
                         selfTailLabel: selfEntry,
-                        localSalt: $"_idxfb{i}");
+                        localSalt: $"_idxfb{i}",
+                        wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
