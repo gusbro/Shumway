@@ -258,6 +258,22 @@ public sealed class WasmTierDelegate
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountDeopt(long pc) { DiagDeopts++; NoteDeoptPc(pc); }
 
+    /// <summary>The id of =/2, which a <see cref="WasmAbi.UnifyCellsRequest"/>
+    /// is counted as. Resolved at the first request: the registry fills
+    /// after this class's statics.</summary>
+    private static int UnifyBuiltinId
+    {
+        get
+        {
+            if (_unifyBuiltinId < 0 && Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
+                    FunctorTable.Intern(AtomTable.Intern("=").Id, 2), out int eq))
+                _unifyBuiltinId = eq;
+            return _unifyBuiltinId;
+        }
+    }
+
+    private static int _unifyBuiltinId = -1;
+
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountBuiltin(int builtinId)
     {
@@ -746,6 +762,29 @@ public sealed class WasmTierDelegate
 
                 long req = cx.ReadSlot(WasmAbi.BuiltinId);
                 int builtinId = (int)(uint)req;
+                if (builtinId == WasmAbi.UnifyCellsRequest)
+                {
+                    // A get_value whose pair only the engine's unifier
+                    // decides: the cells ride the mailbox, the registers are
+                    // the head's. The interpreter goes on from the next
+                    // instruction, as it does after a =/2 request that woke;
+                    // counted under =/2, which it is.
+                    int at = (int)cx.ReadSlot(WasmAbi.Cursor);
+                    CountBuiltin(UnifyBuiltinId);
+                    CountBuiltinCaller(UnifyBuiltinId, cx.OwnerFunctorOf(at));
+                    var left = new Cell(cx.ReadSlot(WasmAbi.UnifyLeft));
+                    var right = new Cell(cx.ReadSlot(WasmAbi.UnifyRight));
+                    cx.SyncEngine();
+                    if (!engine.UnifyValues(left, right))
+                    {
+                        CountBuiltinFail(UnifyBuiltinId);
+                        result = false;
+                        break;
+                    }
+                    pendingPc = (int)cx.TranslatePcToLive(at);
+                    result = true;
+                    break;
+                }
                 CountBuiltin(builtinId);
                 int trim = (int)(req >> 32);
                 int ret = (int)cx.ReadSlot(WasmAbi.Cursor);

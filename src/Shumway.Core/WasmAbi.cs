@@ -18,7 +18,8 @@ public enum WasmVerdict
     SuccessTailCall = 2,
 
     /// <summary>A builtin has to run: <see cref="WasmAbi.BuiltinId"/> says
-    /// which, its arguments are in the registers, and
+    /// which, its arguments are in the registers (or, for
+    /// <see cref="WasmAbi.UnifyCellsRequest"/>, in the mailbox), and
     /// <see cref="WasmAbi.Cursor"/> says where to come back.</summary>
     BuiltinRequest = 3,
 
@@ -398,6 +399,21 @@ public static class WasmAbi
     /// this existed.</para></summary>
     public const int ArithTableBase = 60;
     public const int ArithTableLength = 61;
+
+    /// <summary>The two cells a get_value hands the host when their pair is
+    /// one only the engine's unifier decides, an attributed variable above
+    /// all: a builtin request whose id is <see cref="UnifyCellsRequest"/>,
+    /// with the operands here and not in the registers, which the head
+    /// still needs. The host unifies them and the interpreter goes on at
+    /// the cursor, where a wake the bind queued fires at the next goal
+    /// boundary: the exit a =/2 site takes, and not the deopt a clause
+    /// compiled with the unification in its head took before.</summary>
+    public const int UnifyLeft = 62;
+    public const int UnifyRight = 63;
+
+    /// <summary>The id of that request in <see cref="BuiltinId"/>: no
+    /// registered builtin has it.</summary>
+    public const int UnifyCellsRequest = 0x7FFFFFF0;
 
     /// <summary>Where the expression evaluator leaves its answer: the value
     /// (a 60-bit integer, or the bits of a double) and which of the two it
