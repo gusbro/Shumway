@@ -302,6 +302,62 @@ export async function run(session, emit, out, editor, workspace) {
     clip.setData('text/plain', 'b :-\r\n    c.\r\n');
     program.dispatchEvent(new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true }));
     check('a pasted program keeps its lines', state(), 'a.\nb :-\n    c.\n|15');
+
+    // An edit made by code keeps the caret in sight, which the browser does
+    // only for its own edits, and moves the scroll only when the caret would
+    // leave the box. Measured on the text around the caret, not the way the
+    // editor measures it.
+    {
+      const many = Array.from({ length: 80 }, (_, i) => `l${i}.`).join('\n') + '\n';
+      const lineHeight = parseFloat(getComputedStyle(program).lineHeight);
+      const box = () => {
+        const r = program.getBoundingClientRect();
+        const top = r.top + program.clientTop;
+        return { top, bottom: top + program.clientHeight };
+      };
+      const rectOf = (s) => {
+        const i = editor.getText().indexOf(s);
+        const r = document.createRange();
+        r.setStart(...point(i));
+        r.setEnd(...point(i + s.length));
+        return r.getBoundingClientRect();
+      };
+      const endOf = (s) => editor.getText().indexOf(s) + s.length;
+      /** The bottom of the line box `n` lines below the line holding `s`: the
+       *  text's box sits half the leading inside its line box. */
+      const lineBottomBelow = (s, n) => {
+        const r = rectOf(s);
+        return r.bottom + (lineHeight - r.height) / 2 + n * lineHeight;
+      };
+
+      await paint(many);
+      program.scrollTop = 0;
+      select(endOf('l2.'));
+      key('Enter');
+      check('Enter inside the box does not scroll', program.scrollTop, 0);
+
+      await paint(many);
+      program.scrollTop = 0;
+      let last = 0;
+      while (lineBottomBelow(`l${last + 1}.`, 0) <= box().bottom) last++;
+      select(endOf(`l${last}.`));
+      key('Enter');
+      // The caret is on the new empty line, the one below l<last>.
+      const moved = program.scrollTop;
+      check('Enter on the last visible line brings the new line into the box',
+            moved > 0 && lineBottomBelow(`l${last}.`, 1) <= box().bottom + 0.5, true);
+      check('and scrolls by no more than a line', moved <= Math.ceil(lineHeight) + 1, true);
+
+      await paint(many);
+      program.scrollTop = program.scrollHeight;
+      const atEnd = program.scrollTop;
+      select(many.length);
+      key('Enter');
+      // The text ended in a line feed, so the caret was on the empty line
+      // below l79; the new line feed puts it one further down.
+      check('Enter at the end of the text follows the new last line',
+            program.scrollTop > atEnd && lineBottomBelow('l79.', 2) <= box().bottom + 0.5, true);
+    }
   }
 
   await editor.setText('');
