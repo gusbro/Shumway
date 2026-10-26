@@ -49,7 +49,9 @@ public static class ArithmeticEvaluator
             Tag.BigInt => Number.FromHeap(engine, cell),
             Tag.Rational => new Number(engine.AsRational(cell)),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
-            Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
+            // An attributed variable is unbound too: the wake that could
+            // bind it fires at a goal boundary, never inside an evaluation.
+            Tag.Ref or Tag.AttVar => throw new PrologRuntimeException("instantiation_error"),
             Tag.Atom => EvaluateAtomConstant(engine, cell),
             // Anything else in arithmetic position is non-evaluable.
             // ISO §7.1.2: type_error(evaluable, _); the offending cell

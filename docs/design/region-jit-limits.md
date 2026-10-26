@@ -44,7 +44,7 @@ make the prediction cheap:
 |---|---|
 | a member's block, from one region to the next | the same to within 2% for 90% of the members, 28% at worst |
 | a member never emitted, estimated from its opcodes | median error 21%, with a heavy tail where guards inline their callees |
-| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57 |
+| the shared tail (return and fail handlers, resume entries, push ladder) | 181 + 23 per resume entry + 5 per ladder entry, mean error 57; 192 since the return path decodes the region's own run of markers (+11 on every region measured), plus the members' return compares, up to 8 each, counted with the member; 155 + 20 per resume entry + 4 per ladder entry, mean error 32, since the frames are addressed through a reference |
 
 So a member that was ever emitted predicts itself, the opcode model serves
 the first emission, and the tail follows from the plan.
@@ -179,6 +179,55 @@ estimated from its opcodes, fitted like the reference model (median error
 20%; a ratio to the references errs 36%, the arithmetic opcodes inlining
 far more per reference than the rest). The prologue, the tail and the two
 arguments add 25.
+
+When an opcode's emission changes, its weight moves by the change and the
+rest of the fit stays. `get_value_x` and `get_value_y` were fitted at zero
+as helper calls; emitted as the two-cell unify (ADR-060), each site costs
+84 and 44 more references and 11 and 5 more locals, measured over the
+corpus with the emission on and off (the residual per member is under 2
+references), and the weights carry that. On the members with such sites
+the model's median error falls from 22% to 16% in references and from 25%
+to 19% in locals; over every member, from 24% to 23% and from 26% to 24%.
+The unify's four binding shapes share one bind block: in line, each was a
+`TrailBind` inline of its own, 23 locals per site, and a region at the
+cap on locals lost more of its tail to them than the sites gained.
+
+An opcode whose weight was fitted is fitted again instead when its
+emission changes. `a_int_bin` and `a_int_cmp` called `FusedBin` and
+`FusedCmp`, inlined whole by the JIT, 33 and 24 inlines per site, which
+their weights carried (981 and 632 sixteenths of a local). Emitted on
+method locals (ADR-060), with the helper called through an entry that
+inlines nothing, a site costs 37 and 27 fewer locals than before, measured
+with the lane on and off, and the weights fitted again on the corpus with
+every other weight fixed are 56 and 22 references, 30 and 17 locals. On
+the members with such sites the model's median error in references falls
+from 26% to 21% and in locals stays at 25%.
+
+The frames addressed through a reference (ADR-060 item 6) take references
+out of the tail, not the members: the ladder stores and the restore loads
+address the frame's cells at constant offsets from one reference, and the
+tail fitted again over the corpus is 155 + 20 per resume entry + 4 per
+ladder entry, mean error 32 (192, 23 and 5 with every word indexed, mean
+error 38 on the same regions). In the members, a push site takes the two
+references (5 more of its own) and `allocate` with its `deallocate` or
+`deallocate_proceed` costs 12 and 7 fewer; every allocate has one of the
+two, so a fit cannot tell the three apart and the pair's change goes to
+the deallocate weights, 85 to 73 and 115 to 109. The JIT's locals do not
+move.
+
+A wake test left out where the queue is known empty (ADR-049, stage 2e)
+takes references and locals from the sites it was in front of, measured
+with the tests hoisted and kept: an `execute` costs 16 references fewer
+per site, an `a_int_cmp` 21, an `a_int_bin` 9 and a `cut` 19, and in
+locals an `a_int_cmp` 12 fewer, an `a_int_bin` 7, an `execute` 4 and a
+`cut` 5 (the operand checks of an arithmetic wake point were the JIT's
+inlines). The weights at zero stay at zero; the fitted ones are fitted
+again with the rest fixed: in references `execute` 21 to 10, `a_int_bin`
+56 to 46, `a_int_cmp` 22 to 6 and `neck_cut` 39 to 17; in locals `call` 90
+to 107, `call_builtin` 51 to 74, `a_int_bin` 477 to 390, `a_int_cmp` 264
+to 42 and `neck_cut` 145 to 216. On the members with such sites the
+model's median error in locals falls from 28% to 27% and in references
+stays at 21%; the tail does not move.
 
 `IlRegionBuilder.Build` holds the sum under the locals budget beside the
 reference budget, and a region emitted past the target is planned again

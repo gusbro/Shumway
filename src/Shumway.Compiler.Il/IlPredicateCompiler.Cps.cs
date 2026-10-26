@@ -944,17 +944,18 @@ public sealed partial class IlPredicateCompiler
         var no = emit.DefineLabel($"cps_own_no_{NextLabelSeq()}");
         var slow = emit.DefineLabel($"cps_own_slow_{NextLabelSeq()}");
         var go = emit.DefineLabel($"cps_own_go_{NextLabelSeq()}");
-        EmitResumeOwnFast(emit, l, _emitOwnerFid, cur, own, no);
+        // A continuation method has no run of its own: the pairs table decodes.
+        EmitResumeOwnFast(emit, l, _emitOwnerFid, static e => e.LoadConstant(-1), 0, cur, own, no);
         emit.Branch(no);
         emit.MarkLabel(own);
         emit.LoadLocal(l.Slow);
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(go);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);
@@ -995,10 +996,10 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rfl, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rfl, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rfl, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(done);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);
@@ -1194,10 +1195,10 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfTrue(slow);
         EmitFrameRestoreBody(emit, l);
         emit.LoadArgument(0);
-        EmitLoadCellInt(emit, l.Ctl, CtlHb);
+        EmitLoadCtlInt(emit, l, CtlHb);
         EmitStoreEngineField(emit, EngHb);
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () => emit.LoadLocal(b));
-        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCellInt(emit, l.Ctl, CtlB));
+        EmitStoreRegister(emit, rf, MachineRegs.B, () => EmitLoadCtlInt(emit, l, CtlB));
         emit.Branch(go);
         emit.MarkLabel(slow);
         emit.LoadArgument(0);

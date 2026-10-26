@@ -323,6 +323,8 @@ public sealed partial class IlPredicateCompiler
         Row(ArithCmpMethod, MachineRegs.None, MachineRegs.None);
         Row(ArithFusedBinMethod, MachineRegs.All, MachineRegs.All);
         Row(ArithFusedCmpMethod, MachineRegs.All, MachineRegs.All);
+        Row(ArithFusedBinColdMethod, MachineRegs.All, MachineRegs.All);
+        Row(ArithFusedCmpColdMethod, MachineRegs.All, MachineRegs.All);
         Row(ArithIsEmptyGetter, MachineRegs.None, MachineRegs.None);
         Row(ArithIsPermMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(ArithIsRegMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
@@ -446,6 +448,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineUnifyPermanentMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineUnifyRegisterWithHeapAtMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineUnifyRegistersMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
+        Row(EngineUnifyValuesMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineUnifyStructureMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineUnifyValueXMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EngineUnifyValueYMethod, MachineRegs.E | MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);

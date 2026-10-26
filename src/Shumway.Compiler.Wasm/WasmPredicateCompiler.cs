@@ -2195,10 +2195,12 @@ public static class WasmPredicateCompiler
                 case Opcode.GetVariableY:
                     YStore(ins.I0, () => RegLoad(ins.I1)); return false;
                 case Opcode.GetValueY:
-                    EmitUnifyTwo(() => YLoad(ins.I0), () => RegLoad(ins.I1), ins.Pc);
+                    EmitUnifyTwo(() => YLoad(ins.I0), () => RegLoad(ins.I1), ins.Pc,
+                        () => EmitUnifyCellsRequest(ins.Pc, () => YLoad(ins.I0), () => RegLoad(ins.I1)));
                     return false;
                 case Opcode.GetValueX:
-                    EmitUnifyTwo(() => RegLoad(ins.I0), () => RegLoad(ins.I1), ins.Pc);
+                    EmitUnifyTwo(() => RegLoad(ins.I0), () => RegLoad(ins.I1), ins.Pc,
+                        () => EmitUnifyCellsRequest(ins.Pc, () => RegLoad(ins.I0), () => RegLoad(ins.I1)));
                     return false;
                 case Opcode.GetVariableX:
                     RegStore(ins.I0, () => RegLoad(ins.I1)); return false;
@@ -9681,6 +9683,28 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
+        /// <summary>At a get_value whose pair only the engine's unifier
+        /// decides: the two cells as the instruction reads them (not
+        /// dereferenced: the engine follows a reference to the heap cell it
+        /// ends at, where a value it was handed without a home it would copy
+        /// onto the heap, one cell the interpreter does not allocate) to the
+        /// host as a builtin request, the rest of the clause the
+        /// interpreter's from the next instruction. A =/2 site leaves the
+        /// same way with its arguments in the registers; a head's registers
+        /// must stay, so these ride the mailbox. The clause compiler puts a
+        /// clause's own <c>V = W</c> of permanents into a get_value, which
+        /// is where clpr binds its attributed variables.</summary>
+        private void EmitUnifyCellsRequest(int pc, Action loadLeft, Action loadRight)
+        {
+            StoreSlot64(WasmAbi.UnifyLeft, loadLeft);
+            StoreSlot64(WasmAbi.UnifyRight, loadRight);
+            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                (uint)WasmAbi.UnifyCellsRequest | (-1L << 32))));   // no env trim
+            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                _env.EncodeAddress(pc + OpcodeTable.Get((byte)Opcode.GetValueY).Size))));
+            EmitReturn(WasmVerdict.BuiltinRequest);
+        }
+
         private void EmitPutVariableY(Instr ins)
         {
             EmitFreshHeapVar(ins.Pc);                               // LC0 = Ref(new)
@@ -9900,6 +9924,8 @@ public static class WasmPredicateCompiler
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64DivideSigned());
                     Op(new LocalSet(LC0));
+                    // -(2^59) // -1 is the one quotient that leaves 60 bits.
+                    if (!bounded) FitsCheckC0(pcDeopt);
                     break;
                 case 7:     // Min
                 case 8:     // Max

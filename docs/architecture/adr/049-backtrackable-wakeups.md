@@ -257,6 +257,25 @@ canaries (`PreludeIlBakeTests`).
   activation to the interpreter or resume at a call's continuation, and a
   region's return no longer wakes. A bundle's persisted IL keeps the stage 2
   points.
+- **Stage 2e: a test per stretch, not per goal (2026-10-25).** Compiled
+  code leaves a wake test out where the queue is known empty: from a
+  clause's entry, or from the last test that drained or interrupted, over
+  code that binds no existing variable and calls nothing (puts, variable
+  reads, frames, cuts, arithmetic into a first-occurrence variable). A wake
+  enters the queue only when a binding meets an attributed variable, in a
+  unification instruction, a builtin or a callee, so the test in front of
+  the goal after such code stays; an arithmetic wake point leaves the queue
+  as it finds it when its operands are bound, so nothing is known after
+  one. Joins (an if-then-else's end, its else entry), the body of an
+  inlined callee and a body whose head matched elsewhere start knowing
+  nothing. The queue holds no live wake at a clause entry: a call boundary
+  tested, a resume dropped what the undone bindings queued, a guard that
+  failed left only wakes of undone bindings, and a catch unwind truncates.
+  Not under continuation methods, whose cold method enters at any
+  instruction boundary. `SHUMWAY_IL_HOIST_WAKES=0` tests at every goal, for
+  measuring; `IlWakeHoistTests` compares both forms with Tier-0 on frozen
+  variables bound by a head, a builtin, an inline unification, an
+  if-then-else condition, a callee's last unification and a failing clause.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).

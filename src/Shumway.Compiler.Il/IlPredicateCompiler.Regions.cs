@@ -187,6 +187,9 @@ public sealed partial class IlPredicateCompiler
         public IlRegion Region = null!;
         public int RegionFid;
         public IlLabel RetLabel = null!;
+        // The return of the member being emitted: its compare chain over the
+        // sites that call it, or RetLabel.
+        public IlLabel MemberRetLabel = null!;
         public IlLocal? CursorLocal;
         public bool TailCalls;
         public IlLabel DispatchLabel = null!;
@@ -496,7 +499,7 @@ public sealed partial class IlPredicateCompiler
                 callUnlessOwned: callUnlessOwned, callersOf: callersOf);
         if (costBudget < 0) costBudget = IlRegionCost.PlanBudget;
         var byRefs = IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
-            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget,
+            memberCost: m => RegionMemberCost(m, calleeMap) + IlRegionCost.PerMemberReturn, costBudget: costBudget,
             callUnlessOwned: callUnlessOwned, callersOf: callersOf);
         if (localsBudget < 0) localsBudget = IlRegionCost.LocalsTarget > 0 ? IlRegionCost.LocalsPlanBudget : 0;
         if (localsBudget <= 0) return byRefs;
@@ -505,7 +508,7 @@ public sealed partial class IlPredicateCompiler
         foreach (var m in byRefs.Members) refs += RegionMemberCost(m, calleeMap);
         if (refs < IlRegionCost.LocalsFloorRefs) return byRefs;
         return IlRegionBuilder.Build(root, calleeMap, extraEligible: Eligible,
-            memberCost: m => RegionMemberCost(m, calleeMap), costBudget: costBudget,
+            memberCost: m => RegionMemberCost(m, calleeMap) + IlRegionCost.PerMemberReturn, costBudget: costBudget,
             memberLocals: m => RegionMemberLocals(m, calleeMap), localsBudget: localsBudget,
             callUnlessOwned: callUnlessOwned, callersOf: callersOf);
     }
@@ -759,6 +762,26 @@ public sealed partial class IlPredicateCompiler
         var cursorLabels = new IlLabel[plan.TotalCursors + resumeCount];
         var resumeCursor = new Dictionary<int, int>(resumeCount);
         cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
+        // The region's markers, cursors 1 .. TotalCursors + resumeCount - 1, as
+        // one run of consecutive ids, reserved before the first is emitted: a
+        // return or a fail decodes its own marker by subtraction. Headroom, so
+        // a recompile of a region that grew a little keeps the run.
+        int markerRunCount = plan.TotalCursors + resumeCount - 1;
+        int markerRunReserve = (markerRunCount + 15) & ~15;
+        // Not for the linker's warm pass: its scratch method runs nowhere, and
+        // the building process must not hold the runs the loader will reserve.
+        bool runtimeRun = _persistPatches is null && !_persistScratch;
+        int markerRunBase = runtimeRun
+            ? Activation.ReserveResumeMarkerRange(regionFid, 1, markerRunReserve) : -1;
+        if (runtimeRun)
+            System.Threading.Interlocked.Increment(
+                ref markerRunBase >= 0 ? ref RegionMarkerRuns : ref RegionMarkerRunMisses);
+        void EmitRunBase(IlEmit e)
+            => EmitResumeMarkerRunBase(e, regionFid, 1, markerRunReserve, markerRunBase);
+        var memberReturn = ReturnSitesByMember(region, plan, RegionReturnCompares);
+        var memberRetLabel = new Dictionary<int, IlLabel>(memberReturn.Count);
+        foreach (int mi in memberReturn.Keys)
+            memberRetLabel[mi] = emit.DefineLabel($"rret_m{mi}");
         var cursorBySite = new Dictionary<(int, int), int>();
         var clauseAltCursor = new Dictionary<(int, int), int>();
         var indexNodeCursor = new Dictionary<(int, int), int>();
@@ -789,7 +812,8 @@ public sealed partial class IlPredicateCompiler
 
         var ctx = new RegionEmitContext
         {
-            Region = region, RegionFid = regionFid, RetLabel = retLabel, CursorLocal = curLoc,
+            Region = region, RegionFid = regionFid, RetLabel = retLabel, MemberRetLabel = retLabel,
+            CursorLocal = curLoc,
             TailCalls = CrossRegionTailReturn && !DebugMode,
             DispatchLabel = dispatchLabel, FailLabel = failLabel, MemberEntry = memberEntry,
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
@@ -836,6 +860,7 @@ public sealed partial class IlPredicateCompiler
             {
                 var member = region.Members[mi];
                 ctx.CurrentMemberIndex = mi;
+                ctx.MemberRetLabel = memberRetLabel.TryGetValue(mi, out var mrl) ? mrl : retLabel;
                 _emitMemberFid = member.FunctorId;               // ADR-049
                 int refsBefore = emit.LocalRefCount, instrsBefore = emit.InstructionCount,
                     inlinesBefore = emit.InlineCount, localsBefore = emit.LocalCount;
@@ -845,7 +870,7 @@ public sealed partial class IlPredicateCompiler
                 {
                     EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
                         failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
-                        calleeMap: calleeMap, regionCtx: ctx);
+                        calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
                     ops = OpcodeHistogram(member.BytecodeUnfused, null);
                 }
                 else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
@@ -875,7 +900,43 @@ public sealed partial class IlPredicateCompiler
         trace.MembersEndInlines = emit.InlineCount;
         trace.MembersEndLocals = emit.LocalCount;
         trace.ResumeCursors = resumeCursor.Count;
+        // A member's return: Cp against the markers of the sites that call it,
+        // a direct branch each, before the general return.
+        foreach (var (mi, sites) in memberReturn)
+        {
+            emit.MarkLabel(memberRetLabel[mi]);
+            foreach (int c in sites)
+            {
+                emit.LoadArgument(0);
+                EmitHelperCall(emit, EngineCpGetter);
+                EmitResumeMarker(emit, regionFid, c);
+                emit.BranchIfEqual(cursorLabels[c]);
+            }
+            emit.Branch(retLabel);
+        }
         emit.MarkLabel(retLabel);
+        // The common return, inside the region: Cp is a marker of the region's
+        // own run, the cursor its distance from the run's base. The base is a
+        // constant, -1 for no run: the test of its sign folds, and the helper
+        // decides the rest (another region's marker, a wake cursor, no marker).
+        var retSlow = emit.DefineLabel("rret_slow");
+        EmitRunBase(emit);
+        emit.LoadConstant(0);
+        emit.BranchIfLess(retSlow);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineCpGetter);
+        EmitRunBase(emit);
+        emit.Subtract();
+        emit.StoreLocal(curLoc);                              // cursor - 1
+        emit.LoadLocal(curLoc);
+        emit.LoadConstant(markerRunCount);
+        emit.UnsignedBranchIfGreaterOrEqual(retSlow);
+        emit.LoadLocal(curLoc);
+        emit.LoadConstant(1);
+        emit.Add();
+        emit.StoreLocal(curLoc);
+        emit.Branch(dispatchLabel);                           // intra-region return
+        emit.MarkLabel(retSlow);
         emit.LoadArgument(0);
         // Must go through EmitFunctorId, not a raw LoadConstant:
         // in persist mode a build-process fid means nothing at runtime. With
@@ -901,7 +962,8 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         var failOut = emit.DefineLabel("rfail_out");
         if (frames is not null)
-            EmitResumeOwnFast(emit, frames, regionFid, curLoc, resumeCheck, failOut);
+            EmitResumeOwnFast(emit, frames, regionFid, EmitRunBase, markerRunCount,
+                curLoc, resumeCheck, failOut);
         if (pushSites > 0)
         {
             // ADR-057/058: a choice point this region pushed is resumed here, at
@@ -1048,7 +1110,7 @@ public sealed partial class IlPredicateCompiler
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 forceLeafRuleInline: true,
                                 localSalt: $"_rm{mi0}g{i0}",
-                                guardContCtx: gcCtx);
+                                guardContCtx: gcCtx, wakeEntry: WakeEntry.Clean);
                         else
                         {
                             if (dynBody is not null)
@@ -1056,7 +1118,7 @@ public sealed partial class IlPredicateCompiler
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
-                                regionCtx: ctx);
+                                regionCtx: ctx, wakeEntry: WakeEntry.Carry);   // the body after the commit
                         }
                     },
                     member.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
@@ -1098,7 +1160,7 @@ public sealed partial class IlPredicateCompiler
                         clauses[i].Start, guardEnd + cutSz,
                         ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                         calleeMap: calleeMap, regionCtx: ctx,
-                        localSalt: $"_dynfb{mi}_{i}");
+                        localSalt: $"_dynfb{mi}_{i}", wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
@@ -1117,7 +1179,7 @@ public sealed partial class IlPredicateCompiler
             }
             EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
-                calleeMap: calleeMap, regionCtx: ctx);
+                calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
         }
     }
 
@@ -1233,7 +1295,7 @@ public sealed partial class IlPredicateCompiler
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 forceLeafRuleInline: true,
                                 localSalt: $"_ridx{mi}g{i0}",
-                                guardContCtx: gcCtx);
+                                guardContCtx: gcCtx, wakeEntry: WakeEntry.Clean);
                         else
                         {
                             if (dynBody is not null)
@@ -1241,7 +1303,7 @@ public sealed partial class IlPredicateCompiler
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
-                                regionCtx: ctx);
+                                regionCtx: ctx, wakeEntry: WakeEntry.Carry);   // the body after the commit
                         }
                     },
                     member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
@@ -1296,14 +1358,14 @@ public sealed partial class IlPredicateCompiler
                         info.Clauses[i].Start, guardEnd + cutSz,
                         ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                         calleeMap: calleeMap, regionCtx: ctx,
-                        localSalt: $"_ridxfb{mi}_{i}");
+                        localSalt: $"_ridxfb{mi}_{i}", wakeEntry: WakeEntry.Clean);
                     emit.Branch(dynBody!);
                 }
                 continue;
             }
             EmitClauseBody(emit, member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
-                calleeMap: calleeMap, regionCtx: ctx);
+                calleeMap: calleeMap, regionCtx: ctx, wakeEntry: WakeEntry.Clean);
         }
     }
 
@@ -1432,7 +1494,7 @@ public sealed partial class IlPredicateCompiler
                 // where the code wakes in front of its goals; persisted code
                 // wakes here, CP holding the continuation the resume jumps to.
                 if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
-                emit.Branch(ctx.RetLabel);
+                emit.Branch(ctx.MemberRetLabel);
                 pcRef = pc + 1;
                 return true;
             case Opcode.DeallocateProceed:
@@ -1441,7 +1503,7 @@ public sealed partial class IlPredicateCompiler
                 // After the deallocate, so CP is the caller continuation the
                 // proceed-shape resume captures.
                 if (!WakePoints) EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
-                emit.Branch(ctx.RetLabel);
+                emit.Branch(ctx.MemberRetLabel);
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
             case Opcode.Call:
@@ -1471,7 +1533,11 @@ public sealed partial class IlPredicateCompiler
                     EmitResumeMarker(emit, ctx.RegionFid, cursor);
                     EmitHelperCall(emit, EngineSetCpMethod);
                     // ADR-049 stage 2: the interrupt in front of the call.
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
+                        WakeTested();
+                    }
                     if (intra) EmitRegionGcSafePoint(emit, fid);
                     if (intra)
                     {
@@ -1503,7 +1569,11 @@ public sealed partial class IlPredicateCompiler
                 {
                     // Intra-region tail call: Cp already holds this member's caller
                     // continuation, so the callee's proceed returns straight to it.
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                        WakeTested();
+                    }
                     EmitRegionGcSafePoint(emit, fid);
                     emit.Branch(ctx.MemberEntry[fid]);
                 }
@@ -1511,7 +1581,11 @@ public sealed partial class IlPredicateCompiler
                 {
                     // Cross-region tail call: tail-trampoline (Cp unchanged = the
                     // region's caller continuation; the callee's proceed returns to it).
-                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                    if (!SkipWakeTest())
+                    {
+                        EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
+                        WakeTested();
+                    }
                     EmitContinuationTailCall(emit, ctx.TailCalls, ctx.CursorLocal!,
                         () => EmitResumeMarker(emit, fid, 0));
                     emit.LoadArgument(0);
@@ -1562,6 +1636,53 @@ public sealed partial class IlPredicateCompiler
     /// turns it off.</summary>
     internal static bool RegionGcSafePoints { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_REGION_GC") != "0";
+
+    /// <summary>A member's proceed compares Cp with the markers of up to this
+    /// many sites that call it before the general return, a direct branch per
+    /// site instead of the dispatch switch; 0 turns the compares off.
+    /// <c>SHUMWAY_REGION_RET_COMPARES</c> sets it.</summary>
+    public static int RegionReturnCompares =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_RET_COMPARES"), out int n) ? n : 4;
+
+    /// <summary>Per member (by index), the cursors of the intra-region sites
+    /// whose continuation its proceed may return to: the sites that call it,
+    /// and the sites that call a member from which it is reached by tail
+    /// calls (a tail call hands the caller's Cp on). A member with no such
+    /// site, or with more than <paramref name="cap"/>, is left out.</summary>
+    private static Dictionary<int, List<int>> ReturnSitesByMember(
+        IlRegion region, IlRegionPlan plan, int cap)
+    {
+        var result = new Dictionary<int, List<int>>();
+        if (cap <= 0) return result;
+        var members = region.Members;
+        var indexOf = new Dictionary<int, int>(members.Count);
+        for (int i = 0; i < members.Count; i++) indexOf[members[i].FunctorId] = i;
+        var sites = new List<int>[members.Count];
+        for (int i = 0; i < members.Count; i++) sites[i] = new List<int>();
+        foreach (var s in plan.Sites)
+            if (s.Kind == RegionCursorKind.IntraCallReturn && indexOf.TryGetValue(s.CalleeFid, out int m))
+                sites[m].Add(s.Cursor);
+        // To a fixpoint: tail calls may form cycles.
+        for (bool changed = true; changed;)
+        {
+            changed = false;
+            for (int i = 0; i < members.Count; i++)
+                foreach (var cs in members[i].CallSites)
+                {
+                    if (!cs.IsExecute || !indexOf.TryGetValue(cs.CalleeFunctorId, out int callee) || callee == i)
+                        continue;
+                    foreach (int c in sites[i])
+                        if (!sites[callee].Contains(c)) { sites[callee].Add(c); changed = true; }
+                }
+        }
+        for (int i = 0; i < members.Count; i++)
+            if (sites[i].Count > 0 && sites[i].Count <= cap)
+            {
+                sites[i].Sort();
+                result[i] = sites[i];
+            }
+        return result;
+    }
 
     private static void EmitRegionGcSafePoint(IlEmit emit, int fid)
     {

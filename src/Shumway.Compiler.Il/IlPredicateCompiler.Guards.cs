@@ -1560,7 +1560,8 @@ public sealed partial class IlPredicateCompiler
                 // Slice 1 — up to the committing neck cut.
                 EmitClauseBody(emit, code, c.Start, c.CutPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
-                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a", guardContCtx: gcCtx);
+                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a", guardContCtx: gcCtx,
+                    wakeEntry: WakeEntry.Clean);   // entered past the site's wake point
                 // The cut: a goal boundary (flush pending wakeups; a failing
                 // hook backtracks into the next alternative, pre-commit) — but
                 // no engine Cut call: a fail-direct callee pushed nothing.
@@ -1881,10 +1882,15 @@ public sealed partial class IlPredicateCompiler
         // ---- Commit (replaces the cut opcode). ----
         // ADR-061: a point to resume at; its slow paths leave from here.
         if (cpsFields) CpsInstructionBoundary(emit, false);
-        var rare = emit.DefineLabel($"cf_rare{salt}");
-        emit.LoadArgument(0);
-        EmitHasPendingWakeups(emit);
-        emit.BranchIfTrue(rare);
+        // The commit's wake test, left out where the guard could queue none.
+        bool testWakes = !SkipWakeTest();
+        IlLabel? rare = testWakes ? emit.DefineLabel($"cf_rare{salt}") : null;
+        if (testWakes)
+        {
+            emit.LoadArgument(0);
+            EmitHasPendingWakeups(emit);
+            emit.BranchIfTrue(rare!);
+        }
         EmitTheCut();
         if (g.NeedsSnapshot)
         {
@@ -1892,8 +1898,10 @@ public sealed partial class IlPredicateCompiler
             LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(hb, CpsGuardHbField);
             EmitHelperCall(emit, EngineCommitIlGuardMethod);
         }
+        if (testWakes)
+        {
         emit.Branch(after);
-        emit.MarkLabel(rare);
+        emit.MarkLabel(rare!);
         bool rareLeft = cpsFields && EmitColdExit(emit);
         if (!rareLeft)
         {
@@ -1927,7 +1935,9 @@ public sealed partial class IlPredicateCompiler
             EmitHelperCall(emit, EngineCommitIlGuardMethod);
         }
         }
+        }
         emit.MarkLabel(after);
+        WakeTested();
         // Committed: the guard's locals are dead, its body has boundaries.
         cpsOpaque.Dispose();
 

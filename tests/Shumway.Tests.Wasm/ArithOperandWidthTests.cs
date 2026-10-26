@@ -57,6 +57,7 @@ public sealed class ArithOperandWidthTests
         Try("md2(7, -2, R0)") + ", X = R0.", Try("md2(-7, -2, R0)") + ", X = R0.",
         Try("d2(1, 0, _)") + ".", Try("md2(1, 0, _)") + ".", Try("dm(1, 0, _)") + ".",
         "M is 2^59 - 1, " + Try("d(M, -1, R0)") + ", X = R0.",
+        "N is -(2^59), " + Try("d(N, -1, R0)") + ", X = R0.",   // the one quotient past 60 bits
         "N is -(2^59), " + Try("md(N, 7, R0)") + ", X = R0.",
         Try("mn(3, 5, R0)") + ", X = R0.", Try("mn(-3, -5, R0)") + ", X = R0.",
         Try("ab(-5, R0)") + ", X = R0.", Try("ab(0, R0)") + ", X = R0.", Try("ab(5, R0)") + ", X = R0.",
@@ -111,6 +112,7 @@ public sealed class ArithOperandWidthTests
             "B is 2^31, m(B, B, X), X =:= 2^62.", "B is -(2^31), m(B, B, X), X =:= 2^62.",
             "s(1, 0, 1).", "\\+ s(1, 1, 0).", "f(3, 0.5, X), X =:= 3000.5.",
             "B is 2^58, \\+ c(B, 0).",
+            "N is -(2^59), d(N, -1, X), X =:= 2^59.",
             "B is 2^52 - 11, f(B, 0.5, X), X =:= 4503599627370485248.0.",
             "B is 2^52 - 11, Y is float(4503599627370485248), \\+ c(B, Y)." })
             Assert.True(tiered.Query(check).Success, check);

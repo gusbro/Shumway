@@ -102,9 +102,216 @@ public sealed partial class IlPredicateCompiler
     internal static bool InlineUnifyRegisterWithCell { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_URC") != "0";
 
+    /// <summary>Whether =/2, get_value_x and get_value_y unify their two cells
+    /// inline (<see cref="EmitUnifyTwoCells"/>). An off switch for measuring it.</summary>
+    internal static bool InlineUnifyTwoCells { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_UNIFY2") != "0";
+
+    /// <summary>Whether get_value_x and get_value_y take the two-cell unify
+    /// (<see cref="EmitUnifyTwoCells"/>) rather than the register-with-cell
+    /// path and the register helper. An off switch for measuring it.</summary>
+    internal static bool InlineGetValueTwoCells { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_INLINE_GETVALUE") != "0";
+
+    /// <summary>=/2 sites emitted inline, over every method compiled in this process.</summary>
+    public static int InlineUnifySites;
+    /// <summary>get_value_x and get_value_y sites emitted inline, over every
+    /// method compiled in this process.</summary>
+    public static int InlineGetValueSites;
+
     private const int KU = 60;
 
     private static long TagBits(Tag t) => (long)t << Cell.TagShift;
+
+    private const int AttVarOrPstrTags = 1 << (int)Tag.AttVar | 1 << (int)Tag.Pstr;
+    private const int CompoundTags = 1 << (int)Tag.Str | 1 << (int)Tag.Lis;
+
+    /// <summary>Two cells unified, the result left on the stack: the mirror
+    /// of the wasm tier's EmitUnifyTwo. Both sides dereferenced; the same cell
+    /// succeeds; a plain unbound variable binds to the other side (between
+    /// two, the younger to the older, as BindVarToVar; a compound reached
+    /// through a reference as a reference to its home, as BindVarToCellValue),
+    /// with the trail when it is older than HB; two distinct immediates fail.
+    /// An attributed variable, a packed string, two compounds, two boxed
+    /// numbers and the occurs check take UnifyValues, whose answer is the
+    /// same.</summary>
+    private static void EmitUnifyTwoCells(IlEmit emit, RegisterFile rf, Action pushA, Action pushB)
+    {
+        var ca = rf.Temp(typeof(Cell), KU + 2);
+        var cb = rf.Temp(typeof(Cell), KU + 3);
+        var a = rf.Temp(typeof(long), KU + 2);
+        var b = rf.Temp(typeof(long), KU + 3);
+        var ha = rf.Temp(typeof(int), KU + 2);
+        var hb = rf.Temp(typeof(int), KU + 3);
+        var heap = rf.Temp(typeof(Cell[]), KU + 2);
+        // One bind for the four shapes: the home that takes the bits, the
+        // value's bits and home. Four binds in line cost the method four
+        // TrailBind inlines per site, and a region at the cap on locals lost
+        // its tail to them.
+        var bindHome = rf.Temp(typeof(int), KU + 4);
+        var valueHome = rf.Temp(typeof(int), KU + 5);
+        var valueBits = rf.Temp(typeof(long), KU + 5);
+        int n = NextLabelSeq();
+        var slow = emit.DefineLabel($"u2_slow_{n}");
+        var yes = emit.DefineLabel($"u2_yes_{n}");
+        var no = emit.DefineLabel($"u2_no_{n}");
+        var done = emit.DefineLabel($"u2_done_{n}");
+        var aValue = emit.DefineLabel($"u2_avalue_{n}");
+        var bothBound = emit.DefineLabel($"u2_bound_{n}");
+        var aVarBValue = emit.DefineLabel($"u2_bind_ab_{n}");
+        var bindBToA = emit.DefineLabel($"u2_bind_ba_{n}");
+        var bindValue = emit.DefineLabel($"u2_bindv_{n}");
+        var bind = emit.DefineLabel($"u2_bind_{n}");
+
+        pushA();
+        emit.StoreLocal(ca);
+        pushB();
+        emit.StoreLocal(cb);
+        EmitLoadEngineField(emit, EngHeap);
+        emit.StoreLocal(heap);
+        EmitDerefBits(emit, heap, ca, a, ha);
+        EmitDerefBits(emit, heap, cb, b, hb);
+        // The same cell: the same variable, equal immediates, one compound.
+        emit.LoadLocal(a);
+        emit.LoadLocal(b);
+        emit.BranchIfEqual(yes);
+        emit.LoadArgument(0);
+        EmitHelperCall(emit, EngineOccursModeGetter);
+        emit.BranchIfTrue(slow);
+        EmitTagIs(emit, a, Tag.Ref);
+        emit.BranchIfFalse(aValue);
+        // a is a plain unbound variable at ha.
+        EmitTagIs(emit, b, Tag.Ref);
+        emit.BranchIfFalse(aVarBValue);
+        // Both unbound: the younger home takes the reference.
+        emit.LoadLocal(ha);
+        emit.LoadLocal(hb);
+        emit.BranchIfLess(bindBToA);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(b);
+        emit.StoreLocal(valueBits);
+        emit.Branch(bind);
+        emit.MarkLabel(bindBToA);
+        emit.LoadLocal(hb);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(a);
+        emit.StoreLocal(valueBits);
+        emit.Branch(bind);
+        emit.MarkLabel(aVarBValue);
+        EmitBranchIfTagIn(emit, b, AttVarOrPstrTags, slow);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(b);
+        emit.StoreLocal(valueBits);
+        emit.LoadLocal(hb);
+        emit.StoreLocal(valueHome);
+        emit.Branch(bindValue);
+        emit.MarkLabel(aValue);
+        EmitTagIs(emit, b, Tag.Ref);
+        emit.BranchIfFalse(bothBound);
+        // b is a plain unbound variable at hb, a a value.
+        EmitBranchIfTagIn(emit, a, AttVarOrPstrTags, slow);
+        emit.LoadLocal(hb);
+        emit.StoreLocal(bindHome);
+        emit.LoadLocal(a);
+        emit.StoreLocal(valueBits);
+        emit.LoadLocal(ha);
+        emit.StoreLocal(valueHome);
+        emit.MarkLabel(bindValue);
+        EmitValueBitsToBind(emit, valueBits, valueHome);
+        emit.StoreLocal(valueBits);
+        emit.MarkLabel(bind);
+        EmitBindBits(emit, heap, bindHome, () => emit.LoadLocal(valueBits));
+        emit.Branch(yes);
+        emit.MarkLabel(bothBound);
+        // Two values, distinct bits: an immediate on either side is another
+        // term than the other; the rest is the unifier's.
+        EmitBranchIfTagIn(emit, a, AttVarOrPstrTags, slow);
+        EmitBranchIfTagIn(emit, b, AttVarOrPstrTags, slow);
+        EmitBranchIfTagIn(emit, a, ImmediateTags, no);
+        EmitBranchIfTagIn(emit, b, ImmediateTags, no);
+        emit.MarkLabel(slow);
+        emit.LoadArgument(0);
+        emit.LoadLocal(ca);
+        emit.LoadLocal(cb);
+        EmitRowCall(emit, rf, EngineUnifyValuesMethod);
+        emit.Branch(done);
+        emit.MarkLabel(yes);
+        emit.LoadConstant(true);
+        emit.Branch(done);
+        emit.MarkLabel(no);
+        emit.LoadConstant(false);
+        emit.MarkLabel(done);
+    }
+
+    /// <summary><paramref name="bits"/> := the cell dereferenced, <paramref name="home"/>
+    /// := the heap home of the last reference followed, -1 for an inline value. A
+    /// plain unbound variable is left as the reference to itself.</summary>
+    private static void EmitDerefBits(IlEmit emit, IlLocal heap, IlLocal cell, IlLocal bits, IlLocal home)
+    {
+        var t = RegisterFileOf(emit)!.Temp(typeof(long), KU + 4);
+        var loop = emit.DefineLabel($"u2_deref_{NextLabelSeq()}");
+        var end = emit.DefineLabel($"u2_derefed_{NextLabelSeq()}");
+        emit.LoadLocal(cell);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
+        emit.LoadConstant(-1);
+        emit.StoreLocal(home);
+        emit.MarkLabel(loop);
+        EmitTagIs(emit, bits, Tag.Ref);
+        emit.BranchIfFalse(end);
+        emit.LoadLocal(bits);
+        emit.Convert<int>();
+        emit.StoreLocal(home);
+        emit.LoadLocal(heap);
+        emit.LoadLocal(home);
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(t);
+        emit.LoadLocal(t);
+        emit.LoadLocal(bits);
+        emit.BranchIfEqual(end);
+        emit.LoadLocal(t);
+        emit.StoreLocal(bits);
+        emit.Branch(loop);
+        emit.MarkLabel(end);
+    }
+
+    /// <summary>Pushes what a variable is bound to for the value in
+    /// <paramref name="bits"/>: a reference to <paramref name="home"/> for a
+    /// compound reached through a reference, the cell itself otherwise.</summary>
+    private static void EmitValueBitsToBind(IlEmit emit, IlLocal bits, IlLocal home)
+    {
+        var asRef = emit.DefineLabel($"u2_asref_{NextLabelSeq()}");
+        var cell = emit.DefineLabel($"u2_ascell_{NextLabelSeq()}");
+        var pushed = emit.DefineLabel($"u2_pushed_{NextLabelSeq()}");
+        emit.LoadLocal(home);
+        emit.LoadConstant(0);
+        emit.BranchIfLess(cell);
+        EmitBranchIfTagIn(emit, bits, CompoundTags, asRef);
+        emit.MarkLabel(cell);
+        emit.LoadLocal(bits);
+        emit.Branch(pushed);
+        emit.MarkLabel(asRef);
+        EmitRefBitsOf(emit, home, 0);
+        emit.MarkLabel(pushed);
+    }
+
+    /// <summary>heap[<paramref name="home"/>] := the bits <paramref name="pushBits"/>
+    /// leaves, trailed when the home is older than HB: Bind.</summary>
+    private static void EmitBindBits(IlEmit emit, IlLocal heap, IlLocal home, Action pushBits)
+    {
+        var trailed = emit.DefineLabel($"u2_trailed_{NextLabelSeq()}");
+        EmitHeapCell(emit, heap, home, 0, pushBits);
+        emit.LoadLocal(home);
+        EmitLoadEngineField(emit, EngHb);
+        emit.BranchIfGreaterOrEqual(trailed);
+        emit.LoadArgument(0);
+        emit.LoadLocal(home);
+        EmitHelperCall(emit, EngineTrailBindMethod);
+        emit.MarkLabel(trailed);
+    }
 
     private enum ListWindow { Plain, VarXVarX, ValXVarX }
 
@@ -326,6 +533,15 @@ public sealed partial class IlPredicateCompiler
         }
         emit.MarkLabel(done);
         return true;
+    }
+
+    /// <summary>X[index] pushed, for a constant index: a plain element load,
+    /// as the register helpers read the bank.</summary>
+    private static void EmitLoadRegisterConst(IlEmit emit, int index)
+    {
+        EmitLoadEngineField(emit, EngRegisters);
+        emit.LoadConstant(index);
+        emit.LoadElement<Cell>();
     }
 
     /// <summary>X[index] := the cell <paramref name="pushValue"/> leaves, for a

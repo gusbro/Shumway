@@ -182,6 +182,10 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(
             nameof(Activation.UnifyRegisters),
             new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyValuesMethod =
+        typeof(Activation).GetMethod(
+            nameof(Activation.UnifyValues),
+            new[] { typeof(Cell), typeof(Cell) })!;
     private static readonly MethodInfo EngineGetRegisterMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetRegister), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetHeapMethod =
@@ -271,6 +275,12 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo ArithFusedCmpMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.FusedCmp))!;
+    private static readonly MethodInfo ArithFusedBinColdMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.FusedBinCold))!;
+    private static readonly MethodInfo ArithFusedCmpColdMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.FusedCmpCold))!;
     // ADR-049 close-out: inline arithmetic is a goal boundary. The eval-stack
     // emptiness gate for the multi-op AEval sequence (the drain runs nested
     // arithmetic on the same static stack, so it may only flush at the start).

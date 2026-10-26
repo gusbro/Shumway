@@ -40,6 +40,40 @@ public sealed class CheapUnifyEscapeTests(ITestOutputHelper o)
             "the woken goal did not run before the next user goal");
     }
 
+    /// <summary>The same ordering through a clause's own <c>V = W</c> of
+    /// permanent variables, which the clause compiler puts into a
+    /// get_value_y: the module hands the two cells to the host as a unify
+    /// request (the registers are the head's) and the hook runs before the
+    /// next user goal. Anti-vacuity: the binding clause is in the module.</summary>
+    [Fact]
+    public void AGetValueThatBindsAFrozenVariableWakesBeforeTheNextGoal()
+    {
+        const string Corpus = """
+            :- use_module(library(coroutining)).
+            seen(S) :- nonvar(S).
+            probe(X, S) :- freeze(X, S = woke), bindp(X), seen(S).
+            bindp(V) :- q(W), V = W.
+            q(bound).
+            """;
+        var plain = new PrologEngine();
+        plain.IlPromotion.Threshold = 0;
+        plain.ConsultString(Corpus);
+        Assert.True(plain.Query("probe(_, S), S == woke.").Success,
+            "the interpreter's own ordering moved");
+
+        var (tiered, members) = TieredEngine.Build(Corpus);
+        Assert.True(tiered.Query("probe(_, S), S == woke.").Success,
+            "the woken goal did not run before the next user goal");
+        Assert.True(tiered.Query("probe(X, S), X == bound, S == woke.").Success,
+            "the unify request did not bind the frozen variable");
+        // A predicate joins the module on its first call.
+        Assert.Contains(members, m =>
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(m.Predicate.FunctorId);
+            return arity == 1 && (Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "").EndsWith("bindp");
+        });
+    }
+
     /// <summary>The counter: clpr's solve loop, which used to deopt once per
     /// wake, now leaves only as builtin requests -- and still leaves, which
     /// is the anti-vacuity: =/2 shows in the builtin ranking with the count

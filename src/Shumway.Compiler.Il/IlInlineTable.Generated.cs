@@ -14,10 +14,12 @@ internal static partial class IlInlineTable
     public const string MeasuredArchitecture = "X64";
     private static readonly Dictionary<string, int> Table = new(System.StringComparer.Ordinal)
     {
-        ["Shumway.Builtins.ArithEvalStack::Bin(System.Int32,System.Boolean)"] = 5,   // inlined
+        ["Shumway.Builtins.ArithEvalStack::Bin(System.Int32,System.Boolean)"] = 7,   // inlined
         ["Shumway.Builtins.ArithEvalStack::Cmp(System.Int32)"] = 2,   // inlined
-        ["Shumway.Builtins.ArithEvalStack::FusedBin(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 33,   // inlined
+        ["Shumway.Builtins.ArithEvalStack::FusedBin(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 35,   // inlined
+        ["Shumway.Builtins.ArithEvalStack::FusedBinCold(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 0,   // noinline per IL/cached result
         ["Shumway.Builtins.ArithEvalStack::FusedCmp(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 24,   // inlined
+        ["Shumway.Builtins.ArithEvalStack::FusedCmpCold(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 0,   // noinline per IL/cached result
         ["Shumway.Builtins.ArithEvalStack::IsPerm(Shumway.Core.Activation,System.Int32)"] = 5,   // inlined
         ["Shumway.Builtins.ArithEvalStack::IsReg(Shumway.Core.Activation,System.Int32)"] = 4,   // inlined
         ["Shumway.Builtins.ArithEvalStack::OperandUnbound(Shumway.Core.Activation,System.Int32,System.Int32)"] = 10,   // inlined
@@ -26,7 +28,7 @@ internal static partial class IlInlineTable
         ["Shumway.Builtins.ArithEvalStack::PushY(Shumway.Core.Activation,System.Int32)"] = 11,   // inlined
         ["Shumway.Builtins.ArithEvalStack::SetPerm(Shumway.Core.Activation,System.Int32)"] = 5,   // inlined
         ["Shumway.Builtins.ArithEvalStack::SetReg(Shumway.Core.Activation,System.Int32)"] = 5,   // inlined
-        ["Shumway.Builtins.ArithEvalStack::TryFusedBinInt(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int64&)"] = 27,   // inlined
+        ["Shumway.Builtins.ArithEvalStack::TryFusedBinInt(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32,System.Int64&)"] = 29,   // inlined
         ["Shumway.Builtins.ArithEvalStack::TryFusedCmpInt(Shumway.Core.Activation,System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)"] = 24,   // inlined
         ["Shumway.Builtins.ArithEvalStack::Un(System.Int32)"] = 1,   // inlined
         ["Shumway.Builtins.ArithEvalStack::get_IsEmpty()"] = 1,   // inlined
@@ -39,7 +41,6 @@ internal static partial class IlInlineTable
         ["Shumway.Builtins.TypeBuiltins::IsCompound(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Builtins.TypeBuiltins::IsInteger(Shumway.Core.Activation)"] = 0,   // unprofitable inline
         ["Shumway.Builtins.TypeBuiltins::IsVar(Shumway.Core.Activation)"] = 0,   // unprofitable inline
-        ["Shumway.Builtins.UnifyBuiltins::Unify(Shumway.Core.Activation)"] = 2,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::IsNonEmptyPstr(Shumway.Core.Cell)"] = 3,   // inlined
         ["Shumway.Compiler.Il.IlIndexedDispatch::ResolveEntryByFunctorId(Shumway.Core.Activation,System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Compiler.Il.IlIndexedDispatch::WalkSubOrMiss(Shumway.Core.Activation,Shumway.Core.Cell,System.Int32,System.Int32)"] = 4,   // inlined
@@ -145,6 +146,7 @@ internal static partial class IlInlineTable
         ["Shumway.Core.Activation::UnifyStructure(System.Int32)"] = 0,   // too many il bytes
         ["Shumway.Core.Activation::UnifyValueX(System.Int32)"] = 8,   // inlined
         ["Shumway.Core.Activation::UnifyValueY(System.Int32)"] = 9,   // inlined
+        ["Shumway.Core.Activation::UnifyValues(Shumway.Core.Cell,Shumway.Core.Cell)"] = 1,   // inlined
         ["Shumway.Core.Activation::UnifyVariableX(System.Int32)"] = 4,   // inlined
         ["Shumway.Core.Activation::UnifyVariableY(System.Int32)"] = 5,   // inlined
         ["Shumway.Core.Activation::UnifyVariableYAt(System.Int32,System.Int32)"] = 5,   // inlined

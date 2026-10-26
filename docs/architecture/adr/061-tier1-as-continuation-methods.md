@@ -975,9 +975,11 @@ recorded so that they are not retried without a new reason.
   64-bit immediate keeps a register busy. No change in pushes.
 - **Writing a frame through a byref from `ldelema`**, one bounds check per
   frame instead of one per cell, as the spike did in C#. The method was
-  rejected as an invalid program. A C# helper that writes the frame was
-  inlined by the JIT with no change in pushes, and `tak/4` was 4 to 11%
-  slower.
+  rejected as an invalid program: the emission was Sigil's, and with the
+  emitter of ADR-062 the JIT takes it in a region of any size (ADR-060
+  item 6, the frames through a reference). A C# helper that writes the
+  frame was inlined by the JIT with no change in pushes, and `tak/4` was
+  4 to 11% slower.
 - **`volatile.` loads of the machine's arrays**, to stop the JIT from keeping
   them live across the method. One push fewer, and only with registers read
   from their fields, which were rejected.

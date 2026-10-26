@@ -159,6 +159,18 @@ What the operations of this ADR cost today, in calls per run:
      three stores that tell a retry from a trust. A resumption from outside
      enters the region at a resume cursor and takes the same path: the
      region's entry sends any cursor past the plan's to the restore.
+   - *The frame through a reference.* The push site takes a reference to the
+     frame's first cell (`ldelema`, one bounds check) after its room check,
+     and to the register bank's first cell; the ladder, the control words,
+     the restore and the two or three stores of a resume entry address the
+     words at constant offsets from it, and `allocate` and `deallocate` do
+     the same with the environment. Indexed per word, each store and load
+     paid a bounds check and the address again, and the JIT proved none of
+     them from the room check: the control words sit past the arity, a
+     local in the shared ladder. The reference is taken after the check and
+     held across no call that can grow the stack (the trail unwind and the
+     drop of undone wakes do not). `SHUMWAY_IL_FRAME_REFS=0` indexes per
+     word, for measuring.
 
    Without held registers (item 9, or `SHUMWAY_IL_HELD_REGS=0`) a region
    calls `PushChoicePoint`, `RetryMeElse` and `TrustMe`: the per-site inline
@@ -341,7 +353,8 @@ The fail handler's common case is now emitted before its call to
 resume marker of the region. BP is read first. A choice point of the IL side
 stack always has BP -1, never a marker, so the side stack is not looked at.
 The region reads the floor, the debug session and the frame's BP, finds the
-marker's cursor in the marker table, decrements the backtrack safe point's
+marker's cursor (by subtraction when the marker is in the region's own run,
+in the marker table otherwise), decrements the backtrack safe point's
 countdown and calls the rest of the safe point (`BacktrackSafePointDue`)
 only when it runs out. A hook, a debug session, the floor or any other BP
 takes the call. The reserved surface grows by the backtrack floor, the debug
@@ -351,6 +364,81 @@ previous step, `bc3(12000000)` (a push, a retry and a trust per iteration)
 and `crypt` within noise. A failure-driven loop over the region's own choice
 points with no other safe point (`IlLocalBacktrackTests`) stays interruptible;
 without the countdown `time_out/3` never fires.
+
+A call of `=/2` (the clause compiler leaves it a call when both sides are
+non-variables) unifies its two cells inline, the mirror of the wasm
+tier's open-coded `=/2`: both sides dereferenced; the same cell succeeds; a
+plain unbound variable binds to the other side, between two the younger to
+the older as the unifier does, with the trail when the home is older than
+HB; two distinct immediates fail. An attributed variable, a packed string,
+two compounds, two boxed numbers and the occurs check call `UnifyValues`,
+whose answer is the same. No current builtin is stored: unification raises
+no error. In one process, four copies, against the previous step: `tak`
+(`Z = A` on its exit clause, both permanent, then still a call) -14%
+minimum and -14% median; `serialize` and Blint unchanged; `zebra`, whose
+one site runs once per solution, +3%, the placement of the code.
+
+`get_value_x` and `get_value_y` take the same code, as the wasm tier's
+`EmitUnifyTwo` does for both. Before, `get_value_y` went through the
+register-with-cell fast path, which binds the register's variable only, and
+`get_value_x` through a helper. With it the clause compiler compiles `V = P`
+for a permanent `V` inline as well (a scratch register takes `V`'s cell and
+`P` is matched against it as a head argument; a first-occurrence `V` takes
+the term built for it with `get_variable_y`), which Tier-0 gains from too:
+`Z = A` becomes a `put_value_y` and a `get_value_y`, with no builtin
+dispatch. In one process, four copies, against the previous step: on the
+IL tier `qsort` -5% and `flatten` -1% at the minimum (-7% at the median),
+`tak` even (its gain was the previous step's), the rest within the noise
+of a build against a build, which an A/A control puts at 5%; with the
+inline switched by its knob inside one build, `serialize` -4%, `qsort` -8%,
+`nreverse` -5%, `flatten` -2%. On Tier-0, `tak` -12% and Blint -7%. A
+permanent with a cell matched against a compound in read mode builds
+nothing where the call built its argument: Blint allocates 30 heap cells
+fewer and the clpz puzzles 4.5% fewer, every other program the same.
+`IlInlineUnifyTests` runs every shape on Tier-0 and on a promoted engine;
+`InlineUnifyTests` of the compiler pins the code for each shape of
+permanent.
+
+The fused `a_int_bin` and `a_int_cmp` (`T is A op B`, `A rel B` over leaf
+operands, ADR-018) run on method locals as the `a_eval` sequences do: the
+operands read as the sequence lane reads them, the operation with its
+checks, the result delivered by the target's kind (a register or Y slot
+unified, a first-occurrence register or Y slot stored). Before, each site
+called `FusedBin` or `FusedCmp`, which the JIT inlined whole, 33 and 24
+inlines per site, some forty of the method's locals, and reloaded every
+held register after. The slow lane (a non-integer operand, a zero divisor,
+a result past 60 bits) calls the same helper through an entry that inlines
+nothing (`FusedBinCold`, `FusedCmpCold`), so the site costs the method no
+inline it does not run. A literal zero divisor stays the helper's. The
+integer lanes of both tiers and `FusedBin` itself checked no quotient:
+`-(2^59) // -1` is the one that leaves 60 bits, and it threw out of the
+interpreter; the fused helper, the sequence lanes (also `abs`) and the
+wasm tier now check it. `IlFusedArithTests` runs every operand and target
+kind, the lane's operators and what leaves the lane on Tier-0 and on a
+promoted engine. In one process, four copies, against the previous step,
+heap cells identical: `tak` (three fused subtractions into first-occurrence
+Y slots and one comparison per call) -12% at the minimum and the median,
+on every copy; `nreverse` -2% and -6%, `zebra` -3%, `boyer` -4% and -1%,
+`sendmore` and `queens` -2%; the rest within the noise, Blint and the clpz
+puzzles among them. The region of `tak` makes 197 inlines instead of 347.
+
+The frames are addressed through a reference (item 6): one bounds check for
+a choice point pushed or restored and one for an environment allocated or
+popped, where every word paid its own and the address again (five
+instructions a word, the JIT proving none of them from the room check).
+The region of `tak` goes from 12,975 to 12,538 bytes of native code and
+from 140 bounds checks to 93. In one process, four copies, against the
+previous step, heap cells identical: `tak` (no choice point, the guard
+commits without one, ADR-031; a frame allocated and popped per call) -14%
+at the minimum and -15% at the median on every copy, `qsort` -11% and
+-10%, `zebra` -10% and -7%, `flatten` -11% and -6%, `queens` -10% and
+-6%, `sendmore` -5% and -2%, `boyer` -2%, Blint -2% and -3%, `crypt` and
+the clpz puzzles even, `nreverse` +3% and `serialize` +2% at the minimum
+but -3% and -10% at the median; the form switched by its knob inside one
+build gives the same order (`qsort` -16%, `tak` -9%, `crypt` -7%, `zebra`
+-6%, `flatten` -10% and -13%, `queens` -8%, Blint -4%, `nreverse` even).
+The JIT takes `ldelema` in a region of any size: the rejection recorded
+in ADR-061 was the previous emitter's.
 
 ## Alternatives considered
 

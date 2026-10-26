@@ -315,15 +315,31 @@ public sealed partial class IlPredicateCompiler
         emit.Convert<int>();
         emit.BranchIfGreater(slow);
 
-        EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCeOffset, () => emit.LoadLocal(rf.Local(MachineRegs.E)));
-        EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCpOffset, () => emit.LoadLocal(rf.Local(MachineRegs.Cp)));
-        EmitBuildCellConst(emit, rf, RawIntTag | (uint)n);
-        EmitStoreStackTempCell(emit, rf, newE, Activation.EnvNOffset);
-        // The Y slots are RawInt(0), which the heap collector's scan skips: one
-        // cell, stored n times.
-        if (n > 0) EmitBuildCellConst(emit, rf, RawIntTag);
-        for (int i = 0; i < n; i++)
-            EmitStoreStackTempCell(emit, rf, newE, Activation.EnvY1Offset + i);
+        if (InlineFrameRefs)
+        {
+            // Through a reference to the frame, after the check (growing
+            // replaces the array): one bounds check for the frame.
+            var frame = rf.Temp(CellRefType, 0);
+            EmitTakeRef(emit, rf.Local(MachineRegs.StackArray), () => emit.LoadLocal(newE), frame);
+            EmitStoreRefInt(emit, frame, Activation.EnvCeOffset, () => emit.LoadLocal(rf.Local(MachineRegs.E)));
+            EmitStoreRefInt(emit, frame, Activation.EnvCpOffset, () => emit.LoadLocal(rf.Local(MachineRegs.Cp)));
+            EmitStoreRefBits(emit, frame, Activation.EnvNOffset, () => emit.LoadConstant(RawIntTag | (uint)n));
+            // The Y slots are RawInt(0), which the heap collector's scan skips.
+            for (int i = 0; i < n; i++)
+                EmitStoreRefBits(emit, frame, Activation.EnvY1Offset + i, () => emit.LoadConstant(RawIntTag));
+        }
+        else
+        {
+            EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCeOffset, () => emit.LoadLocal(rf.Local(MachineRegs.E)));
+            EmitStoreStackRawInt(emit, rf, newE, Activation.EnvCpOffset, () => emit.LoadLocal(rf.Local(MachineRegs.Cp)));
+            EmitBuildCellConst(emit, rf, RawIntTag | (uint)n);
+            EmitStoreStackTempCell(emit, rf, newE, Activation.EnvNOffset);
+            // The Y slots are RawInt(0), which the heap collector's scan skips:
+            // one cell, stored n times.
+            if (n > 0) EmitBuildCellConst(emit, rf, RawIntTag);
+            for (int i = 0; i < n; i++)
+                EmitStoreStackTempCell(emit, rf, newE, Activation.EnvY1Offset + i);
+        }
         EmitStoreRegister(emit, rf, MachineRegs.StackTop, () =>
         {
             emit.LoadLocal(newE);
@@ -362,18 +378,37 @@ public sealed partial class IlPredicateCompiler
 
         emit.LoadLocal(e);
         emit.StoreLocal(oldE);
-        EmitStoreRegister(emit, rf, MachineRegs.Cp, () => EmitStackInt(emit, rf, () =>
+        if (InlineFrameRefs)
         {
-            emit.LoadLocal(oldE);
-            emit.LoadConstant(Activation.EnvCpOffset);
-            emit.Add();
-        }));
-        EmitStoreRegister(emit, rf, MachineRegs.E, () => EmitStackInt(emit, rf, () =>
+            // CP and CE through one reference to the frame.
+            var frame = rf.Temp(CellRefType, 0);
+            EmitTakeRef(emit, rf.Local(MachineRegs.StackArray), () => emit.LoadLocal(oldE), frame);
+            EmitStoreRegister(emit, rf, MachineRegs.Cp, () =>
+            {
+                EmitLoadRefBits(emit, frame, Activation.EnvCpOffset);
+                emit.Convert<int>();
+            });
+            EmitStoreRegister(emit, rf, MachineRegs.E, () =>
+            {
+                EmitLoadRefBits(emit, frame, Activation.EnvCeOffset);
+                emit.Convert<int>();
+            });
+        }
+        else
         {
-            emit.LoadLocal(oldE);
-            emit.LoadConstant(Activation.EnvCeOffset);
-            emit.Add();
-        }));
+            EmitStoreRegister(emit, rf, MachineRegs.Cp, () => EmitStackInt(emit, rf, () =>
+            {
+                emit.LoadLocal(oldE);
+                emit.LoadConstant(Activation.EnvCpOffset);
+                emit.Add();
+            }));
+            EmitStoreRegister(emit, rf, MachineRegs.E, () => EmitStackInt(emit, rf, () =>
+            {
+                emit.LoadLocal(oldE);
+                emit.LoadConstant(Activation.EnvCeOffset);
+                emit.Add();
+            }));
+        }
 
         // The popped frame's space is free when no choice point sits at or
         // above it: reclaim down to the top of what the E and B chains keep.

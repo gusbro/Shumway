@@ -25,12 +25,19 @@ internal static class IlRegionCost
 
     /// <summary>The prologue of a region method (registers into locals).</summary>
     public const int Prologue = 20;
-    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch.</summary>
-    public const int TailBase = 181;
+    /// <summary>The tail's fixed part: return and fail handlers, wake dispatch,
+    /// the common restore; the decode of the region's own run of markers in
+    /// both handlers is 11. Fitted with the resume and ladder terms on the
+    /// corpus with the frames addressed through a reference (mean error 32;
+    /// 192, 23 and 5 with every word indexed).</summary>
+    public const int TailBase = 155;
+    /// <summary>Per member, its return's compares with the sites that call it:
+    /// two references per compare, up to <see cref="IlPredicateCompiler.RegionReturnCompares"/>.</summary>
+    public static int PerMemberReturn => 2 * Math.Max(0, IlPredicateCompiler.RegionReturnCompares);
     /// <summary>Per resume entry (a clause alternative or an index node).</summary>
-    public const int PerResumeCursor = 23;
+    public const int PerResumeCursor = 20;
     /// <summary>Per entry of the push ladder, one per arity up to the largest.</summary>
-    public const int PerLadderEntry = 5;
+    public const int PerLadderEntry = 4;
     private const int LadderReserve = 8 * PerLadderEntry;
 
     /// <summary>What the members may add up to under <see cref="Target"/>.</summary>
@@ -256,37 +263,45 @@ internal static class IlRegionCost
 
     /// <summary>JIT locals per opcode in sixteenths, fitted on the corpus
     /// with the head streams in their read-only form (ADR-063); the opcodes
-    /// not listed fitted at zero. Median error 21%.</summary>
+    /// not listed fitted at zero. Median error 21%. get_value_x and
+    /// get_value_y, fitted at zero as helper calls, carry the change their
+    /// two-cell unify made, measured per site over the corpus; a_int_bin and
+    /// a_int_cmp, fitted as inlined helper calls, were fitted again with
+    /// their lane, the other weights fixed, and once more with call,
+    /// call_builtin and neck_cut when the wake test in front of a goal was
+    /// left out where the queue is known empty (ADR-049).</summary>
     private static int LocalsWeight16(Opcode op) => op switch
     {
-        Opcode.AIntBin => 981,
-        Opcode.AIntCmp => 632,
         Opcode.AEvalIs => 391,
+        Opcode.AIntBin => 390,
         Opcode.AEvalPush => 314,
         Opcode.PutInteger => 284,
         Opcode.AllocateGetLevel => 276,
         Opcode.GetAtom => 236,
         Opcode.GetList => 226,
+        Opcode.NeckCut => 216,
         Opcode.DeallocateProceed => 211,
         Opcode.UnifyNil => 203,
         Opcode.UnifyInteger => 186,
+        Opcode.GetValueX => 172,
         Opcode.AEvalBin => 170,
         Opcode.GetInteger => 170,
         Opcode.UnifyValueX => 164,
-        Opcode.NeckCut => 145,
         Opcode.UnifyVariableX => 133,
         Opcode.PutValueX => 127,
         Opcode.UnifyVariableY => 121,
+        Opcode.Call => 107,
         Opcode.PutVariableX => 105,
         Opcode.AEvalUn => 105,
         Opcode.UnifyAtom => 103,
         Opcode.UnifyValueY => 94,
-        Opcode.Call => 90,
         Opcode.GetStructure => 84,
+        Opcode.GetValueY => 81,
+        Opcode.CallBuiltin => 74,
         Opcode.PutNil => 63,
         Opcode.UnifyVoid => 63,
-        Opcode.CallBuiltin => 51,
         Opcode.PutValueY => 49,
+        Opcode.AIntCmp => 42,
         Opcode.GetVariableY => 40,
         Opcode.PutVariableY => 27,
         Opcode.Deallocate => 26,
@@ -296,7 +311,9 @@ internal static class IlRegionCost
     };
 
     /// <summary>What the member would add to a region: its block, measured or
-    /// estimated, and the tail's resume entries its clauses bring.</summary>
+    /// estimated, and the tail's resume entries its clauses bring. The planner
+    /// adds <see cref="PerMemberReturn"/> to the budget's count, not to the
+    /// copy-or-call limit.</summary>
     public static int MemberCost(CompiledPredicate member,
         IReadOnlyList<(int Start, int End)>? clauseRanges, int resumeCursors)
     {
@@ -308,7 +325,14 @@ internal static class IlRegionCost
 
     /// <summary>The opcode model: local references per opcode, fitted; the
     /// opcodes not listed fitted at zero. Floored at a per-byte rate, so a
-    /// body of unlisted opcodes is not free.</summary>
+    /// body of unlisted opcodes is not free. get_value_x and get_value_y
+    /// carry the change their two-cell unify made, as in
+    /// <see cref="LocalsWeight16"/>; deallocate and deallocate_proceed carry
+    /// the change the frames addressed through a reference made to a frame
+    /// (every allocate has one of the two: a fit cannot tell them apart);
+    /// execute, a_int_bin, a_int_cmp and neck_cut were fitted again when the
+    /// wake test in front of a goal was left out where the queue is known
+    /// empty (ADR-049).</summary>
     public static int Estimate(byte[] code, IReadOnlyList<(int Start, int End)>? clauseRanges)
     {
         long sum = 0, bytes = 0;
@@ -333,26 +357,29 @@ internal static class IlRegionCost
     {
         Opcode.AllocateGetLevel => 153,
         Opcode.AEvalIs => 148,
-        Opcode.DeallocateProceed => 115,
+        Opcode.DeallocateProceed => 109,
         Opcode.PutList => 88,
-        Opcode.Deallocate => 85,
+        Opcode.GetValueX => 84,
         Opcode.AEvalCmp => 80,
+        Opcode.Deallocate => 73,
         Opcode.GetList => 73,
         Opcode.Allocate => 47,
+        Opcode.AIntBin => 46,
         Opcode.UnifyStructure => 45,
+        Opcode.GetValueY => 44,
         Opcode.GetInteger => 40,
-        Opcode.NeckCut => 39,
         Opcode.GetAtom => 36,
         Opcode.PutInteger => 33,
         Opcode.GetStructure => 30,
-        Opcode.AIntCmp => 27,
-        Opcode.Execute => 21,
         Opcode.PutValueX => 21,
+        Opcode.NeckCut => 17,
         Opcode.PutValueY => 17,
         Opcode.UnifyVoid => 14,
+        Opcode.Execute => 10,
         Opcode.Proceed => 10,
         Opcode.PutAtom => 9,
         Opcode.AEvalPush => 9,
+        Opcode.AIntCmp => 6,
         Opcode.UnifyList => 2,
         _ => 0,
     };
