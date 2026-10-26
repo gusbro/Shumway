@@ -46,7 +46,7 @@ public static class ArithmeticEvaluator
         => cell.Tag switch
         {
             Tag.Int => new Number(cell.AsInt),
-            Tag.BigInt => new Number(engine.AsBigInt(cell)),
+            Tag.BigInt => Number.FromHeap(engine, cell),
             Tag.Rational => new Number(engine.AsRational(cell)),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
@@ -508,9 +508,24 @@ public static class ArithmeticEvaluator
     // catchable resource_error(memory) everywhere: Tier-0, the ADR-018 eval
     // stack, and the IL tier alike. The int64→BigInteger promotion paths catch
     // their own OverflowException locally and never reach this.
+    // Consumes its operands: a limb buffer an operand owns (ADR-064) goes back
+    // to the pool unless the result still names it.
     public static Number ApplyBin(BinOp op, Number a, Number b, bool preferRationals = false)
     {
-        try { return ApplyBinCore(op, a, b, preferRationals); }
+        try
+        {
+            // A deferred product (a Scaled value, ADR-064) is computed before
+            // any operation but the three that know how to carry or fuse it.
+            if (op is not (BinOp.Add or BinOp.Sub or BinOp.Mul))
+            {
+                a = LimbArith.Materialize(in a);
+                b = LimbArith.Materialize(in b);
+            }
+            Number r = ApplyBinCore(op, a, b, preferRationals);
+            LimbArith.ReleaseUnless(in a, in r);
+            LimbArith.ReleaseUnless(in b, in r);
+            return r;
+        }
         catch (OverflowException) { throw new PrologRuntimeException("resource_error", "memory"); }
         catch (OutOfMemoryException) { throw new PrologRuntimeException("resource_error", "memory"); }
     }
@@ -612,6 +627,8 @@ public static class ArithmeticEvaluator
     private static Number FloorDivide(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        if (a.IsLimbs && b.IsInt && LimbArith.IsSmallDivisor(b.IntValue))
+            return LimbArith.Quotient(in a, b.IntValue, floor: true);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigA = a.AsBigInteger();
@@ -632,7 +649,14 @@ public static class ArithmeticEvaluator
     /// representation-cap wrapper as <see cref="ApplyBin"/>.</summary>
     public static Number ApplyUn(UnOp op, Number a)
     {
-        try { return ApplyUnCore(op, a); }
+        try
+        {
+            if (op is not (UnOp.Neg or UnOp.Pos or UnOp.Abs or UnOp.Sign))
+                a = LimbArith.Materialize(in a);
+            Number r = ApplyUnCore(op, a);
+            LimbArith.ReleaseUnless(in a, in r);
+            return r;
+        }
         catch (OverflowException) { throw new PrologRuntimeException("resource_error", "memory"); }
         catch (OutOfMemoryException) { throw new PrologRuntimeException("resource_error", "memory"); }
     }
@@ -761,6 +785,8 @@ public static class ArithmeticEvaluator
     public static bool ApplyRel(RelOp rel, Number a, Number b)
     {
         int c = Compare(a, b);
+        a.Release();
+        b.Release();
         return rel switch
         {
             RelOp.Eq => c == 0,
@@ -776,6 +802,7 @@ public static class ArithmeticEvaluator
     private static Number Sign(Number a)
     {
         if (a.IsFloat) return new Number((double)Math.Sign(a.FloatValue));
+        if (a.IsLimbs || a.IsScaled) return new Number(a.LimbsNegative ? -1L : 1L);
         if (a.IsBig) return new Number(a.BigValue.Sign);
         return new Number((long)Math.Sign(a.IntValue));
     }
@@ -855,6 +882,9 @@ public static class ArithmeticEvaluator
         if (b.IntValue < int.MinValue)
             return new Number(a.AsBigInteger().Sign < 0 ? -1L : 0L);
         int shift = (int)b.IntValue;
+        if (a.IsLimbs && shift != int.MinValue)
+            return shift >= 0 ? LimbArith.ShiftLeft(in a, shift)
+                : a.LimbsNegative ? new Number(a.BigValue >> -shift) : LimbArith.ShiftRight(in a, -shift);
         if (a.IsBig) return new Number(a.BigValue << shift);
         // `checked` does not cover shifts in C# (they wrap silently, and the
         // count is masked to 0..63 — `1L << 64` is 1). Unbounded-integer
@@ -881,6 +911,9 @@ public static class ArithmeticEvaluator
             return a.AsBigInteger().IsZero ? new Number(0L)
                 : throw new PrologRuntimeException("resource_error", "memory");
         int shift = (int)b.IntValue;
+        if (a.IsLimbs && shift != int.MinValue)
+            return shift < 0 ? LimbArith.ShiftLeft(in a, -shift)
+                : a.LimbsNegative ? new Number(a.BigValue >> shift) : LimbArith.ShiftRight(in a, shift);
         if (a.IsBig) return new Number(a.BigValue >> shift);
         // C# masks a long's shift count to 0..63 (`1L >> 64` is 1) — outside
         // that window BigInteger has the intended unbounded semantics,
@@ -895,6 +928,32 @@ public static class ArithmeticEvaluator
         EnsureBothInt(a, b);
         return new Number(System.Numerics.BigInteger.GreatestCommonDivisor(
             a.AsBigInteger(), b.AsBigInteger()));
+    }
+
+    // x^e by squaring in checked long arithmetic without exceptions: false on
+    // the first overflow, which is the one case where the platform path was
+    // going to be taken anyway.
+    private static bool TryPowLong(long x, int e, out long r)
+    {
+        r = 1;
+        long p = x;
+        while (true)
+        {
+            if ((e & 1) != 0 && !TryMulLong(r, p, out r)) return false;
+            e >>= 1;
+            if (e == 0) return true;
+            if (!TryMulLong(p, p, out p)) return false;
+        }
+    }
+
+    private static bool TryMulLong(long x, long y, out long r)
+    {
+        r = unchecked(x * y);
+        if (x == 0 || y == 0) return true;
+        // A product that wraps is one the division does not undo; the one
+        // non-wrapping pair the division cannot check is -1 * long.MinValue.
+        if ((x == -1 && y == long.MinValue) || (y == -1 && x == long.MinValue)) return false;
+        return r / y == x;
     }
 
     private static Number Power(Number a, Number b, bool preferRationals = false)
@@ -916,6 +975,10 @@ public static class ArithmeticEvaluator
                 if ((-bb).IsOne) return new Number((b.IntValue & 1) == 0 ? 1L : -1L);
                 throw new PrologRuntimeException("resource_error", "memory");
             }
+            // A small base and exponent stay in the long lane; an overflow
+            // along the way takes the platform path with no exception thrown.
+            if (a.IsInt && b.IntValue <= 64 && TryPowLong(a.IntValue, (int)b.IntValue, out long small))
+                return new Number(small);
             return new Number(System.Numerics.BigInteger.Pow(a.AsBigInteger(), (int)b.IntValue));
         }
         // ISO 9.3.10 (Cor.2): integer base, negative integer exponent —
@@ -965,6 +1028,7 @@ public static class ArithmeticEvaluator
     {
         if (a.IsFloat) return new Number(-a.FloatValue);
         if (a.IsRat) return new Number(Rational.Create(-a.RatValue.Num, a.RatValue.Den));
+        if (a.IsLimbs || a.IsScaled) return a.Negated();
         if (a.IsBig) return new Number(-a.BigValue);
         // long.MinValue: negation overflows long but fits in BigInteger.
         try { return new Number(checked(-a.IntValue)); }
@@ -975,6 +1039,7 @@ public static class ArithmeticEvaluator
     {
         if (a.IsFloat) return new Number(Math.Abs(a.FloatValue));
         if (a.IsRat) return new Number(Rational.Create(BigInteger.Abs(a.RatValue.Num), a.RatValue.Den));
+        if (a.IsLimbs || a.IsScaled) return a.LimbsNegative ? a.Negated() : a;
         if (a.IsBig) return new Number(BigInteger.Abs(a.BigValue));
         if (a.IntValue >= 0) return a;
         try { return new Number(checked(-a.IntValue)); }
@@ -999,6 +1064,7 @@ public static class ArithmeticEvaluator
             var (bn, bd) = b.AsRationalParts();
             return new Number(Rational.Create(an * bd + bn * ad, ad * bd));
         }
+        if (a.HasLimbs || b.HasLimbs) return LimbArith.Add(in a, in b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() + b.AsBigInteger());
         try { return new Number(checked(a.IntValue + b.IntValue)); }
         catch (OverflowException)
@@ -1017,6 +1083,7 @@ public static class ArithmeticEvaluator
             var (bn, bd) = b.AsRationalParts();
             return new Number(Rational.Create(an * bd - bn * ad, ad * bd));
         }
+        if (a.HasLimbs || b.HasLimbs) return LimbArith.Sub(in a, in b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() - b.AsBigInteger());
         try { return new Number(checked(a.IntValue - b.IntValue)); }
         catch (OverflowException)
@@ -1035,6 +1102,7 @@ public static class ArithmeticEvaluator
             var (bn, bd) = b.AsRationalParts();
             return new Number(Rational.Create(an * bn, ad * bd));
         }
+        if (a.HasLimbs || b.HasLimbs) return LimbArith.Mul(in a, in b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() * b.AsBigInteger());
         try { return new Number(checked(a.IntValue * b.IntValue)); }
         catch (OverflowException)
@@ -1065,6 +1133,8 @@ public static class ArithmeticEvaluator
     private static Number IntegerDivide(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        if (a.IsLimbs && b.IsInt && LimbArith.IsSmallDivisor(b.IntValue))
+            return LimbArith.Quotient(in a, b.IntValue, floor: false);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bb = b.AsBigInteger();
@@ -1079,6 +1149,8 @@ public static class ArithmeticEvaluator
     private static Number Modulo(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        if (a.IsLimbs && b.IsInt && LimbArith.IsSmallDivisor(b.IntValue))
+            return LimbArith.Remainder(in a, b.IntValue, floorMod: true);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigA = a.AsBigInteger();
@@ -1098,6 +1170,8 @@ public static class ArithmeticEvaluator
     private static Number Remainder(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        if (a.IsLimbs && b.IsInt && LimbArith.IsSmallDivisor(b.IntValue))
+            return LimbArith.Remainder(in a, b.IntValue, floorMod: false);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigB = b.AsBigInteger();

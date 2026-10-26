@@ -65,8 +65,8 @@ public sealed partial class Activation
 
     private ExtraTrailEntry[] _extraTrail;
 
-    // ----- Per-engine auxiliary value tables (ADR-002) -----
-    private readonly List<BigInteger> _bigIntTable = new();
+    // ----- Per-engine auxiliary value tables (ADR-002; big integers are heap
+    // blocks since ADR-064) -----
     private readonly List<Rational> _rationalTable = new();
     private readonly List<object?> _foreignTable = new();
 
@@ -553,7 +553,7 @@ public sealed partial class Activation
                 return ReferenceEquals(
                     _foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]);
             case Tag.BigInt:
-                return _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+                return BigIntEquals(a, b);
             case Tag.Rational:
                 return _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);
             // Compounds and PSTR descend: use an explicit work-stack (O(1) C#
@@ -727,7 +727,7 @@ public sealed partial class Activation
                                         _foreignTable[b.AsForeignId]);
                 return true;
             case Tag.BigInt:
-                equal = _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+                equal = BigIntEquals(a, b);
                 return true;
             case Tag.Rational:
                 equal = _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);

@@ -164,6 +164,16 @@ the collector fixes up, to the new addresses:
 - environment Y-slots and X-registers,
 - `_heapTop`, `_hb`, and any `CatchFrame.SnapHeapTop`.
 
+The marks are a bitmap, one bit per cell, and the forwarding map is the
+count of marked cells before each 64-cell word: a live cell's new address
+is its word's count plus a popcount inside the word (`GcForwarding.Of`).
+Computing the map is one pass over the words and the slide one pass over
+the set bits, so a collection costs the words of the heap and the live
+cells rather than every cell. Before this (2026-10) the marks were one byte
+per cell and the map one int per cell, four passes over the heap per
+collection, which a loop allocating large blocks (ADR-064) paid as about a
+third of its time.
+
 ### Invariants preserved
 
 - **ADR-002 cell layout** unchanged — the collector only reads tags and

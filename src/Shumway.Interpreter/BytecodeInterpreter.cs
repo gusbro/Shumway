@@ -2796,30 +2796,39 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.UnifyBigInt:
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
-                    Cell value = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
-                    // ADR-020: inside a reserve-upfront inline
-                    // build the value must land in the reserved arg slot, not
-                    // at the heap top — a bigint cell is a single cell (the
-                    // payload is the aux-table id / an immediate), so it slots
-                    // in exactly like unify_integer. Without this branch the
-                    // reserved slot stayed unwritten (fresh heap: an
-                    // accidental unbound var; recycled heap: a stale cell —
-                    // the Logtalk random-library seed corruption).
+                    System.Numerics.BigInteger literal = ResolveBigIntLiteral(literalId);
+                    // ADR-020: inside a reserve-upfront inline build the
+                    // value's cell must land in the reserved arg slot, not at
+                    // the heap top; a block (ADR-064) goes above the top and
+                    // the slot takes its reference, as a nested structure
+                    // does. Without this branch the reserved slot stayed
+                    // unwritten (fresh heap: an accidental unbound var;
+                    // recycled heap: a stale cell — the Logtalk
+                    // random-library seed corruption).
                     if (_engine.ReservedWrite)
                     {
-                        _engine.UnifyArgCell(value);
+                        _engine.UnifyArgCell(_engine.MakeBigInt(literal));
                         _engine.SetPc(pc + 5); inClause = true;
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
+                        // ADR-064: a value past the inline range is a block of
+                        // cells and cannot be written where the argument cell
+                        // goes; the compiler routes it through put_bigint +
+                        // unify_value_x (PreEmitMultiCellLiterals), so only an
+                        // inline-range value reaches this branch.
+                        if (literal < Cell.MinInt60 || literal > Cell.MaxInt60)
+                            throw new NotSupportedException(
+                                "unify_bigint in write mode would corrupt the compound's "
+                                + "arg layout — emit put_bigint + unify_value_x instead.");
                         int idx = _engine.AllocateHeap(1);
-                        _engine.SetHeap(idx, value);
+                        _engine.SetHeap(idx, Cell.Int((long)literal));
                     }
                     else
                     {
-                        if (!_engine.UnifyHeapWithCell(ptr, value))
+                        if (!_engine.UnifyHeapWithCell(ptr, _engine.MakeBigInt(literal)))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                             break;

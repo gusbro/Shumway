@@ -8,50 +8,109 @@ public sealed partial class Activation
     // ----- Auxiliary value tables -----
 
     /// <summary>
-    /// Stores <paramref name="value"/> in the engine's BigInteger table and returns a
-    /// bigint cell whose payload is its id. The cell is meaningful only for this engine
-    /// (auxiliary tables are not shared, unlike atoms and functors).
+    /// Writes <paramref name="value"/> as a block on the heap (ADR-064: a header
+    /// and its 60-bit limbs, see <see cref="Limbs"/>) and returns the bigint cell
+    /// that references the header. Backtracking past the allocation and the heap
+    /// collector reclaim the block like any other cells.
     ///
-    /// <para>Values that fit in the 60-bit inline range collapse to <see cref="Cell.Int"/>
-    /// instead of consuming a side-table slot. The runtime invariant is that a value
-    /// in 60-bit range is always represented as <c>Tag.Int</c>, never <c>Tag.BigInt</c>;
-    /// keeping the canonical form unique lets unification compare values by raw cell
-    /// equality without crossing tag boundaries.</para>
+    /// <para>Values that fit in the 60-bit inline range collapse to <see cref="Cell.Int"/>.
+    /// The runtime invariant is that a value in 60-bit range is always represented
+    /// as <c>Tag.Int</c>, never <c>Tag.BigInt</c>; keeping the canonical form unique
+    /// lets unification compare values by raw cell equality without crossing tag
+    /// boundaries.</para>
     /// </summary>
     public Cell MakeBigInt(BigInteger value)
     {
         if (value >= Cell.MinInt60 && value <= Cell.MaxInt60)
             return Cell.Int((long)value);
-        int id = _bigIntTable.Count;
-        _bigIntTable.Add(value);
-        // Record the allocation on the extra trail so a later backtrack
-        // truncates the table back to its pre-allocation size and frees
-        // the slot (BigInt trail-aware allocation).
-        TrailBigIntAlloc(id);
-        return Cell.BigInt(id);
+        byte[] bytes;
+        // .NET Framework computes values past the cap that .NET refuses, and
+        // their bytes alone can exhaust memory: both are the resource error.
+        try { bytes = Limbs.MagnitudeBytes(value); }
+        catch (OutOfMemoryException) { throw TooBig(); }
+        if (Limbs.BitLength(bytes) > Limbs.MaxBits) throw TooBig();
+        int count = Limbs.CountFor(bytes);
+        int idx = AllocateHeap(count + 1);
+        _heap[idx] = Limbs.Header(count, value.Sign < 0);
+        Limbs.FromBytes(bytes, _heap.AsSpan(idx + 1, count));
+        return Cell.BigInt(idx);
     }
 
-    private void TrailBigIntAlloc(int oldCount)
+    // A big integer past Limbs.MaxBits: the catchable error the heap's own
+    // exhaustion raises, so catch/3 can recover from it.
+    private static PrologRuntimeException TooBig()
+        => new("resource_error", "memory") { Origin = ErrorOrigin.Engine };
+
+    /// <summary>The same for a value already in limbs (normalised, little-endian).
+    /// <paramref name="limbs"/> may be a span over this heap: the block goes above
+    /// the top, and a growth leaves the old array readable.</summary>
+    public Cell MakeBigInt(ReadOnlySpan<Cell> limbs, bool negative)
     {
-        EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
-            Diagnostics.CommitTrace.Kind.Trail,
-            (int)TrailType.BigIntAlloc, _extraTrailTop);
-        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
-        {
-            Type = TrailType.BigIntAlloc,
-            HeapIdx = oldCount,
-            OldValue = default,
-            BindingTrailMarker = _bindingTrailTop,
-        };
+        if (Limbs.TryToLong(limbs, negative, out long v)) return Cell.Int(v);
+        if (Limbs.BitLength(limbs) > Limbs.MaxBits) throw TooBig();
+        int idx = AllocateHeap(limbs.Length + 1);
+        _heap[idx] = Limbs.Header(limbs.Length, negative);
+        limbs.CopyTo(_heap.AsSpan(idx + 1, limbs.Length));
+        return Cell.BigInt(idx);
     }
 
-    /// <summary>Returns the <see cref="BigInteger"/> referenced by a bigint cell.</summary>
+    /// <summary>The block of a limb value times a limb-sized multiplier
+    /// (below 2^60), computed straight into the heap: no scratch and no copy.
+    /// A product in the inline range collapses to <see cref="Cell.Int"/>, the
+    /// cells given back since nothing was allocated after them.</summary>
+    public Cell MakeBigIntProduct(ReadOnlySpan<Cell> limbs, ulong scale, bool negative)
+    {
+        int cap = limbs.Length + 1;
+        int idx = AllocateHeap(cap + 1);
+        int n = Limbs.MulLimb(limbs, scale, _heap.AsSpan(idx + 1, cap));
+        if (Limbs.TryToLong(_heap.AsSpan(idx + 1, n), negative, out long v))
+        {
+            _heapTop = idx;
+            _cellsAllocated -= cap + 1;
+            return Cell.Int(v);
+        }
+        if (Limbs.BitLength(_heap.AsSpan(idx + 1, n)) > Limbs.MaxBits)
+        {
+            _heapTop = idx;
+            _cellsAllocated -= cap + 1;
+            throw TooBig();
+        }
+        _heapTop = idx + 1 + n;
+        _cellsAllocated -= cap - n;
+        _heap[idx] = Limbs.Header(n, negative);
+        return Cell.BigInt(idx);
+    }
+
+    /// <summary>Returns the value of a bigint cell's block as a <see cref="BigInteger"/>:
+    /// a linear conversion, for the consumers that compute nothing hot on it.</summary>
     public BigInteger AsBigInt(Cell cell)
     {
         if (cell.Tag != Tag.BigInt)
             throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected BigInt.");
-        return _bigIntTable[cell.AsBigIntId];
+        var limbs = BigIntLimbs(cell, out bool negative);
+        return Limbs.ToBigInteger(limbs, negative);
+    }
+
+    /// <summary>The limbs of a bigint cell's block, in place on the heap, and its
+    /// sign. The span is valid until the heap grows or a collection runs.</summary>
+    public ReadOnlySpan<Cell> BigIntLimbs(Cell cell, out bool negative)
+    {
+        int h = cell.AsHeapIndex;
+        Cell header = _heap[h];
+        negative = Limbs.Negative(header);
+        return _heap.AsSpan(h + 1, Limbs.Count(header));
+    }
+
+    /// <summary>Whether two bigint cells hold one value: the same block, or
+    /// blocks of the same sign, count and limbs.</summary>
+    public bool BigIntEquals(Cell a, Cell b)
+    {
+        if (a.Data == b.Data) return true;
+        int ha = a.AsHeapIndex, hb = b.AsHeapIndex;
+        Cell headerA = _heap[ha], headerB = _heap[hb];
+        if (headerA.Data != headerB.Data) return false;
+        int n = Limbs.Count(headerA);
+        return Limbs.Equal(_heap.AsSpan(ha + 1, n), _heap.AsSpan(hb + 1, n));
     }
 
     /// <summary>
@@ -170,28 +229,25 @@ public sealed partial class Activation
     private void ForeignSweepUnmarked(bool[]? live)
         => SweepSideTable(_foreignTable, live);
 
-    /// <summary>ADR-053: the same sweep over the numeric side tables.
+    /// <summary>ADR-053: the same sweep over the rational side table. (Big
+    /// integers left the side tables with ADR-064: a block on the heap is
+    /// reclaimed by the collector and by backtracking like any other cells.)
     ///
-    /// <para><see cref="TrailType.BigIntAlloc"/> and
-    /// <see cref="TrailType.RationalAlloc"/> reclaim a slot when
+    /// <para><see cref="TrailType.RationalAlloc"/> reclaims a slot when
     /// backtracking unwinds past the allocation, which covers a search and
     /// covers nothing else: a deterministic loop never backtracks, and that
-    /// loop is what an embedded system spends its life in. Twenty thousand
-    /// transient big integers in one left twenty thousand entries standing
-    /// after a full collection, linear in the loop, though the program could
-    /// only ever name one at a time.</para>
+    /// loop is what an embedded system spends its life in.</para>
     ///
-    /// <para>Safer here than for the foreign table: a BigInt or Rational id
-    /// never escapes into a term (every use is an immediate lookup inside
-    /// this class), so there is no analogue of the '$foreign'(N)
-    /// round-trip to go stale when a tail slot is released.</para>
+    /// <para>Safer here than for the foreign table: a Rational id never
+    /// escapes into a term (every use is an immediate lookup inside this
+    /// class), so there is no analogue of the '$foreign'(N) round-trip to go
+    /// stale when a tail slot is released.</para>
     ///
     /// <para>This does not disturb the trail contract. The unwind truncates
     /// only when the table is larger than the size it recorded, so a table
     /// the collector already shrank makes it a no-op.</para></summary>
-    private void NumericSweepUnmarked(bool[]? bigLive, bool[]? ratLive)
+    private void NumericSweepUnmarked(bool[]? ratLive)
     {
-        SweepSideTable(_bigIntTable, bigLive);
         SweepSideTable(_rationalTable, ratLive);
     }
 
@@ -998,7 +1054,6 @@ public sealed partial class Activation
         return bufferIdx + bufferCellCount;
     }
 
-    internal int BigIntTableCount => _bigIntTable.Count;
     internal int ForeignTableCount => _foreignTable.Count;
 
     // ----- Trail accessors -----
@@ -1390,12 +1445,9 @@ public sealed partial class Activation
                         Diagnostics.AttVarCellTrace.Kind.Restored);
                 break;
             case TrailType.BigIntAlloc:
-                // entry.HeapIdx holds the table size *before* the allocation
-                // that this trail entry records. Drop everything appended
-                // since (in this case, exactly the one slot) so the table
-                // is back to its pre-allocation shape.
-                if (_bigIntTable.Count > entry.HeapIdx)
-                    _bigIntTable.RemoveRange(entry.HeapIdx, _bigIntTable.Count - entry.HeapIdx);
+                // No producer since ADR-064 (a big integer is heap cells, reclaimed
+                // by the heap top reset); the kind stays so the trail codes a wasm
+                // module bakes do not shift.
                 break;
             case TrailType.RationalAlloc:
                 if (_rationalTable.Count > entry.HeapIdx)
@@ -1673,7 +1725,7 @@ public sealed partial class Activation
             Tag.Int => aCell.AsInt == bCell.AsInt,
             Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
-            Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.BigInt => BigIntEquals(aCell, bCell),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
@@ -1735,7 +1787,7 @@ public sealed partial class Activation
             Tag.Int => a.AsInt == b.AsInt,
             Tag.Str => GuardedUnifyStr(a.AsHeapIndex, b.AsHeapIndex),
             Tag.Lis => GuardedUnifyLis(a.AsHeapIndex, b.AsHeapIndex),
-            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.BigInt => BigIntEquals(a, b),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
@@ -1941,7 +1993,7 @@ public sealed partial class Activation
                 new OccursItem(OccursWork.Str, a.AsHeapIndex, b.AsHeapIndex)),
             Tag.Lis => RunOccursCheck(
                 new OccursItem(OccursWork.Lis, a.AsHeapIndex, b.AsHeapIndex)),
-            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.BigInt => BigIntEquals(a, b),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
@@ -2088,7 +2140,7 @@ public sealed partial class Activation
             // Queued, not descended: the enclosing loop runs them.
             Tag.Str => Queue(OccursWork.Str, aCell.AsHeapIndex, bCell.AsHeapIndex, work),
             Tag.Lis => Queue(OccursWork.Lis, aCell.AsHeapIndex, bCell.AsHeapIndex, work),
-            Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.BigInt => BigIntEquals(aCell, bCell),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),

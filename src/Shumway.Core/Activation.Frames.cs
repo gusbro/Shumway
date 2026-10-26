@@ -1433,22 +1433,21 @@ public sealed partial class Activation
             //     outgrows the heap top, wrongly drops live old-attvar
             //     entries — breaking the restore chain so the record ends
             //     up pointing at a reclaimed term (donald: fd(Dom, _)).
-            //   - BigIntAlloc: HeapIdx is the bigint table size before the
-            //     allocation, also not a heap address. The big-integer table
-            //     is a side table reclaimed only by these entries (nothing
-            //     else trims it), so — like CatchFrame — the entry must always
-            //     survive: a plain backtrack to an ancestor trims every bigint
-            //     allocated since, and the cut must keep that behaviour intact
-            //     (the committed bigints are dead once that ancestor backtrack
-            //     reclaims the heap cells referencing them). Dropping it on the
-            //     bogus `tableSize < parentHeapTop` test leaks table slots and
-            //     can reuse an id under a surviving reference.
+            //   - RationalAlloc: HeapIdx is the rational table size before the
+            //     allocation, also not a heap address. The table is a side
+            //     table reclaimed only by these entries (nothing else trims
+            //     it), so — like CatchFrame — the entry must always survive: a
+            //     plain backtrack to an ancestor trims every rational allocated
+            //     since, and the cut must keep that behaviour intact. Dropping
+            //     it on the bogus `tableSize < parentHeapTop` test leaks table
+            //     slots and can reuse an id under a surviving reference.
+            //     BigIntAlloc has no producer since ADR-064 and keeps the rule.
             //   - CatchFrame: control state, not a heap cell — always keep.
             bool survives = entry.Type switch
             {
                 TrailType.CatchFrame => entry.OldValue.Data != CatchTrailReclaimed,
                 TrailType.BigIntAlloc => true,
-                TrailType.RationalAlloc => true,   // side table, same contract as BigIntAlloc
+                TrailType.RationalAlloc => true,
                 // External-state restore (b_setval): HeapIdx indexes the
                 // external trail log, not the heap — a backtrack to an ancestor
                 // above the cut must still restore the host-level value.

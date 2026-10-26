@@ -7,6 +7,9 @@ at the end of a collection, and the lifetime of a managed object the engine
 holds on a Prolog program's behalf, which
 `docs/architecture/decision-policy.md` names a major decision. Companion to ADR-052, which did the same for the
 attribute table; ADR-051 removed this table's highest-rate producer.
+Section 4 below applied the sweep to the BigInteger and Rational tables;
+ADR-064 then moved big integers out of the side tables onto the heap, so of
+that section only the rational half remains in force.
 
 ## Context
 

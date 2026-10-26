@@ -298,38 +298,39 @@ public static double AsFloat(Cell header, Cell[] heap)
 
 **Heap allocation pattern**: when creating a FLOAT, allocate two consecutive cells. The header goes in the first, the paired INT in the second. The header points to the second.
 
-### BIGINT (0x7) — Reference to BigInteger
+### BIGINT (0x7) — Reference to a block of limbs (ADR-064)
 
 ```
 Bits 63..60: 0x7
 Bits 59..32: 0 (reserved)
-Bits 31..0:  id in the engine's BigInteger table
+Bits 31..0:  heap index of the block's header
 ```
 
-When an integer exceeds the range of INT (60 bits signed), it's stored in a per-engine `List<BigInteger>` (the BigInt table). The cell holds the index into this list.
+When an integer exceeds the range of INT (60 bits signed), it is a block of
+`n + 1` consecutive heap cells, every one tagged RAWINT so the collector
+treats it as a leaf:
 
-**Construction**:
-
-```csharp
-public Cell MakeBigInt(BigInteger value)
-{
-    int id = _bigIntTable.Count;
-    _bigIntTable.Add(value);
-    return new Cell(((long)Tag.BigInt << 60) | (uint)id);
-}
+```
+header   RAWINT   payload = n << 1 | sign        n limbs; sign = 1 when negative
+limb i   RAWINT   payload = magnitude bits 60i .. 60i+59, i in 0 .. n-1
 ```
 
-**Extraction**:
+Limbs are little-endian and 60 bits wide (the payload of a cell), the top
+limb is nonzero, and a value in the inline range is always an INT cell, so a
+one-limb block holds a magnitude in `[2^59, 2^60)`. The kernels over limb
+spans live in `Limbs` (Shumway.Core); `MakeBigInt` writes a block at the heap
+top from a `BigInteger` or from limbs, `AsBigInt` converts a block back
+(linear), and `BigIntLimbs` is the view the arithmetic reads in place.
 
-```csharp
-public BigInteger AsBigInt(Cell c)
-{
-    int id = (int)(c.Data & 0xFFFFFFFFL);
-    return _bigIntTable[id];
-}
-```
+**Lifetime**: the heap's. Backtracking past the allocation reclaims the
+block through the heap top reset, and the collector marks the header and
+its limbs through the BIGINT cell (bounds-guarded like a PSTR header) and
+relocates the reference. Nothing is trailed.
 
-The BigInt table grows during a query. It is **not** trail-reversed (truncating it would be expensive). At end-of-query, the table is cleared.
+**Literals**: a big integer under a compound cannot be written inline where
+the argument cell goes, so the compiler routes it like a float literal
+(`PreEmitMultiCellLiterals`, temporary plus `unify_value_x`) and keeps such a
+compound out of the inline nested build.
 
 ### FOREIGN (0x8) — Reference to .NET object
 

@@ -3,16 +3,13 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-053 over the numeric side tables, end to end. The mechanism
-/// is pinned in Shumway.Tests.Core.NumericSideTableSweepTests; what matters
-/// here is that the sweep joins the existing trail contract without
-/// changing an answer.
-///
-/// <para>`BigIntAlloc` reclaims a slot when backtracking unwinds past the
-/// allocation. The sweep can shrink the table first, so the unwind now
-/// routinely finds a table smaller than the size it recorded. That is a
-/// no-op by construction (it truncates only when the table is larger), and
-/// these are the cases that say so.</para></summary>
+/// <summary>Big integers and rationals across a collection and a backtrack,
+/// end to end. A big integer is a block of heap cells (ADR-064), reclaimed
+/// by the collector and by the heap top reset; a rational is a side-table
+/// entry (ADR-053) that `RationalAlloc` reclaims when backtracking unwinds
+/// past the allocation, after a sweep that may have shrunk the table first
+/// (a no-op by construction: it truncates only when the table is larger).
+/// What matters here is that neither mechanism changes an answer.</summary>
 public sealed class NumericSideTableLifetimeTests
 {
     private static PrologEngine Engine()

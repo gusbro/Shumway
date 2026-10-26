@@ -45,8 +45,9 @@ public static class GlobalVarsBuiltins
     }
 
     /// <summary>A cell that carries its whole value: nothing to relocate, no
-    /// side table, no heap address. A float pairs a second heap cell and a
-    /// bigint / rational indexes a per-activation table, so neither is one.
+    /// side table, no heap address. A float pairs a second heap cell, a
+    /// bigint names a block of heap cells (ADR-064) and a rational indexes a
+    /// per-activation table, so none of them is one.
     /// </summary>
     private static bool IsSelfContained(Cell c) =>
         c.Tag is Tag.Int or Tag.Atom or Tag.Foreign;

@@ -40,7 +40,6 @@ public readonly struct Cell : IEquatable<Cell>
     public int AsHeapIndex => (int)Data;
     public int AsAtomId => (int)Data;
     public int AsFunctorId => (int)Data;
-    public int AsBigIntId => (int)Data;
     public int AsRationalId => (int)Data;
     public int AsForeignId => (int)Data;
 
@@ -107,9 +106,11 @@ public readonly struct Cell : IEquatable<Cell>
         throw new ArgumentOutOfRangeException(nameof(value),
             $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");
 
+    /// <summary>A big integer (ADR-064). Payload is the heap index of the
+    /// block's header; the limbs follow it (see <see cref="Limbs"/>).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Cell BigInt(int tableId)
-        => new(((long)Tag.BigInt << TagShift) | (uint)tableId);
+    public static Cell BigInt(int headerIdx)
+        => new(((long)Tag.BigInt << TagShift) | (uint)headerIdx);
 
     /// <summary>An exact rational (ADR-039). Payload is an id into the
     /// activation's rational side table — the <see cref="BigInt"/> pattern.</summary>

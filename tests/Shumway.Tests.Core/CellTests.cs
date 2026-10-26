@@ -149,11 +149,12 @@ public class CellTests
     [Theory]
     [InlineData(0)]
     [InlineData(123)]
-    public void BigInt_RoundTrips(int tableId)
+    public void BigInt_RoundTrips(int headerIdx)
     {
-        var c = Cell.BigInt(tableId);
+        // ADR-064: the payload is the heap index of the block's header.
+        var c = Cell.BigInt(headerIdx);
         Assert.Equal(Tag.BigInt, c.Tag);
-        Assert.Equal(tableId, c.AsBigIntId);
+        Assert.Equal(headerIdx, c.AsHeapIndex);
     }
 
     [Theory]

@@ -5,19 +5,17 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Core;
 
-/// <summary>ADR-053, applied to the numeric side tables. `BigIntAlloc` and
-/// `RationalAlloc` reclaim a slot when backtracking unwinds past the
-/// allocation, which covers a search and covers nothing else: a
-/// deterministic loop never backtracks, and that loop is the shape this
-/// engine is deployed in. Measured before this: 20,000 transient big
-/// integers in a deterministic loop left 20,000 table entries standing
-/// after a full collection, linear in the loop, though the program could
-/// only ever name one at a time.
+/// <summary>ADR-053, applied to the rational side table. `RationalAlloc`
+/// reclaims a slot when backtracking unwinds past the allocation, which
+/// covers a search and covers nothing else: a deterministic loop never
+/// backtracks, and that loop is the shape this engine is deployed in. The
+/// sweep is the mechanism that covers it, and here it is safer than for the
+/// foreign table: a Rational id never escapes into a term (every use is an
+/// immediate lookup inside Activation), so there is no analogue of the
+/// '$foreign'(N) round-trip.
 ///
-/// <para>The sweep is the mechanism that covers it, and here it is safer
-/// than for the foreign table: a BigInt or Rational id never escapes into a
-/// term (every use is an immediate lookup inside Activation), so there is
-/// no analogue of the '$foreign'(N) round-trip.</para></summary>
+/// <para>Big integers left the side tables with ADR-064; their lifetime is
+/// the heap's, tested in <see cref="BigIntHeapBlockTests"/>.</para></summary>
 public class NumericSideTableSweepTests(ITestOutputHelper o)
 {
     private static void ClearRegisters(Activation e)
@@ -28,101 +26,9 @@ public class NumericSideTableSweepTests(ITestOutputHelper o)
 
     private static BigInteger Big(int n) => BigInteger.Pow(2, 70) + n;
 
-    /// <summary>The leak: allocations nothing can reach, with no
-    /// backtracking to unwind them.
-    ///
-    /// <para>Asserted on the exact table count rather than on managed
-    /// memory. A memory assertion taken after a query measures a dead
-    /// activation, whose tables are collectable whatever the engine did,
-    /// and an attempt at one read the same 43 MB with the sweep on and
-    /// off.</para></summary>
-    [Theory]
-    [InlineData(100)]
-    [InlineData(20_000)]        // flat in the loop, which is the claim
-    public void UnreachableBigIntegersAreReleased(int n)
-    {
-        var e = new Activation();
-        ClearRegisters(e);
-        e.AllocateHeapUnbound();                     // something to collect
-
-        for (int i = 0; i < n; i++) e.MakeBigInt(Big(i));     // all dropped
-        Assert.Equal(n, e.BigIntTableCount);
-
-        e.CollectHeap();
-
-        o.WriteLine($"bigint table: {n} -> {e.BigIntTableCount}");
-        Assert.Equal(0, e.BigIntTableCount);
-    }
-
-    /// <summary>The counter-proof: a big integer a register still names must
-    /// survive, and still read back as itself. Without the Tag.BigInt case
-    /// in the trace this fails red.</summary>
-    [Fact]
-    public void AReachableBigIntegerSurvivesAndKeepsItsValue()
-    {
-        var e = new Activation();
-        ClearRegisters(e);
-        e.AllocateHeapUnbound();
-
-        for (int i = 0; i < 50; i++) e.MakeBigInt(Big(i));    // dead
-        Cell kept = e.MakeBigInt(Big(999));
-        e.SetRegister(0, kept);
-        for (int i = 0; i < 50; i++) e.MakeBigInt(Big(i));    // dead
-
-        e.CollectHeap();
-
-        Cell r0 = e.GetRegister(0);
-        Assert.Equal(Tag.BigInt, r0.Tag);
-        Assert.Equal(Big(999), e.AsBigInt(r0));
-    }
-
-    /// <summary>One reached only through a compound on the heap: the id has
-    /// to be recorded from the trace, not only from the roots.</summary>
-    [Fact]
-    public void ABigIntegerNestedInAStructureSurvives()
-    {
-        var e = new Activation();
-        ClearRegisters(e);
-        e.AllocateHeapUnbound();
-
-        int f = e.AllocateHeap(2);
-        e.SetHeap(f, Cell.Functor(
-            FunctorTable.Intern(AtomTable.Intern("wrap", permanent: true).Id, 1)));
-        e.SetHeap(f + 1, e.MakeBigInt(Big(7)));
-        e.SetRegister(0, Cell.Str(f));
-
-        e.CollectHeap();
-
-        int nf = e.GetRegister(0).AsHeapIndex;
-        Assert.Equal(Big(7), e.AsBigInt(e.GetHeap(nf + 1)));
-    }
-
-    /// <summary>A dead entry under a live one is zeroed, not removed: the
-    /// live id has to keep meaning what it meant. Zeroing is what releases
-    /// the BigInteger's internal magnitude array, which is the memory.
-    /// </summary>
-    [Fact]
-    public void ADeadBigIntegerUnderALiveOneIsZeroedNotRemoved()
-    {
-        var e = new Activation();
-        ClearRegisters(e);
-        e.AllocateHeapUnbound();
-
-        e.MakeBigInt(Big(1));                        // id 0, dead
-        Cell live = e.MakeBigInt(Big(2));            // id 1, rooted
-        e.SetRegister(0, live);
-        Assert.Equal(2, e.BigIntTableCount);
-
-        e.CollectHeap();
-
-        Assert.Equal(2, e.BigIntTableCount);
-        Cell r0 = e.GetRegister(0);
-        Assert.Equal(1, r0.AsBigIntId);              // the live id did not move
-        Assert.Equal(Big(2), e.AsBigInt(r0));
-    }
-
-    /// <summary>The same for rationals (ADR-039), whose struct holds two
-    /// big integers, so a dead entry retains two magnitude arrays.</summary>
+    /// <summary>A rational's struct holds two big integers, so a dead entry
+    /// retains two magnitude arrays; the sweep releases them and the one a
+    /// register still names survives with its value.</summary>
     [Fact]
     public void UnreachableRationalsAreReleasedAndAReachableOneSurvives()
     {

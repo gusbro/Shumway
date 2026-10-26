@@ -10,9 +10,10 @@ namespace Shumway.Tests.Core;
 ///
 /// <para>Before this, nothing ever removed an entry -- not backtracking, not
 /// the collector, not a cut -- so a query looping over a native reftype
-/// output grew the table at the speed of the loop. Its two sibling side
-/// tables both reclaim (TrailType.BigIntAlloc / RationalAlloc), which is
-/// what made this an unapplied mechanism rather than a missing one.</para>
+/// output grew the table at the speed of the loop. Its sibling side table
+/// reclaims (TrailType.RationalAlloc; big integers were a side table too
+/// before ADR-064 moved them to the heap), which is what made this an
+/// unapplied mechanism rather than a missing one.</para>
 /// </summary>
 public class ForeignTableSweepTests(ITestOutputHelper o)
 {

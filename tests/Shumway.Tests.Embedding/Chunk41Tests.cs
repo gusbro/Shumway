@@ -17,11 +17,11 @@ namespace Shumway.Tests.Embedding;
 public class Chunk41Tests
 {
     // ============================================================================
-    // BigInt trail
+    // Big integers across backtracking (heap blocks since ADR-064)
     // ============================================================================
 
     [Fact]
-    public void BigIntAlloc_BacktrackingFreesSlot()
+    public void BigInt_BacktrackingKeepsLaterAnswersRight()
     {
         var engine = new PrologEngine();
         engine.ConsultString(":- dynamic v/1.");
@@ -42,7 +42,7 @@ public class Chunk41Tests
     }
 
     [Fact]
-    public void BigIntAlloc_FindallReclaimsBetweenSolutions()
+    public void BigInt_FindallKeepsEverySolutionsValue()
     {
         // findall iterates a generator that produces transient bigints. The
         // resulting list should still contain correct values; the test

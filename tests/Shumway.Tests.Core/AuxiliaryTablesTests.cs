@@ -52,16 +52,19 @@ public class AuxiliaryTablesTests
     }
 
     [Fact]
-    public void MakeBigInt_DistinctCallsGetDistinctIds()
+    public void MakeBigInt_DistinctCallsGetDistinctBlocks()
     {
-        // Two BigInt cells with the same outside-range value get separate
-        // side-table slots. The collapse only fires for inline-range values.
+        // ADR-064: two BigInt cells with the same outside-range value are two
+        // blocks on the heap, a header and its limbs each. The collapse only
+        // fires for inline-range values.
         var engine = new Activation();
-        var big = BigInteger.Parse("999999999999999999999");
+        var big = BigInteger.Parse("999999999999999999999");   // two limbs
+        int top0 = engine.HeapTop;
         Cell a = engine.MakeBigInt(big);
         Cell b = engine.MakeBigInt(big);
-        Assert.NotEqual(a.AsBigIntId, b.AsBigIntId);
-        Assert.Equal(2, engine.BigIntTableCount);
+        Assert.NotEqual(a.AsHeapIndex, b.AsHeapIndex);
+        Assert.Equal(top0 + 2 * 3, engine.HeapTop);
+        Assert.True(engine.BigIntEquals(a, b));
     }
 
     [Fact]

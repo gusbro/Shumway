@@ -9,12 +9,11 @@ public enum TrailType : byte
     /// <summary>An already-bound cell was overwritten with a different value.</summary>
     ValueChange = 1,
 
-    /// <summary>One slot was appended to the BigInteger side table; the
-    /// trail entry's <see cref="ExtraTrailEntry.HeapIdx"/> field carries
-    /// the table size <em>before</em> the append, so unwind can truncate
-    /// the table back to that size and reclaim the slot. Lets backtracking
-    /// past a <c>is/2</c> that produced a transient BigInteger free the
-    /// side-table slot instead of leaving it dangling.</summary>
+    /// <summary>Retired by ADR-064: a big integer is a block of heap cells,
+    /// reclaimed by the heap top reset, so nothing records one. The code
+    /// stays because a wasm module bakes these codes into its trail
+    /// compaction; an entry of this kind is never produced and unwinds as a
+    /// no-op.</summary>
     BigIntAlloc = 2,
 
     /// <summary>One slot was appended to the rational side table (ADR-039).
