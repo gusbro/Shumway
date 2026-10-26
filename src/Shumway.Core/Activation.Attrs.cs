@@ -205,14 +205,14 @@ public sealed partial class Activation
     /// construction. A home at or past the collected range is left alone:
     /// the collector says nothing about it, and silence is not a
     /// proof.</para></summary>
-    private void AttrSweepUnmarked(bool[] marked, int oldTop)
+    private void AttrSweepUnmarked(ulong[] markBits, int oldTop)
     {
         if (_attrStore.Count == 0) return;
         // Collected first: AttrDropRecord mutates the store, which the key
         // enumeration would not survive.
         List<int>? dead = null;
         foreach (int home in _attrStore.Keys)
-            if ((uint)home < (uint)oldTop && !marked[home])
+            if ((uint)home < (uint)oldTop && (markBits[home >> 6] & (1UL << (home & 63))) == 0)
                 (dead ??= new List<int>()).Add(home);
         if (dead is null) return;
         foreach (int home in dead) AttrDropRecord(home);

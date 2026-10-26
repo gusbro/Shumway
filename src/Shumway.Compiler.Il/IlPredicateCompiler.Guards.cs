@@ -541,6 +541,7 @@ public sealed partial class IlPredicateCompiler
                 case Opcode.PutInteger:
                 case Opcode.PutNil:
                 case Opcode.PutFloat:
+                case Opcode.PutBigInt:                 // ADR-064: a block, pre-emitted like a float
                 case Opcode.PutVariableX:
                 case Opcode.PutStructureR:
                 case Opcode.PutListR:
@@ -1356,6 +1357,7 @@ public sealed partial class IlPredicateCompiler
                     case Opcode.PutInteger:
                     case Opcode.PutNil:
                     case Opcode.PutFloat:
+                    case Opcode.PutBigInt:             // ADR-064: a block, pre-emitted like a float
                     case Opcode.PutVariableX:
                     case Opcode.PutStructureR:
                     case Opcode.PutListR:

@@ -76,11 +76,15 @@ This means the compiler is type-agnostic at the call site — `IntTerm` and
 The three opcodes match their float-literal cousins almost exactly. The
 interpreter calls `Engine.MakeBigInt(pool[literalId])` to materialise the
 value, then performs the same register / heap / unify-pointer dance as the
-float path. The only structural difference is that `Cell.BigInt` is a
-single-cell representation (table id in the payload), so `unify_bigint`
-in write mode allocates one heap slot and writes directly — no
-PreEmitMultiCellLiterals dance is needed (that's a float-specific workaround
-for the 2-cell heap layout of `Tag.Float`).
+float path. Originally `Cell.BigInt` was a single-cell representation (a
+table id in the payload), so `unify_bigint` in write mode allocated one heap
+slot and wrote directly. Since ADR-064 a value past the inline range is a
+block of cells on the heap, so a big integer under a compound takes the
+float literal's route: `PreEmitMultiCellLiterals` builds it into a temporary
+and the compound references it with `unify_value_x`, and `CanInlineCompound`
+keeps such a compound out of the inline nested build. `unify_bigint` in
+write mode is reached only for a value in the inline range, which is one
+`Int` cell; a block there is a compiler bug and the interpreter says so.
 
 ### MakeBigInt canonicalisation
 

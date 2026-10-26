@@ -174,7 +174,7 @@ public static class StandardOrderComparator
     private static Number ToNumber(Activation engine, Cell c) => c.Tag switch
     {
         Tag.Int => new Number(c.AsInt),
-        Tag.BigInt => new Number(engine.AsBigInt(c)),
+        Tag.BigInt => Number.FromHeap(engine, c),
         Tag.Rational => new Number(engine.AsRational(c)),
         Tag.Float => new Number(Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex))),
         _ => throw new InvalidOperationException(

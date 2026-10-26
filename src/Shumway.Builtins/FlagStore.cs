@@ -23,7 +23,9 @@ public readonly struct FlagValue
     }
 
     public static FlagValue OfAtom(int atomId) => new(true, atomId, default);
-    public static FlagValue OfNumber(Number n) => new(false, 0, n);
+    // Detached: the store outlives the evaluation that produced the value, so
+    // it may hold neither a view over the heap nor a pooled buffer (ADR-064).
+    public static FlagValue OfNumber(Number n) => new(false, 0, n.Detached());
 
     /// <summary>The default value of an unset flag — the integer 0 (SWI).</summary>
     public static FlagValue Zero => OfNumber(new Number(0L));

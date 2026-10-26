@@ -56,6 +56,47 @@ public class HeapGcTests
         Assert.Equal(2, e.GetHeap(nf + 2).AsInt);
     }
 
+    /// <summary>The forwarding map is a count per 64-cell word plus a
+    /// popcount inside the word: live cells sitting exactly on and around the
+    /// word boundaries, with garbage between them, land in order at the
+    /// addresses their rank gives, and their references follow.</summary>
+    [Fact]
+    public void Collect_RelocatesLiveCellsAcrossWordBoundariesByRank()
+    {
+        var e = new Activation();
+        ClearRegisters(e);
+
+        // Pairs at 62..63, 64..65, 126..127, 191..192, 255..256, 319..320 and
+        // 1000..1001: each a two-cell list (head Int, tail []) rooted by a
+        // register, straddling or touching a word boundary, garbage between.
+        int[] starts = { 62, 64, 126, 191, 255, 319, 1000 };
+        int reg = 0;
+        foreach (int start in starts)
+        {
+            while (e.HeapTop < start) e.AllocateHeapUnbound();   // garbage up to the pair
+            int h = e.AllocateHeap(2);
+            Assert.Equal(start, h);
+            e.SetHeap(h, Cell.Int(start));
+            e.SetHeap(h + 1, Cell.Atom(AtomTable.EmptyListId));
+            e.SetRegister(reg++, Cell.Lis(h));
+        }
+        while (e.HeapTop < 1100) e.AllocateHeapUnbound();        // trailing garbage
+        int oldTop = e.HeapTop;
+
+        int reclaimed = e.CollectHeap();
+
+        Assert.Equal(oldTop - 2 * starts.Length, reclaimed);
+        Assert.Equal(2 * starts.Length, e.HeapTop);
+        for (int i = 0; i < starts.Length; i++)
+        {
+            Cell r = e.GetRegister(i);
+            Assert.Equal(Tag.Lis, r.Tag);
+            Assert.Equal(2 * i, r.AsHeapIndex);                  // its rank among the live pairs
+            Assert.Equal(starts[i], e.GetHeap(2 * i).AsInt);
+            Assert.Equal(AtomTable.EmptyListId, e.GetHeap(2 * i + 1).AsAtomId);
+        }
+    }
+
     [Fact]
     public void Collect_PreservesUnboundVariableSelfRef()
     {

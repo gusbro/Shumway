@@ -49,7 +49,7 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x4 | ATOM     | Atom id (global). |
 | 0x5 | INT      | Signed 60-bit integer (inline). |
 | 0x6 | FLOAT    | 4 high bits of double + heap index to INT cell with 60 low bits. |
-| 0x7 | BIGINT   | Id in the per-engine BigInteger table. |
+| 0x7 | BIGINT   | Heap index of a block: a RawInt header (limb count, sign) and 60-bit limbs (ADR-064; originally an id in a per-engine BigInteger table). |
 | 0x8 | FOREIGN  | Id in the per-engine foreign object table. |
 | 0x9 | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4. |
 | 0xA | PSTR     | Packed list header: presentation bit (59), astral bit (58, ADR-048), length, buffer index, offset (see PSTR design doc). |
@@ -68,7 +68,7 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 
 ### The heap is fully blittable
 
-The heap is `Cell[]`, where `Cell` is a `readonly struct` wrapping a `long`. **The .NET GC never scans cells for managed references.** All managed-reference data (BigInteger, string, foreign object) lives in per-engine auxiliary tables. The cell holds an integer id into the appropriate table.
+The heap is `Cell[]`, where `Cell` is a `readonly struct` wrapping a `long`. **The .NET GC never scans cells for managed references.** All managed-reference data (string, foreign object, rational) lives in per-engine auxiliary tables. The cell holds an integer id into the appropriate table. (A big integer was such a table entry until ADR-064 made it a block of cells on the heap.)
 
 ### Cell construction and inspection
 
@@ -190,7 +190,7 @@ This decision is consistent with `Span<Cell>` and array indexing in .NET, which 
 ### Negative
 
 - **Doubles cost 2 cells**: minor cost for non-float-heavy workloads.
-- **Large integers require BigInteger table**: integers outside ±2^59 need a per-engine table lookup. This is acceptable because such values are rare in typical Prolog code.
+- **Large integers cost a block of cells**: integers outside ±2^59 are a header plus one cell per 60 bits on the heap (ADR-064; originally a per-engine table lookup). Acceptable because such values are rare in typical Prolog code, and the block is reclaimed like any other cells.
 - **Cell payload is not aligned**: when reading the payload as a typed value (e.g., `AsInt`), masking is required. The masking cost is negligible.
 
 ### Mitigations

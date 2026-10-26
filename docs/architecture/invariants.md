@@ -23,9 +23,11 @@ is the authority. ADR references give the full rationale.
   (`ConcurrentDictionary` / fine-grained locks) — engines share them.
   (ADR-001.)
 - **The heap is a `Cell[]` of 8-byte blittable values. Never put managed
-  object references inside cells.** Managed payloads (BigInteger, string,
-  foreign object, rational) live in per-activation side tables, reached by an
-  integer id in the cell. Enforced by the `Cell` type itself (a struct over a
+  object references inside cells.** Managed payloads (string, foreign
+  object, rational) live in per-activation side tables, reached by an
+  integer id in the cell. A big integer is cells, not a payload: a `RawInt`
+  header and 60-bit limbs on the heap, referenced by the `BigInt` cell's
+  heap index (ADR-064). Enforced by the `Cell` type itself (a struct over a
   `ulong`). (ADR-002.)
 - **Cells are 8 bytes: 4-bit tag + payload.** Do not change this layout.
   (ADR-002; field-level detail in `../design/cell-layout-detail.md`.)
@@ -100,8 +102,9 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
 ## Trails and backtracking
 
 - **Two separate trails**: `BindingTrail` (int[], the hot path) and
-  `ExtraTrail` (struct[], other reversible state — attribute changes, BigInt
-  allocations, rational allocations). (ADR-004.)
+  `ExtraTrail` (struct[], other reversible state — attribute changes,
+  rational allocations; big-integer allocations until ADR-064 made a big
+  integer heap cells the heap top reset reclaims). (ADR-004.)
 - **HB check**: bindings to variables younger than the newest choice point are
   not trailed.
 - **Young-to-old**: unifying two unbound variables binds the younger (higher
@@ -110,8 +113,9 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   permanent. Consequence: **exploring more clauses than ISO mandates is a
   correctness bug, not a cosmetic one** — extra backtracking re-runs side
   effects.
-- **Trail compaction must preserve live `AttrModify`/`BigIntAlloc` entries**
-  (a dropped attribute-restore entry corrupts constraint stores on backtrack).
+- **Trail compaction must preserve live `AttrModify`/`RationalAlloc` entries**
+  (a dropped attribute-restore entry corrupts constraint stores on backtrack;
+  a dropped side-table entry leaks the slot).
 - **A cut that discards a `setup_call_cleanup/3` scope runs the cleanup
   before the goal after the cut, in every tier**: the interpreter after each
   cut instruction, Tier-1 IL inside `NeckCut` and `CutToLevel`, a wasm
@@ -184,16 +188,20 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
   and attributed variables stay sound**: env Y-slots, CP-protected slots,
   query vars, global vars, debugger-held roots (`MarkHeapRoots` /
   `RelocateHeapRoots` seams) are all roots. (ADR-016.)
-- **Every side table is a WEAK holder** — foreign, BigInteger and
-  rational: an entry lives only while a
-  FOREIGN cell naming it is reachable. Dead entries are NULLED (surviving
-  ids stay positional, so no id is reused under a live reference) and only
-  the tail is removed, while its last entry is provably dead. Judged by
-  liveness, never by the stored value: null and zero are things a program
-  can store on purpose. The BigIntAlloc/RationalAlloc trail entries reclaim
-  a slot only when BACKTRACKING unwinds past the allocation, which does
+- **Every side table is a WEAK holder** — foreign and rational: an entry
+  lives only while a cell naming it is reachable. Dead entries are NULLED
+  (surviving ids stay positional, so no id is reused under a live reference)
+  and only the tail is removed, while its last entry is provably dead.
+  Judged by liveness, never by the stored value: null and zero are things a
+  program can store on purpose. The RationalAlloc trail entries reclaim a
+  slot only when BACKTRACKING unwinds past the allocation, which does
   nothing in the deterministic loop an embedded system lives in; the sweep
   is what covers that. (ADR-053.)
+- **A big integer's block is marked through its `BigInt` cell and relocated
+  as a unit**: the header's count says how many limb cells follow, every one
+  a `RawInt` leaf, and the reference is bounds-guarded like a PSTR header's,
+  so a stale `BigInt` cell the conservative scan reads can over-retain but
+  never crash or corrupt. (ADR-064.)
 - **The attribute table is a WEAK root** — a row does not keep its variable
   alive. The attribute value is reached from the live variable, never the
   variable from its row, and rows the trace disproves are swept before

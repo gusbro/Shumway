@@ -113,42 +113,35 @@ public class Chunk337Tests
         Assert.Equal(v0, engine.GetAttr(x, mod));
     }
 
-    // The sibling bug: BigIntAlloc entries overload HeapIdx to mean the
-    // big-integer table size before the allocation (not a heap address). The
-    // old `HeapIdx < parentHeapTop` test wrongly dropped the entry once the
-    // table outgrew the parent CP's heap top, so a cut+backtrack failed to trim
-    // the bigint table — a leak (and potential id reuse under a surviving
-    // reference). The fix keeps BigIntAlloc entries unconditionally, matching
-    // plain (no-cut) backtracking.
+    // ADR-064: a big integer is a block of heap cells, so backtracking past its
+    // allocation reclaims it through the heap top the choice point saved, with
+    // no trail entry to classify. The old BigIntAlloc entry the cut had to keep
+    // (its HeapIdx was a table size, not a heap address) no longer exists.
     [Fact]
-    public void Cut_TrimsBigIntTable_OnBacktrack_WhenTableIndexExceedsParentHeapTop()
+    public void Cut_ThenBacktrack_ReclaimsABigIntegerBlockThroughTheHeapTop()
     {
         var engine = new Activation();
-        var big = BigInteger.Pow(2, 100);   // out of 60-bit range → table slot
+        var big = BigInteger.Pow(2, 100);
 
-        // Inflate the bigint table so its indices are large while the heap
-        // stays tiny — the parent CP's heap top will be far below the table
-        // index, the misclassified case.
         for (int i = 0; i < 50; i++) engine.MakeBigInt(big + i);
 
         engine.SetHbForTesting(engine.HeapTop);
         engine.PushChoicePoint(0, 999);
         int outerB = engine.B;
-        int outerBinding = engine.BindingTrailTop;
         int outerExtra = engine.ExtraTrailTop;
-        int countAtOuter = engine.BigIntTableCount;
+        int topAtOuter = engine.HeapTop;
 
-        // Allocate a bigint above the outer CP — its BigIntAlloc entry has a
-        // table-index HeapIdx (~50) well above the parent heap top (~0).
-        engine.MakeBigInt(big + 9999);
-        Assert.Equal(countAtOuter + 1, engine.BigIntTableCount);
+        // A block above the outer CP: cells, and nothing on the extra trail.
+        Cell c = engine.MakeBigInt(big + 9999);
+        Assert.Equal(Tag.BigInt, c.Tag);
+        Assert.True(engine.HeapTop > topAtOuter);
+        Assert.Equal(outerExtra, engine.ExtraTrailTop);
 
         engine.PushChoicePoint(0, 998);
         engine.Cut(outerB);
 
-        // Backtrack to the outer CP: the bigint table must be trimmed back.
-        // With the bug the dropped entry never trims, leaving the slot leaked.
-        engine.UnwindTrails(outerBinding, outerExtra);
-        Assert.Equal(countAtOuter, engine.BigIntTableCount);
+        // Backtrack to the outer CP: its saved heap top takes the block back.
+        engine.RetryMeElse(0);
+        Assert.Equal(topAtOuter, engine.HeapTop);
     }
 }

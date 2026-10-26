@@ -15,21 +15,74 @@ namespace Shumway.Core;
 /// </summary>
 public sealed partial class Activation
 {
-    // Scratch buffers reused across collections to avoid per-GC churn.
-    private bool[]? _gcMarked;
+    // Scratch buffers reused across collections to avoid per-GC churn. The
+    // marks are a bitmap, one bit per heap cell, and the forwarding map is
+    // the count of marked cells before each 64-cell word (see GcForwarding):
+    // computing it and sliding the live cells cost the words and the live
+    // cells, not every cell the heap holds.
+    private ulong[]? _gcBits;
+    private int[]? _gcPrefix;
     // Cells newly marked since the current mark began — the root-attribution
     // probe reads deltas of this to charge retained cells to specific roots.
     private int _gcMarkCount;
-    private int[]? _gcForward;
     private int[]? _gcWork;
+
+    /// <summary>The forwarding map of one collection (ADR-016). A live cell at
+    /// <c>p</c> moves to the number of live cells below it: the prefix count
+    /// of its word plus a popcount inside the word. Valid for <c>p</c> in
+    /// <c>[0, OldTop]</c>, the top itself mapping to the new live count.</summary>
+    private readonly struct GcForwarding
+    {
+        public readonly ulong[] Bits;
+        public readonly int[] Prefix;
+        public readonly int OldTop;
+
+        public GcForwarding(ulong[] bits, int[] prefix, int oldTop)
+        {
+            Bits = bits;
+            Prefix = prefix;
+            OldTop = oldTop;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public int Of(int p)
+        {
+            int w = p >> 6;
+            ulong below = Bits[w] & ((1UL << (p & 63)) - 1);
+            return Prefix[w] + System.Numerics.BitOperations.PopCount(below);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public bool Marked(int p) => (Bits[p >> 6] & (1UL << (p & 63))) != 0;
+    }
+
+    /// <summary>The mark bitmap sized and cleared for a heap of
+    /// <paramref name="oldTop"/> cells; one word past the last cell so a
+    /// boundary at the top has a word.</summary>
+    private ulong[] GcMarkBits(int oldTop)
+    {
+        int words = (oldTop >> 6) + 1;
+        ulong[] bits = _gcBits is { } b && b.Length >= words ? b : (_gcBits = new ulong[words + (words >> 2) + 16]);
+        System.Array.Clear(bits, 0, words);
+        return bits;
+    }
+
+    private static int GcCountMarked(ulong[] bits, int oldTop)
+    {
+        int words = (oldTop >> 6) + 1, live = 0;
+        for (int w = 0; w < words; w++) live += System.Numerics.BitOperations.PopCount(bits[w]);
+        return live;
+    }
     // ADR-053: which foreign ids the trace reached, this collection. Filled
     // by GcMarkReferents' Foreign case -- the only place a foreign cell is
     // ever looked at -- and read once by the sweep.
     private bool[]? _gcForeignLive;
-    // ADR-053: and the same for the numeric side tables, whose own
+    // ADR-053: and the same for the rational side table, whose own
     // reclamation only fires on backtracking and so does nothing in the
-    // deterministic loop an embedded system lives in.
-    private bool[]? _gcBigIntLive;
+    // deterministic loop an embedded system lives in. (A big integer is heap
+    // cells since ADR-064 and needs no such set.)
     private bool[]? _gcRationalLive;
 
     /// <summary>ADR-053: clears the per-collection sets of reached side-table
@@ -38,7 +91,6 @@ public sealed partial class Activation
     private void ResetSideTableLiveSets()
     {
         ResetLiveSet(ref _gcForeignLive, _foreignTable.Count);
-        ResetLiveSet(ref _gcBigIntLive, _bigIntTable.Count);
         ResetLiveSet(ref _gcRationalLive, _rationalTable.Count);
     }
 
@@ -507,8 +559,7 @@ public sealed partial class Activation
         HeapGcRuns++;
 
         // ---- mark every cell reachable from the roots. ----
-        bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
-        System.Array.Clear(marked, 0, oldTop);
+        ulong[] bits = GcMarkBits(oldTop);
         if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
         // the mark primitives are private methods over these
         // fields (direct calls from MarkRoots / the trace loop); delegates
@@ -540,28 +591,29 @@ public sealed partial class Activation
         // next live cell landed, and the row would come to answer for an
         // unrelated variable. Dropping them also stops the table itself
         // from growing without bound, which freeing their cells does not.
-        AttrSweepUnmarked(marked, oldTop);
+        AttrSweepUnmarked(bits, oldTop);
 
         // ADR-053: and the same for the side tables, off the ids the trace
         // recorded. Before relocation for the same reason -- though the ids
         // do not move, the AttrSnapshot relocation below walks the foreign
         // table and should not be handed entries the collector disproved.
         ForeignSweepUnmarked(_gcForeignLive);
-        NumericSweepUnmarked(_gcBigIntLive, _gcRationalLive);
+        NumericSweepUnmarked(_gcRationalLive);
 
-        // ---- forwarding addresses (order-preserving slide). ----
-        // forward[i] = number of marked cells in [0, i). New address of a
-        // live cell at i is forward[i]; a heap-top boundary p maps to
-        // forward[p]; the new heap top is forward[oldTop].
-        int[] forward = _gcForward is { } f2 && f2.Length >= oldTop + 1
-            ? f2 : (_gcForward = new int[oldTop + 1]);
+        // ---- forwarding addresses (order-preserving slide): the count of
+        // marked cells before each 64-cell word, one pass over the words; a
+        // cell's new address is its word's count plus a popcount inside the
+        // word (GcForwarding.Of), the top's the new live count. ----
+        int words = (oldTop >> 6) + 1;
+        int[] prefix = _gcPrefix is { } pf && pf.Length > words ? pf : (_gcPrefix = new int[words + (words >> 2) + 16]);
         int live = 0;
-        for (int i = 0; i < oldTop; i++)
+        for (int w = 0; w < words; w++)
         {
-            forward[i] = live;
-            if (marked[i]) live++;
+            prefix[w] = live;
+            live += System.Numerics.BitOperations.PopCount(bits[w]);
         }
-        forward[oldTop] = live;
+        prefix[words] = live;
+        var forward = new GcForwarding(bits, prefix, oldTop);
 
         if (live == oldTop) return 0;   // nothing to reclaim (and nothing moved:
                                         // debugger marks etc. stay valid as they are,
@@ -569,16 +621,21 @@ public sealed partial class Activation
         HeapGcCount++;
         HeapGcReclaimedCells += oldTop - live;
 
-        // ---- rewrite payloads in place (still at old positions). ----
-        for (int i = 0; i < oldTop; i++)
-            if (marked[i])
-                _heap[i] = RelocateCell(_heap[i], forward);
-
-        // ---- slide live cells left. forward[i] <= i and i is
-        // increasing, so the destination is always already vacated. ----
-        for (int i = 0; i < oldTop; i++)
-            if (marked[i])
-                _heap[forward[i]] = _heap[i];
+        // ---- rewrite payloads and slide the live cells left, one pass over
+        // the set bits. A cell's destination is the count of live cells
+        // before it, never past its own index and already vacated: the live
+        // cells before it have moved, and a dead one is free. ----
+        int dest = 0;
+        for (int w = 0; w < words; w++)
+        {
+            ulong word = bits[w];
+            while (word != 0)
+            {
+                int i = (w << 6) + System.Numerics.BitOperations.TrailingZeroCount(word);
+                word &= word - 1;
+                _heap[dest++] = RelocateCell(_heap[i], forward);
+            }
+        }
 
         // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
@@ -630,7 +687,7 @@ public sealed partial class Activation
     /// <summary>Relocates every external holder's heap indices. Runs in the
     /// same pass as the rest of the relocation: compaction reuses addresses, so
     /// an index left unmapped can come to name an unrelated cell.</summary>
-    private void RelocateExternalHolders(int[] forward, int oldTop)
+    private void RelocateExternalHolders(GcForwarding forward, int oldTop)
     {
         // The attribute table is rebuilt: its keys are heap indices, so this is
         // a re-key, not an in-place edit.
@@ -665,14 +722,13 @@ public sealed partial class Activation
         // an unrelated variable and '$attv_new_since' would read a
         // genuinely new attributed variable as already-seen. An entry the
         // collector did not mark is dropped instead of mapped.
-        bool[]? live = _gcMarked;
         foreach (object? o in _foreignTable)
             if (o is AttrSnapshot snap)
             {
                 var mapped = new System.Collections.Generic.HashSet<int>(snap.Homes.Count);
                 foreach (int home in snap.Homes)
                 {
-                    if (live is not null && (uint)home < (uint)oldTop && !live[home])
+                    if ((uint)home < (uint)oldTop && !forward.Marked(home))
                         continue;                       // died in this collection
                     mapped.Add(RelocIndex(home, forward));
                 }
@@ -688,8 +744,7 @@ public sealed partial class Activation
     {
         int oldTop = _heapTop;
         if (oldTop == 0) return (0, 0);
-        bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
-        System.Array.Clear(marked, 0, oldTop);
+        GcMarkBits(oldTop);
         if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
@@ -699,9 +754,7 @@ public sealed partial class Activation
         OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
         while (_gcWorkTop > 0)
             GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
-        int live = 0;
-        for (int i = 0; i < oldTop; i++) if (marked[i]) live++;
-        return (live, oldTop);
+        return (GcCountMarked(_gcBits!, oldTop), oldTop);
     }
 
     /// <summary>Diagnostic (the stack-roots GC arc): attributes retained heap
@@ -717,8 +770,7 @@ public sealed partial class Activation
     {
         int oldTop = _heapTop;
         if (oldTop == 0) return;
-        bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
-        System.Array.Clear(marked, 0, oldTop);
+        GcMarkBits(oldTop);
         if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
@@ -876,30 +928,33 @@ public sealed partial class Activation
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
     /// (if any) mapped through <paramref name="forward"/>. Atomic cells
     /// are returned unchanged.</summary>
-    private static Cell RelocateCell(Cell c, int[] forward)
+    private static Cell RelocateCell(Cell c, in GcForwarding forward)
     {
-        // forward has length oldTop+1; a valid heap index is in [0, oldTop).
-        int oldTop = forward.Length - 1;
+        // A valid heap index is in [0, oldTop).
+        int oldTop = forward.OldTop;
         switch (c.Tag)
         {
             case Tag.Ref:
-                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Ref(forward[c.AsHeapIndex]) : c;
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Ref(forward.Of(c.AsHeapIndex)) : c;
             case Tag.Str:
-                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Str(forward[c.AsHeapIndex]) : c;
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Str(forward.Of(c.AsHeapIndex)) : c;
             case Tag.Lis:
-                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Lis(forward[c.AsHeapIndex]) : c;
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Lis(forward.Of(c.AsHeapIndex)) : c;
             case Tag.AttVar:
-                return InBounds(c.AsHeapIndex, oldTop) ? Cell.AttVar(forward[c.AsHeapIndex]) : c;
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.AttVar(forward.Of(c.AsHeapIndex)) : c;
+            case Tag.BigInt:
+                // ADR-064: the payload is the heap index of the block's header.
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.BigInt(forward.Of(c.AsHeapIndex)) : c;
             case Tag.Float:
                 // Preserve tag + the 4 high mantissa/exponent bits (payload
                 // bits 56..59); rewrite only the low-32-bit paired index.
                 return InBounds(c.FloatPairedIndex, oldTop)
                     ? new Cell((c.Data & unchecked((long)0xFFFFFFFF00000000L))
-                               | (uint)forward[c.FloatPairedIndex])
+                               | (uint)forward.Of(c.FloatPairedIndex))
                     : c;
             case Tag.Pstr:
                 return InBounds(c.AsPstrBufferIndex, oldTop)
-                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset, c.AsPstrKind, c.AsPstrIsAstral)
+                    ? Cell.Pstr(c.AsPstrLength, forward.Of(c.AsPstrBufferIndex), c.AsPstrOffset, c.AsPstrKind, c.AsPstrIsAstral)
                     : c;
             default:
                 return c;   // atomic / leaf
@@ -914,9 +969,12 @@ public sealed partial class Activation
     // crash the collector.
     private void GcMarkCell(int addr)
     {
-        bool[] marked = _gcMarked!;
-        if ((uint)addr >= (uint)_gcOldTop || marked[addr]) return;
-        marked[addr] = true;
+        ulong[] bits = _gcBits!;
+        if ((uint)addr >= (uint)_gcOldTop) return;
+        int w = addr >> 6;
+        ulong bit = 1UL << (addr & 63);
+        if ((bits[w] & bit) != 0) return;
+        bits[w] |= bit;
         _gcMarkCount++;
         int[] work = _gcWork!;
         if (_gcWorkTop == work.Length)
@@ -985,15 +1043,19 @@ public sealed partial class Activation
                 GcMarkCell(c.FloatPairedIndex);
                 break;
             case Tag.BigInt:
-                // ADR-053: a big integer's slot is reachable only through
-                // cells like this one. Recording the id is what lets the
-                // sweep release the rest -- the trail reclaims a slot only
-                // when backtracking unwinds past the allocation, which a
-                // deterministic loop never does.
-                if (_gcBigIntLive is { } bg
-                    && (uint)c.AsBigIntId < (uint)bg.Length)
-                    bg[c.AsBigIntId] = true;
+            {
+                // ADR-064: the header and its limbs, all RawInt leaves, are
+                // reached only through cells like this one. Bounds-guarded
+                // like the PSTR arm: a stale slot can read as a BigInt whose
+                // index lands on anything, and the worst allowed outcome is
+                // over-retention.
+                int h = c.AsHeapIndex;
+                if ((uint)h >= (uint)oldTop || _heap[h].Tag != Tag.RawInt) break;
+                int n = Limbs.Count(_heap[h]);
+                if (n <= 0 || (uint)(h + n) >= (uint)oldTop) break;
+                for (int i = 0; i <= n; i++) GcMarkCell(h + i);
                 break;
+            }
             case Tag.Rational:
                 if (_gcRationalLive is { } rt
                     && (uint)c.AsRationalId < (uint)rt.Length)
@@ -1025,21 +1087,21 @@ public sealed partial class Activation
                 GcMarkCell(bufStart + bufCount);   // logical tail cell
                 break;
             }
-            // Atom, Int, Functor, BigInt, Rational, String, Foreign,
-            // PstrBuffer, RawInt (control words): leaves.
+            // Atom, Int, Functor, Rational, String, Foreign, PstrBuffer,
+            // RawInt (control words, big-integer headers and limbs): leaves.
         }
     }
 
     // Relocate a bare heap-address root, leaving an out-of-range index
     // (a transient/dead slot, never a live heap cell) untouched.
-    private static int RelocIndex(int idx, int[] forward)
-        => (uint)idx < (uint)(forward.Length - 1) ? forward[idx] : idx;
+    private static int RelocIndex(int idx, in GcForwarding forward)
+        => (uint)idx < (uint)forward.OldTop ? forward.Of(idx) : idx;
 
     // Relocate a heap-TOP boundary (valid range [0, oldTop], inclusive —
     // forward[oldTop] is the new live count). A stale/garbage boundary
     // outside that range is left untouched rather than crashing.
-    private static int RelocBoundary(int p, int[] forward)
-        => (uint)p < (uint)forward.Length ? forward[p] : p;
+    private static int RelocBoundary(int p, in GcForwarding forward)
+        => (uint)p <= (uint)forward.OldTop ? forward.Of(p) : p;
 
     /// <summary>Marks the cells reachable from every root. The X register
     /// bank and the entire control stack are scanned <i>conservatively</i>:
@@ -1135,7 +1197,7 @@ public sealed partial class Activation
     /// the CP chain is walked separately to fix exactly those two slots per
     /// frame. Trails and catch frames hold bare indices, relocated
     /// explicitly.</summary>
-    private void RelocateRoots(int[] forward, int oldTop)
+    private void RelocateRoots(GcForwarding forward, int oldTop)
     {
         for (int i = 0; i < _registers.Length; i++)
             _registers[i] = RelocateCell(_registers[i], forward);

@@ -597,7 +597,12 @@ public sealed partial class ClauseCompiler
     internal static bool CanInlineCompound(CompoundTerm c)
     {
         foreach (Term a in c.Args)
-            if (a is FloatTerm or StringTerm) return false;
+        {
+            if (a is FloatTerm or StringTerm or BigIntTerm) return false;
+            // ADR-064: an integer past the inline range is a block of cells too.
+            if (a is IntTerm n && (n.Value < Shumway.Core.Cell.MinInt60 || n.Value > Shumway.Core.Cell.MaxInt60))
+                return false;
+        }
         return true;
     }
 
@@ -790,6 +795,23 @@ public sealed partial class ClauseCompiler
                     int strSlot = s.Xs.AllocateAnonymousSlot();
                     s.Emitter.EmitPutPstr(_stringLiterals.Intern(new Shumway.Core.TextLiteral(str.Content, str.Kind)), strSlot);
                     temps[i] = strSlot;
+                    break;
+                // ADR-064: a big integer is a block of cells, so like a float it
+                // cannot be written inline where the argument cell goes. An
+                // integer in the 60-bit inline range materialises as one Int
+                // cell and stays on unify_bigint.
+                case BigIntTerm bn:
+                    temps ??= new Dictionary<int, int>();
+                    int bigSlot = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutBigInt(_bigIntLiterals.Intern(bn.Value), bigSlot);
+                    temps[i] = bigSlot;
+                    break;
+                case IntTerm n when n.Value < Shumway.Core.Cell.MinInt60 || n.Value > Shumway.Core.Cell.MaxInt60:
+                    temps ??= new Dictionary<int, int>();
+                    int wideSlot = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutBigInt(
+                        _bigIntLiterals.Intern(new System.Numerics.BigInteger(n.Value)), wideSlot);
+                    temps[i] = wideSlot;
                     break;
             }
         }
