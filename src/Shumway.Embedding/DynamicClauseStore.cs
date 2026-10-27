@@ -214,7 +214,11 @@ internal sealed class DynamicClauseStore
     /// <summary>Get-or-create: the live clause list for
     /// <paramref name="fid"/>, creating an empty slot (and the dynamic mark)
     /// on first use.</summary>
-    public List<Clause> Slot(int fid)
+    public List<Clause> Slot(int fid) => Dense(fid, PhysicalSlot(fid));
+
+    /// <summary><see cref="Slot"/> without the compaction: for a mutator that
+    /// moves no position, which a tombstone does not disturb.</summary>
+    private List<Clause> PhysicalSlot(int fid)
     {
         if (!_clauses.TryGetValue(fid, out var list))
         {
@@ -222,7 +226,7 @@ internal sealed class DynamicClauseStore
             _clauses[fid] = list;
             _functors.Add(fid);
         }
-        return Dense(fid, list);
+        return list;
     }
 
     public bool RemoveSlot(int fid)
@@ -366,7 +370,11 @@ internal sealed class DynamicClauseStore
 
     public void AppendClause(int fid, Clause c)
     {
-        var list = Slot(fid);
+        // Physical: an append lands past every position, so the tombstones
+        // wait for RemoveClauseAt's half-dead rule. A dense list here
+        // compacted the slot and rebuilt its index on every assert that
+        // followed a retract.
+        var list = PhysicalSlot(fid);
         NotifyInsertAt(fid, list.Count);
         list.Add(c);
         if (_indexes.TryGetValue(fid, out var ix)) ix.Append(c);

@@ -57,6 +57,36 @@ public sealed class ClauseTombstoneTests
         }
     }
 
+    /// <summary>An assert after a retract is not a reader: it appends past
+    /// every position and leaves the tombstones to the half-dead rule. Asking
+    /// for the dense list there compacted the slot and rebuilt its index on
+    /// every assert of an assert/retract loop, O(n) each over a big
+    /// predicate. Counted: n rounds over n clauses tombstone n slots against
+    /// 2n, one compaction at most.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AnAssertAfterARetractDoesNotCompact(int threshold)
+    {
+        const int n = 3_000;
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.ConsultString(Program + "\n" + """
+            churn(0) :- !.
+            churn(N) :- assertz(tok(x)), retract(tok(x)), M is N - 1, churn(M).
+            """);
+        e.IlPromotion.Threshold = threshold;
+        e.ConsultString($":- mk({n}).");
+        long before = e.ClauseSlotCompactions;
+        Assert.True(e.Query($"churn({n}).").Success);
+        long compactions = e.ClauseSlotCompactions - before;
+        Assert.True(compactions <= 2, $"{compactions} compactions over {n} assert/retract rounds");
+        Assert.Equal(0, e.ClauseIndexRebuilds);
+        // The rounds left no trace, and every original clause still answers.
+        Assert.False(e.Query("tok(x).").Success);
+        Assert.True(e.Query($"findall(X, tok(X), L), length(L, {n}), L = [{n}|_].").Success);
+        Assert.True(e.Query("tok(1), tok(1500).").Success);
+    }
+
     /// <summary>A reader between retracts, inside the same query, while the
     /// slot still holds tombstones: it must see exactly the live clauses.
     /// This is the compact-on-read seam -- the one place a tombstone could
