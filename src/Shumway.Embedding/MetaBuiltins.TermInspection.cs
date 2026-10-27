@@ -99,8 +99,6 @@ public static partial class MetaBuiltins
             Cell a = ResolveLocal(engine, engine.GetRegister(2));
             if (n.Tag is Tag.Ref or Tag.AttVar || a.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
-            Term nameTerm = MaterializeRegister(engine, 1);
-            Term arityTerm = MaterializeRegister(engine, 2);
             if (a.Tag == Tag.BigInt)
             {
                 // A bignum is an integer: negative is a domain error;
@@ -109,16 +107,16 @@ public static partial class MetaBuiltins
                 // (issue #106), not a flag-derived representation error.
                 throw new ShumwayPrologException(
                     engine.AsBigInt(a).Sign < 0
-                        ? IsoError.DomainError("not_less_than_zero", arityTerm)
+                        ? IsoError.DomainError("not_less_than_zero", MaterializeRegister(engine, 2))
                         : IsoError.ResourceError("finite_memory"));
             }
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", arityTerm));
+                    IsoError.TypeError("integer", MaterializeRegister(engine, 2)));
             long arity = a.AsInt;
             if (arity < 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("not_less_than_zero", arityTerm));
+                    IsoError.DomainError("not_less_than_zero", MaterializeRegister(engine, 2)));
             // Checked before any allocation: the probe one past capacity
             // must error, not thrash 4 GiB of heap into being (issue #106).
             if (arity > MaxArity)
@@ -129,13 +127,13 @@ public static partial class MetaBuiltins
                 // T becomes Name itself (atomic).
                 if (n.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", nameTerm));
+                        IsoError.TypeError("atomic", MaterializeRegister(engine, 1)));
                 return engine.UnifyRegisterWithCell(0, n);
             }
             if (n.Tag is Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
-                throw new ShumwayPrologException(IsoError.TypeError("atom", nameTerm));
+                throw new ShumwayPrologException(IsoError.TypeError("atom", MaterializeRegister(engine, 1)));
             if (n.Tag != Tag.Atom)
-                throw new ShumwayPrologException(IsoError.TypeError("atomic", nameTerm));
+                throw new ShumwayPrologException(IsoError.TypeError("atomic", MaterializeRegister(engine, 1)));
             // '.'/2 is the list constructor, and a cons lives in a Lis cell
             // everywhere else in the engine (ADR-017). Building a Str here
             // spelled a list that compared unequal to the list it spells:
@@ -466,10 +464,10 @@ public static partial class MetaBuiltins
             // build the STR. The list is on the heap so the walk is a
             // pointer chase, no allocation.
             Cell listC = ResolveLocal(engine, engine.GetRegister(1));
-            Term listTerm = MaterializeRegister(engine, 1);
             // §8.5.3.3 order: an unbound list (or tail) is an
             // instantiation_error; an improper one is type_error(list, L)
-            // with the whole list as culprit.
+            // with the whole list as culprit. The culprit is read only when
+            // thrown: reading it on every call copied the list each time.
             if (listC.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             int count = 0;
@@ -482,10 +480,11 @@ public static partial class MetaBuiltins
             if (cur.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-                throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("list", MaterializeRegister(engine, 1)));
             if (count == 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("non_empty_list", listTerm));
+                    IsoError.DomainError("non_empty_list", MaterializeRegister(engine, 1)));
 
             // Fetch the functor cell (the first element) — through the
             // list-like cursor: a packed list is a list (ADR-047), and
@@ -493,19 +492,18 @@ public static partial class MetaBuiltins
             engine.TryUnconsListLike(engine.NormalizeListCell(listC),
                 out Cell firstRaw, out Cell restAfterFirst);
             Cell first = ResolveLocal(engine, firstRaw);
-            Term firstTerm = engine.MaterializeCellToTerm is { } fmat
-                && fmat(first) is Term ft ? ft : new VarTerm("_");
             if (first.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (count == 1)
             {
                 if (first.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", firstTerm));
+                        IsoError.TypeError("atomic", CellCulprit(engine, first)));
                 return engine.UnifyRegisterWithCell(0, first);
             }
             if (first.Tag != Tag.Atom)
-                throw new ShumwayPrologException(IsoError.TypeError("atom", firstTerm));
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", CellCulprit(engine, first)));
             int arity = count - 1;
             // Past address-space capacity the term cannot be built; with
             // max_arity unbounded that is a resource error (issue #106).
@@ -541,6 +539,11 @@ public static partial class MetaBuiltins
         }
         return false;
     }
+
+    /// <summary>The culprit of an error raised on <paramref name="c"/>. Only
+    /// an error path calls it: reading a term is a copy.</summary>
+    private static Term CellCulprit(Activation engine, Cell c)
+        => engine.MaterializeCellToTerm is { } fmat && fmat(c) is Term t ? t : new VarTerm("_");
 
     /// <summary>Builds a fresh proper list whose head slots hold the given
     /// cell values. Same layout pattern as <c>SortBuiltins.BuildList</c>:
