@@ -2205,7 +2205,12 @@ public sealed partial class PrologEngine
             // single-clause static predicate before the caller patches the
             // asserted clause's call sites against the address map.
             if (transformed.Count > 1)
+            {
                 LinkRuntimeAssertHelpers(engine, transformed);
+                // The next setup derives these helpers again from the store
+                // (they are not stored), which takes a fresh product.
+                _programStamp++;
+            }
         }
         _assertClauseCompiler ??= new Shumway.Compiler.Wam.ClauseCompiler();
         return _assertClauseCompiler.Compile(

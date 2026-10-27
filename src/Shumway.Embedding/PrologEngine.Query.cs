@@ -627,6 +627,94 @@ public sealed partial class PrologEngine
         InitialStackSize = 16,
     };
 
+    /// <summary>The transformed and module-rewritten clauses of one dynamic
+    /// predicate, cached per functor (<see cref="_dynamicRewriteCache"/>).
+    /// Head fids include any MetaTransform helper clauses' heads.</summary>
+    private (List<Clause> Clauses, List<int> HeadFids, object LocalsRef, int ModesVersion)
+        RewriteDynamicPredicate(int fid, List<Clause> clauses, ModuleRewrite.Context fidCtx,
+            Shumway.Compiler.Modes.ModeTable modeTable)
+    {
+        var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var rewritten = new List<Clause>(transformed.Count);
+        foreach (var clause in transformed)
+            rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
+        var headFids = new List<int>(rewritten.Count);
+        foreach (var c in rewritten)
+            headFids.Add(HeadFunctorIdOf(c));
+        var entry = (rewritten, headFids, (object)fidCtx.LocalFunctors, modeTable.Version);
+        _dynamicRewriteCache[fid] = entry;
+        return entry;
+    }
+
+    /// <summary>Brings the product's compile of each predicate a dynamic
+    /// mutation left stale (<see cref="_productStaleDynamicFids"/>) up to
+    /// date by itself: its rewrite, its compile and its snapshot source, as a
+    /// full build leaves them, at the cost of that predicate instead of the
+    /// program. Only for a predicate of facts, or an empty one, that the
+    /// product already holds, with no source clauses in a module and the user
+    /// context: a rule's rewrite can mint helpers the query link has to
+    /// carry. False leaves the setup to a full build.</summary>
+    private bool RefreshStaleDynamicPredicates(CompiledProgramProduct product,
+        HashSet<int> unindexedFunctors, int failStubAddr,
+        Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        var modeTable = Modes;
+        var stale = new List<(int Fid, int At, List<Clause>? Clauses)>(_productStaleDynamicFids.Count);
+        foreach (int fid in _productStaleDynamicFids)
+        {
+            if (_staticRewriteHeadFids?.Contains(fid) == true
+                || _dynamicSeedModule.ContainsKey(fid)
+                || modeTable.AllModesDeterministic(fid)
+                || !_dynStore.IsDynamic(fid))
+                return false;
+            List<Clause>? clauses = null;
+            if (_dynStore.TryGetClauses(fid, out var cs) && cs.Count > 0)
+            {
+                foreach (var c in cs)
+                    if (c.Kind != ClauseKind.Fact) return false;
+                clauses = cs;
+            }
+            int at = product.DynamicPreds.FindIndex(p => p.FunctorId == fid);
+            if (at < 0) return false;
+            stale.Add((fid, at, clauses));
+        }
+        var ctx = new ModuleRewrite.Context(
+            DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel, _dynStore.Functors);
+        foreach (var (fid, at, clauses) in stale)
+        {
+            // An empty predicate compiles from its stub, unrewritten, as in a
+            // full build (EmitEmptyDynamicStubs).
+            List<Clause> source = clauses is null
+                ? new List<Clause> { EmptyDynamicStub(fid, pos) }
+                : RewriteDynamicPredicate(fid, clauses, ctx, modeTable).Clauses;
+            var compiled = new ModuleCompiler
+            {
+                EmitDebugInfo = _flags.EmitDebugInfo,
+                DebugCodegen = _flags.DebugCodegen,
+                DebugFileId = _debugFileId,
+                NonDebuggableFunctors = _nonDebuggableFunctors,
+                ElideRedundantCuts = false,
+            }.Compile(
+                source, null, unindexedFunctors, _literalPools,
+                dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
+            if (compiled.Predicates.Count != 1 || compiled.Predicates[0].FunctorId != fid)
+                return false;
+            var pred = compiled.Predicates[0];
+            _jitIndexProfile.RecordCompileDecision(fid, _jitIndexProfile.IsHot(fid));
+            if (ReferenceEquals(pred.PoolsRef, _literalPools)
+                || ModuleCompiler.IsCachedPredicateReusable(pred))
+            {
+                _dynamicPredicateCache[fid] = pred;
+                if (_skipCompileMergedCache is not null)
+                    _skipCompileMergedCache[fid] = pred;
+            }
+            product.DynamicPreds[at] = pred;
+            _snapshotStaleFids.Remove(fid);
+        }
+        _productStaleDynamicFids.Clear();
+        return true;
+    }
+
     private (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
              Shumway.Core.Activation Engine,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
@@ -771,8 +859,15 @@ public sealed partial class PrologEngine
                 || product.EmitDebugInfo != _flags.EmitDebugInfo
                 || product.DebugCodegen != _flags.DebugCodegen))
             product = null;
+        // Dynamic mutations alone: their predicates are brought up to date in
+        // the product one by one, or the product is built again.
+        if (product is not null && _productStaleDynamicFids.Count > 0
+            && !RefreshStaleDynamicPredicates(product, unindexedFunctors, failStubAddr, queryTerm.Position))
+            product = null;
         if (product is null)
         {
+        _productStaleDynamicFids.Clear();
+        ProgramProductBuilds++;
         if (LoadProfEnabled) ProfProductBuilds++;
         long profPb0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
@@ -1075,18 +1170,7 @@ public sealed partial class PrologEngine
                         // old ones) must go with it.
                         DropDynamicPredicateCacheEntry(fid);
                     }
-                    var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
-                    var rewritten = new List<Clause>(transformed.Count);
-                    foreach (var clause in transformed)
-                        rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
-                    // Head fids include any MetaTransform helper clauses'
-                    // heads, mirroring what the per-clause HeadFunctorIdOf
-                    // walk over allRewritten used to collect.
-                    var headFids = new List<int>(rewritten.Count);
-                    foreach (var c in rewritten)
-                        headFids.Add(HeadFunctorIdOf(c));
-                    entry = (rewritten, headFids, fidCtx.LocalFunctors, modeTable.Version);
-                    _dynamicRewriteCache[fid] = entry;
+                    entry = RewriteDynamicPredicate(fid, clauses, fidCtx, modeTable);
                 }
                 allRewritten.AddRange(entry.Clauses);
                 foreach (int f in entry.HeadFids)
@@ -2258,16 +2342,23 @@ public sealed partial class PrologEngine
         foreach (int fid in _dynStore.Functors)
         {
             if (!seen.Add(fid)) continue;
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            Term head = arity == 0
-                ? (Term)new AtomTerm(name)
-                : new CompoundTerm(
-                    name,
-                    Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
-            Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
-            allRewritten.Add(new Clause(ClauseKind.Rule, stubTerm, pos));
+            allRewritten.Add(EmptyDynamicStub(fid, pos));
         }
+    }
+
+    /// <summary><c>Head :- fail.</c>, the clause an empty dynamic predicate
+    /// is compiled from.</summary>
+    private static Clause EmptyDynamicStub(int fid, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        Term head = arity == 0
+            ? (Term)new AtomTerm(name)
+            : new CompoundTerm(
+                name,
+                Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
+        Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
+        return new Clause(ClauseKind.Rule, stubTerm, pos);
     }
 
     /// <summary>the bare-functor alias computation,

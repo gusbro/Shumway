@@ -298,7 +298,10 @@ public sealed partial class PrologEngine
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         _snapshotStaleFids.Add(functorId);
-        DropDynamicPredicateCacheEntry(functorId);
+        // The persistent buffer holds the mutation (ADR-015): the next setup
+        // brings this predicate up to date in the program product by itself.
+        DropDynamicCompiled(functorId);
+        _productStaleDynamicFids.Add(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
         // is stale: evict it, and clear every live query interpreter's direct
         // fid-table slot so the very next dispatch re-resolves live (falling
@@ -368,6 +371,22 @@ public sealed partial class PrologEngine
     {
         // The compiled program product embeds this functor's compile.
         _programStamp++;
+        DropDynamicCompiled(functorId);
+    }
+
+    /// <summary>Dynamic predicates mutated since the program product was
+    /// built. The persistent buffer already holds the mutation (ADR-015), so
+    /// the next setup brings only these up to date in the product
+    /// (<see cref="RefreshStaleDynamicPredicates"/>): rebuilding the whole
+    /// product after every assert cost O(program) per query.</summary>
+    private readonly HashSet<int> _productStaleDynamicFids = new();
+
+    /// <summary>Full builds of the program product — counted, for the tests
+    /// that pin which mutations leave the product in place.</summary>
+    internal long ProgramProductBuilds;
+
+    private void DropDynamicCompiled(int functorId)
+    {
         _dynamicPredicateCache.Remove(functorId);
         var merged = _skipCompileMergedCache;
         if (merged is null) return;
