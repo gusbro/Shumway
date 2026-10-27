@@ -1900,9 +1900,49 @@ public sealed partial class Activation
         var (_, arity) = FunctorTable.Lookup(functorIdA);
         for (int i = 1; i <= arity; i++)
         {
+            if (TryUnifyLeaf(fA + i, fB + i, out bool unified))
+            {
+                if (!unified) return false;
+                continue;
+            }
             if (!Unify(fA + i, fB + i, depth + 1, activePairs)) return false;
         }
         return true;
+    }
+
+    /// <summary>The pairs an argument of a compound usually holds, settled
+    /// without entering <see cref="Unify(int, int, int, HashSet{long})"/>:
+    /// the same cell, a plain unbound variable on either side, two atoms, two
+    /// small integers. False leaves the pair to it: attributed variables,
+    /// partial strings, compound pairs and the numbers kept off-cell. The
+    /// cases and their order are Unify's own.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private bool TryUnifyLeaf(int aIdx, int bIdx, out bool unified)
+    {
+        int aAddr = Deref(aIdx);
+        int bAddr = Deref(bIdx);
+        unified = true;
+        if (aAddr == bAddr) return true;
+        Cell aCell = _heap[aAddr];
+        Cell bCell = _heap[bAddr];
+        if (aCell.Tag == Tag.Ref)
+        {
+            if (bCell.Tag == Tag.Ref) { BindVarToVar(aAddr, bAddr); return true; }
+            if (bCell.Tag == Tag.AttVar) return false;
+            BindVarToValue(aAddr, bAddr, bCell);
+            return true;
+        }
+        if (bCell.Tag == Tag.Ref)
+        {
+            if (aCell.Tag == Tag.AttVar) return false;
+            BindVarToValue(bAddr, aAddr, aCell);
+            return true;
+        }
+        if (aCell.Tag != bCell.Tag) return false;
+        if (aCell.Tag == Tag.Atom) { unified = aCell.AsAtomId == bCell.AsAtomId; return true; }
+        if (aCell.Tag == Tag.Int) { unified = aCell.AsInt == bCell.AsInt; return true; }
+        return false;
     }
 
     /// <summary>
@@ -1929,7 +1969,11 @@ public sealed partial class Activation
             if (activePairs is not null
                 && !activePairs.Add(((long)hA << 32) | (uint)hB))
                 return true;   // cyclic spine — rational-tree unify
-            if (!Unify(hA, hB, depth + 1, activePairs)) return false;
+            if (TryUnifyLeaf(hA, hB, out bool unified))
+            {
+                if (!unified) return false;
+            }
+            else if (!Unify(hA, hB, depth + 1, activePairs)) return false;
             int aAddr = Deref(hA + 1);
             int bAddr = Deref(hB + 1);
             if (aAddr == bAddr) { Profiler.Unify(); return true; }   // the tail Unify the recursion used to count
