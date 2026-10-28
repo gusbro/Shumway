@@ -132,14 +132,34 @@ public sealed partial class PrologEngine
     private Activation? RunningActivation()
         => _running.Count > 0 ? _running[^1] : _madeBy?.RunningActivation();
 
+    // What this engine keeps beyond its activations claims atoms through this, from
+    // the first run with collection on (ADR-003).
+    private HostAtomClaim? _hostAtoms;
+
+    // Only builtins change these stores, inside a run, so an engine that does not
+    // run can be marked from another thread.
+    private sealed class HeldAtoms : IAtomHolder
+    {
+        private readonly PrologEngine _engine;
+        public HeldAtoms(PrologEngine engine) => _engine = engine;
+
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            _engine.GlobalVars.MarkAtoms(set);
+            _engine.FlagStore.MarkAtoms(set);
+            _engine._records?.MarkAtoms(set);
+        }
+    }
+
     /// <summary>An activation starts or resumes running: its program is the current
     /// one until it stops (<see cref="LeaveRun"/>). Its first run joins the atom domain
     /// of the activation it runs inside, if any (ADR-003): from there a collection
-    /// marks it, and its setup is done.</summary>
+    /// marks it, and its setup is done. Its runs are runs of the engine.</summary>
     private void EnterRun(Activation engine)
     {
         if (AtomTable.CollectionEnabled && engine.AtomDomain is null)
-            engine.JoinAtomDomain(RunningActivation());
+            engine.JoinAtomDomain(RunningActivation(),
+                _hostAtoms ??= new HostAtomClaim(new HeldAtoms(this)));
         engine.EnterAtomRun();
         _running.Add(engine);
         if (engine.HostProgram is LinkedProgram p && !ReferenceEquals(p, _cur)) SwitchTo(p);

@@ -315,7 +315,7 @@ public static class AtomTable
     /// <see cref="GetById"/> throws on it, so a holder the marks miss fails where it
     /// reads instead of reading another atom. Switched off, the ids poisoned so far
     /// are free.</summary>
-    internal static bool PoisonDeadIds
+    public static bool PoisonDeadIds
     {
         get { lock (_lock) return _poisonDeadIds; }
         set
@@ -418,7 +418,8 @@ public static class AtomTable
         }
     }
 
-    internal static bool CollectionPending => Volatile.Read(ref _pendingTarget) != 0;
+    /// <summary>Whether a requested collection waits for a claimant to mark.</summary>
+    public static bool CollectionPending => Volatile.Read(ref _pendingTarget) != 0;
 
     /// <summary>The transient atoms among the ids set in <paramref name="bits"/>,
     /// ascending, into <paramref name="found"/>; returns their count. An id of no live

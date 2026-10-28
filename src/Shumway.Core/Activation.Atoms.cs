@@ -13,6 +13,9 @@ public sealed class AtomDomain : IAtomClaimantOwner
     // Replaced, never changed: a collection on another thread reads it.
     private Activation[] _members = System.Array.Empty<Activation>();
     private int _runDepth;
+    // The hosts whose outermost run is in this domain: they mark at its safe
+    // points. Read and changed on the domain's thread only.
+    private readonly List<HostAtomClaim> _hosts = new();
     /// <summary>What the domain claims atoms through.</summary>
     public AtomClaimant Claimant { get; }
     internal readonly AtomMarkSet Found = new();
@@ -56,11 +59,21 @@ public sealed class AtomDomain : IAtomClaimantOwner
         Claimant.Apply(epoch, Found.Transient());
     }
 
-    // Every member is asked: the one running marks the domain at its next safe
-    // point, and the others find it marked when they resume.
+    // Every member is asked: the one running marks the domain, and the hosts running
+    // in it, at its next safe point; the others find it marked when they resume.
     void IAtomClaimantOwner.RequestMark()
     {
         foreach (var member in Volatile.Read(ref _members)) member.RequestAtomMarkAtSafePoint();
+    }
+
+    internal void AddHost(HostAtomClaim host) => _hosts.Add(host);
+
+    internal void RemoveHost(HostAtomClaim host) => _hosts.Remove(host);
+
+    // At a safe point of a member: the hosts running here that a collection waits for.
+    internal void MarkRunningHosts()
+    {
+        for (int i = 0; i < _hosts.Count; i++) _hosts[i].MarkIfWaited();
     }
 
     internal long BeginMark()
@@ -79,9 +92,70 @@ public sealed class AtomDomain : IAtomClaimantOwner
     }
 }
 
+/// <summary>
+/// The atoms a host keeps beyond its activations (ADR-003): an engine's global
+/// variables, recorded database and flag values. The host changes them only from
+/// its activations' runs, so its claimant runs from the outermost of those runs to
+/// its end, and meanwhile marks at the safe points of the domain that run is in.
+/// </summary>
+public sealed class HostAtomClaim : IAtomClaimantOwner
+{
+    private readonly IAtomHolder _host;
+    private readonly AtomMarkSet _found = new();
+    private int _runDepth;
+    // The domain of the outermost run.
+    private AtomDomain? _runningIn;
+
+    /// <summary>What the host claims atoms through.</summary>
+    public AtomClaimant Claimant { get; }
+
+    public HostAtomClaim(IAtomHolder host)
+    {
+        _host = host;
+        Claimant = AtomTable.RegisterClaimant(this);
+    }
+
+    internal void EnterRun(AtomDomain domain)
+    {
+        if (_runDepth++ != 0) return;
+        Claimant.EnterRun();
+        domain.AddHost(this);
+        _runningIn = domain;
+    }
+
+    internal void ExitRun(bool completed)
+    {
+        if (--_runDepth != 0) return;
+        _runningIn!.RemoveHost(this);
+        _runningIn = null;
+        Claimant.ExitRun(completed);
+    }
+
+    internal void MarkIfWaited()
+    {
+        if (AtomTable.WaitsFor(Claimant.LastMark)) Mark();
+    }
+
+    void IAtomClaimantOwner.MarkHeld() => Mark();
+
+    // Nothing to ask: a host runs inside a run of its domain, which registered
+    // before the host's run began, so the collection asks the domain too, and its
+    // safe points serve the host first.
+    void IAtomClaimantOwner.RequestMark() { }
+
+    private void Mark()
+    {
+        long epoch = AtomTable.BeginMark();
+        _found.Reset();
+        _host.MarkAtoms(_found);
+        Claimant.Apply(epoch, _found.Transient());
+    }
+}
+
 public sealed partial class Activation
 {
     private AtomDomain? _atomDomain;
+    private HostAtomClaim? _hostAtomClaim;
     // Where GcMarkReferents records the atoms it reaches; null outside an atom mark.
     private AtomMarkSet? _atomMarkSet;
     private bool _atomMarkRequested;
@@ -89,14 +163,19 @@ public sealed partial class Activation
     /// <summary>The domain this activation claims atoms with, once it joined one.</summary>
     public AtomDomain? AtomDomain => _atomDomain;
 
+    /// <summary>The host whose runs this activation's runs are, once it joined a domain.</summary>
+    public HostAtomClaim? HostAtomClaim => _hostAtomClaim;
+
     /// <summary>Joins the domain of <paramref name="outer"/>, the activation whose builtin
     /// this one runs inside, or a new one: at its first run, once its setup wrote
-    /// what it writes, since a collection may mark it from another thread from here.</summary>
-    public void JoinAtomDomain(Activation? outer)
+    /// what it writes, since a collection may mark it from another thread from here.
+    /// The runs of the activation are runs of <paramref name="host"/> as well.</summary>
+    public void JoinAtomDomain(Activation? outer, HostAtomClaim? host = null)
     {
         if (_atomDomain is not null) return;
         _atomDomain = outer?._atomDomain ?? new AtomDomain();
         _atomDomain.Join(this);
+        _hostAtomClaim = host;
     }
 
     /// <summary>The activation is done: it leaves its domain, inside a run of the
@@ -113,21 +192,34 @@ public sealed partial class Activation
     /// <summary>The activation starts or resumes running: from here until
     /// <see cref="LeaveAtomRun"/> a collection does not mark its domain from another
     /// thread. Anything that writes into the activation runs inside.</summary>
-    public void EnterAtomRun() => _atomDomain?.EnterRun();
+    public void EnterAtomRun()
+    {
+        if (_atomDomain is not { } domain) return;
+        domain.EnterRun();
+        _hostAtomClaim?.EnterRun(domain);
+    }
 
     /// <summary>The run <see cref="EnterAtomRun"/> began has stopped;
     /// <paramref name="completed"/> unless by an exception.</summary>
-    public void LeaveAtomRun(bool completed) => _atomDomain?.ExitRun(completed);
+    public void LeaveAtomRun(bool completed)
+    {
+        if (_atomDomain is not { } domain) return;
+        _hostAtomClaim?.ExitRun(completed);
+        domain.ExitRun(completed);
+    }
 
     /// <summary>From any thread: the activation marks its domain at its next safe
     /// point, for a collection that waits for it.</summary>
     public void RequestAtomMarkAtSafePoint() => SetSafePointRequest(SafePointAtomMark);
 
-    // A heap collection due at this safe point marks in its own trace; without one,
-    // the trace alone, from wherever the safe point stands.
+    // The hosts running in the domain first. A heap collection due at this safe
+    // point marks the domain in its own trace; without one, the trace alone, from
+    // wherever the safe point stands.
     private void ServeAtomMarkRequest(bool heapCollectionFollows)
     {
-        if (_atomDomain is not { } domain || !AtomTable.WaitsFor(domain.Claimant.LastMark)) return;
+        if (_atomDomain is not { } domain) return;
+        domain.MarkRunningHosts();
+        if (!AtomTable.WaitsFor(domain.Claimant.LastMark)) return;
         if (heapCollectionFollows && !_gcDiagActive && _gcInhibit == 0
             && _gcThreshold > 0 && _heapTop >= _gcThreshold)
             return;

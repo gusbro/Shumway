@@ -28,7 +28,7 @@ namespace Shumway.Core;
 /// a global variable) starts with its root value and is copied back on its
 /// own.</para>
 /// </summary>
-public sealed class SolutionBuffer
+public sealed class SolutionBuffer : IAtomHolder
 {
     private const int ChunkBits = 12;
     private const int ChunkSize = 1 << ChunkBits;

@@ -17,12 +17,23 @@ public class AtomCollectionTests
         AtomTable.PoisonDeadIds = true;
     }
 
-    private static Activation NewActivation(Activation? outer = null)
+    private static Activation NewActivation(Activation? outer = null, HostAtomClaim? host = null)
     {
         var e = new Activation();
         for (int i = 0; i < e.RegisterCount; i++) e.SetRegister(i, Cell.Atom(0));
-        e.JoinAtomDomain(outer);
+        e.JoinAtomDomain(outer, host);
         return e;
+    }
+
+    private sealed class Host : IAtomHolder
+    {
+        public readonly List<int> Ids = new();
+        public int Marks;
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            Marks++;
+            foreach (int id in Ids) set.Add(id);
+        }
     }
 
     private static int Fresh(string name) => AtomTable.Intern(name).Id;
@@ -234,6 +245,113 @@ public class AtomCollectionTests
         running.LeaveAtomDomain();
 
         Assert.False(AtomTable.CollectionPending);
+    }
+
+    [Fact]
+    public void AnIdleHostIsMarkedByTheCollection()
+    {
+        var host = new Host();
+        var claim = new HostAtomClaim(host);
+        int held = Fresh("held_by_host"), loose = Fresh("loose");
+        host.Ids.Add(held);
+
+        AtomTable.RequestCollection();
+
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, host.Marks);
+        Assert.Equal(1, AtomTable.ClaimsOf(held));
+        Assert.True(Dead(loose));
+        GC.KeepAlive(claim);
+    }
+
+    [Fact]
+    public void AHostThatHasNotRunSinceItsLastMarkIsNotScannedAgain()
+    {
+        var host = new Host();
+        var claim = new HostAtomClaim(host);
+        int held = Fresh("held_by_host");
+        host.Ids.Add(held);
+        AtomTable.RequestCollection();
+
+        AtomTable.RequestCollection();
+
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, host.Marks);
+        Assert.Equal(1, AtomTable.ClaimsOf(held));
+        GC.KeepAlive(claim);
+    }
+
+    [Fact]
+    public void AHostRunsFromItsOutermostRunToItsEnd()
+    {
+        var claim = new HostAtomClaim(new Host());
+        var outer = NewActivation(host: claim);
+        var inner = NewActivation(outer, claim);
+        outer.EnterAtomRun();
+        inner.EnterAtomRun();
+
+        inner.LeaveAtomRun(completed: true);
+        Assert.True(claim.Claimant.IsRunning);
+        outer.LeaveAtomRun(completed: true);
+        Assert.False(claim.Claimant.IsRunning);
+    }
+
+    [Fact]
+    public void ARunningHostMarksAtASafePointOfItsDomain()
+    {
+        var host = new Host();
+        var claim = new HostAtomClaim(host);
+        var running = NewActivation(host: claim);
+        int held = Fresh("held_by_running_host");
+        host.Ids.Add(held);
+        running.EnterAtomRun();
+
+        AtomTable.RequestCollection();
+        Assert.True(AtomTable.CollectionPending);
+        Assert.Equal(0, host.Marks);
+
+        running.MaybeCollectHeap();
+
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, host.Marks);
+        Assert.Equal(1, AtomTable.ClaimsOf(held));
+        running.LeaveAtomRun(completed: true);
+    }
+
+    [Fact]
+    public void AHostRunningInAnOuterActivationMarksAtTheInnerOnesSafePoint()
+    {
+        Host outerHost = new(), innerHost = new();
+        var outerClaim = new HostAtomClaim(outerHost);
+        var innerClaim = new HostAtomClaim(innerHost);
+        var outer = NewActivation(host: outerClaim);
+        outer.EnterAtomRun();
+        var inner = NewActivation(outer, innerClaim);
+        inner.EnterAtomRun();
+
+        AtomTable.RequestCollection();
+        inner.MaybeCollectHeap();
+
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, outerHost.Marks);
+        Assert.Equal(1, innerHost.Marks);
+        inner.LeaveAtomRun(completed: true);
+        outer.LeaveAtomRun(completed: true);
+    }
+
+    [Fact]
+    public void ARunningHostThatStopsFirstMarksAsItStops()
+    {
+        var host = new Host();
+        var claim = new HostAtomClaim(host);
+        var running = NewActivation(host: claim);
+        running.EnterAtomRun();
+        AtomTable.RequestCollection();
+
+        running.LeaveAtomRun(completed: true);
+
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, host.Marks);
     }
 
     [Fact]
