@@ -127,19 +127,31 @@ public sealed partial class PrologEngine
     /// builtins.</summary>
     private readonly List<Activation> _running = new();
 
+    /// <summary>The innermost activation running on this thread's stack, of this engine
+    /// or of the engine whose builtin made this one (<see cref="CreateSubEngine"/>).</summary>
+    private Activation? RunningActivation()
+        => _running.Count > 0 ? _running[^1] : _madeBy?.RunningActivation();
+
     /// <summary>An activation starts or resumes running: its program is the current
-    /// one until it stops (<see cref="LeaveRun"/>).</summary>
+    /// one until it stops (<see cref="LeaveRun"/>). Its first run joins the atom domain
+    /// of the activation it runs inside, if any (ADR-003): from there a collection
+    /// marks it, and its setup is done.</summary>
     private void EnterRun(Activation engine)
     {
+        if (AtomTable.CollectionEnabled && engine.AtomDomain is null)
+            engine.JoinAtomDomain(RunningActivation());
+        engine.EnterAtomRun();
         _running.Add(engine);
         if (engine.HostProgram is LinkedProgram p && !ReferenceEquals(p, _cur)) SwitchTo(p);
     }
 
-    /// <summary>The run <see cref="EnterRun"/> began has stopped: the activation it
-    /// ran inside of, if any, is current again. With none, the program last linked
-    /// stays current, as it always did between queries.</summary>
-    private void LeaveRun()
+    /// <summary>The run <see cref="EnterRun"/> began has stopped,
+    /// <paramref name="completed"/> unless by an exception: the activation it ran
+    /// inside of, if any, is current again. With none, the program last linked stays
+    /// current, as it always did between queries.</summary>
+    private void LeaveRun(bool completed)
     {
+        _running[^1].LeaveAtomRun(completed);
         _running.RemoveAt(_running.Count - 1);
         if (_running.Count > 0 && _running[^1].HostProgram is LinkedProgram p
             && !ReferenceEquals(p, _cur))

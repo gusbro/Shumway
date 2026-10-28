@@ -59,10 +59,19 @@ public static class ArithFunctorTable
         for (int id = _filled; id < limit; id++)
         {
             var (atomId, arity) = FunctorTable.Lookup(id);
-            string? name = AtomTable.GetById(atomId)?.Name;
-            _rows[id] = name is null ? 0 : Resolve(name, arity);
+            _rows[id] = AtomTable.ProbeById(atomId) is { } atom ? RowFor(atom, arity) : 0;
         }
         _filled = limit;
+    }
+
+    // A row stays as written, and a dead atom's id goes to another name (ADR-003):
+    // an operation is kept only for a permanent name. An evaluable name is made
+    // permanent here, and its row kept only if its atom still has this id.
+    private static int RowFor(Atom atom, int arity)
+    {
+        int row = Resolve(atom.Name, arity);
+        if (row == 0 || atom.IsPermanent) return row;
+        return AtomTable.Intern(atom.Name, permanent: true).Id == atom.Id ? row : 0;
     }
 
     private static int Resolve(string name, int arity)

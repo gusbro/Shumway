@@ -13,8 +13,9 @@ namespace Shumway.Core;
 /// </list>
 ///
 /// The by-name index <see cref="_byName"/> holds <see cref="WeakReference{T}"/> entries so
-/// that a TransientWeak atom has no table-side strong reference. Ids are never reused: a
-/// name interned again after its atom died gets a new id.
+/// that a TransientWeak atom has no table-side strong reference. A dead atom's id is
+/// handed out again: a holder the marks miss reads another atom, which
+/// <see cref="PoisonDeadIds"/> turns into an exception for tests.
 /// </summary>
 public static class AtomTable
 {
@@ -41,6 +42,15 @@ public static class AtomTable
 #endif
     private static int _nextId = FirstUserId;
 
+    // The ids of dead atoms, handed out again last in first out: an id a holder
+    // failed to claim comes back soon, where the tests that run with reuse meet it.
+    private static int[] _freeIds = System.Array.Empty<int>();
+    private static int _freeCount;
+
+    // Under PoisonDeadIds, the dead ids with their names, kept out of the free list.
+    private static readonly Dictionary<int, string> _poisoned = new();
+    private static bool _poisonDeadIds;
+
     // Every strongly held atom by id, permanent and transient, grown copy-on-write:
     // GetById and the claims read it without the lock. A TransientWeak or dead atom
     // has no slot (null), the first so the table keeps no strong reference to it.
@@ -53,6 +63,14 @@ public static class AtomTable
     // The global epoch. A claimant's mark takes a new value (BeginMark); an intern
     // and a lost claim stamp an atom with the current one.
     private static long _epoch;
+
+    // The live claimants, under _lock: a collection takes the oldest last mark among
+    // them, and one registering meanwhile is seen or registers after the minimum.
+    private static readonly List<AtomClaimant> _claimants = new();
+
+    // The epoch a requested collection waits for every claimant to have marked
+    // at; 0 with none requested. Written under _lock.
+    private static long _pendingTarget;
 
     private readonly struct TransientWeakEntry
     {
@@ -158,7 +176,7 @@ public static class AtomTable
                 return existing;
             }
 
-            int id = _nextId++;
+            int id = NextIdLocked();
             var atom = new Atom(id, name, isPermanent: permanent);
             atom.Epoch = Volatile.Read(ref _epoch);
             atom.NameRef = new WeakReference<Atom>(atom);
@@ -198,7 +216,25 @@ public static class AtomTable
         } while (Interlocked.CompareExchange(ref atom.Epoch, cur > now ? cur : now, cur) != cur);
     }
 
-    /// <summary>Returns the atom with <paramref name="id"/>, or <c>null</c> if no live atom carries that id.</summary>
+    // A dead atom's id when one is free, else one never handed out.
+    private static int NextIdLocked()
+        => _freeCount > 0 ? _freeIds[--_freeCount] : _nextId++;
+
+    // An id whose atom is gone from every table: free, or poisoned.
+    private static void FreeIdLocked(int id, string name)
+    {
+        if (_poisonDeadIds)
+        {
+            _poisoned[id] = name;
+            return;
+        }
+        if (_freeCount == _freeIds.Length)
+            System.Array.Resize(ref _freeIds, System.Math.Max(64, _freeCount * 2));
+        _freeIds[_freeCount++] = id;
+    }
+
+    /// <summary>Returns the atom with <paramref name="id"/>, or <c>null</c> if no live atom
+    /// carries that id. Under <see cref="PoisonDeadIds"/>, a dead atom's id throws.</summary>
     public static Atom? GetById(int id)
     {
         Atom?[] arr = _byIdArray;
@@ -206,12 +242,35 @@ public static class AtomTable
             return atom;
         lock (_lock)
         {
-            if (_transientById.TryGetValue(id, out var transient)) return transient;
-            if (_permanentById.TryGetValue(id, out var permanent)) return permanent;
-            if (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out var weak))
-                return weak;
+            if (FindLocked(id) is { } found) return found;
+            if (_poisoned.TryGetValue(id, out var dead))
+            {
+                PoisonedReads++;
+                throw new InvalidOperationException(
+                    $"Atom id {id} ('{dead}') was read after its atom died: a holder of it is not marked (ADR-003).");
+            }
             return null;
         }
+    }
+
+    /// <summary>As <see cref="GetById"/> for an id that may be a dead atom's, such as
+    /// the name of an entry of the functor table: null then, poisoned or not.</summary>
+    public static Atom? ProbeById(int id)
+    {
+        Atom?[] arr = _byIdArray;
+        if ((uint)id < (uint)arr.Length && arr[id] is { } atom)
+            return atom;
+        lock (_lock)
+            return FindLocked(id);
+    }
+
+    private static Atom? FindLocked(int id)
+    {
+        if (_transientById.TryGetValue(id, out var transient)) return transient;
+        if (_permanentById.TryGetValue(id, out var permanent)) return permanent;
+        if (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out var weak))
+            return weak;
+        return null;
     }
 
     /// <summary>True when <paramref name="id"/> names a live transient atom: what a mark
@@ -244,6 +303,160 @@ public static class AtomTable
 
     /// <summary>The current global epoch.</summary>
     public static long CurrentEpoch => Volatile.Read(ref _epoch);
+
+    /// <summary>Whether claimants mark and collections run. Off until every holder of
+    /// atom ids is a claimant: a collection frees what no claimant names.</summary>
+    public static bool CollectionEnabled { get; set; }
+
+    /// <summary>One past the highest id handed out: every id a cell can hold is below.</summary>
+    public static int IdBound => Volatile.Read(ref _nextId);
+
+    /// <summary>For tests: a dead atom's id is not handed out again, and
+    /// <see cref="GetById"/> throws on it, so a holder the marks miss fails where it
+    /// reads instead of reading another atom. Switched off, the ids poisoned so far
+    /// are free.</summary>
+    internal static bool PoisonDeadIds
+    {
+        get { lock (_lock) return _poisonDeadIds; }
+        set
+        {
+            lock (_lock)
+            {
+                _poisonDeadIds = value;
+                if (value) return;
+                foreach (var kv in _poisoned) FreeIdLocked(kv.Key, kv.Value);
+                _poisoned.Clear();
+            }
+        }
+    }
+
+    /// <summary>Dead ids <see cref="GetById"/> was asked for under
+    /// <see cref="PoisonDeadIds"/>, caught or not.</summary>
+    internal static int PoisonedReads { get; private set; }
+
+    /// <summary>Registers a claimant for <paramref name="owner"/>, which it references
+    /// weakly. It takes nothing before this returns: its last mark is the epoch now,
+    /// and every atom it interns from here is stamped at or after it.</summary>
+    public static AtomClaimant RegisterClaimant(IAtomClaimantOwner owner)
+    {
+        lock (_lock)
+        {
+            var claimant = new AtomClaimant(owner, Volatile.Read(ref _epoch)) { Registered = true };
+            _claimants.Add(claimant);
+            return claimant;
+        }
+    }
+
+    internal static void Unregister(AtomClaimant claimant)
+    {
+        lock (_lock)
+        {
+            if (!claimant.Registered) return;
+            claimant.Registered = false;
+            _claimants.Remove(claimant);
+            claimant.ReleaseLocked();
+        }
+    }
+
+    // The oldest last mark among the live claimants. One whose owner is gone is
+    // released here: nothing can run it again.
+    private static long MinLastMarkLocked()
+    {
+        long min = long.MaxValue;
+        for (int i = _claimants.Count - 1; i >= 0; i--)
+        {
+            var claimant = _claimants[i];
+            if (!claimant.Owner.TryGetTarget(out _))
+            {
+                claimant.Registered = false;
+                _claimants.RemoveAt(i);
+                claimant.ReleaseLocked();
+                continue;
+            }
+            long mark = claimant.LastMark;
+            if (mark < min) min = mark;
+        }
+        return min;
+    }
+
+    internal static int ClaimantCount { get { lock (_lock) return _claimants.Count; } }
+
+    /// <summary>Starts a collection: every claimant marks, an idle one here on the
+    /// calling thread and a running one at its next safe point or as it stops, and
+    /// the last mark collects. A claimant that registers meanwhile is not waited for.</summary>
+    public static void RequestCollection()
+    {
+        AtomClaimant[] claimants;
+        lock (_lock)
+        {
+            if (_pendingTarget == 0) Volatile.Write(ref _pendingTarget, BeginMark());
+            claimants = _claimants.ToArray();
+        }
+        foreach (var claimant in claimants) claimant.MarkOrAsk();
+        CompletePendingCollection();
+    }
+
+    /// <summary>Whether a requested collection waits for a claimant whose last
+    /// mark is <paramref name="lastMark"/>.</summary>
+    internal static bool WaitsFor(long lastMark)
+    {
+        long target = Volatile.Read(ref _pendingTarget);
+        return target != 0 && lastMark < target;
+    }
+
+    /// <summary>Collects once every claimant has marked since the requested
+    /// collection began: called after each mark and each release.</summary>
+    internal static void CompletePendingCollection()
+    {
+        if (Volatile.Read(ref _pendingTarget) == 0) return;
+        lock (_lock)
+        {
+            long target = _pendingTarget;
+            if (target == 0 || MinLastMarkLocked() < target) return;
+            Volatile.Write(ref _pendingTarget, 0);
+            CollectLocked(long.MaxValue);
+        }
+    }
+
+    internal static bool CollectionPending => Volatile.Read(ref _pendingTarget) != 0;
+
+    /// <summary>The transient atoms among the ids set in <paramref name="bits"/>,
+    /// ascending, into <paramref name="found"/>; returns their count. An id of no live
+    /// atom is dropped, and a TransientWeak atom counts: a claim takes it back.</summary>
+    internal static int TransientAmong(ulong[] bits, int words, ref int[] found)
+    {
+        Atom?[] arr = _byIdArray;
+        int n = 0;
+        List<int>? missing = null;
+        for (int w = 0; w < words; w++)
+        {
+            ulong word = bits[w];
+            while (word != 0)
+            {
+                int id = (w << 6) + System.Numerics.BitOperations.TrailingZeroCount(word);
+                word &= word - 1;
+                if ((uint)id < (uint)arr.Length && arr[id] is { } atom)
+                {
+                    if (atom.IsPermanent) continue;
+                    if (n == found.Length) System.Array.Resize(ref found, System.Math.Max(64, n * 2));
+                    found[n++] = id;
+                }
+                else (missing ??= new()).Add(id);
+            }
+        }
+        if (missing is null) return n;
+        bool added = false;
+        lock (_lock)
+            foreach (int id in missing)
+                if (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out _))
+                {
+                    if (n == found.Length) System.Array.Resize(ref found, System.Math.Max(64, n * 2));
+                    found[n++] = id;
+                    added = true;
+                }
+        if (added) System.Array.Sort(found, 0, n);
+        return n;
+    }
 
     /// <summary>Starts a claimant's mark and returns its epoch: once the claims are
     /// applied, the claimant publishes it as its last mark.</summary>
@@ -290,89 +503,100 @@ public static class AtomTable
     }
 
     /// <summary>
-    /// Collects the transient atoms no claimant keeps: no claim, and an epoch below
-    /// <paramref name="minMarkEpoch"/>, the oldest last mark among the live claimants, so
-    /// every one of them has marked since the atom was last taken or let go. An atom C#
-    /// still holds goes to TransientWeak; the others die. A TransientWeak atom that is
-    /// claimed or taken again is transient again. Returns the atoms that died.
+    /// Collects the transient atoms no claimant keeps: no claim, and an epoch below the
+    /// oldest last mark among the live claimants, so every one of them has marked since
+    /// the atom was last taken or let go. An atom C# still holds goes to TransientWeak;
+    /// the others die. A TransientWeak atom that is claimed or taken again is transient
+    /// again. Returns the atoms that died.
     /// </summary>
+    public static int Collect() => Collect(long.MaxValue);
+
+    /// <summary>As <see cref="Collect()"/>, with <paramref name="minMarkEpoch"/> as one
+    /// more last mark: what a claimant outside the registry has not marked since.</summary>
     public static int Collect(long minMarkEpoch)
     {
         lock (_lock)
+            return CollectLocked(minMarkEpoch);
+    }
+
+    private static int CollectLocked(long minMarkEpoch)
+    {
+        long registered = MinLastMarkLocked();
+        if (registered < minMarkEpoch) minMarkEpoch = registered;
+        SweepCount++;
+        var foreignAlive = new HashSet<int>();
+        for (int i = _foreignWeakRefs.Count - 1; i >= 0; i--)
         {
-            SweepCount++;
-            var foreignAlive = new HashSet<int>();
-            for (int i = _foreignWeakRefs.Count - 1; i >= 0; i--)
-            {
-                if (_foreignWeakRefs[i].TryGetTarget(out var held))
-                    foreignAlive.Add(held.Id);
-                else
-                    _foreignWeakRefs.RemoveAt(i);
-            }
-
-            List<Atom>? demote = null, candidates = null;
-            foreach (var atom in _transientById.Values)
-            {
-                if (Volatile.Read(ref atom.Claims) != 0
-                    || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
-                    continue;
-                if (foreignAlive.Contains(atom.Id)) (demote ??= new()).Add(atom);
-                else (candidates ??= new()).Add(atom);
-            }
-            if (demote is not null)
-                foreach (var atom in demote)
-                {
-                    _transientById.Remove(atom.Id);
-                    StoreInArrayLocked(atom.Id, null);
-                    _transientWeak[atom.Id] = new TransientWeakEntry(
-                        new WeakReference<Atom>(atom), atom.Name, atom.NameRef!);
-                }
-            int died = 0;
-            if (candidates is not null)
-                foreach (var atom in candidates)
-                {
-                    // The state is written before the epoch is read again: an intern
-                    // that stamped the atom meanwhile is seen here, or sees the death.
-                    Interlocked.Exchange(ref atom.State, 1);
-                    if (Volatile.Read(ref atom.Epoch) >= minMarkEpoch
-                        || Volatile.Read(ref atom.Claims) != 0)
-                    {
-                        Volatile.Write(ref atom.State, 0);
-                        continue;
-                    }
-                    _transientById.Remove(atom.Id);
-                    StoreInArrayLocked(atom.Id, null);
-                    RemoveNameLocked(atom.Name, atom.NameRef!);
-                    died++;
-                }
-            SweptAtoms += died;
-
-            List<int>? weakDropped = null;
-            List<Atom>? weakBack = null;
-            foreach (var kv in _transientWeak)
-            {
-                if (!kv.Value.Weak.TryGetTarget(out var atom))
-                    (weakDropped ??= new()).Add(kv.Key);
-                else if (Volatile.Read(ref atom.Claims) != 0
-                         || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
-                    (weakBack ??= new()).Add(atom);
-            }
-            if (weakDropped is not null)
-                foreach (int id in weakDropped)
-                {
-                    var entry = _transientWeak[id];
-                    _transientWeak.Remove(id);
-                    RemoveNameLocked(entry.Name, entry.NameRef);
-                }
-            if (weakBack is not null)
-                foreach (var atom in weakBack)
-                {
-                    _transientWeak.Remove(atom.Id);
-                    _transientById[atom.Id] = atom;
-                    StoreInArrayLocked(atom.Id, atom);
-                }
-            return died;
+            if (_foreignWeakRefs[i].TryGetTarget(out var held))
+                foreignAlive.Add(held.Id);
+            else
+                _foreignWeakRefs.RemoveAt(i);
         }
+
+        List<Atom>? demote = null, candidates = null;
+        foreach (var atom in _transientById.Values)
+        {
+            if (Volatile.Read(ref atom.Claims) != 0
+                || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
+                continue;
+            if (foreignAlive.Contains(atom.Id)) (demote ??= new()).Add(atom);
+            else (candidates ??= new()).Add(atom);
+        }
+        if (demote is not null)
+            foreach (var atom in demote)
+            {
+                _transientById.Remove(atom.Id);
+                StoreInArrayLocked(atom.Id, null);
+                _transientWeak[atom.Id] = new TransientWeakEntry(
+                    new WeakReference<Atom>(atom), atom.Name, atom.NameRef!);
+            }
+        int died = 0;
+        if (candidates is not null)
+            foreach (var atom in candidates)
+            {
+                // The state is written before the epoch is read again: an intern
+                // that stamped the atom meanwhile is seen here, or sees the death.
+                Interlocked.Exchange(ref atom.State, 1);
+                if (Volatile.Read(ref atom.Epoch) >= minMarkEpoch
+                    || Volatile.Read(ref atom.Claims) != 0)
+                {
+                    Volatile.Write(ref atom.State, 0);
+                    continue;
+                }
+                _transientById.Remove(atom.Id);
+                StoreInArrayLocked(atom.Id, null);
+                RemoveNameLocked(atom.Name, atom.NameRef!);
+                FreeIdLocked(atom.Id, atom.Name);
+                died++;
+            }
+        SweptAtoms += died;
+
+        List<int>? weakDropped = null;
+        List<Atom>? weakBack = null;
+        foreach (var kv in _transientWeak)
+        {
+            if (!kv.Value.Weak.TryGetTarget(out var atom))
+                (weakDropped ??= new()).Add(kv.Key);
+            else if (Volatile.Read(ref atom.Claims) != 0
+                     || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
+                (weakBack ??= new()).Add(atom);
+        }
+        if (weakDropped is not null)
+            foreach (int id in weakDropped)
+            {
+                var entry = _transientWeak[id];
+                _transientWeak.Remove(id);
+                RemoveNameLocked(entry.Name, entry.NameRef);
+                FreeIdLocked(id, entry.Name);
+            }
+        if (weakBack is not null)
+            foreach (var atom in weakBack)
+            {
+                _transientWeak.Remove(atom.Id);
+                _transientById[atom.Id] = atom;
+                StoreInArrayLocked(atom.Id, atom);
+            }
+        return died;
     }
 
     // Removes a name's entry only while it is still the given atom's: the name may name
@@ -404,11 +628,12 @@ public static class AtomTable
     public static int PermanentCount { get { lock (_lock) return _permanentById.Count; } }
     public static int TransientCount { get { lock (_lock) return _transientById.Count; } }
     internal static int TransientWeakCount { get { lock (_lock) return _transientWeak.Count; } }
+    internal static int FreeIdCount { get { lock (_lock) return _freeCount; } }
     internal static int ForeignHoldCount { get { lock (_lock) return _foreignWeakRefs.Count; } }
 
     /// <summary>Claims currently counted on <paramref name="id"/>, -1 for a permanent
-    /// or unknown atom. For tests.</summary>
-    internal static int ClaimsOf(int id) => TransientFor(id) is { } a ? Volatile.Read(ref a.Claims) : -1;
+    /// or unknown atom. For tests and diagnostics.</summary>
+    public static int ClaimsOf(int id) => TransientFor(id) is { } a ? Volatile.Read(ref a.Claims) : -1;
 
     /// <summary>
     /// Wipes all state back to the pre-registered defaults. Intended only for test isolation.
@@ -422,9 +647,16 @@ public static class AtomTable
             _transientById.Clear();
             _transientWeak.Clear();
             _foreignWeakRefs.Clear();
+            foreach (var claimant in _claimants) claimant.Registered = false;
+            _claimants.Clear();
+            _pendingTarget = 0;
             _byIdArray = System.Array.Empty<Atom?>();
             _permanentByName.Clear();
             _nextId = FirstUserId;
+            _freeCount = 0;
+            _poisoned.Clear();
+            _poisonDeadIds = false;
+            PoisonedReads = 0;
             _epoch = 0;
             AddPreRegisteredLocked(EmptyListId, "[]");
             AddPreRegisteredLocked(EmptyBracesId, "{}");
@@ -447,7 +679,7 @@ public static class AtomTable
                 if (!existing.IsPermanent) PromoteToPermanentLocked(existing);
                 continue;
             }
-            int id = _nextId++;
+            int id = NextIdLocked();
             var atom = new Atom(id, s, isPermanent: true);
             atom.NameRef = new WeakReference<Atom>(atom);
             _byName[s] = atom.NameRef;

@@ -83,7 +83,17 @@ public sealed partial class PrologEngine
                 // coming until somebody asks for another solution), and a debugger left
                 // waiting for it thinks the program is running.
                 host.DebugSession?.OnLeaveProlog(engine);
-                yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
+                // Built inside a run: it reads the activation, and may write to it.
+                Solution solution;
+                engine.EnterAtomRun();
+                bool built = false;
+                try
+                {
+                    solution = BuildSolution(varNames, varHeapIndices, engine, isLast, host);
+                    built = true;
+                }
+                finally { engine.LeaveAtomRun(built); }
+                yield return solution;
                 // A known-last solution: don't backtrack — there's nothing
                 // to find and re-running would just confirm failure.
                 if (isLast) break;
@@ -102,12 +112,17 @@ public sealed partial class PrologEngine
             // the SWI toplevel-cancel case). Runs before the heap buffer is
             // surrendered so the cleanup goal still has its heap.
             if (engine.HasCleanupHandlers || engine.HasPendingCleanups)
-                interp.RunTeardownCleanups(program);
+            {
+                engine.EnterAtomRun();
+                try { interp.RunTeardownCleanups(program); }
+                finally { engine.LeaveAtomRun(completed: false); }
+            }
             host.DebugSession?.OnLeaveProlog(engine);
             host.AccountGarbageCollection(engine);
             // Out of the dynamic-mutation broadcast: this activation cannot
             // resume, so a later mutation has nothing to tell it.
             host.UnregisterLiveEngine(engine);
+            engine.LeaveAtomDomain();
             host._heapPool.Return(engine);
         }
     }
@@ -132,11 +147,14 @@ public sealed partial class PrologEngine
     {
         Func<InterpreterResult> step = action;
         EnterRun(engine);
+        bool completed = false;
         try
         {
-            return RunSteps(interp, program, engine, step);
+            var result = RunSteps(interp, program, engine, step);
+            completed = true;
+            return result;
         }
-        finally { LeaveRun(); }
+        finally { LeaveRun(completed); }
     }
 
     private InterpreterResult RunSteps(

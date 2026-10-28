@@ -57,7 +57,9 @@ public static partial class MetaBuiltins
         return new RecordedCursor(host, atomId, keyTerm, returnPc).Start(engine);
     }
 
-    private sealed class RecordedCursor
+    // The snapshot keeps records the consumer may have erased: their atoms are
+    // claimed through the cursor (ADR-003).
+    private sealed class RecordedCursor : IAtomHolder
     {
         private readonly PrologEngine _host;
         private readonly int _atomId;   // >= 0 => atom key (integer store); -1 => compound
@@ -95,6 +97,13 @@ public static partial class MetaBuiltins
         }
 
         public bool Start(Activation engine) => Attempt(engine, isResume: false);
+
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            if (_atomId >= 0) set.Add(_atomId);
+            if (_snapshot is { } snapshot)
+                foreach (var (_, value) in snapshot) value.MarkAtoms(set);
+        }
 
         private bool Attempt(Activation engine, bool isResume)
         {

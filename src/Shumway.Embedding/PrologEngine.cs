@@ -1210,13 +1210,16 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         return engine;
     }
 
+    // The engine whose builtin made this one, for a query run inside it.
+    private PrologEngine? _madeBy;
+
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
     /// consulted modules and operator declarations. Used by meta-builtins like
     /// <c>findall/3</c> that need to enumerate every solution of a goal
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
-        var sub = new PrologEngine { Out = Out };
+        var sub = new PrologEngine { Out = Out, _madeBy = this };
         // Replace the sub-engine's default empty module set with deep copies
         // of ours so modifications in the sub-engine never bleed back.
         sub._modules.Clear();

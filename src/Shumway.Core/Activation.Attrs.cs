@@ -192,7 +192,11 @@ public sealed partial class Activation
     {
         if (_attrStore.Count == 0) return;
         if (!_attrStore.TryGetValue(home, out var record)) return;
-        foreach (var (_, value) in record) GcMarkCell(value);
+        foreach (var (module, value) in record)
+        {
+            GcMarkCell(value);
+            _atomMarkSet?.Add(module);
+        }
     }
 
     /// <summary>ADR-052: drops every row the collector just disproved -- a

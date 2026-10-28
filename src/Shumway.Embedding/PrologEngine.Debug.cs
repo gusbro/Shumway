@@ -2078,13 +2078,20 @@ public sealed partial class PrologEngine
     /// for a variable goal (<c>$call</c>, <c>$call_conj</c>, <c>$call_disj</c>,
     /// <c>$call_arrow</c>). <c>$call_neg</c> is deliberately left visible — it is
     /// the runtime form of <c>\+</c>, a meta-goal.</para></summary>
-    // Transparency is a pure function of the functor's name, and functor ids are stable
-    // for the life of the process — but computing it walks functor table → atom table →
-    // demangle → string switch, and the call port asked at every goal. Cached forever.
+    // Transparency is a pure function of the functor's name, but computing it walks
+    // functor table → atom table → demangle → string switch, and the call port asks at
+    // every goal. Cached until the next atom collection: a dead atom's id goes to
+    // another name (ADR-003).
     private readonly Dictionary<int, bool> _transparentByFid = new();
+    private int _transparentByFidSweep;
 
     internal bool IsTransparentControlFunctor(int functorId)
     {
+        if (_transparentByFidSweep != AtomTable.SweepCount)
+        {
+            _transparentByFid.Clear();
+            _transparentByFidSweep = AtomTable.SweepCount;
+        }
         if (_transparentByFid.TryGetValue(functorId, out bool cached)) return cached;
         var (atomId, arity) = FunctorTable.Lookup(functorId);
         var name = AtomTable.GetById(atomId)?.Name;

@@ -1766,7 +1766,7 @@ public sealed partial class Activation
         if (top.Key != _b || !ReferenceEquals(top.Del, self)) { CountLocalResume(2); return false; }
         if (Debug is not null) { CountLocalResume(3); return false; }
         Profiler.Backtrack();
-        BacktrackSafePoint();
+        RetrySafePoint();
         if (CpPushRing is { } ring)
             ring[CpPushRingPos++ & (CpPushRingSize - 1)] = ((long)-6 << 32) | (uint)top.Cursor;
         (_, cursor) = PopIlChoicePointAndRestore();
@@ -1793,7 +1793,7 @@ public sealed partial class Activation
                 if (fid == rootFunctorId)
                 {
                     Profiler.Backtrack();
-                    BacktrackSafePoint();
+                    RetrySafePoint();
                     if (CpPushRing is { } ring)
                         ring[CpPushRingPos++ & (CpPushRingSize - 1)] = ((long)-6 << 32) | (uint)cur;
                     CountLocalResume(0);

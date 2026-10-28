@@ -19,20 +19,24 @@ public static class ModuleQualify
     /// tagged). Measured end to end, the memo takes 7-9% off what a solve
     /// allocates.
     ///
-    /// <para>It needs no invalidation and carries no lifetime argument: atom
-    /// ids are permanent and interning is deterministic, so the same triple
-    /// yields the same functor for the life of the process. That is what
-    /// separates this from caching a resolution, which depends on the address
-    /// map and has to be stamped with it.</para></summary>
+    /// <para>An entry keeps the atoms it was made from: a dead atom's id goes
+    /// to another name (ADR-003), so a hit counts only while both ids still
+    /// name those atoms. It needs no other invalidation: interning is
+    /// deterministic. That is what separates this from caching a resolution,
+    /// which depends on the address map and has to be stamped with it.</para></summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
-        (int Module, int Name, int Arity), int> Memo = new();
+        (int Module, int Name, int Arity), (Atom? Module, Atom? Name, int Functor)> Memo = new();
 
     public static int Mangle(int moduleAtomId, int nameAtomId, int arity)
-        => Memo.GetOrAdd((moduleAtomId, nameAtomId, arity), static k =>
-        {
-            string module = AtomTable.GetById(k.Module)?.Name ?? "";
-            string name = AtomTable.GetById(k.Name)?.Name ?? "";
-            int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
-            return FunctorTable.Intern(mangledAtom, k.Arity);
-        });
+    {
+        var key = (moduleAtomId, nameAtomId, arity);
+        Atom? module = AtomTable.GetById(moduleAtomId), name = AtomTable.GetById(nameAtomId);
+        if (Memo.TryGetValue(key, out var hit)
+            && ReferenceEquals(hit.Module, module) && ReferenceEquals(hit.Name, name))
+            return hit.Functor;
+        int mangledAtom = AtomTable.Intern((module?.Name ?? "") + "$" + (name?.Name ?? ""), permanent: true).Id;
+        int functor = FunctorTable.Intern(mangledAtom, arity);
+        Memo[key] = (module, name, functor);
+        return functor;
+    }
 }

@@ -155,8 +155,8 @@ public class AtomTableTests
         Assert.Equal(0, AtomTable.TransientWeakCount);
         Assert.Null(AtomTable.GetById(id));
         Assert.False(AtomTable.IsTransient(id));
-        // After it died, interning the same name allocates a new id.
-        Assert.NotEqual(id, AtomTable.Intern("drop_me").Id);
+        // After it died, interning the same name makes a new atom.
+        Assert.NotSame(atom, AtomTable.Intern("drop_me"));
     }
 
     [Fact]
@@ -257,15 +257,123 @@ public class AtomTableTests
         Assert.Same(atom, AtomTable.GetById(atom.Id));
     }
 
+    // ---------- Id reuse ----------
+
     [Fact]
-    public void Collect_IdsAreNeverReused()
+    public void Collect_ADeadAtomsIdIsHandedOutAgain()
     {
-        var first = AtomTable.Intern("first");
-        int firstId = first.Id;
+        int firstId = AtomTable.Intern("first").Id;
+        int bound = AtomTable.IdBound;
         CollectAll();
+        Assert.Equal(1, AtomTable.FreeIdCount);
+
         var second = AtomTable.Intern("second");
-        Assert.NotEqual(firstId, second.Id);
-        Assert.True(second.Id > firstId);
+
+        Assert.Equal(firstId, second.Id);
+        Assert.Same(second, AtomTable.GetById(firstId));
+        Assert.Equal(bound, AtomTable.IdBound);
+        Assert.Equal(0, AtomTable.FreeIdCount);
+    }
+
+    [Fact]
+    public void Collect_IdsStayBoundedWhileAtomsComeAndGo()
+    {
+        AtomTable.Intern("gen0");
+        int bound = AtomTable.IdBound;
+        for (int i = 1; i <= 1_000; i++)
+        {
+            CollectAll();
+            AtomTable.Intern("gen" + i);
+        }
+        Assert.Equal(bound, AtomTable.IdBound);
+    }
+
+    [Fact]
+    public void Collect_AReusedIdReusesItsFunctors()
+    {
+        var first = AtomTable.Intern("first_functor_name");
+        int functor = FunctorTable.Intern(first.Id, 2);
+        int functors = FunctorTable.IdLimit;
+        CollectAll();
+
+        var second = AtomTable.Intern("second_functor_name");
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(functor, FunctorTable.Intern(second.Id, 2));
+        Assert.Equal(functors, FunctorTable.IdLimit);
+    }
+
+    [Fact]
+    public void Collect_AnIdIsNotHandedOutWhileCStillHoldsItsAtom()
+    {
+        int id = InternForeignHeldDiscardingStrongRef("held_in_csharp");
+        CollectAll();
+        Assert.Equal(1, AtomTable.TransientWeakCount);
+        Assert.Equal(0, AtomTable.FreeIdCount);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        CollectAll();
+
+        Assert.Equal(0, AtomTable.TransientWeakCount);
+        Assert.Equal(id, AtomTable.Intern("after_release").Id);
+    }
+
+    [Fact]
+    public void Collect_AReusedIdIsNotQualifiedAsTheDeadName()
+    {
+        int module = AtomTable.Intern("qualifying_module").Id;
+        AtomTable.ApplyClaims(System.Array.Empty<int>(), new[] { module });
+        int dead = AtomTable.Intern("dead_goal").Id;
+        ModuleQualify.Mangle(module, dead, 1);
+        CollectAll();
+        int reused = AtomTable.Intern("live_goal").Id;
+        Assert.Equal(dead, reused);
+
+        var (name, arity) = FunctorTable.Lookup(ModuleQualify.Mangle(module, reused, 1));
+
+        Assert.Equal("qualifying_module$live_goal", AtomTable.GetById(name)!.Name);
+        Assert.Equal(1, arity);
+    }
+
+    // ---------- Poisoned dead ids ----------
+
+    [Fact]
+    public void Poisoned_ADeadIdIsNotHandedOutAgain()
+    {
+        AtomTable.PoisonDeadIds = true;
+        int firstId = AtomTable.Intern("first").Id;
+        CollectAll();
+
+        Assert.NotEqual(firstId, AtomTable.Intern("second").Id);
+        Assert.Equal(0, AtomTable.FreeIdCount);
+    }
+
+    [Fact]
+    public void Poisoned_ReadingADeadIdThrows()
+    {
+        AtomTable.PoisonDeadIds = true;
+        int id = AtomTable.Intern("poisoned").Id;
+        CollectAll();
+
+        var e = Assert.Throws<InvalidOperationException>(() => AtomTable.GetById(id));
+        Assert.Contains("'poisoned'", e.Message);
+        Assert.Equal(1, AtomTable.PoisonedReads);
+        Assert.Null(AtomTable.ProbeById(id));
+    }
+
+    [Fact]
+    public void Poisoned_SwitchedOffItsIdsAreFree()
+    {
+        AtomTable.PoisonDeadIds = true;
+        int id = AtomTable.Intern("poisoned").Id;
+        CollectAll();
+
+        AtomTable.PoisonDeadIds = false;
+
+        Assert.Null(AtomTable.GetById(id));
+        Assert.Equal(id, AtomTable.Intern("next").Id);
     }
 
     [Fact]
@@ -310,10 +418,14 @@ public class AtomTableTests
     /// that claims nothing and marks again every few interns, publishing its
     /// epoch; the collector takes the oldest published epoch, so it keeps killing
     /// atoms every thread has let go while the threads take the same names again.
-    /// What a thread took since its last mark must be alive until it marks again.</summary>
-    [Fact]
-    public async Task Intern_RacingCollect_NeverHandsOutADeadAtom()
+    /// What a thread took since its last mark must be alive until it marks again,
+    /// whether its id is handed out again or poisoned.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Intern_RacingCollect_NeverHandsOutADeadAtom(bool poison)
     {
+        AtomTable.PoisonDeadIds = poison;
         const int threads = 3, names = 64, perMark = 8, marks = 3_000;
         var lastMark = new long[threads];
         for (int t = 0; t < threads; t++) lastMark[t] = AtomTable.BeginMark();

@@ -455,7 +455,7 @@ public sealed partial class BytecodeInterpreter
                 // re-satisfy through Call and are already cancellable there, so
                 // they pay nothing here. Counter-throttled → negligible per-pop
                 // cost even for Tier-1 IL clause backtracking.
-                _engine.BacktrackSafePoint();
+                _engine.RetrySafePoint();
                 // ADR-035 redo port for an IL choice point — under a debug
                 // session that means a backtrackable builtin re-satisfying
                 // (between/3, repeat/0, clause/2, …), since debuggable code
@@ -518,7 +518,7 @@ public sealed partial class BytecodeInterpreter
                     // above takes: a failure-driven loop whose retries all
                     // come through here (length(L, N), fail under time_out/3)
                     // reaches no other one.
-                    _engine.BacktrackSafePoint();
+                    _engine.RetrySafePoint();
                     _engine.Debug?.OnRedo(_engine, -1);
                     if (Activation.CpPushRing is { } r4)
                         r4[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
