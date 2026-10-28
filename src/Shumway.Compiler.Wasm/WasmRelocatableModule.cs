@@ -332,7 +332,7 @@ public sealed class WasmRelocatableModule
                     value = env.EncodeBuiltinId(id, r.Offset);
                     break;
                 case WasmRelocKind.Atom:
-                    value = env.AtomCell(AtomTable.Intern(r.Name).Id);
+                    value = env.AtomCell(AtomTable.Intern(r.Name, permanent: true).Id);
                     break;
                 case WasmRelocKind.Functor:
                     value = env.FunctorCell(Functor(r.Name, r.Arity));
@@ -369,7 +369,7 @@ public sealed class WasmRelocatableModule
     }
 
     private static int Functor(string name, int arity)
-        => FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
+        => FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
 
     // Members are contiguous: the end of one is the start of the next, and
     // an address at a member's bias is that member's entry, not the

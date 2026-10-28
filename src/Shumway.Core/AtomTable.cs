@@ -1,26 +1,20 @@
 namespace Shumway.Core;
 
 /// <summary>
-/// Global atom table with the three-tier storage strategy from ADR-003.
+/// Global atom table with the three tiers of ADR-003.
 ///
 /// <list type="bullet">
-///   <item><b>Permanent</b> — strong refs from <see cref="_permanentById"/>; never collected.</item>
-///   <item><b>Transient</b> — strong refs from <see cref="_transientById"/>; can be moved to
-///         TransientWeak or removed by <see cref="Sweep"/>.</item>
-///   <item><b>TransientWeak</b> — only a <see cref="WeakReference{T}"/>; the table itself
-///         does not keep the atom alive. It survives only as long as foreign C# code retains
-///         a strong reference.</item>
+///   <item><b>Permanent</b>: strong refs from <see cref="_permanentById"/>; never collected.</item>
+///   <item><b>Transient</b>: strong refs from <see cref="_transientById"/>, alive while a
+///         claimant holds it or since its last intern not every claimant has marked
+///         (<see cref="Collect"/>).</item>
+///   <item><b>TransientWeak</b>: only a <see cref="WeakReference{T}"/>; it survives as long as
+///         foreign C# code retains the <see cref="Atom"/>.</item>
 /// </list>
 ///
 /// The by-name index <see cref="_byName"/> holds <see cref="WeakReference{T}"/> entries so
-/// that demoting an atom to TransientWeak truly releases all table-side strong references —
-/// otherwise the weak-ref tier would be pointless. Atom identity is preserved across tiers
-/// because all lookups (Intern by name, GetById) hit the same Atom instance as long as it
-/// is alive.
-///
-/// All mutating operations and <see cref="GetById"/> hold <see cref="_lock"/>. The GC's
-/// mark phase is performed externally by the engine subsystem; this table implements the
-/// sweep (phases 2-4 of ADR-003) given the set of reachable atom ids as input.
+/// that a TransientWeak atom has no table-side strong reference. Ids are never reused: a
+/// name interned again after its atom died gets a new id.
 /// </summary>
 public static class AtomTable
 {
@@ -33,33 +27,13 @@ public static class AtomTable
     public const int FalseId = 4;
     public const int FirstUserId = 16;
 
-    // ConcurrentDictionary lets Intern probe transients
-    // lock-free on the fast path, mirroring the lock-free
-    // path for permanents. Single-threaded engines saw
-    // Monitor.Enter_Slowpath as the 6th-hottest function in dotnet-
-    // trace because every transient atom creation (atom_chars per-
-    // character loops, get_char streams, atom_concat results, etc.)
-    // took AtomTable._lock. Concurrent reads here are wait-free;
-    // writes still go through _lock so the multi-step bookkeeping
-    // (id allocation, by-id dictionaries, permanent mirror) stays
-    // consistent.
+    // Reads are lock-free; writes go through _lock so the multi-step bookkeeping
+    // (id allocation, by-id dictionaries, the id array) stays consistent.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, WeakReference<Atom>> _byName = new();
     private static readonly Dictionary<int, Atom> _permanentById = new();
     private static readonly Dictionary<int, Atom> _transientById = new();
     private static readonly Dictionary<int, TransientWeakEntry> _transientWeak = new();
     private static readonly List<WeakReference<Atom>> _foreignWeakRefs = new();
-    // System.Threading.Lock (new in .NET 9) is markedly
-    // faster than the legacy object-based monitor on uncontended paths.
-    // For Blint, AtomTable.Intern shows up at ~1.8% inclusive in
-    // dotnet-trace with the lock-free fast paths in place;
-    // the ~1.2% in children is mostly Monitor.Enter_Slowpath when
-    // the transient-promotion or new-atom slow path acquires _lock.
-    // System.Threading.Lock skips the syncblock dance and uses a
-    // dedicated state machine with a true fast path that the JIT
-    // can inline.
-    // .NET Framework has no System.Threading.Lock, so there it is the object
-    // monitor — the very thing this measurement was about. Same semantics,
-    // slower uncontended path; the modern target keeps what it measured.
 #if NETFRAMEWORK
     private static readonly object _lock = new();
 #else
@@ -67,50 +41,37 @@ public static class AtomTable
 #endif
     private static int _nextId = FirstUserId;
 
-    // fast-path for the most common GetById case. Permanent
-    // atoms (string literals, public predicate names, the single-char
-    // cache, etc.) get dense ids and far outnumber lookups on transient
-    // / weak ids. A flat array indexed by id, grown copy-on-write, lets
-    // the dispatcher / TermReader skip the lock + dictionary probe on
-    // the common case. Misses (uncached id, transient, or weak) fall
-    // through to the locked path.
-    private static volatile Atom?[] _permanentByIdArray = System.Array.Empty<Atom?>();
+    // Every strongly held atom by id, permanent and transient, grown copy-on-write:
+    // GetById and the claims read it without the lock. A TransientWeak or dead atom
+    // has no slot (null), the first so the table keeps no strong reference to it.
+    private static volatile Atom?[] _byIdArray = System.Array.Empty<Atom?>();
 
-    // Lock-free by-NAME fast path for permanent atoms — the Intern
-    // counterpart of _permanentByIdArray (which serves GetById). A
-    // permanent atom's identity is stable and it is never collected, so a
-    // hit here needs no lock. Profiling Blint showed AtomTable.Intern's
-    // global lock at ~16% of wall time, contended against the background
-    // Tier-1 promotion thread; the dominant callers (atom_chars over the
-    // pre-interned single-char ASCII atoms, predicate-name interning in
-    // assert/retract) re-intern atoms that are already permanent, so this
-    // dictionary takes them off the lock entirely. Written only under
-    // _lock at every permanent-creation / promotion site; read lock-free.
+    // Lock-free by-name path for permanent atoms: a permanent intern request is
+    // satisfied by a hit here with no lock. Written only under _lock.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Atom> _permanentByName = new();
+
+    // The global epoch. A claimant's mark takes a new value (BeginMark); an intern
+    // and a lost claim stamp an atom with the current one.
+    private static long _epoch;
 
     private readonly struct TransientWeakEntry
     {
         public readonly WeakReference<Atom> Weak;
         public readonly string Name;
-        public TransientWeakEntry(WeakReference<Atom> weak, string name) { Weak = weak; Name = name; }
+        public readonly WeakReference<Atom> NameRef;
+        public TransientWeakEntry(WeakReference<Atom> weak, string name, WeakReference<Atom> nameRef)
+        { Weak = weak; Name = name; NameRef = nameRef; }
     }
 
-    // cache of single-character atom ids. Widened
-    // it from 128 (ASCII) to 256 (Latin-1 — what `char (byte)` covers
-    // and what every other major Prolog (GNU, SWI, SICStus) pre-
-    // interns). The character-I/O builtins (peek_char/get_char/put_char),
-    // `char_code/2`, and the per-character loops in atom_chars / string_chars
-    // all hit this cache, so any code point in 0..255 skips the lock +
-    // dictionary probe + 1-char string allocation that Intern would do.
+    // Single-character atoms 0..255 are pre-interned permanent; their ids are a flat
+    // array lookup for the character builtins.
     public const int SingleCharAtomCacheLimit = 256;
     private static readonly int[] _singleCharAtomIds = new int[SingleCharAtomCacheLimit];
 
     /// <summary>Number of permanent atoms a freshly-reset table holds:
     /// the five pre-registered specials (<c>[]</c>, <c>{}</c>, <c>.</c>,
-    /// <c>true</c>, <c>false</c>) plus the single-char ASCII
-    /// cache (codes 0..127). <c>.</c> is in both sets so it counts
-    /// once. Tests use this as the baseline when asserting on
-    /// <see cref="PermanentCount"/> after an intern.</summary>
+    /// <c>true</c>, <c>false</c>) plus the single-character cache.
+    /// <c>.</c> is in both sets so it counts once.</summary>
     public const int PreRegisteredPermanentCount = 5 + SingleCharAtomCacheLimit - 1;
 
     static AtomTable()
@@ -120,20 +81,12 @@ public static class AtomTable
         AddPreRegisteredLocked(ConsFunctorId, ".");
         AddPreRegisteredLocked(TrueId, "true");
         AddPreRegisteredLocked(FalseId, "false");
-
-        // Pre-intern single-character atoms 0..127 as permanent atoms
-        // and remember their ids in a flat int array for lock-free
-        // lookup. "[]" / "." are already permanent from above; their
-        // codes get patched in below so the cache stays consistent.
         RebuildSingleCharCacheLocked();
     }
 
     /// <summary>Returns the pre-interned permanent atom id for the
     /// single-character atom whose only code is <paramref name="code"/>,
-    /// or <c>-1</c> if <paramref name="code"/> is outside the cached
-    /// range. The cache is populated at class-load time so this is a
-    /// pure array index — no lock, no allocation. Used by character-
-    /// I/O builtins.</summary>
+    /// or <c>-1</c> if <paramref name="code"/> is outside the cached range.</summary>
     public static int GetSingleCharAtomId(int code)
     {
         if ((uint)code >= (uint)SingleCharAtomCacheLimit) return -1;
@@ -143,16 +96,19 @@ public static class AtomTable
     private static void AddPreRegisteredLocked(int id, string name)
     {
         var atom = new Atom(id, name, isPermanent: true);
-        _byName[name] = new WeakReference<Atom>(atom);
+        atom.NameRef = new WeakReference<Atom>(atom);
+        _byName[name] = atom.NameRef;
         _permanentById[id] = atom;
-        StorePermanentInArrayLocked(id, atom);
+        _permanentByName[name] = atom;
+        StoreInArrayLocked(id, atom);
     }
 
-    private static void StorePermanentInArrayLocked(int id, Atom atom)
+    private static void StoreInArrayLocked(int id, Atom? atom)
     {
-        Atom?[] arr = _permanentByIdArray;
+        Atom?[] arr = _byIdArray;
         if (id >= arr.Length)
         {
+            if (atom is null) return;
             int newSize = arr.Length == 0 ? 256 : arr.Length * 2;
             while (newSize <= id) newSize *= 2;
             var newArr = new Atom?[newSize];
@@ -160,98 +116,120 @@ public static class AtomTable
             arr = newArr;
         }
         arr[id] = atom;
-        _permanentByIdArray = arr;
-        // Mirror into the lock-free by-name fast path (every created-
-        // permanent atom flows through here).
-        _permanentByName[atom.Name] = atom;
+        _byIdArray = arr;
     }
 
     /// <summary>
     /// Returns the canonical <see cref="Atom"/> for <paramref name="name"/>, allocating one
     /// on first use. Passing <c>permanent: true</c> promotes an existing transient atom.
+    /// A transient atom is stamped with the current epoch, so it outlives the claimants
+    /// that have not marked since (ADR-003).
     /// </summary>
     public static Atom Intern(string name, bool permanent = false)
     {
         ArgumentNullException.ThrowIfNull(name);
         if (permanent)
         {
-            // Lock-free fast path: a permanent
-            // atom satisfies a permanent intern request directly; its
-            // identity is stable and it is never collected. A transient
-            // hit must not short-circuit here — it needs
-            // PromoteToPermanentLocked under the lock.
             if (_permanentByName.TryGetValue(name, out var perm))
                 return perm;
         }
-        // One lock-free by-name probe for the transient
-        // (permanent:false) path — it used to probe _permanentByName first
-        // (a guaranteed miss for a transient atom, paying a full string
-        // hash) and then _byName. Every live atom of either tier has a
-        // _byName entry, and a permanent's WeakReference target is strongly
-        // held by _permanentById so TryGetTarget always succeeds for it —
-        // so a single _byName hit satisfies a permanent:false request
-        // regardless of tier (the safety argument for the
-        // lock-free read of the ConcurrentDictionary still applies; a
-        // GC-collected weak target is a miss and falls through to _lock).
         else if (_byName.TryGetValue(name, out var liveRef)
-                 && liveRef.TryGetTarget(out var alive))
+                 && liveRef.TryGetTarget(out var alive)
+                 && (alive.IsPermanent || Taken(alive)))
         {
             return alive;
         }
         lock (_lock)
         {
-            if (_byName.TryGetValue(name, out var weakRef) && weakRef.TryGetTarget(out var existing))
+            if (_byName.TryGetValue(name, out var weakRef) && weakRef.TryGetTarget(out var existing)
+                && Volatile.Read(ref existing.State) == 0)
             {
                 if (permanent && !existing.IsPermanent)
                     PromoteToPermanentLocked(existing);
+                else if (!existing.IsPermanent)
+                {
+                    Stamp(existing, Volatile.Read(ref _epoch));
+                    if (_transientWeak.Remove(existing.Id))
+                    {
+                        _transientById[existing.Id] = existing;
+                        StoreInArrayLocked(existing.Id, existing);
+                    }
+                }
                 return existing;
             }
 
             int id = _nextId++;
             var atom = new Atom(id, name, isPermanent: permanent);
-            _byName[name] = new WeakReference<Atom>(atom);
+            atom.Epoch = Volatile.Read(ref _epoch);
+            atom.NameRef = new WeakReference<Atom>(atom);
             if (permanent)
-            {
                 _permanentById[id] = atom;
-                StorePermanentInArrayLocked(id, atom);
-            }
             else
                 _transientById[id] = atom;
+            // By id before by name: a lock-free intern that finds the name may
+            // look the id up next.
+            StoreInArrayLocked(id, atom);
+            if (permanent)
+                _permanentByName[name] = atom;
+            _byName[name] = atom.NameRef;
             return atom;
         }
+    }
+
+    // Stamps a transient atom taken now and tells whether it is alive. The stamp is a
+    // full fence before the state is read, and Collect writes the state with a full
+    // fence before it reads the epoch again: either Collect sees the stamp and keeps the
+    // atom, or this sees the death and Intern makes a new atom under the lock.
+    private static bool Taken(Atom atom)
+    {
+        Stamp(atom, Volatile.Read(ref _epoch));
+        return Volatile.Read(ref atom.State) == 0;
+    }
+
+    // Raises an atom's epoch to at least `now`, always with an interlocked write. Not
+    // a plain exchange: a stamp that read the global epoch earlier and lands later
+    // would move the epoch back under a claimant that took the atom meanwhile.
+    private static void Stamp(Atom atom, long now)
+    {
+        long cur;
+        do
+        {
+            cur = Volatile.Read(ref atom.Epoch);
+        } while (Interlocked.CompareExchange(ref atom.Epoch, cur > now ? cur : now, cur) != cur);
     }
 
     /// <summary>Returns the atom with <paramref name="id"/>, or <c>null</c> if no live atom carries that id.</summary>
     public static Atom? GetById(int id)
     {
-        // lock-free fast-path for permanent atoms via a
-        // dense array. The dispatcher's hot path (every atom name
-        // resolution during term materialisation, every atom_concat /
-        // char_code result, etc.) lands here, and permanents
-        // dominate the working set — they're keyed off id directly
-        // with no lock + dictionary probe needed.
-        Atom?[] permArr = _permanentByIdArray;
-        if ((uint)id < (uint)permArr.Length)
-        {
-            var p = permArr[id];
-            if (p is not null) return p;
-        }
+        Atom?[] arr = _byIdArray;
+        if ((uint)id < (uint)arr.Length && arr[id] is { } atom)
+            return atom;
         lock (_lock)
         {
-            if (_permanentById.TryGetValue(id, out var atom))
-                return atom;
-            if (_transientById.TryGetValue(id, out atom))
-                return atom;
-            if (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out atom))
-                return atom;
+            if (_transientById.TryGetValue(id, out var transient)) return transient;
+            if (_permanentById.TryGetValue(id, out var permanent)) return permanent;
+            if (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out var weak))
+                return weak;
             return null;
         }
     }
 
+    /// <summary>True when <paramref name="id"/> names a live transient atom: what a mark
+    /// lists as a claim.</summary>
+    public static bool IsTransient(int id)
+    {
+        Atom?[] arr = _byIdArray;
+        if ((uint)id < (uint)arr.Length && arr[id] is { } atom)
+            return !atom.IsPermanent;
+        lock (_lock)
+            return _transientById.ContainsKey(id)
+                || (_transientWeak.TryGetValue(id, out var entry) && entry.Weak.TryGetTarget(out _));
+    }
+
     /// <summary>
     /// Records that <paramref name="atom"/> has been exposed to C# code through the embedding
-    /// API. While C# retains the reference, the atom will not be collected even if no engine
-    /// references it. No-op for permanent atoms.
+    /// API. While C# retains the reference, the atom is not collected even if no claimant
+    /// holds it. No-op for permanent atoms.
     /// </summary>
     public static void RegisterForeignHold(Atom atom)
     {
@@ -264,76 +242,144 @@ public static class AtomTable
         }
     }
 
+    /// <summary>The current global epoch.</summary>
+    public static long CurrentEpoch => Volatile.Read(ref _epoch);
+
+    /// <summary>Starts a claimant's mark and returns its epoch: once the claims are
+    /// applied, the claimant publishes it as its last mark.</summary>
+    public static long BeginMark() => Interlocked.Increment(ref _epoch);
+
     /// <summary>
-    /// Implements phases 2-4 of the atom GC from ADR-003. <paramref name="reachable"/> is the
-    /// set of atom ids reachable from engine state (heaps, stacks, registers, predicate
-    /// metadata); the caller is responsible for computing it (mark phase).
+    /// Replaces a claimant's claims. <paramref name="before"/> is the sorted list of
+    /// transient atom ids its previous mark held, <paramref name="after"/> the sorted list
+    /// this mark found. An atom found and not held gains a claim; one held and not found
+    /// loses one, stamped first with the current epoch, so a claimant that took it from
+    /// this one and has not marked yet still keeps it.
     /// </summary>
-    public static void Sweep(HashSet<int> reachable)
+    public static void ApplyClaims(ReadOnlySpan<int> before, ReadOnlySpan<int> after)
     {
-        ArgumentNullException.ThrowIfNull(reachable);
+        long now = Volatile.Read(ref _epoch);
+        int i = 0, j = 0;
+        while (i < before.Length || j < after.Length)
+        {
+            if (j == after.Length || (i < before.Length && before[i] < after[j]))
+            {
+                if (TransientFor(before[i++]) is { } lost)
+                {
+                    Stamp(lost, now);
+                    Interlocked.Decrement(ref lost.Claims);
+                }
+            }
+            else if (i == before.Length || after[j] < before[i])
+            {
+                if (TransientFor(after[j++]) is { } gained)
+                    Interlocked.Increment(ref gained.Claims);
+            }
+            else
+            {
+                i++;
+                j++;
+            }
+        }
+    }
+
+    private static Atom? TransientFor(int id)
+    {
+        Atom? atom = GetById(id);
+        return atom is { IsPermanent: false } ? atom : null;
+    }
+
+    /// <summary>
+    /// Collects the transient atoms no claimant keeps: no claim, and an epoch below
+    /// <paramref name="minMarkEpoch"/>, the oldest last mark among the live claimants, so
+    /// every one of them has marked since the atom was last taken or let go. An atom C#
+    /// still holds goes to TransientWeak; the others die. A TransientWeak atom that is
+    /// claimed or taken again is transient again. Returns the atoms that died.
+    /// </summary>
+    public static int Collect(long minMarkEpoch)
+    {
         lock (_lock)
         {
             SweepCount++;
-            // compact foreign-hold weak refs and collect ids still alive in C#.
             var foreignAlive = new HashSet<int>();
             for (int i = _foreignWeakRefs.Count - 1; i >= 0; i--)
             {
-                if (_foreignWeakRefs[i].TryGetTarget(out var atom))
-                    foreignAlive.Add(atom.Id);
+                if (_foreignWeakRefs[i].TryGetTarget(out var held))
+                    foreignAlive.Add(held.Id);
                 else
                     _foreignWeakRefs.RemoveAt(i);
             }
 
-            // walk Transient. Keep if reachable; demote to TransientWeak if only C#
-            // holds it; otherwise drop entirely.
-            var toDemote = new List<KeyValuePair<int, Atom>>();
-            var toDrop = new List<KeyValuePair<int, Atom>>();
-            foreach (var kv in _transientById)
+            List<Atom>? demote = null, candidates = null;
+            foreach (var atom in _transientById.Values)
             {
-                if (reachable.Contains(kv.Key))
+                if (Volatile.Read(ref atom.Claims) != 0
+                    || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
                     continue;
-                if (foreignAlive.Contains(kv.Key))
-                    toDemote.Add(kv);
-                else
-                    toDrop.Add(kv);
+                if (foreignAlive.Contains(atom.Id)) (demote ??= new()).Add(atom);
+                else (candidates ??= new()).Add(atom);
             }
-            foreach (var kv in toDemote)
-            {
-                _transientById.Remove(kv.Key);
-                _transientWeak[kv.Key] = new TransientWeakEntry(new WeakReference<Atom>(kv.Value), kv.Value.Name);
-                // _byName: keep — its weak entry still references the live atom (foreign C# holds it).
-            }
-            foreach (var kv in toDrop)
-            {
-                _transientById.Remove(kv.Key);
-                _byName.TryRemove(kv.Value.Name, out _);
-            }
-            SweptAtoms += toDrop.Count;
+            if (demote is not null)
+                foreach (var atom in demote)
+                {
+                    _transientById.Remove(atom.Id);
+                    StoreInArrayLocked(atom.Id, null);
+                    _transientWeak[atom.Id] = new TransientWeakEntry(
+                        new WeakReference<Atom>(atom), atom.Name, atom.NameRef!);
+                }
+            int died = 0;
+            if (candidates is not null)
+                foreach (var atom in candidates)
+                {
+                    // The state is written before the epoch is read again: an intern
+                    // that stamped the atom meanwhile is seen here, or sees the death.
+                    Interlocked.Exchange(ref atom.State, 1);
+                    if (Volatile.Read(ref atom.Epoch) >= minMarkEpoch
+                        || Volatile.Read(ref atom.Claims) != 0)
+                    {
+                        Volatile.Write(ref atom.State, 0);
+                        continue;
+                    }
+                    _transientById.Remove(atom.Id);
+                    StoreInArrayLocked(atom.Id, null);
+                    RemoveNameLocked(atom.Name, atom.NameRef!);
+                    died++;
+                }
+            SweptAtoms += died;
 
-            // walk TransientWeak. Promote back to Transient if an engine resurrected
-            // it; drop entirely if the .NET GC has collected the atom; otherwise leave alone.
-            var weakToPromote = new List<KeyValuePair<int, Atom>>();
-            var weakToRemove = new List<KeyValuePair<int, string>>();
+            List<int>? weakDropped = null;
+            List<Atom>? weakBack = null;
             foreach (var kv in _transientWeak)
             {
                 if (!kv.Value.Weak.TryGetTarget(out var atom))
-                    weakToRemove.Add(new KeyValuePair<int, string>(kv.Key, kv.Value.Name));
-                else if (reachable.Contains(kv.Key))
-                    weakToPromote.Add(new KeyValuePair<int, Atom>(kv.Key, atom));
+                    (weakDropped ??= new()).Add(kv.Key);
+                else if (Volatile.Read(ref atom.Claims) != 0
+                         || Volatile.Read(ref atom.Epoch) >= minMarkEpoch)
+                    (weakBack ??= new()).Add(atom);
             }
-            foreach (var kv in weakToPromote)
-            {
-                _transientWeak.Remove(kv.Key);
-                _transientById[kv.Key] = kv.Value;
-            }
-            foreach (var kv in weakToRemove)
-            {
-                _transientWeak.Remove(kv.Key);
-                _byName.TryRemove(kv.Value, out _);
-            }
+            if (weakDropped is not null)
+                foreach (int id in weakDropped)
+                {
+                    var entry = _transientWeak[id];
+                    _transientWeak.Remove(id);
+                    RemoveNameLocked(entry.Name, entry.NameRef);
+                }
+            if (weakBack is not null)
+                foreach (var atom in weakBack)
+                {
+                    _transientWeak.Remove(atom.Id);
+                    _transientById[atom.Id] = atom;
+                    StoreInArrayLocked(atom.Id, atom);
+                }
+            return died;
         }
     }
+
+    // Removes a name's entry only while it is still the given atom's: the name may name
+    // a newer atom by now.
+    private static void RemoveNameLocked(string name, WeakReference<Atom> nameRef)
+        => ((ICollection<KeyValuePair<string, WeakReference<Atom>>>)_byName)
+            .Remove(new KeyValuePair<string, WeakReference<Atom>>(name, nameRef));
 
     private static void PromoteToPermanentLocked(Atom atom)
     {
@@ -343,24 +389,26 @@ public static class AtomTable
         _permanentById[atom.Id] = atom;
         _transientById.Remove(atom.Id);
         _transientWeak.Remove(atom.Id);
-        // A promoted atom is now eligible for the lock-free by-name path.
+        StoreInArrayLocked(atom.Id, atom);
         _permanentByName[atom.Name] = atom;
     }
 
     // ---------- Diagnostics / test helpers ----------
 
-    /// <summary>Sweeps run and transient atoms dropped by them, process-wide
-    /// like the table itself — statistics/0 reports both.</summary>
+    /// <summary>Collections run and transient atoms they reclaimed, process-wide
+    /// like the table itself; statistics/0 reports both.</summary>
     public static int SweepCount { get; private set; }
     public static long SweptAtoms { get; private set; }
 
-    /// <summary>Occupancy of the two liveness tiers — statistics/0's atom
-    /// line reads them (public: the counters are process-wide diagnostics,
-    /// like the sweep counters above).</summary>
+    /// <summary>Occupancy of the two liveness tiers; statistics/0's atom line reads them.</summary>
     public static int PermanentCount { get { lock (_lock) return _permanentById.Count; } }
     public static int TransientCount { get { lock (_lock) return _transientById.Count; } }
     internal static int TransientWeakCount { get { lock (_lock) return _transientWeak.Count; } }
     internal static int ForeignHoldCount { get { lock (_lock) return _foreignWeakRefs.Count; } }
+
+    /// <summary>Claims currently counted on <paramref name="id"/>, -1 for a permanent
+    /// or unknown atom. For tests.</summary>
+    internal static int ClaimsOf(int id) => TransientFor(id) is { } a ? Volatile.Read(ref a.Claims) : -1;
 
     /// <summary>
     /// Wipes all state back to the pre-registered defaults. Intended only for test isolation.
@@ -374,24 +422,15 @@ public static class AtomTable
             _transientById.Clear();
             _transientWeak.Clear();
             _foreignWeakRefs.Clear();
-            // clear the array fast-path too. Otherwise a
-            // post-reset Intern that lands on a stale slot (because
-            // _nextId restarts at FirstUserId but the array still
-            // holds prior atoms at those ids) would return the
-            // stale atom from GetById's fast path.
-            _permanentByIdArray = System.Array.Empty<Atom?>();
-            // Clear the by-name fast path too; the AddPreRegistered /
-            // RebuildSingleCharCache calls below re-populate it.
+            _byIdArray = System.Array.Empty<Atom?>();
             _permanentByName.Clear();
             _nextId = FirstUserId;
+            _epoch = 0;
             AddPreRegisteredLocked(EmptyListId, "[]");
             AddPreRegisteredLocked(EmptyBracesId, "{}");
             AddPreRegisteredLocked(ConsFunctorId, ".");
             AddPreRegisteredLocked(TrueId, "true");
             AddPreRegisteredLocked(FalseId, "false");
-            // rebuild the single-char-atom cache too —
-            // ResetForTesting just wiped the underlying atoms, so the
-            // pre-populated ids in _singleCharAtomIds are stale.
             RebuildSingleCharCacheLocked();
         }
     }
@@ -410,9 +449,11 @@ public static class AtomTable
             }
             int id = _nextId++;
             var atom = new Atom(id, s, isPermanent: true);
-            _byName[s] = new WeakReference<Atom>(atom);
+            atom.NameRef = new WeakReference<Atom>(atom);
+            _byName[s] = atom.NameRef;
             _permanentById[id] = atom;
-            StorePermanentInArrayLocked(id, atom);
+            _permanentByName[s] = atom;
+            StoreInArrayLocked(id, atom);
             _singleCharAtomIds[i] = id;
         }
     }

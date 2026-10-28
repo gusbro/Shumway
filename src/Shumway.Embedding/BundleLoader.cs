@@ -906,7 +906,7 @@ internal sealed class BundleLoader
             var index = new PersistedIlIndex { Predicates = new() };
             foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
             {
-                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name).Id, pe.Arity);
+                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name, permanent: true).Id, pe.Arity);
                 index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost, pe.SnapshotClauses));
                 if (pe.IndexGraph is { Length: > 0 } graph)
                     (index.IndexGraphs ??= new())[fid] = graph;
@@ -1106,7 +1106,7 @@ internal sealed class BundleLoader
             int functorId;
             if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
             {
-                int aid = Shumway.Core.AtomTable.Intern(info.Name).Id;
+                int aid = Shumway.Core.AtomTable.Intern(info.Name, permanent: true).Id;
                 functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
                 slot = info.Slot;
             }
@@ -1373,7 +1373,7 @@ internal sealed class BundleLoader
     /// kind exists to kill.</summary>
     private static int ResolveBuiltinPatch(string name, int arity)
     {
-        int aid = Shumway.Core.AtomTable.Intern(name).Id;
+        int aid = Shumway.Core.AtomTable.Intern(name, permanent: true).Id;
         int fid = Shumway.Core.FunctorTable.Intern(aid, arity);
         if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int builtinId))
             throw new InvalidDataException(
@@ -1396,7 +1396,7 @@ internal sealed class BundleLoader
 
     private static int ResolveMarkerRun(Shumway.Compiler.Il.IlPatchSite s)
     {
-        int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+        int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
         int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
         return Shumway.Core.Activation.ReserveResumeMarkerRange(fid, s.Cursor, s.Count);
     }
@@ -1413,17 +1413,17 @@ internal sealed class BundleLoader
             switch (s.Kind)
             {
                 case Shumway.Compiler.Il.IlPatchKind.Atom:
-                    runtimeValue = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    runtimeValue = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     break;
                 case Shumway.Compiler.Il.IlPatchKind.Functor:
                 {
-                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     runtimeValue = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
                     break;
                 }
                 case Shumway.Compiler.Il.IlPatchKind.ResumeMarker:
                 {
-                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
                     runtimeValue = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
                     break;

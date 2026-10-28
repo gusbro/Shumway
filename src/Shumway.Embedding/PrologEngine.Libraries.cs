@@ -698,7 +698,7 @@ public sealed partial class PrologEngine
     // API/env/shipped dirs.
     private IEnumerable<string> EnumerateLibraryDirs()
     {
-        int fsp = FunctorTable.Intern(AtomTable.Intern("file_search_path").Id, 2);
+        int fsp = FunctorTable.Intern(AtomTable.Intern("file_search_path", permanent: true).Id, 2);
         if (_dynStore.TryGetClauses(fsp, out var fspClauses))
             foreach (Clause cl in fspClauses)
                 if (cl.Term is CompoundTerm { Functor: "file_search_path",
@@ -706,7 +706,7 @@ public sealed partial class PrologEngine
                     && TryDirText(d, out string dir))
                     yield return dir;
 
-        int ld = FunctorTable.Intern(AtomTable.Intern("library_directory").Id, 1);
+        int ld = FunctorTable.Intern(AtomTable.Intern("library_directory", permanent: true).Id, 1);
         if (_dynStore.TryGetClauses(ld, out var ldClauses))
             foreach (Clause cl in ldClauses)
                 if (cl.Term is CompoundTerm { Functor: "library_directory", Args: [var d] }

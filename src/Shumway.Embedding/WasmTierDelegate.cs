@@ -266,7 +266,7 @@ public sealed class WasmTierDelegate
         get
         {
             if (_unifyBuiltinId < 0 && Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
-                    FunctorTable.Intern(AtomTable.Intern("=").Id, 2), out int eq))
+                    FunctorTable.Intern(AtomTable.Intern("=", permanent: true).Id, 2), out int eq))
                 _unifyBuiltinId = eq;
             return _unifyBuiltinId;
         }
