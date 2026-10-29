@@ -64,6 +64,7 @@ public static partial class MetaBuiltins
         // the collect step groups the solutions by it.
         BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
         BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
+        BuiltinsRegistry.Register("$bagof_free", 3, MetaBuiltins.BagofFree);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
         // (live-engine findall + fail-on-empty), not builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled

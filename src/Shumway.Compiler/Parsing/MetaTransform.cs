@@ -55,7 +55,24 @@ public static class MetaTransform
         var result = new List<Clause>();
         var helpers = new List<Clause>();
         int counter = 0;
+        var savedStaticWitness = _staticWitnessBagofs;
+        _staticWitnessBagofs = new HashSet<Term>(ReferenceEqualityComparer.Instance);
+        try
+        {
+            ApplyRules(clauses, result, helpers, ref counter);
+        }
+        finally
+        {
+            _staticWitnessBagofs = savedStaticWitness;
+        }
 
+        result.AddRange(helpers);
+        return result;
+    }
+
+    private static void ApplyRules(
+        IEnumerable<Clause> clauses, List<Clause> result, List<Clause> helpers, ref int counter)
+    {
         foreach (var clause in clauses)
         {
             if (clause.Kind == ClauseKind.Rule
@@ -64,6 +81,8 @@ public static class MetaTransform
             {
                 Term head = ruleTerm.Args[0];
                 Term body = ruleTerm.Args[1];
+                _staticWitnessBagofs!.Clear();
+                MarkStaticWitnessBagofs(head, body, _staticWitnessBagofs);
                 // ISO 7.8.8 cut transparency. A `!` inside a
                 // `;` / `->` then/else branch must commit the host clause, but
                 // the branch lowers to a synthesised helper whose own clause
@@ -100,9 +119,6 @@ public static class MetaTransform
                 result.Add(clause);
             }
         }
-
-        result.AddRange(helpers);
-        return result;
     }
 
     /// <param name="cutK">The host clause's captured cut-barrier
@@ -311,14 +327,18 @@ public static class MetaTransform
         // bagof/3 and setof/3 with a callable (non-variable) Goal — rewrite
         // to an in-engine collect loop that groups solutions by the goal's
         // witness variables. See RewriteBagof and the class
-        // remarks. A bare-variable Goal falls through to the runtime builtin.
+        // remarks. A Goal that is a variable once its ^ prefixes are stripped
+        // falls through to the runtime builtin: bound to V^G at the call, its
+        // own ^ quantifies V, which only the runtime strip can see.
         if (goal is CompoundTerm bs
             && (bs.Functor == "bagof" || bs.Functor == "setof")
             && bs.Args.Length == 3
-            && InlinableGoal(bs.Args[1]))
+            && InlinableGoal(bs.Args[1])
+            && StripExistentials(bs.Args[1], null) is not VarTerm)
         {
+            bool staticWitness = _staticWitnessBagofs?.Contains(bs) == true;
             Term rewritten = WithResultListCheck(bs.Args[2], RewriteBagof(
-                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter, helpers),
+                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], staticWitness, ref counter, helpers),
                 bs.Functor, goal.Position);
             // ADR-035 — the inner collect-loop ';' is bagof/setof, not a user ';'.
             _nextHelperKind = bs.Functor;
@@ -520,6 +540,12 @@ public static class MetaTransform
         int id = _helperIdProvider is { } p ? p() : ++counter;
         return $"{_helperPrefix}${kind}_{id}";
     }
+
+    /// <summary>The bagof/setof calls of the clause being transformed whose
+    /// witness can be computed from the variable names as written; see
+    /// <see cref="MarkStaticWitnessBagofs"/>. [ThreadStatic] for the same
+    /// reason as <see cref="InlineIteEnabled"/>; set by <see cref="Apply"/>.</summary>
+    [ThreadStatic] private static HashSet<Term>? _staticWitnessBagofs;
 
     /// <summary>ADR-025 — per-thread toggle for the inline if-then-else lowering.
     /// [ThreadStatic] rather than a parameter because TransformGoal recursion has
@@ -1102,18 +1128,17 @@ public static class MetaTransform
     /// a meta-called bagof/setof takes — records and enumerates through the
     /// same two builtins, so both paths group identically.</para></summary>
     private static Term RewriteBagof(
-        string functor, Term template, Term goal, Term bag, ref int counter,
-        List<Clause> helpers)
+        string functor, Term template, Term goal, Term bag, bool staticWitness,
+        ref int counter, List<Clause> helpers)
     {
         var position = goal.Position;
 
         // Strip ^/2 existential wrappers; collect the quantified variables.
+        var quantified = new List<Term>();
+        goal = StripExistentials(goal, quantified);
         var existential = new HashSet<string>();
-        while (goal is CompoundTerm caret && caret.Functor == "^" && caret.Args.Length == 2)
-        {
-            CollectNamedVars(caret.Args[0], new List<string>(), existential);
-            goal = caret.Args[1];
-        }
+        foreach (Term q in quantified)
+            CollectNamedVars(q, new List<string>(), existential);
 
         // §7.6.2 on the goal the ^ wrappers were hiding: `setof(X, X^(true;4), L)`
         // must raise type_error(callable, (true;4)) before anything runs.
@@ -1142,9 +1167,19 @@ public static class MetaTransform
                 witnessVars.Add(v);
         }
 
-        Term Witness() => witnessVars.Count == 0
+        Term WrittenWitness() => witnessVars.Count == 0
             ? new AtomTerm("$w")
             : new CompoundTerm("$w", witnessVars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        // Names are not variables: one of them may be bound at the call to a
+        // term that shares a variable with the template or a quantified term
+        // (`Z = g(Y), bagof(X, Y^p(X,Z), L)`). Unless MarkStaticWitnessBagofs
+        // ruled that out, the witness is computed from the instantiated terms
+        // by '$bagof_free' before the goal runs.
+        Term? freeWitness = null;
+        if (!staticWitness && witnessVars.Count > 0)
+            freeWitness = new VarTerm("$W" + counter++);
+        Term Witness() => freeWitness ?? WrittenWitness();
 
         string kind = functor;   // '$bagof_next'(setof|bagof, Witness-Bag)
 
@@ -1182,7 +1217,7 @@ public static class MetaTransform
             (Term)new AtomTerm("true"),
         }) { Position = position };
 
-        return new CompoundTerm(",", new[]
+        Term collect = new CompoundTerm(",", new[]
         {
             disjunction,
             new CompoundTerm("$bagof_next", new Term[]
@@ -1191,6 +1226,95 @@ public static class MetaTransform
                 new CompoundTerm("-", new[] { Witness(), bag }),
             }),
         }) { Position = position };
+        if (freeWitness is null)
+            return collect;
+
+        var bound = new List<Term>(quantified.Count + 1) { template };
+        bound.AddRange(quantified);
+        return new CompoundTerm(",", new[]
+        {
+            (Term)new CompoundTerm("$bagof_free", new[]
+            {
+                WrittenWitness(),
+                new CompoundTerm("$w", bound.ToArray()),
+                freeWitness,
+            }),
+            collect,
+        }) { Position = position };
+    }
+
+    /// <summary>The goal of a bagof/setof with its <c>V^</c> prefixes
+    /// removed; each <c>V</c> is added to <paramref name="quantified"/>
+    /// when it is given.</summary>
+    private static Term StripExistentials(Term goal, List<Term>? quantified)
+    {
+        while (goal is CompoundTerm caret && caret.Functor == "^" && caret.Args.Length == 2)
+        {
+            quantified?.Add(caret.Args[0]);
+            goal = caret.Args[1];
+        }
+        return goal;
+    }
+
+    /// <summary>Marks the bagof/setof calls of a clause whose witness, the
+    /// goal's variables minus the template's and the ^-quantified ones, can
+    /// be computed from the names as written. A name stands for a distinct
+    /// unbound variable at the call only if the call is where it first
+    /// occurs; a variable first seen earlier in the clause (or in the head)
+    /// may be bound by then. The names give the right witness when the
+    /// witness candidates are all first seen at the call, or the template
+    /// and quantified variables are: then no candidate can share a variable
+    /// with the template or a quantified term. Text order is execution order
+    /// or earlier (a variable in an earlier disjunction branch counts as
+    /// seen), so a mark is never wrong, only sometimes missing.</summary>
+    private static void MarkStaticWitnessBagofs(Term head, Term body, HashSet<Term> marks)
+    {
+        var seen = new HashSet<string>();
+        CollectNamedVars(head, new List<string>(), seen);
+        var work = new List<Term>(32) { body };
+        while (work.Count > 0)
+        {
+            Term next = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (next)
+            {
+                case VarTerm v when v.Name != "_":
+                    seen.Add(v.Name);
+                    break;
+                case CompoundTerm c:
+                    if (c.Functor is "bagof" or "setof" && c.Args.Length == 3
+                        && WitnessNamesAreFresh(c, seen))
+                    {
+                        marks.Add(c);
+                    }
+                    for (int i = c.Args.Length - 1; i >= 0; i--) work.Add(c.Args[i]);
+                    break;
+            }
+        }
+    }
+
+    private static bool WitnessNamesAreFresh(CompoundTerm bagof, HashSet<string> seen)
+    {
+        var quantified = new List<Term>();
+        Term goal = StripExistentials(bagof.Args[1], quantified);
+        var boundNames = new HashSet<string>();
+        CollectNamedVars(bagof.Args[0], new List<string>(), boundNames);
+        foreach (Term q in quantified)
+            CollectNamedVars(q, new List<string>(), boundNames);
+        var goalNames = new List<string>();
+        CollectNamedVars(goal, goalNames, new HashSet<string>());
+
+        bool candidatesFresh = true;
+        foreach (string n in goalNames)
+        {
+            if (!boundNames.Contains(n) && seen.Contains(n)) { candidatesFresh = false; break; }
+        }
+        if (candidatesFresh) return true;
+        foreach (string n in boundNames)
+        {
+            if (seen.Contains(n)) return false;
+        }
+        return true;
     }
 
     /// <summary>Returns a copy of <paramref name="term"/> with every anonymous

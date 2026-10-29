@@ -586,6 +586,20 @@ internal sealed class ConsultPipeline
         && ((c.Functor == "term_expansion" && c.Args.Length is 2 or 6)
             || (c.Functor == "goal_expansion" && c.Args.Length == 2));
 
+    /// <summary>A <c>:- dynamic</c> or <c>:- multifile</c> declaration of an
+    /// expansion hook. While nothing defines the hook it becomes an empty
+    /// dynamic predicate, like any multifile one: current, a call fails, and
+    /// asserts go to it. Hook clauses from a source still take the static
+    /// pipeline, and the declaration gives way to them (IsDeclaredOnlyHook at
+    /// the clause routing).</summary>
+    private void DeclareHook(int fid)
+    {
+        if (E.HasPredicate(fid)) return;
+        E._dynStore.MarkDynamic(fid);
+        if (!E._dynStore.HasClauses(fid))
+            E._dynStore[fid] = new List<Clause>();
+    }
+
     /// <summary>Early-activation clause surgery: a <c>term_expansion/2</c>
     /// clause is renamed to <paramref name="earlyName"/> (so only the directive
     /// probe consults it); a <c>goal_expansion/2</c> or <c>term_expansion/6</c>
@@ -1770,7 +1784,11 @@ internal sealed class ConsultPipeline
                     // record.pl declares `:- dynamic system:term_expansion/2.`,
                     // and routing its hook clauses to the dynamic store hides
                     // them from the hook runner — `:- record` then ran as a goal.
-                    if (PrologEngine.IsGlobalHookFunctor(fid)) continue;
+                    if (PrologEngine.IsGlobalHookFunctor(fid))
+                    {
+                        DeclareHook(fid);
+                        continue;
+                    }
                     E._dynStore.MarkDynamic(fid);
                     // Remember the declaring module (the store is flat-global,
                     // but separate compilation seeds each dynamic from its
@@ -1821,7 +1839,11 @@ internal sealed class ConsultPipeline
                     // unmangled (clpz's `:- multifile user:term_expansion/6` whose
                     // body calls `once(duodcg_body(..))`). Keep them on the static
                     // pipeline, where MetaTransform lowers those goals first.
-                    if (PrologEngine.IsGlobalHookFunctor(fid)) continue;
+                    if (PrologEngine.IsGlobalHookFunctor(fid))
+                    {
+                        DeclareHook(fid);
+                        continue;
+                    }
                     pendingMultifile.Add(fid);
                     // A multifile predicate accumulates clauses from several
                     // sources (assert, other files) — so it is callable and
@@ -2164,6 +2186,13 @@ internal sealed class ConsultPipeline
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
+                    if (E.IsDeclaredOnlyHook(fid))
+                    {
+                        // A hook clause from a source takes the static pipeline,
+                        // so the empty declaration made for it gives way.
+                        E._dynStore.UnmarkDynamic(fid);
+                        E._dynStore.RemoveSlot(fid);
+                    }
                     if (E._dynStore.IsDynamic(fid))
                     {
                         bool isMultifile = pendingMultifile?.Contains(fid) == true;
