@@ -129,22 +129,35 @@ public static partial class MetaBuiltins
             if (h.IsReader && Want("end_of_stream"))
             {
                 // §8.11.8: not / at / past. A binary reader has no
-                // TextReader — probe the seekable stream instead.
-                string state = h.PastEof ? "past"
-                    : ReferenceEquals(h, registry.UserInput) ? "not"
-                    : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
-                    : h.BinaryStream is { CanSeek: true } bs
-                        ? (bs.Position < bs.Length ? "not" : "at")
-                        : "not";
-                pairs.Add((h, new CompoundTerm("end_of_stream",
-                    new Term[] { new AtomTerm(state) })));
+                // TextReader — probe the seekable stream instead. A file
+                // that refuses the read leaves the state unknown, and the
+                // property out: §8.11.8 lists no I/O error.
+                string? state;
+                try
+                {
+                    state = h.PastEof ? "past"
+                        : ReferenceEquals(h, registry.UserInput) ? "not"
+                        : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
+                        : h.BinaryStream is { CanSeek: true } bs
+                            ? (bs.Position < bs.Length ? "not" : "at")
+                            : "not";
+                }
+                catch (Shumway.Core.PrologRuntimeException ex) when (ex.Kind == "system_error")
+                {
+                    state = null;
+                }
+                if (state is not null)
+                    pairs.Add((h, new CompoundTerm("end_of_stream",
+                        new Term[] { new AtomTerm(state) })));
             }
             // position/1 — seekable position when the underlying .NET
             // stream has one; otherwise the chars-consumed count of a
             // tracking reader still is a stream position (user_input has
             // one this way — GNU and SWI report one for stdin too), it
-            // just cannot be repositioned to.
-            long? pos = TryGetStreamPosition(h);
+            // just cannot be repositioned to. Asked for only: a writer's
+            // position flushes it, and a query about another property writes
+            // nothing.
+            long? pos = Want("position") || Want("reposition") ? TryGetStreamPosition(h) : null;
             long? propPos = pos
                 ?? (h.Reader is Shumway.Core.PositionTrackingReader tr
                     ? tr.CharsConsumed : null);
@@ -243,6 +256,9 @@ public static partial class MetaBuiltins
         }
         catch (NotSupportedException) { /* fall through */ }
         catch (ObjectDisposedException) { /* fall through */ }
+        // The file refuses the buffered bytes (a device that takes no writes):
+        // no position, rather than an error from a query (§8.11.8 lists none).
+        catch (Shumway.Core.PrologRuntimeException ex) when (ex.Kind == "system_error") { }
         return null;
     }
 

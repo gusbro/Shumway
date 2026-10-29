@@ -198,4 +198,61 @@ public sealed class HostIoErrorTests
             catch(get_char(S, _), error(system_error(_), get_char/2), Second = true),
             close(S), First == true, Second == true.").Success);
     }
+
+    [Fact]
+    public void AStreamWhoseBytesTheHostRefusedLeavesStreamPropertyAnswering()
+    {
+        // Left open after its flush failed, with the bytes still buffered (a
+        // test that expects the error and moves on): a later query about the
+        // streams answers, and this one has no position.
+        using var sink = new FailingSink();
+        var e = Engine();
+
+        Assert.True(e.Query($@"open({sink.Atom}, write, S), write(S, abc),
+            catch(flush_output(S), error(system_error(_), _), true),
+            stream_property(_, alias(user_output)),
+            findall(P, stream_property(S, P), Ps), \+ memberchk(position(_), Ps),
+            memberchk(mode(write), Ps),
+            close(S, [force(true)]).").Success);
+    }
+
+    [Fact]
+    public void AQueryAboutAnotherPropertyWritesNothing()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-hostio-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string file = Path.Combine(dir, "pending.txt");
+            var e = Engine();
+
+            // The text stays in the writer's buffer: no query but position
+            // flushes it.
+            Assert.True(e.Query($@"open('{file.Replace('\\', '/')}', write, S), write(S, abc),
+                stream_property(S, file_name(_)), stream_property(S, mode(write)),
+                nb_setval(hostio_pending, S).").Success);
+            Assert.Equal(0, new FileInfo(file).Length);
+            Assert.True(e.Query("nb_getval(hostio_pending, S), close(S).").Success);
+            Assert.Equal(3, new FileInfo(file).Length);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void AReadTheHostRefusedLeavesStreamPropertyAnswering()
+    {
+        // The input side: end_of_stream peeks, and a refused read leaves the
+        // state unknown, not an error.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+        using var sink = new FailingSink(lockFrom: 8192, content: new string('a', 20000));
+        var e = Engine();
+
+        Assert.True(e.Query($@"open({sink.Atom}, read, S),
+            catch(( between(1, 20000, _), get_char(S, _), fail ; true ), error(system_error(_), _), true),
+            findall(P, stream_property(S, P), Ps), \+ memberchk(end_of_stream(_), Ps),
+            close(S).").Success);
+    }
 }
