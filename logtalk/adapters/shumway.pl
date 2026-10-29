@@ -263,6 +263,15 @@
 %   quietly and the directive is dropped — if a predicate from it is really
 %   needed, its call site raises a clear existence_error later, which beats
 %   aborting the whole compilation here.
+%
+% A module that Logtalk compiles as an object is the exception for
+% use_module/2: the modules it names are objects too, and the core turns the
+% directive into uses/2 on them itself, so it is left alone here.
+'$lgt_prolog_term_expansion'((:- use_module(Module, _)), _) :-
+	atom(Module),
+	logtalk_load_context(entity_type, module),
+	!,
+	fail.
 '$lgt_prolog_term_expansion'((:- use_module(constraintLib, _)), []) :- !.
 '$lgt_prolog_term_expansion'((:- use_module(Library)), Expansion) :- !,
 	'$shumway_expand_use_module'(Library, Expansion).
@@ -439,9 +448,10 @@
 '$lgt_load_prolog_file'(File) :-
 	consult(File).
 
-% No modification-time tracking: a constant time means reload(changed)
-% decisions fall back to the core's own bookkeeping.
-'$lgt_file_modification_time'(_File, 0).
+% Unix-epoch seconds: logtalk_make/0-1 and reload(changed) compare them to
+% find the files changed since they were loaded.
+'$lgt_file_modification_time'(File, Time) :-
+	file_modification_time(File, Time).
 
 '$lgt_environment_variable'(Variable, Value) :-
 	catch(getenv(Variable, Value), _, fail).
