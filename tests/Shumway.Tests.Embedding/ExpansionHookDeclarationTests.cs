@@ -48,11 +48,17 @@ public class ExpansionHookDeclarationTests
         int te = FunctorTable.Intern(AtomTable.Intern("term_expansion").Id, 2);
         int ge = FunctorTable.Intern(AtomTable.Intern("goal_expansion").Id, 2);
 
+        // Consulting skips the expansion pass, as with no hook at all.
+        Assert.False(engine.HasPrologTermExpansion);
+        Assert.False(engine.HasPrologGoalExpansion);
         Assert.False(engine.HookCouldMatch(te, new AtomTerm("f")));
         Assert.False(engine.HookCouldMatch(ge, new CompoundTerm("g", new Term[] { new IntTerm(1) })));
 
         Assert.True(engine.Query("assertz(term_expansion(f, g)).").Success);
+        Assert.True(engine.HasPrologTermExpansion);
         Assert.True(engine.HookCouldMatch(te, new AtomTerm("f")));
+        Assert.True(engine.Query("assertz(goal_expansion(h, true)).").Success);
+        Assert.True(engine.HasPrologGoalExpansion);
     }
 
     [Fact]

@@ -77,9 +77,13 @@ public sealed partial class PrologEngine
     private static readonly int TermExpansion6Fid =
         FunctorTable.Intern(AtomTable.Intern("term_expansion", permanent: true).Id, 6);
 
-    internal bool HasPrologTermExpansion => HasPredicate(TermExpansionFid);
+    // A hook only declared expands nothing, so consulting skips the expansion
+    // pass as it does when no hook exists (Logtalk declares both hooks).
+    internal bool HasPrologTermExpansion => HasExpandingHook(TermExpansionFid);
 
-    internal bool HasPrologTermExpansion6 => HasPredicate(TermExpansion6Fid);
+    internal bool HasPrologTermExpansion6 => HasExpandingHook(TermExpansion6Fid);
+
+    private bool HasExpandingHook(int fid) => HasPredicate(fid) && !IsDeclaredOnlyHook(fid);
 
     // ---- hook discriminator index ----
     //
@@ -525,7 +529,7 @@ public sealed partial class PrologEngine
     private static readonly int GoalExpansionFid =
         FunctorTable.Intern(AtomTable.Intern("goal_expansion", permanent: true).Id, 2);
 
-    internal bool HasPrologGoalExpansion => HasPredicate(GoalExpansionFid);
+    internal bool HasPrologGoalExpansion => HasExpandingHook(GoalExpansionFid);
 
     // term_expansion/2 and goal_expansion/2 are global hooks: any module that
     // defines one (real libraries do it with a `user:` clause head — atts.pl,
