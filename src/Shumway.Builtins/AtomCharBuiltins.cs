@@ -450,12 +450,12 @@ public static class AtomCharBuiltins
         return true;
     }
 
+    // Not by the range of a long: an inline integer holds 60 bits, and
+    // MakeBigInt keeps the smaller values inline.
     private static bool FinishInteger(
         Activation engine, System.Numerics.BigInteger value, ref Cell cell)
     {
-        cell = value >= long.MinValue && value <= long.MaxValue
-            ? Cell.Int((long)value)
-            : engine.MakeBigInt(value);
+        cell = engine.MakeBigInt(value);
         return true;
     }
 
@@ -781,9 +781,9 @@ public static class AtomCharBuiltins
         {
             string s = engine.AsPstrString(
                 engine.Deref(engine.GetRegister(1).AsHeapIndex));
-            if (long.TryParse(s, NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out long iv))
-                return engine.UnifyRegisterWithCell(0, Cell.Int(iv));
+            if (System.Numerics.BigInteger.TryParse(s, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out var iv))
+                return engine.UnifyRegisterWithCell(0, engine.MakeBigInt(iv));
             if (double.TryParse(s, NumberStyles.Float,
                     CultureInfo.InvariantCulture, out double dv))
                 return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(dv));
