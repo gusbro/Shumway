@@ -54,10 +54,10 @@ same rule.
    Scryer:
    - At compile time, a meta-argument of a call in module `m` becomes
      `m:Arg`. The meta-arguments are those of the callee's
-     `meta_predicate` declaration, and for the prelude's higher-order
-     predicates that declare none (`maplist`, `foldl`, `include`,
-     `exclude`, `partition`, `predsort`, `phrase`, `time`, and a few
-     more), a fixed table, kept out of `predicate_property/2`. An argument
+     `meta_predicate` declaration. The prelude declares its higher-order
+     predicates too (`maplist`, `foldl`, `include`, `exclude`,
+     `partition`, `predsort`, `time`, and `phrase` with its body as `//`),
+     and `predicate_property/2` reports them. An argument
      that resolves the same from any module stays as written: one naming
      a global or builtin predicate that is neither a control construct
      nor a meta-predicate. In `user`, whose own predicates are global,

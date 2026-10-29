@@ -121,6 +121,29 @@ internal static class Prelude
         :- meta_predicate(ifthen(0, 0)).
         :- meta_predicate(ifthenelse(0, 0, 0)).
         :- meta_predicate(apply(1, *)).
+        % The higher-order library predicates: a closure takes the extra
+        % arguments the predicate adds, a grammar body (//) two lists.
+        :- meta_predicate(maplist(1, *)).
+        :- meta_predicate(maplist(2, *, *)).
+        :- meta_predicate(maplist(3, *, *, *)).
+        :- meta_predicate(maplist(4, *, *, *, *)).
+        :- meta_predicate(maplist(5, *, *, *, *, *)).
+        :- meta_predicate(maplist(6, *, *, *, *, *, *)).
+        :- meta_predicate(maplist(7, *, *, *, *, *, *, *)).
+        :- meta_predicate(foldl(3, *, *, *)).
+        :- meta_predicate(foldl(4, *, *, *, *)).
+        :- meta_predicate(foldl(5, *, *, *, *, *)).
+        :- meta_predicate(include(1, *, *)).
+        :- meta_predicate(exclude(1, *, *)).
+        :- meta_predicate(partition(1, *, *, *)).
+        :- meta_predicate(predsort(3, *, *)).
+        :- meta_predicate(countall(0, *)).
+        :- meta_predicate(call_det(0, *)).
+        :- meta_predicate(call_residue_vars(0, *)).
+        :- meta_predicate(time(0)).
+        :- meta_predicate(with_output_to(*, 0)).
+        :- meta_predicate(phrase(//, *)).
+        :- meta_predicate(phrase(//, *, *)).
         % Control constructs: callable, and their arguments are goals.
         % (','/2 and friends are seeded in C# — PrologEngine's
         % SeedControlMetaTemplates — since a ','-term in the directive is
@@ -156,10 +179,10 @@ internal static class Prelude
         % public like coroutining's '$co_alias_check'/1: the goal a wakeup
         % meta-calls resolves globally, not module-locally.
         :- public '$lazy_text_step'/4.
-        :- meta_predicate(phrase_from_stream(2, *)).
-        :- meta_predicate(phrase_from_stream(2, *, *)).
-        :- meta_predicate(phrase_from_file(2, *)).
-        :- meta_predicate(phrase_from_file(2, *, *)).
+        :- meta_predicate(phrase_from_stream(//, *)).
+        :- meta_predicate(phrase_from_stream(//, *, *)).
+        :- meta_predicate(phrase_from_file(//, *)).
+        :- meta_predicate(phrase_from_file(//, *, *)).
         :- public display/1.
         :- public display/2.
         :- public recorda/2.

@@ -1278,6 +1278,7 @@ public sealed partial class PrologEngine
         return (arity, n) switch
         {
             (2, "," or ";" or "->" or "*->") => true,
+            (1, "\\+") => true,
             (0, "!") => true,
             _ => false,
         };
