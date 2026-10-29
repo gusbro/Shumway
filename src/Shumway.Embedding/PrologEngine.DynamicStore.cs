@@ -1836,8 +1836,9 @@ public sealed partial class PrologEngine
             // their call sites (the forward-reference re-patch below resolves
             // sites to a concrete address, not through the map). Redirect the
             // old entry with `execute <new>` so stale baked sites flow to the
-            // redefinition — same trick as RebuildEngineFidChainView; every
-            // predicate entry is ≥ 5 bytes, and only fresh calls read the
+            // redefinition — same trick as RebuildEngineFidChainView. The
+            // compiler makes every predicate at least 5 bytes
+            // (PredicateCompiler.MinimumLength), and only fresh calls read the
             // entry (a CP's bp points at a later clause, never the entry).
             if (addrMap.TryGetValue(fid, out int oldAddr)
                 && oldAddr != a
