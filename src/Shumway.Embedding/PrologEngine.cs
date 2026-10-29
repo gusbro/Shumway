@@ -1048,6 +1048,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
         SeedControlMetaTemplates();
+        // An image's atoms live while code names its pool entry (ADR-003).
+        _literalPools.Images.OnNamed = image => RetainCode(ImageAtomIds(image));
+        _literalPools.Images.OnUnnamed = image => DropCode(ImageAtomIds(image));
 
         // Every operator defined (a `:- op` applies here at parse time) is
         // routed to the active consult's collection frame, so the

@@ -191,7 +191,7 @@ public sealed partial class PrologEngine
             externalSymbols: addrMap,
             switchTableIdBase: switchTables.Count);
         int at = engine.AppendCode(link.Bytecode);
-        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), link.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), link.Bytecode, LinkAtomIds(link));
         switchTables.AddRange(link.SwitchTables);
         SyncOrInvalidateAfterMutation(engine, ownsHost);
         RefreshLiteralPoolsIfChanged(engine);
@@ -624,7 +624,7 @@ public sealed partial class PrologEngine
         // reuse by later assertz/asserta. The "avoid mid-query
         // while another goal iterates this predicate" caveat is exactly
         // the safety condition checked above.
-        GarbageCollectClauses(engine, functorId, reclaimChunks: false);
+        GarbageCollectClauses(engine, functorId);
            }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
@@ -675,6 +675,9 @@ public sealed partial class PrologEngine
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         }
         chain.ClearEntries();
+        // No retract follows to sweep them: a loop that abolishes and consults
+        // would otherwise lay every file's clauses after the last.
+        TryReclaimDeadDynamicChain(engine, functorId);
     }
 
     // ============================================================================
@@ -846,7 +849,7 @@ public sealed partial class PrologEngine
     /// Calling GC mid-query while another goal is iterating the same
     /// dynamic predicate is the case to avoid; documentation only.</para>
     /// </summary>
-    internal int GarbageCollectClauses(Activation engine, int functorId, bool reclaimChunks = true)
+    internal int GarbageCollectClauses(Activation engine, int functorId)
     {
         if (GetChainTable(engine) is not { } tbl
             || !tbl.Chains.TryGetValue(functorId, out var chain)) return 0;
@@ -918,36 +921,23 @@ public sealed partial class PrologEngine
         // each pass pays for the retirements that caused it.
         if (chain.RetiredCount * 2 >= chain.Entries.Count) chain.CompactEntries();
 
-        // Drain the dead-chunk staging into the engine-wide free
-        // list so subsequent incremental assertz / asserta can
-        // reuse the bytes (a long-lived engine that retracts and
-        // re-asserts thousands of clauses then has bounded memory
-        // growth instead of monotonic). Returns the total bytes
-        // reclaimed for diagnostics.
-        // Mid-query reclamation (reclaimChunks=false): leave the dead
-        // chunks' bytecode in place rather than recycling it. A choice
-        // point still in flight (e.g. retract's own re-satisfiable CP,
-        // or a failure-driven loop's outer CP) may resume into a dead
-        // chunk; check_visible then filters it by captured
-        // view-gen — but only if the bytecode is intact. Recycling an
-        // address an in-flight CP still references would let a later
-        // assertz overwrite a live retry_me_else (observed as
-        // "RetryMeElse without an active choice point"). The bypassed
-        // bytes are reclaimed by the persistent compaction
-        // between queries instead. We still clear DeadChunks so the
-        // reclaim threshold resets.
+        // The bypassed chunks are dropped, their bytes for the free list later
+        // asserts reuse, so an engine that retracts and asserts for ever stays
+        // bounded. A choice point still in flight (a retract's own, a
+        // failure-driven loop's outer one) may resume into one, and a goal that
+        // entered one may return into its body: a chunk's bytes, literals and
+        // atoms go only once no activation reaches it. Recycling an address a
+        // live choice point still references would let a later assertz overwrite
+        // a live retry_me_else. The head stays: the trampoline enters it. Returns
+        // the bytes dropped, for diagnostics.
         int reclaimed = 0;
-        if (reclaimChunks)
+        foreach (var (addr, length) in chain.DeadChunks)
         {
-            foreach (var (addr, length) in chain.DeadChunks)
-            {
-                tbl.FreeChunks.Add((addr, length));
-                reclaimed += length;
-            }
+            ChainPatcher.DropChunk(tbl, addr, length, recycle: addr != chain.HeadClauseAddr);
+            reclaimed += length;
         }
-        // Bypassed, a dead chunk's code never runs again: its literals go.
-        foreach (var (addr, _) in chain.DeadChunks) ChainPatcher.ReleaseChunk(tbl, addr);
         chain.DeadChunks.Clear();
+        ChainPatcher.ReleaseUnreached(tbl);
         _literalPools.SweepIfDue();
         return reclaimed;
     }
@@ -1503,7 +1493,8 @@ public sealed partial class PrologEngine
             imageLiterals: _literalPools.Images);
 
         int trampolineAddr = engine.AppendCode(predicate.Bytecode);
-        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), predicate.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), predicate.Bytecode,
+            Shumway.Compiler.Wam.CodeAtoms.Of(predicate).Ids);
         // ADR-041 — mid-query trampolines are invisible to the per-query
         // PredicatesByAddress map; register the address→fid here so the
         // dispatch-time clause selector covers live-linked chains too.
@@ -1702,7 +1693,7 @@ public sealed partial class PrologEngine
         // --- same ModuleCompiler + Linker as setup ---------------------
         int failStubAddr =
             OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
-        int loadOffset = engine.ProgramLength;
+        int loadOffset = -1, tableBase = 0, reserved = 0;
         Shumway.Compiler.Wam.Linker.LinkResult link;
         try
         {
@@ -1717,10 +1708,11 @@ public sealed partial class PrologEngine
                 rewritten, cache: null, unindexedFunctors: null,
                 _literalPools, dynamicFunctors: _dynStore.Functors,
                 failStubAddr: failStubAddr);
+            (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, module.Predicates, switchTables);
             link = new Shumway.Compiler.Wam.Linker().Link(
                 module.Predicates, loadOffset,
                 externalSymbols: addrMap,
-                switchTableIdBase: switchTables.Count);
+                switchTableIdBase: tableBase);
             RegisterLateHelpers(module.Predicates);   // cross-activation visibility
         }
         catch (InvalidOperationException ex)
@@ -1728,12 +1720,13 @@ public sealed partial class PrologEngine
             // A structural issue (e.g. a duplicate head across the batch):
             // never fail the consult — the next top-level setup links the
             // whole module coherently.
+            ReturnPlace(engine, loadOffset, reserved);
             if (diagLive) Console.Error.WriteLine(
                 $"[LIVE-LINK] skip(compile-throw) mod={moduleName}: {ex.Message}");
             return;
         }
 
-        PublishLiveLink(engine, link, loadOffset, addrMap, switchTables, ownsHost);
+        PublishLiveLink(engine, link, loadOffset, tableBase, addrMap, switchTables, ownsHost);
     }
 
     /// <summary>Links the predicates an engine library's bundle brought in
@@ -1762,20 +1755,21 @@ public sealed partial class PrologEngine
         }
         if (preds.Count == 0) return;
         bool ownsHost = EngineOwnsHostBuffer(engine);
-        int loadOffset = engine.ProgramLength;
+        var (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, preds, switchTables);
         Shumway.Compiler.Wam.Linker.LinkResult link;
         try
         {
             link = new Shumway.Compiler.Wam.Linker().Link(
                 preds, loadOffset, externalSymbols: addrMap,
-                switchTableIdBase: switchTables.Count);
+                switchTableIdBase: tableBase);
         }
         catch (InvalidOperationException)
         {
             // The next top-level setup links the library whole.
+            ReturnPlace(engine, loadOffset, reserved);
             return;
         }
-        PublishLiveLink(engine, link, loadOffset, addrMap, switchTables, ownsHost);
+        PublishLiveLink(engine, link, loadOffset, tableBase, addrMap, switchTables, ownsHost);
     }
 
     /// <summary>Makes the imports a running goal just added callable bare
@@ -1817,29 +1811,77 @@ public sealed partial class PrologEngine
     /// <summary>Appends a link made against a live query's address map to
     /// that query's code and publishes its addresses, so the query's
     /// direct calls and meta-calls reach the new predicates.</summary>
+    // Where a live link goes: a hole of dropped code it fits, else the end of
+    // the buffer, and a run of freed switch-table slots, else the end of the
+    // list. The size reserved from the free list, 0 at the end.
+    private (int Offset, int TableBase, int Reserved) PlaceLiveLink(Activation engine,
+        IReadOnlyList<Shumway.Compiler.Wam.CompiledPredicate> preds, List<Shumway.Core.SwitchTable> switchTables)
+    {
+        int size = 0, tables = 0;
+        foreach (var pred in preds)
+        {
+            size += pred.Bytecode.Length;
+            tables += pred.SwitchTables.Count;
+        }
+        int at = size > 0
+            ? DynamicCodePatcher.TryReuseFreeChunk(GetOrCreateChainTable(engine).FreeChunks, size)
+            : -1;
+        return (at >= 0 ? at : engine.ProgramLength, FreeTableRun(switchTables, tables), at >= 0 ? size : 0);
+    }
+
+    private static int FreeTableRun(List<Shumway.Core.SwitchTable> tables, int count)
+    {
+        if (count == 0) return tables.Count;
+        int run = 0;
+        for (int i = 0; i < tables.Count; i++)
+        {
+            run = tables[i] is null ? run + 1 : 0;
+            if (run == count) return i - count + 1;
+        }
+        return tables.Count;
+    }
+
+    private void ReturnPlace(Activation engine, int offset, int reserved)
+    {
+        if (reserved > 0)
+            DynamicCodePatcher.FreeBytes(GetOrCreateChainTable(engine).FreeChunks, offset, reserved);
+    }
+
     private void PublishLiveLink(Activation engine, Shumway.Compiler.Wam.Linker.LinkResult link,
-        int loadOffset, Shumway.Core.LayeredIntMap<int> addrMap,
+        int loadOffset, int tableBase, Shumway.Core.LayeredIntMap<int> addrMap,
         List<Shumway.Core.SwitchTable> switchTables, bool ownsHost)
     {
-        engine.AppendCode(link.Bytecode);
-        _literalPools.Pin(link.Bytecode);
+        if (loadOffset < engine.ProgramLength)
+            Array.Copy(link.Bytecode, 0, engine.CurrentProgram!, loadOffset, link.Bytecode.Length);
+        else
+            engine.AppendCode(link.Bytecode);
         NoteLiveLinked(engine, link.PredicatesByAddress);
         byte[] prog = engine.CurrentProgram!;
+        var table = GetOrCreateChainTable(engine);
 
         // Merge new addresses + bare-name aliases so both direct calls in
         // later batches and runtime meta-calls resolve the new predicates.
+        // A reload redefines a predicate the buffer already runs, and code
+        // may have baked its entry: the first reload turns that entry into a
+        // trampoline, `execute <new>`, and every later one retargets it. The
+        // address map names the trampoline, so whatever bakes an address from
+        // it reaches a version only through it, and a version a later reload
+        // replaces has no way in. Every predicate entry is >= 5 bytes, and
+        // only fresh calls read the entry (a CP's bp points at a later
+        // clause, never the entry).
         var visible = engine.LiveConsultVisibleFids ??= new HashSet<int>();
+        var stable = table.StableEntries ??= new Dictionary<int, int>();
+        var entries = new Dictionary<int, int>(link.Addresses.Count);
+        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? retargeted = null;
         foreach (var (fid, a) in link.Addresses)
         {
-            // A reload redefines a predicate an earlier batch already linked
-            // — and earlier batches may have baked the old entry address into
-            // their call sites (the forward-reference re-patch below resolves
-            // sites to a concrete address, not through the map). Redirect the
-            // old entry with `execute <new>` so stale baked sites flow to the
-            // redefinition — same trick as RebuildEngineFidChainView; every
-            // predicate entry is ≥ 5 bytes, and only fresh calls read the
-            // entry (a CP's bp points at a later clause, never the entry).
-            if (addrMap.TryGetValue(fid, out int oldAddr)
+            int entry = a;
+            if (stable.TryGetValue(fid, out int stub))
+            {
+                Shumway.Core.BytecodeIO.WriteInt32(prog, stub + 1, a);
+                entry = stub;
+            }
+            else if (addrMap.TryGetValue(fid, out int oldAddr)
                 && oldAddr != a
                 && oldAddr >= 0
                 && !Shumway.Core.CallTarget.IsUnresolved(oldAddr)
@@ -1848,15 +1890,38 @@ public sealed partial class PrologEngine
             {
                 prog[oldAddr] = (byte)Opcode.Execute;
                 Shumway.Core.BytecodeIO.WriteInt32(prog, oldAddr + 1, a);
+                stable[fid] = entry = oldAddr;
             }
-            addrMap[fid] = a;
+            if (entry != a)
+            {
+                (retargeted ??= new())[entry] = link.PredicatesByAddress[a];
+                // Compiled code of the version it replaces leaves new calls too.
+                InvalidateIlForFunctor(fid);
+            }
+            addrMap[fid] = entry;
+            entries[fid] = entry;
             visible.Add(fid);
         }
+        // The batch's own calls to a predicate with a trampoline go through it
+        // too: the linker resolved them to the new entry.
+        foreach (var (addr, pred) in link.PredicatesByAddress)
+            foreach (var site in pred.CallSites)
+                if (stable.TryGetValue(site.CalleeFunctorId, out int stub))
+                    Shumway.Core.BytecodeIO.WriteInt32(prog, addr + site.OpcodeOffset + 1, stub);
+        // A trampoline's address names the version it leads to.
+        if (retargeted is not null && engine.HostProgram is LinkedProgram host)
+            host.AddLinked(retargeted);
+        ChainPatcher.NoteLinkedVersions(table, link, literals: true, switchTables, tableBase,
+            engine.HostProgram as LinkedProgram);
         // Bare-name aliases feed both the address map (so a bare call
         // resolves) and the visibility set (so a setup-time-baked sentinel
         // for the bare fid resolves to this static address).
-        AddBareLocalAliases(addrMap, link.Addresses, recordAdded: visible);
-        switchTables.AddRange(link.SwitchTables);
+        AddBareLocalAliases(addrMap, entries, recordAdded: visible);
+        for (int i = 0; i < link.SwitchTables.Count; i++)
+        {
+            if (tableBase + i < switchTables.Count) switchTables[tableBase + i] = link.SwitchTables[i];
+            else switchTables.Add(link.SwitchTables[i]);
+        }
 
         // Forward references: record this batch's unresolved sites (baked
         // with the undefined sentinel), then re-patch every accumulated
@@ -2269,7 +2334,7 @@ public sealed partial class PrologEngine
                 enableIndexing: false,
                 isDynamic: false);
             int addr = engine.AppendCode(pred.Bytecode);
-            ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode);
+            ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode, Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
             // Relocate predicate-local dispatch targets (try_me_else /
             // retry_me_else chain operands) to absolute addresses — the
             // mid-query append bypasses ModuleCompiler's link step, same
@@ -2370,6 +2435,7 @@ public sealed partial class PrologEngine
             _runtimeAssertHelperPreds[p.FunctorId] = p;
             // Kept for the engine's life, to be linked into any activation.
             _literalPools.Pin(p.Bytecode);
+            RetainCode(Shumway.Compiler.Wam.CodeAtoms.Of(p).Ids);
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
             string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
             // The mangled form is '<module>$' + the helper's own '$'-leading
@@ -2439,6 +2505,7 @@ public sealed partial class PrologEngine
                 isDynamic: false);
             _runtimeAssertHelperPreds[fid] = pred;
             _literalPools.Pin(pred.Bytecode);
+            RetainCode(Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
         }
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
@@ -2449,7 +2516,7 @@ public sealed partial class PrologEngine
             return existing;
 
         int addr = engine.AppendCode(pred.Bytecode);
-        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode);
+        ChainPatcher.NoteCodeUnit(GetOrCreateChainTable(engine), pred.Bytecode, Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
         foreach (int siteRel in pred.DispatchSites)
         {
             int operandAbsPos = addr + siteRel;
@@ -2847,7 +2914,8 @@ public sealed partial class PrologEngine
             chunkAddr: chunkAddr,
             chunkLength: chunk.Length));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
-        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, compiledClause.Bytecode);
+        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, chunk.Length, compiledClause.Bytecode,
+            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
 
         // AppendCode may have reallocated the buffer;
         // refresh PrologEngine's reference so the next query sees the
@@ -3048,7 +3116,8 @@ public sealed partial class PrologEngine
             next: chunkAddr + NextOperandLocal,
             chunkAddr: chunkAddr,
             chunkLength: chunk.Length), oldHead);
-        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, compiledClause.Bytecode);
+        ChainPatcher.NoteClauseChunk(chainTable, chunkAddr, chunk.Length, compiledClause.Bytecode,
+            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
@@ -3264,6 +3333,37 @@ public sealed partial class PrologEngine
         foreach (int fid in _dynStore.ClauseFunctors)
             if (seen.Add(fid))
                 PopulateDynChainViaAddressMap(fid, program, addressMap, predicatesByAddress);
+    }
+
+    // The atoms of the dynamic region, claimed clause by clause where a chain
+    // knows the clause's chunk, so a chunk the chain gives up gives its atoms up;
+    // what a predicate's code names outside its chunks claims for the buffer's
+    // life. A key of a switch table is not claimed: its clause's chunk names it,
+    // and a key that outlives its clauses keeps a bucket of dead clauses and of
+    // those for any key, which is what any other key reaches too.
+    private void NoteDynamicRegionAtoms(byte[] program, Shumway.Compiler.Wam.Linker.LinkResult link)
+    {
+        foreach (var pred in link.PredicatesByAddress.Values)
+        {
+            if (!DynChains.Chains.TryGetValue(pred.FunctorId, out var chain) || chain.Entries.Count == 0)
+            {
+                ChainPatcher.NoteAtomUnit(DynChains, Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
+                continue;
+            }
+            var inChunks = new HashSet<int>();
+            foreach (var entry in chain.Entries)
+            {
+                if (entry.ChunkAddr < 0 || entry.ChunkLength <= 0) continue;
+                int[] atoms = Shumway.Compiler.Wam.CodeAtoms.OfRange(program, entry.ChunkAddr, entry.ChunkLength);
+                ChainPatcher.NoteChunkAtoms(DynChains, entry.ChunkAddr, entry.ChunkAddr + entry.ChunkLength, atoms);
+                inChunks.UnionWith(atoms);
+            }
+            // The code's operands outside the chunks; the switch keys are left out.
+            var rest = new List<int>();
+            foreach (int id in Shumway.Compiler.Wam.CodeAtoms.OfRange(pred.Bytecode, 0, pred.Bytecode.Length))
+                if (!inChunks.Contains(id)) rest.Add(id);
+            ChainPatcher.NoteAtomUnit(DynChains, rest.ToArray());
+        }
     }
 
     private void PopulateDynChainViaAddressMap(

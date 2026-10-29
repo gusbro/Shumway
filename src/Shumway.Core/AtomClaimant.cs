@@ -40,6 +40,12 @@ public sealed class AtomClaimant
     private long _runs;
     private long _runsAtHeldMark = -1;
 
+    // Claims that follow what the owner holds as it changes (an engine's code), a
+    // count per atom: the claim is taken when the count leaves zero and given up
+    // when it returns there. Changed while the owner runs; a release gives them up.
+    private Dictionary<int, int>? _standing;
+    private int[] _changed = System.Array.Empty<int>();
+
     internal readonly WeakReference<IAtomClaimantOwner> Owner;
     internal bool Registered;
 
@@ -99,6 +105,57 @@ public sealed class AtomClaimant
         if (completed && AtomTable.WaitsFor(LastMark)) TryMarkHeld();
     }
 
+    /// <summary>The owner holds each of <paramref name="atomIds"/> once more, beyond
+    /// what its marks find, until it drops them: an engine's code as it lands. Called
+    /// while the owner runs, so a collection cannot complete between the intern of
+    /// an atom and its claim.</summary>
+    public void Retain(ReadOnlySpan<int> atomIds)
+    {
+        System.Diagnostics.Debug.Assert(IsRunning, "a standing claim changed outside a run");
+        var standing = _standing ??= new Dictionary<int, int>();
+        int n = 0;
+        foreach (int id in atomIds)
+        {
+            standing.TryGetValue(id, out int count);
+            standing[id] = count + 1;
+            if (count == 0) Changed(ref n, id);
+        }
+        if (n == 0) return;
+        System.Array.Sort(_changed, 0, n);
+        AtomTable.ApplyClaims(ReadOnlySpan<int>.Empty, new ReadOnlySpan<int>(_changed, 0, n));
+    }
+
+    /// <summary>The owner no longer holds <paramref name="atomIds"/> once each, as
+    /// <see cref="Retain"/> took them: an atom it holds no more loses its claim,
+    /// stamped now, so it outlives the claimants that have not marked since. Called
+    /// on the owner's thread, running or not.</summary>
+    public void Drop(ReadOnlySpan<int> atomIds)
+    {
+        if (_standing is not { } standing) return;
+        int n = 0;
+        foreach (int id in atomIds)
+        {
+            if (!standing.TryGetValue(id, out int count)) continue;
+            if (count > 1) { standing[id] = count - 1; continue; }
+            standing.Remove(id);
+            Changed(ref n, id);
+        }
+        if (n == 0) return;
+        System.Array.Sort(_changed, 0, n);
+        AtomTable.ApplyClaims(new ReadOnlySpan<int>(_changed, 0, n), ReadOnlySpan<int>.Empty);
+    }
+
+    /// <summary>How many times the owner holds <paramref name="atomId"/> beyond its
+    /// marks. For tests.</summary>
+    internal int StandingCount(int atomId)
+        => _standing is { } s && s.TryGetValue(atomId, out int n) ? n : 0;
+
+    private void Changed(ref int n, int id)
+    {
+        if (n == _changed.Length) System.Array.Resize(ref _changed, System.Math.Max(16, n * 2));
+        _changed[n++] = id;
+    }
+
     /// <summary>Gives up every claim and leaves the registry.</summary>
     public void Release()
     {
@@ -148,5 +205,11 @@ public sealed class AtomClaimant
     {
         AtomTable.ApplyClaims(Held, ReadOnlySpan<int>.Empty);
         _heldCount = 0;
+        if (_standing is not { Count: > 0 } standing) return;
+        var ids = new int[standing.Count];
+        standing.Keys.CopyTo(ids, 0);
+        System.Array.Sort(ids);
+        _standing = null;
+        AtomTable.ApplyClaims(ids, ReadOnlySpan<int>.Empty);
     }
 }

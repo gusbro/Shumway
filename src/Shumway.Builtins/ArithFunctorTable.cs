@@ -22,6 +22,12 @@ using Shumway.Core;
 public static class ArithFunctorTable
 {
     private static int[] _rows = new int[256];
+    // The atom each row was written for: a dead atom's id goes to another name,
+    // whose functors take the old entries (ADR-003), so a row is written again
+    // when its functor's atom changed. A copy a module took keeps the old row,
+    // which is sound: a row other than 0 names a permanent atom, never replaced,
+    // and on a 0 the module declines and the engine evaluates.
+    private static Atom?[] _rowAtoms = new Atom?[256];
     private static int _filled;
     private static readonly object Lock = new();
 
@@ -39,9 +45,23 @@ public static class ArithFunctorTable
         lock (Lock)
         {
             Fill();
-            return (uint)functorId < (uint)_filled ? _rows[functorId] : 0;
+            if ((uint)functorId >= (uint)_filled) return 0;
+            var (atomId, arity) = FunctorTable.Lookup(functorId);
+            var atom = AtomTable.ProbeById(atomId);
+            if (!ReferenceEquals(atom, _rowAtoms[functorId]))
+            {
+                _rows[functorId] = atom is null ? 0 : RowFor(atom, arity);
+                _rowAtoms[functorId] = atom;
+            }
+            return _rows[functorId];
         }
     }
+
+    /// <summary>Whether <paramref name="name"/>/<paramref name="arity"/> is an
+    /// arithmetic function the table gives a row: code that names one interns
+    /// the name permanent, as the engine's own names are (ADR-003), so its row
+    /// is written for an atom that never dies.</summary>
+    public static bool IsEvaluable(string name, int arity) => Resolve(name, arity) != 0;
 
     public static int EncodeBinary(int op) => (2 << 8) | (op & 0xFF);
     public static int EncodeUnary(int op) => (1 << 8) | (op & 0xFF);
@@ -55,11 +75,14 @@ public static class ArithFunctorTable
             int n = _rows.Length;
             while (n < limit) n *= 2;
             System.Array.Resize(ref _rows, n);
+            System.Array.Resize(ref _rowAtoms, n);
         }
         for (int id = _filled; id < limit; id++)
         {
             var (atomId, arity) = FunctorTable.Lookup(id);
-            _rows[id] = AtomTable.ProbeById(atomId) is { } atom ? RowFor(atom, arity) : 0;
+            var atom = AtomTable.ProbeById(atomId);
+            _rows[id] = atom is null ? 0 : RowFor(atom, arity);
+            _rowAtoms[id] = atom;
         }
         _filled = limit;
     }

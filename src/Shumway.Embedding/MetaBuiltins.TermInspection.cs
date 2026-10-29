@@ -1524,8 +1524,8 @@ public static partial class MetaBuiltins
     /// every dynamic predicate's chain and re-threads it through only
     /// the live entries, bypassing the retracted ones still sitting
     /// in the bytecode. The dispatch cost of subsequent calls then
-    /// drops from O(ever-asserted) back to O(live). The dead-clause
-    /// bytecode is left orphaned; the program buffer doesn't shrink.</summary>
+    /// drops from O(ever-asserted) back to O(live). A dead clause's bytes are
+    /// reused by later asserts once no goal can run them.</summary>
     public static bool GarbageCollectClauses0(Activation engine)
     {
         if (engine.Host is not PrologEngine host)

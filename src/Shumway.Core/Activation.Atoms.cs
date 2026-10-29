@@ -115,21 +115,30 @@ public sealed class HostAtomClaim : IAtomClaimantOwner
         Claimant = AtomTable.RegisterClaimant(this);
     }
 
-    internal void EnterRun(AtomDomain domain)
+    internal void EnterRun(AtomDomain? domain)
     {
         if (_runDepth++ != 0) return;
         Claimant.EnterRun();
-        domain.AddHost(this);
+        domain?.AddHost(this);
         _runningIn = domain;
     }
 
     internal void ExitRun(bool completed)
     {
         if (--_runDepth != 0) return;
-        _runningIn!.RemoveHost(this);
+        _runningIn?.RemoveHost(this);
         _runningIn = null;
         Claimant.ExitRun(completed);
     }
+
+    /// <summary>The host changes what it keeps from outside a run (a consult, the
+    /// setup of a query): busy as in a run until <see cref="ExitHostChange"/>, with no
+    /// safe point, so a collection waits for the change to end and marks there.</summary>
+    public void EnterHostChange() => EnterRun(null);
+
+    /// <summary>The change <see cref="EnterHostChange"/> began is over;
+    /// <paramref name="completed"/> unless by an exception.</summary>
+    public void ExitHostChange(bool completed) => ExitRun(completed);
 
     internal void MarkIfWaited()
     {
@@ -165,6 +174,41 @@ public sealed partial class Activation
 
     /// <summary>The host whose runs this activation's runs are, once it joined a domain.</summary>
     public HostAtomClaim? HostAtomClaim => _hostAtomClaim;
+
+    /// <summary>Sets <c>reached[i]</c> for each range [<paramref name="starts"/>[i],
+    /// <paramref name="ends"/>[i]) of the buffer this activation runs on (ascending,
+    /// disjoint) that a word of its control state points into: code dropped from
+    /// the buffer that it can still run. Dropped code has no way in, so only a word
+    /// copied while running in it leads back. Read conservatively: a word that only
+    /// looks like an address keeps a range longer.</summary>
+    public void MarkReachedCode(ReadOnlySpan<int> starts, ReadOnlySpan<int> ends, Span<bool> reached)
+    {
+        // Every word of the control state that can hold a code address: the
+        // continuation, the program counter and the return of the builtin in
+        // progress, the control stack's words, the catches' recoveries.
+        Reach(_cp, starts, ends, reached);
+        Reach(_p, starts, ends, reached);
+        Reach(BuiltinReturnPc, starts, ends, reached);
+        for (int i = 0; i < _stackTop; i++)
+            if (_stack[i].Tag == Tag.RawInt) Reach((int)_stack[i].Data, starts, ends, reached);
+        for (int i = 0; i < _catchFrames.Count; i++) Reach(_catchFrames[i].RecoveryCp, starts, ends, reached);
+    }
+
+    private static void Reach(int word, ReadOnlySpan<int> starts, ReadOnlySpan<int> ends, Span<bool> reached)
+    {
+        int lo = 0, hi = starts.Length - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (word < starts[mid]) hi = mid - 1;
+            else if (word >= ends[mid]) lo = mid + 1;
+            else
+            {
+                reached[mid] = true;
+                return;
+            }
+        }
+    }
 
     /// <summary>Joins the domain of <paramref name="outer"/>, the activation whose builtin
     /// this one runs inside, or a new one: at its first run, once its setup wrote

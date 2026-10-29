@@ -58,6 +58,15 @@ public sealed partial class PrologEngine
             SortedEntries = null;
             FidMemoLo = FidMemoHi = int.MaxValue;
         }
+
+        /// <summary>The predicate linked at <paramref name="addr"/> is gone: new
+        /// code may take its bytes.</summary>
+        public void ForgetLinked(int addr)
+        {
+            if (Map is not LayeredIntMap<CompiledPredicate> map || !map.Remove(addr)) return;
+            SortedEntries = null;
+            FidMemoLo = FidMemoHi = int.MaxValue;
+        }
     }
 
     /// <summary>The Break bytes patched into one code array and the bytes they replaced,
@@ -133,8 +142,87 @@ public sealed partial class PrologEngine
         => _running.Count > 0 ? _running[^1] : _madeBy?.RunningActivation();
 
     // What this engine keeps beyond its activations claims atoms through this, from
-    // the first run with collection on (ADR-003).
+    // the first run or change with collection on (ADR-003).
     private HostAtomClaim? _hostAtoms;
+
+    internal HostAtomClaim? HostAtoms
+        => _hostAtoms ?? (AtomTable.CollectionEnabled
+            ? _hostAtoms = new HostAtomClaim(new HeldAtoms(this))
+            : null);
+
+    // A change the host makes from outside a run holds the engine busy, as a run
+    // does: the code it compiles claims its atoms before a collection can mark the
+    // engine (ADR-003).
+    private T HostChange<T>(Func<T> change)
+    {
+        var claim = HostAtoms;
+        claim?.EnterHostChange();
+        bool completed = false;
+        try
+        {
+            T result = change();
+            completed = true;
+            return result;
+        }
+        finally { claim?.ExitHostChange(completed); }
+    }
+
+    private void HostChange(Action change) => HostChange(() => { change(); return 0; });
+
+    // The engine's code claims its atoms as it lands and gives them up as it
+    // dies, as its literals do (ADR-003): a count per atom in the claimant.
+    internal void RetainCode(int[] atomIds)
+    {
+        if (atomIds.Length > 0) HostAtoms?.Claimant.Retain(atomIds);
+    }
+
+    internal void DropCode(int[] atomIds)
+    {
+        if (atomIds.Length > 0) _hostAtoms?.Claimant.Drop(atomIds);
+    }
+
+    // The transient atoms an image's cells name, ascending.
+    private static int[] ImageAtomIds(Shumway.Core.TermImage image)
+    {
+        List<int>? ids = null;
+        foreach (var cell in image.Cells)
+        {
+            int id = cell.Tag == Tag.Atom ? cell.AsAtomId
+                : cell.Tag == Tag.Functor && FunctorTable.TryLookup(cell.AsFunctorId, out var f) ? f.AtomId
+                : -1;
+            if (id >= 0 && AtomTable.IsTransient(id)) (ids ??= new()).Add(id);
+        }
+        if (ids is null) return System.Array.Empty<int>();
+        ids.Sort();
+        int n = 0;
+        for (int i = 0; i < ids.Count; i++)
+            if (n == 0 || ids[i] != ids[n - 1]) ids[n++] = ids[i];
+        ids.RemoveRange(n, ids.Count - n);
+        return ids.ToArray();
+    }
+
+    /// <summary>The atoms a link's live predicates name, ascending: a dead
+    /// version laid out to keep the addresses after it is not among them.</summary>
+    internal static int[] LinkAtomIds(Shumway.Compiler.Wam.Linker.LinkResult link)
+    {
+        int[]? only = null;
+        List<int>? all = null;
+        foreach (var pred in link.PredicatesByAddress.Values)
+        {
+            int[] ids = Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids;
+            if (ids.Length == 0) continue;
+            if (only is null && all is null) { only = ids; continue; }
+            all ??= new List<int>(only!);
+            all.AddRange(ids);
+        }
+        if (all is null) return only ?? System.Array.Empty<int>();
+        all.Sort();
+        int n = 0;
+        for (int i = 0; i < all.Count; i++)
+            if (n == 0 || all[i] != all[n - 1]) all[n++] = all[i];
+        all.RemoveRange(n, all.Count - n);
+        return all.ToArray();
+    }
 
     // Only builtins change these stores, inside a run, so an engine that does not
     // run can be marked from another thread.
@@ -158,8 +246,7 @@ public sealed partial class PrologEngine
     private void EnterRun(Activation engine)
     {
         if (AtomTable.CollectionEnabled && engine.AtomDomain is null)
-            engine.JoinAtomDomain(RunningActivation(),
-                _hostAtoms ??= new HostAtomClaim(new HeldAtoms(this)));
+            engine.JoinAtomDomain(RunningActivation(), HostAtoms);
         engine.EnterAtomRun();
         _running.Add(engine);
         if (engine.HostProgram is LinkedProgram p && !ReferenceEquals(p, _cur)) SwitchTo(p);

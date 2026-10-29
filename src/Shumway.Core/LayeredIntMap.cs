@@ -46,6 +46,15 @@ public sealed class LayeredIntMap<TValue> : IReadOnlyDictionary<int, TValue>
         }
     }
 
+    /// <summary>Removes <paramref name="key"/> from the overlay: false when the
+    /// overlay has no such key (a key of the base cannot go).</summary>
+    public bool Remove(int key)
+    {
+        if (!_overlay.Remove(key)) return false;
+        if (_base.ContainsKey(key)) _shadowed--;
+        return true;
+    }
+
     public int Count => _overlay.Count + _base.Count - _shadowed;
 
     public bool ContainsKey(int key)

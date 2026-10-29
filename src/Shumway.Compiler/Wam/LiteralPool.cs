@@ -33,6 +33,11 @@ public sealed class LiteralPool<T> where T : notnull
     /// <summary>Changes whenever the value at some id may have changed.</summary>
     public int Version { get; private set; }
 
+    /// <summary>Told when an entry comes to be named by code (its first reference,
+    /// or a pin) and when no code names it any more: what an entry holds beyond its
+    /// value (an image's atoms, ADR-003) lives that long.</summary>
+    public Action<T>? OnNamed, OnUnnamed;
+
     /// <summary>The id of <paramref name="value"/>, interned if new: a freed
     /// id first, else the next one. A new entry is counted at zero and
     /// waits for the sweep until a code unit references it.</summary>
@@ -72,7 +77,11 @@ public sealed class LiteralPool<T> where T : notnull
     {
         int r = Refs(id);
         if (r == Freed) throw Dead(id, "pin");
-        if (r == 0) _zeroCount--;
+        if (r == 0)
+        {
+            _zeroCount--;
+            OnNamed?.Invoke(_byId[id]);
+        }
         _refs[id] = Pinned;
     }
 
@@ -80,7 +89,11 @@ public sealed class LiteralPool<T> where T : notnull
     public void AddRef(int id)
     {
         int r = Refs(id);
-        if (r == 0) _zeroCount--;
+        if (r == 0)
+        {
+            _zeroCount--;
+            OnNamed?.Invoke(_byId[id]);
+        }
         if (r >= 0) _refs[id] = r + 1;
         else if (r == Freed) throw Dead(id, "reference");
     }
@@ -93,7 +106,11 @@ public sealed class LiteralPool<T> where T : notnull
         int r = Refs(id);
         if (r > 0)
         {
-            if (--r == 0) Queue(id);
+            if (--r == 0)
+            {
+                Queue(id);
+                OnUnnamed?.Invoke(_byId[id]);
+            }
             _refs[id] = r;
         }
         else if (r != Pinned)

@@ -477,7 +477,7 @@ public sealed partial class ClauseCompiler
             }
         }
 
-        int functorId = InternFunctor(name, headArgs.Length);
+        int functorId = InternPredicate(name, headArgs.Length);
 
         // ADR-035 — the frame map: which Y slot each source variable ended up in. Only
         // the ones the source named; the cut barrier and the if-then-else barriers also

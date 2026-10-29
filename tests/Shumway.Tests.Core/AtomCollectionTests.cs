@@ -355,6 +355,88 @@ public class AtomCollectionTests
     }
 
     [Fact]
+    public void AnAtomAHostRetainsLivesUntilItsLastDrop()
+    {
+        var claim = new HostAtomClaim(new Host());
+        int code = Fresh("named_by_code");
+        claim.EnterHostChange();
+        claim.Claimant.Retain(new[] { code });
+        claim.Claimant.Retain(new[] { code });
+        claim.ExitHostChange(completed: true);
+
+        AtomTable.RequestCollection();
+        Assert.Equal(1, AtomTable.ClaimsOf(code));
+
+        claim.EnterHostChange();
+        claim.Claimant.Drop(new[] { code });
+        claim.ExitHostChange(completed: true);
+        AtomTable.RequestCollection();
+        Assert.Equal(1, AtomTable.ClaimsOf(code));
+
+        claim.EnterHostChange();
+        claim.Claimant.Drop(new[] { code });
+        claim.ExitHostChange(completed: true);
+        AtomTable.RequestCollection();
+        Assert.True(Dead(code));
+        GC.KeepAlive(claim);
+    }
+
+    [Fact]
+    public void AReleasedHostGivesUpWhatItRetained()
+    {
+        var claim = new HostAtomClaim(new Host());
+        int code = Fresh("named_by_code");
+        claim.EnterHostChange();
+        claim.Claimant.Retain(new[] { code });
+        claim.ExitHostChange(completed: true);
+
+        claim.Claimant.Release();
+        AtomTable.RequestCollection();
+
+        Assert.True(Dead(code));
+    }
+
+    [Fact]
+    public void AHostChangeHoldsTheClaimantAndMarksAsItEnds()
+    {
+        var host = new Host();
+        var claim = new HostAtomClaim(host);
+        claim.EnterHostChange();
+
+        AtomTable.RequestCollection();
+        Assert.True(AtomTable.CollectionPending);
+
+        claim.ExitHostChange(completed: true);
+        Assert.False(AtomTable.CollectionPending);
+        Assert.Equal(1, host.Marks);
+    }
+
+    [Theory]
+    [InlineData("builtin return")]
+    [InlineData("continuation")]
+    [InlineData("frame")]
+    public void AControlWordReachesTheDroppedCodeItPointsInto(string word)
+    {
+        var e = NewActivation();
+        int[] starts = { 100, 200 }, ends = { 120, 220 };
+        switch (word)
+        {
+            case "builtin return": e.BuiltinReturnPc = 205; break;
+            case "continuation": e._cp = 205; break;
+            case "frame":
+                e._cp = 205;
+                e.Allocate(0);
+                e._cp = 0;
+                break;
+        }
+        var reached = new bool[2];
+
+        e.MarkReachedCode(starts, ends, reached);
+
+        Assert.Equal(new[] { false, true }, reached);
+    }
+
+    [Fact]
     public async Task ARunWaitsWhileTheCollectionMarksItsClaimant()
     {
         using var inside = new ManualResetEventSlim();

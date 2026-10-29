@@ -194,6 +194,10 @@ public static class AtomTable
         }
     }
 
+    /// <summary>Takes an atom a holder kept again, as an intern of its name would:
+    /// false when it died, and the holder then interns the name anew.</summary>
+    public static bool Retake(Atom atom) => atom.IsPermanent || Taken(atom);
+
     // Stamps a transient atom taken now and tells whether it is alive. The stamp is a
     // full fence before the state is read, and Collect writes the state with a full
     // fence before it reads the epoch again: either Collect sees the stamp and keeps the

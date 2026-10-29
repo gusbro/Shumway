@@ -609,7 +609,7 @@ public sealed partial class PrologEngine
         // followed immediately by a query). Uncontended cost is a fenced check; the
         // watcher takes the same gate in AddBreakpoint/RemoveBreakpoint/ClearBreakpoints.
         lock (_debugArmGate)
-            return SetupQueryFromTermUnderGate(queryTerm);
+            return HostChange(() => SetupQueryFromTermUnderGate(queryTerm));
     }
 
     private (Shumway.Core.ProgramView Program,
@@ -2106,8 +2106,12 @@ public sealed partial class PrologEngine
             // (nested-query) engines still running on their buffers.
             ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
-            // The dynamic region: a unit of the new buffer.
-            ChainPatcher.NoteCodeUnit(DynChains, _dynamicLink!.Bytecode);
+            // The dynamic region: a unit of the new buffer for its literals, and
+            // clause by clause for its atoms; the static region's predicates claim
+            // theirs version by version, its literals being pinned.
+            ChainPatcher.NoteCodeUnit(DynChains, _dynamicLink!.Bytecode, System.Array.Empty<int>());
+            NoteDynamicRegionAtoms(program, _dynamicLink!);
+            ChainPatcher.NoteLinkedVersions(DynChains, _staticLink!);
         }
         // associate this engine with the table describing the
         // buffer it runs on: every in-place dynamic mutation this engine
@@ -2120,7 +2124,7 @@ public sealed partial class PrologEngine
         RegisterLiveEngine(engine);
         // The query's region: a unit of the query. Every unit of this setup
         // holds its references now, so what nothing names can go.
-        ChainPatcher.NoteQueryUnit(engine, queryBytes);
+        ChainPatcher.NoteQueryUnit(engine, queryBytes, LinkAtomIds(queryLink));
         _literalPools.SweepIfDue();
         // The precise GC register bound assumes the interpreter's caller-saved
         // discipline; promoted IL regions break it (see GcPreciseRegisterBounds).
