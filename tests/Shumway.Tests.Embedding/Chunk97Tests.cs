@@ -68,6 +68,31 @@ public class Chunk97Tests
         Assert.True(Holds("atomic_list_concat([], A), A == ''."));
     }
 
+    // ---- atomic_concat/3 ----
+
+    [Theory]
+    [InlineData(@"atomic_concat(ab, 12, A), A == ab12")]
+    [InlineData(@"atomic_concat(x, 1.5, A), A == 'x1.5'")]
+    [InlineData(@"atomic_concat(1, 2, A), A == '12'")]
+    [InlineData(@"atomic_concat('', '', A), A == ''")]
+    [InlineData(@"atomic_concat(a, b, ab)")]
+    [InlineData(@"\+ atomic_concat(a, b, ac)")]
+    public void AtomicConcat_JoinsTwoAtomicsIntoAnAtom(string goal)
+    {
+        Assert.True(Holds(goal + "."), goal);
+    }
+
+    [Theory]
+    [InlineData(@"atomic_concat(_, b, ab)", @"instantiation_error")]
+    [InlineData(@"atomic_concat(a, _, ab)", @"instantiation_error")]
+    [InlineData(@"atomic_concat(f(x), b, _)", @"type_error(atomic, f(x))")]
+    [InlineData(@"atomic_concat(a, [b], _)", @"type_error(atomic, [b])")]
+    [InlineData(@"atomic_concat(a, b, 3)", @"type_error(atom, 3)")]
+    public void AtomicConcat_RaisesItsOwnErrors(string goal, string error)
+    {
+        Assert.True(Holds($"catch({goal}, error(E, C), true), E == {error}, C == atomic_concat/3."), goal);
+    }
+
     // ---- atomic_list_concat/3 — join ----
 
     [Fact]

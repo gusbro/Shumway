@@ -86,6 +86,7 @@ internal static class Prelude
         :- meta_predicate(map_list_to_pairs(2, *, *)).
         :- public predsort/3.
         :- public sort/4.
+        :- public atomic_concat/3.
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
@@ -1544,7 +1545,8 @@ internal static class Prelude
 
         % ===== atom / number conversion =====
         % atom_number/2 and number_string/2 are C# builtins (parse-or-fail
-        % via TryParse); atomic_list_concat/2,3 and char_type/2 are below.
+        % via TryParse); atomic_concat/3, atomic_list_concat/2,3 and
+        % char_type/2 are below.
 
         % render an atomic term (atom, number or string) as an atom.
         '$atomic_to_atom'(X, X) :- atom(X), !.
@@ -1565,6 +1567,22 @@ internal static class Prelude
             '$atomic_to_atom'(X, AX),
             '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
+
+        %! atomic_concat(+Atomic1, +Atomic2, ?Atom) | Atoms & strings | Concatenates two atomic terms into an atom.
+        atomic_concat(A, B, Atom) :-
+            '$ac_check'(A),
+            '$ac_check'(B),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_concat/3))
+            ),
+            '$atomic_to_atom'(A, AA),
+            '$atomic_to_atom'(B, BA),
+            atom_concat(AA, BA, Atom).
+
+        '$ac_check'(X) :- var(X), !, throw(error(instantiation_error, atomic_concat/3)).
+        '$ac_check'(X) :- atomic(X), !.
+        '$ac_check'(X) :- throw(error(type_error(atomic, X), atomic_concat/3)).
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-
