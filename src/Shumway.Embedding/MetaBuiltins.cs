@@ -478,7 +478,10 @@ public static partial class MetaBuiltins
         // (Logtalk's linter).
         BuiltinsRegistry.Register("read_term", 3, ReadTermWithOptions,
             Io, "read_term(+Stream, -Term, +Options)",
-            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options.", kind: PredicateKind.Iso);
+            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1, variables/1 and line_counts/2 options.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("line_count", 2, LineCount2,
+            Io, "line_count(+Stream, -Line)",
+            "The line the next character read from a text input stream comes from, counting from 1.");
         BuiltinsRegistry.Register("read",      1, Read1,
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("read",      2, Read2,

@@ -84,6 +84,51 @@ public sealed class PositionTrackingReaderTests
         Assert.Equal(4, r.CharsConsumed);
     }
 
+    // Line is the line the next character comes from: one more than the line
+    // terminators read, whichever way they are read.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Line_CountsTheTerminatorsRead(bool translate)
+    {
+        var r = On("a\r\nb\nc", translate);
+        Assert.Equal(1, r.Line);
+        Assert.Equal('a', r.Read());
+        Assert.Equal(1, r.Line);
+        ReadAll(r);
+        Assert.Equal(3, r.Line);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Line_CountsInABlockReadToo(bool translate)
+    {
+        var r = On("a\nb\r\nc\n", translate);
+        var buf = new char[16];
+        r.Read(buf, 0, buf.Length);
+        Assert.Equal(4, r.Line);
+    }
+
+    [Fact]
+    public void Line_PeekingAPairDoesNotCountIt()
+    {
+        var r = On("\r\nx");
+        Assert.Equal('\n', r.Peek());
+        Assert.Equal(1, r.Line);
+        r.Read();
+        Assert.Equal(2, r.Line);
+    }
+
+    [Fact]
+    public void ResetCount_StartsTheLinesOver()
+    {
+        var r = On("a\nb\n");
+        ReadAll(r);
+        r.ResetCount();
+        Assert.Equal(1, r.Line);
+    }
+
     [Fact]
     public void ResetCount_DropsTheLookahead()
     {
