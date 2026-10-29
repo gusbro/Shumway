@@ -144,7 +144,8 @@ public sealed class Utf8TextReader : TextReader
         int cp;
         int length;
         try { cp = DecodeNext(out length); }
-        catch (PrologRuntimeException)
+        // Not a failure of the file under it (system_error): no byte was read.
+        catch (PrologRuntimeException ex) when (ex.Kind == "representation_error")
         {
             // A read consumes the offending lead byte — byte-wise resync —
             // where a peek left it in place.

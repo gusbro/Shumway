@@ -169,8 +169,8 @@ public static class StreamBuiltins
     /// other Prolog locks the files it opens, and programs that reopen a file
     /// they already hold open are ordinary — the .NET convenience
     /// constructors would fail them with a sharing violation.</summary>
-    private static FileStream SharedFileStream(string path, FileMode fm, FileAccess fa)
-        => new(path, fm, fa, FileShare.ReadWrite);
+    private static Stream SharedFileStream(string path, FileMode fm, FileAccess fa)
+        => HostFileStream.Open(path, fm, fa, FileShare.ReadWrite);
 
     private static StreamWriter SharedWriter(
         string path, bool append, string encodingName, bool writeBom)
@@ -622,14 +622,7 @@ public static class StreamBuiltins
         if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
             || ReferenceEquals(h, st.UserError))
             return true;
-        if (h.Reader is not null) h.Reader.Dispose();
-        if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
-        if (h.BinaryStream is not null)
-        {
-            try { h.BinaryStream.Flush(); } catch { }
-            h.BinaryStream.Dispose();
-        }
-        engine.Streams!.Remove(h);
+        Release(engine, h, force: false);
         return true;
     }
 
@@ -648,19 +641,35 @@ public static class StreamBuiltins
         if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
             || ReferenceEquals(h, st.UserError))
             return true;
-        try
-        {
-            if (h.Reader is not null) h.Reader.Dispose();
-            if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
-            if (h.BinaryStream is not null)
-            {
-                try { h.BinaryStream.Flush(); } catch { if (!force) throw; }
-                h.BinaryStream.Dispose();
-            }
-        }
-        catch when (force) { /* force(true) swallows close errors */ }
-        engine.Streams!.Remove(h);
+        Release(engine, h, force);
         return true;
+    }
+
+    // A stream that is closed lets go of its file and leaves the registry even
+    // when writing what it still buffers fails: the failure is raised after,
+    // and force(true) swallows it.
+    private static void Release(Activation engine, StreamHandle h, bool force)
+    {
+        PrologRuntimeException? failed = null;
+        if (h.Reader is not null) Attempt(h.Reader.Dispose, ref failed);
+        if (h.Writer is not null)
+        {
+            Attempt(h.Writer.Flush, ref failed);
+            Attempt(h.Writer.Dispose, ref failed);
+        }
+        if (h.BinaryStream is not null)
+        {
+            Attempt(h.BinaryStream.Flush, ref failed);
+            Attempt(h.BinaryStream.Dispose, ref failed);
+        }
+        engine.Streams!.Remove(h);
+        if (failed is not null && !force) throw failed;
+    }
+
+    private static void Attempt(System.Action step, ref PrologRuntimeException? failed)
+    {
+        try { step(); }
+        catch (PrologRuntimeException ex) { failed ??= ex; }
     }
 
     private static Cell DerefLocal(Activation engine, Cell c)
@@ -1322,7 +1331,7 @@ public static class StreamBuiltins
     {
         var h = engine.Streams?.CurrentOutput ?? throw new InvalidOperationException(
             "Activation has no stream registry.");
-        h.Writer!.Flush();
+        Flush(h);
         return true;
     }
 
@@ -1330,8 +1339,15 @@ public static class StreamBuiltins
     public static bool FlushOutput1(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
-        h.Writer!.Flush();
+        Flush(h);
         return true;
+    }
+
+    // An output stream writes text through its writer, or bytes (type(binary)).
+    private static void Flush(StreamHandle h)
+    {
+        if (h.Writer is not null) h.Writer.Flush();
+        else h.BinaryStream?.Flush();
     }
 
     // ---------- at_end_of_stream ----------
