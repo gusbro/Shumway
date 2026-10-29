@@ -1502,7 +1502,8 @@ internal sealed class ConsultPipeline
             // later in its file (clpz's goal_expansion calls list_goal_/3 from
             // further down), so it must never run against the file's own
             // ordinary clauses; the deferred re-expansion pass covers those.
-            // A throw from a partial hook means "cannot expand", not "abort".
+            // A throw from a partial hook means "cannot expand", not "abort";
+            // an abort/0 it calls is still one.
             if (repl is null && rc.Kind == ClauseKind.Directive
                 && earlyHooksActive && earlyHookPredName is not null)
             {
@@ -1511,7 +1512,8 @@ internal sealed class ConsultPipeline
                     if (E.TryEarlyTermExpansion(earlyHookPredName, rc.Term, out var dexp))
                         repl = dexp;
                 }
-                catch { /* fall through: process the directive unexpanded */ }
+                catch (Exception ex) when (ex is not PrologAbortException)
+                { /* fall through: process the directive unexpanded */ }
             }
             if (repl is null)
                 return SingletonClause(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);
@@ -2570,7 +2572,8 @@ internal sealed class ConsultPipeline
         // committed, in source order (SWI load-time semantics). A goal that
         // fails or raises prints a warning and loading continues — matching
         // SWI. halt/0-1 (PrologHaltException) propagates: halting from an
-        // initialization goal ends the load, exactly as under SWI.
+        // initialization goal ends the load, exactly as under SWI. So does
+        // abort/0, which abandons the load with the query that started it.
         if (initializationGoals is not null)
         {
             foreach (var g in initializationGoals)
@@ -2597,6 +2600,7 @@ internal sealed class ConsultPipeline
                             $"Warning: initialization goal failed: {g}");
                 }
                 catch (PrologHaltException) { throw; }
+                catch (PrologAbortException) { throw; }
                 catch (Exception ex)
                 {
                     E.Warn(
@@ -2773,6 +2777,7 @@ internal sealed class ConsultPipeline
                     $"Warning: directive failed: {DescribeDirective(goal)}");
         }
         catch (PrologHaltException) { throw; }
+        catch (PrologAbortException) { throw; }
         catch (Exception ex)
         {
             E.Warn(

@@ -116,6 +116,7 @@ internal static partial class WebShumwayApp
     private const char TagLast = 'l';       // the last solution
     private const char TagFailed = 'f';     // no (more) solutions
     private const char TagError = 'e';      // the query raised
+    private const char TagAborted = 'a';    // abort/0 ended the query
 
     /// <summary>Appends engine output to the page. Prolog writes reach this through
     /// <see cref="PageWriter"/>, which the engine holds as its output stream.</summary>
@@ -333,6 +334,11 @@ internal static partial class WebShumwayApp
             {
                 EndRun();
                 return TagFailed.ToString();
+            }
+            catch (Shumway.Core.PrologAbortException)
+            {
+                EndRun();
+                return TagAborted.ToString();
             }
             catch (Exception ex)
             {

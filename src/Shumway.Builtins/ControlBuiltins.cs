@@ -142,6 +142,11 @@ public static class ControlBuiltins
     public static bool Halt0(Activation engine) =>
         throw new PrologHaltException(0);
 
+    /// <summary><c>abort/0</c> — abandons the running query; see
+    /// <see cref="PrologAbortException"/>.</summary>
+    public static bool Abort0(Activation engine) =>
+        throw new PrologAbortException();
+
     /// <summary><c>halt(Code)</c> — terminates execution with the given
     /// integer exit code.</summary>
     public static bool Halt1(Activation engine)
