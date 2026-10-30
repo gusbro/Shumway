@@ -1589,9 +1589,9 @@ public static partial class MetaBuiltins
         {
             // Read the codes list and decide: numeric → number, else atom.
             string s = ReadCodesAsString(engine, engine.GetRegister(1));
-            if (long.TryParse(s, System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out long iv))
-                return engine.UnifyRegisterWithCell(0, Cell.Int(iv));
+            if (System.Numerics.BigInteger.TryParse(s, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var iv))
+                return engine.UnifyRegisterWithCell(0, engine.MakeBigInt(iv));
             if (double.TryParse(s, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out double dv))
                 return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(dv));
