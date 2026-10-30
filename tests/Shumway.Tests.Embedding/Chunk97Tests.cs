@@ -68,6 +68,50 @@ public class Chunk97Tests
         Assert.True(Holds("atomic_list_concat([], A), A == ''."));
     }
 
+    // ---- atomic_concat/3 ----
+
+    [Theory]
+    [InlineData(@"atomic_concat(ab, 12, A), A == ab12")]
+    [InlineData(@"atomic_concat(x, 1.5, A), A == 'x1.5'")]
+    [InlineData(@"atomic_concat(1, 2, A), A == '12'")]
+    [InlineData(@"atomic_concat('', '', A), A == ''")]
+    [InlineData(@"atomic_concat(a, b, ab)")]
+    [InlineData(@"\+ atomic_concat(a, b, ac)")]
+    public void AtomicConcat_JoinsTwoAtomicsIntoAnAtom(string goal)
+    {
+        Assert.True(Holds(goal + "."), goal);
+    }
+
+    [Theory]
+    [InlineData(@"atomic_concat(_, b, ab)", @"instantiation_error")]
+    [InlineData(@"atomic_concat(a, _, ab)", @"instantiation_error")]
+    [InlineData(@"atomic_concat(f(x), b, _)", @"type_error(atomic, f(x))")]
+    [InlineData(@"atomic_concat(a, [b], _)", @"type_error(atomic, [b])")]
+    [InlineData(@"atomic_concat(a, b, 3)", @"type_error(atom, 3)")]
+    public void AtomicConcat_RaisesItsOwnErrors(string goal, string error)
+    {
+        Assert.True(Holds($"catch({goal}, error(E, C), true), E == {error}, C == atomic_concat/3."), goal);
+    }
+
+    // The Logtalk adapter shipped in logtalk/ defined its own atomic_concat/3
+    // while the engine had none; loading it now would be refused, clause by
+    // clause, with a warning each time.
+    [Fact]
+    public void AtomicConcat_TheLogtalkAdapterLeavesItToTheEngine()
+    {
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (dir is not null && !System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "CLAUDE.md")))
+            dir = dir.Parent!;
+        string adapter = System.IO.Path.Combine(dir!.FullName, "logtalk", "adapters", "shumway.pl");
+        var warnings = new System.IO.StringWriter();
+        var engine = new PrologEngine { Warnings = warnings };
+
+        engine.ConsultFile(adapter);
+
+        Assert.DoesNotContain("atomic_concat", warnings.ToString());
+        Assert.True(engine.Query("atomic_concat(ab, 12, A), A == ab12.").Success);
+    }
+
     // ---- atomic_list_concat/3 — join ----
 
     [Fact]

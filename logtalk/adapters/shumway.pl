@@ -559,28 +559,6 @@ call_cleanup(Goal, Cleanup) :-
 '$lgt_format'(Format, Arguments) :-
 	format(Format, Arguments).
 
-% atomic_concat(+atomic, +atomic, ?atom): strict-typed concatenation some
-% library objects import from `user`.
-atomic_concat(A, B, Atom) :-
-	(	var(A) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	var(B) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	\+ atomic(A) ->
-		throw(error(type_error(atomic, A), atomic_concat/3))
-	;	\+ atomic(B) ->
-		throw(error(type_error(atomic, B), atomic_concat/3))
-	;	'$shumway_as_atom'(A, AtomA),
-		'$shumway_as_atom'(B, AtomB),
-		atom_concat(AtomA, AtomB, Atom)
-	).
-
-'$shumway_as_atom'(Atomic, Atom) :-
-	(	atom(Atomic) ->
-		Atom = Atomic
-	;	term_to_atom(Atomic, Atom)
-	).
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %  {File, ...} top-level shorthand for logtalk_load/1
