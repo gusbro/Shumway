@@ -292,6 +292,13 @@ internal static class ReplTopLevel
                 MaybeDumpProfile(engine);
                 return halted.ExitCode;
             }
+            catch (Shumway.Core.PrologAbortException aborted)
+            {
+                // abort/0 while loading abandons the load, the files after it
+                // included, and hands over to the top level.
+                PrintError(engine, aborted);
+                break;
+            }
         }
         // --quads <file>, repeatable: load the quad-transcript library (it
         // brings coroutining itself), consult each transcript, run every
@@ -581,6 +588,7 @@ internal static class ReplTopLevel
             // until the engine learned to re-raise a halt out of a load.
             throw;
         }
+        catch (Shumway.Core.PrologAbortException) { throw; }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"% could not consult {path}: {ex.Message}");

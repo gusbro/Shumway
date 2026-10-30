@@ -375,6 +375,8 @@ public static class StandardBuiltins
             Control, "fail", "Always fails.", kind: PredicateKind.Control);
         BuiltinsRegistry.Register("true", 0, ControlBuiltins.True,
             Control, "true", "Always succeeds.", kind: PredicateKind.Control);
+        BuiltinsRegistry.Register("abort", 0, ControlBuiltins.Abort0,
+            Control, "abort", "Stops the running query. catch/3 cannot catch it, but setup_call_cleanup/3 cleanups still run.");
         BuiltinsRegistry.Register("halt", 0, ControlBuiltins.Halt0,
             Control, "halt", "Halts the engine with exit code 0.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1,

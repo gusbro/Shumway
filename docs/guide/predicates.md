@@ -130,6 +130,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `:(+Module, :Goal)` | engine | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches. |
+| `abort` | engine | Stops the running query. catch/3 cannot catch it, but setup_call_cleanup/3 cleanups still run. |
 | `apply(:Goal, +ExtraArgs)` | engine | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | control | Calls a goal. |
 | `call(:Goal, +Extra1)` | iso | Calls a goal extended with one extra argument. |

@@ -359,9 +359,9 @@ public sealed partial class BytecodeInterpreter
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
         catch (System.Exception ex) when (PcRing is not null
             && ex is not Shumway.Core.PrologRuntimeException
-            // Prolog-level control flow (thrown balls, halt/2), not corruption.
+            // Prolog-level control flow (thrown balls, halt/2, abort/0), not corruption.
             && ex.GetType().Name is not "ShumwayPrologException"
-                and not "PrologHaltException")
+                and not "PrologHaltException" and not "PrologAbortException")
         {
             DumpPcRing(code, _engine.P, ex.GetType().Name);
             throw;
