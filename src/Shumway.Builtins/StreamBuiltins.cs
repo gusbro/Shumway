@@ -1352,13 +1352,13 @@ public static class StreamBuiltins
 
     // ---------- at_end_of_stream ----------
 
-    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. Defined by
-    /// stream property (end_of_stream at/past), and §8.11.8.3 lists no
-    /// permission error — an output stream simply lacks the property, so
-    /// the call fails rather than raising.</summary>
+    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. An output
+    /// stream raises permission_error(input, stream, S), as every input
+    /// predicate does. Not a failure: that reads as "not at end yet", and a
+    /// loop waiting for the end of a stream opened for writing never ends.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return AtEnd(engine, h);
     }
 
