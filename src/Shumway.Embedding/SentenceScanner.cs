@@ -249,25 +249,34 @@ public static class SentenceScanner
     /// line comments, and <c>/* */</c> block comments.</summary>
     private static bool IsLayoutOnly(System.Text.StringBuilder sb)
     {
-        int i = 0, n = sb.Length;
+        string text = sb.ToString();
+        return FirstTokenIndex(text) == text.Length;
+    }
+
+    /// <summary>Where the first token of <paramref name="text"/> starts: past
+    /// the whitespace, <c>%</c> line comments and <c>/* */</c> block comments
+    /// before it, or the text's length when there is none.</summary>
+    public static int FirstTokenIndex(string text)
+    {
+        int i = 0, n = text.Length;
         while (i < n)
         {
-            char ch = sb[i];
+            char ch = text[i];
             if (char.IsWhiteSpace(ch)) { i++; continue; }
             if (ch == '%')
             {
-                while (i < n && sb[i] != '\n') i++;
+                while (i < n && text[i] != '\n') i++;
                 continue;
             }
-            if (ch == '/' && i + 1 < n && sb[i + 1] == '*')
+            if (ch == '/' && i + 1 < n && text[i + 1] == '*')
             {
                 i += 2;
-                while (i + 1 < n && !(sb[i] == '*' && sb[i + 1] == '/')) i++;
+                while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/')) i++;
                 i = System.Math.Min(n, i + 2);
                 continue;
             }
-            return false;
+            return i;
         }
-        return true;
+        return n;
     }
 }

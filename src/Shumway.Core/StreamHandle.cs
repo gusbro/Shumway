@@ -173,6 +173,12 @@ public sealed class PositionTrackingReader : TextReader
     /// position.</summary>
     public long CharsConsumed { get; private set; }
 
+    /// <summary>The line the next character is on, counting from 1: one more
+    /// than the line terminators consumed so far. A repositioning re-reads up
+    /// to its target, so this stays exact without being stored in a
+    /// position.</summary>
+    public long Line { get; private set; } = 1;
+
     /// <summary>True when a CR-LF pair reads as the single character
     /// <c>\n</c> (ADR-045). Binary streams never reach this class, so the
     /// ISO rule "text converts, binary does not" is structural here.</summary>
@@ -244,7 +250,11 @@ public sealed class PositionTrackingReader : TextReader
                 c = '\n';
             }
         }
-        if (c >= 0) CharsConsumed++;
+        if (c >= 0)
+        {
+            CharsConsumed++;
+            if (c == '\n') Line++;
+        }
         return c;
     }
 
@@ -253,7 +263,12 @@ public sealed class PositionTrackingReader : TextReader
         if (!TranslatesNewlines && _buffered == Empty)
         {
             int n = Inner.Read(buffer, index, count);
-            if (n > 0) CharsConsumed += n;
+            if (n > 0)
+            {
+                CharsConsumed += n;
+                for (int k = index; k < index + n; k++)
+                    if (buffer[k] == '\n') Line++;
+            }
             return n;
         }
         int i = 0;
@@ -317,11 +332,13 @@ public sealed class PositionTrackingReader : TextReader
         return h;
     }
 
-    /// <summary>Resets the consumed-character count after the caller has
-    /// rewound the underlying stream (see <c>set_stream_position/2</c>).</summary>
+    /// <summary>Resets the consumed-character and line counts after the
+    /// caller has rewound the underlying stream (see
+    /// <c>set_stream_position/2</c>).</summary>
     public void ResetCount()
     {
         CharsConsumed = 0;
+        Line = 1;
         _buffered = Empty;
         _buffered2 = Empty;
     }

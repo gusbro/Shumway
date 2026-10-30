@@ -508,12 +508,12 @@
 '$lgt_close'(Stream) :-
 	close(Stream).
 
-% no per-stream line counting available
-'$lgt_stream_current_line_number'(_Stream, 0).
+'$lgt_stream_current_line_number'(Stream, Line) :-
+	line_count(Stream, Line).
 
-% no term position tracking either: every term reads as spanning 0-0
-'$lgt_read_term'(Stream, Term, Options, 0-0) :-
-	read_term(Stream, Term, Options).
+% the lines the term starts and ends on
+'$lgt_read_term'(Stream, Term, Options, LineBegin-LineEnd) :-
+	read_term(Stream, Term, [line_counts(LineBegin, LineEnd)| Options]).
 
 '$lgt_write_compiled_term'(Stream, Term, _Kind, _Path, _Line) :-
 	write_canonical(Stream, Term),

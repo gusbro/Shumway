@@ -1268,6 +1268,23 @@ Two rules to keep in mind:
 - They work in every number: decimal, binary, octal and hexadecimal
   integers, and both parts of a float (`1_1.2_5e1_1`).
 
+### Options of `read_term/3`
+
+| Option | Gives |
+|---|---|
+| `variables(Vars)` | The term's variables, in order of first appearance. |
+| `variable_names(Pairs)` | `Name = Var` for each named variable. |
+| `singletons(Pairs)` | `Name = Var` for each named variable that occurs once. |
+| `line_counts(Begin, End)` | The line of the term's first token, past any layout and comments, and the line of its end dot, counting from 1. |
+
+At end of file the three lists are empty. `double_quotes/1`,
+`syntax_errors/1`, `term_position/1`, `subterm_positions/1`, `cycles/1`,
+`backquoted_string/1`, `character_escapes/1`, `module/1` and `comments/1`
+are accepted, so code written for other systems runs, and have no effect.
+
+`line_count(Stream, Line)` gives the line the next character of a text
+input stream will come from.
+
 ### Operator atoms as operands
 
 An atom that is an operator cannot be the bare operand of another

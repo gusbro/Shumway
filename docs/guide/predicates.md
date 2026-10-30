@@ -407,6 +407,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `get_code(+Stream, -Code)` | iso | Reads one character code from a stream (ISO §8.12.4). |
 | `getenv(+Name, -Value)` | engine | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
 | `http_download(+URL, +File)` | engine | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
+| `line_count(+Stream, -Line)` | engine | The line the next character read from a text input stream comes from, counting from 1. |
 | `mkdir(+Path)` | engine | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | iso | Writes a newline to the current output stream. |
 | `nl(+Stream)` | iso | Writes a newline to the given stream. |
@@ -437,7 +438,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `read(-Term)` | iso | Reads one term from current input (ISO §8.14.2). |
 | `read(+Stream, -Term)` | iso | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | iso | Reads one term from a read-mode stream. |
-| `read_term(+Stream, -Term, +Options)` | iso | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
+| `read_term(+Stream, -Term, +Options)` | iso | Reads one term from a read-mode stream; honours variable_names/1, singletons/1, variables/1 and line_counts/2 options. |
 | `read_term_from_chars(+Chars, -Term, +Options)` | engine | Reads a term from a character list, honouring read_term/2 options. |
 | `read_term_from_stream(+Stream, -Term)` | engine | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | engine | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
