@@ -77,9 +77,13 @@ public sealed partial class PrologEngine
     private static readonly int TermExpansion6Fid =
         FunctorTable.Intern(AtomTable.Intern("term_expansion", permanent: true).Id, 6);
 
-    internal bool HasPrologTermExpansion => HasPredicate(TermExpansionFid);
+    // A hook only declared expands nothing, so consulting skips the expansion
+    // pass as it does when no hook exists (Logtalk declares both hooks).
+    internal bool HasPrologTermExpansion => HasExpandingHook(TermExpansionFid);
 
-    internal bool HasPrologTermExpansion6 => HasPredicate(TermExpansion6Fid);
+    internal bool HasPrologTermExpansion6 => HasExpandingHook(TermExpansion6Fid);
+
+    private bool HasExpandingHook(int fid) => HasPredicate(fid) && !IsDeclaredOnlyHook(fid);
 
     // ---- hook discriminator index ----
     //
@@ -117,13 +121,22 @@ public sealed partial class PrologEngine
     private HookDiscriminators? _teIdx, _te6Idx, _geIdx;
     internal bool _hookIndexValid;
 
+    /// <summary>Whether a clause of the hook could expand <paramref name="input"/>;
+    /// when not, the hook is not queried for it.</summary>
+    internal bool HookCouldMatch(int hookFid, Term input) =>
+        hookFid == TermExpansionFid ? HookIndex(hookFid, ref _teIdx).CouldMatch(input)
+        : hookFid == GoalExpansionFid ? HookIndex(hookFid, ref _geIdx).CouldMatch(input)
+        : HookIndex(hookFid, ref _te6Idx).CouldMatch(input);
+
     private HookDiscriminators HookIndex(int hookFid, ref HookDiscriminators? slot)
     {
         if (!_hookIndexValid) { _teIdx = _te6Idx = _geIdx = null; _hookIndexValid = true; }
         if (slot is not null) return slot;
         var idx = new HookDiscriminators();
         // A hook living in the dynamic store (asserted, no static clauses) can
-        // change without a consult — don't reason about its clauses.
+        // change without a consult — don't reason about its clauses. One only
+        // declared matches nothing, and is not cached: the next assert changes it.
+        if (IsDeclaredOnlyHook(hookFid)) return idx;
         if (_dynStore.IsDynamic(hookFid)) { idx.AnyMatch = true; return slot = idx; }
         var (atomId, arity) = FunctorTable.Lookup(hookFid);
         string hookName = AtomTable.GetById(atomId)?.Name ?? "";
@@ -285,7 +298,7 @@ public sealed partial class PrologEngine
     // inputs) when the hook is undefined or fails for this term.
     private bool TryPrologTermExpansion6(Term input, Term ids, out Term output, out Term newIds)
     {
-        if (!HookIndex(TermExpansion6Fid, ref _te6Idx).CouldMatch(input))
+        if (!HookCouldMatch(TermExpansion6Fid, input))
         {
             output = input;
             newIds = ids;
@@ -330,7 +343,7 @@ public sealed partial class PrologEngine
     // undefined or fails for this term.
     private bool TryPrologTermExpansionOnce(Term input, List<Term> output)
     {
-        if (!HookIndex(TermExpansionFid, ref _teIdx).CouldMatch(input)) return false;
+        if (!HookCouldMatch(TermExpansionFid, input)) return false;
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
@@ -516,7 +529,7 @@ public sealed partial class PrologEngine
     private static readonly int GoalExpansionFid =
         FunctorTable.Intern(AtomTable.Intern("goal_expansion", permanent: true).Id, 2);
 
-    internal bool HasPrologGoalExpansion => HasPredicate(GoalExpansionFid);
+    internal bool HasPrologGoalExpansion => HasExpandingHook(GoalExpansionFid);
 
     // term_expansion/2 and goal_expansion/2 are global hooks: any module that
     // defines one (real libraries do it with a `user:` clause head — atts.pl,
@@ -529,6 +542,13 @@ public sealed partial class PrologEngine
 
     internal static readonly int[] GlobalHookFunctors =
         { TermExpansionFid, GoalExpansionFid, TermExpansion6Fid };
+
+    /// <summary>A hook made dynamic by a <c>:- dynamic</c> declaration or an
+    /// assert (not by the implicit_dynamic scan) that has no clauses now: it
+    /// matches nothing, and a hook clause from a source replaces it.</summary>
+    internal bool IsDeclaredOnlyHook(int fid) =>
+        IsGlobalHookFunctor(fid) && _dynStore.IsDynamic(fid) && !_dynStore.IsImplicitOnly(fid)
+        && (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0);
 
     // Apply goal_expansion to every body goal of a clause (or a directive's goal).
     // A fact has no body and is returned unchanged.
@@ -678,7 +698,7 @@ public sealed partial class PrologEngine
     // single replacement goal.
     private bool TryPrologGoalExpansion(Term input, out Term expanded)
     {
-        if (!HookIndex(GoalExpansionFid, ref _geIdx).CouldMatch(input))
+        if (!HookCouldMatch(GoalExpansionFid, input))
         {
             if (TeDiagEnabled)
                 System.Console.Error.WriteLine($"[GE] index-skip: {input}");
