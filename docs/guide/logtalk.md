@@ -75,7 +75,8 @@ Shumway; only that one selector borrows SWI's name.
   Message dispatch (`::`) runs at parity with plain calls; Logtalk
   static-binds it under `optimize(on)`.
 - **Capabilities announced**: `tabling` (the engine's `:- table` works inside
-  objects) and native coroutining (`dif/2`, `freeze/2`, `when/2`) with the
+  objects), `coinduction` (unification, comparison, copying and the term
+  inspection built-ins terminate on cyclic terms) and native coroutining (`dif/2`, `freeze/2`, `when/2`) with the
   meta-argument wrapping Logtalk expects; the compiler reads our
   `predicate_property/2` meta-predicate templates exactly as it does SWI's.
 - The adapter carries the backend compatibility layer: the OS predicate
@@ -86,10 +87,11 @@ Shumway; only that one selector borrows SWI's name.
   `format/2,3`, `predicate_property/2` and the full ISO surface Logtalk's
   compiler needs, is native.
 
-- **The `tests/prolog` ISO conformity battery** (192 testers, 4,304
-  counted tests): **4,263 passed / 41 failed**, every tester reporting
-  (measured 2026-09; `atom_codes_2`, `number_codes_2` and
-  `at_end_of_stream_1` again 2026-10;
+- **The `tests/prolog` ISO conformity battery** (192 testers, 4,372
+  counted tests): **4,326 passed / 46 failed**, every tester reporting
+  (measured 2026-09; `atom_codes_2`, `number_codes_2`,
+  `at_end_of_stream_1` and the 27 testers whose cyclic-term cases run once
+  `coinduction` is announced again 2026-10;
   baseline before the 2026-08 campaign: 2,096 / 933).
   The five `unicode/` testers run with no skips: `directives/encoding_1`
   3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
@@ -123,9 +125,16 @@ Shumway; only that one selector borrows SWI's name.
   where these `lgt_*` and `commons_*` tests record what several other
   systems do:
 
-  - `length_2` (6): `length(a, N)` and other non-lists fail rather than
-    raise `type_error(list, ...)`, as Neumerkel's `length/2` cases have
-    it (`length(2, 0)` is false).
+  - `length_2` (7): `length(a, N)` and other non-lists, a cyclic list
+    among them, fail rather than raise `type_error(list, ...)`, as
+    Neumerkel's `length/2` cases have it (`length(2, 0)` is false).
+  - `term_comparison` (4): `X = s(X,_), Y = s(Y,_), X @< Y` and three
+    like it depend on which of two fresh variables is older, and the
+    standard leaves the order of variables to the implementation. lgtunit
+    calls the goal as a term built at run time, and Shumway builds the
+    deeper subterm first, so the variable in `Y`'s term is the older one.
+    Written as a clause body, the same goals give the answers the tests
+    expect.
   - `read_term_3` (6): `variables/1`, `variable_names/1` and
     `singletons/1` are output options, so a value that cannot unify
     (`variables(a)`) makes the read fail; it is not a

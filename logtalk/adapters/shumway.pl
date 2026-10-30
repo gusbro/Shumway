@@ -10,9 +10,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-:- built_in.
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %  backend identity and capabilities
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -102,10 +99,12 @@
 %   `unsupported`, so this claim is exactly what `arbitrary` exercises.
 % - threads/engines/sockets: genuinely absent (single-threaded activations,
 %   no socket layer).
-% - modules: Logtalk-compiling Prolog MODULE FILES as objects is more than
-%   ADR-038 provides (no current_module/1 reflection, M:G only shimmed).
-% - coinduction: needs verified rational-tree unification end to end;
-%   revisit deliberately, not as a flag flip.
+% - modules: unsupported — the module hooks below
+%   ('$lgt_find_visible_module_predicate'/3 and the rest) are stubs, and
+%   there is no current_module/1; announcing modules has Logtalk rely on them.
+% - coinduction: supported — unification, comparison, copying and the term
+%   inspection builtins all terminate on cyclic terms (rational trees).
+%   Logtalk's tests/prolog battery gates its cyclic-term cases on this flag.
 '$lgt_prolog_feature'(encoding_directive, full).
 
 % SWI-style fixed-width unicode escapes (\uXXXX / \UXXXXXXXX) in quoted
@@ -118,7 +117,7 @@
 '$lgt_prolog_feature'(engines, unsupported).
 '$lgt_prolog_feature'(threads, unsupported).
 '$lgt_prolog_feature'(modules, unsupported).
-'$lgt_prolog_feature'(coinduction, unsupported).
+'$lgt_prolog_feature'(coinduction, supported).
 '$lgt_prolog_feature'(unicode, full).
 
 
@@ -548,12 +547,6 @@ term_hash(Term, _Depth, _Range, Hash) :-
 	Acc is (Acc0 * 33 + Code) /\ 0x3fffffff,
 	'$shumway_hash_fold'(Codes, Acc, Hash).
 
-% setup_call_cleanup/3 is native (prelude). lgtunit's deterministic/1,2 for
-% this dialect family is written over call_cleanup/2, which is the same thing
-% without a setup.
-call_cleanup(Goal, Cleanup) :-
-	setup_call_cleanup(true, Goal, Cleanup).
-
 '$lgt_format'(Stream, Format, Arguments) :-
 	format(Stream, Format, Arguments).
 '$lgt_format'(Format, Arguments) :-
@@ -588,13 +581,6 @@ call_cleanup(Goal, Cleanup) :-
 % library, so the adapter opts in on the program's behalf — announcing the
 % capability and then not having it is worse than not announcing it.
 :- use_module(library(coroutining)).
-
-% SWI-arm code reaches plain-Prolog land with MODULE-QUALIFIED goals
-% (library(timeout) calls time:call_with_time_limit/2). Shumway has no M:Goal
-% (ADR-038 defers it), so the module is dropped and the goal called — correct
-% for these uses, where the predicate itself is supplied by this adapter.
-':'(_Module, Goal) :-
-	call(Goal).
 
 % Registered so predicate_property/2 reports meta_predicate(T) for them —
 % which is where Logtalk's compiler looks when it compiles the qualified
@@ -852,9 +838,6 @@ make_directory(Directory) :-
 
 delete_directory(Directory) :-
 	rmdir(Directory).
-
-delete_file(File) :-
-	delete(File).
 
 rename_file(Old, New) :-
 	rename(Old, New).
