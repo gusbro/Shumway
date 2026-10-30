@@ -1068,7 +1068,7 @@ public static class MetaTransform
         var seen = new HashSet<string>();
         CollectNamedVars(innerGoal, freeVars, seen);
 
-        // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so a cut inside G is
+        // §8.15.1: `\+ G` is `(call(G) -> fail ; true)`, so a cut inside G is
         // local to it. Spliced bare into the helper's first clause it would
         // cut the helper itself and take the second clause — the one that
         // makes the negation succeed — with it, so `\+ ((!, fail))` failed.

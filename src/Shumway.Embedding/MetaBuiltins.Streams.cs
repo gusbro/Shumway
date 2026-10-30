@@ -13,7 +13,7 @@ public static partial class MetaBuiltins
         => Shumway.Builtins.StreamBuiltins.IsOpenStream(engine, engine.GetRegister(0));
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
-    /// ISO §8.11.8.1. Enumerates every registered stream on
+    /// enumerates every registered stream on
     /// backtracking. Filename and Mode arguments unify against each
     /// handle's metadata; the stream arg is bound to a Foreign cell
     /// wrapping the underlying <see cref="Shumway.Core.StreamHandle"/>.
@@ -47,11 +47,6 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>stream_property(?Stream, ?Property)</c> — ISO §8.11.8.2.
-    /// Enumerates (Stream, Property) pairs for every registered stream.
-    /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
-    /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
-    /// <c>end_of_stream(at|not)</c>.</summary>
     /// <summary>Property names stream_property/2 recognises — a bound
     /// second argument outside this set is domain_error(stream_property).</summary>
     private static readonly HashSet<string> KnownStreamProperties = new()
@@ -60,6 +55,8 @@ public static partial class MetaBuiltins
         "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
+    /// <summary><c>stream_property(?Stream, ?Property)</c> — ISO §8.11.8.
+    /// Enumerates (Stream, Property) pairs for every registered stream.</summary>
     public static bool StreamProperty(Activation engine)
     {
         var registry = engine.Streams
@@ -263,7 +260,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>set_stream_position(+Stream, +Position)</c> — ISO
-    /// §8.11.10. Position is an integer matching what
+    /// §8.11.9. Position is an integer matching what
     /// <c>stream_property(_, position(N))</c> yields: characters
     /// consumed for a text read stream, byte offset for binary and
     /// write streams. A text read stream repositions by rewinding the
@@ -282,7 +279,7 @@ public static partial class MetaBuiltins
                 "domain_error", "stream_position", engine, posCell);
         long target = posCell.AsInt;
 
-        // §8.11.7.3: `open(…, [reposition(false)])` refuses the seek even when
+        // §8.11.9.3: `open(…, [reposition(false)])` refuses the seek even when
         // the underlying stream could do it.
         if (!h.Repositionable)
             throw new Shumway.Core.PrologRuntimeException(
@@ -372,7 +369,7 @@ public static partial class MetaBuiltins
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
     }
 
-    /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
+    /// <summary><c>read/1</c> — ISO §8.14.1. Reads one term from the
     /// current input stream.</summary>
     public static bool Read1(Activation engine)
     {
@@ -381,7 +378,7 @@ public static partial class MetaBuiltins
         return ReadOneTermInto(engine, ResolveTextReaderFromHandle(h), regOut: 0);
     }
 
-    /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.2.</summary>
+    /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.1.</summary>
     public static bool Read2(Activation engine) =>
         ReadOneTermInto(engine,
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
@@ -420,7 +417,7 @@ public static partial class MetaBuiltins
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
-            // ISO §8.14.2.3.g — text-term read on a binary stream.
+            // ISO §8.14.1.3 — text-term read on a binary stream.
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         return h.Reader!;
     }

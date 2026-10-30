@@ -164,7 +164,7 @@ public static class AtomCharBuiltins
     {
         Cell charCell = Resolve(engine, engine.GetRegister(0));
         Cell codeCell = Resolve(engine, engine.GetRegister(1));
-        // §8.16.5.3.c: a bound non-integer Code is type_error(integer, C),
+        // §8.16.6.3.c: a bound non-integer Code is type_error(integer, C),
         // checked even when Char is a usable character.
         if (codeCell.Tag is not (Tag.Ref or Tag.AttVar) && codeCell.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer", engine, codeCell);
@@ -172,7 +172,7 @@ public static class AtomCharBuiltins
         if (charCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(charCell.AsAtomId)?.Name ?? "";
-            // ISO §8.16.5: a non-character first arg is type_error(character).
+            // ISO §8.16.6: a non-character first arg is type_error(character).
             // A character is one code point — an astral one spans two units.
             if (!Utf16Text.IsOneCodePoint(name))
                 throw new PrologRuntimeException(
@@ -200,7 +200,7 @@ public static class AtomCharBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        // ISO §8.16.5.3.a-b: both var → instantiation_error; otherwise
+        // ISO §8.16.6.3.a-b: both var → instantiation_error; otherwise
         // one is bound but to the wrong type.
         if (charCell.Tag is Tag.Ref or Tag.AttVar && codeCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
@@ -242,8 +242,9 @@ public static class AtomCharBuiltins
         //      fully bound — parsed as a number and unified with Number (the
         //      primary direction, so number_chars(1, "01") parses "01"→1 and
         //      succeeds). A bound element that is not a character is a
-        //      type_error even past an earlier unbound one (§8.16.8); a list
-        //      that only has unbound elements/tail falls through to generate.
+        //      type_error even past an earlier unbound one (§8.16.7/8.16.8);
+        //      a list that only has unbound elements/tail falls through to
+        //      generate.
         if (strCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             string s = AnalyzeCharList(engine, strCell, asCodes, numIsNumber, out bool hasUnbound);
@@ -259,7 +260,7 @@ public static class AtomCharBuiltins
                 if (floatRangeFlaw is not null)
                     throw new PrologRuntimeException(
                         "representation_error", floatRangeFlaw);
-                // ISO §8.16.8 reads the chars as a term that must be a number, so
+                // ISO §8.16.7/8.16.8 read the chars as a term that must be a number, so
                 // `'-'1` (quoted prefix minus) is -1 and `'\n-' 3` is -3 — cases the
                 // token parser above doesn't cover. Fall back to the host's full
                 // term reader (wired on the engine); a non-number result stays a
@@ -832,7 +833,7 @@ public static class AtomCharBuiltins
     public static bool SubAtom(Activation engine)
     {
         Cell atomC = Resolve(engine, engine.GetRegister(0));
-        // ISO §8.16.10.3: Atom var → instantiation_error; not atom → type_error.
+        // ISO §8.16.3.3: Atom var → instantiation_error; not atom → type_error.
         if (atomC.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         string atomName;
@@ -941,9 +942,10 @@ public static class AtomCharBuiltins
             sb.Append(engine.ReadPstrChain(cursor, out cursor));
             cursor = ListCursor.Resolve(engine, cursor);
         }
-        // ISO §8.16.8.3.a — when Number is a variable, a partial list (unbound
-        // tail) is instantiation_error, which takes precedence over a type_error
-        // on any element. Detect it by walking the spine first, so
+        // ISO §8.16.7.3.a/8.16.8.3.a — when Number is a variable, a partial
+        // list (unbound tail) is instantiation_error, which takes precedence
+        // over a type_error on any element. Detect it by walking the spine
+        // first, so
         // `number_chars(N, [1|_])` reports instantiation_error (via the
         // hasUnbound path the caller checks) rather than type_error(character) on
         // the head 1. Gated on !numberBound: when Number is bound we are

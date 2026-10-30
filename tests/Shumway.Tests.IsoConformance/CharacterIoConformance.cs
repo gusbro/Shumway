@@ -9,8 +9,8 @@ namespace Shumway.Tests.IsoConformance;
 ///
 /// Covers <c>get_char/1,2</c> (§8.12.1), <c>peek_char/1,2</c>
 /// (§8.12.2), <c>put_char/1,2</c> (§8.12.3), <c>get_code/1,2</c>
-/// (§8.12.4), <c>peek_code/1,2</c> (§8.12.5), <c>put_code/1,2</c>
-/// (§8.12.6). All built on the chunk-140 stream registry so the
+/// (§8.12.1), <c>peek_code/1,2</c> (§8.12.2), <c>put_code/1,2</c>
+/// (§8.12.3). All built on the chunk-140 stream registry so the
 /// 1-arg forms honour the current input/output cursors set by
 /// <c>set_input/1</c> and <c>set_output/1</c>.
 /// </summary>

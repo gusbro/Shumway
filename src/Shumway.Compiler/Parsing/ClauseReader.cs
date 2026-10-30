@@ -440,7 +440,7 @@ public sealed class ClauseReader
         }
     }
 
-    /// <summary>ISO §6.4.2 / §8.14.9. The directive
+    /// <summary>ISO §6.4.2 / §8.14.5. The directive
     /// <c>:- char_conversion(In, Out)</c> registers an in-character
     /// to out-character mapping that the lexer applies to the start
     /// of the next token. An identity mapping (<c>In == Out</c>)
