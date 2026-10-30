@@ -109,10 +109,13 @@ public sealed class SchimpfArcRegressionTests
         Raises("close(user_output, [force(true)|b])",
             "type_error(list, [force(true)|b])");
 
-    // ---- §8.11.8: at_end_of_stream is property-based ----
+    // ---- §8.11.8: at_end_of_stream on an output stream ----
+    // The suite expects a failure; that reads as "not at end yet", so this
+    // raises instead (tests/schimpf/README.md lists the divergence).
 
-    [Fact] public void AtEndOfStream_OutputStream_Fails() =>
-        True("\\+ at_end_of_stream(user_output).");
+    [Fact] public void AtEndOfStream_OutputStream_IsPermissionError() =>
+        Raises("at_end_of_stream(user_output)",
+            "permission_error(input, stream, user_output)");
 
     // ---- §8.11.5.3: eof_action defaults to error ----
 

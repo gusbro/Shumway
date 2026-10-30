@@ -458,6 +458,27 @@ public class StreamControlConformance : IDisposable
     }
 
     [Fact]
+    public void AtEndOfStream1_OutputStream_RaisesPermissionError()
+    {
+        // A failure would read as "not at end yet". The culprit is the
+        // argument as written: the alias, or the stream term.
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', write, S, [alias(st_o)]), "
+            + "catch((at_end_of_stream(st_o), R1 = succeeded), error(E1, _), R1 = E1), "
+            + "catch((at_end_of_stream(S), R2 = succeeded), error(E2, _), R2 = E2), "
+            + "close(S), "
+            + "R1 == permission_error(input, stream, st_o), "
+            + "R2 == permission_error(input, stream, S).").Success);
+        Assert.True(e.Query(
+            $"open('{path}', write, B, [type(binary)]), "
+            + "catch((at_end_of_stream(B), R = succeeded), error(E, _), R = E), "
+            + "close(B), "
+            + "R == permission_error(input, stream, B).").Success);
+    }
+
+    [Fact]
     public void AtEndOfStream1_AfterReadingAll_IsAtEnd()
     {
         File.WriteAllText(_tempPath, "x");
@@ -535,9 +556,8 @@ public class StreamControlConformance : IDisposable
         var e = new PrologEngine();
         Assert.True(e.Query(
             "catch(get_char(user_output, _), error(permission_error(input, stream, user_output), _), true).").Success);
-        // at_end_of_stream/1 is property-based (§8.11.8): an output stream
-        // simply lacks the end_of_stream property, so the call fails —
-        // §8.11.8.3 lists no permission error.
-        Assert.True(e.Query("\\+ at_end_of_stream(user_output).").Success);
+        Assert.True(e.Query(
+            "catch((at_end_of_stream(user_output), R = succeeded), error(E, _), R = E), "
+            + "R == permission_error(input, stream, user_output).").Success);
     }
 }

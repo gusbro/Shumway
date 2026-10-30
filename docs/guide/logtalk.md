@@ -87,8 +87,9 @@ Shumway; only that one selector borrows SWI's name.
   compiler needs, is native.
 
 - **The `tests/prolog` ISO conformity battery** (192 testers, 4,304
-  counted tests): **4,261 passed / 43 failed**, every tester reporting
-  (measured 2026-09, `atom_codes_2` and `number_codes_2` again 2026-10;
+  counted tests): **4,263 passed / 41 failed**, every tester reporting
+  (measured 2026-09; `atom_codes_2`, `number_codes_2` and
+  `at_end_of_stream_1` again 2026-10;
   baseline before the 2026-08 campaign: 2,096 / 933).
   The five `unicode/` testers run with no skips: `directives/encoding_1`
   3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
@@ -129,10 +130,9 @@ Shumway; only that one selector borrows SWI's name.
     `singletons/1` are output options, so a value that cannot unify
     (`variables(a)`) makes the read fail; it is not a
     `domain_error(read_option, ...)` (Cor.3, Neumerkel's cases).
-  - `current_input_1`, `current_output_1`, `stream_property_2` (4) and
-    `at_end_of_stream_1` (2): asking about a closed stream, or asking
-    whether an output stream is at its end, fails; the error tables of
-    8.11 list no error for those cases.
+  - `current_input_1`, `current_output_1` and `stream_property_2` (4):
+    asking about a closed stream fails; the error tables of 8.11 list no
+    error for that case.
 
   The one `syntax/numbers` failure is the lone `0''` above
   (`lgt_number_30`, which the battery itself marks de facto rather than
