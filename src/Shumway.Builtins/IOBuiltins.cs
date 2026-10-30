@@ -65,7 +65,7 @@ public static class IOBuiltins
         return true;
     }
 
-    /// <summary><c>writeq(X)</c> — ISO §8.14.5. Writes <c>X</c> in
+    /// <summary><c>writeq(X)</c> — ISO §8.14.2. Writes <c>X</c> in
     /// quoted form: atoms and strings get quote characters where
     /// needed so the output reads back. Equivalent to
     /// <c>write_term(X, [quoted(true), numbervars(true)])</c>.</summary>
@@ -77,7 +77,7 @@ public static class IOBuiltins
     }
 
     /// <summary><c>writeq(+Stream, X)</c> — stream-aware writeq.
-    /// ISO §8.14.5.</summary>
+    /// ISO §8.14.2.</summary>
     public static bool Writeq2(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
@@ -122,7 +122,7 @@ public static class IOBuiltins
     }
 
     /// <summary><c>write_term(+Stream, +Term, +Options)</c> — ISO
-    /// §8.14.3.</summary>
+    /// §8.14.2.</summary>
     public static bool WriteTerm3(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
@@ -401,7 +401,7 @@ public static class IOBuiltins
         return true;
     }
 
-    /// <summary><c>write_canonical(+Stream, +Term)</c> — ISO §8.14.6.</summary>
+    /// <summary><c>write_canonical(+Stream, +Term)</c> — ISO §8.14.2.</summary>
     public static bool WriteCanonical2(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));

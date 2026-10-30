@@ -1254,7 +1254,7 @@ public static partial class MetaBuiltins
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
     }
 
-    /// <summary><c>current_op(?Priority, ?Type, ?Name)</c> — ISO §8.17.3.
+    /// <summary><c>current_op(?Priority, ?Type, ?Name)</c> — ISO §8.14.4.
     /// Enumerates every defined operator on backtracking, with any of
     /// the three args optionally constraining the search. Uses the
     /// standard PushBuiltinChoicePoint pattern for the multi-solution
@@ -1369,7 +1369,7 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>char_conversion(+InChar, +OutChar)</c> — ISO §8.14.9.
+    /// <summary><c>char_conversion(+InChar, +OutChar)</c> — ISO §8.14.5.
     /// Updates the engine's char-conversion table on
     /// <see cref="PrologFlags.CharConversion"/> with a one-character
     /// mapping. An identity mapping (<c>InChar == OutChar</c>) removes
@@ -1386,9 +1386,9 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (outCell.Tag is Tag.Ref or Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        // ISO §8.14.9.3.c-d: a bound argument that is not a one-char atom is
+        // ISO §8.14.5.3: a bound argument that is not a one-char atom is
         // representation_error(character) — not type_error; contrast
-        // current_char_conversion/2 (§8.14.10.3), which uses type_error.
+        // current_char_conversion/2 (§8.14.6.3), which uses type_error.
         if (inCell.Tag != Tag.Atom
             || AtomTable.GetById(inCell.AsAtomId)?.Name is not { } inName
             || !Shumway.Core.Utf16Text.IsOneCodePoint(inName))
@@ -1411,7 +1411,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>current_char_conversion(?InChar, ?OutChar)</c> —
-    /// ISO §8.14.10. Enumerates the active char-conversion table on
+    /// ISO §8.14.6. Enumerates the active char-conversion table on
     /// backtracking. The Phase-9 PushBuiltinChoicePoint pattern drives
     /// the multi-solution dispatch.</summary>
     public static bool CurrentCharConversion(Activation engine)
@@ -1419,7 +1419,7 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "current_char_conversion/2 requires the engine to be hosted by a PrologEngine.");
-        // ISO §8.14.10.3: a bound argument that is not a one-char atom is
+        // ISO §8.14.6.3: a bound argument that is not a one-char atom is
         // type_error(character, C) — checked before the table is consulted,
         // so an empty table still raises rather than failing silently.
         for (int reg = 0; reg < 2; reg++)

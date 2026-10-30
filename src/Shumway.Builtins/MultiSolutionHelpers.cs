@@ -238,7 +238,7 @@ public static class MultiSolutionHelpers
         Cell lCell = Resolve(engine, engine.GetRegister(2));
         Cell aCell = Resolve(engine, engine.GetRegister(3));
         Cell sCell = Resolve(engine, engine.GetRegister(4));
-        // §8.16.5.3: each bound position argument must be an integer
+        // §8.16.3.3: each bound position argument must be an integer
         // (type_error) and non-negative (domain_error); a value merely
         // larger than the atom just has no solution.
         CheckIndexArg(engine, bCell);

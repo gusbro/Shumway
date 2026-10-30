@@ -10,7 +10,7 @@ namespace Shumway.Tests.IsoConformance;
 /// Covers <c>current_input/1</c> (§8.11.1), <c>current_output/1</c>
 /// (§8.11.2), <c>open/3</c> (§8.11.5), <c>close/1</c> (§8.11.6),
 /// <c>flush_output/0,1</c> (§8.11.7) and <c>at_end_of_stream/0,1</c>
-/// (§8.11.9). The bigger stream-registry features —
+/// (§8.11.8). The bigger stream-registry features —
 /// <c>stream_property/2</c>, <c>current_stream/3</c>,
 /// <c>set_input/1</c>, <c>set_output/1</c>, the <c>open/4</c> options
 /// list and <c>set_stream_position/2</c> — need a dedicated stream

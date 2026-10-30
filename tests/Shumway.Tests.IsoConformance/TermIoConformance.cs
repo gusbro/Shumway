@@ -5,10 +5,10 @@ using Shumway.Embedding;
 namespace Shumway.Tests.IsoConformance;
 
 /// <summary>
-/// ISO 13211-1, §8.14 Term I/O. Covers <c>read/1,2</c> (§8.14.2),
-/// <c>read_term/2,3</c> (§8.14.1), <c>write/1,2</c> (§8.14.4),
-/// <c>writeq/1,2</c> (§8.14.5), <c>write_canonical/1,2</c>
-/// (§8.14.6), and <c>write_term/2,3</c> (§8.14.3). All built on the
+/// ISO 13211-1, §8.14 Term I/O. Covers <c>read/1,2</c> (§8.14.1),
+/// <c>read_term/2,3</c> (§8.14.1), <c>write/1,2</c> (§8.14.2),
+/// <c>writeq/1,2</c> (§8.14.2), <c>write_canonical/1,2</c>
+/// (§8.14.2), and <c>write_term/2,3</c> (§8.14.2). All built on the
 /// chunk-140 stream registry so the 1-arg forms honour
 /// <c>set_input/1</c> / <c>set_output/1</c>.
 /// </summary>

@@ -761,7 +761,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>get_code/1</c> — reads one character code from
-    /// current input. EOF returns -1. ISO §8.12.4.</summary>
+    /// current input. EOF returns -1. ISO §8.12.1.</summary>
     public static bool GetCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
@@ -769,14 +769,14 @@ public static class StreamBuiltins
         return ReadCodeInto(engine, h, regOut: 0);
     }
 
-    /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.4.</summary>
+    /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.1.</summary>
     public static bool GetCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadCodeInto(engine, h, regOut: 1);
     }
 
-    /// <summary><c>peek_code/1</c> — ISO §8.12.5.</summary>
+    /// <summary><c>peek_code/1</c> — ISO §8.12.2.</summary>
     public static bool PeekCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
@@ -784,7 +784,7 @@ public static class StreamBuiltins
         return PeekCodeInto(engine, h, regOut: 0);
     }
 
-    /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.5.</summary>
+    /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.2.</summary>
     public static bool PeekCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
@@ -792,7 +792,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>put_code(+Code)</c> — writes the character with the
-    /// given code to current output. ISO §8.12.6.</summary>
+    /// given code to current output. ISO §8.12.3.</summary>
     public static bool PutCode1(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput
@@ -801,7 +801,7 @@ public static class StreamBuiltins
         return true;
     }
 
-    /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.6.</summary>
+    /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.3.</summary>
     public static bool PutCode2(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
@@ -942,7 +942,7 @@ public static class StreamBuiltins
         throw new PrologRuntimeException("type_error", "in_character", engine, c);
     }
 
-    /// <summary>§8.12.4.3.c: in_character_code = a char code or -1.</summary>
+    /// <summary>§8.12.1.3: in_character_code = a char code or -1.</summary>
     private static void CheckOutArgIsInCharacterCode(Activation engine, int regOut)
     {
         Cell c = Resolve(engine, engine.GetRegister(regOut));
@@ -1211,7 +1211,7 @@ public static class StreamBuiltins
         CheckPastEof(engine, h);
         int c = h.Reader!.ReadCodePoint();
         if (c < 0) h.PastEof = true;
-        // ISO §8.12.4: EOF is the integer -1.
+        // ISO §8.12.1: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
@@ -1362,14 +1362,14 @@ public static class StreamBuiltins
         return AtEnd(engine, h);
     }
 
-    /// <summary><c>at_end_of_stream/0</c> — checks current_input.</summary>
+    /// <summary><c>at_end_of_stream/0</c> — ISO §8.11.8. Checks current_input.</summary>
     public static bool AtEndOfStream0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput;
         return h is not null && AtEnd(engine, h);
     }
 
-    /// <summary>True when the position is at or past end (§8.11.9). A
+    /// <summary>True when the position is at or past end (§8.11.8). A
     /// binary reader has no TextReader — probe the seekable stream.</summary>
     private static bool AtEnd(Activation engine, StreamHandle h)
     {

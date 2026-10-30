@@ -87,7 +87,7 @@ public sealed class SchimpfArcRegressionTests
     [Fact] public void AtomConcat_BoundNonAtomResult_IsTypeErrorAtom() =>
         Raises("atom_concat(a, b, 3)", "type_error(atom, 3)");
 
-    // ---- §8.14.9.3 / §8.14.10.3: the char_conversion asymmetry ----
+    // ---- §8.14.5.3 / §8.14.6.3: the char_conversion asymmetry ----
 
     [Fact] public void CurrentCharConversion_NonCharacter_IsTypeErrorWithCulprit() =>
         Raises("current_char_conversion(1, _)", "type_error(character, 1)");

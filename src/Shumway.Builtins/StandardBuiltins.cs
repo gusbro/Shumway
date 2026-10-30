@@ -168,13 +168,13 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("write_canonical", 1, IOBuiltins.WriteCanonical,
             Io, "write_canonical(+Term)", "Writes a term in a quoted, operator-free form that reads back.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("write_canonical", 2, IOBuiltins.WriteCanonical2,
-            Io, "write_canonical(+Stream, +Term)", "Writes a term in canonical form to a stream (ISO §8.14.6).", kind: PredicateKind.Iso);
+            Io, "write_canonical(+Stream, +Term)", "Writes a term in canonical form to a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("write_term",      3, IOBuiltins.WriteTerm3,
-            Io, "write_term(+Stream, +Term, +Options)", "Writes a term to a stream honouring options (ISO §8.14.3).", kind: PredicateKind.Iso);
+            Io, "write_term(+Stream, +Term, +Options)", "Writes a term to a stream honouring options.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("writeq",          1, IOBuiltins.Writeq1,
-            Io, "writeq(+Term)", "Writes a term in quoted (parseable) form (ISO §8.14.5).", kind: PredicateKind.Iso);
+            Io, "writeq(+Term)", "Writes a term in quoted (parseable) form.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("writeq",          2, IOBuiltins.Writeq2,
-            Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).", kind: PredicateKind.Iso);
+            Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print,
             Io, "print(+Term)", "Writes a term using print conventions.");
         BuiltinsRegistry.Register("print",           2, IOBuiltins.Print2,
@@ -186,7 +186,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
             "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
-            + "eof_action). ISO §8.11.5.", kind: PredicateKind.Iso);
+            + "eof_action).", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,
@@ -206,53 +206,53 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar,
             Io, "peek_char(+Stream, -Char)", "Peeks the next character of a stream without consuming it.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_char",  1, StreamBuiltins.GetChar0,
-            Io, "get_char(-Char)", "Reads one character from the current input stream (ISO §8.12.1).", kind: PredicateKind.Iso);
+            Io, "get_char(-Char)", "Reads one character from the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_char", 1, StreamBuiltins.PeekChar0,
-            Io, "peek_char(-Char)", "Peeks one character from the current input stream (ISO §8.12.2).", kind: PredicateKind.Iso);
+            Io, "peek_char(-Char)", "Peeks one character from the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_char",  1, StreamBuiltins.PutChar1,
-            Io, "put_char(+Char)", "Writes a single-character atom to the current output stream (ISO §8.12.3).", kind: PredicateKind.Iso);
+            Io, "put_char(+Char)", "Writes a single-character atom to the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_char",  2, StreamBuiltins.PutChar2,
-            Io, "put_char(+Stream, +Char)", "Writes a single-character atom to the given stream (ISO §8.12.3).", kind: PredicateKind.Iso);
+            Io, "put_char(+Stream, +Char)", "Writes a single-character atom to the given stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_code",  1, StreamBuiltins.GetCode0,
-            Io, "get_code(-Code)", "Reads one character code from the current input stream (ISO §8.12.4).", kind: PredicateKind.Iso);
+            Io, "get_code(-Code)", "Reads one character code from the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_code",  2, StreamBuiltins.GetCode2,
-            Io, "get_code(+Stream, -Code)", "Reads one character code from a stream (ISO §8.12.4).", kind: PredicateKind.Iso);
+            Io, "get_code(+Stream, -Code)", "Reads one character code from a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_code", 1, StreamBuiltins.PeekCode0,
-            Io, "peek_code(-Code)", "Peeks one character code from current input (ISO §8.12.5).", kind: PredicateKind.Iso);
+            Io, "peek_code(-Code)", "Peeks one character code from current input.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_code", 2, StreamBuiltins.PeekCode2,
-            Io, "peek_code(+Stream, -Code)", "Peeks one character code from a stream (ISO §8.12.5).", kind: PredicateKind.Iso);
+            Io, "peek_code(+Stream, -Code)", "Peeks one character code from a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_code",  1, StreamBuiltins.PutCode1,
-            Io, "put_code(+Code)", "Writes the character for Code to the current output stream (ISO §8.12.6).", kind: PredicateKind.Iso);
+            Io, "put_code(+Code)", "Writes the character for Code to the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_code",  2, StreamBuiltins.PutCode2,
-            Io, "put_code(+Stream, +Code)", "Writes the character for Code to a stream (ISO §8.12.6).", kind: PredicateKind.Iso);
+            Io, "put_code(+Stream, +Code)", "Writes the character for Code to a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_byte",  1, StreamBuiltins.GetByte0,
-            Io, "get_byte(-Byte)", "Reads one byte from the current input binary stream (ISO §8.13.1).", kind: PredicateKind.Iso);
+            Io, "get_byte(-Byte)", "Reads one byte from the current input binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_byte",  2, StreamBuiltins.GetByte2,
-            Io, "get_byte(+Stream, -Byte)", "Reads one byte from a binary stream (ISO §8.13.1).", kind: PredicateKind.Iso);
+            Io, "get_byte(+Stream, -Byte)", "Reads one byte from a binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_byte", 1, StreamBuiltins.PeekByte0,
-            Io, "peek_byte(-Byte)", "Peeks one byte from the current input binary stream (ISO §8.13.2).", kind: PredicateKind.Iso);
+            Io, "peek_byte(-Byte)", "Peeks one byte from the current input binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_byte", 2, StreamBuiltins.PeekByte2,
-            Io, "peek_byte(+Stream, -Byte)", "Peeks one byte from a binary stream (ISO §8.13.2).", kind: PredicateKind.Iso);
+            Io, "peek_byte(+Stream, -Byte)", "Peeks one byte from a binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_byte",  1, StreamBuiltins.PutByte1,
-            Io, "put_byte(+Byte)", "Writes one byte to the current output binary stream (ISO §8.13.3).", kind: PredicateKind.Iso);
+            Io, "put_byte(+Byte)", "Writes one byte to the current output binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("put_byte",  2, StreamBuiltins.PutByte2,
-            Io, "put_byte(+Stream, +Byte)", "Writes one byte to a binary stream (ISO §8.13.3).", kind: PredicateKind.Iso);
+            Io, "put_byte(+Stream, +Byte)", "Writes one byte to a binary stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_input",  1, StreamBuiltins.CurrentInput,
-            Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).", kind: PredicateKind.Iso);
+            Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_output", 1, StreamBuiltins.CurrentOutput,
-            Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream (ISO §8.11.2).", kind: PredicateKind.Iso);
+            Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_input",  1, StreamBuiltins.SetInput,
-            Io, "set_input(+Stream)", "Sets the current input stream (ISO §8.11.3).", kind: PredicateKind.Iso);
+            Io, "set_input(+Stream)", "Sets the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_output", 1, StreamBuiltins.SetOutput,
-            Io, "set_output(+Stream)", "Sets the current output stream (ISO §8.11.4).", kind: PredicateKind.Iso);
+            Io, "set_output(+Stream)", "Sets the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
-            Io, "flush_output", "Flushes the current output stream (ISO §8.11.7).", kind: PredicateKind.Iso);
+            Io, "flush_output", "Flushes the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,
-            Io, "flush_output(+Stream)", "Flushes the given stream (ISO §8.11.7).", kind: PredicateKind.Iso);
+            Io, "flush_output(+Stream)", "Flushes the given stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("at_end_of_stream", 0, StreamBuiltins.AtEndOfStream0,
-            Io, "at_end_of_stream", "Succeeds if the current input stream is at end of file (ISO §8.11.9).", kind: PredicateKind.Iso);
+            Io, "at_end_of_stream", "Succeeds if the current input stream is at end of file.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("at_end_of_stream", 1, StreamBuiltins.AtEndOfStream1,
-            Io, "at_end_of_stream(+Stream)", "Succeeds if the given stream is at end of file (ISO §8.11.9).", kind: PredicateKind.Iso);
+            Io, "at_end_of_stream(+Stream)", "Succeeds if the given stream is at end of file.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("format",    3, IOBuiltins.Format3,
             Io, "format(+Stream, +Format, +Arguments)", "Writes formatted output to the given stream.");
 
@@ -367,7 +367,7 @@ public static class StandardBuiltins
             Lists, "keysort(+Pairs, -Sorted)",
             "Stable-sort a list of K-V pairs by K in the standard order of terms. "
             + "Each element must be a -/2 compound; relative order of equal-key "
-            + "pairs is preserved. ISO §8.4.4.", kind: PredicateKind.Iso);
+            + "pairs is preserved.", kind: PredicateKind.Iso);
 
         // Control.
         const string Control = "Control";

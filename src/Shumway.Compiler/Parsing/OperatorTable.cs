@@ -136,7 +136,7 @@ public sealed class OperatorTable
     /// <summary>Enumerates every (priority, type, name) currently
     /// registered. Each (name, fixity) pair produces one entry, so an
     /// atom that's both prefix and infix (e.g. <c>-</c>) appears
-    /// twice. Used by <c>current_op/3</c> (ISO §8.17.3) to drive its
+    /// twice. Used by <c>current_op/3</c> (ISO §8.14.4) to drive its
     /// backtracking enumeration.</summary>
     public IEnumerable<(int Precedence, OperatorType Type, string Name)> Enumerate()
     {

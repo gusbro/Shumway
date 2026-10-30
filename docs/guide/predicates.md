@@ -121,7 +121,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `term_string(?Term, ?String)` | engine | Converts between a term and its textual string representation. |
 | `term_string(?Term, ?String, +Options)` | engine | As term_string/2 with an accepted, ignored option list. |
 | `term_to_atom(?Term, ?Atom)` | engine | Converts between a term and its textual atom representation. |
-| `term_variables(+Term, -Variables)` | iso | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
+| `term_variables(+Term, -Variables)` | iso | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order. |
 | `unifiable(@X, @Y, -Unifier)` | engine | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
 | `variant(@Term1, @Term2)` | engine | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption). |
 
@@ -252,7 +252,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V)` | library | Folds Goal over three lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | library | Included holds the elements of List for which Goal succeeds. |
 | `intersection(+Set1, +Set2, -Intersection)` | library | Intersection holds the elements of Set1 that also occur in Set2. |
-| `keysort(+Pairs, -Sorted)` | iso | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
+| `keysort(+Pairs, -Sorted)` | iso | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. |
 | `last(?List, ?Last)` | library | Relates a list to its last element. A cyclic list raises resource_error(finite_memory). |
 | `length(?List, ?Length)` | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails. |
 | `list_to_set(+List, -Set)` | library | Removes duplicates from a list, keeping the first occurrence of each. A cyclic list gives the set of its distinct elements. |
@@ -368,15 +368,15 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | Predicate | Kind | Description |
 | --- | --- | --- |
 | `absolute_file_name(+FileSpec, -Absolute)` | engine | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
-| `at_end_of_stream` | iso | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
-| `at_end_of_stream(+Stream)` | iso | Succeeds if the given stream is at end of file (ISO §8.11.9). |
+| `at_end_of_stream` | iso | Succeeds if the current input stream is at end of file. |
+| `at_end_of_stream(+Stream)` | iso | Succeeds if the given stream is at end of file. |
 | `chdir(?Path)` | engine | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
 | `close(+Stream)` | iso | Closes an open stream. |
 | `close(+Stream, +Options)` | iso | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
 | `copy_file(+From, +To)` | engine | Copies file From to To (overwriting To). Raises existence_error(source_sink, From) when From is missing. |
-| `current_input(-Stream)` | iso | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
-| `current_output(-Stream)` | iso | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
-| `current_stream(?Filename, ?Mode, ?Stream)` | engine | Enumerates open streams (ISO §8.11.8.1). |
+| `current_input(-Stream)` | iso | Unifies Stream with a designator for the current input stream. |
+| `current_output(-Stream)` | iso | Unifies Stream with a designator for the current output stream. |
+| `current_stream(?Filename, ?Mode, ?Stream)` | engine | Enumerates open streams. |
 | `delete(+File)` | engine | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
 | `delete_file(+File)` | engine | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | engine | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
@@ -389,8 +389,8 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `file_name_extension(?Base, ?Ext, ?Full)` | engine | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). |
 | `file_permission(+File, +Permission)` | engine | Succeeds when File (a file or directory) grants Permission: read, write, execute or search. A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
 | `file_size(+File, -Bytes)` | engine | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
-| `flush_output` | iso | Flushes the current output stream (ISO §8.11.7). |
-| `flush_output(+Stream)` | iso | Flushes the given stream (ISO §8.11.7). |
+| `flush_output` | iso | Flushes the current output stream. |
+| `flush_output(+Stream)` | iso | Flushes the given stream. |
 | `format(+Format)` | engine | Like format/2 with no arguments. |
 | `format(+Format, +Arguments)` | engine | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | engine | Writes formatted output to the given stream. |
@@ -399,12 +399,12 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `get(+Stream, ?Code)` | engine | Stream variant of get/1. |
 | `get0(?Code)` | engine | Reads the next character code from the current input stream without skipping non-printing codes. EOF returns -1. |
 | `get0(+Stream, ?Code)` | engine | Stream variant of get0/1. |
-| `get_byte(-Byte)` | iso | Reads one byte from the current input binary stream (ISO §8.13.1). |
-| `get_byte(+Stream, -Byte)` | iso | Reads one byte from a binary stream (ISO §8.13.1). |
-| `get_char(-Char)` | iso | Reads one character from the current input stream (ISO §8.12.1). |
+| `get_byte(-Byte)` | iso | Reads one byte from the current input binary stream. |
+| `get_byte(+Stream, -Byte)` | iso | Reads one byte from a binary stream. |
+| `get_char(-Char)` | iso | Reads one character from the current input stream. |
 | `get_char(+Stream, -Char)` | iso | Reads and consumes one character from a stream. |
-| `get_code(-Code)` | iso | Reads one character code from the current input stream (ISO §8.12.4). |
-| `get_code(+Stream, -Code)` | iso | Reads one character code from a stream (ISO §8.12.4). |
+| `get_code(-Code)` | iso | Reads one character code from the current input stream. |
+| `get_code(+Stream, -Code)` | iso | Reads one character code from a stream. |
 | `getenv(+Name, -Value)` | engine | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
 | `http_download(+URL, +File)` | engine | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
 | `line_count(+Stream, -Line)` | engine | The line the next character read from a text input stream comes from, counting from 1. |
@@ -412,14 +412,14 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `nl` | iso | Writes a newline to the current output stream. |
 | `nl(+Stream)` | iso | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | iso | Opens a file as a stream handle. |
-| `open(+File, +Mode, -Stream, +Options)` | iso | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action). ISO §8.11.5. |
+| `open(+File, +Mode, -Stream, +Options)` | iso | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action). |
 | `partial_string(+Text, ?Ls, ?Ls0)` | engine | Ls is the packed list of Text's characters with Ls0 as its tail. |
-| `peek_byte(-Byte)` | iso | Peeks one byte from the current input binary stream (ISO §8.13.2). |
-| `peek_byte(+Stream, -Byte)` | iso | Peeks one byte from a binary stream (ISO §8.13.2). |
-| `peek_char(-Char)` | iso | Peeks one character from the current input stream (ISO §8.12.2). |
+| `peek_byte(-Byte)` | iso | Peeks one byte from the current input binary stream. |
+| `peek_byte(+Stream, -Byte)` | iso | Peeks one byte from a binary stream. |
+| `peek_char(-Char)` | iso | Peeks one character from the current input stream. |
 | `peek_char(+Stream, -Char)` | iso | Peeks the next character of a stream without consuming it. |
-| `peek_code(-Code)` | iso | Peeks one character code from current input (ISO §8.12.5). |
-| `peek_code(+Stream, -Code)` | iso | Peeks one character code from a stream (ISO §8.12.5). |
+| `peek_code(-Code)` | iso | Peeks one character code from current input. |
+| `peek_code(+Stream, -Code)` | iso | Peeks one character code from a stream. |
 | `pid(-Pid)` | engine | Unifies Pid with the current process id. |
 | `portray_clause(+Clause)` | engine | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | engine | Like portray_clause/1 but writes to the given stream. |
@@ -429,14 +429,14 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `prolog_to_os_filename(?PrologPath, ?OsPath)` | engine | Converts between Shumway's canonical '/'-separated path form and the host's native form. Either argument may be the bound one; on a system whose separator is already '/' the two forms are the same. |
 | `put(+Code)` | engine | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
 | `put(+Stream, +Code)` | engine | Stream variant of put/1. |
-| `put_byte(+Byte)` | iso | Writes one byte to the current output binary stream (ISO §8.13.3). |
-| `put_byte(+Stream, +Byte)` | iso | Writes one byte to a binary stream (ISO §8.13.3). |
-| `put_char(+Char)` | iso | Writes a single-character atom to the current output stream (ISO §8.12.3). |
-| `put_char(+Stream, +Char)` | iso | Writes a single-character atom to the given stream (ISO §8.12.3). |
-| `put_code(+Code)` | iso | Writes the character for Code to the current output stream (ISO §8.12.6). |
-| `put_code(+Stream, +Code)` | iso | Writes the character for Code to a stream (ISO §8.12.6). |
-| `read(-Term)` | iso | Reads one term from current input (ISO §8.14.2). |
-| `read(+Stream, -Term)` | iso | Reads one term from a stream (ISO §8.14.2). |
+| `put_byte(+Byte)` | iso | Writes one byte to the current output binary stream. |
+| `put_byte(+Stream, +Byte)` | iso | Writes one byte to a binary stream. |
+| `put_char(+Char)` | iso | Writes a single-character atom to the current output stream. |
+| `put_char(+Stream, +Char)` | iso | Writes a single-character atom to the given stream. |
+| `put_code(+Code)` | iso | Writes the character for Code to the current output stream. |
+| `put_code(+Stream, +Code)` | iso | Writes the character for Code to a stream. |
+| `read(-Term)` | iso | Reads one term from current input. |
+| `read(+Stream, -Term)` | iso | Reads one term from a stream. |
 | `read_term(+Stream, -Term)` | iso | Reads one term from a read-mode stream. |
 | `read_term(+Stream, -Term, +Options)` | iso | Reads one term from a read-mode stream; honours variable_names/1, singletons/1, variables/1 and line_counts/2 options. |
 | `read_term_from_chars(+Chars, -Term, +Options)` | engine | Reads a term from a character list, honouring read_term/2 options. |
@@ -446,15 +446,15 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `see(+File)` | engine | Opens File for reading and makes it the current input stream. An already-open see-stream is closed first. |
 | `seeing(?File)` | engine | Unifies File with the name of the current input stream's file (or `user` when current input is user_input). |
 | `seen` | engine | Closes the current input stream (if not user_input) and reverts current input to user_input. |
-| `set_input(+Stream)` | iso | Sets the current input stream (ISO §8.11.3). |
-| `set_output(+Stream)` | iso | Sets the current output stream (ISO §8.11.4). |
-| `set_stream_position(+Stream, +Position)` | iso | Seeks the stream to the given byte position (ISO §8.11.10). |
+| `set_input(+Stream)` | iso | Sets the current input stream. |
+| `set_output(+Stream)` | iso | Sets the current output stream. |
+| `set_stream_position(+Stream, +Position)` | iso | Seeks the stream to the given byte position. |
 | `shell(+Command)` | engine | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
 | `shell(+Command, -Status)` | engine | Runs Command through the platform shell and unifies Status with its exit code. |
 | `skip(+Code)` | engine | Reads from the current input stream, discarding characters until the code Code is read. |
 | `skip(+Stream, +Code)` | engine | Stream variant of skip/1. |
 | `sleep(+Seconds)` | engine | Suspends execution for Seconds (integer or float). |
-| `stream_property(?Stream, ?Property)` | iso | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
+| `stream_property(?Stream, ?Property)` | iso | Enumerates (Stream, Property) pairs for every open stream. |
 | `tab(+N)` | engine | Writes N spaces to the current output stream. |
 | `tab(+Stream, +N)` | engine | Stream variant of tab/1: writes N spaces to Stream. |
 | `tell(+File)` | engine | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
@@ -465,21 +465,21 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `write(+Term)` | iso | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | iso | Writes a term to the given stream. |
 | `write_canonical(+Term)` | iso | Writes a term in a quoted, operator-free form that reads back. |
-| `write_canonical(+Stream, +Term)` | iso | Writes a term in canonical form to a stream (ISO §8.14.6). |
+| `write_canonical(+Stream, +Term)` | iso | Writes a term in canonical form to a stream. |
 | `write_term(+Term, +Options)` | iso | Writes a term honouring the given list of write options. |
-| `write_term(+Stream, +Term, +Options)` | iso | Writes a term to a stream honouring options (ISO §8.14.3). |
+| `write_term(+Stream, +Term, +Options)` | iso | Writes a term to a stream honouring options. |
 | `write_term_to_chars(+Term, +Options, -Chars)` | engine | Writes a term to a character list with write_term/2's options. |
 | `writeln(+Term)` | engine | Writes a term followed by a newline. |
-| `writeq(+Term)` | iso | Writes a term in quoted (parseable) form (ISO §8.14.5). |
-| `writeq(+Stream, +Term)` | iso | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
+| `writeq(+Term)` | iso | Writes a term in quoted (parseable) form. |
+| `writeq(+Stream, +Term)` | iso | Writes a term in quoted (parseable) form to a stream. |
 
 ## Flags, operators & reflection
 
 | Predicate | Kind | Description |
 | --- | --- | --- |
-| `char_conversion(+InChar, +OutChar)` | iso | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
-| `current_char_conversion(?InChar, ?OutChar)` | iso | Enumerates the active char-conversion table (ISO §8.14.10). |
-| `current_op(?Priority, ?Type, ?Name)` | iso | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
+| `char_conversion(+InChar, +OutChar)` | iso | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token. InChar == OutChar removes the entry. |
+| `current_char_conversion(?InChar, ?OutChar)` | iso | Enumerates the active char-conversion table. |
+| `current_op(?Priority, ?Type, ?Name)` | iso | Enumerates the operator table; backtracks over every operator. |
 | `current_prolog_flag(?Flag, ?Value)` | iso | Reads the value of a Prolog flag. |
 | `is_stream(@Term)` | engine | Succeeds if Term is a stream handle or a registered stream alias. |
 | `module_property(?Module, ?Property)` | engine | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
