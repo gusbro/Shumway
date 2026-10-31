@@ -371,8 +371,8 @@
 % Shumway paths need no OS-specific spelling changes
 '$lgt_prolog_os_file_name'(Path, Path).
 
-% Path expansion = $LOGTALKHOME/$LOGTALKUSER substitution, then absolute,
-% then forward slashes throughout. The core assembles paths POSIX-style;
+% Path expansion = a leading $VAR/ substituted, then absolute, then forward
+% slashes throughout. The core assembles paths POSIX-style;
 % .NET hands back backslashed Windows paths, and a mixed 'dir\/file' join
 % breaks exists_file — so everything the adapter returns is '/'-separated.
 '$lgt_expand_path'(Path, ExpandedPath) :-
@@ -390,15 +390,17 @@
 	;	Slashed = Path
 	).
 
+% Any variable, not a fixed list: the `home` library alias is '$HOME/', or
+% '$USERPROFILE/' on Windows without HOME. An undefined one stays as written.
 '$shumway_env_prefix'(Path, Substituted) :-
-	(	sub_atom(Path, 0, _, _, '$LOGTALKHOME/'),
-		getenv('LOGTALKHOME', Value) ->
-		sub_atom(Path, 13, _, 0, Tail),
-		atomic_list_concat([Value, '/', Tail], Substituted)
-	;	sub_atom(Path, 0, _, _, '$LOGTALKUSER/'),
-		getenv('LOGTALKUSER', Value) ->
-		sub_atom(Path, 13, _, 0, Tail),
-		atomic_list_concat([Value, '/', Tail], Substituted)
+	(	sub_atom(Path, 0, 1, _, '$'),
+		once(sub_atom(Path, Slash, 1, _, '/')),
+		Slash > 1,
+		Length is Slash - 1,
+		sub_atom(Path, 1, Length, _, Name),
+		catch(getenv(Name, Value), _, fail) ->
+		sub_atom(Path, Slash, _, 0, Tail),
+		atom_concat(Value, Tail, Substituted)
 	;	Substituted = Path
 	).
 

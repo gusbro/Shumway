@@ -97,4 +97,34 @@ public class LogtalkAdapterTests
               term_variables(f(X, V), Vs), Vs == [V],
               findall(X, true, [F]), F = f(_, a).").Success);
     }
+
+    // Logtalk's `home` library alias is '$HOME/', or '$USERPROFILE/' on Windows
+    // without HOME; left unexpanded, packs made a directory named after it.
+    [Fact]
+    public void ALeadingEnvironmentVariableInAPathIsExpanded()
+    {
+        string name = "SHUMWAY_LGT_" + Guid.NewGuid().ToString("N");
+        string dir = Path.GetTempPath().TrimEnd('\\', '/');
+        Environment.SetEnvironmentVariable(name, dir);
+        try
+        {
+            var engine = Adapter("object");
+            var sol = engine.Query($@"'$lgt_expand_path'('${name}/logtalk_packs/', P).");
+            Assert.True(sol.Success);
+            Assert.Equal(dir.Replace('\\', '/') + "/logtalk_packs/",
+                Assert.IsType<Shumway.Compiler.Ast.AtomTerm>(sol["P"]).Name);
+        }
+        finally { Environment.SetEnvironmentVariable(name, null); }
+    }
+
+    [Fact]
+    public void AnUndefinedEnvironmentVariableStaysAsWritten()
+    {
+        string name = "SHUMWAY_LGT_UNSET_" + Guid.NewGuid().ToString("N");
+        var engine = Adapter("object");
+        var sol = engine.Query($@"'$lgt_expand_path'('${name}/x.lgt', P).");
+        Assert.True(sol.Success);
+        Assert.EndsWith($"/${name}/x.lgt",
+            Assert.IsType<Shumway.Compiler.Ast.AtomTerm>(sol["P"]).Name);
+    }
 }
