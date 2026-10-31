@@ -1547,10 +1547,13 @@ public sealed partial class PrologEngine
                 if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
                     BytecodeIO.WriteInt32(_persistentProgram!, prefix.Length + offset + 1, dynAddr);
         }
-        // pick the per-query overlay's start address with
-        // enough headroom over the persistent length for mid-query
-        // assertz extensions (typically far less than 64 MB).
-        _querySplit = _persistentLength + PersistentToQueryGap;
+        // The per-query overlay sits just below the resume markers, leaving
+        // the persistent program room to grow mid-query.
+        _querySplit = TestQueryGrowthRoom is int room
+            ? _persistentLength + room
+            : Activation.ResumeMarkerBase - QueryOverlayReserve;
+        if (_persistentLength > _querySplit)
+            throw new PrologRuntimeException("resource_error", "code_space");
 
         // Build the merged external-symbols table for the query
         // linker — it resolves calls into both the static and
@@ -1603,6 +1606,9 @@ public sealed partial class PrologEngine
                 staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
 
         byte[] queryBytes = queryLink.Bytecode;
+        // Past the reserve the overlay's addresses would read as resume markers.
+        if ((long)_querySplit + queryBytes.Length > Activation.ResumeMarkerBase)
+            throw new PrologRuntimeException("resource_error", "code_space");
         if (LoadProfEnabled)
             ProfQueryCompileTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profQc0;
         long profMg0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
