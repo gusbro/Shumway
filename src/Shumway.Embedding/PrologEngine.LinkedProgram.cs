@@ -182,7 +182,7 @@ public sealed partial class PrologEngine
     }
 
     // The transient atoms an image's cells name, ascending.
-    private static int[] ImageAtomIds(Shumway.Core.TermImage image)
+    internal static int[] ImageAtomIds(Shumway.Core.TermImage image)
     {
         List<int>? ids = null;
         foreach (var cell in image.Cells)

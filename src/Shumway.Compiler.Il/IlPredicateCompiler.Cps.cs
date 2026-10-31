@@ -184,6 +184,8 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, PredicateDelegate baseDelegate)
     {
         if (!CpsMode || DebugMode) return null;
+        // The methods are the delegate's code: they name its artifact.
+        using var artifact = new ArtifactScope(ArtifactOf(baseDelegate));
         var type = CpsTypeBuilder(predicate.FunctorId);
         var layout = EmitCps(type, predicate, calleeMap, baseDelegate, "Alt", (CpsStubs.Jump, CpsStubs.Fail),
             out object[] literals);
@@ -192,6 +194,12 @@ public sealed partial class IlPredicateCompiler
         created.GetField(LiteralsFieldOf(layout.AltField))!.SetValue(null, literals);
         var code = BindCps(created, layout, predicate.FunctorId);
         lock (CpsGenerations) CpsGenerations.Add(created);
+        NoteArtifactDelegate(code.EntryDelegate, literals);
+        NoteArtifactDelegate(code.ColdDelegate, literals);
+        if (code.AltDelegate is { } alt) NoteArtifactDelegate(alt, literals);
+        foreach (var method in code.ByCursor)
+            if (method is not null && !ReferenceEquals(method, code.AltDelegate))
+                NoteArtifactDelegate(method, literals);
         return code;
     }
 

@@ -841,6 +841,12 @@ public sealed partial class Activation
     // A byte, not a bool: ResumeFromBuiltin is the resume a builtin's retry leaves.
     [EditorBrowsable(EditorBrowsableState.Never)] public byte _ilTailCallPending;
 
+    // The compiled code whose method is on the C# stack calling a builtin that
+    // may change code (ADR-003): the code stores its id before the call, the
+    // dispatch loop clears it when compiled code returns to it. Nothing else
+    // names a method on the stack, so this is what keeps its atoms claimed.
+    [EditorBrowsable(EditorBrowsableState.Never)] public int _ilArtifact;
+
     /// <summary>The <see cref="_ilTailCallPending"/> a builtin's retry leaves
     /// (<see cref="ResumeAtReturnPc"/>): Pc is the instruction after the
     /// builtin's call, never a predicate's entry, and the interpreter resumes

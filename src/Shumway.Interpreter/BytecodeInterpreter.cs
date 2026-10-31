@@ -645,7 +645,9 @@ public sealed partial class BytecodeInterpreter
                             if (Tier1Dispatcher?.OnDispatch(addr) is { } fwd)
                             {
                                 _engine.MaybeCollectHeapAtDispatch(addr);
-                                if (!fwd(_engine))
+                                bool forwarded = fwd(_engine);
+                                _engine._ilArtifact = 0;   // no compiled method is on the stack
+                                if (!forwarded)
                                 {
                                     if (!TryBacktrack())
                                         return InterpreterResult.Failed;
@@ -687,7 +689,9 @@ public sealed partial class BytecodeInterpreter
                         + "delegate is bound. (A Tier-1 promotion must "
                         + "have unwired itself mid-query, which is a bug.)");
                 }
-                if (!del(_engine, cursor))
+                bool resumed = del(_engine, cursor);
+                _engine._ilArtifact = 0;   // no compiled method is on the stack
+                if (!resumed)
                 {
                     if (!TryBacktrack()) return InterpreterResult.Failed;
                     continue;
@@ -3159,7 +3163,9 @@ public sealed partial class BytecodeInterpreter
                 Tier1Dispatcher!.CreditCaller(sitePc);
                 sitePc = -1;   // a chained tail call comes from compiled code
             }
-            if (!ilFn(_engine))
+            bool ran = ilFn(_engine);
+            _engine._ilArtifact = 0;   // no compiled method is on the stack
+            if (!ran)
             {
                 if (!TryBacktrack()) throw new TopLevelFailure();
                 return;

@@ -277,6 +277,7 @@ public sealed partial class IlPredicateCompiler
     /// loading process resolves by name).</summary>
     private static void EmitBuiltinImplCall(IlEmit emit, int builtinId)
     {
+        EmitArtifactStore(emit, builtinId);
         var impl = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Impl;
         var method = impl.Method;
         if (impl.Target is null && method.IsStatic && impl.GetInvocationList().Length == 1

@@ -194,6 +194,55 @@ public sealed partial class Activation
         for (int i = 0; i < _catchFrames.Count; i++) Reach(_catchFrames[i].RecoveryCp, starts, ends, reached);
     }
 
+    /// <summary>Sets <c>reached[i]</c> for each of <paramref name="functorIds"/>
+    /// (ascending) that a resume marker among this activation's control words
+    /// names: compiled code of that predicate it can still resume into. The
+    /// words are those of <see cref="MarkReachedCode"/>.</summary>
+    public void MarkReachedMarkers(ReadOnlySpan<int> functorIds, Span<bool> reached)
+    {
+        ReachMarker(_cp, functorIds, reached);
+        ReachMarker(_p, functorIds, reached);
+        ReachMarker(BuiltinReturnPc, functorIds, reached);
+        for (int i = 0; i < _stackTop; i++)
+            if (_stack[i].Tag == Tag.RawInt) ReachMarker((int)_stack[i].Data, functorIds, reached);
+        for (int i = 0; i < _catchFrames.Count; i++) ReachMarker(_catchFrames[i].RecoveryCp, functorIds, reached);
+    }
+
+    private static void ReachMarker(int word, ReadOnlySpan<int> functorIds, Span<bool> reached)
+    {
+        if (!IsResumeMarker(word)) return;
+        int fid = DecodeResumeMarker(word).FunctorId;
+        int lo = 0, hi = functorIds.Length - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (functorIds[mid] < fid) lo = mid + 1;
+            else if (functorIds[mid] > fid) hi = mid - 1;
+            else
+            {
+                reached[mid] = true;
+                return;
+            }
+        }
+    }
+
+    /// <summary>The compiled code that stored itself as running
+    /// (<see cref="_ilArtifact"/>); 0 for none.</summary>
+    public int RunningArtifact => _ilArtifact;
+
+    /// <summary>Adds to <paramref name="into"/> the delegate of every compiled
+    /// choice point on the stack, and the delegate it wraps: the code those
+    /// choice points resume into.</summary>
+    public void CollectIlChoicePointDelegates(List<object> into)
+    {
+        for (int i = 0; i < _ilCpTop; i++)
+        {
+            var del = _ilCpStack[i].Del;
+            into.Add(del);
+            if (del.Target is { } target) into.Add(target);
+        }
+    }
+
     private static void Reach(int word, ReadOnlySpan<int> starts, ReadOnlySpan<int> ends, Span<bool> reached)
     {
         int lo = 0, hi = starts.Length - 1;

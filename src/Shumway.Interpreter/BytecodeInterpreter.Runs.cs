@@ -420,7 +420,9 @@ public sealed partial class BytecodeInterpreter
             _engine.MaybeCollectHeapAtDispatch(p);
             var fn = t.OnDispatch(p);
             if (fn is null) return true;
-            if (!fn(_engine)) return false;
+            bool ran = fn(_engine);
+            _engine._ilArtifact = 0;   // no compiled method is on the stack
+            if (!ran) return false;
             if (!_engine.IlTailCallPending)
             {
                 _engine.SetPc(_engine.Cp);
@@ -464,7 +466,9 @@ public sealed partial class BytecodeInterpreter
                 // still names the CP being resumed here.
                 _engine.Debug?.OnRedo(_engine, -1);
                 var (del, cursor) = _engine.RetryOrPopIlChoicePoint();
-                if (del(_engine, cursor))
+                bool resumed = del(_engine, cursor);
+                _engine._ilArtifact = 0;   // no compiled method is on the stack
+                if (resumed)
                 {
                     // Success: if the IL signalled a tail-call,
                     // leave Pc alone so the next dispatch picks up at the

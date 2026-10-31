@@ -402,7 +402,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             if (pred.IsDebuggable) continue;
             var del = Promoter(pred, addr);
             if (del is null) { _unpromotable.Add(fid); continue; }
-            ilStore.RegisterBoundDelegate(fid, del);
+            ilStore.RegisterBoundDelegate(fid, del, compiledFrom: pred);
             NoteInstalled(fid, addr, pred);
             installed++;
         }
@@ -515,7 +515,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             settled = true;
             return null;
         }
-        ilStore.RegisterBoundDelegate(functorId, del);
+        ilStore.RegisterBoundDelegate(functorId, del, compiledFrom: predicate);
         NoteInstalled(functorId, linkedAddress, predicate);
         return del;
     }
@@ -563,7 +563,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             return null;
         }
         settled = false;
-        ilStore.RegisterBoundDelegate(functorId, del);
+        ilStore.RegisterBoundDelegate(functorId, del, compiledFrom: shadow.Snapshot);
         _shadows[functorId] = shadow.Address;
         ShadowPromotions++;
         return del;

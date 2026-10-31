@@ -119,10 +119,11 @@ public sealed partial class IlPredicateCompiler
     private PredicateDelegate FinishEmit(IlEmit emit, string header, bool regionTailDone = false)
     {
         if (!regionTailDone) EmitRegionTail(emit);
-        if (TryFinishCps(emit, header, out var cpsBase)) return cpsBase;   // ADR-061
+        if (TryFinishCps(emit, header, out var cpsBase))   // ADR-061
+            return NoteArtifactDelegate(cpsBase, emit.Literals);
         DumpIl(emit, header);
         DumpRegionCost(emit);
-        return emit.CreateDelegate(initLocals: ZeroLocals);
+        return NoteArtifactDelegate(emit.CreateDelegate(initLocals: ZeroLocals), emit.Literals);
     }
 
     /// <summary>The method's IL to <c>SHUMWAY_IL_DUMP</c>, as finished.</summary>
@@ -778,6 +779,7 @@ public sealed partial class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         using var code = new CodeScope(predicate);
+        using var artifact = new ArtifactScope();
         DiagnoseInlineCandidates(predicate, calleeMap);
         DiagnoseRegion(predicate, calleeMap);
         // Region compilation (Stage 3, gated): emit the root + its local

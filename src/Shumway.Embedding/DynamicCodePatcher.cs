@@ -127,6 +127,7 @@ internal sealed class DynamicCodePatcher
     /// that no activation on it reaches.</summary>
     internal void ReleaseUnreached(DynChainTable table)
     {
+        E.IlPromotion.ReleaseRetiredUnreached();
         if (table.Dropped is not { Count: > 0 } dropped) return;
         // A wasm module bakes pcs of the code it was compiled from and may return
         // into it; until the tier says which, dropped code stays.
@@ -1955,6 +1956,14 @@ internal sealed class DynamicCodePatcher
         _liveEngines.Add(new WeakReference<Activation>(engine));
     }
 
+    /// <summary>The open activations of this engine: what may still resume
+    /// into code the engine dropped or retired.</summary>
+    internal IEnumerable<Activation> LiveActivations()
+    {
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+            if (_liveEngines[i].TryGetTarget(out var engine)) yield return engine;
+    }
+
     /// <summary>Drops <paramref name="engine"/> when its query ends, so the
     /// list holds only open activations — and therefore, minus whichever one
     /// is running, exactly the suspended ones the broadcast is for.
@@ -1972,6 +1981,8 @@ internal sealed class DynamicCodePatcher
             if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
                 _liveEngines.RemoveAt(i);
         }
+        // Compiled code only this activation could resume into goes with it.
+        E.IlPromotion.ReleaseRetiredUnreached();
         // Its code is dead: the query's region, and the buffer when it was
         // the last activation on a table the host has replaced.
         if (_activationUnits.TryGetValue(engine, out var units))

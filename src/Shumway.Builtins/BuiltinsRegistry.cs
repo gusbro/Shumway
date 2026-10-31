@@ -36,6 +36,20 @@ public static class BuiltinsRegistry
     private static volatile Dictionary<int, int> _byFunctorId = new();
     private static int _nextId;
 
+    // The engine's own builtins that may change compiled code or run another
+    // activation (BuiltinEntry.MayChangeCode), by name; a foreign predicate is
+    // marked when it registers.
+    private static readonly HashSet<string> CodeChangers = new()
+    {
+        "assert", "asserta", "assertz", "retract", "$retractall_modifiable", "abolish",
+        "consult", "reconsult", "ensure_loaded", "use_module", "$load_text",
+        "garbage_collect_clauses", "compact_dynamic_buffer", "jit_compile", "$tbl_solve_complete",
+    };
+
+    /// <summary>Marks the builtin as one that may change compiled code or run
+    /// another activation (<see cref="BuiltinEntry.MayChangeCode"/>).</summary>
+    public static void MarkMayChangeCode(int builtinId) => GetById(builtinId).MayChangeCode = true;
+
     /// <summary>Registers a builtin under the given name and arity, returning
     /// its id. If a builtin with the same functor is already registered, the
     /// existing id is returned and <paramref name="impl"/> is ignored.
@@ -84,7 +98,10 @@ public static class BuiltinsRegistry
                 arr = newArr;
             }
             arr[id] = new BuiltinEntry(
-                id, name, arity, impl, category, template, summary, kind);
+                id, name, arity, impl, category, template, summary, kind)
+            {
+                MayChangeCode = CodeChangers.Contains(name),
+            };
             _entries = arr;
             return id;
         }

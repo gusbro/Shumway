@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted ([Phase 1](../../history/phase-1-closure.md)).
+Accepted.
 
 ## Context
 
@@ -31,160 +31,172 @@ A solution is required that lets the table participate in GC while still allowin
 
 ## Decision
 
-Shumway uses a **three-tier atom table** with explicit movement between tiers driven by a custom atom GC.
+Shumway interns atoms into one process-wide table with stable ids, in three
+tiers. Transient atoms are kept alive by claims that each activation and each
+engine compute when they mark, so engines on different threads collect on
+their own, without stopping one another.
 
 ### The three tiers
 
-1. **Permanent**: atoms originating from source code literals, builtin names, or explicit promotion. Strong references in `_permanentById` (a `Dictionary<int, Atom>`, mirrored by a copy-on-write `_permanentByIdArray` for lock-free `GetById`). **Never collected** by the custom GC. Two sub-categories:
-   - Atoms from source code (created during `Consult`).
-   - Atoms promoted from Transient (e.g., when a transient atom appears in a source file loaded later).
+1. **Permanent**: never collected. The pre-registered atoms, the names the
+   engine itself fixes (builtin names, atom ids C# keeps in static caches),
+   and the atoms of a linked bundle's code. A bundle is static and never
+   unloaded, and its persisted IL and wasm modules bake atom ids and are
+   shared by the process, so every loader of a bundle interns permanent.
 
-2. **Transient**: atoms created dynamically at runtime (via `atom_concat`, `read_term`, etc.). Strong references in `_transientById` (a `Dictionary<int, Atom>`). **Kept alive by the table itself** during normal execution. The custom atom GC moves them to TransientWeak or removes them entirely.
+2. **Transient**: every other atom, the atoms of code compiled by a consult,
+   by `assert` and for a query included. An atom named only by clauses that
+   were retracted, abolished or replaced by a reconsult is garbage once
+   nothing else holds it, so a system that never stops and works by `assert`
+   and `retract` keeps a bounded table. The compilers intern transient.
 
-3. **TransientWeak**: atoms that have no strong reference from any engine but are still held by C# via the embedding API. The table holds only a `WeakReference<Atom>`. The .NET GC handles the actual collection: if C# lets go, the atom is collected; if reused by an engine, the atom is promoted back to Transient.
+3. **TransientWeak**: a transient atom no engine claims while C# still holds
+   it through the embedding API (`RegisterForeignHold`). The table keeps only a
+   `WeakReference<Atom>`, and the .NET GC decides: if C# lets go, the atom is
+   gone; if an engine interns it again first, it is transient again.
+
+### Ids
+
+One id per live name in the process. A collected atom's id is free, and a new
+atom takes a free id before a fresh one, the last freed first: the ids, the
+array indexed by them and a mark's bitmap stay bounded by the most atoms alive
+at once, not by every atom the process made. A name interned again after its
+atom died is a new atom, with whatever id is free. What is kept per activation
+and per engine is liveness, never the name: two engines that intern the same
+name get the same atom.
+
+A stale id therefore names another atom. Every holder of an atom id is a
+claimant or is reached by a claimant's mark. A cache keyed by an atom or
+functor id keeps permanent names only, checks on a hit that its ids still name
+the atoms it was made from, or is emptied when a collection runs. For tests the
+table can poison dead ids instead of freeing them: a poisoned id is not handed
+out again and looking it up throws, so a holder a mark misses fails where it
+reads.
+
+The hot path writes the id. `put_atom` is a store and atom comparison is
+integer equality; no instruction counts references.
 
 ### Lookup tables
 
-- `_byName: ConcurrentDictionary<string, WeakReference<Atom>>`: maps atom name to a **weak** reference to the atom. Weak so that demoting an atom to TransientWeak truly releases every table-side strong reference — a strong `_byName` would make the weak tier pointless. Used by `Intern(string)`.
-- `_permanentById: Dictionary<int, Atom>`: strong references that keep Permanent atoms alive.
-- `_transientById: Dictionary<int, Atom>`: strong references for Transient atoms.
-- `_transientWeak: Dictionary<int, TransientWeakEntry>`: for TransientWeak atoms — each entry bundles the `WeakReference<Atom>` with a cached name (the name is needed after the atom is gone).
-- `_foreignWeakRefs: List<WeakReference<Atom>>`: weak references corresponding to atoms exposed to C# via the embedding API. Used by the GC to detect C# retention.
+- `_byName: ConcurrentDictionary<string, WeakReference<Atom>>`: name to atom,
+  weak so that a TransientWeak atom has no strong table-side reference. Used by
+  `Intern(string)`. A dead atom's entry is removed only while it still names
+  that atom.
+- `_permanentById`: strong references to the permanent atoms, mirrored by a
+  copy-on-write array for lock-free `GetById`.
+- `_transientById`: strong references to the transient atoms.
+- `_transientWeak`: the TransientWeak atoms, each a `WeakReference<Atom>` with
+  its name.
+- `_foreignWeakRefs`: weak references to the atoms handed to C#, which tell a
+  collection which unclaimed atoms C# still holds.
 
-### Atom GC algorithm
+### Claims
 
-The GC runs at safe points (between queries, or when the transient table grows past a threshold). Stop-the-world for engines is brief (milliseconds).
+Each transient atom carries a claim count and an epoch: the value of a global
+epoch counter when it was last interned or last lost a claim. Interning writes
+the epoch; nothing else happens on the hot path or in an intern.
 
-**Phase 1 — Mark**: scan reachable engine state for atom ids.
+The claimants hold sorted lists of transient atom ids:
 
-```
-marked = empty set
-for each engine in all engines:
-    for each cell in engine.heap, engine.stack, engine.registers:
-        if cell.tag == ATOM:
-            marked.add(cell.AsAtomId)
-    for each cell in engine's trails (if applicable):
-        if cell.tag == ATOM: marked.add(cell.AsAtomId)
-for each predicate in all loaded predicates:
-    for each atom id in predicate's atom references:
-        marked.add(id)
-```
+- **Activations.** Each activation holds the transient atoms its last mark
+  found. A nested activation, a query run inside a builtin of another on the
+  same thread (the complete evaluation of tabled negation, a consult from
+  Prolog, a foreign predicate that queries back, the debugger's evaluation),
+  marks with the activation it runs in and shares its list. The last
+  activation of a domain to end releases its list.
+- **Engines.** Each engine holds the transient atoms of its state beyond any
+  activation: its code (the persistent program buffer, the static link, the
+  literal pools and images, the dynamic clause store, and the atoms each IL or
+  wasm artifact compiled from that code bakes, recorded with the artifact and
+  held while it is reachable, delegates retired for resumes included), its
+  global variables, its recorded database and its `flag/3` values. A
+  retracted clause's code stays in the persistent buffer, and holds its atoms,
+  until the buffer compacts (ADR-015).
 
-**Phase 2 — Compute foreignAlive**: walk `_foreignWeakRefs`, retain those whose target is still alive.
+Compiled code holds its atoms as long as an activation can still run it. An
+IL artifact (a compile's delegates and continuation methods) claims the atom
+operands of every predicate the compile read and the atoms of the images its
+methods load; a wasm module claims those of the predicate it was compiled
+from. The claim holds while the code is installed and, once it is evicted or
+replaced, while an activation of the engine reaches it: through a resume
+marker of its predicate among the activation's control words, through a
+compiled choice point of its code, or through a method of its code on the
+stack. Only a builtin that may change code (assert, retract, abolish, the
+consult family, the clause collectors, the tier switch, a foreign predicate)
+can evict the code of a method that is running, so a method stores its
+artifact's id into the activation before it calls one, and the dispatch loop
+clears it when compiled code returns to it; every other call stores nothing. A
+wasm module's running method is named by the resume marker its builtin's
+return address carries. Retired code is released when no activation reaches
+it: when code is evicted, when an activation ends, and before a new install.
+A resume marker names a predicate and a cursor, not a version, so a new
+install for a predicate waits until its retired code is gone, and the
+predicate runs on bytecode until then. A bundle's code names no artifact and
+claims nothing, its atoms being permanent; retired, it is kept.
 
-```
-foreignAlive = empty set
-newForeignRefs = empty list
-for each weak in _foreignWeakRefs:
-    if weak.TryGetTarget(out atom):
-        foreignAlive.add(atom.Id)
-        newForeignRefs.add(weak)
-_foreignWeakRefs = newForeignRefs   // compact
-```
+### Collection
 
-**Phase 3 — Process Transient table**: for each transient, decide between three outcomes.
+A claimant's mark replaces its list with what it finds and adjusts the counts
+by the difference, merging the two sorted lists: an atom it found and did not
+hold gains a claim; an atom it held and did not find loses one, which writes
+the atom's epoch. An atom dies when its count is zero and every live claimant
+has marked since its epoch; the registry of claimants publishes each one's
+last mark epoch. So an atom another claimant took, and has not marked yet,
+cannot die. Counts and the dead state change atomically: engines on different
+threads collect on their own, and an intern that meets a dead atom makes a new
+one for the name. An unclaimed atom C# still holds goes to TransientWeak
+instead of dying.
 
-```
-for each (id, atom) in _transient:
-    if marked.contains(id):
-        # still in use, keep in Transient
-        pass
-    elif foreignAlive.contains(id):
-        # not used by any engine, but C# holds it; move to TransientWeak
-        _transient.remove(id)
-        _transientWeak[id] = new WeakReference<Atom>(atom)
-    else:
-        # nobody uses it, remove (drop the strong reference)
-        _transient.remove(id)
-        _byName.remove(atom.Name)
-        # .NET GC will eventually collect the Atom object
-```
+A collection starts when the transient atoms interned since the last one pass
+a threshold. It waits for every claimant to mark at or after the epoch it
+began at, and the mark that completes it, or the release of the last claimant
+it waited for, sweeps the table. A claimant's owner runs it between taking
+and giving back a busy state: an activation's domain from the outermost step
+of its query (each run, the building of each answer, the teardown), an engine
+from the outermost step of any of its queries and while the host changes it.
+The collection takes each claimant idle if it can, without waiting:
 
-**Phase 4 — Process TransientWeak table**: clean up dead weak refs, promote back to Transient if reused.
+- A claimant it takes is marked there, on the collection's thread. One that
+  has not run since its last mark made that way holds what it held: its last
+  mark moves to now and nothing is scanned.
+- A running claimant is asked to mark at its next safe point, through the
+  request word the safe points already read for the debugger, so the hot path
+  reads nothing more. A heap collection due at that safe point marks in its
+  own trace (ADR-016); otherwise the activation traces without moving
+  anything. A failure-driven loop that crosses no call boundary is reached at
+  the throttled safe point of the retries the engine makes itself, the one that
+  serves cancellation; the backtrack polls of compiled code do not mark, since
+  they keep heap indices and registers in locals no trace sees. A running
+  engine marks at the safe points of the domain its outermost step runs in,
+  which holds the queries its builtins run, on other engines too. A claimant
+  that stops before a safe point marks as it stops, unless an exception
+  stopped it.
 
-```
-for each (id, weak) in _transientWeak:
-    if not weak.TryGetTarget(out atom):
-        # C# also released, remove the entry
-        _transientWeak.remove(id)
-        _byName.remove(<atom's name; needs caching since atom is gone>)
-    elif marked.contains(id):
-        # an engine used it again; promote back to Transient
-        _transient[id] = atom
-        _transientWeak.remove(id)
-    else:
-        # still only held by C#, keep in TransientWeak
-        pass
-```
+So a claimant that does not run, an engine kept idle or a query whose answers
+the host stopped asking for, never holds a collection back.
 
-### Atom ids are stable
+The mark takes every cell the trace reaches (an `Atom` cell, and the name atom
+of a `Functor` cell) and the atom ids the activation keeps outside cells:
+attribute module keys and their trail log, the wakeup queue, the
+global-variable keys of the external trail, the findall, bagof and setof
+buffers in progress, and the objects of builtin choice points and of the
+foreign table, through a visitor they implement. An activation joins its
+domain at its first run, once its setup wrote what it writes: from there a
+collection may mark it from another thread.
 
-Once an atom is assigned an id, that id never changes, even as the atom moves between tiers. Cells in heaps that contain `id=42` remain valid as long as the atom with id 42 is alive (in any tier).
+### Atom terms held by the host
 
-### Hot path is trivial
+An `AtomTerm` caches the id it resolved, and the trees the host holds (an
+answer, an exception, a term handed to a foreign predicate) cannot be marked.
+The cached id carries the number of sweeps run when it was taken; after a
+sweep the tree resolves the atom again by the name it keeps.
 
-The hot path of `put_atom` is just:
+### Functors
 
-```csharp
-heap[idx] = new Cell((long)Tag.Atom << 60 | (uint)atomId);
-```
-
-No reference counting. No anchor list updates. No bookkeeping. The atom remains alive because the Transient table holds it.
-
-### Promotion to Permanent
-
-When a transient atom appears in a source file being loaded, it is promoted to Permanent:
-
-```csharp
-public static Atom Intern(string name, bool permanent)
-{
-    var atom = LookupOrCreate(name);
-    if (permanent && !atom.IsPermanent)
-    {
-        lock (_lock)
-        {
-            if (!atom.IsPermanent)
-            {
-                _permanentAnchors.Add(atom);
-                atom.IsPermanent = true;
-                if (_transient.Remove(atom.Id))
-                {
-                    // moved from Transient to Permanent
-                }
-                else if (_transientWeak.Remove(atom.Id))
-                {
-                    // moved from TransientWeak to Permanent
-                }
-            }
-        }
-    }
-    return atom;
-}
-```
-
-### Foreign exposure registers a weak ref
-
-When the embedding API returns an `Atom` to C#:
-
-```csharp
-public Atom InternForApi(string name)
-{
-    var atom = AtomTable.Intern(name, permanent: false);
-    if (!atom.IsPermanent)
-        AtomTable.RegisterForeignHold(atom);
-    return atom;
-}
-
-internal static void RegisterForeignHold(Atom atom)
-{
-    lock (_foreignHoldsLock)
-    {
-        _foreignWeakRefs.Add(new WeakReference<Atom>(atom));
-    }
-}
-```
-
-This registration is what lets the GC distinguish "atom used by engine" from "atom retained only by C#".
+The functor table maps a functor id to its name atom and arity, and is not a
+claimant. An entry stays when its name atom dies and serves the atom that
+takes the id next, so the table is bounded by the ids in use and the arities
+each was used with.
 
 ## Alternatives Considered
 
@@ -208,61 +220,44 @@ This registration is what lets the GC distinguish "atom used by engine" from "at
 
 **Considered.** .NET has `ConditionalWeakTable<TKey, TValue>` for this kind of "weak-keyed" mapping. However, its semantics (the table never enumerates keys, values are kept alive while keys are) don't quite match the atom use case. The three-tier approach is more explicit and clear.
 
+### One mark over every engine
+
+**Rejected.** A sweep that marks every engine's state needs every engine stopped at a safe point at the same time, a handshake across threads. Claims computed per activation and per engine let each collect alone.
+
+### A namespace per activation
+
+**Rejected.** Activations meet through shared code and stores: a name in a bundle's code, a fact asserted by one query and read by another. One name must have one id everywhere it can be compared.
+
+### Claims kept on every intern
+
+**Rejected.** A set per claimant updated on each intern costs a hash lookup per intern and some twenty bytes per atom per claimant, as much as a short atom itself. Computing claims when marking costs a store per intern and the merge of two sorted lists per mark.
+
 ## Consequences
 
 ### Positive
 
-- **Long-running systems are safe**: atoms created dynamically can be reclaimed when no longer in use.
-- **C# retention works naturally**: as long as C# holds the atom object, it stays alive. When C# lets go, it's eligible for collection on the next GC.
-- **Hot path is unaffected**: `put_atom` is the same as in a non-GC system. No per-operation cost.
+- **Long-running systems are safe**: atoms created dynamically, and those of clauses that were retracted or replaced, are reclaimed once nothing holds them.
+- **No stop across threads**: each activation and each engine collects on its own.
+- **A claimant that does not run holds nothing back**: idle engines and suspended queries are marked by the collection.
+- **Bounded ids**: a dead atom's id is reused, so the ids and the tables indexed by them follow the atoms alive.
+- **C# retention works naturally**: as long as C# holds the atom object, it stays alive.
+- **Hot path is unaffected**: `put_atom` is the same as in a non-GC system.
 - **Atom comparison stays O(1)**: ids are stable; comparison is integer equality.
-- **GC is amortized**: runs only when needed, not on every operation.
+- **GC is amortized**: atoms are marked only past a threshold, inside a heap collection or at a query setup.
 
 ### Negative
 
-- **Complexity**: the system has three tiers and explicit transitions between them.
-- **Safe-point coordination**: the GC must coordinate with engines via safe points; this adds protocol around multi-threaded scenarios.
-- **`_byName` removal complexity**: when an atom is collected, its entry in `_byName` must also be removed. This requires either caching the name before removal or scanning the dictionary.
-
-### Mitigations
-
-- The atom GC code is isolated in a single module (`Shumway.Core.AtomTable`). Other parts of the system interact only through `Intern`, `GetById`, and `RegisterForeignHold`.
-- Documentation in the `AtomTable` source explains the three tiers and their transitions in detail.
-- Tests cover each transition path explicitly.
+- **A holder the mark misses lets a live atom die**: its id goes to the next new atom, and the cells that still hold it read that atom. Every structure that keeps atom ids outside cells has to be part of a mark; tests poison dead ids to find one that is not.
+- **Memory per atom**: a count and an epoch on each transient atom, and four bytes per atom per claimant held between marks.
+- **A claimant blocked inside a builtin** (a read waiting for input) holds a collection back until it reaches a safe point.
+- **Retracted code holds its atoms until the persistent buffer compacts.**
 
 ## Implementation Notes
 
 ### Atom object layout
 
-```csharp
-public sealed class Atom
-{
-    internal int Id;
-    internal string Name;
-    internal bool IsPermanent;
-    
-    // Constructor only used internally by AtomTable
-    internal Atom(int id, string name) { Id = id; Name = name; }
-}
-```
-
-The `Atom` class is sealed and immutable from the outside. Only `AtomTable` can construct atoms.
-
-### Safe points and thread coordination
-
-When the GC runs, all engines must be at a safe point (not in the middle of a hot path that would observe inconsistent state). The mechanism:
-
-- Each engine checks a `volatile int _gcRequested` flag periodically (in its dispatch loop, every N instructions).
-- When the flag is set, the engine enters a safe point and waits.
-- When all engines are at safe points, the GC runs.
-- After the GC, engines resume.
-
-For single-threaded use (one engine per process), this is trivial: the GC runs between queries.
-
-`design/atom-gc-coordination.md` describes the atom table and its tiers as
-built; a multi-engine stop-the-world coordination protocol was considered but
-not built, and the sweep is currently exercised only by tests (that document
-covers the current status).
+An `Atom` holds its id, its name, whether it is permanent, its claim count,
+its epoch and whether it died. Only `AtomTable` constructs atoms.
 
 ### Pre-registered atoms
 
@@ -276,25 +271,23 @@ At engine construction, the system pre-registers common atoms with fixed ids:
 
 This lets the interpreter and compiler reference these atoms as compile-time constants without lookup.
 
-### Ids never reused
-
-When an atom is collected, its id is not reused for new atoms. The id counter advances monotonically. With 32-bit ids, the space (~2 billion) is far larger than any realistic Prolog system needs. Avoiding id reuse simplifies invariants (no risk of stale cell references coincidentally matching a new atom).
-
-### Per-engine TransientWeak tracking is not required
-
-The decision is to use a global `_transientWeak` map. The atom GC operates globally over all engines. Per-engine atom tracking would add complexity without clear benefit.
-
 ## Test Strategy
 
-- **Sweep of unreached transient atoms**: create transients, drop all references, run GC, verify they are removed from the table.
-- **C# retention prevents collection**: create transient via embedding API, retain in C#, run GC, verify atom remains accessible.
-- **Promotion back to Transient**: create transient, run GC (moves to TransientWeak), use it again from an engine, run GC, verify it's back in Transient.
-- **Permanent promotion**: create transient, then load a source file that mentions the same atom, verify it's promoted to Permanent.
-- **Stability of ids across transitions**: verify an atom's id doesn't change as it moves between tiers.
-- **Concurrent atom creation from multiple engines**: stress test that `Intern` is thread-safe and produces consistent ids.
+- **A test per kind of claim**: an atom reachable only from that claimant survives a forced collection, and the test fails with that claimant left out of the mark.
+- **Id reuse**: a dead atom's id is handed out again, the ids stay bounded while atoms come and go, a reused id reuses its functor entries, and a cache keyed by ids answers for the atom that has the id now.
+- **Poisoned ids**: with dead ids poisoned, reading one throws; the collection tests run poisoned.
+- **Idle and running claimants**: an idle claimant is marked by the collection, and scanned again only if it ran; a running one marks at its next safe point, at a backtrack safe point, inside a heap collection due there, or as it stops; a run waits while the collection marks its claimant; a running engine marks at the safe points of its own query and of a query its builtin runs on another engine.
+- **Reclamation**: transient atoms created and dropped in a loop are reclaimed and the table stays bounded, over many queries and within one long query.
+- **Retracted clauses**: an atom named only by retracted or abolished clauses is reclaimed after the buffer compacts.
+- **Bundles**: the atoms of a linked bundle stay permanent.
+- **Host trees**: a term the host held across a sweep materializes with its name.
+- **C# retention**: an atom handed to C# and unclaimed survives while C# holds it.
+- **Threads**: two engines intern and collect in parallel, and `Intern` gives one id per name.
 
 ## Related ADRs
 
 - ADR-001 (Engines and Global Tables): the atom table is global, but operates over engine state.
 - ADR-002 (Cell Layout): atoms in cells are encoded by id.
-- ADR-010 (Embedding API): foreign holds are registered when atoms are exposed to C#.
+- ADR-010 (Embedding API): foreign holds are registered when atoms are exposed to C#; an engine runs on one thread at a time.
+- ADR-015 (Persistent code space): retracted code is reclaimed when the buffer compacts.
+- ADR-016 (Heap garbage collection): an activation marks atoms inside its heap collection.

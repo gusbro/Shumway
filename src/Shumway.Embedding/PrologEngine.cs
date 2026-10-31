@@ -1067,6 +1067,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
         IlPromotion.StringPoolProvider = StringPoolForFid;
         IlPromotion.OnDelegateEvicted = ClearLiveIlSlots;
+        // Compiled code claims its atoms while it can run (ADR-003).
+        IlPromotion.RetainAtoms = RetainCode;
+        IlPromotion.DropAtoms = DropCode;
+        IlPromotion.LiveActivations = () => ChainPatcher.LiveActivations();
 
         if (consultPrelude) InstallPrelude();
     }

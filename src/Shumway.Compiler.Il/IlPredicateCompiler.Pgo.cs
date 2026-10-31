@@ -29,6 +29,7 @@ public sealed partial class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         using var code = new CodeScope(predicate);
+        using var artifact = new ArtifactScope();
         if (predicate.ClauseCount > 1
             && TryDescribeIndexedAtomPredicate(predicate, out var info))
         {
@@ -56,6 +57,7 @@ public sealed partial class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         using var code = new CodeScope(predicate);
+        using var artifact = new ArtifactScope();
         if (profileKey < 0
             || !TryDescribeIndexedAtomPredicate(predicate, out var info))
         {
