@@ -23,6 +23,10 @@ public sealed partial class PrologEngine
         public Activation? Engine;
         public string? QueryText;
 
+        /// <summary>Where the query's own code lies in the buffer, [Start, End);
+        /// End is 0 once the code was given back (ReleaseQueryCode).</summary>
+        public int QueryStart, QueryEnd;
+
         /// <summary>The predicates' entry addresses, sorted; built on first use.</summary>
         public int[]? SortedEntries;
 
@@ -110,8 +114,17 @@ public sealed partial class PrologEngine
     /// an activation still on the old array keeps the old record.</summary>
     private void OnProgramMoved(Activation engine, int copied)
     {
-        byte[] program = engine.CurrentProgram!;
-        var old = (engine.HostProgram as LinkedProgram)?.Breakpoints;
+        var moved = MoveBreakpointRecord((engine.HostProgram as LinkedProgram)?.Breakpoints,
+            engine.CurrentProgram!, copied);
+        if (engine.HostProgram is LinkedProgram p) p.Breakpoints = moved;
+        if (engine.BreakpointOriginals is not null) engine.BreakpointOriginals = moved.Patches;
+    }
+
+    /// <summary>The program moved to <paramref name="program"/>, a copy of the
+    /// first <paramref name="copied"/> bytes of the array <paramref name="old"/>
+    /// describes: the patches and live code below the copy move with it.</summary>
+    private BreakpointRecord MoveBreakpointRecord(BreakpointRecord? old, byte[] program, int copied)
+    {
         var moved = new BreakpointRecord(program) { SitesVersion = old?.SitesVersion ?? 0 };
         if (old is not null)
         {
@@ -123,9 +136,12 @@ public sealed partial class PrologEngine
         }
         _breakpointRecords.Remove(program);
         _breakpointRecords.Add(program, moved);
-        if (engine.HostProgram is LinkedProgram p) p.Breakpoints = moved;
-        if (engine.BreakpointOriginals is not null) engine.BreakpointOriginals = moved.Patches;
+        return moved;
     }
+
+    private void MoveBreakpointRecord(byte[] old, byte[] program, int copied)
+        => MoveBreakpointRecord(_breakpointRecords.TryGetValue(old, out var record) ? record : null,
+            program, copied);
 
     /// <summary>Bumped whenever the armed breakpoint sites change, so a program whose
     /// buffer was last synced before knows it is behind.</summary>

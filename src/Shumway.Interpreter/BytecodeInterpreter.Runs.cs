@@ -39,9 +39,7 @@ public sealed partial class BytecodeInterpreter
     private bool TryInlineCheckVisible(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int afterPc,
         int deadSkipTo = -1)
     {
-        if (afterPc + 17 > codeLen
-            || (code.Overflow is null ? codeArr[afterPc] : code[afterPc])
-               != (byte)Opcode.CheckVisible)
+        if (afterPc + 17 > codeLen || codeArr[afterPc] != (byte)Opcode.CheckVisible)
         {
             _engine.SetPc(afterPc);
             return true;
@@ -89,8 +87,8 @@ public sealed partial class BytecodeInterpreter
     /// unify-family opcodes (Blint pairs: unify_list→unify_atom 945K,
     /// unify_atom→unify_list 782K, get_list→unify_value_x 666K, …): consume the
     /// whole run here in a tight loop with a small switch instead of going back
-    /// around the main dispatch loop (marker check + bounds check + split-view
-    /// branch + the big switch) once per opcode. Bodies are exact mirrors of the
+    /// around the main dispatch loop (marker check + bounds check + the big
+    /// switch) once per opcode. Bodies are exact mirrors of the
     /// main-loop cases — keep them in sync when touching either.
     /// <c>unify_variable_y</c>,
     /// <c>unify_value_y</c> and <c>unify_structure</c> are in the run switch too
@@ -105,7 +103,7 @@ public sealed partial class BytecodeInterpreter
     {
         while (pc < codeLen)
         {
-            byte op = code.Overflow is null ? codeArr[pc] : code[pc];
+            byte op = codeArr[pc];
             switch ((Opcode)op)
             {
                 case Opcode.UnifyVariableX:
@@ -355,7 +353,7 @@ public sealed partial class BytecodeInterpreter
     private void RunGetVariableYRun(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
     {
         while (pc + 9 <= codeLen
-               && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.GetVariableY)
+               && codeArr[pc] == (byte)Opcode.GetVariableY)
         {
             Shumway.Core.Profiler.Opcode((byte)Opcode.GetVariableY);
             int slot = ReadI32(code, codeArr, pc + 1);
@@ -369,7 +367,7 @@ public sealed partial class BytecodeInterpreter
     private void RunPutValueYRun(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
     {
         while (pc + 9 <= codeLen
-               && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.PutValueY)
+               && codeArr[pc] == (byte)Opcode.PutValueY)
         {
             Shumway.Core.Profiler.Opcode((byte)Opcode.PutValueY);
             int slot = ReadI32(code, codeArr, pc + 1);

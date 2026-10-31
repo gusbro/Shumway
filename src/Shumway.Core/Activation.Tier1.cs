@@ -318,30 +318,16 @@ public sealed partial class Activation
     /// <see cref="AppendCode"/> call. </summary>
     public void SetInitialProgramLength(int length) => _programLength = length;
 
-    /// <summary>the per-query overlay buffer holding the
-    /// synthetic <c>__query__</c> clause and its auxiliaries. Lives at
-    /// logical addresses ≥ <see cref="CurrentQuerySplit"/>; addresses
-    /// below the split index into <see cref="CurrentProgram"/>. Null
-    /// when there's no overlay (e.g. a sub-engine, IL re-entry path
-    /// driving over the persistent buffer alone).</summary>
-    public byte[]? CurrentQueryOverlay { get; set; }
+    /// <summary>The bytes the code buffer may reach: addresses stay below the
+    /// resume markers, and a host sets it lower (a 32-bit process cannot hold
+    /// an array near the markers). <see cref="AppendCode"/> raises
+    /// <c>resource_error(code_space)</c> at it instead of growing.</summary>
+    public int CodeLimit { get; set; } = ResumeMarkerBase;
 
-    /// <summary>The logical address at which <see cref="CurrentQueryOverlay"/>
-    /// starts. Addresses in <c>[0, Split)</c> live in
-    /// <see cref="CurrentProgram"/>; addresses in
-    /// <c>[Split, Split + Overlay.Length)</c> live in the overlay.</summary>
-    public int CurrentQuerySplit { get; set; }
-
-    /// <summary>The two-buffer logical view used by the interpreter
-    /// dispatch loop's hot-path refresh after a mid-query
-    /// <see cref="AppendCode"/>. Reads stay correct across the
-    /// realloc-and-grow path.</summary>
+    /// <summary>The view the interpreter's dispatch loop refreshes after a
+    /// mid-query <see cref="AppendCode"/> moved the program to a larger array.</summary>
     public Shumway.Core.ProgramView GetProgramView()
-    {
-        var prog = CurrentProgram ?? Array.Empty<byte>();
-        if (CurrentQueryOverlay is null) return new Shumway.Core.ProgramView(prog);
-        return new Shumway.Core.ProgramView(prog, CurrentQueryOverlay, CurrentQuerySplit);
-    }
+        => new Shumway.Core.ProgramView(CurrentProgram ?? Array.Empty<byte>());
 
     /// <summary>per-query switch tables, wired by the
     /// embedding layer at query setup as a mutable list so the
@@ -380,11 +366,8 @@ public sealed partial class Activation
     public Action<Activation, int>? ProgramMoved { get; set; }
 
     /// <summary>The bytes <see cref="AppendCode"/> can still add before the
-    /// program reaches the query overlay at <see cref="CurrentQuerySplit"/>;
-    /// unbounded when no overlay is in place.</summary>
-    public int CodeRoom => CurrentQueryOverlay is null
-        ? int.MaxValue
-        : Math.Max(0, CurrentQuerySplit - ProgramLength);
+    /// program reaches <see cref="CodeLimit"/>.</summary>
+    public int CodeRoom => Math.Max(0, CodeLimit - ProgramLength);
 
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
     /// and returns its start offset. Existing offsets stay valid — the
@@ -392,8 +375,8 @@ public sealed partial class Activation
     /// a long-running query's repeated dynamic recompiles from re-copying
     /// the whole (growing) buffer each time. Raises
     /// <c>resource_error(code_space)</c> rather than append past
-    /// <see cref="CurrentQuerySplit"/>: the view reads those addresses from
-    /// the query overlay, so code placed there would never run.</summary>
+    /// <see cref="CodeLimit"/>, or when the process cannot allocate the
+    /// grown array.</summary>
     public int AppendCode(byte[] chunk)
     {
         byte[] program = CurrentProgram ?? Array.Empty<byte>();
@@ -403,8 +386,15 @@ public sealed partial class Activation
             throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
         if (needed > program.Length)
         {
-            long limit = CurrentQueryOverlay is null ? int.MaxValue : CurrentQuerySplit;
-            var grown = new byte[Math.Max(needed, Math.Min(program.Length * 2L, limit))];
+            byte[] grown;
+            try
+            {
+                grown = new byte[(int)Math.Max(needed, Math.Min(program.Length * 2L, CodeLimit))];
+            }
+            catch (OutOfMemoryException)
+            {
+                throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
+            }
             Array.Copy(program, grown, offset);
             CurrentProgram = program = grown;
             // bumping the generation tells the interpreter's
@@ -422,8 +412,7 @@ public sealed partial class Activation
     /// <summary>Monotonic counter bumped whenever the bytecode
     /// program's underlying array reference changes (a reallocation
     /// inside <see cref="AppendCode"/>, an embedding-layer rewire of
-    /// <see cref="CurrentProgram"/> / <see cref="CurrentQueryOverlay"/>
-    /// / <see cref="CurrentQuerySplit"/>). The bytecode interpreter
+    /// <see cref="CurrentProgram"/>). The bytecode interpreter
     /// caches its <see cref="ProgramView"/> across dispatch iterations
     /// and only refreshes when this generation has changed — the
     /// per-iteration <c>GetProgramView()</c> call was measurable on
@@ -431,9 +420,8 @@ public sealed partial class Activation
     public int ProgramGeneration => _programGeneration;
     private int _programGeneration;
 
-    /// <summary>Bump after the embedding layer rewires program /
-    /// overlay / split fields directly (e.g. the per-
-    /// query reset of <see cref="CurrentQueryOverlay"/>). The
+    /// <summary>Bump after the embedding layer rewires
+    /// <see cref="CurrentProgram"/> directly (the per-query setup). The
     /// interpreter then picks up the new view on its next dispatch
     /// iteration.</summary>
     public void BumpProgramGeneration() => _programGeneration++;
@@ -971,8 +959,8 @@ public sealed partial class Activation
     // tables.
     //
     // ResumeMarkerBase is set high enough that no bytecode address collides:
-    // the per-query overlay sits just below it, and AppendCode keeps the
-    // persistent program below the overlay.
+    // AppendCode keeps the code buffer below CodeLimit, which is at most
+    // this.
     // ResumeMarkerCursorStride is no longer part of the encoding; it
     // survives only as the IL emitters' per-predicate cursor-count budget
     // (an emit-shape policy, not a correctness cap).

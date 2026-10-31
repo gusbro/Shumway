@@ -1038,8 +1038,7 @@ public sealed partial class PrologEngine
         // the call stack. Skip it but keep walking; the caller advances envIndex
         // regardless, so the next real frame still pairs with its own environment.
         // A dynamic clause past it is not its code.
-        if (IsTransparentControlFunctor(pred.FunctorId)
-            && !PastPredicate(pred, entry, pc, _cur.Engine?.CurrentQuerySplit ?? 0))
+        if (IsTransparentControlFunctor(pred.FunctorId) && !PastPredicate(pred, entry, pc))
             return false;
         sites.Add((pc, env));
         return IsQueryEntry(i);
@@ -1077,13 +1076,11 @@ public sealed partial class PrologEngine
     /// rather than wrong; arity -1 says the frame is not a Name/Arity.</summary>
     internal const string DynamicClauseFrame = "<dynamic clause>";
 
-    /// <summary>Whether <paramref name="pc"/>, which the search for the nearest entry placed
-    /// in <paramref name="pred"/> at <paramref name="entry"/>, lies past that predicate's
-    /// code and below the query's region (<paramref name="querySplit"/>): in code added to
-    /// the array while queries ran. The query's region is linked in one piece.</summary>
-    internal static bool PastPredicate(
-        Shumway.Compiler.Wam.CompiledPredicate pred, int entry, int pc, int querySplit)
-        => pc >= entry + pred.Bytecode.Length && (querySplit <= 0 || pc < querySplit);
+    /// <summary>Whether <paramref name="pc"/> lies past the code of
+    /// <paramref name="pred"/>, the nearest predicate linked at or below it: a
+    /// clause chunk appended while queries ran, which no map names.</summary>
+    internal static bool PastPredicate(Shumway.Compiler.Wam.CompiledPredicate pred, int entry, int pc)
+        => pc >= entry + pred.Bytecode.Length;
 
     /// <summary>A call stack is a column, not a page: a query long enough to wrap turns the
     /// whole stack unreadable, and the tail of a goal is not what identifies it.</summary>
@@ -1106,7 +1103,7 @@ public sealed partial class PrologEngine
         if (i < 0) i = ~i - 1;
         if (i < 0) return false;
         var pred = _cur.Map[entries[i]];
-        if (PastPredicate(pred, entries[i], pc, engine.CurrentQuerySplit))
+        if (PastPredicate(pred, entries[i], pc))
         {
             frames.Add(new DebugFrame(DynamicClauseFrame, -1, "", 0, pc,
                 Array.Empty<(string, string)>()));
@@ -2028,14 +2025,12 @@ public sealed partial class PrologEngine
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
         var pred = _cur.Map[entries[i]];
-        int split = _cur.Engine?.CurrentQuerySplit ?? 0;
-        if (PastPredicate(pred, entries[i], address, split)) return null;
+        if (PastPredicate(pred, entries[i], address)) return null;
         // The memo range reproduces the search's clamp semantics exactly: everything
-        // from this predicate's start to the next predicate's start resolves here, except
-        // past the end of a predicate below the query's region.
+        // from this predicate's start to its end resolves here; past the end is a
+        // clause appended while queries ran.
         int hi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
-        int end = entries[i] + pred.Bytecode.Length;
-        if (split <= 0 || end < split) hi = Math.Min(hi, end);
+        hi = Math.Min(hi, entries[i] + pred.Bytecode.Length);
         _cur.FidMemoLo = entries[i];
         _cur.FidMemoHi = hi;
         _cur.FidMemoFid = pred.FunctorId;
@@ -2138,8 +2133,7 @@ public sealed partial class PrologEngine
         addresses.Add(engine.P);
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
             addresses.Add(retAddr);
-        return ResolveAddressesWithPositions(
-            addresses, PredicatesByAddressOf(engine), engine.CurrentQuerySplit);
+        return ResolveAddressesWithPositions(addresses, PredicatesByAddressOf(engine));
     }
 
     /// <summary>Translates each address to the predicate that contains it (the
@@ -2150,8 +2144,7 @@ public sealed partial class PrologEngine
     private (IReadOnlyList<(string Name, int Arity)> Plain,
              IReadOnlyList<StackFrame> WithPositions)
         ResolveAddressesWithPositions(IEnumerable<int> addresses,
-            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map,
-            int querySplit)
+            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map)
     {
         if (map is null)
             return (Array.Empty<(string, int)>(), Array.Empty<StackFrame>());
@@ -2191,7 +2184,7 @@ public sealed partial class PrologEngine
             if (idx < 0) continue;
             int entryAddr = sortedEntries[idx];
             var pred = map[entryAddr];
-            if (PastPredicate(pred, entryAddr, addr, querySplit))
+            if (PastPredicate(pred, entryAddr, addr))
             {
                 // One frame for a run of them: which clauses they are is not known.
                 if (plain.Count == 0 || plain[^1].Item1 != DynamicClauseFrame)

@@ -829,8 +829,10 @@ public static partial class MetaBuiltins
         clauseTerm = StripAssertQualifiers(clauseTerm);
         ValidateAssertClause(clauseTerm, engine);
         // Before the database changes: a clause whose code cannot be placed
-        // must leave nothing behind.
-        if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom)
+        // must leave nothing behind. A hole that size will do as well as room
+        // at the end: the chunk is placed in the first hole it fits.
+        if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom
+            && !host.HasFreeCodeChunk(engine, PrologEngine.AssertCodeHeadroom))
             throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —

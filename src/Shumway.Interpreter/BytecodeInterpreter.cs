@@ -497,20 +497,14 @@ public sealed partial class BytecodeInterpreter
 
     private InterpreterResult Dispatch(ProgramView code)
     {
-        // cache the ProgramView across dispatch iterations.
+        // cache the program array across dispatch iterations.
         // Refresh only when the engine's program generation has
-        // changed (AppendCode reallocation, per-query rewire of
-        // overlay/split).
+        // changed (AppendCode reallocation, a query's rewire).
         //
-        // peel off a direct byte[] reference when the view
-        // is single-buffer (the steady state — Overflow only appears
-        // mid-query during persistent + per-query
-        // split, and even then the per-query overlay is small). The
-        // per-iteration `code[pc]` indexer otherwise compiles to a
-        // branch on Split per dispatch tick.
+        // The array behind the view, read directly by the hot handlers.
         int cachedGen = -1;
         bool engineDriven = _engine.CurrentProgram is not null;
-        byte[] codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
+        byte[] codeArr = code.Primary;
         int codeLen = code.Length;
         // Catch frames below this index belong to outer drivers (their C#
         // frames sit between us and them) — a throw resolving to one of those
@@ -537,7 +531,7 @@ public sealed partial class BytecodeInterpreter
                 if (gen != cachedGen)
                 {
                     code = _engine.GetProgramView();
-                    codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
+                    codeArr = code.Primary;
                     codeLen = code.Length;
                     cachedGen = gen;
                 }
@@ -718,13 +712,7 @@ public sealed partial class BytecodeInterpreter
             }
             inClause = false;
 
-            // when the view is split (Overflow != null) we
-            // fall back to the indexer for both the opcode byte and
-            // every operand read inside the case bodies (those still
-            // go through BytecodeIO's ProgramView overloads, which
-            // handle the split internally). The fast path skips the
-            // per-tick Split branch entirely.
-            byte opByte = code.Overflow is null ? codeArr[pc] : code[pc];
+            byte opByte = codeArr[pc];
             Shumway.Core.Profiler.Opcode(opByte);
             if (PcRing is { } ring) { ring[_pcRingPos++ & (PcRingSize - 1)] = pc; }
 #if SHUMWAY_PROFILE
@@ -1456,7 +1444,7 @@ public sealed partial class BytecodeInterpreter
                     // so the single-byte peek distinguishes the two.
                     int padPc = pc + 5;
                     bool demoted = padPc < codeLen
-                        && (code.Overflow is null ? codeArr[padPc] : code[padPc])
+                        && codeArr[padPc]
                            == (byte)Opcode.Nop;
                     int afterPc = pc + (demoted ? 9 : 5);
                     // Peephole fusion (see TryMeElse).
@@ -3198,22 +3186,12 @@ public sealed partial class BytecodeInterpreter
     /// switch.</summary>
     private sealed class TopLevelFailure : Exception { }
 
-    /// <summary>peeled operand read. The hot handlers read their
-    /// operands through the same single-buffer <c>codeArr</c> the dispatch loop
-    /// already peeled for the opcode byte, instead of
-    /// <see cref="BytecodeIO.ReadInt32(in ProgramView, int)"/>, which re-tests
-    /// <c>Overflow is null</c> + the split boundary per read through an
-    /// <c>in</c>-struct indirection. The JIT inlines this and can CSE the
-    /// <c>Overflow is null</c> branch with the handler's surrounding peeled
-    /// reads. The split-view case (Overflow non-null — only mid-query during
-    /// persistent + per-query split) falls back to the routing
-    /// overload unchanged.</summary>
+    /// <summary>Operand read through the array the dispatch loop peeled for the
+    /// opcode byte, not through the view's <c>in</c>-struct indirection.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static int ReadI32(in Shumway.Core.ProgramView code, byte[] codeArr, int offset)
-        => code.Overflow is null
-            ? BytecodeIO.ReadInt32(codeArr, offset)
-            : BytecodeIO.ReadInt32(code, offset);
+        => BytecodeIO.ReadInt32(codeArr, offset);
 
     /// <summary>A CallIl/ExecuteIl site whose callee lost its delegate
     /// (evicted after a relink rewrote the site) becomes the plain Call /
@@ -3230,22 +3208,15 @@ public sealed partial class BytecodeInterpreter
             throw new InvalidOperationException(
                 $"{(isExecute ? "ExecuteIl" : "CallIl")}: no IL delegate and no "
                 + $"bytecode for functor id {functorId}. Bytecode rewrite invariant violated.");
-        byte[] buf; int at;
-        if (pc < code.Split) { buf = code.Primary; at = pc; }
-        else { buf = code.Overflow!; at = pc - code.Split; }
-        buf[at] = isExecute ? (byte)Opcode.Execute : (byte)Opcode.Call;
-        BytecodeIO.WriteInt32(buf, at + 1, addr);
+        byte[] buf = code.Primary;
+        buf[pc] = isExecute ? (byte)Opcode.Execute : (byte)Opcode.Call;
+        BytecodeIO.WriteInt32(buf, pc + 1, addr);
     }
 
-    /// <summary>peeled 8-byte operand read; see
-    /// <see cref="ReadI32"/>. Worst pre-peel offender was
-    /// <see cref="TryInlineCheckVisible"/>'s two ReadInt64s — 23.5M chain
-    /// steps per Blint run.</summary>
+    /// <summary>8-byte operand read; see <see cref="ReadI32"/>.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static long ReadI64(in Shumway.Core.ProgramView code, byte[] codeArr, int offset)
-        => code.Overflow is null
-            ? BytecodeIO.ReadInt64(codeArr, offset)
-            : BytecodeIO.ReadInt64(code, offset);
+        => BytecodeIO.ReadInt64(codeArr, offset);
 
 }

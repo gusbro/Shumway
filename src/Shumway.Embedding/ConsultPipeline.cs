@@ -2215,10 +2215,10 @@ internal sealed class ConsultPipeline
                         // do not patch the live dispatch in place at
                         // this site. AppendDynamicClauseIncremental extends the
                         // dynamic predicate's compiled chain, and for a predicate
-                        // whose dispatch lives in the *persistent* code region
-                        // (< E._querySplit — the common case, since Logtalk's
-                        // internal `$lgt_*` tables are declared dynamic and
-                        // compiled into the persistent buffer) that means writing
+                        // whose dispatch lives in the persistent code region
+                        // (the common case, since Logtalk's internal `$lgt_*`
+                        // tables are declared dynamic and compiled into the
+                        // persistent buffer) that means writing
                         // into shared bytecode the running query is executing
                         // from. Under a heavy multi-file consult (loading
                         // Logtalk's `random` / `basic_types` libraries) the

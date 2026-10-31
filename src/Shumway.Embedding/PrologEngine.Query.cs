@@ -1649,13 +1649,13 @@ public sealed partial class PrologEngine
                 if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
                     BytecodeIO.WriteInt32(_persistentProgram!, prefix.Length + offset + 1, dynAddr);
         }
-        // The per-query overlay sits just below the resume markers, leaving
-        // the persistent program room to grow mid-query.
-        _querySplit = TestQueryGrowthRoom is int room
-            ? _persistentLength + room
-            : Activation.ResumeMarkerBase - QueryOverlayReserve;
-        if (_persistentLength > _querySplit)
-            throw new PrologRuntimeException("resource_error", "code_space");
+        // The query's code goes right after the persistent program, or into a
+        // hole an earlier query left; what the query appends (asserted clauses,
+        // consulted files) follows the program. The link lays the predicates
+        // end to end, so their sizes say where it fits.
+        int querySize = 0;
+        foreach (var p in queryPreds) querySize += p.Bytecode.Length;
+        int queryStart = ReservePersistent(querySize);
 
         // Build the merged external-symbols table for the query
         // linker — it resolves calls into both the static and
@@ -1690,16 +1690,9 @@ public sealed partial class PrologEngine
         }
         var persistentAddresses = _persistentAddressesCache;
 
-        // The per-query region is appended in a separate buffer at a
-        // logical address well above the persistent buffer's end.
-        // The ProgramView built below routes addresses in [0, split)
-        // to the persistent buffer and [split, split+queryLen) to the
-        // per-query overlay; persistent growth between now and the
-        // query's end stays in [persistentLength, split) so the
-        // overlay's linked addresses remain stable.
         var queryLink = new Linker().Link(
             queryPreds,
-            loadOffset: _querySplit,
+            loadOffset: queryStart,
             externalSymbols: persistentAddresses,
             switchTableIdBase:
                 // _dynamicLink is non-null here (built in the
@@ -1708,9 +1701,7 @@ public sealed partial class PrologEngine
                 staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
 
         byte[] queryBytes = queryLink.Bytecode;
-        // Past the reserve the overlay's addresses would read as resume markers.
-        if ((long)_querySplit + queryBytes.Length > Activation.ResumeMarkerBase)
-            throw new PrologRuntimeException("resource_error", "code_space");
+        PlacePersistent(queryBytes, queryStart);
         if (LoadProfEnabled)
             ProfQueryCompileTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profQc0;
         long profMg0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
@@ -1744,9 +1735,9 @@ public sealed partial class PrologEngine
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
-        // persistent part pre-merged at rebuild time; query region layered
-        // on top (address spaces are disjoint — the query region lives above
-        // the split — but the layered lookup doesn't rely on that).
+        // persistent part pre-merged at rebuild time; the query's predicates
+        // layered on top (their addresses are disjoint from the program's,
+        // but the layered lookup doesn't rely on that).
         var mergedPredicatesByAddress =
             new Shumway.Core.LayeredIntMap<Shumway.Compiler.Wam.CompiledPredicate>(
                 CollectionsCompat.Copy(queryLink.PredicatesByAddress),
@@ -1772,13 +1763,11 @@ public sealed partial class PrologEngine
         BytecodeIO.WriteInt32(_persistentProgram!, callPos + 1, linkResult.Addresses[queryFunctorId]);
 
         // `program` is the persistent byte[] (used by all mutation
-        // paths: assertz/retract/abolish chain patching, AppendCode);
-        // `programView` is the two-buffer logical view passed to the
-        // interpreter and IL helpers — they read across the gap into
-        // the per-query overlay transparently.
+        // paths: assertz/retract/abolish chain patching, AppendCode), the
+        // query's code now in it; `programView` is the view the interpreter
+        // and IL helpers read.
         byte[] program = _persistentProgram!;
-        var programView = new Shumway.Core.ProgramView(
-            _persistentProgram!, queryBytes, _querySplit);
+        var programView = new Shumway.Core.ProgramView(program);
 
         // (Static-predicate caching runs at product build, inside the
         // compiled-program-product block above.)
@@ -1931,12 +1920,9 @@ public sealed partial class PrologEngine
         _heapPool.Adopt(engine);
         // the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
-        // raw byte[] capacity) for AppendCode's offset accounting. The
-        // overlay + split let the dispatch loop refresh the
-        // ProgramView correctly after a mid-query AppendCode.
+        // raw byte[] capacity) for AppendCode's offset accounting.
         engine.SetInitialProgramLength(_persistentLength);
-        engine.CurrentQueryOverlay = queryBytes;
-        engine.CurrentQuerySplit = _querySplit;
+        engine.CodeLimit = CodeSpaceLimit;
         // the dispatch loop caches its ProgramView and
         // refreshes only when this generation flips, so the per-
         // query rewire above has to advertise itself.
@@ -2000,7 +1986,8 @@ public sealed partial class PrologEngine
         // overwrite (target address → callee functor id).
         long profIn0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         InstallCallIlRewrites(
-            interp, mergedPredicatesByAddress, queryLink.PredicatesByAddress, queryBytes);
+            interp, mergedPredicatesByAddress, queryLink.PredicatesByAddress,
+            queryStart, queryStart + queryBytes.Length);
         if (LoadProfEnabled)
             ProfInstallTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profIn0;
 
@@ -2087,7 +2074,7 @@ public sealed partial class PrologEngine
                 int entryAddr = sortedAddrs[idx];
                 if (!resolverMap.TryGetValue(entryAddr, out var pred))
                     return null;
-                if (PastPredicate(pred, entryAddr, addr, engine.CurrentQuerySplit))
+                if (PastPredicate(pred, entryAddr, addr))
                     return DynamicClauseFrame;
                 var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
                 string name = AtomTable.GetById(atomId)?.Name ?? "?";
@@ -2195,6 +2182,8 @@ public sealed partial class PrologEngine
             Map = linkResult.PredicatesByAddress,
             Engine = engine,
             QueryText = queryText,
+            QueryStart = queryStart,
+            QueryEnd = queryStart + queryBytes.Length,
         };
         engine.HostProgram = _cur;
         engine.ProgramMoved = _onProgramMoved ??= OnProgramMoved;

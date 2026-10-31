@@ -1981,8 +1981,10 @@ internal sealed class DynamicCodePatcher
             if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
                 _liveEngines.RemoveAt(i);
         }
-        // Compiled code only this activation could resume into goes with it.
+        // Compiled code only this activation could resume into goes with it,
+        // and so does the query's own code.
         E.IlPromotion.ReleaseRetiredUnreached();
+        E.ReleaseQueryCode(engine);
         // Its code is dead: the query's region, and the buffer when it was
         // the last activation on a table the host has replaced.
         if (_activationUnits.TryGetValue(engine, out var units))
