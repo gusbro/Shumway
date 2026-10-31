@@ -437,37 +437,15 @@ public static class ModuleRewrite
             : QualifyMetaArgs(c, module, ctx, onlyWhereNeeded: false,
                 localModule: resolvedName == module + "$" + c.Functor ? module : null);
 
-    /// <summary>The meta-arguments of the prelude's higher-order predicates
-    /// that declare none: per argument, how many arguments the callee adds to
-    /// the closure, or -1. Kept here rather than as <c>meta_predicate</c>
-    /// directives so <c>predicate_property/2</c> reports what it always
-    /// did.</summary>
-    public static int[]? LibraryMetaArgSpec(string name, int arity) => (name, arity) switch
-    {
-        ("maplist", >= 2 and <= 8) => Spec(arity, 0, arity - 1),
-        ("foldl", >= 4 and <= 6) => Spec(arity, 0, arity - 1),
-        ("include" or "exclude", 3) => Spec(arity, 0, 1),
-        ("partition", 4) => Spec(arity, 0, 1),
-        ("predsort", 3) => Spec(arity, 0, 3),
-        ("countall" or "call_det" or "call_residue_vars", 2) => Spec(arity, 0, 0),
-        ("time", 1) => Spec(arity, 0, 0),
-        ("phrase", 2 or 3) => Spec(arity, 0, 2),
-        ("with_output_to", 2) => Spec(arity, 1, 0),
-        _ => null,
-    };
-
     /// <summary>The spec a compile without an engine uses: the prelude's
-    /// <c>meta_predicate</c> declarations, then
-    /// <see cref="LibraryMetaArgSpec"/>. A module's own predicate has none
+    /// <c>meta_predicate</c> declarations. A module's own predicate has none
     /// here: only that module's declarations could describe it.</summary>
     public static int[]? DefaultMetaArgSpec(int fid, string? localModule)
     {
         if (localModule is not null) return null;
-        if (PreludeMetaTemplates.Value.TryGetValue(fid, out Term? template))
-            return MetaArgSpecOfTemplate(template);
-        var (atomId, arity) = FunctorTable.Lookup(fid);
-        string? name = AtomTable.GetById(atomId)?.Name;
-        return name is null ? null : LibraryMetaArgSpec(name, arity);
+        return PreludeMetaTemplates.Value.TryGetValue(fid, out Term? template)
+            ? MetaArgSpecOfTemplate(template)
+            : null;
     }
 
     private static readonly Lazy<Dictionary<int, Term>> PreludeMetaTemplates = new(() =>
@@ -516,14 +494,6 @@ public static class ModuleRewrite
         }
     }
 
-    private static int[] Spec(int arity, int position, int extra)
-    {
-        var spec = new int[arity];
-        System.Array.Fill(spec, -1);
-        spec[position] = extra;
-        return spec;
-    }
-
     /// <summary>A <c>meta_predicate</c> template as a meta-argument spec:
     /// 0 to 9 is a goal or closure taking that many extra arguments, and
     /// <c>:</c> and <c>^</c> are module-sensitive; anything else is data.
@@ -538,6 +508,7 @@ public static class ModuleRewrite
             {
                 IntTerm { Value: >= 0 and <= 9 } n => (int)n.Value,
                 AtomTerm { Name: ":" or "^" } => 0,
+                AtomTerm { Name: "//" } => 2,   // a grammar body, run on two lists
                 _ => -1,
             };
             if (extra < 0) continue;

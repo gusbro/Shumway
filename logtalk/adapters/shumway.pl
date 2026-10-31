@@ -10,9 +10,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-:- built_in.
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %  backend identity and capabilities
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -102,10 +99,12 @@
 %   `unsupported`, so this claim is exactly what `arbitrary` exercises.
 % - threads/engines/sockets: genuinely absent (single-threaded activations,
 %   no socket layer).
-% - modules: Logtalk-compiling Prolog MODULE FILES as objects is more than
-%   ADR-038 provides (no current_module/1 reflection, M:G only shimmed).
-% - coinduction: needs verified rational-tree unification end to end;
-%   revisit deliberately, not as a flag flip.
+% - modules: unsupported — the module hooks below
+%   ('$lgt_find_visible_module_predicate'/3 and the rest) are stubs, and
+%   there is no current_module/1; announcing modules has Logtalk rely on them.
+% - coinduction: supported — unification, comparison, copying and the term
+%   inspection builtins all terminate on cyclic terms (rational trees).
+%   Logtalk's tests/prolog battery gates its cyclic-term cases on this flag.
 '$lgt_prolog_feature'(encoding_directive, full).
 
 % SWI-style fixed-width unicode escapes (\uXXXX / \UXXXXXXXX) in quoted
@@ -118,7 +117,7 @@
 '$lgt_prolog_feature'(engines, unsupported).
 '$lgt_prolog_feature'(threads, unsupported).
 '$lgt_prolog_feature'(modules, unsupported).
-'$lgt_prolog_feature'(coinduction, unsupported).
+'$lgt_prolog_feature'(coinduction, supported).
 '$lgt_prolog_feature'(unicode, full).
 
 
@@ -263,6 +262,15 @@
 %   quietly and the directive is dropped — if a predicate from it is really
 %   needed, its call site raises a clear existence_error later, which beats
 %   aborting the whole compilation here.
+%
+% A module that Logtalk compiles as an object is the exception for
+% use_module/2: the modules it names are objects too, and the core turns the
+% directive into uses/2 on them itself, so it is left alone here.
+'$lgt_prolog_term_expansion'((:- use_module(Module, _)), _) :-
+	atom(Module),
+	logtalk_load_context(entity_type, module),
+	!,
+	fail.
 '$lgt_prolog_term_expansion'((:- use_module(constraintLib, _)), []) :- !.
 '$lgt_prolog_term_expansion'((:- use_module(Library)), Expansion) :- !,
 	'$shumway_expand_use_module'(Library, Expansion).
@@ -363,8 +371,8 @@
 % Shumway paths need no OS-specific spelling changes
 '$lgt_prolog_os_file_name'(Path, Path).
 
-% Path expansion = $LOGTALKHOME/$LOGTALKUSER substitution, then absolute,
-% then forward slashes throughout. The core assembles paths POSIX-style;
+% Path expansion = a leading $VAR/ substituted, then absolute, then forward
+% slashes throughout. The core assembles paths POSIX-style;
 % .NET hands back backslashed Windows paths, and a mixed 'dir\/file' join
 % breaks exists_file — so everything the adapter returns is '/'-separated.
 '$lgt_expand_path'(Path, ExpandedPath) :-
@@ -382,15 +390,17 @@
 	;	Slashed = Path
 	).
 
+% Any variable, not a fixed list: the `home` library alias is '$HOME/', or
+% '$USERPROFILE/' on Windows without HOME. An undefined one stays as written.
 '$shumway_env_prefix'(Path, Substituted) :-
-	(	sub_atom(Path, 0, _, _, '$LOGTALKHOME/'),
-		getenv('LOGTALKHOME', Value) ->
-		sub_atom(Path, 13, _, 0, Tail),
-		atomic_list_concat([Value, '/', Tail], Substituted)
-	;	sub_atom(Path, 0, _, _, '$LOGTALKUSER/'),
-		getenv('LOGTALKUSER', Value) ->
-		sub_atom(Path, 13, _, 0, Tail),
-		atomic_list_concat([Value, '/', Tail], Substituted)
+	(	sub_atom(Path, 0, 1, _, '$'),
+		once(sub_atom(Path, Slash, 1, _, '/')),
+		Slash > 1,
+		Length is Slash - 1,
+		sub_atom(Path, 1, Length, _, Name),
+		catch(getenv(Name, Value), _, fail) ->
+		sub_atom(Path, Slash, _, 0, Tail),
+		atom_concat(Value, Tail, Substituted)
 	;	Substituted = Path
 	).
 
@@ -439,9 +449,10 @@
 '$lgt_load_prolog_file'(File) :-
 	consult(File).
 
-% No modification-time tracking: a constant time means reload(changed)
-% decisions fall back to the core's own bookkeeping.
-'$lgt_file_modification_time'(_File, 0).
+% Unix-epoch seconds: logtalk_make/0-1 and reload(changed) compare them to
+% find the files changed since they were loaded.
+'$lgt_file_modification_time'(File, Time) :-
+	file_modification_time(File, Time).
 
 '$lgt_environment_variable'(Variable, Value) :-
 	catch(getenv(Variable, Value), _, fail).
@@ -498,12 +509,12 @@
 '$lgt_close'(Stream) :-
 	close(Stream).
 
-% no per-stream line counting available
-'$lgt_stream_current_line_number'(_Stream, 0).
+'$lgt_stream_current_line_number'(Stream, Line) :-
+	line_count(Stream, Line).
 
-% no term position tracking either: every term reads as spanning 0-0
-'$lgt_read_term'(Stream, Term, Options, 0-0) :-
-	read_term(Stream, Term, Options).
+% the lines the term starts and ends on
+'$lgt_read_term'(Stream, Term, Options, LineBegin-LineEnd) :-
+	read_term(Stream, Term, [line_counts(LineBegin, LineEnd)| Options]).
 
 '$lgt_write_compiled_term'(Stream, Term, _Kind, _Path, _Line) :-
 	write_canonical(Stream, Term),
@@ -538,38 +549,10 @@ term_hash(Term, _Depth, _Range, Hash) :-
 	Acc is (Acc0 * 33 + Code) /\ 0x3fffffff,
 	'$shumway_hash_fold'(Codes, Acc, Hash).
 
-% setup_call_cleanup/3 is native (prelude). lgtunit's deterministic/1,2 for
-% this dialect family is written over call_cleanup/2, which is the same thing
-% without a setup.
-call_cleanup(Goal, Cleanup) :-
-	setup_call_cleanup(true, Goal, Cleanup).
-
 '$lgt_format'(Stream, Format, Arguments) :-
 	format(Stream, Format, Arguments).
 '$lgt_format'(Format, Arguments) :-
 	format(Format, Arguments).
-
-% atomic_concat(+atomic, +atomic, ?atom): strict-typed concatenation some
-% library objects import from `user`.
-atomic_concat(A, B, Atom) :-
-	(	var(A) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	var(B) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	\+ atomic(A) ->
-		throw(error(type_error(atomic, A), atomic_concat/3))
-	;	\+ atomic(B) ->
-		throw(error(type_error(atomic, B), atomic_concat/3))
-	;	'$shumway_as_atom'(A, AtomA),
-		'$shumway_as_atom'(B, AtomB),
-		atom_concat(AtomA, AtomB, Atom)
-	).
-
-'$shumway_as_atom'(Atomic, Atom) :-
-	(	atom(Atomic) ->
-		Atom = Atomic
-	;	term_to_atom(Atomic, Atom)
-	).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -600,13 +583,6 @@ atomic_concat(A, B, Atom) :-
 % library, so the adapter opts in on the program's behalf — announcing the
 % capability and then not having it is worse than not announcing it.
 :- use_module(library(coroutining)).
-
-% SWI-arm code reaches plain-Prolog land with MODULE-QUALIFIED goals
-% (library(timeout) calls time:call_with_time_limit/2). Shumway has no M:Goal
-% (ADR-038 defers it), so the module is dropped and the goal called — correct
-% for these uses, where the predicate itself is supplied by this adapter.
-':'(_Module, Goal) :-
-	call(Goal).
 
 % Registered so predicate_property/2 reports meta_predicate(T) for them —
 % which is where Logtalk's compiler looks when it compiles the qualified
@@ -864,9 +840,6 @@ make_directory(Directory) :-
 
 delete_directory(Directory) :-
 	rmdir(Directory).
-
-delete_file(File) :-
-	delete(File).
 
 rename_file(Old, New) :-
 	rename(Old, New).

@@ -38,8 +38,9 @@ public static partial class MetaBuiltins
         StreamHandle h;
         try
         {
-            h = new StreamHandle(
-                streams.NextId(), new StreamReader(path), "read", path);
+            h = new StreamHandle(streams.NextId(),
+                new StreamReader(HostFileStream.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)),
+                "read", path);
         }
         catch (FileNotFoundException)
         {
@@ -52,6 +53,10 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw OpenFailed(ex, path);
         }
         streams.Add(h);
         streams.SetCurrentInput(h);
@@ -101,14 +106,20 @@ public static partial class MetaBuiltins
         StreamHandle h;
         try
         {
-            h = new StreamHandle(
-                streams.NextId(), new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path);
+            h = new StreamHandle(streams.NextId(),
+                new StreamWriter(HostFileStream.Open(path, FileMode.Create, FileAccess.Write, FileShare.Read))
+                    { NewLine = "\n" },
+                "write", path);
         }
         catch (DirectoryNotFoundException)
         {
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw OpenFailed(ex, path);
         }
         streams.Add(h);
         streams.SetCurrentOutput(h);
@@ -134,10 +145,21 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    // As open/3: what the host refuses (a directory, a read-only file) is a
+    // permission error, any other failure to open a system error.
+    private static Shumway.Core.PrologRuntimeException OpenFailed(Exception ex, string path)
+        => ex is UnauthorizedAccessException
+            ? new Shumway.Core.PrologRuntimeException(
+                "permission_error", "open,source_sink", (object)new Shumway.Compiler.Ast.AtomTerm(path))
+            : new Shumway.Core.PrologRuntimeException("system_error", ex.Message);
+
     private static void CloseAndForget(StreamRegistry registry, StreamHandle h)
     {
-        try { h.Reader?.Dispose(); h.Writer?.Flush(); h.Writer?.Dispose(); }
-        catch { /* best-effort close */ }
+        // Best effort, step by step: a flush the host refuses still lets the
+        // file go.
+        try { h.Reader?.Dispose(); } catch { }
+        try { h.Writer?.Flush(); } catch { }
+        try { h.Writer?.Dispose(); } catch { }
         registry.Remove(h);
     }
 

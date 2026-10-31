@@ -26,6 +26,9 @@ public static class ErrorRendering
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(ex);
 
+        // abort/0 is not an error, and the stack of the last one is not its.
+        if (ex is PrologAbortException) return new[] { "Execution aborted." };
+
         var lines = new List<string>
         {
             ex switch

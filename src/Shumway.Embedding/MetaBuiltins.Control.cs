@@ -828,6 +828,10 @@ public static partial class MetaBuiltins
         Term clauseTerm = MaterializeClauseRegister(engine, 0);
         clauseTerm = StripAssertQualifiers(clauseTerm);
         ValidateAssertClause(clauseTerm, engine);
+        // Before the database changes: a clause whose code cannot be placed
+        // must leave nothing behind.
+        if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom)
+            throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second

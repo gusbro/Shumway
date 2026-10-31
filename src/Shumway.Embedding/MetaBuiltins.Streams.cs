@@ -13,7 +13,7 @@ public static partial class MetaBuiltins
         => Shumway.Builtins.StreamBuiltins.IsOpenStream(engine, engine.GetRegister(0));
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
-    /// ISO §8.11.8.1. Enumerates every registered stream on
+    /// enumerates every registered stream on
     /// backtracking. Filename and Mode arguments unify against each
     /// handle's metadata; the stream arg is bound to a Foreign cell
     /// wrapping the underlying <see cref="Shumway.Core.StreamHandle"/>.
@@ -47,11 +47,6 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>stream_property(?Stream, ?Property)</c> — ISO §8.11.8.2.
-    /// Enumerates (Stream, Property) pairs for every registered stream.
-    /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
-    /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
-    /// <c>end_of_stream(at|not)</c>.</summary>
     /// <summary>Property names stream_property/2 recognises — a bound
     /// second argument outside this set is domain_error(stream_property).</summary>
     private static readonly HashSet<string> KnownStreamProperties = new()
@@ -60,6 +55,8 @@ public static partial class MetaBuiltins
         "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
+    /// <summary><c>stream_property(?Stream, ?Property)</c> — ISO §8.11.8.
+    /// Enumerates (Stream, Property) pairs for every registered stream.</summary>
     public static bool StreamProperty(Activation engine)
     {
         var registry = engine.Streams
@@ -129,22 +126,35 @@ public static partial class MetaBuiltins
             if (h.IsReader && Want("end_of_stream"))
             {
                 // §8.11.8: not / at / past. A binary reader has no
-                // TextReader — probe the seekable stream instead.
-                string state = h.PastEof ? "past"
-                    : ReferenceEquals(h, registry.UserInput) ? "not"
-                    : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
-                    : h.BinaryStream is { CanSeek: true } bs
-                        ? (bs.Position < bs.Length ? "not" : "at")
-                        : "not";
-                pairs.Add((h, new CompoundTerm("end_of_stream",
-                    new Term[] { new AtomTerm(state) })));
+                // TextReader — probe the seekable stream instead. A file
+                // that refuses the read leaves the state unknown, and the
+                // property out: §8.11.8 lists no I/O error.
+                string? state;
+                try
+                {
+                    state = h.PastEof ? "past"
+                        : ReferenceEquals(h, registry.UserInput) ? "not"
+                        : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
+                        : h.BinaryStream is { CanSeek: true } bs
+                            ? (bs.Position < bs.Length ? "not" : "at")
+                            : "not";
+                }
+                catch (Shumway.Core.PrologRuntimeException ex) when (ex.Kind == "system_error")
+                {
+                    state = null;
+                }
+                if (state is not null)
+                    pairs.Add((h, new CompoundTerm("end_of_stream",
+                        new Term[] { new AtomTerm(state) })));
             }
             // position/1 — seekable position when the underlying .NET
             // stream has one; otherwise the chars-consumed count of a
             // tracking reader still is a stream position (user_input has
             // one this way — GNU and SWI report one for stdin too), it
-            // just cannot be repositioned to.
-            long? pos = TryGetStreamPosition(h);
+            // just cannot be repositioned to. Asked for only: a writer's
+            // position flushes it, and a query about another property writes
+            // nothing.
+            long? pos = Want("position") || Want("reposition") ? TryGetStreamPosition(h) : null;
             long? propPos = pos
                 ?? (h.Reader is Shumway.Core.PositionTrackingReader tr
                     ? tr.CharsConsumed : null);
@@ -243,11 +253,14 @@ public static partial class MetaBuiltins
         }
         catch (NotSupportedException) { /* fall through */ }
         catch (ObjectDisposedException) { /* fall through */ }
+        // The file refuses the buffered bytes (a device that takes no writes):
+        // no position, rather than an error from a query (§8.11.8 lists none).
+        catch (Shumway.Core.PrologRuntimeException ex) when (ex.Kind == "system_error") { }
         return null;
     }
 
     /// <summary><c>set_stream_position(+Stream, +Position)</c> — ISO
-    /// §8.11.10. Position is an integer matching what
+    /// §8.11.9. Position is an integer matching what
     /// <c>stream_property(_, position(N))</c> yields: characters
     /// consumed for a text read stream, byte offset for binary and
     /// write streams. A text read stream repositions by rewinding the
@@ -266,7 +279,7 @@ public static partial class MetaBuiltins
                 "domain_error", "stream_position", engine, posCell);
         long target = posCell.AsInt;
 
-        // §8.11.7.3: `open(…, [reposition(false)])` refuses the seek even when
+        // §8.11.9.3: `open(…, [reposition(false)])` refuses the seek even when
         // the underlying stream could do it.
         if (!h.Repositionable)
             throw new Shumway.Core.PrologRuntimeException(
@@ -356,7 +369,7 @@ public static partial class MetaBuiltins
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
     }
 
-    /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
+    /// <summary><c>read/1</c> — ISO §8.14.1. Reads one term from the
     /// current input stream.</summary>
     public static bool Read1(Activation engine)
     {
@@ -365,7 +378,7 @@ public static partial class MetaBuiltins
         return ReadOneTermInto(engine, ResolveTextReaderFromHandle(h), regOut: 0);
     }
 
-    /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.2.</summary>
+    /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.1.</summary>
     public static bool Read2(Activation engine) =>
         ReadOneTermInto(engine,
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
@@ -404,7 +417,7 @@ public static partial class MetaBuiltins
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
-            // ISO §8.14.2.3.g — text-term read on a binary stream.
+            // ISO §8.14.1.3 — text-term read on a binary stream.
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         return h.Reader!;
     }
@@ -455,12 +468,31 @@ public static partial class MetaBuiltins
     /// <c>null</c> when only layout/comments remained before end-of-file (the
     /// <c>end_of_file</c> case).</summary>
     private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader)
+        => ParseOneTerm(engine, reader, wantLines: false, out _, out _);
+
+    /// <summary>As above; when <paramref name="wantLines"/>, also the lines the
+    /// sentence's first token and its end dot are on, 0 for a reader that does
+    /// not count lines. At end of file both are the last line.</summary>
+    private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader,
+        bool wantLines, out long beginLine, out long endLine)
     {
+        var counted = wantLines ? reader as Shumway.Core.PositionTrackingReader : null;
+        long startLine = counted?.Line ?? 0;
         // The Arity exemption must match the lexer's, or the scanner would
         // cut a sentence the lexer accepts (raw control bytes in quotes).
         string? text = SentenceScanner.ReadSentenceText(
             reader, out _, allowRawControls: LiveFlags(engine).ArityCompat);
+        // The scanner stops right after the end dot, so the reader is still
+        // on its line.
+        beginLine = endLine = counted?.Line ?? 0;
         if (text is null) return null;
+        if (counted is not null)
+        {
+            beginLine = startLine;
+            int first = SentenceScanner.FirstTokenIndex(text);
+            for (int i = 0; i < first; i++)
+                if (text[i] == '\n') beginLine++;
+        }
         // Parse with the engine's live operator table, not the static
         // default: a runtime `op/3` (e.g. the classic `op(200, fy, ['#'])`
         // before reading a spec file) must be in force for read/1,2, exactly
@@ -490,9 +522,12 @@ public static partial class MetaBuiltins
     /// <summary>§8.14.1.3 validation of read_term's option list, before any
     /// input is consumed: unbound list or element → instantiation_error;
     /// improper/non-list → type_error(list, WholeList); an element that is
-    /// not a recognised Name(Arg) → domain_error(read_option, Element).</summary>
-    private static void ValidateReadOptions(Activation engine, int optReg)
+    /// not a recognised Name(Arg), or <c>line_counts(Begin, End)</c>, →
+    /// domain_error(read_option, Element). True when line_counts is among
+    /// them.</summary>
+    private static bool ValidateReadOptions(Activation engine, int optReg)
     {
+        bool wantsLines = false;
         Term listTerm = MaterializeRegister(engine, optReg);
         Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
         var guard = new SpineGuard(node);
@@ -500,7 +535,7 @@ public static partial class MetaBuiltins
         {
             if (node.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
-            if (node.Tag == Tag.Atom && node.AsAtomId == AtomTable.EmptyListId) return;
+            if (node.Tag == Tag.Atom && node.AsAtomId == AtomTable.EmptyListId) return wantsLines;
             if (node.Tag != Tag.Lis)
                 throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
             int hb = node.AsHeapIndex;
@@ -517,8 +552,10 @@ public static partial class MetaBuiltins
             {
                 var (aid, ar) = FunctorTable.Lookup(
                     engine.GetHeap(head.AsHeapIndex).AsFunctorId);
-                ok = ar == 1
-                    && KnownReadOptions.Contains(AtomTable.GetById(aid)?.Name ?? "");
+                string name = AtomTable.GetById(aid)?.Name ?? "";
+                ok = (ar == 1 && KnownReadOptions.Contains(name))
+                    || (ar == 2 && name == "line_counts");
+                if (ok && ar == 2) wantsLines = true;
             }
             if (!ok)
             {
@@ -544,9 +581,9 @@ public static partial class MetaBuiltins
     private static bool ReadTermWithOptionsCore(
         Activation engine, System.IO.TextReader reader, int termReg, int optReg)
     {
-        ValidateReadOptions(engine, optReg);
+        bool wantsLines = ValidateReadOptions(engine, optReg);
         CheckPastEofByReader(engine, reader);
-        Term? parsed = ParseOneTerm(engine, reader);
+        Term? parsed = ParseOneTerm(engine, reader, wantsLines, out long beginLine, out long endLine);
         if (parsed is null)
         {
             MarkPastEof(engine, reader);
@@ -555,7 +592,8 @@ public static partial class MetaBuiltins
             // ISO: at end_of_file the read options unify with the empty list.
             int nilSlot = engine.AllocateHeap(1);
             engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return UnifyReadOptions(engine, optReg, nilSlot, nilSlot, nilSlot);
+            return UnifyReadOptions(engine, optReg, nilSlot, nilSlot, nilSlot)
+                && (!wantsLines || UnifyLineCounts(engine, optReg, beginLine, endLine));
         }
 
         // Named (non-"_") variables in first-appearance order, with occurrence
@@ -613,7 +651,8 @@ public static partial class MetaBuiltins
         int varsIdx = engine.AllocateHeap(1);
         engine.SetHeap(varsIdx, varsCell);
 
-        return UnifyReadOptions(engine, optReg, vnIdx, singIdx, varsIdx);
+        return UnifyReadOptions(engine, optReg, vnIdx, singIdx, varsIdx)
+            && (!wantsLines || UnifyLineCounts(engine, optReg, beginLine, endLine));
     }
 
     /// <summary>Collects the named (non-anonymous) variable names of an AST in
@@ -673,6 +712,43 @@ public static partial class MetaBuiltins
                         _                => -1,
                     };
                     if (valIdx >= 0 && !engine.Unify(sfx + 1, valIdx))
+                        return false;
+                }
+            }
+            node = ResolveLocal(engine, engine.GetHeap(hb + 1));
+        }
+        return true;
+    }
+
+    /// <summary><c>line_count(+Stream, -Line)</c> — the line the next character
+    /// read from a text input stream comes from, counting from 1. Fails on a
+    /// stream that does not count lines (an output or binary one).</summary>
+    public static bool LineCount2(Activation engine)
+    {
+        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (h.Reader is not Shumway.Core.PositionTrackingReader counted) return false;
+        return engine.UnifyRegisterWithCell(1, Cell.Int(counted.Line));
+    }
+
+    /// <summary>Unifies each <c>line_counts(Begin, End)</c> in the options with
+    /// the lines the term read starts and ends on.</summary>
+    private static bool UnifyLineCounts(Activation engine, int optReg, long begin, long end)
+    {
+        Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
+        while (node.Tag == Tag.Lis)
+        {
+            int hb = node.AsHeapIndex;
+            Cell head = ResolveLocal(engine, engine.GetHeap(hb));
+            if (head.Tag == Tag.Str)
+            {
+                int sfx = head.AsHeapIndex;
+                var (aid, ar) = FunctorTable.Lookup(engine.GetHeap(sfx).AsFunctorId);
+                if (ar == 2 && AtomTable.GetById(aid)?.Name == "line_counts")
+                {
+                    int lines = engine.AllocateHeap(2);
+                    engine.SetHeap(lines, Cell.Int(begin));
+                    engine.SetHeap(lines + 1, Cell.Int(end));
+                    if (!engine.Unify(sfx + 1, lines) || !engine.Unify(sfx + 2, lines + 1))
                         return false;
                 }
             }

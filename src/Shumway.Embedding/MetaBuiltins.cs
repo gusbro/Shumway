@@ -64,6 +64,7 @@ public static partial class MetaBuiltins
         // the collect step groups the solutions by it.
         BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
         BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
+        BuiltinsRegistry.Register("$bagof_free", 3, MetaBuiltins.BagofFree);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
         // (live-engine findall + fail-on-empty), not builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled
@@ -294,7 +295,7 @@ public static partial class MetaBuiltins
             Term, "numbervars(+Term, +Start, -End, +Options)", "As numbervars/3 with an accepted, ignored option list.");
         BuiltinsRegistry.Register("term_variables",    2, TermVariables,
             Term, "term_variables(+Term, -Variables)",
-            "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).", kind: PredicateKind.Iso);
+            "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
             Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
         BuiltinsRegistry.Register("term_string",       2, TermString,
@@ -389,14 +390,14 @@ public static partial class MetaBuiltins
 
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
             Reflect, "current_op(?Priority, ?Type, ?Name)",
-            "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).", kind: PredicateKind.Iso);
+            "Enumerates the operator table; backtracks over every operator.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("char_conversion", 2, CharConversion,
             Reflect, "char_conversion(+InChar, +OutChar)",
             "Registers a one-character-to-one-character mapping the lexer applies "
-            + "to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry.", kind: PredicateKind.Iso);
+            + "to the start of each unquoted token. InChar == OutChar removes the entry.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
             Reflect, "current_char_conversion(?InChar, ?OutChar)",
-            "Enumerates the active char-conversion table (ISO §8.14.10).", kind: PredicateKind.Iso);
+            "Enumerates the active char-conversion table.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("asserta", 2, AssertaRef,
             "Database", "asserta(+Clause, -Ref)",
             "Adds Clause at the front of its predicate and unifies Ref with its clause reference.");
@@ -457,13 +458,13 @@ public static partial class MetaBuiltins
             Io, "read_term_from_stream(+Stream, -Term)", "Reads one term from a read-mode stream.");
         BuiltinsRegistry.Register("current_stream",  3, CurrentStream,
             Io, "current_stream(?Filename, ?Mode, ?Stream)",
-            "Enumerates open streams (ISO §8.11.8.1).");
+            "Enumerates open streams.");
         BuiltinsRegistry.Register("stream_property", 2, StreamProperty,
             Io, "stream_property(?Stream, ?Property)",
-            "Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2).", kind: PredicateKind.Iso);
+            "Enumerates (Stream, Property) pairs for every open stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_stream_position", 2, SetStreamPosition,
             Io, "set_stream_position(+Stream, +Position)",
-            "Seeks the stream to the given byte position (ISO §8.11.10).", kind: PredicateKind.Iso);
+            "Seeks the stream to the given byte position.", kind: PredicateKind.Iso);
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. delegate to the existing
         // stream-aware reader so the builtin set covers both names.
@@ -478,11 +479,14 @@ public static partial class MetaBuiltins
         // (Logtalk's linter).
         BuiltinsRegistry.Register("read_term", 3, ReadTermWithOptions,
             Io, "read_term(+Stream, -Term, +Options)",
-            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options.", kind: PredicateKind.Iso);
+            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1, variables/1 and line_counts/2 options.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("line_count", 2, LineCount2,
+            Io, "line_count(+Stream, -Line)",
+            "The line the next character read from a text input stream comes from, counting from 1.");
         BuiltinsRegistry.Register("read",      1, Read1,
-            Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).", kind: PredicateKind.Iso);
+            Io, "read(-Term)", "Reads one term from current input.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("read",      2, Read2,
-            Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).", kind: PredicateKind.Iso);
+            Io, "read(+Stream, -Term)", "Reads one term from a stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("http_download", 2, HttpDownload,
             Io, "http_download(+URL, +File)",
             "Downloads URL's raw bytes to File (HTTP/HTTPS); a network or "
@@ -496,7 +500,8 @@ public static partial class MetaBuiltins
             Io, "absolute_file_name(+FileSpec, -Absolute)",
             "Resolves a file specification to an absolute path. The basic 2-arg form: "
             + "takes an atom (a path, possibly relative) and unifies the second arg with "
-            + "the absolute form. The 3-arg form with options (extensions, file_type, "
+            + "the absolute form. A trailing / is kept when FileSpec has one and never "
+            + "added. The 3-arg form with options (extensions, file_type, "
             + "access, file_search_path) is not yet supported.");
         BuiltinsRegistry.Register("working_directory", 2, WorkingDirectory2,
             Io, "working_directory(-Old, +New)",

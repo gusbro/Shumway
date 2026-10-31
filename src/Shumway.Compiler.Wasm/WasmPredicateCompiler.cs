@@ -655,6 +655,7 @@ public static class WasmPredicateCompiler
                     return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
+                case Opcode.Nop:    // padding after the last instruction
                     return;
                 case Opcode.PutStructureR:
                 case Opcode.PutListR:

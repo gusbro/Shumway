@@ -39,6 +39,23 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class PredicateCompiler
 {
+    /// <summary>The fewest bytes a compiled predicate takes. A reload inside a
+    /// running query redirects the old entry with <c>execute &lt;new&gt;</c>,
+    /// 5 bytes (PrologEngine.PublishLiveLink): a shorter predicate, one
+    /// <c>proceed</c> or one <c>fail</c>, would have the code laid after it
+    /// overwritten.</summary>
+    public const int MinimumLength = 5;
+
+    // Pads with nop after the last instruction, where nothing runs.
+    private static byte[] AtLeastMinimumLength(byte[] code)
+    {
+        if (code.Length >= MinimumLength) return code;
+        var padded = new byte[MinimumLength];
+        Array.Copy(code, padded, code.Length);
+        for (int i = code.Length; i < MinimumLength; i++) padded[i] = (byte)Opcode.Nop;
+        return padded;
+    }
+
     /// <summary>when <c>false</c>, the compiler omits the
     /// <see cref="Opcode.Meta"/>+<see cref="MetaSubOpcode.DbgInfo"/>
     /// per-clause source-position markers from the emitted bytecode.
@@ -211,7 +228,7 @@ public sealed class PredicateCompiler
                         clauseStart + s.OpcodeOffset, s.CalleeFunctorId, s.IsExecute))
                     .ToArray();
                 return new CompiledPredicate(
-                    em.ToBytes(),
+                    AtLeastMinimumLength(em.ToBytes()),
                     functorId,
                     arity,
                     clauseCount: 1,
@@ -227,7 +244,7 @@ public sealed class PredicateCompiler
                 };
             }
             return new CompiledPredicate(
-                compiledClauses[0].Bytecode,
+                AtLeastMinimumLength(compiledClauses[0].Bytecode),
                 functorId,
                 arity,
                 clauseCount: 1,
@@ -412,7 +429,7 @@ public sealed class PredicateCompiler
         }
 
         return new CompiledPredicate(
-            emitter.ToBytes(), functorId, arity, n, callSites, dispatchSites,
+            AtLeastMinimumLength(emitter.ToBytes()), functorId, arity, n, callSites, dispatchSites,
             Array.Empty<SwitchTable>(), Array.Empty<int>(), position,
             clausePositions)
         {
@@ -1373,7 +1390,7 @@ public sealed class PredicateCompiler
         }
 
         return new CompiledPredicate(
-            emitter.ToBytes(), functorId, arity, n,
+            AtLeastMinimumLength(emitter.ToBytes()), functorId, arity, n,
             callSites, dispatchSites, switchTables, switchTableIdSites, position,
             clausePositions)
         {
@@ -1773,7 +1790,7 @@ public sealed class PredicateCompiler
         }
 
         return new CompiledPredicate(
-            emitter.ToBytes(), functorId, arity, n,
+            AtLeastMinimumLength(emitter.ToBytes()), functorId, arity, n,
             callSites, dispatchSites, switchTables, switchTableIdSites, position,
             clausePositions)
         {

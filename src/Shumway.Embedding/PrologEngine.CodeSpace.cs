@@ -185,22 +185,25 @@ public sealed partial class PrologEngine
     /// <summary>when a query is in flight, the address at
     /// which the per-query overlay begins (the
     /// <see cref="ProgramView"/>'s <c>Split</c>). Persistent growth
-    /// mid-query must stay below this, otherwise the query region's
-    /// linked offsets collide with newly-extended dynamic bytecode.
-    /// The setup code picks this with enough headroom over the
-    /// persistent length for typical mid-query <c>assertz</c>
-    /// growth.</summary>
+    /// mid-query stays below it: <c>AppendCode</c> raises
+    /// <c>resource_error(code_space)</c> rather than cross it.</summary>
     internal int _querySplit = -1;
 
-    /// <summary>how much address space to reserve between
-    /// the persistent program's end and the per-query region's start.
-    /// Mid-query <c>assertz</c> may extend persistent up to this much
-    /// before the persistent / query address ranges would collide; an
-    /// assert that would overflow this gap forces a rebuild
-    /// (effectively reverting to the within-query free-list
-    /// model for that one assertz). 64 MB is more than any realistic
-    /// per-query dynamic burst needs.</summary>
-    private const int PersistentToQueryGap = 64 * 1024 * 1024;
+    /// <summary>The address space reserved for the per-query overlay, just
+    /// below <see cref="Activation.ResumeMarkerBase"/>. The overlay starts
+    /// there whatever the persistent length, so a query can grow the
+    /// persistent program by nearly a gigabyte; only the bytes it uses are
+    /// allocated.</summary>
+    private const int QueryOverlayReserve = 64 * 1024 * 1024;
+
+    /// <summary>Tests only: places the overlay this many bytes past the
+    /// persistent program's end, so the code-space limit is reachable.</summary>
+    internal int? TestQueryGrowthRoom { get; set; }
+
+    /// <summary>What an assert needs left before the overlay: it checks before
+    /// changing the database, so a clause it cannot place leaves nothing behind.
+    /// A single clause's code is far smaller.</summary>
+    internal const int AssertCodeHeadroom = 64 * 1024;
 
     /// <summary>Marks the persistent program as stale so the next query
     /// setup rebuilds it. Called on every consult and on every change

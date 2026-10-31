@@ -70,7 +70,7 @@ public class AtomsAndStringsConformance
     [Fact]
     public void NumberChars_ParsesTheListWhenBothArgumentsAreBound()
     {
-        // ISO §8.16.8: the char list is authoritative when instantiated, so
+        // ISO §8.16.7: the char list is authoritative when instantiated, so
         // number_chars(1, ['0','1']) parses "01"→1 and succeeds (it must not
         // generate "1" from the 1 and fail the compare).
         var engine = new PrologEngine();
@@ -91,7 +91,7 @@ public class AtomsAndStringsConformance
     public void NumberChars_BoundNonCharElement_IsTypeError()
     {
         // A bound element that is not a character wins over an earlier unbound
-        // one (§8.16.8): number_chars(1, [_, []]) → type_error(character, []).
+        // one (§8.16.7): number_chars(1, [_, []]) → type_error(character, []).
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(number_chars(1, [_, []]), error(type_error(character, _), _), true).").Success);

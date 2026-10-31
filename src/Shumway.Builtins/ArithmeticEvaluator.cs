@@ -90,7 +90,7 @@ public static class ArithmeticEvaluator
             case "rand" when engine.Host is IRandomHost rh2:
                 return new Number(rh2.Random.Next());
         }
-        // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
+        // ISO §7.1.2 / §7.9.2: any other atom in arithmetic position raises
         // type_error(evaluable, Name/0) — the culprit is the indicator
         // compound, not the bare atom (a catcher for foo/0 must unify).
         throw EvaluableTypeError(engine, name ?? "?", 0);

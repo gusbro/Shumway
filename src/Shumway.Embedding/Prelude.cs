@@ -86,6 +86,7 @@ internal static class Prelude
         :- meta_predicate(map_list_to_pairs(2, *, *)).
         :- public predsort/3.
         :- public sort/4.
+        :- public atomic_concat/3.
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
@@ -121,6 +122,29 @@ internal static class Prelude
         :- meta_predicate(ifthen(0, 0)).
         :- meta_predicate(ifthenelse(0, 0, 0)).
         :- meta_predicate(apply(1, *)).
+        % The higher-order library predicates: a closure takes the extra
+        % arguments the predicate adds, a grammar body (//) two lists.
+        :- meta_predicate(maplist(1, *)).
+        :- meta_predicate(maplist(2, *, *)).
+        :- meta_predicate(maplist(3, *, *, *)).
+        :- meta_predicate(maplist(4, *, *, *, *)).
+        :- meta_predicate(maplist(5, *, *, *, *, *)).
+        :- meta_predicate(maplist(6, *, *, *, *, *, *)).
+        :- meta_predicate(maplist(7, *, *, *, *, *, *, *)).
+        :- meta_predicate(foldl(3, *, *, *)).
+        :- meta_predicate(foldl(4, *, *, *, *)).
+        :- meta_predicate(foldl(5, *, *, *, *, *)).
+        :- meta_predicate(include(1, *, *)).
+        :- meta_predicate(exclude(1, *, *)).
+        :- meta_predicate(partition(1, *, *, *)).
+        :- meta_predicate(predsort(3, *, *)).
+        :- meta_predicate(countall(0, *)).
+        :- meta_predicate(call_det(0, *)).
+        :- meta_predicate(call_residue_vars(0, *)).
+        :- meta_predicate(time(0)).
+        :- meta_predicate(with_output_to(*, 0)).
+        :- meta_predicate(phrase(//, *)).
+        :- meta_predicate(phrase(//, *, *)).
         % Control constructs: callable, and their arguments are goals.
         % (','/2 and friends are seeded in C# — PrologEngine's
         % SeedControlMetaTemplates — since a ','-term in the directive is
@@ -156,10 +180,10 @@ internal static class Prelude
         % public like coroutining's '$co_alias_check'/1: the goal a wakeup
         % meta-calls resolves globally, not module-locally.
         :- public '$lazy_text_step'/4.
-        :- meta_predicate(phrase_from_stream(2, *)).
-        :- meta_predicate(phrase_from_stream(2, *, *)).
-        :- meta_predicate(phrase_from_file(2, *)).
-        :- meta_predicate(phrase_from_file(2, *, *)).
+        :- meta_predicate(phrase_from_stream(//, *)).
+        :- meta_predicate(phrase_from_stream(//, *, *)).
+        :- meta_predicate(phrase_from_file(//, *)).
+        :- meta_predicate(phrase_from_file(//, *, *)).
         :- public display/1.
         :- public display/2.
         :- public recorda/2.
@@ -1544,7 +1568,8 @@ internal static class Prelude
 
         % ===== atom / number conversion =====
         % atom_number/2 and number_string/2 are C# builtins (parse-or-fail
-        % via TryParse); atomic_list_concat/2,3 and char_type/2 are below.
+        % via TryParse); atomic_concat/3, atomic_list_concat/2,3 and
+        % char_type/2 are below.
 
         % render an atomic term (atom, number or string) as an atom.
         '$atomic_to_atom'(X, X) :- atom(X), !.
@@ -1565,6 +1590,22 @@ internal static class Prelude
             '$atomic_to_atom'(X, AX),
             '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
+
+        %! atomic_concat(+Atomic1, +Atomic2, ?Atom) | Atoms & strings | Concatenates two atomic terms into an atom.
+        atomic_concat(A, B, Atom) :-
+            '$ac_check'(A),
+            '$ac_check'(B),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_concat/3))
+            ),
+            '$atomic_to_atom'(A, AA),
+            '$atomic_to_atom'(B, BA),
+            atom_concat(AA, BA, Atom).
+
+        '$ac_check'(X) :- var(X), !, throw(error(instantiation_error, atomic_concat/3)).
+        '$ac_check'(X) :- atomic(X), !.
+        '$ac_check'(X) :- throw(error(type_error(atomic, X), atomic_concat/3)).
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-

@@ -45,6 +45,7 @@ public sealed partial class BytecodeInterpreter
     public void RunTeardownCleanups(ProgramView code)
     {
         if (!_engine.HasCleanupHandlers && !_engine.HasPendingCleanups) return;
+        _engine.BeginTeardown();
         _engine.FireAllRemainingCleanups();
         FlushPendingCleanups(code);
     }

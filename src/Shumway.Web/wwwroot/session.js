@@ -16,6 +16,7 @@ export const SOLUTION = 's';
 export const LAST = 'l';
 export const FAILED = 'f';
 export const ERROR = 'e';
+export const ABORTED = 'a';
 
 let engine = null;
 

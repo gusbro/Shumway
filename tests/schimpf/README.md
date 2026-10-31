@@ -34,10 +34,10 @@ cd suite
 echo "run_iso." | ../../../dist/Release/shumway harness.pl ../auxiliaries_shumway.pl ../driver.pl
 ```
 
-Expected summary (2026-09-27):
+Expected summary (2026-10-30):
 
 ```
-summary(total(945),ok(925),failed(13),skipped(7),broken(0),malformed(8),non_test(0))
+summary(total(945),ok(914),failed(24),skipped(7),broken(0),malformed(8),non_test(0))
 ```
 
 - **skipped 7** — tests the author marked `fixme` in `iso.tst`.
@@ -66,7 +66,7 @@ artifacts rather than engine questions:
   SWI and Scryer) raises `existence_error(stream, bin)` there; without a
   pre-opened alias the section's `open` never runs and 10 tests cascade.
 
-## The 13 remaining failures — documented divergences
+## The 24 remaining failures — documented divergences
 
 Each was arbitrated against the ISO text and the reference engines before
 deciding to keep Shumway's behavior. Test numbers are the driver's
@@ -76,8 +76,10 @@ sequential count over `iso.tst`.
 |---|---|---|---|
 | 130 | `functor(T, foo, N)` one past `max_arity`: `representation_error(max_arity)` | `max_arity` is `unbounded`; an arity past the address space's capacity is `resource_error(finite_memory)` | A term's arity has no limit of its own here, as in SICStus; stc#70 defines `max_procedure_arity` for exactly this kind of processor (1023, read-only). The suite's own commented variant reads the flag first |
 | 373 | `close(foo, [force(true)])` on a closed alias succeeds | `existence_error(stream, foo)` | `force(true)` covers errors *while closing* (§8.11.6); resolving the alias precedes that. SWI and Scryer raise too |
+| 395 | `at_end_of_stream(user_output)` fails | `permission_error(input, stream, user_output)` | a failure reads as "not at end yet", so a loop waiting for the end of a stream opened for writing never ends; every other input predicate raises this error on an output stream |
 | 403 | `set_stream_position(S, 3.5)` on a closed S: `domain_error(stream_position, 3.5)` | `existence_error(stream, …)` | §8.11.9.3 lists the existence check (d) before position validity (e); when several error conditions hold the choice is implementation-defined (§7.12.1) |
 | 622 | `current_op(1, 2, _)`: `type_error(atom, 2)` | `domain_error(operator_specifier, 2)` | §8.14.4.3's specifier error is domain_error whatever the term's type; GNU agrees exactly |
+| 708, 774, 785-788, 793, 817, 822, 823 | a codes list with an element that is not an integer (`atom_codes(_, [a])`, `number_codes(1, [[]])`, ...): `representation_error(character_code)` | `type_error(integer, E)` | Cor.2 rewrote 8.16.5.3 and 8.16.8.3: an element that is not an integer is `type_error(integer, E)`, and `representation_error(character_code)` is for an integer that names no character. The suite follows the 1995 condition d |
 | 760 | `number_chars(N, [1\|_])`: `type_error(character, 1)` | `instantiation_error` | with N unbound the partial list is checked first — the outcome Neumerkel's number_chars set sanctions |
 | 762 | `number_chars([], 1)`: `type_error(list, 1)` | `type_error(number, [])` | both conditions hold; the Number argument is checked first (§7.12.1 leaves the pick to the processor) |
 | 816 | `number_codes(N, ['1'\|_])`: `representation_error(character_code)` | `instantiation_error` | same partial-list precedence as 760, codes spelling |

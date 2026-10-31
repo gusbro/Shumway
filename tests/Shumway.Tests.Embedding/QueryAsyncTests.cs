@@ -138,6 +138,56 @@ public class QueryAsyncTests
         });
     }
 
+    // A cancelled query still runs the cleanup of every setup_call_cleanup scope
+    // it abandons. The cancel request stays pending while the query is torn
+    // down, and the cleanup's own calls are safe points: without a teardown
+    // that sets the request aside, the cleanup cancelled itself before it ran.
+    [Theory]
+    [InlineData(@"setup_call_cleanup(true, (qat_entered, count(2000000000)), assertz(cleaned))")]
+    [InlineData(@"setup_call_cleanup(true, (qat_entered, repeat, fail), assertz(cleaned))")]
+    [InlineData(@"setup_call_cleanup(true, setup_call_cleanup(true, (qat_entered, count(2000000000)), assertz(inner)), (inner, assertz(cleaned)))")]
+    public void QueryAll_Cancellation_RunsTheCleanupsOfTheScopesItAbandons(string goal)
+    {
+        var e = WithCounter();
+        e.ConsultString(":- dynamic(cleaned/0). :- dynamic(inner/0).");
+        // The request is made once the query is inside the scope: one
+        // cancelled before it gets there has nothing to clean up.
+        using var cts = new CancellationTokenSource();
+        CancelOnEntry.Register(e, cts);
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+        {
+            foreach (var _ in e.QueryAll(goal + ".", cts.Token)) { }
+        });
+        Assert.True(e.Query("cleaned.").Success, goal);
+    }
+
+    // Foreign predicates are registered once per process; the tests of a class
+    // run one at a time, so the token the next call cancels can be a static.
+    private static class CancelOnEntry
+    {
+        private static readonly object Gate = new();
+        private static bool _registered;
+        private static CancellationTokenSource? _current;
+
+        public static void Register(PrologEngine engine, CancellationTokenSource cts)
+        {
+            lock (Gate)
+            {
+                _current = cts;
+                if (_registered) return;
+                engine.RegisterPredicates(typeof(CancelOnEntry));
+                _registered = true;
+            }
+        }
+
+        [PrologPredicate("qat_entered/0")]
+        public static bool Entered(Shumway.Core.Activation engine)
+        {
+            _current?.CancelAfter(20);
+            return true;
+        }
+    }
+
     [Fact]
     public async Task QueryAsync_AlreadyCancelledToken_DoesNotEnumerate()
     {

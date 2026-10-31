@@ -7,6 +7,9 @@ Accepted (2026-08-14; ships with 0.9.0).
 Landing before any release, so no published version changes behavior: the
 first release and this convention arrive together.
 
+Amended 2026-10-31: `absolute_file_name/2` no longer adds a trailing `/` to a
+directory (point 5).
+
 ## Context
 
 Shumway's path-producing builtins returned the host's native form. On
@@ -90,11 +93,11 @@ A = 'C:/temp/x.pl', OS = 'C:\\temp\\x.pl'.
 SWI's name and semantics, because that is what portable code (Logtalk's
 `library(os)` among it) already calls. On Unix it is the identity.
 
-### 5. A directory ends with `/`
+### 5. `working_directory/2` ends with `/`
 
-`working_directory/2` returns `C:/temp/`; `absolute_file_name/2` of a
-directory returns `C:/temp/`. Before this ADR the two disagreed
-(`C:\temp\` versus `C:\temp`), which is its own bug.
+`working_directory/2` returns `C:/temp/`, a form a file name can be
+concatenated onto. `absolute_file_name/2` keeps a trailing `/` when its
+argument has one and never adds one (amended 2026-10-31, see the end).
 
 ## Consequences
 
@@ -129,3 +132,20 @@ loss for a cosmetic gain.
 vary between programs on one engine, so library code could not rely on
 either form — the worst of both. The single escape hatch is a conversion
 predicate, not a mode.
+
+## Amendment (2026-10-31): `absolute_file_name/2` does not add a `/`
+
+As first written, point 5 also made `absolute_file_name/2` of an existing
+directory end with `/`, to agree with `working_directory/2`. That made the
+answer depend on the file system and not only on the argument: `C:/temp/x`
+resolved to `C:/temp/x` before the directory was created and to `C:/temp/x/`
+after. A program that builds a path or URL this way and compares it with one
+built at another time, or with one whose `/` it stripped, finds two values for
+one directory. Logtalk's packs tool does both: it saves a registry URL without
+the `/`, and its lock checks rebuild the URL through `absolute_file_name/2`,
+so the saved and expected URLs never matched.
+
+`absolute_file_name/2` now keeps a trailing `/` when the argument has one and
+never adds one. SWI-Prolog and SICStus do not add one either.
+`working_directory/2` keeps its `/`: it always names a directory, so its form
+does not depend on the file system.

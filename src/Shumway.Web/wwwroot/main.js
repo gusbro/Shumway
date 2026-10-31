@@ -241,7 +241,7 @@ async function step() {
   debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
   freshLine();
-  if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); wasmAllTick(); return; }
+  if (aborted || tag === session.ABORTED) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); wasmAllTick(); return; }
   if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); wasmAllTick(); return; }
   if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); wasmAllTick(); return; }
   if (tag === session.LAST) {

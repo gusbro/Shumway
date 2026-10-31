@@ -93,6 +93,39 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$bagof_free'(Candidates, Bound, Witness)</c> — the witness
+    /// of a compiled bagof/setof whose variables may already be bound when it
+    /// is called. Witness is <c>'$w'(V1..Vn)</c> over the unbound variables of
+    /// Candidates that do not occur in Bound (the template and the
+    /// ^-quantified terms), in first-occurrence order, or the atom
+    /// <c>'$w'</c> when there are none: the free variables of the goal as
+    /// instantiated at the call (ISO §7.1.1.4), not as written.</summary>
+    public static bool BagofFree(Activation engine)
+    {
+        int roots = engine.AllocateHeap(2);
+        engine.SetHeap(roots, engine.GetRegister(0));
+        engine.SetHeap(roots + 1, engine.GetRegister(1));
+        var boundVars = new List<int>();
+        CollectVars(engine, roots + 1, new HashSet<int>(), boundVars);
+        var candidateVars = new List<int>();
+        CollectVars(engine, roots, new HashSet<int>(), candidateVars);
+        var bound = new HashSet<int>(boundVars);
+        var free = new List<int>(candidateVars.Count);
+        foreach (int v in candidateVars)
+        {
+            if (!bound.Contains(v)) free.Add(v);
+        }
+
+        int witnessAtom = AtomTable.Intern("$w", permanent: true).Id;
+        if (free.Count == 0)
+            return engine.UnifyRegisterWithCell(2, Cell.Atom(witnessAtom));
+        int b = engine.AllocateHeap(free.Count + 1);
+        engine.SetHeap(b, Cell.Functor(FunctorTable.Intern(witnessAtom, free.Count)));
+        for (int i = 0; i < free.Count; i++)
+            engine.SetHeap(b + 1 + i, Cell.Ref(free[i]));
+        return engine.UnifyRegisterWithCell(2, Cell.Str(b));
+    }
+
     /// <summary>Canonical witness key, straight off the heap: unbound
     /// variables (and attvars) key by first-occurrence index of their deref
     /// address — so two witnesses that alias their variables in the same

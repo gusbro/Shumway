@@ -140,6 +140,12 @@ false.
   responsive) and prints `% Execution aborted.`. This covers the usual
   runaways, including failure-driven builtin loops like
   `between(0, BIG, X), fail` and `repeat, fail`.
+- A program can stop its own query by calling `abort/0`. The top level
+  prints `% Execution aborted.`, as it does for `Esc`, and waits for the
+  next query. `catch/3` cannot catch an abort, but every cleanup set up
+  with `setup_call_cleanup/3` still runs. If the abort happens while the
+  files named on the command line are loading, the files after it are not
+  loaded. A program built with `shumway-link --exe` exits with status 1.
 - A query wider than the terminal wraps across rows; the cursor tracks
   the edit position. `↑`/`↓` walk history, `Tab` completes predicate
   names, and the usual Home/End/Ctrl-A/E/U/K editing keys work.
@@ -568,6 +574,23 @@ catch (Shumway.Core.PrologRuntimeException ex)
     Console.WriteLine(ex.Ball);   // error(evaluation_error(zero_divisor), _)
 }
 ```
+
+When a query calls `abort/0`, your code gets a
+`Shumway.Core.PrologAbortException` instead:
+
+```csharp
+try { engine.Query("run."); }
+catch (Shumway.Core.PrologAbortException)
+{
+    Console.WriteLine("the program aborted");
+}
+```
+
+It comes out of the `Query` or `QueryAll` call you made, even when the abort
+happened deeper down, for example in a file the query consulted. `catch/3` in
+the program cannot stop it, and every cleanup set up with
+`setup_call_cleanup/3` has already run when you receive it. Those cleanups
+also run when you cancel a query through its `CancellationToken`.
 
 ### Loading a precompiled bundle
 
@@ -1244,6 +1267,23 @@ Two rules to keep in mind:
   underscore begins a variable name, just as it does anywhere else.
 - They work in every number: decimal, binary, octal and hexadecimal
   integers, and both parts of a float (`1_1.2_5e1_1`).
+
+### Options of `read_term/3`
+
+| Option | Gives |
+|---|---|
+| `variables(Vars)` | The term's variables, in order of first appearance. |
+| `variable_names(Pairs)` | `Name = Var` for each named variable. |
+| `singletons(Pairs)` | `Name = Var` for each named variable that occurs once. |
+| `line_counts(Begin, End)` | The line of the term's first token, past any layout and comments, and the line of its end dot, counting from 1. |
+
+At end of file the three lists are empty. `double_quotes/1`,
+`syntax_errors/1`, `term_position/1`, `subterm_positions/1`, `cycles/1`,
+`backquoted_string/1`, `character_escapes/1`, `module/1` and `comments/1`
+are accepted, so code written for other systems runs, and have no effect.
+
+`line_count(Stream, Line)` gives the line the next character of a text
+input stream will come from.
 
 ### Operator atoms as operands
 

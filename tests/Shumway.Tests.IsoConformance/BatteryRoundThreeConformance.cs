@@ -246,7 +246,7 @@ public class BatteryRoundThreeConformance
     [Fact]
     public void NegationKeepsItsGoalsCutLocal()
     {
-        // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so the cut inside G
+        // §8.15.1: `\+ G` is `(call(G) -> fail ; true)`, so the cut inside G
         // commits within G only — spliced bare into the helper it used to cut
         // away the very clause that makes the negation succeed.
         Succeeds("\\+ ((!, fail)).");

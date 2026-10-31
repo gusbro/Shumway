@@ -401,6 +401,12 @@ internal static class Program
                 return haltCode;
             return sol.Success ? 0 : 1;
         }}
+        catch (Shumway.Core.PrologAbortException)
+        {{
+            // abort/0 with no top level to return to: exit 1, as GNU and SWI do.
+            System.Console.Error.WriteLine(""% Execution aborted."");
+            return 1;
+        }}
         catch (Shumway.Core.PrologRuntimeException ex)
         {{
             System.Console.Error.WriteLine(""shumway: uncaught: "" + ex.Message);

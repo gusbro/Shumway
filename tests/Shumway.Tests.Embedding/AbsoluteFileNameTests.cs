@@ -58,6 +58,49 @@ public class AbsoluteFileNameTests
         Assert.True(sol.Success);
     }
 
+    /// <summary>ADR-044 amendment: the answer for a directory does not depend
+    /// on whether it exists, so a path built before the directory is created
+    /// compares equal to one built after.</summary>
+    [Fact]
+    public void AbsoluteFileName_Directory_AnswersTheSameBeforeAndAfterItExists()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-afn-" + Guid.NewGuid().ToString("N"));
+        string spec = dir.Replace('\\', '/');
+        var e = new PrologEngine();
+        string query = $@"absolute_file_name('{spec}', A).";
+        try
+        {
+            var before = e.Query(query);
+            Directory.CreateDirectory(dir);
+            var after = e.Query(query);
+            Assert.True(before.Success && after.Success);
+            Assert.Equal(spec, Assert.IsType<AtomTerm>(before["A"]).Name);
+            Assert.Equal(spec, Assert.IsType<AtomTerm>(after["A"]).Name);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir);
+        }
+    }
+
+    [Fact]
+    public void AbsoluteFileName_DirectoryWrittenWithSlash_KeepsIt()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-afn-" + Guid.NewGuid().ToString("N"));
+        string spec = dir.Replace('\\', '/') + "/";
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var sol = new PrologEngine().Query($@"absolute_file_name('{spec}', A).");
+            Assert.True(sol.Success);
+            Assert.Equal(spec, Assert.IsType<AtomTerm>(sol["A"]).Name);
+        }
+        finally
+        {
+            Directory.Delete(dir);
+        }
+    }
+
     [Fact]
     public void WorkingDirectory_ReadOnlyForm_Returns_CurrentCwd()
     {

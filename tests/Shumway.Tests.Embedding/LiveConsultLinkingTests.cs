@@ -87,6 +87,32 @@ public class LiveConsultLinkingTests
         finally { System.IO.File.Delete(a); System.IO.File.Delete(b); }
     }
 
+    // A reload redirects the old entry with a 5-byte execute. A predicate of one
+    // instruction (a fact with only anonymous arguments is a lone proceed, a
+    // clause that fails a lone fail) has to leave room for it: otherwise the
+    // redirect writes over the predicate laid after it, and that one's own
+    // redirect over the first's operand. A mutation testing tool reloads its
+    // mutants this way, inside one query.
+    [Fact]
+    public void MidQueryReload_OfAOneInstructionPredicate_LeavesTheNextOneIntact()
+    {
+        string v1 = WriteTemp("tiny(_).\nnext(X) :- X is 4 + 2 - 1.\n");
+        string v2 = WriteTemp("tiny(_) :- fail.\nnext(X) :- X is 4 + 2 - 2.\n");
+        try
+        {
+            var engine = new PrologEngine();
+            string p1 = v1.Replace("\\", "/");
+            string p2 = v2.Replace("\\", "/");
+
+            var sol = engine.Query($@"consult('{p1}'), tiny(a), next(A), A == 5,
+                reconsult('{p2}'), \+ tiny(a), next(B), B == 4,
+                reconsult('{p1}'), tiny(a), next(C), C == 5.");
+
+            Assert.True(sol.Success);
+        }
+        finally { System.IO.File.Delete(v1); System.IO.File.Delete(v2); }
+    }
+
     private static string RenderList(Term? t)
     {
         var sb = new System.Text.StringBuilder("[");

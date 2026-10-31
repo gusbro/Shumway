@@ -356,13 +356,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
                    && declarers.Contains(localModule)
                 ? ModuleRewrite.MetaArgSpecOfTemplate(template)
                 : null;
-        else if (template is not null) spec = ModuleRewrite.MetaArgSpecOfTemplate(template);
-        else
-        {
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            string? name = AtomTable.GetById(atomId)?.Name;
-            spec = name is null ? null : ModuleRewrite.LibraryMetaArgSpec(name, arity);
-        }
+        else spec = template is not null ? ModuleRewrite.MetaArgSpecOfTemplate(template) : null;
         _metaArgSpecCache[key] = (template, spec);
         return spec;
     }

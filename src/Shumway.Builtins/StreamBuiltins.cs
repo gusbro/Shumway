@@ -169,8 +169,8 @@ public static class StreamBuiltins
     /// other Prolog locks the files it opens, and programs that reopen a file
     /// they already hold open are ordinary — the .NET convenience
     /// constructors would fail them with a sharing violation.</summary>
-    private static FileStream SharedFileStream(string path, FileMode fm, FileAccess fa)
-        => new(path, fm, fa, FileShare.ReadWrite);
+    private static Stream SharedFileStream(string path, FileMode fm, FileAccess fa)
+        => HostFileStream.Open(path, fm, fa, FileShare.ReadWrite);
 
     private static StreamWriter SharedWriter(
         string path, bool append, string encodingName, bool writeBom)
@@ -622,14 +622,7 @@ public static class StreamBuiltins
         if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
             || ReferenceEquals(h, st.UserError))
             return true;
-        if (h.Reader is not null) h.Reader.Dispose();
-        if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
-        if (h.BinaryStream is not null)
-        {
-            try { h.BinaryStream.Flush(); } catch { }
-            h.BinaryStream.Dispose();
-        }
-        engine.Streams!.Remove(h);
+        Release(engine, h, force: false);
         return true;
     }
 
@@ -648,19 +641,35 @@ public static class StreamBuiltins
         if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
             || ReferenceEquals(h, st.UserError))
             return true;
-        try
-        {
-            if (h.Reader is not null) h.Reader.Dispose();
-            if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
-            if (h.BinaryStream is not null)
-            {
-                try { h.BinaryStream.Flush(); } catch { if (!force) throw; }
-                h.BinaryStream.Dispose();
-            }
-        }
-        catch when (force) { /* force(true) swallows close errors */ }
-        engine.Streams!.Remove(h);
+        Release(engine, h, force);
         return true;
+    }
+
+    // A stream that is closed lets go of its file and leaves the registry even
+    // when writing what it still buffers fails: the failure is raised after,
+    // and force(true) swallows it.
+    private static void Release(Activation engine, StreamHandle h, bool force)
+    {
+        PrologRuntimeException? failed = null;
+        if (h.Reader is not null) Attempt(h.Reader.Dispose, ref failed);
+        if (h.Writer is not null)
+        {
+            Attempt(h.Writer.Flush, ref failed);
+            Attempt(h.Writer.Dispose, ref failed);
+        }
+        if (h.BinaryStream is not null)
+        {
+            Attempt(h.BinaryStream.Flush, ref failed);
+            Attempt(h.BinaryStream.Dispose, ref failed);
+        }
+        engine.Streams!.Remove(h);
+        if (failed is not null && !force) throw failed;
+    }
+
+    private static void Attempt(System.Action step, ref PrologRuntimeException? failed)
+    {
+        try { step(); }
+        catch (PrologRuntimeException ex) { failed ??= ex; }
     }
 
     private static Cell DerefLocal(Activation engine, Cell c)
@@ -752,7 +761,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>get_code/1</c> — reads one character code from
-    /// current input. EOF returns -1. ISO §8.12.4.</summary>
+    /// current input. EOF returns -1. ISO §8.12.1.</summary>
     public static bool GetCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
@@ -760,14 +769,14 @@ public static class StreamBuiltins
         return ReadCodeInto(engine, h, regOut: 0);
     }
 
-    /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.4.</summary>
+    /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.1.</summary>
     public static bool GetCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadCodeInto(engine, h, regOut: 1);
     }
 
-    /// <summary><c>peek_code/1</c> — ISO §8.12.5.</summary>
+    /// <summary><c>peek_code/1</c> — ISO §8.12.2.</summary>
     public static bool PeekCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
@@ -775,7 +784,7 @@ public static class StreamBuiltins
         return PeekCodeInto(engine, h, regOut: 0);
     }
 
-    /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.5.</summary>
+    /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.2.</summary>
     public static bool PeekCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
@@ -783,7 +792,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>put_code(+Code)</c> — writes the character with the
-    /// given code to current output. ISO §8.12.6.</summary>
+    /// given code to current output. ISO §8.12.3.</summary>
     public static bool PutCode1(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput
@@ -792,7 +801,7 @@ public static class StreamBuiltins
         return true;
     }
 
-    /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.6.</summary>
+    /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.3.</summary>
     public static bool PutCode2(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
@@ -933,7 +942,7 @@ public static class StreamBuiltins
         throw new PrologRuntimeException("type_error", "in_character", engine, c);
     }
 
-    /// <summary>§8.12.4.3.c: in_character_code = a char code or -1.</summary>
+    /// <summary>§8.12.1.3: in_character_code = a char code or -1.</summary>
     private static void CheckOutArgIsInCharacterCode(Activation engine, int regOut)
     {
         Cell c = Resolve(engine, engine.GetRegister(regOut));
@@ -1202,7 +1211,7 @@ public static class StreamBuiltins
         CheckPastEof(engine, h);
         int c = h.Reader!.ReadCodePoint();
         if (c < 0) h.PastEof = true;
-        // ISO §8.12.4: EOF is the integer -1.
+        // ISO §8.12.1: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
@@ -1322,7 +1331,7 @@ public static class StreamBuiltins
     {
         var h = engine.Streams?.CurrentOutput ?? throw new InvalidOperationException(
             "Activation has no stream registry.");
-        h.Writer!.Flush();
+        Flush(h);
         return true;
     }
 
@@ -1330,30 +1339,37 @@ public static class StreamBuiltins
     public static bool FlushOutput1(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
-        h.Writer!.Flush();
+        Flush(h);
         return true;
+    }
+
+    // An output stream writes text through its writer, or bytes (type(binary)).
+    private static void Flush(StreamHandle h)
+    {
+        if (h.Writer is not null) h.Writer.Flush();
+        else h.BinaryStream?.Flush();
     }
 
     // ---------- at_end_of_stream ----------
 
-    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. Defined by
-    /// stream property (end_of_stream at/past), and §8.11.8.3 lists no
-    /// permission error — an output stream simply lacks the property, so
-    /// the call fails rather than raising.</summary>
+    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. An output
+    /// stream raises permission_error(input, stream, S), as every input
+    /// predicate does. Not a failure: that reads as "not at end yet", and a
+    /// loop waiting for the end of a stream opened for writing never ends.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return AtEnd(engine, h);
     }
 
-    /// <summary><c>at_end_of_stream/0</c> — checks current_input.</summary>
+    /// <summary><c>at_end_of_stream/0</c> — ISO §8.11.8. Checks current_input.</summary>
     public static bool AtEndOfStream0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput;
         return h is not null && AtEnd(engine, h);
     }
 
-    /// <summary>True when the position is at or past end (§8.11.9). A
+    /// <summary>True when the position is at or past end (§8.11.8). A
     /// binary reader has no TextReader — probe the seekable stream.</summary>
     private static bool AtEnd(Activation engine, StreamHandle h)
     {

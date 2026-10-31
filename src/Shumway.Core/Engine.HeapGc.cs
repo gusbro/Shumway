@@ -183,11 +183,38 @@ public sealed partial class Activation
     // promptly.
     private volatile bool _cancelRequested;
 
+    // A cancelled query is still torn down: the cleanups of the
+    // setup_call_cleanup scopes it abandons run after the request was seen,
+    // through calls that are safe points. Teardown sets the request aside so
+    // they are not cancelled in turn, and drops one that arrives during it.
+    // The gate keeps a request from another thread from interleaving with
+    // that; safe points still read only _cancelRequested.
+    private readonly object _cancelGate = new();
+    private bool _tearingDown;
+
     /// <summary>Requests that the running query abort at the next heap GC
     /// watermark crossing (a query that allocates no heap is not cancellable).
     /// Thread-safe; the engine that observes it throws
-    /// <see cref="OperationCanceledException"/>.</summary>
-    public void RequestCancellation() => _cancelRequested = true;
+    /// <see cref="OperationCanceledException"/>. Ignored once the query is
+    /// being torn down.</summary>
+    public void RequestCancellation()
+    {
+        lock (_cancelGate)
+        {
+            if (!_tearingDown) _cancelRequested = true;
+        }
+    }
+
+    /// <summary>The query is over and its leftover cleanups are about to run:
+    /// a pending or later cancellation request no longer applies.</summary>
+    public void BeginTeardown()
+    {
+        lock (_cancelGate)
+        {
+            _tearingDown = true;
+            _cancelRequested = false;
+        }
+    }
 
     /// <summary>Clears a pending cancellation request (e.g. before reusing an
     /// engine).</summary>

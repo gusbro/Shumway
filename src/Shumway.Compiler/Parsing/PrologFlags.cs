@@ -118,7 +118,7 @@ public sealed class PrologFlags
     /// <c>char_conversion/2</c> builtin write here; the
     /// <c>current_char_conversion/2</c> builtin reads from here.
     /// An identity mapping (In == Out) removes the entry per ISO
-    /// §8.14.9.</summary>
+    /// §8.14.5.</summary>
     public Dictionary<char, char> CharConversion { get; } = new();
 
     /// <summary>Command-line argument list, surfaced as the

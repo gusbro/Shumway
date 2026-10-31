@@ -239,4 +239,33 @@ public class Chunk174Tests
         Assert.Equal(0, runExit);
         Assert.Contains("hello", runStdout);
     }
+
+    // abort/0 with no top level to return to: the cleanups run and the
+    // executable exits with status 1. Opt-in like the test above.
+    [Fact]
+    public void Cli_ExeAbort_RunsTheCleanupAndExitsWithOne()
+    {
+        if (Environment.GetEnvironmentVariable("SHUMWAY_RUN_EXE_TESTS") != "1") return;
+        if (!File.Exists(LinkExe) || !File.Exists(CompileExe)) return;
+
+        using var dir = new TempDir();
+        string pl = Path.Combine(dir.Path, "app.pl");
+        File.WriteAllText(pl,
+            ":- module(app).\n:- public main/0.\n"
+            + "main :- setup_call_cleanup(true, abort, (write(cleaned), nl)).\n");
+        string shmo = Path.Combine(dir.Path, "app.shmo");
+        string shum = Path.Combine(dir.Path, "app.shum");
+        string exe = Path.Combine(dir.Path, "app");
+
+        Assert.Equal(0, RunCli(CompileExe, out _, out _, 30_000, "-o", shmo, pl));
+        int linkExit = RunCli(LinkExe, out _, out string linkStderr, 120_000,
+            "-o", shum, "--goal", "main", "--exe", exe, shmo);
+        Assert.True(linkExit == 0, "linker failed: " + linkStderr);
+
+        string producedExe = OperatingSystem.IsWindows() ? exe + ".exe" : exe;
+        int runExit = RunCli(producedExe, out string runStdout, out string runStderr, 10_000);
+        Assert.Equal(1, runExit);
+        Assert.Contains("cleaned", runStdout);
+        Assert.Contains("% Execution aborted.", runStderr);
+    }
 }

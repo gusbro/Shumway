@@ -379,19 +379,32 @@ public sealed partial class Activation
     /// (ADR-035).</summary>
     public Action<Activation, int>? ProgramMoved { get; set; }
 
+    /// <summary>The bytes <see cref="AppendCode"/> can still add before the
+    /// program reaches the query overlay at <see cref="CurrentQuerySplit"/>;
+    /// unbounded when no overlay is in place.</summary>
+    public int CodeRoom => CurrentQueryOverlay is null
+        ? int.MaxValue
+        : Math.Max(0, CurrentQuerySplit - ProgramLength);
+
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
     /// and returns its start offset. Existing offsets stay valid — the
     /// content is only ever appended, never moved. Capacity doubling keeps
     /// a long-running query's repeated dynamic recompiles from re-copying
-    /// the whole (growing) buffer each time.</summary>
+    /// the whole (growing) buffer each time. Raises
+    /// <c>resource_error(code_space)</c> rather than append past
+    /// <see cref="CurrentQuerySplit"/>: the view reads those addresses from
+    /// the query overlay, so code placed there would never run.</summary>
     public int AppendCode(byte[] chunk)
     {
         byte[] program = CurrentProgram ?? Array.Empty<byte>();
         int offset = ProgramLength;
         int needed = offset + chunk.Length;
+        if (chunk.Length > CodeRoom)
+            throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
         if (needed > program.Length)
         {
-            var grown = new byte[Math.Max(needed, program.Length * 2)];
+            long limit = CurrentQueryOverlay is null ? int.MaxValue : CurrentQuerySplit;
+            var grown = new byte[Math.Max(needed, Math.Min(program.Length * 2L, limit))];
             Array.Copy(program, grown, offset);
             CurrentProgram = program = grown;
             // bumping the generation tells the interpreter's
@@ -951,9 +964,9 @@ public sealed partial class Activation
     // Same lock-free-read / locked-intern discipline as the atom/functor
     // tables.
     //
-    // ResumeMarkerBase is set high enough that no plausible bytecode
-    // address collides (the per-query overlay lives at
-    // PersistentToQueryGap which is ~64 MB — markers start at 1 GB).
+    // ResumeMarkerBase is set high enough that no bytecode address collides:
+    // the per-query overlay sits just below it, and AppendCode keeps the
+    // persistent program below the overlay.
     // ResumeMarkerCursorStride is no longer part of the encoding; it
     // survives only as the IL emitters' per-predicate cursor-count budget
     // (an emit-shape policy, not a correctness cap).

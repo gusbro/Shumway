@@ -5,7 +5,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 152: ISO §6.4.2 / §8.14.9-10 character conversion. Adds
+/// Chunk 152: ISO §6.4.2 / §8.14.5-6 character conversion. Adds
 /// the <c>:- char_conversion(In, Out)</c> directive, the runtime
 /// <c>char_conversion/2</c> and <c>current_char_conversion/2</c>
 /// builtins, and lexer integration: when
@@ -45,7 +45,7 @@ public class Chunk152Tests
     [Fact]
     public void IdentityMapping_Removes_Entry()
     {
-        // ISO §8.14.9 — an identity mapping (In == Out) deletes any
+        // ISO §8.14.5 — an identity mapping (In == Out) deletes any
         // existing entry. Useful for undoing earlier conversions.
         var e = new PrologEngine();
         e.Query("char_conversion('a', 'b').");
@@ -78,9 +78,9 @@ public class Chunk152Tests
     [Fact]
     public void CharConversion_NonAtomArg_RaisesRepresentationError()
     {
-        // ISO §8.14.9.3.c: a bound argument that is not a one-char atom is
+        // ISO §8.14.5.3: a bound argument that is not a one-char atom is
         // representation_error(character) — not type_error; contrast
-        // current_char_conversion/2 (§8.14.10.3), which uses type_error.
+        // current_char_conversion/2 (§8.14.6.3), which uses type_error.
         var e = new PrologEngine();
         var sol = e.Query(
             "catch(char_conversion(123, 'a'), error(representation_error(F), _), true).");

@@ -4,7 +4,7 @@ using Shumway.Embedding;
 namespace Shumway.Tests.IsoConformance;
 
 /// <summary>
-/// ISO 13211-1, §6.4.2 (character conversion) and §8.14.9–10. Covers
+/// ISO 13211-1, §6.4.2 (character conversion) and §8.14.5–6. Covers
 /// <c>char_conversion/2</c> (registers an InChar → OutChar mapping
 /// the lexer applies to the start of every unquoted token, gated on
 /// the <c>char_conversion</c> flag) and <c>current_char_conversion/2</c>
@@ -46,7 +46,7 @@ public class CharConversionConformance
     [Fact]
     public void CharConversion_RepresentationError_OnNonCharacterArg()
     {
-        // §8.14.9.3.c: not a one-char atom → representation_error(character)
+        // §8.14.5.3: not a one-char atom → representation_error(character)
         // (current_char_conversion/2 is the one that uses type_error).
         var e = new PrologEngine();
         var sol = e.Query(
