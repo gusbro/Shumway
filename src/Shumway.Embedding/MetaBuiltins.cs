@@ -500,7 +500,8 @@ public static partial class MetaBuiltins
             Io, "absolute_file_name(+FileSpec, -Absolute)",
             "Resolves a file specification to an absolute path. The basic 2-arg form: "
             + "takes an atom (a path, possibly relative) and unifies the second arg with "
-            + "the absolute form. The 3-arg form with options (extensions, file_type, "
+            + "the absolute form. A trailing / is kept when FileSpec has one and never "
+            + "added. The 3-arg form with options (extensions, file_type, "
             + "access, file_search_path) is not yet supported.");
         BuiltinsRegistry.Register("working_directory", 2, WorkingDirectory2,
             Io, "working_directory(-Old, +New)",

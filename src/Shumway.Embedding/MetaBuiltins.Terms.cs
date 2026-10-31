@@ -905,12 +905,9 @@ public static partial class MetaBuiltins
             return false;
         try
         {
-            string absolute = Path.GetFullPath(spec);
-            // ADR-044: a directory answers with its trailing separator, so the
-            // result can have a file name concatenated onto it.
-            absolute = Directory.Exists(absolute)
-                ? PrologPath.ToCanonicalDirectory(absolute)
-                : PrologPath.ToCanonical(absolute);
+            // ADR-044 (amended): a trailing separator is kept as written and
+            // never added, so the answer does not depend on what exists.
+            string absolute = PrologPath.ToCanonical(Path.GetFullPath(spec));
             int aid = AtomTable.Intern(absolute, permanent: true).Id;
             return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
         }
