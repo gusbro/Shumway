@@ -367,7 +367,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 
 | Predicate | Kind | Description |
 | --- | --- | --- |
-| `absolute_file_name(+FileSpec, -Absolute)` | engine | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
+| `absolute_file_name(+FileSpec, -Absolute)` | engine | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. A trailing / is kept when FileSpec has one and never added. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
 | `at_end_of_stream` | iso | Succeeds if the current input stream is at end of file. |
 | `at_end_of_stream(+Stream)` | iso | Succeeds if the given stream is at end of file. |
 | `chdir(?Path)` | engine | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
