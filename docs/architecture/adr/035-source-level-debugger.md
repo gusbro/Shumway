@@ -411,6 +411,17 @@ per query setup and a push and pop per run; on the A/B harness the trivial-query
 ratio against main (median 1.005) stayed within main against itself (0.994).
 Tests: `Adr035NestedQueryTests`, `NestedQueryAddressMapTests`.
 
+Since 2026-11-01 the directives and `initialization/1` goals of a file a running
+query consults no longer run as queries of their own: they run on the running
+query's activation, through the prelude's `'$consult_goal'/1`, against the code the
+consult linked live (a query's setup rebuilt the compiled program whenever the
+program had changed, once per directive over a load of many files). A query is
+still nested in a running one when a foreign predicate starts one with the host
+API, when the debugger evaluates a goal, when a consult binds pending breakpoints
+and when a file's own expansion hooks are re-applied; the per-program records
+above serve those. `Adr035NestedQueryTests` starts its nested query from a foreign
+predicate the consulted file's directive calls.
+
 Code linked into a running query (a consult or a library load in the query) joins
 that query's program: its predicates go into the address map, and debuggable ones
 into the debugger's tables, so a stop or a step in them shows where it is and a

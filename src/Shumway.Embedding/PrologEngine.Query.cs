@@ -1377,6 +1377,7 @@ public sealed partial class PrologEngine
         // predicates it did not change (see OrderStaticRegion).
         OrderStaticRegion(pStatic);
 
+        ProgramProductBuilds++;
         product = _programProduct = new CompiledProgramProduct
         {
             DerivationGen = _derivationGen,

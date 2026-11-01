@@ -253,6 +253,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$cp_owners", 0, CpOwners);
         BuiltinsRegistry.Register("$scc_forget", 1, SccForget);
         BuiltinsRegistry.Register("$pop_pending_cleanup", 2, PopPendingCleanup);
+        // How a consult-time goal run by the prelude's '$consult_goal'/1 ended.
+        BuiltinsRegistry.Register("$consult_goal_outcome", 1, ConsultGoalOutcome);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
         // defined in the prelude. They call these helpers to
