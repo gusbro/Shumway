@@ -1551,7 +1551,7 @@ public sealed partial class PrologEngine
             queryClauses, cache: null, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
         // The versions the query module's copies of the pools were taken at.
-        var poolVersions = new int[4];
+        var poolVersions = new int[3];
         RecordPoolVersions(poolVersions);
         RegisterLateHelpers(queryModule.Predicates);
 
@@ -1872,7 +1872,9 @@ public sealed partial class PrologEngine
             // and the linked program byte array for the
             // IL Call re-entry helper.
             CurrentStringLiterals = queryModule.StringLiterals,
-            CurrentImages = queryModule.ImageLiterals,   // ADR-063
+            // ADR-063: the pool itself, not a copy: a fact asserted at run
+            // time adds its image, and a copy per assert was O(pool) each.
+            CurrentImages = _literalPools.Images.Items,
             CurrentProgram = program,
             // ADR-015 — bytecode-level dynamic dispatch reads the
             // host's generation at every enter_dynamic opcode
@@ -1997,10 +1999,9 @@ public sealed partial class PrologEngine
         {
             interp.RefreshLiteralPools(s, f, b);
             engine.CurrentStringLiterals = s;
-            engine.CurrentImages = _literalPools.Images.Snapshot();   // ADR-063
         };
         // The versions the interpreter's copies were taken at, so the
-        // per-assert refresh (four Snapshot() copies) runs only when a pool
+        // per-assert refresh (three Snapshot() copies) runs only when a pool
         // changed since. Per activation (see _interpPoolVersions).
         _interpPoolVersions.AddOrUpdate(engine, poolVersions);
 

@@ -12,7 +12,7 @@ namespace Shumway.Core;
 /// engine backtrack into the cursor, which then tries <c>i+1</c>. It runs after
 /// the choice point is armed, so what it binds a retry undoes. <c>arity</c>
 /// is how many argument registers the choice point must save / restore.</para></summary>
-public sealed class IndexEnumCursor
+public sealed class IndexEnumCursor : IAtomHolder
 {
     private int _index;
     private readonly int _count;
@@ -28,6 +28,13 @@ public sealed class IndexEnumCursor
         _returnPc = returnPc;
         _tryAt = tryAt;
         _resume = Resume;
+    }
+
+    /// <summary>The atoms the candidates hold (ADR-003), when the object
+    /// <paramref name="tryAt"/> runs on holds any.</summary>
+    public void MarkAtoms(AtomMarkSet set)
+    {
+        if (_tryAt.Target is IAtomHolder holder) holder.MarkAtoms(set);
     }
 
     /// <summary>Starts the enumeration: unifies candidate 0 (returning into the

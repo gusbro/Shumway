@@ -296,6 +296,14 @@ public sealed partial class PrologEngine
     /// whether the index is working.</summary>
     internal long RetractCandidatesTried;
 
+    /// <summary>Facts asserted as the image of their head (ADR-063): the ones
+    /// that built no term and ran no clause compiler.</summary>
+    internal long ImageFactsAsserted;
+
+    /// <summary>Clauses clause/2 has tried to unify with: the candidates its
+    /// prefilter could not rule out.</summary>
+    internal long ClauseCandidatesTried;
+
     /// <summary>The physical clause list, tombstones included — the retract
     /// path only. Everything else reads through the dense accessors, which
     /// compact first, so a tombstone cannot reach anything that shows a
@@ -2190,6 +2198,8 @@ public sealed partial class PrologEngine
 
     private static int ExtractHeadFunctorId(Clause clause)
     {
+        // A fact kept as the image of its head knows its functor (ADR-063).
+        if (clause.HeadImage is not null) return clause.HeadFidMemo - 1;
         Term head = clause.Kind == ClauseKind.Rule
             ? ((CompoundTerm)clause.Term).Args[0]
             : clause.Term;
@@ -2244,6 +2254,10 @@ public sealed partial class PrologEngine
     internal Shumway.Compiler.Wam.CompiledClause? CompileRuntimeAssertClause(
         Activation engine, int functorId, Clause newClause)
     {
+        // ADR-063: a fact kept as the image of its head compiles from the
+        // image, without the clause compiler.
+        if (newClause.HeadImage is { } image)
+            return Shumway.Compiler.Wam.FactImageCompiler.Compile(image, functorId, _literalPools);
         Clause toCompile;
         if (newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Fact
             && !Modes.AllModesDeterministic(functorId))
@@ -2547,17 +2561,17 @@ public sealed partial class PrologEngine
     /// <summary>Refreshes the activation's copies of the literal pools when
     /// a pool's version moved since they were taken (query setup or the last
     /// refresh): a new or reused id, a sweep. Unchanged versions skip the
-    /// four <c>Snapshot()</c> copies, the common case: an asserted fact like
-    /// <c>next_char_i(42)</c> interns nothing.</summary>
+    /// three <c>Snapshot()</c> copies, the common case: an asserted fact like
+    /// <c>next_char_i(42)</c> interns nothing. The image pool is read live
+    /// (ADR-063): a fact asserted at run time interns one per compound head.</summary>
     internal void RefreshLiteralPoolsIfChanged(Activation engine)
     {
         // Per engine (one with no record refreshes unconditionally; a
         // refresh is idempotent).
-        var versions = _interpPoolVersions.GetValue(engine, static _ => new int[4] { -1, -1, -1, -1 });
+        var versions = _interpPoolVersions.GetValue(engine, static _ => new int[3] { -1, -1, -1 });
         if (_literalPools.Strings.Version == versions[0]
             && _literalPools.Floats.Version == versions[1]
-            && _literalPools.BigInts.Version == versions[2]
-            && _literalPools.Images.Version == versions[3])
+            && _literalPools.BigInts.Version == versions[2])
             return;
         engine.RefreshLiteralPoolsCallback?.Invoke(
             _literalPools.Strings.Snapshot(),
@@ -2571,7 +2585,6 @@ public sealed partial class PrologEngine
         versions[0] = _literalPools.Strings.Version;
         versions[1] = _literalPools.Floats.Version;
         versions[2] = _literalPools.BigInts.Version;
-        versions[3] = _literalPools.Images.Version;
     }
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a

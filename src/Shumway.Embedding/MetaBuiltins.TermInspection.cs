@@ -996,13 +996,40 @@ public static partial class MetaBuiltins
         // Drop the clauses whose head definitely cannot match the pattern, so
         // the cursor enumerates solutions rather than the whole predicate —
         // first-argument indexing's answer to the same question, at the AST
-        // level. `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
-        candidates.RemoveAll(c => !HeadCanMatch(headPattern, ClauseHead(c)));
+        // level, or against the image of a fact asserted at run time (ADR-063).
+        // `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
+        int headHeap = engine.MaterializeRegisterForTrace(0);
+        candidates.RemoveAll(c => c.HeadImage is { } image
+            ? image.DefinitelyDiffers(engine, headHeap, 4)
+            : !HeadCanMatch(headPattern, ClauseHead(c)));
 
         int returnPc = engine.BuiltinReturnPc;
         // arity 2 (clause/2): save the arg registers across backtracks.
-        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc,
-            (e, i) => ClauseEnumUnify(e, candidates[i]));
+        var steps = new ClauseEnumSteps(candidates, pairRegister: 1);
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc, steps.TryAt);
+    }
+
+    /// <summary>The candidates of a clause/2 enumeration and the register of
+    /// the query's pair. It holds the atoms of the images among them (ADR-003)
+    /// while the cursor can still try a clause the store has let go.</summary>
+    private sealed class ClauseEnumSteps : IAtomHolder
+    {
+        private readonly List<Clause> _candidates;
+        private readonly int _pairRegister;
+
+        public ClauseEnumSteps(List<Clause> candidates, int pairRegister)
+        {
+            _candidates = candidates;
+            _pairRegister = pairRegister;
+        }
+
+        public bool TryAt(Activation engine, int i)
+            => ClauseEnumUnify(engine, _candidates[i], _pairRegister);
+
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            foreach (var c in _candidates) c.HeadImage?.MarkAtoms(set);
+        }
     }
 
     private static Term ClauseHead(Clause c) => c.Kind == ClauseKind.Rule
@@ -1043,11 +1070,22 @@ public static partial class MetaBuiltins
         _ => true,
     };
 
-    private static bool ClauseEnumUnify(Activation engine, Clause candidate)
-        => ClauseEnumUnify(engine, candidate, pairRegister: 1);
+    private static readonly int _pairFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("-", permanent: true).Id, 2);
 
     private static bool ClauseEnumUnify(Activation engine, Clause candidate, int pairRegister)
     {
+        if (engine.Host is PrologEngine host) host.ClauseCandidatesTried++;
+        if (candidate.HeadImage is { } image)
+        {
+            // ADR-063: the fact's head from its image, its body `true`.
+            Cell copied = engine.BuildImage(image);
+            int s = engine.AllocateHeap(3);
+            engine.SetHeap(s, Cell.Functor(_pairFunctorId));
+            engine.SetHeap(s + 1, copied);
+            engine.SetHeap(s + 2, Cell.Atom(AtomTable.TrueId));
+            return engine.UnifyRegisterWithCell(pairRegister, Cell.Str(s));
+        }
         Term head = candidate.Kind == ClauseKind.Rule
             ? ((CompoundTerm)candidate.Term).Args[0]
             : candidate.Term;
@@ -1197,8 +1235,8 @@ public static partial class MetaBuiltins
             candidates.AddRange(host.StaticClausesInModule(src, fid));
 
         int returnPc = engine.BuiltinReturnPc;
-        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 3, returnPc,
-            (e, i) => ClauseEnumUnify(e, candidates[i], pairRegister: 2));
+        var steps = new ClauseEnumSteps(candidates, pairRegister: 2);
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 3, returnPc, steps.TryAt);
     }
 
     /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module

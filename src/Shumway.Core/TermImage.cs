@@ -9,7 +9,7 @@ namespace Shumway.Core;
 /// and which registers it points at a cell. Equal by content, holes
 /// included, so a literal pool interns one image per distinct term and
 /// register assignment.</summary>
-public sealed class TermImage : IEquatable<TermImage>
+public sealed class TermImage : IEquatable<TermImage>, IAtomHolder
 {
     private readonly Cell[] _cells;
     private readonly ImageHole[] _holes;
@@ -82,6 +82,92 @@ public sealed class TermImage : IEquatable<TermImage>
 
     /// <summary>The cell that names the copy at <paramref name="start"/>.</summary>
     public Cell RootCell(int start) => Root == Tag.Lis ? Cell.Lis(start) : Cell.Str(start);
+
+    /// <summary>Adds the atoms the cells name (ADR-003): an atom cell, a
+    /// functor's name.</summary>
+    public void MarkAtoms(AtomMarkSet set)
+    {
+        var cells = _cells;
+        for (int i = 0; i < cells.Length; i++) set.AddCell(cells[i]);
+    }
+
+    private int[]? _transientAtomIds;
+
+    /// <summary>The transient atoms the cells name, ascending and distinct
+    /// (ADR-003): what a holder of the image claims. Computed once.</summary>
+    public int[] TransientAtomIds => _transientAtomIds ??= ComputeTransientAtomIds();
+
+    private int[] ComputeTransientAtomIds()
+    {
+        List<int>? ids = null;
+        foreach (var cell in _cells)
+        {
+            int id = cell.Tag == Tag.Atom ? cell.AsAtomId
+                : cell.Tag == Tag.Functor && FunctorTable.TryLookup(cell.AsFunctorId, out var f) ? f.AtomId
+                : -1;
+            if (id >= 0 && AtomTable.IsTransient(id)) (ids ??= new()).Add(id);
+        }
+        if (ids is null) return Array.Empty<int>();
+        ids.Sort();
+        int n = 0;
+        for (int i = 0; i < ids.Count; i++)
+            if (n == 0 || ids[i] != ids[n - 1]) ids[n++] = ids[i];
+        ids.RemoveRange(n, ids.Count - n);
+        return ids.ToArray();
+    }
+
+    /// <summary>True when the term at heap cell <paramref name="heapIdx"/>
+    /// certainly does not unify with the image's term: they differ in an atom,
+    /// an integer, a functor or a list cell within <paramref name="depth"/>
+    /// levels. False when they may; a variable, a float or a packed string on
+    /// either side is a may.</summary>
+    public bool DefinitelyDiffers(Activation engine, int heapIdx, int depth)
+        => Differs(engine, heapIdx, RootCell(0), depth);
+
+    private bool Differs(Activation engine, int heapIdx, Cell b, int depth)
+    {
+        if (depth <= 0) return false;
+        int idx = engine.Deref(heapIdx);
+        Cell h = engine.GetHeap(idx);
+        switch (h.Tag)
+        {
+            case Tag.Atom:
+                return b.Tag switch
+                {
+                    Tag.Atom => b.AsAtomId != h.AsAtomId,
+                    Tag.Int or Tag.Str or Tag.Lis => true,
+                    _ => false,
+                };
+            case Tag.Int:
+                return b.Tag switch
+                {
+                    Tag.Int => b.AsInt != h.AsInt,
+                    Tag.Atom or Tag.Str or Tag.Lis => true,
+                    _ => false,
+                };
+            case Tag.Str:
+            {
+                if (b.Tag is Tag.Atom or Tag.Int) return true;
+                if (b.Tag != Tag.Str) return false;
+                Cell f = engine.GetHeap(h.AsHeapIndex);
+                Cell bf = _cells[b.AsHeapIndex];
+                if (f.Tag != Tag.Functor || bf.Tag != Tag.Functor) return false;
+                if (f.AsFunctorId != bf.AsFunctorId) return true;
+                int arity = FunctorTable.Lookup(f.AsFunctorId).Arity;
+                for (int k = 1; k <= arity; k++)
+                    if (Differs(engine, h.AsHeapIndex + k, _cells[b.AsHeapIndex + k], depth - 1))
+                        return true;
+                return false;
+            }
+            case Tag.Lis:
+                if (b.Tag is Tag.Atom or Tag.Int) return true;
+                if (b.Tag != Tag.Lis) return false;
+                return Differs(engine, h.AsHeapIndex, _cells[b.AsHeapIndex], depth - 1)
+                    || Differs(engine, h.AsHeapIndex + 1, _cells[b.AsHeapIndex + 1], depth - 1);
+            default:
+                return false;
+        }
+    }
 
     /// <summary>Copies the cells from <paramref name="offset"/> to
     /// <paramref name="end"/> into <paramref name="heap"/> at
@@ -203,6 +289,24 @@ public sealed class TermImage : IEquatable<TermImage>
     /// <paramref name="header"/>, its buffer cells, the tail cell.</summary>
     public static int PstrBlockEnd(int header, Cell headerCell)
         => header + 2 + (headerCell.AsPstrLength + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
+
+    /// <summary>The code units of the packed string whose header is at
+    /// <paramref name="header"/>, this segment of it.</summary>
+    public string PstrRun(int header)
+    {
+        var cells = _cells;
+        int n = cells[header].AsPstrLength;
+        var run = new char[n];
+        for (int i = 0; i < n; i++)
+            run[i] = (char)cells[header + 1 + i / Cell.PstrCodeUnitsPerBuffer]
+                .AsPstrCodeUnit(i % Cell.PstrCodeUnitsPerBuffer);
+        return new string(run);
+    }
+
+    /// <summary>The cell that holds the tail of the packed string whose header
+    /// is at <paramref name="header"/>: <c>[]</c>, a REF to the next segment's
+    /// header, or anything a list's tail can be.</summary>
+    public int PstrTailOffset(int header) => PstrBlockEnd(header, _cells[header]) - 1;
 
     public bool Equals(TermImage? other)
         => other is not null && Root == other.Root && _cells.AsSpan().SequenceEqual(other._cells)

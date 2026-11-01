@@ -147,7 +147,8 @@ public sealed class LiteralPoolLifetimeTests
         // Mutated: evicted; called: promoted again, the same images.
         Assert.True(engine.Query("assertz(big(h(0))).").Success);
         // The goals name the clauses' own terms: their images are the
-        // clauses' (interned by content), so the pool does not grow.
+        // clauses' (interned by content), so the pool does not grow; the
+        // asserted fact's head matches through its stream (ADR-063).
         for (int i = 0; i < 3; i++)
             Assert.True(engine.Query("big(f(a, b, c, d, e, f, g, h, i)), big(g(1, 2, 3, 4, 5, 6, 7, 8, 9)), big(h(0)), findall(X, big(X), L), length(L, 3).").Success);
         Assert.True(Promoted(engine, "big/1"), engine.IlPromotion.DescribePromotionState());

@@ -128,6 +128,36 @@ public sealed class EngineCodeAtomTests
     }
 
     [Fact]
+    public void AnAssertedCompoundFactKeepsItsAtomsUntilItsChunkIsReclaimed()
+    {
+        // The head is copied whole from its image in the pool (ADR-063): the
+        // atoms inside the compound are the image's, claimed while the chunk
+        // names the entry and while the store holds the clause.
+        string s = Suffix();
+        Run(e =>
+        {
+            e.ConsultString(":- dynamic(fact/1).");
+            Assert.True(e.Query($"between(1, 6, I), number_codes(I, Cs), atom_codes(N, Cs), "
+                + $"atom_concat(a_{s}_, N, A), assertz(fact(f(A, b_{s}))), fail ; true.").Success);
+            int first = IdOf($"a_{s}_1"), b = IdOf($"b_{s}");
+            Assert.True(e.ImageFactsAsserted >= 6);
+
+            AtomTable.RequestCollection();
+            Assert.True(Alive(first, $"a_{s}_1") && Alive(b, $"b_{s}"));
+            Assert.True(e.Query($"fact(f(X, Y)), X == a_{s}_1, Y == b_{s}.").Success);
+            Assert.True(e.Query($"clause(fact(f(a_{s}_2, Y)), true), Y == b_{s}.").Success);
+
+            Assert.True(e.Query("retract(fact(_)), fail ; true.").Success);
+            Assert.True(e.Query("\\+ fact(_).").Success);
+            AtomTable.RequestCollection();
+
+            // The first clause's chunk is reclaimed, as above; the chain keeps
+            // its last chunks until a later reclaim, and b with them.
+            Assert.False(Alive(first, $"a_{s}_1"));
+        });
+    }
+
+    [Fact]
     public void AnAssertAndRetractLoopKeepsTheTableBounded()
     {
         string s = Suffix();

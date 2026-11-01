@@ -217,6 +217,13 @@ public sealed class PrologFlags
     /// <c>debug_lco</c>) and gives a debugger a frame per active goal.</summary>
     public bool DebugCodegen { get; set; } = false;
 
+    /// <summary>ADR-063: whether a fact asserted at run time is kept as the
+    /// image of its head and compiled from it, without a term or the clause
+    /// compiler. On unless <c>SHUMWAY_IMAGE_FACTS</c> is <c>0</c>, for the
+    /// measurement.</summary>
+    public bool ImageFacts { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IMAGE_FACTS") != "0";
+
     /// <summary>ADR-035 — the <c>debug_lco</c> prolog flag: whether the
     /// <c>debug_lastcall</c> sites in debug-compiled code perform last-call
     /// optimisation. Default <c>true</c>, i.e. debug-compiled code runs exactly

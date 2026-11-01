@@ -198,24 +198,7 @@ public sealed partial class PrologEngine
     }
 
     // The transient atoms an image's cells name, ascending.
-    internal static int[] ImageAtomIds(Shumway.Core.TermImage image)
-    {
-        List<int>? ids = null;
-        foreach (var cell in image.Cells)
-        {
-            int id = cell.Tag == Tag.Atom ? cell.AsAtomId
-                : cell.Tag == Tag.Functor && FunctorTable.TryLookup(cell.AsFunctorId, out var f) ? f.AtomId
-                : -1;
-            if (id >= 0 && AtomTable.IsTransient(id)) (ids ??= new()).Add(id);
-        }
-        if (ids is null) return System.Array.Empty<int>();
-        ids.Sort();
-        int n = 0;
-        for (int i = 0; i < ids.Count; i++)
-            if (n == 0 || ids[i] != ids[n - 1]) ids[n++] = ids[i];
-        ids.RemoveRange(n, ids.Count - n);
-        return ids.ToArray();
-    }
+    internal static int[] ImageAtomIds(Shumway.Core.TermImage image) => image.TransientAtomIds;
 
     /// <summary>The atoms a link's live predicates name, ascending: a dead
     /// version laid out to keep the addresses after it is not among them.</summary>

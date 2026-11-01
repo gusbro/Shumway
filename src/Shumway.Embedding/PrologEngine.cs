@@ -1045,6 +1045,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // An image's atoms live while code names its pool entry (ADR-003).
         _literalPools.Images.OnNamed = image => RetainCode(ImageAtomIds(image));
         _literalPools.Images.OnUnnamed = image => DropCode(ImageAtomIds(image));
+        // A fact kept as the image of its head claims its atoms while the store holds it.
+        _dynStore.ClaimAtoms = RetainCode;
+        _dynStore.ReleaseAtoms = DropCode;
 
         // Every operator defined (a `:- op` applies here at parse time) is
         // routed to the active consult's collection frame, so the
@@ -1233,9 +1236,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;
         }
-        _dynStore.CopyInto(sub._dynStore);
-        foreach (var (fid, clauses) in _dynStore.Slots)
-            sub._dynStore[fid] = new List<Clause>(clauses);
+        // The copies of the facts kept as images claim their atoms in the
+        // sub-engine (ADR-003): a change of its store outside a run.
+        sub.HostChange(() =>
+        {
+            _dynStore.CopyInto(sub._dynStore);
+            foreach (var (fid, clauses) in _dynStore.Slots)
+                sub._dynStore[fid] = new List<Clause>(clauses);
+        });
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
         // The sub-engine shares the parent's static program, so the

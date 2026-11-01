@@ -2598,6 +2598,7 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
     /// solution that never runs.</remarks>
     public static DynFirstArgKey Of(Clause c)
     {
+        if (c.HeadImage is { } image) return OfImage(image);
         Term head = c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
             ? h : c.Term;
         if (head is not CompoundTerm hc || hc.Args.Length == 0) return Anything;
@@ -2619,6 +2620,35 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
                     | (uint)cc.Args.Length);
             default:
                 return Anything;    // var / float / bigint / unkeyed head shapes
+        }
+    }
+
+    /// <summary>The key of a fact kept as the image of its head (ADR-063), from
+    /// the cell of its first argument: the cases of <see cref="OfCall"/>, a
+    /// packed string keyed as the list it is.</summary>
+    private static DynFirstArgKey OfImage(Shumway.Core.TermImage image)
+    {
+        var cells = image.Cells;
+        if (cells.Length < 2 || FunctorTable.Lookup(cells[0].AsFunctorId).Arity == 0) return Anything;
+        Cell a = cells[1];
+        switch (a.Tag)
+        {
+            case Tag.Atom:
+                return new(AtomKind, a.AsAtomId);
+            case Tag.Int:
+                return new(IntKind, a.AsInt);
+            case Tag.Lis:
+                return new(ListKind, 0);
+            case Tag.Str:
+            {
+                var (aid, ar) = FunctorTable.Lookup(cells[a.AsHeapIndex].AsFunctorId);
+                return new(StructKind, ((long)aid << 32) | (uint)ar);
+            }
+            case Tag.Ref:
+                // A variable or a float keys nothing; a packed string is a list.
+                return cells[a.AsHeapIndex].Tag == Tag.Pstr ? new(ListKind, 0) : Anything;
+            default:
+                return Anything;
         }
     }
 
