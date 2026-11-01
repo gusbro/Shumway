@@ -154,6 +154,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // the same query sees them — exactly as a runtime assertz would. Null during
     // startup/ctor consults, where the next query builds dispatch fresh.
     internal Activation? _liveConsultEngine;
+    /// <summary>How the goal a live consult is running ended, reported by
+    /// <c>'$consult_goal_outcome'/1</c>: null while it runs and when it
+    /// succeeded, else <c>failed</c> or <c>raised(Ball)</c>.</summary>
+    internal Term? ConsultGoalOutcome;
+    /// <summary>Compiled-program products built so far: one per query setup
+    /// that found the program changed. A load's setup cost grows with it.</summary>
+    internal long ProgramProductBuilds;
     internal readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>ADR-046 — per-module operator layers, each parented by

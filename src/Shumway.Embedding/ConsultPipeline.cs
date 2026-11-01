@@ -2595,53 +2595,20 @@ internal sealed class ConsultPipeline
         // defers to after the whole text is loaded.
         if (directiveGoals is not null)
             foreach (var g in directiveGoals)
-                RunConsultDirectiveGoal(QualifyGoalForModule(g, moduleName));
+            {
+                Term goal = QualifyGoalForModule(g, moduleName);
+                RunConsultGoal(goal, "directive", DescribeDirective(goal));
+            }
 
         // `:- initialization(Goal)` goals run now, after the consult has
-        // committed, in source order (SWI load-time semantics). A goal that
-        // fails or raises prints a warning and loading continues — matching
-        // SWI. halt/0-1 (PrologHaltException) propagates: halting from an
-        // initialization goal ends the load, exactly as under SWI. So does
-        // abort/0, which abandons the load with the query that started it.
+        // committed, in source order (SWI load-time semantics).
         if (initializationGoals is not null)
-        {
             foreach (var g in initializationGoals)
-            {
-                try
-                {
-                    E.LastHaltExitCode = null;
-                    bool ok = false;
-                    foreach (var sol in E.QueryAll(QualifyGoalForModule(g, moduleName)))
-                    { ok = sol.Success; break; }
+                RunConsultGoal(QualifyGoalForModule(g, moduleName),
+                    "initialization goal", g.ToString() ?? "");
 
-                    // halt/0-1 does not reach us as an exception: QueryAll catches it and
-                    // reports the goal as failed, leaving the code behind in
-                    // E.LastHaltExitCode. So a goal that halted looked exactly like one that
-                    // failed — the load went on, and the process it was told to end lived
-                    // on to read from stdin. Re-raise it here: halting from an
-                    // initialization goal ends the load, which is what the paragraph above
-                    // has always claimed and what SWI does.
-                    if (E.LastHaltExitCode is int exitCode)
-                        throw new PrologHaltException(exitCode);
-
-                    if (!ok)
-                        E.Warn(
-                            $"Warning: initialization goal failed: {g}");
-                }
-                catch (PrologHaltException) { throw; }
-                catch (PrologAbortException) { throw; }
-                catch (Exception ex)
-                {
-                    E.Warn(
-                        $"Warning: initialization goal raised: {g}: {ex.Message}");
-                    if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                        E.Warn(ex.StackTrace ?? "");
-                }
-            }
-        }
-
-        // RESUME-boundary reconciliation: this consult (and the
-        // nested queries its initialization goals spawned) may have mutated
+        // RESUME-boundary reconciliation: this consult (and any query
+        // nested in it, one a goal started with the host API) may have mutated
         // dynamic predicates through other engines' views; before control
         // returns to the suspended caller, diff its dispatch view against
         // the store so no ghost clause (missed broadcast patch) survives
@@ -2650,13 +2617,6 @@ internal sealed class ConsultPipeline
             E.ReconcileEngineDynamicView(resumeEng);
     }
 
-    /// <summary>Runs a general (non-declaration) directive goal — ISO §7.4.2.
-    /// A goal that fails or raises prints a warning to stderr and loading
-    /// continues; <c>halt/0-1</c> ends the load (propagated as
-    /// <see cref="PrologHaltException"/>, mirroring the <c>initialization/1</c>
-    /// handling above). The goal runs on the live engine, so an undefined
-    /// predicate — the classic <c>:- use_module</c> typo — surfaces as an
-    /// <c>existence_error</c> warning instead of being silently dropped.</summary>
     // A `:- Goal` / `:- initialization(Goal)` in an export-qualified module runs
     // in that module's context, so a call to one of its module-local predicates
     // resolves (clpz's `:- initialization((generated_clauses(Cs), ...))` calls the
@@ -2790,31 +2750,86 @@ internal sealed class ConsultPipeline
         return prefix + text[..DirectiveTextLimit] + "...";
     }
 
-    private void RunConsultDirectiveGoal(Term goal)
+    /// <summary>Runs a consult-time goal (a <c>:- Goal</c> directive, an
+    /// <c>initialization/1</c> goal) once the file's clauses are in place. A goal
+    /// that fails or raises warns and loading goes on; <c>halt/0-1</c> and
+    /// <c>abort/0</c> end the load, propagated. An undefined predicate, the
+    /// classic <c>:- use_module</c> typo, is an <c>existence_error</c> warning,
+    /// not silence.
+    /// <para>A file loaded by a running goal (<c>consult/1</c>, <c>use_module/1</c>)
+    /// runs its goals on that goal's activation, through the prelude's
+    /// <c>'$consult_goal'/1</c>, against the code the consult just linked live.
+    /// Not as a query of its own: a query's setup rebuilds the compiled program
+    /// whenever the program changed, so a load of many files with a directive
+    /// each (every Logtalk entity) rebuilt it per file, quadratic in the files.
+    /// A host consult has no running goal and runs each goal as a query.</para></summary>
+    private void RunConsultGoal(Term goal, string what, string described)
     {
-        try
+        bool ok;
+        Term? ball = null;
+        string? message = null;
+        string? trace = null;
+        if (E._liveConsultEngine is { } live && live.ReentrantSolve is { } solve)
         {
-            E.LastHaltExitCode = null;
-            bool ok = false;
-            foreach (var sol in E.QueryAll(goal)) { ok = sol.Success; break; }
-
-            if (E.LastHaltExitCode is int exitCode)
-                throw new PrologHaltException(exitCode);
-
-            if (!ok)
-                E.Warn(
-                    $"Warning: directive failed: {DescribeDirective(goal)}");
+            E.ConsultGoalOutcome = null;
+            try
+            {
+                // The wrapper itself always succeeds. halt, abort and a host
+                // failure propagate, as from any other goal of the running query.
+                solve(Materializer.MaterializeAsCell(live,
+                    new CompoundTerm(ConsultGoalWrapper, new[] { goal })));
+                Term? outcome = E.ConsultGoalOutcome;
+                ok = outcome is null;
+                if (outcome is CompoundTerm { Functor: "raised", Args: [var raised] })
+                    ball = raised;
+            }
+            finally { E.ConsultGoalOutcome = null; }
         }
-        catch (PrologHaltException) { throw; }
-        catch (PrologAbortException) { throw; }
-        catch (Exception ex)
+        else
         {
-            E.Warn(
-                $"Warning: directive raised: {DescribeDirective(goal)}: {ex.Message}");
-            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                E.Warn(ex.StackTrace ?? "");
+            try
+            {
+                E.LastHaltExitCode = null;
+                ok = false;
+                foreach (var sol in E.QueryAll(goal)) { ok = sol.Success; break; }
+                // halt/0-1 does not reach us as an exception: QueryAll catches it
+                // and reports the goal as failed, leaving the code behind in
+                // E.LastHaltExitCode. Re-raise it: halting from a consult-time
+                // goal ends the load, as under SWI.
+                if (E.LastHaltExitCode is int exitCode)
+                    throw new PrologHaltException(exitCode);
+            }
+            catch (PrologHaltException) { throw; }
+            catch (PrologAbortException) { throw; }
+            catch (Exception ex)
+            {
+                ok = false;
+                ball = BallOf(ex);
+                message = ex.Message;
+                if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                    trace = ex.StackTrace ?? "";
+            }
         }
+        if (ok) return;
+        if (ball is null && message is null)
+            E.Warn($"Warning: {what} failed: {described}");
+        else
+            E.Warn($"Warning: {what} raised: {described}: "
+                + (ball is null ? message : AstTermRenderer.Render(ball, 999, E.Operators, quoted: true)));
+        if (trace is not null) E.Warn(trace);
     }
+
+    /// <summary>The prelude predicate a live consult runs its goals through.</summary>
+    private const string ConsultGoalWrapper = "$consult_goal";
+
+    /// <summary>The ball a consult-time goal's exception carries: the thrown
+    /// term, or the ISO error term of a runtime error; null for a host failure.</summary>
+    private static Term? BallOf(Exception ex) => ex switch
+    {
+        ShumwayPrologException spe => spe.Term,
+        Shumway.Core.PrologRuntimeException pre => MetaBuiltins.TranslateRuntimeError(pre),
+        _ => null,
+    };
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
     /// consulted source. Clauses for the same functor must

@@ -291,6 +291,17 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$consult_goal_outcome'(+Outcome)</c>: the prelude's
+    /// <c>'$consult_goal'/1</c> tells the consult that ran a file's goal how it
+    /// ended, <c>failed</c> or <c>raised(Ball)</c>. Read as a term here, inside
+    /// the engine: the host holds no heap index across the goal.</summary>
+    public static bool ConsultGoalOutcome(Activation engine)
+    {
+        if (engine.Host is PrologEngine host)
+            host.ConsultGoalOutcome = MaterializeRegister(engine, 0);
+        return true;
+    }
+
     /// <summary>One consult specification: an atom path, the atom <c>user</c>
     /// (read clauses from current input until end_of_file), or a list of
     /// specifications — the Edinburgh <c>[file1, file2]</c> shape, which the

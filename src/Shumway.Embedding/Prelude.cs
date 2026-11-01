@@ -208,6 +208,7 @@ internal static class Prelude
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
         :- public '$wake_call'/1.
+        :- public '$consult_goal'/1.
         :- public '$wake_driver'/1.
         % The portray/1 hook: user code adds clauses to it from anywhere, so
         % it is multifile and dynamic before anyone declares it (SWI, SICStus).
@@ -293,6 +294,16 @@ internal static class Prelude
         % arrives here instead and runs through call/1 — full semantics, own
         % cut barrier.
         '$wake_call'(G) :- call(G).
+
+        % A `:- G` or `:- initialization(G)` of a file that a running goal
+        % consulted runs here, on that goal's own activation, not as a query of
+        % its own (whose setup would recompile the program per directive). It
+        % always succeeds, so the consult goes on whatever G did, and tells the
+        % host how G ended; halt/0-1 and abort/0 are not balls and pass through.
+        '$consult_goal'(G) :-
+            (   catch(G, Ball, '$consult_goal_outcome'(raised(Ball))) -> true
+            ;   '$consult_goal_outcome'(failed)
+            ).
 
         % ===== ADR-049: the wake driver =====
         % Entered by the engine's wake interrupt with the pending batch; runs
