@@ -56,7 +56,7 @@ public static partial class MetaBuiltins
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            throw OpenFailed(ex, path);
+            throw OpenFailed(path);
         }
         streams.Add(h);
         streams.SetCurrentInput(h);
@@ -119,7 +119,7 @@ public static partial class MetaBuiltins
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            throw OpenFailed(ex, path);
+            throw OpenFailed(path);
         }
         streams.Add(h);
         streams.SetCurrentOutput(h);
@@ -145,13 +145,11 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    // As open/3: what the host refuses (a directory, a read-only file) is a
-    // permission error, any other failure to open a system error.
-    private static Shumway.Core.PrologRuntimeException OpenFailed(Exception ex, string path)
-        => ex is UnauthorizedAccessException
-            ? new Shumway.Core.PrologRuntimeException(
-                "permission_error", "open,source_sink", (object)new Shumway.Compiler.Ast.AtomTerm(path))
-            : new Shumway.Core.PrologRuntimeException("system_error", ex.Message);
+    // As open/3 (§8.11.5.3): a file that exists and cannot be opened is a
+    // permission error, whatever the host's reason.
+    private static Shumway.Core.PrologRuntimeException OpenFailed(string path)
+        => new(
+            "permission_error", "open,source_sink", (object)new Shumway.Compiler.Ast.AtomTerm(path));
 
     private static void CloseAndForget(StreamRegistry registry, StreamHandle h)
     {

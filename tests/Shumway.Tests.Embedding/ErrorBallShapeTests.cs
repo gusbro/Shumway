@@ -89,6 +89,41 @@ public sealed class ErrorBallShapeTests
             + "error(permission_error(open, source_sink, _), _), true).").Success);
     }
 
+    [Theory]
+    [InlineData("open(F, write, _)", "open/3")]
+    [InlineData("open(F, read, _)", "open/3")]
+    [InlineData("open(F, append, _, [])", "open/4")]
+    [InlineData("open(F, read, _, [type(binary)])", "open/4")]
+    [InlineData("see(F)", "see/1")]
+    [InlineData("tell(F)", "tell/1")]
+    public void AFileThatExistsAndCannotBeOpenedIsAPermissionError(string goal, string context)
+    {
+        // §8.11.5.3: a source/sink that cannot be opened is a permission error,
+        // whatever the host's reason. A file another handle holds unshared is a
+        // reason every host gives as a plain IOException, the class a read-only
+        // file system arrives as too (#193); it used to become system_error.
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "shumway-open-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        string path = System.IO.Path.Combine(dir, "held.txt");
+        System.IO.File.WriteAllText(path, "held");
+        try
+        {
+            using (new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.ReadWrite, System.IO.FileShare.None))
+            {
+                // Not vacuous: the host refuses the file with a plain IOException.
+                var refused = Assert.ThrowsAny<System.IO.IOException>(() =>
+                    new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite).Dispose());
+                Assert.Equal(typeof(System.IO.IOException), refused.GetType());
+
+                string atom = "'" + path.Replace('\\', '/') + "'";
+                Assert.True(Engine().Query(
+                    $"F = {atom}, catch(({goal}), error(permission_error(open, source_sink, C), {context}), true), C == F.").Success,
+                    goal);
+            }
+        }
+        finally { System.IO.Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void AMissingFileIsStillDistinctFromOneThatCannotBeOpened()
     {
