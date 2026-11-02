@@ -25,6 +25,15 @@ public sealed partial class IndexedDynamicChurnTests
         touch(V) :- ( V =:= 40 -> drop_evens ; true ).
         visit_nested(L) :- findall(V, (item(_, V), touch_nested(V)), L).
         touch_nested(V) :- ( V =:= 40 -> nested_query(drop_evens) ; true ).
+        :- dynamic row/2.
+        fillt(0) :- !.
+        fillt(N) :- assertz(row(N, v(N))), M is N - 1, fillt(M).
+        readt(0) :- !.
+        readt(N) :- row(N, v(X)), X == N, M is N - 1, readt(M).
+        draint(0) :- !.
+        draint(N) :- retract(row(N, _)), M is N - 1, draint(M).
+        drain_odd(N) :- between(1, N, K), K mod 2 =:= 1, retract(row(K, _)), fail.
+        drain_odd(_).
         """;
 
     public sealed partial class Host
@@ -199,5 +208,90 @@ public sealed partial class IndexedDynamicChurnTests
         // ANTI-VACUITY: the retracts ran on the layout asked for, and on the
         // chain they were enough for a sweep.
         Assert.Equal(hot ? 20 : 0, e.IndexedRetracts);
+    }
+
+    // A table of facts keyed by an integer, filled and read in one query and
+    // drained by key in the next, when it has the indexed layout. Before, each
+    // retract enumerated every chain head and walked every chain to find its
+    // clause's entries, and compacted the slot and rebuilt the first-argument
+    // index: the drain was quadratic (5,000 rows: 3.5 s against 65 ms in the
+    // query that filled them).
+    [Fact]
+    public void ADrainByKeyInAnotherQuery_VisitsEachEntryOnce()
+    {
+        const int N = 2000;
+        var e = Engine(hot: true);
+        Assert.True(e.Query($"fillt({N}), readt({N}).").Success);
+        long steps = e.IndexedPatchSteps, compactions = e.ClauseSlotCompactions;
+        Assert.True(e.Query($"draint({N}), \\+ row(_, _).").Success);
+        // ANTI-VACUITY: every retract ran on the indexed layout.
+        Assert.Equal(N, e.IndexedRetracts);
+        // Two entries per clause, one in its key's chain and one in the chain
+        // of every clause; the key's chain holds just the one, and the other
+        // is on record, not walked to.
+        Assert.InRange(e.IndexedPatchSteps - steps, N, 4L * N);
+        Assert.Equal(0, e.IndexedVarEntryMisses);
+        // The slot compacts once per halving.
+        Assert.InRange(e.ClauseSlotCompactions - compactions, 0, 16);
+    }
+
+    // Without the record, each retract walks the chain of every clause to its
+    // clause's position, and gets that position from the tombstones before
+    // its slot: the slot is not compacted for it. (Before, it was, and the
+    // first-argument index was rebuilt on every retract.)
+    [Fact]
+    public void ADrainWithoutTheRecord_WalksAndDoesNotCompact()
+    {
+        const int N = 500;
+        var e = Engine(hot: true);
+        e.IndexedVarRecordOff = true;
+        Assert.True(e.Query($"fillt({N}), readt({N}).").Success);
+        long compactions = e.ClauseSlotCompactions;
+        Assert.True(e.Query($"draint({N}), \\+ row(_, _).").Success);
+        Assert.Equal(N, e.IndexedRetracts);
+        Assert.Equal(N, e.IndexedVarEntryMisses);
+        Assert.InRange(e.ClauseSlotCompactions - compactions, 0, 12);
+    }
+
+    // The record covers the clauses the layout was built from and the ones
+    // assertz and asserta added to it in place, a clause for every key too.
+    [Fact]
+    public void RowsAddedToTheIndexedLayout_AreRetractedFromTheRecord()
+    {
+        var e = Engine(hot: true);
+        Assert.True(e.Query("fillt(30), readt(30).").Success);
+        Assert.True(e.Query("draint(15), findall(K, row(K, _), L), length(L, 15).").Success);
+        Assert.True(e.Query(
+            "assertz(row(100, v(100))), assertz(row(101, v(101))), asserta(row(102, v(102))), "
+            + "assertz(row(_, any)), "
+            + "retract(row(100, _)), retract(row(102, _)), retract(row(_, any)), retract(row(101, _)), "
+            + "forall(between(16, 30, K), retract(row(K, _))), \\+ row(_, _).").Success);
+        // ANTI-VACUITY: every retract ran on the indexed layout, none walked.
+        Assert.Equal(34, e.IndexedRetracts);
+        Assert.Equal(0, e.IndexedVarEntryMisses);
+    }
+
+    // The entries the fast path patches are the right ones: after half the
+    // keys are retracted in a query of their own, a call by key and the
+    // enumeration answer as on the plain chain.
+    [Fact]
+    public void ADrainByKeyInAnotherQuery_AnswersAsAPlainChain()
+    {
+        var hot = Engine(hot: true);
+        var cold = Engine(hot: false);
+        foreach (var e in new[] { hot, cold })
+        {
+            Assert.True(e.Query("fillt(60), readt(60).").Success);
+            Assert.True(e.Query("drain_odd(60).").Success);
+        }
+        Assert.Equal(30, hot.IndexedRetracts);
+        foreach (string probe in new[]
+                 {
+                     "findall(K-V, row(K, V), R)", "findall(V, row(7, V), R)", "findall(V, row(8, V), R)",
+                     "findall(V, row(1, V), R)", "findall(V, row(60, V), R)", "findall(V, row(61, V), R)",
+                 })
+            Assert.True($"{cold.Query(probe + ".")["R"]}" == $"{hot.Query(probe + ".")["R"]}",
+                $"{probe} is {hot.Query(probe + ".")["R"]} on the indexed layout and "
+                + $"{cold.Query(probe + ".")["R"]} on the chain");
     }
 }

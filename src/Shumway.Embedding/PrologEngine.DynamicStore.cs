@@ -404,19 +404,36 @@ public sealed partial class PrologEngine
         // removing the clause from _dynamicClauses (the var-chain
         // walk reads idx-indexed entries in their pre-removal order).
         bool isIndexed = IsExtensibleIndexedLayout(engine, functorId);
-        int retiredBodyAddr = -1;
+        int retiredBodyAddr = -1, retiredVarEntryDied = -1;
         if (isIndexed)
         {
-            // The var-chain walk counts entries the way a dense list is
-            // numbered, so the slot has to be dense before idx can address
-            // it. Rare layout; the compaction resets the debt it spends.
-            if (_dynStore.TombstoneCount(functorId) > 0)
+            // The clause's entry in the chain of every clause is on record,
+            // and its execute names the body. The walk by index is the
+            // fallback for a clause the record lacks: it skips the entries
+            // retracted before it, O(retracted) per retract until a sweep.
+            byte[] prog = engine.CurrentProgram!;
+            var chainTable = GetChainTable(engine);
+            if (chainTable is not null
+                && chainTable.Chains.TryGetValue(functorId, out var chainState)
+                && chainState.IndexedVarEntries.Remove(clause, out int knownDied)
+                && knownDied + 13 <= prog.Length
+                && Shumway.Core.BytecodeIO.ReadInt64(prog, knownDied) == long.MaxValue
+                && prog[knownDied + 8] == (byte)Shumway.Core.Opcode.Execute)
             {
-                _dynStore.CompactSlot(functorId);
-                idx = list.IndexOf(clause);
-                if (idx < 0) return false;
+                retiredVarEntryDied = knownDied;
+                retiredBodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, knownDied + 9);
             }
-            retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
+            else
+            {
+                ChainPatcher.IndexedVarEntryMisses++;
+                // The walk counts entries the way the dense list is numbered;
+                // the tombstones before the slot are a rank query. Not a
+                // compaction: that rebuilt the first-argument index on every
+                // retract, O(clauses) each.
+                int denseIdx = idx - _dynStore.TombstonesBefore(functorId, idx);
+                retiredBodyAddr = FindBodyAddrForClauseIndex(
+                    engine, functorId, denseIdx, out retiredVarEntryDied);
+            }
         }
         _dynStore.RemoveClauseAt(functorId, idx);
         InvalidateDynamicCache(functorId);
@@ -472,7 +489,8 @@ public sealed partial class PrologEngine
                     RebuildEngineFidChainView(other, functorId);
             }
         if (retiredBodyAddr > 0
-            && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
+            && TryPatchDiedInAllIndexedChains(
+                engine, functorId, retiredBodyAddr, clause, retiredVarEntryDied))
         {
             ChainPatcher.NoteIndexedRetract(engine, functorId);
             if (ChainAudit)
@@ -3488,6 +3506,14 @@ public sealed partial class PrologEngine
                 last.ChunkLength = end - currentChunkStart;
         }
         chain.TailNextAddr = tailNextOperand;
+        // The indexed layout: each clause's entry in the chain of every
+        // clause, by clause, for retract. The walk above paired the entries
+        // of every chain with the clauses positionally, which for this
+        // layout names the wrong clause.
+        if (predByteLength > 2 && !ChainPatcher.IndexedVarRecordOff
+            && program[predAddr] == (byte)Shumway.Core.Opcode.EnterDynamic
+            && program[predAddr + 1] == (byte)Shumway.Core.Opcode.SwitchOnTerm)
+            DynamicCodePatcher.CollectIndexedVarEntries(program, predAddr, clauses, chain.IndexedVarEntries);
         // Always record chain state when a tail-next exists, even when
         // _dynamicClauses is empty (declared-but-never-asserted dynamic
         // predicates have the empty-stub clause as the patch target for

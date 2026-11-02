@@ -403,8 +403,10 @@ internal sealed class DynamicCodePatcher
     /// that enumerates every clause regardless of indexable args).
     /// Returns -1 if the layout doesn't match.</summary>
     internal int FindFinalVarChainHead(Activation engine, int predAddr)
+        => FindFinalVarChainHead(engine.CurrentProgram, predAddr);
+
+    internal static int FindFinalVarChainHead(byte[]? prog, int predAddr)
     {
-        var prog = engine.CurrentProgram;
         if (prog is null || predAddr + 18 > prog.Length) return -1;
         int p = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
         while (p > 0 && p + 1 <= prog.Length)
@@ -419,6 +421,39 @@ internal sealed class DynamicCodePatcher
             p = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 5);
         }
         return -1;
+    }
+
+    /// <summary>Records, for each clause of a predicate just laid out
+    /// indexed, the died slot of its entry in the chain of every clause: the
+    /// chain lists the clauses in store order, all alive at this point. Stops
+    /// at the first entry that is not of the chain's shape; a clause left out
+    /// takes the walk by index when retracted.</summary>
+    internal static void CollectIndexedVarEntries(
+        byte[] prog, int predAddr, IReadOnlyList<Clause> clauses, Dictionary<Clause, int> into)
+    {
+        into.Clear();
+        int cur = FindFinalVarChainHead(prog, predAddr);
+        for (int i = 0; i < clauses.Count && cur > 0 && cur + 27 <= prog.Length; i++)
+        {
+            if (prog[cur] != (byte)Shumway.Core.Opcode.TryMeElse
+                && prog[cur] != (byte)Shumway.Core.Opcode.RetryMeElse) return;
+            int header = ChainEntryHeaderSize(prog, cur);
+            if (cur + header + 22 > prog.Length
+                || prog[cur + header] != (byte)Shumway.Core.Opcode.CheckVisible
+                || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return;
+            into[clauses[i]] = cur + header + 9;
+            cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+        }
+    }
+
+    /// <summary>After an in-place assert added <paramref name="clause"/> to the
+    /// indexed layout: the died slot of its entry in the chain of every
+    /// clause, for the retract.</summary>
+    private void NoteIndexedVarEntry(Activation engine, int functorId, Clause clause, int diedAddr)
+    {
+        if (diedAddr <= 0 || IndexedVarRecordOff) return;
+        if (GetChainTable(engine) is { } table && table.Chains.TryGetValue(functorId, out var chain))
+            chain.IndexedVarEntries[clause] = diedAddr;
     }
 
     internal bool IsExtensibleIndexedLayout(Activation engine, int functorId)
@@ -653,6 +688,8 @@ internal sealed class DynamicCodePatcher
         int newKeyValue = 0;
         int subSwitchTableId = -1;
 
+        int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
+        if (varTailNext < 0) return false;
         if (isVarArg)
         {
             // Collect every chain's tail-next operand. Includes the
@@ -662,8 +699,6 @@ internal sealed class DynamicCodePatcher
         }
         else
         {
-            int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
-            if (varTailNext < 0) return false;
             chainTailNexts.Add(varTailNext);
             bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
             isNewKey = bucketChainHead < 0;
@@ -779,10 +814,13 @@ internal sealed class DynamicCodePatcher
         //     the new clause as its tail).
         //   - every chain (var + list + every bucket
         //     across all sub-switches).
+        int varEntryDied = -1;
         foreach (int tailNext in chainTailNexts)
         {
             int newEntry = AppendNonHeadEntry(bodyAddr);
             prog = engine.CurrentProgram!;
+            if (tailNext == varTailNext)
+                varEntryDied = newEntry + ChainEntryHeaderSize(prog, newEntry) + 9;
             // Tripwire: a fresh append always lands beyond every existing
             // chain slot. newEntry at or below the slot being patched means
             // the append position was stale and the write would splice the
@@ -798,6 +836,8 @@ internal sealed class DynamicCodePatcher
             }
             Shumway.Core.BytecodeIO.WriteInt32(prog, tailNext, newEntry);
         }
+
+        NoteIndexedVarEntry(engine, functorId, newClause, varEntryDied);
 
         // The new chunks may have grown the persistent buffer (chunk
         // 151b) — keep PrologEngine's cached reference current (owner),
@@ -1185,6 +1225,7 @@ internal sealed class DynamicCodePatcher
         // Demote each chain to demote, build new head chunk, record
         // the old → new redirect.
         var redirectMap = new Dictionary<int, int>();
+        int varEntryDied = -1;
         foreach (int oldHead in chainsToDemote)
         {
             // Demote try_me_else (9 bytes) to retry_me_else (5
@@ -1205,7 +1246,10 @@ internal sealed class DynamicCodePatcher
             int newHead = engine.AppendCode(em.ToBytes());
             prog = engine.CurrentProgram!;
             redirectMap[oldHead] = newHead;
+            if (oldHead == varChainHead)
+                varEntryDied = newHead + ChainEntryHeaderSize(prog, newHead) + 9;
         }
+        NoteIndexedVarEntry(engine, functorId, newClause, varEntryDied);
 
         // Walk every pointer slot that could reference a chain head
         // and redirect any that match.
@@ -1409,8 +1453,10 @@ internal sealed class DynamicCodePatcher
     /// <paramref name="clauseIndex"/> is the position in the
     /// pre-removal list. Returns <c>-1</c> on layout mismatch or
     /// when the index runs off the chain.</summary>
-    internal int FindBodyAddrForClauseIndex(Activation engine, int functorId, int clauseIndex)
+    internal int FindBodyAddrForClauseIndex(
+        Activation engine, int functorId, int clauseIndex, out int varEntryDiedAddr)
     {
+        varEntryDiedAddr = -1;
         if (!IsExtensibleIndexedLayout(engine, functorId)) return -1;
         var addrMap = engine.CurrentFunctorAddresses;
         if (addrMap is null || !addrMap.TryGetValue(functorId, out int predAddr)) return -1;
@@ -1432,7 +1478,11 @@ internal sealed class DynamicCodePatcher
             if (died == long.MaxValue)
             {
                 if (aliveIdx == clauseIndex)
+                {
+                    // The entry itself, so the retract need not find it again.
+                    varEntryDiedAddr = diedAddr;
                     return Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
+                }
                 aliveIdx++;
             }
             int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
@@ -1441,24 +1491,38 @@ internal sealed class DynamicCodePatcher
         }
     }
 
-    /// <summary>Walks every chain in the extensible-
-    /// indexed predicate (each bucket chain reached through a switch
-    /// table value, the list chain head, and the var-fallthrough
-    /// chain), and patches the died slot of every entry whose
-    /// <c>execute</c> targets <paramref name="bodyAddr"/>. The died
-    /// slot is the second 8-byte field of the entry's
-    /// <c>check_visible</c>, located at chain-header-size + 1 + 8
-    /// from the entry's start. Returns <c>true</c> when at least one
-    /// entry was patched (the chain actually held a reference to the
-    /// body); <c>false</c> when the predicate isn't using the chunk-
-    /// 155a layout or no chain referenced the retired body.</summary>
-    internal bool TryPatchDiedInAllIndexedChains(Activation engine, int functorId, int bodyAddr)
+    /// <summary>Patches the died slot of every entry of the extensible-indexed
+    /// predicate whose <c>execute</c> targets <paramref name="bodyAddr"/>, the
+    /// retired clause's body. The died slot is the second 8-byte field of the
+    /// entry's <c>check_visible</c>, at chain-header-size + 1 + 8 from the
+    /// entry's start. A clause with a concrete first argument is in two chains,
+    /// the one of every clause (its entry is <paramref name="varEntryDiedAddr"/>,
+    /// found by the index walk) and its key's, reached through the switch
+    /// table: those two are patched without enumerating the heads, which made a
+    /// drain O(clauses) per retract. A clause with a variable first argument is
+    /// in every chain, and a layout the bucket lookup does not know (a cascade
+    /// over several arguments) is walked whole. Returns <c>true</c> when at
+    /// least one entry was patched; <c>false</c> when the predicate isn't using
+    /// the layout or no chain referenced the retired body.</summary>
+    internal bool TryPatchDiedInAllIndexedChains(
+        Activation engine, int functorId, int bodyAddr, Clause clause, int varEntryDiedAddr)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
         int predAddr = addrMap[functorId];
         int failStub = engine.DynamicFailStubAddr;
+        long gen = E._dbGeneration.Value;
+
+        if (varEntryDiedAddr > 0)
+        {
+            int bucketHead = FindBucketChainHead(engine, predAddr, clause);
+            if (bucketHead > 0 && PatchDiedInChain(prog, bucketHead, failStub, bodyAddr, gen))
+            {
+                Shumway.Core.BytecodeIO.WriteInt64(prog, varEntryDiedAddr, gen);
+                return true;
+            }
+        }
 
         // enumerate every chain head reachable from the
         // top-level switch, including multi-level cascades through
@@ -1469,27 +1533,34 @@ internal sealed class DynamicCodePatcher
 
         bool anyPatched = false;
         foreach (int head in heads)
-        {
-            int cur = head;
-            while (cur > 0 && cur + 27 <= prog.Length)
-            {
-                int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
-                int execOpPos = cur + chainHeaderSize + 17;
-                if (execOpPos + 5 > prog.Length) break;
-                if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
-                int target = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
-                if (target == bodyAddr)
-                {
-                    int diedAddr = cur + chainHeaderSize + 9;
-                    Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, E._dbGeneration.Value);
-                    anyPatched = true;
-                }
-                int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
-                if (next == failStub) break;
-                cur = next;
-            }
-        }
+            if (PatchDiedInChain(prog, head, failStub, bodyAddr, gen)) anyPatched = true;
         return anyPatched;
+    }
+
+    /// <summary>Walks one chain and patches the died slot of the entry whose
+    /// <c>execute</c> targets <paramref name="bodyAddr"/>; a chain holds a
+    /// clause at most once, so the walk ends there. False when the chain has no
+    /// such entry.</summary>
+    private bool PatchDiedInChain(byte[] prog, int head, int failStub, int bodyAddr, long gen)
+    {
+        int cur = head;
+        while (cur > 0 && cur + 27 <= prog.Length)
+        {
+            IndexedPatchSteps++;
+            int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
+            int execOpPos = cur + chainHeaderSize + 17;
+            if (execOpPos + 5 > prog.Length) break;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
+            if (Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1) == bodyAddr)
+            {
+                Shumway.Core.BytecodeIO.WriteInt64(prog, cur + chainHeaderSize + 9, gen);
+                return true;
+            }
+            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            if (next == failStub) break;
+            cur = next;
+        }
+        return false;
     }
 
     // A retract kills the clause's entry in each chain that holds it and
@@ -1503,6 +1574,19 @@ internal sealed class DynamicCodePatcher
     /// <summary>Retracts from a predicate in the indexed layout, and the
     /// sweeps that unlinked entries.</summary>
     internal long IndexedRetracts, IndexedSweeps;
+
+    /// <summary>Chain entries visited while those retracts patched their
+    /// clause's entries: a test pins that a drain visits O(clauses) of them.</summary>
+    internal long IndexedPatchSteps;
+
+    /// <summary>Retracts whose clause had no entry on record
+    /// (<see cref="DynChainState.IndexedVarEntries"/>) and walked the chain of
+    /// every clause by index instead; a test pins it at zero.</summary>
+    internal long IndexedVarEntryMisses;
+
+    /// <summary>For a test: keeps the record empty, so every retract takes the
+    /// walk by index and the test can pin what that fallback costs.</summary>
+    internal bool IndexedVarRecordOff;
 
     /// <summary>After a retract killed a clause's entries in the indexed layout.</summary>
     internal void NoteIndexedRetract(Activation engine, int functorId)
@@ -2178,6 +2262,13 @@ internal sealed class DynChainState
     public int RetiredCount;
     public readonly List<(int PrevAddr, int NextAddr)> PendingBypass = new();
 
+    /// <summary>The indexed layout: each live clause's entry in the chain of
+    /// every clause, as the address of its died slot (the execute that names
+    /// the body follows it). Filled when the predicate is laid out and by the
+    /// in-place asserts; a retract takes its clause out. The positional
+    /// <see cref="Entries"/> do not describe that layout.</summary>
+    public readonly Dictionary<Clause, int> IndexedVarEntries = new(ReferenceEqualityComparer.Instance);
+
     /// <summary>The single live entry holding a clause, or nothing while the
     /// clause has none or has ever had more than one -- the walk decides
     /// those. It is what lets a retract retire its entry without scanning
@@ -2317,6 +2408,7 @@ internal sealed class DynChainState
         Entries.Clear();
         _entriesPerClause.Clear();
         _byClause.Clear();
+        IndexedVarEntries.Clear();
         SourceBlockEntries = 0;
         FirstLive = LastLive = null;
         LiveCount = 0;
