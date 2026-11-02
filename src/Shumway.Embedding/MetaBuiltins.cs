@@ -393,6 +393,11 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
             Reflect, "current_op(?Priority, ?Type, ?Name)",
             "Enumerates the operator table; backtracks over every operator.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("current_module", 1, CurrentModule,
+            Reflect, "current_module(?Module)",
+            "True if Module is a loaded module, user included; enumerates the "
+            + "modules in name order when Module is unbound. A Module that is neither "
+            + "a variable nor an atom raises type_error(atom, Module).");
         BuiltinsRegistry.Register("char_conversion", 2, CharConversion,
             Reflect, "char_conversion(+InChar, +OutChar)",
             "Registers a one-character-to-one-character mapping the lexer applies "
@@ -560,6 +565,14 @@ public static partial class MetaBuiltins
             + "(equivalent to consult/1). use_module(library(clpfd)) enables the "
             + "CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two "
             + "libraries cannot coexist in the same engine.");
+        BuiltinsRegistry.Register("use_module", 2, UseModule2,
+            Database, "use_module(+Spec, +Imports)",
+            "Loads Spec as use_module/1 does, then imports into user only the "
+            + "predicates Imports lists, as Name/Arity or Name//Arity; an op/3 element "
+            + "adds nothing, since the module's operators come with any import. A "
+            + "malformed list is an error raised before the load. Naming a predicate "
+            + "the module does not export raises permission_error(access, "
+            + "private_procedure, Module:Name/Arity) before anything is imported.");
         BuiltinsRegistry.Register("save_state", 1, SaveState1,
             Database, "save_state(+File)",
             "Writes a snapshot of the engine's user-visible state to File. "

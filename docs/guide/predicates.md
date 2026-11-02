@@ -236,6 +236,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `save_state(+File)` | engine | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. |
 | `save_state(+File, +Options)` | engine | Like save_state/1 but accepts an options list. Recognised: dynamic_only(true) restricts the snapshot to dynamic clauses (no consult history); restore_state/1 then merges them into the engine's current state via assertz without resetting. |
 | `use_module(+Spec)` | engine | Loads a library or file. Spec is either library(Name), where Name is one of the built-in libraries (clpfd, clpr), or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
+| `use_module(+Spec, +Imports)` | engine | Loads Spec as use_module/1 does, then imports into user only the predicates Imports lists, as Name/Arity or Name//Arity; an op/3 element adds nothing, since the module's operators come with any import. A malformed list is an error raised before the load. Naming a predicate the module does not export raises permission_error(access, private_procedure, Module:Name/Arity) before anything is imported. |
 | `well_founded(+Goal, -Status)` | engine | The well-founded truth value of a tabled Goal: true, false or undefined. |
 
 ## Lists
@@ -479,6 +480,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | --- | --- | --- |
 | `char_conversion(+InChar, +OutChar)` | iso | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token. InChar == OutChar removes the entry. |
 | `current_char_conversion(?InChar, ?OutChar)` | iso | Enumerates the active char-conversion table. |
+| `current_module(?Module)` | engine | True if Module is a loaded module, user included; enumerates the modules in name order when Module is unbound. A Module that is neither a variable nor an atom raises type_error(atom, Module). |
 | `current_op(?Priority, ?Type, ?Name)` | iso | Enumerates the operator table; backtracks over every operator. |
 | `current_prolog_flag(?Flag, ?Value)` | iso | Reads the value of a Prolog flag. |
 | `is_stream(@Term)` | engine | Succeeds if Term is a stream handle or a registered stream alias. |

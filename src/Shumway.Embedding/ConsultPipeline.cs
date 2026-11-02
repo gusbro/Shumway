@@ -1880,15 +1880,11 @@ internal sealed class ConsultPipeline
                 // an autoloaded name died with existence_error when it finally ran
                 // (record.pl autoloads current_type/3 from library(error); its
                 // `:- record` expansion hook then killed the importer's consult).
+                var filter = autoDir.Args.Length == 2
+                    ? DirectiveImportList("autoload/2", autoDir.Args[1])
+                    : null;
                 string? src = E.ExecuteUseModuleDirective(autoDir.Args[0]);
-                if (autoDir.Args.Length == 2)
-                {
-                    var filter = new List<(string, int)>();
-                    TryReadFunctorSpecList(autoDir.Args[1], filter);
-                    RecordImports(src, filter);
-                }
-                else
-                    RecordImports(src, filter: null);
+                RecordImports(src, filter);
             }
             else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
             {
@@ -1967,10 +1963,10 @@ internal sealed class ConsultPipeline
             else if (body is CompoundTerm { Functor: "use_module", Args.Length: 2 } umDir2)
             {
                 // `:- use_module(Spec, ImportList)` — load the module, then import
-                // only the selected predicate indicators (ADR-038).
+                // only the selected predicate indicators (ADR-038). The list is
+                // read first, so a malformed one loads nothing.
+                var filter = DirectiveImportList("use_module/2", umDir2.Args[1]);
                 string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
-                var filter = new List<(string, int)>();
-                TryReadFunctorSpecList(umDir2.Args[1], filter);
                 RecordImports(src, filter);
             }
             else
@@ -3514,6 +3510,58 @@ internal sealed class ConsultPipeline
         }
         spec = ("", 0);
         return false;
+    }
+
+    /// <summary>The import list of <c>use_module/2</c> and <c>autoload/2</c>,
+    /// directive or goal: each element a predicate indicator (<c>Name/Arity</c>
+    /// or <c>Name//Arity</c>) or an <c>op(P, T, Name)</c>, which adds nothing
+    /// because a module's exported operators come with any import (ADR-046).
+    /// A partial list or an unbound indicator is an instantiation error and any
+    /// other term a type error: a malformed list is refused, not read as
+    /// importing nothing.</summary>
+    internal static List<(string Name, int Arity)> ReadImportList(Term list)
+    {
+        var imports = new List<(string, int)>();
+        Term cursor = list;
+        while (true)
+        {
+            switch (cursor)
+            {
+                case VarTerm:
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
+                case AtomTerm { Name: "[]" }:
+                    return imports;
+                case CompoundTerm { Functor: ".", Args: [var element, var rest] }:
+                    if (element is VarTerm
+                        or CompoundTerm { Functor: "/" or "//", Args: [VarTerm, _] or [_, VarTerm] })
+                        throw new ShumwayPrologException(IsoError.InstantiationError());
+                    if (element is not CompoundTerm { Functor: "op", Args.Length: 3 })
+                    {
+                        if (element is CompoundTerm { Functor: "/" or "//", Args: [_, IntTerm { Value: < 0 }] }
+                            || !TryReadFunctorSpec(element, out var spec))
+                            throw new ShumwayPrologException(
+                                IsoError.TypeError("predicate_indicator", element));
+                        imports.Add(spec);
+                    }
+                    cursor = rest;
+                    break;
+                default:
+                    throw new ShumwayPrologException(IsoError.TypeError("list", list));
+            }
+        }
+    }
+
+    /// <summary><see cref="ReadImportList"/> for a directive: its error is a
+    /// load error naming the directive.</summary>
+    internal static List<(string Name, int Arity)> DirectiveImportList(string directive, Term list)
+    {
+        try { return ReadImportList(list); }
+        catch (ShumwayPrologException ex)
+        {
+            Term formal = ex.Term is CompoundTerm { Functor: "error", Args: [var f, _] } ? f : ex.Term;
+            throw new InvalidOperationException(
+                $"malformed import list in :- {directive}: {formal}");
+        }
     }
 
     private static bool TryReadFunctorSpecList(Term list, List<(string, int)> output)
