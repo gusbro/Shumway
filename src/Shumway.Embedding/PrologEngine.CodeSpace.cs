@@ -798,6 +798,15 @@ public sealed partial class PrologEngine
     /// reference-equality validity check above.</summary>
     internal static readonly HashSet<int> EmptyLocalsSentinel = new();
 
+    private static readonly Dictionary<int, string> NoImports = new();
+
+    /// <summary>ADR-038: <paramref name="module"/>'s import table, for a
+    /// rewrite of clauses that belong to it but live in the dynamic store.
+    /// Without it a call there to an imported predicate stays bare and
+    /// misses the importer's <c>Source$name</c>.</summary>
+    internal IReadOnlyDictionary<int, string> ImportsOf(string module)
+        => _modules.TryGetValue(module, out var manifest) ? manifest.Imports : NoImports;
+
     /// <summary>ADR-030 elision-result cache across product builds. The
     /// elision decisions are a pure function of the eligible (static) clause
     /// content, the defined-indicator set, and the per-indicator eligibility

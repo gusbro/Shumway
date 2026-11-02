@@ -1315,6 +1315,27 @@ public static partial class MetaBuiltins
                           1, Materializer.MaterializeAsCell(e, indicators[i])));
     }
 
+    /// <summary><c>current_module(?Module)</c>: Module is a module of the
+    /// engine, <c>user</c> included (<see cref="PrologEngine.VisibleModuleNames"/>).
+    /// A bound Module is a membership test; an unbound one backtracks over the
+    /// modules in name order. Anything else is type_error(atom, Module), as for
+    /// the module of <c>current_predicate(M:PI)</c>.</summary>
+    public static bool CurrentModule(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "current_module/1 requires a PrologEngine host.");
+        Term m = MaterializeRegister(engine, 0);
+        if (m is AtomTerm atom) return host.IsVisibleModule(atom.Name);
+        if (m is not VarTerm)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", m, engine));
+        List<string> names = host.VisibleModuleNames();
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, names.Count, 1, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(
+                0, Materializer.MaterializeAsCell(e, new AtomTerm(names[i]))));
+    }
+
     /// <summary><c>'$listable_predicates'/1</c> — the user-defined
     /// predicates <c>listing/0,1</c> may print, each as a
     /// <c>pi(Name, Arity, Dynamic)</c> term where <c>Dynamic</c> is

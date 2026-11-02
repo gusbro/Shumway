@@ -536,6 +536,15 @@ At the REPL you load a library the same way, as a goal:
 L = [a, b].
 ```
 
+As a goal, `use_module/2` imports into `user` only the predicates it lists,
+and `current_module/1` tells whether a module is loaded:
+
+```
+?- use_module(library(lists_ext), [take/3]).
+?- current_module(lists_ext).
+true.
+```
+
 **Export-qualified modules.** A library that isolates its predicates uses the
 two-argument module directive:
 
@@ -852,7 +861,14 @@ Two things to know going in:
   defines `term_expansion/2`, `goal_expansion/2` or a clause for another
   module (`M:Head :- Body`) is refused instead, by `shumway-compile` and
   `shumway-link` alike: compiled one file at a time, the hook would never
-  run and the clause would define a predicate named `:`.
+  run and the clause would define a predicate named `:`. A file that only
+  declares one of those hooks `multifile` or `dynamic`, with no clause, is
+  not refused: the declaration installs nothing.
+- **A file-at-a-time compile does not run directives.** An
+  `:- initialization(G)` and a goal directive (`:- assertz(...)`, anything
+  that is not a declaration) are dropped, and each one is reported as a
+  warning naming it. `--consult` runs them while compiling, and the object
+  carries the state they leave in its dynamic predicates.
 
 ### Step 2: `shumway-link` (linker)
 
@@ -1128,7 +1144,7 @@ link-time meaning:
 | `:- public Name/N.` | Exports the predicate to the global namespace. Required for any predicate called from another module. |
 | `:- public [a/1, b/2].` | List form of the above. |
 | `:- use_module(library(X)).` | Loads library `X` (baked-in, or `X.pl`/`X.shum` on the library search path) and imports its whole export surface. |
-| `:- use_module(library(X), [a/1]).` | As above but imports only the listed indicators. Importing a non-exported name is an error. |
+| `:- use_module(library(X), [a/1]).` | As above but imports only the listed indicators, `Name/Arity` or `Name//Arity`; an `op/3` element adds nothing, since the module's operators come with any import. Importing a non-exported name is an error, and so is a list that is not a list of indicators. |
 | `:- dynamic Name/N.` | The predicate is modifiable at runtime (`assertz`, `retract`). Also contributes to the global namespace, so other modules can call it. Even with zero clauses, the indicator counts as defined. |
 | `:- ensure_linked Name/N.` | Tells the linker to treat this predicate as a **reachability root**. Use it when the predicate is called only via runtime meta-call (`call/1` with a constructed goal): the static call graph won't see the edge, and without this hint the linker would drop the predicate as unreachable. |
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |

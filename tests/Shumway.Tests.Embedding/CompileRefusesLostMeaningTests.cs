@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Shumway.Embedding;
 using Xunit;
 
 namespace Shumway.Tests.Embedding;
@@ -111,6 +112,56 @@ public sealed class CompileRefusesLostMeaningTests
             Assert.Equal(0, r.Exit);
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch (IOException) { } }
+    }
+
+    [Fact]
+    public void AHookDeclaredWithoutClausesIsNotRefused()
+    {
+        // Logtalk's runtime declares term_expansion/2 multifile for its user
+        // pseudo-object and gives it no clause: nothing is installed, so
+        // nothing is lost.
+        var declared = ShmoCompiler.CompileSource(@"
+:- multifile(term_expansion/2).
+:- dynamic(goal_expansion/2).
+p.
+", "declares");
+        Assert.Null(ShmoCompiler.WhatFileAtATimeLoses(declared));
+
+        var defined = ShmoCompiler.CompileSource(@"
+:- multifile(term_expansion/2).
+term_expansion(marker, expanded).
+p.
+", "defines");
+        Assert.Contains("term_expansion/2", ShmoCompiler.WhatFileAtATimeLoses(defined));
+    }
+
+    [Fact]
+    public void ADirectiveFileAtATimeDoesNotRunIsAWarning()
+    {
+        // The consult runs initialization/1 and goal directives; compiled one
+        // file at a time they are dropped, so each one is reported. A
+        // declaration is not.
+        var r = ShmoCompiler.TryCompileSource(@":- dynamic(f/1).
+:- initialization(assertz(f(1))).
+:- assertz(f(0)).
+:- op(700, xfx, ===>).
+:- discontiguous(g/1).
+:- disable_debug.
+g(1).
+");
+        Assert.True(r.Success);
+        Assert.Collection(r.Warnings,
+            w =>
+            {
+                Assert.Equal(2, w.Line);
+                Assert.Contains("initialization/1", w.Message);
+                Assert.Contains("--consult", w.Message);
+            },
+            w =>
+            {
+                Assert.Equal(3, w.Line);
+                Assert.Contains("assertz/1", w.Message);
+            });
     }
 
     [Fact]

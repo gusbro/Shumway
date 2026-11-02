@@ -291,17 +291,13 @@ public static class StreamBuiltins
         {
             throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            // What the host refuses (a directory, a read-only file) is a
-            // permission error and has to arrive as one: a bare CLR exception
-            // escapes catch/3 entirely.
+            // §8.11.5.3: a source/sink that exists and cannot be opened is a
+            // permission error, whatever the host's reason (a directory, a
+            // read-only file or file system, a file another handle holds).
             throw new PrologRuntimeException("permission_error", "open,source_sink",
                                              engine, pathCell);
-        }
-        catch (IOException ex)
-        {
-            throw new PrologRuntimeException("system_error", ex.Message);
         }
 
         // open/3 = open/4 with an empty options list: the eof_action
@@ -577,17 +573,13 @@ public static class StreamBuiltins
         {
             throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            // What the host refuses (a directory, a read-only file) is a
-            // permission error and has to arrive as one: a bare CLR exception
-            // escapes catch/3 entirely.
+            // §8.11.5.3: a source/sink that exists and cannot be opened is a
+            // permission error, whatever the host's reason (a directory, a
+            // read-only file or file system, a file another handle holds).
             throw new PrologRuntimeException("permission_error", "open,source_sink",
                                              engine, pathCell);
-        }
-        catch (IOException ex)
-        {
-            throw new PrologRuntimeException("system_error", ex.Message);
         }
 
         handle.EofAction = eofAction;

@@ -1154,6 +1154,14 @@ public sealed partial class PrologEngine
     /// goal-form <c>use_module(library(X))</c> resolves the imported predicates.
     /// Invalidates the rewrite caches when it adds anything.</summary>
     internal void ImportAllExportsIntoUser(string sourceModule)
+        => ImportExportsIntoUser(sourceModule, only: null);
+
+    /// <summary>As <see cref="ImportAllExportsIntoUser"/>, for the functors in
+    /// <paramref name="only"/> (the goal-form <c>use_module/2</c>), or the whole
+    /// export surface when it is null. The caller has checked that each one is
+    /// exported. The module's exported operators come in either way, as in the
+    /// directive.</summary>
+    internal void ImportExportsIntoUser(string sourceModule, IReadOnlyCollection<int>? only)
     {
         // ADR-046 — the module's exported operators become part of the
         // top-level syntax too (a directly-consulted module or a goal-form
@@ -1165,7 +1173,7 @@ public sealed partial class PrologEngine
         List<int>? added = null;
         List<(int Fid, string Provider)>? addedFrom = null;
         Dictionary<string, List<int>>? kept = null;
-        foreach (int fid in srcManifest.ExportFunctors)
+        foreach (int fid in only ?? (IEnumerable<int>)srcManifest.ExportFunctors)
         {
             // Chase re-exports to the defining module; a re-exported bare-global
             // (builtin/prelude/dynamic) gets no mapping and resolves bare.
@@ -1301,13 +1309,9 @@ public sealed partial class PrologEngine
     /// Modules sorted, fids first-seen order — a stable enumeration.</summary>
     internal IEnumerable<(string Module, int Fid)> DefinedModulePredicates(string? onlyModule)
     {
-        var names = new List<string>();
-        foreach (string mod in _modules.Keys)
-            if ((onlyModule is null || mod == onlyModule) && !mod.StartsWith('$'))
-                names.Add(mod);
-        names.Sort(StringComparer.Ordinal);
-        foreach (string mod in names)
+        foreach (string mod in VisibleModuleNames())
         {
+            if (onlyModule is not null && mod != onlyModule) continue;
             ModuleManifest manifest = _modules[mod];
             var seen = new HashSet<int>();
             bool Fresh(int fid)
@@ -1337,6 +1341,22 @@ public sealed partial class PrologEngine
                     if (Fresh(fid)) yield return (mod, fid);
         }
     }
+
+    /// <summary>The modules a program sees, in name order: every module of
+    /// the table but the engine's own (<c>$</c>-named). <c>current_module/1</c>
+    /// enumerates them and <c>current_predicate(M:PI)</c> walks them.</summary>
+    internal List<string> VisibleModuleNames()
+    {
+        var names = new List<string>();
+        foreach (string mod in _modules.Keys)
+            if (!mod.StartsWith('$')) names.Add(mod);
+        names.Sort(StringComparer.Ordinal);
+        return names;
+    }
+
+    /// <summary>The membership form of <see cref="VisibleModuleNames"/>.</summary>
+    internal bool IsVisibleModule(string module)
+        => !module.StartsWith('$') && _modules.ContainsKey(module);
 
     /// <summary>Whether <paramref name="module"/> defines the functor — the
     /// membership form of <see cref="DefinedModulePredicates"/>.</summary>

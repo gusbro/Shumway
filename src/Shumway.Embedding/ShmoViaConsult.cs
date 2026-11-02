@@ -275,7 +275,7 @@ public static class ShmoViaConsult
             {
                 foreach (var err in localErrors)
                     errors.Add(new ShmoCompileError(
-                        $"[{name}] {err.Message}", err.Line, err.Column));
+                        $"[{name}] {err.Message}", err.Line, err.Column, err.File));
                 continue;
             }
 

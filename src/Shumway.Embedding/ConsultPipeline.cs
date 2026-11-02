@@ -1880,15 +1880,11 @@ internal sealed class ConsultPipeline
                 // an autoloaded name died with existence_error when it finally ran
                 // (record.pl autoloads current_type/3 from library(error); its
                 // `:- record` expansion hook then killed the importer's consult).
+                var filter = autoDir.Args.Length == 2
+                    ? DirectiveImportList("autoload/2", autoDir.Args[1])
+                    : null;
                 string? src = E.ExecuteUseModuleDirective(autoDir.Args[0]);
-                if (autoDir.Args.Length == 2)
-                {
-                    var filter = new List<(string, int)>();
-                    TryReadFunctorSpecList(autoDir.Args[1], filter);
-                    RecordImports(src, filter);
-                }
-                else
-                    RecordImports(src, filter: null);
+                RecordImports(src, filter);
             }
             else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
             {
@@ -1967,10 +1963,10 @@ internal sealed class ConsultPipeline
             else if (body is CompoundTerm { Functor: "use_module", Args.Length: 2 } umDir2)
             {
                 // `:- use_module(Spec, ImportList)` — load the module, then import
-                // only the selected predicate indicators (ADR-038).
+                // only the selected predicate indicators (ADR-038). The list is
+                // read first, so a malformed one loads nothing.
+                var filter = DirectiveImportList("use_module/2", umDir2.Args[1]);
                 string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
-                var filter = new List<(string, int)>();
-                TryReadFunctorSpecList(umDir2.Args[1], filter);
                 RecordImports(src, filter);
             }
             else
@@ -2128,7 +2124,8 @@ internal sealed class ConsultPipeline
                 => multifileCtx ??= new ModuleRewrite.Context(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    E._dynStore.Functors)
+                    E._dynStore.Functors,
+                    ConsultImports())
                 { MetaArgSpec = E.MetaArgSpec };
 
             // Reconsult: the predicates this source defines are replaced, not
@@ -2254,6 +2251,11 @@ internal sealed class ConsultPipeline
             }
             clauses = keptClauses;
         }
+
+        // A named module's import table is the one this consult builds: its
+        // manifest is replaced at the commit, not extended.
+        IReadOnlyDictionary<int, string> ConsultImports()
+            => pendingImports ?? (IReadOnlyDictionary<int, string>)new Dictionary<int, string>();
 
         // ADR-038 — record the predicates this consult imported from an
         // export-qualified module `src`: each imported bare functor id maps to
@@ -2587,7 +2589,8 @@ internal sealed class ConsultPipeline
                 pendingDiscontiguous, firstHookIndex, inFileGoalHooks,
                 moduleName, pendingMultifile,
                 () => new ModuleRewrite.Context(moduleName,
-                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors)
+                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors,
+                    ConsultImports())
                 { MetaArgSpec = E.MetaArgSpec });
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
@@ -2595,53 +2598,20 @@ internal sealed class ConsultPipeline
         // defers to after the whole text is loaded.
         if (directiveGoals is not null)
             foreach (var g in directiveGoals)
-                RunConsultDirectiveGoal(QualifyGoalForModule(g, moduleName));
+            {
+                Term goal = QualifyGoalForModule(g, moduleName);
+                RunConsultGoal(goal, "directive", DescribeDirective(goal));
+            }
 
         // `:- initialization(Goal)` goals run now, after the consult has
-        // committed, in source order (SWI load-time semantics). A goal that
-        // fails or raises prints a warning and loading continues — matching
-        // SWI. halt/0-1 (PrologHaltException) propagates: halting from an
-        // initialization goal ends the load, exactly as under SWI. So does
-        // abort/0, which abandons the load with the query that started it.
+        // committed, in source order (SWI load-time semantics).
         if (initializationGoals is not null)
-        {
             foreach (var g in initializationGoals)
-            {
-                try
-                {
-                    E.LastHaltExitCode = null;
-                    bool ok = false;
-                    foreach (var sol in E.QueryAll(QualifyGoalForModule(g, moduleName)))
-                    { ok = sol.Success; break; }
+                RunConsultGoal(QualifyGoalForModule(g, moduleName),
+                    "initialization goal", g.ToString() ?? "");
 
-                    // halt/0-1 does not reach us as an exception: QueryAll catches it and
-                    // reports the goal as failed, leaving the code behind in
-                    // E.LastHaltExitCode. So a goal that halted looked exactly like one that
-                    // failed — the load went on, and the process it was told to end lived
-                    // on to read from stdin. Re-raise it here: halting from an
-                    // initialization goal ends the load, which is what the paragraph above
-                    // has always claimed and what SWI does.
-                    if (E.LastHaltExitCode is int exitCode)
-                        throw new PrologHaltException(exitCode);
-
-                    if (!ok)
-                        E.Warn(
-                            $"Warning: initialization goal failed: {g}");
-                }
-                catch (PrologHaltException) { throw; }
-                catch (PrologAbortException) { throw; }
-                catch (Exception ex)
-                {
-                    E.Warn(
-                        $"Warning: initialization goal raised: {g}: {ex.Message}");
-                    if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                        E.Warn(ex.StackTrace ?? "");
-                }
-            }
-        }
-
-        // RESUME-boundary reconciliation: this consult (and the
-        // nested queries its initialization goals spawned) may have mutated
+        // RESUME-boundary reconciliation: this consult (and any query
+        // nested in it, one a goal started with the host API) may have mutated
         // dynamic predicates through other engines' views; before control
         // returns to the suspended caller, diff its dispatch view against
         // the store so no ghost clause (missed broadcast patch) survives
@@ -2650,13 +2620,6 @@ internal sealed class ConsultPipeline
             E.ReconcileEngineDynamicView(resumeEng);
     }
 
-    /// <summary>Runs a general (non-declaration) directive goal — ISO §7.4.2.
-    /// A goal that fails or raises prints a warning to stderr and loading
-    /// continues; <c>halt/0-1</c> ends the load (propagated as
-    /// <see cref="PrologHaltException"/>, mirroring the <c>initialization/1</c>
-    /// handling above). The goal runs on the live engine, so an undefined
-    /// predicate — the classic <c>:- use_module</c> typo — surfaces as an
-    /// <c>existence_error</c> warning instead of being silently dropped.</summary>
     // A `:- Goal` / `:- initialization(Goal)` in an export-qualified module runs
     // in that module's context, so a call to one of its module-local predicates
     // resolves (clpz's `:- initialization((generated_clauses(Cs), ...))` calls the
@@ -2790,31 +2753,86 @@ internal sealed class ConsultPipeline
         return prefix + text[..DirectiveTextLimit] + "...";
     }
 
-    private void RunConsultDirectiveGoal(Term goal)
+    /// <summary>Runs a consult-time goal (a <c>:- Goal</c> directive, an
+    /// <c>initialization/1</c> goal) once the file's clauses are in place. A goal
+    /// that fails or raises warns and loading goes on; <c>halt/0-1</c> and
+    /// <c>abort/0</c> end the load, propagated. An undefined predicate, the
+    /// classic <c>:- use_module</c> typo, is an <c>existence_error</c> warning,
+    /// not silence.
+    /// <para>A file loaded by a running goal (<c>consult/1</c>, <c>use_module/1</c>)
+    /// runs its goals on that goal's activation, through the prelude's
+    /// <c>'$consult_goal'/1</c>, against the code the consult just linked live.
+    /// Not as a query of its own: a query's setup rebuilds the compiled program
+    /// whenever the program changed, so a load of many files with a directive
+    /// each (every Logtalk entity) rebuilt it per file, quadratic in the files.
+    /// A host consult has no running goal and runs each goal as a query.</para></summary>
+    private void RunConsultGoal(Term goal, string what, string described)
     {
-        try
+        bool ok;
+        Term? ball = null;
+        string? message = null;
+        string? trace = null;
+        if (E._liveConsultEngine is { } live && live.ReentrantSolve is { } solve)
         {
-            E.LastHaltExitCode = null;
-            bool ok = false;
-            foreach (var sol in E.QueryAll(goal)) { ok = sol.Success; break; }
-
-            if (E.LastHaltExitCode is int exitCode)
-                throw new PrologHaltException(exitCode);
-
-            if (!ok)
-                E.Warn(
-                    $"Warning: directive failed: {DescribeDirective(goal)}");
+            E.ConsultGoalOutcome = null;
+            try
+            {
+                // The wrapper itself always succeeds. halt, abort and a host
+                // failure propagate, as from any other goal of the running query.
+                solve(Materializer.MaterializeAsCell(live,
+                    new CompoundTerm(ConsultGoalWrapper, new[] { goal })));
+                Term? outcome = E.ConsultGoalOutcome;
+                ok = outcome is null;
+                if (outcome is CompoundTerm { Functor: "raised", Args: [var raised] })
+                    ball = raised;
+            }
+            finally { E.ConsultGoalOutcome = null; }
         }
-        catch (PrologHaltException) { throw; }
-        catch (PrologAbortException) { throw; }
-        catch (Exception ex)
+        else
         {
-            E.Warn(
-                $"Warning: directive raised: {DescribeDirective(goal)}: {ex.Message}");
-            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                E.Warn(ex.StackTrace ?? "");
+            try
+            {
+                E.LastHaltExitCode = null;
+                ok = false;
+                foreach (var sol in E.QueryAll(goal)) { ok = sol.Success; break; }
+                // halt/0-1 does not reach us as an exception: QueryAll catches it
+                // and reports the goal as failed, leaving the code behind in
+                // E.LastHaltExitCode. Re-raise it: halting from a consult-time
+                // goal ends the load, as under SWI.
+                if (E.LastHaltExitCode is int exitCode)
+                    throw new PrologHaltException(exitCode);
+            }
+            catch (PrologHaltException) { throw; }
+            catch (PrologAbortException) { throw; }
+            catch (Exception ex)
+            {
+                ok = false;
+                ball = BallOf(ex);
+                message = ex.Message;
+                if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                    trace = ex.StackTrace ?? "";
+            }
         }
+        if (ok) return;
+        if (ball is null && message is null)
+            E.Warn($"Warning: {what} failed: {described}");
+        else
+            E.Warn($"Warning: {what} raised: {described}: "
+                + (ball is null ? message : AstTermRenderer.Render(ball, 999, E.Operators, quoted: true)));
+        if (trace is not null) E.Warn(trace);
     }
+
+    /// <summary>The prelude predicate a live consult runs its goals through.</summary>
+    private const string ConsultGoalWrapper = "$consult_goal";
+
+    /// <summary>The ball a consult-time goal's exception carries: the thrown
+    /// term, or the ISO error term of a runtime error; null for a host failure.</summary>
+    private static Term? BallOf(Exception ex) => ex switch
+    {
+        ShumwayPrologException spe => spe.Term,
+        Shumway.Core.PrologRuntimeException pre => MetaBuiltins.TranslateRuntimeError(pre),
+        _ => null,
+    };
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
     /// consulted source. Clauses for the same functor must
@@ -3499,6 +3517,58 @@ internal sealed class ConsultPipeline
         }
         spec = ("", 0);
         return false;
+    }
+
+    /// <summary>The import list of <c>use_module/2</c> and <c>autoload/2</c>,
+    /// directive or goal: each element a predicate indicator (<c>Name/Arity</c>
+    /// or <c>Name//Arity</c>) or an <c>op(P, T, Name)</c>, which adds nothing
+    /// because a module's exported operators come with any import (ADR-046).
+    /// A partial list or an unbound indicator is an instantiation error and any
+    /// other term a type error: a malformed list is refused, not read as
+    /// importing nothing.</summary>
+    internal static List<(string Name, int Arity)> ReadImportList(Term list)
+    {
+        var imports = new List<(string, int)>();
+        Term cursor = list;
+        while (true)
+        {
+            switch (cursor)
+            {
+                case VarTerm:
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
+                case AtomTerm { Name: "[]" }:
+                    return imports;
+                case CompoundTerm { Functor: ".", Args: [var element, var rest] }:
+                    if (element is VarTerm
+                        or CompoundTerm { Functor: "/" or "//", Args: [VarTerm, _] or [_, VarTerm] })
+                        throw new ShumwayPrologException(IsoError.InstantiationError());
+                    if (element is not CompoundTerm { Functor: "op", Args.Length: 3 })
+                    {
+                        if (element is CompoundTerm { Functor: "/" or "//", Args: [_, IntTerm { Value: < 0 }] }
+                            || !TryReadFunctorSpec(element, out var spec))
+                            throw new ShumwayPrologException(
+                                IsoError.TypeError("predicate_indicator", element));
+                        imports.Add(spec);
+                    }
+                    cursor = rest;
+                    break;
+                default:
+                    throw new ShumwayPrologException(IsoError.TypeError("list", list));
+            }
+        }
+    }
+
+    /// <summary><see cref="ReadImportList"/> for a directive: its error is a
+    /// load error naming the directive.</summary>
+    internal static List<(string Name, int Arity)> DirectiveImportList(string directive, Term list)
+    {
+        try { return ReadImportList(list); }
+        catch (ShumwayPrologException ex)
+        {
+            Term formal = ex.Term is CompoundTerm { Functor: "error", Args: [var f, _] } ? f : ex.Term;
+            throw new InvalidOperationException(
+                $"malformed import list in :- {directive}: {formal}");
+        }
     }
 
     private static bool TryReadFunctorSpecList(Term list, List<(string, int)> output)

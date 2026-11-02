@@ -100,8 +100,8 @@
 % - threads/engines/sockets: genuinely absent (single-threaded activations,
 %   no socket layer).
 % - modules: unsupported — the module hooks below
-%   ('$lgt_find_visible_module_predicate'/3 and the rest) are stubs, and
-%   there is no current_module/1; announcing modules has Logtalk rely on them.
+%   ('$lgt_find_visible_module_predicate'/3 and the rest) are stubs;
+%   announcing modules has Logtalk rely on them.
 % - coinduction: supported — unification, comparison, copying and the term
 %   inspection builtins all terminate on cyclic terms (rational trees).
 %   Logtalk's tests/prolog battery gates its cyclic-term cases on this flag.

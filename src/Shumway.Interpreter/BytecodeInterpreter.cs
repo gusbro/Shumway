@@ -488,11 +488,22 @@ public sealed partial class BytecodeInterpreter
     public InterpreterResult Backtrack(ProgramView code)
     {
         if (!TryBacktrack()) return InterpreterResult.Failed;
+        // The re-entrant solve targets this view, as under Run: a foreign
+        // predicate, a portray hook or a consult-time goal reached from the
+        // resumed continuation ran against the view Run restored on its way
+        // out, the one of a nested query that had ended, or none at all.
+        ProgramView savedReentrantCode = _reentrantCode;
+        _reentrantCode = code;
+        _engine.ReentrantSolve = _reentrantSolve ??= ReentrantSolveTransparent;
         int savedHeld = _engine.CatchFramesHeld;
         _engine.CatchFramesHeld = _engine.CatchFrameCount;
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
-        finally { _engine.CatchFramesHeld = savedHeld; }
+        finally
+        {
+            _reentrantCode = savedReentrantCode;
+            _engine.CatchFramesHeld = savedHeld;
+        }
     }
 
     private InterpreterResult Dispatch(ProgramView code)

@@ -1150,9 +1150,12 @@ public sealed partial class PrologEngine
             // N asserts re-transforms only the asserted functors, and a
             // derivation bump re-transforms only entries whose module's
             // locals actually changed.
+            // A module's import table changes only with its manifest, which
+            // re-transforms the module and hands out a new locals set, so the
+            // LocalsRef check below covers the imports too.
             var userLocals = userLocalsCache ?? EmptyLocalsSentinel;
             var dynCtx = new ModuleRewrite.Context(
-                DefaultModuleName, userLocals, _dynStore.Functors);
+                DefaultModuleName, userLocals, _dynStore.Functors, ImportsOf(DefaultModuleName));
             // per-module contexts for dynamic predicates whose
             // clauses came from a named module (bundle seeds / source-
             // carrying entries). Built lazily; everything unattributed
@@ -1172,7 +1175,8 @@ public sealed partial class PrologEngine
                         fidCtx = new ModuleRewrite.Context(
                             seedModule,
                             seedLocals ?? EmptyLocalsSentinel,
-                            _dynStore.Functors)
+                            _dynStore.Functors,
+                            ImportsOf(seedModule))
                         { MetaArgSpec = MetaArgSpec };
                         namedDynCtx[seedModule] = fidCtx;
                     }
@@ -1479,6 +1483,7 @@ public sealed partial class PrologEngine
         // predicates it did not change (see OrderStaticRegion).
         OrderStaticRegion(pStatic);
 
+        ProgramProductBuilds++;
         product = _programProduct = new CompiledProgramProduct
         {
             DerivationGen = _derivationGen,

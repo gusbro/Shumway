@@ -10,8 +10,9 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>ADR-035 — a query nested in a running one (a directive of a file the running
-/// query consults) links a program of its own: its address map, its debugger tables and,
+/// <summary>ADR-035 — a query nested in a running one (one a foreign predicate starts with
+/// the host API, here from a directive of a file the running query consults, so the program
+/// changed under it) links a program of its own: its address map, its debugger tables and,
 /// when the consult rebuilds the persistent buffer, a buffer and breakpoint record of its
 /// own. The running query keeps its own when it resumes: a stop in its code reports its
 /// line and frames, the Break bytes in its buffer run the instructions they replaced, and
@@ -33,7 +34,7 @@ public sealed class Adr035NestedQueryTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    /// <summary>What the consulted file's directive saw, inside the nested query.</summary>
+    /// <summary>What the nested query's foreign predicate saw.</summary>
     public sealed class NestedProbe
     {
         public byte[]? NestedBuffer;
@@ -58,8 +59,18 @@ public sealed class Adr035NestedQueryTests : IDisposable
             }
         }
 
+        /// <summary>The consulted file's directive. It runs on the running query's own
+        /// activation; the nested query is the one it starts with the host API.</summary>
         [PrologPredicate("nested_probe/0")]
         public static bool Probe(Activation engine)
+        {
+            var host = (PrologEngine)engine.Host!;
+            foreach (var _ in host.QueryAll("nested_inner.")) break;
+            return true;
+        }
+
+        [PrologPredicate("nested_inner/0")]
+        public static bool Inner(Activation engine)
         {
             var probe = Current!;
             probe.NestedBuffer = engine.CurrentProgram;
@@ -101,7 +112,7 @@ public sealed class Adr035NestedQueryTests : IDisposable
     }
 
     /// <summary>A debug-compiled engine whose go/1 consults a file of <paramref name="m"/>
-    /// new predicates and a directive, then calls after/1 (not last, so go/1 keeps its
+    /// new predicates and a directive that starts a nested query, then calls after/1 (not last, so go/1 keeps its
     /// frame):
     /// <code>
     ///  2: go(X) :- consult(Extra), after(X), atom(X).
