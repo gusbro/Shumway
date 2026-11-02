@@ -564,13 +564,8 @@ internal sealed class DynamicCodePatcher
         int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
 
-        // Pull arg-0 of the new clause's head.
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return -1;
-        var arg0 = headComp.Args[0];
+        var kind = Arg0Of(newClause, out int key);
+        if (kind == Arg0Kind.None) return -1;
 
         // Walk the const-label cascade for level 0 only. The cascade
         // is atom → integer → structure within one level; on multi-
@@ -605,26 +600,22 @@ internal sealed class DynamicCodePatcher
             return -1;
         }
 
-        switch (arg0)
+        switch (kind)
         {
-            case Shumway.Compiler.Ast.AtomTerm a:
-                int atomId = Shumway.Core.AtomTable.Intern(a.Name).Id;
-                return CascadeLookup(constLbl, atomId, Shumway.Core.Opcode.SwitchOnAtom);
-            case Shumway.Compiler.Ast.IntTerm n
-                when n.Value >= int.MinValue && n.Value <= int.MaxValue:
-                return CascadeLookup(constLbl, (int)n.Value, Shumway.Core.Opcode.SwitchOnInteger);
-            case Shumway.Compiler.Ast.CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
+            case Arg0Kind.Atom:
+                return CascadeLookup(constLbl, key, Shumway.Core.Opcode.SwitchOnAtom);
+            case Arg0Kind.Int:
+                return CascadeLookup(constLbl, key, Shumway.Core.Opcode.SwitchOnInteger);
+            case Arg0Kind.List:
                 return listLbl == varLbl ? -1 : listLbl;
-            case Shumway.Compiler.Ast.CompoundTerm c:
-                int functorId = Shumway.Core.FunctorTable.Intern(
-                    Shumway.Core.AtomTable.Intern(c.Functor).Id, c.Args.Length);
+            case Arg0Kind.Struct:
                 // struct cascade: structLbl points at switch_on_structure.
                 if (structLbl <= 0 || structLbl == varLbl) return -1;
                 if (prog[structLbl] != (byte)Shumway.Core.Opcode.SwitchOnStructure) return -1;
                 int sTableId = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
                 var sTable = engine.GetSwitchTable(sTableId);
                 if (sTable is null) return -1;
-                int sTarget = sTable.Lookup(functorId);
+                int sTarget = sTable.Lookup(key);
                 return sTarget == sTable.DefaultAddress ? -1 : sTarget;
             default:
                 return -1;
@@ -659,15 +650,11 @@ internal sealed class DynamicCodePatcher
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
 
-        // Pull the new clause's head arg-0 — we classify it to decide
-        // the same-key vs new-key vs var-arg path.
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return false;
-        var arg0 = headComp.Args[0];
-        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
+        // The new clause's first argument decides the path: the same key,
+        // a new key, or a variable that extends every chain.
+        var arg0Kind = Arg0Of(newClause, out int arg0Key);
+        if (arg0Kind == Arg0Kind.None) return false;
+        bool isVarArg = arg0Kind == Arg0Kind.Var;
 
         // Plan which chain tails the new clause's body will be
         // linked into. var-arg-at-0 extends every
@@ -714,7 +701,7 @@ internal sealed class DynamicCodePatcher
                 // bail to rebuild if the type's sub-switch doesn't
                 // exist yet (would be a layout change).
                 if (!TryLocateSubSwitchForArg(
-                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                        engine, predAddr, arg0Kind, arg0Key, out newKeyValue, out subSwitchTableId))
                     return false;
             }
         }
@@ -796,7 +783,7 @@ internal sealed class DynamicCodePatcher
                 return true;   // the rebuild took the store, the new clause included
             }
             int newBucketHead = BuildAndAppendNewBucketChain(
-                engine, failStub, headArity: headComp.Args.Length,
+                engine, failStub, headArity: FunctorTable.Lookup(functorId).Arity,
                 varArgBodies, bodyAddr);
             prog = engine.CurrentProgram!;
             var oldTable = engine.GetSwitchTable(subSwitchTableId);
@@ -859,31 +846,20 @@ internal sealed class DynamicCodePatcher
     /// have a sub-switch of that type — adding one would be a layout
     /// change beyond scope.</summary>
     private static bool TryLocateSubSwitchForArg(
-        Activation engine, int predAddr, Shumway.Compiler.Ast.Term arg0,
+        Activation engine, int predAddr, Arg0Kind arg0Kind, int arg0Key,
         out int keyValue, out int tableId)
     {
-        keyValue = 0; tableId = -1;
+        keyValue = arg0Key; tableId = -1;
         var prog = engine.CurrentProgram!;
         int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
 
         Shumway.Core.Opcode wantedOp;
-        switch (arg0)
+        switch (arg0Kind)
         {
-            case Shumway.Compiler.Ast.AtomTerm a:
-                wantedOp = Shumway.Core.Opcode.SwitchOnAtom;
-                keyValue = Shumway.Core.AtomTable.Intern(a.Name).Id;
-                break;
-            case Shumway.Compiler.Ast.IntTerm n
-                when n.Value >= int.MinValue && n.Value <= int.MaxValue:
-                wantedOp = Shumway.Core.Opcode.SwitchOnInteger;
-                keyValue = (int)n.Value;
-                break;
-            case Shumway.Compiler.Ast.CompoundTerm c when c.Functor != "." || c.Args.Length != 2:
-                wantedOp = Shumway.Core.Opcode.SwitchOnStructure;
-                keyValue = Shumway.Core.FunctorTable.Intern(
-                    Shumway.Core.AtomTable.Intern(c.Functor).Id, c.Args.Length);
-                break;
+            case Arg0Kind.Atom: wantedOp = Shumway.Core.Opcode.SwitchOnAtom; break;
+            case Arg0Kind.Int: wantedOp = Shumway.Core.Opcode.SwitchOnInteger; break;
+            case Arg0Kind.Struct: wantedOp = Shumway.Core.Opcode.SwitchOnStructure; break;
             default:
                 return false;  // list (handled by listLbl, not a sub-switch) or unsupported
         }
@@ -958,13 +934,73 @@ internal sealed class DynamicCodePatcher
     }
 
     private static bool IsVarArgAt0(Shumway.Compiler.Ast.Clause c)
+        => Arg0Of(c, out _) == Arg0Kind.Var;
+
+    /// <summary>What the layout keys a clause's first argument by: the cases
+    /// of the compiler's indexing (PredicateCompiler.ClassifyTerm), with
+    /// <see cref="Other"/> for what it keys as a variable (a float, packed
+    /// text, an integer past the operand) and <see cref="None"/> for a head
+    /// without arguments.</summary>
+    private enum Arg0Kind : byte { None, Var, Atom, Int, List, Struct, Other }
+
+    /// <summary>The kind of a clause's first argument and its key: an atom id,
+    /// an integer, a functor id. Read off the image of a fact kept as one
+    /// (ADR-063), so the in-place paths never build its term; off the term
+    /// otherwise.</summary>
+    private static Arg0Kind Arg0Of(Shumway.Compiler.Ast.Clause c, out int key)
     {
+        key = 0;
+        if (c.HeadImage is { } image)
+        {
+            var cells = image.Cells;
+            if (cells.Length < 2 || FunctorTable.Lookup(cells[0].AsFunctorId).Arity == 0)
+                return Arg0Kind.None;
+            Cell a = cells[1];
+            switch (a.Tag)
+            {
+                case Tag.Atom:
+                    key = a.AsAtomId;
+                    return Arg0Kind.Atom;
+                case Tag.Int when a.AsInt >= int.MinValue && a.AsInt <= int.MaxValue:
+                    key = (int)a.AsInt;
+                    return Arg0Kind.Int;
+                case Tag.Lis:
+                    return Arg0Kind.List;
+                case Tag.Str:
+                    key = cells[a.AsHeapIndex].AsFunctorId;
+                    return Arg0Kind.Struct;
+                case Tag.Ref:
+                    // A variable is a reference to a reference (its own cell,
+                    // or that of its first occurrence); a float or packed text
+                    // is reached through a reference to its cells.
+                    return cells[a.AsHeapIndex].Tag == Tag.Ref ? Arg0Kind.Var : Arg0Kind.Other;
+                default:
+                    return Arg0Kind.Other;
+            }
+        }
         Shumway.Compiler.Ast.Term head = c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
             ? ((Shumway.Compiler.Ast.CompoundTerm)c.Term).Args[0]
             : c.Term;
         if (head is not Shumway.Compiler.Ast.CompoundTerm hc || hc.Args.Length == 0)
-            return false;
-        return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
+            return Arg0Kind.None;
+        switch (hc.Args[0])
+        {
+            case VarTerm:
+                return Arg0Kind.Var;
+            case AtomTerm atom:
+                key = AtomTable.Intern(atom.Name).Id;
+                return Arg0Kind.Atom;
+            case IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue:
+                key = (int)n.Value;
+                return Arg0Kind.Int;
+            case CompoundTerm { Functor: ".", Args.Length: 2 }:
+                return Arg0Kind.List;
+            case CompoundTerm cc:
+                key = FunctorTable.Intern(AtomTable.Intern(cc.Functor).Id, cc.Args.Length);
+                return Arg0Kind.Struct;
+            default:
+                return Arg0Kind.Other;
+        }
     }
 
     /// <summary>recursively enumerates every chain head
@@ -1108,14 +1144,10 @@ internal sealed class DynamicCodePatcher
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
 
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return false;
-        var arg0 = headComp.Args[0];
-        int arity = headComp.Args.Length;
-        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
+        var arg0Kind = Arg0Of(newClause, out int arg0Key);
+        if (arg0Kind == Arg0Kind.None) return false;
+        int arity = FunctorTable.Lookup(functorId).Arity;
+        bool isVarArg = arg0Kind == Arg0Kind.Var;
 
         // for multi-arg, the var slot at predAddr+2
         // cascades through switch_on_arg before reaching a chain
@@ -1151,7 +1183,7 @@ internal sealed class DynamicCodePatcher
             else
             {
                 if (!TryLocateSubSwitchForArg(
-                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                        engine, predAddr, arg0Kind, arg0Key, out newKeyValue, out subSwitchTableId))
                     return false;
             }
         }
