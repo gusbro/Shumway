@@ -102,8 +102,12 @@ public sealed partial class PrologEngine
     /// <see cref="InvalidateDynamicCache"/>).</summary>
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildDynamicSnapshot(int fid)
     {
-        // Mutated since the last setup: the sources below may not show it.
-        if (_snapshotStaleFids.Contains(fid)) return null;
+        // Mutated since the last setup: the sources below may not show it. A
+        // predicate whose compile the setup left for the next full build
+        // (DeferStaleDynamicPredicates) is rewritten here, from the store.
+        if (_snapshotStaleFids.Contains(fid)
+            && (_productStaleDynamicFids.Contains(fid) || !RewriteDeferredDynamicPredicate(fid)))
+            return null;
         // The clauses the setup compiled the predicate from, in its order: a
         // predicate declared dynamic in a module keeps its source clauses in
         // the module (the static rewrite), and what was asserted since is in
@@ -154,10 +158,11 @@ public sealed partial class PrologEngine
     /// after a mutation reaches the predicate as it is then. No name maps to
     /// the shadow's address. The snapshot returned keeps the predicate's own
     /// functor, which is what the module is installed under.</para></summary>
-    /// <summary>Dynamic functors mutated since the last query setup rebuilt
-    /// the rewrite caches: until then those caches may not reflect the
-    /// mutation, so no snapshot is taken from them. Cleared by the setup.
-    /// </summary>
+    /// <summary>Dynamic functors mutated since the rewrite caches last held
+    /// them: no snapshot is taken from those caches until a full build
+    /// rebuilds them, or a snapshot has the predicate rewritten for itself
+    /// (<see cref="RewriteDeferredDynamicPredicate"/>) once a setup has run
+    /// since the mutation.</summary>
     internal readonly HashSet<int> _snapshotStaleFids = new();
 
     internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid)

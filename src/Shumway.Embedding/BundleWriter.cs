@@ -483,8 +483,9 @@ public static class BundleWriter
         // predicates that ship with clauses. Replace each one's enter_dynamic
         // chain (which the IL compiler can't emit, and which would be a
         // non-evictable snapshot if it could) with its static-style snapshot —
-        // exactly what BuildDynamicSnapshot produces at runtime; the
-        // Query("true.") warm-up above already populated _dynamicRewriteCache.
+        // exactly what BuildDynamicSnapshot produces at runtime, from the
+        // rewrite caches the Query("true.") warm-up above built, or rewritten
+        // for the snapshot when a setup left a predicate's compile as it was.
         // At load the snapshot delegate is registered into IlPromotion._delegates
         // [fid] (RegisterBoundDelegate) — the same slot a runtime-built snapshot
         // uses — so the predicate runs as IL from the first call with no runtime

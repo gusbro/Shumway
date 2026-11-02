@@ -664,74 +664,54 @@ public sealed partial class PrologEngine
         return entry;
     }
 
-    /// <summary>Brings the product's compile of each predicate a dynamic
-    /// mutation left stale (<see cref="_productStaleDynamicFids"/>) up to
-    /// date by itself: its rewrite, its compile and its snapshot source, as a
-    /// full build leaves them, at the cost of that predicate instead of the
-    /// program. Only for a predicate of facts, or an empty one, that the
-    /// product already holds, with no source clauses in a module and the user
-    /// context: a rule's rewrite can mint helpers the query link has to
-    /// carry. False leaves the setup to a full build.</summary>
-    private bool RefreshStaleDynamicPredicates(CompiledProgramProduct product,
-        HashSet<int> unindexedFunctors, int failStubAddr,
-        Shumway.Compiler.Lexer.SourcePosition pos)
+    /// <summary>Leaves the product's compile of each predicate a dynamic
+    /// mutation left stale (<see cref="_productStaleDynamicFids"/>) as it is.
+    /// Nothing reads it before the next full build: the persistent buffer
+    /// holds the mutation (ADR-015), a relink of that buffer comes with a
+    /// full build (<see cref="InvalidatePersistent"/> advances the derivation
+    /// generation), and a snapshot has the predicate rewritten when it asks
+    /// (<see cref="BuildDynamicSnapshot"/>). Compiling it here cost the
+    /// predicate's size per query after a mutation, and built the term of
+    /// every fact kept as an image (ADR-063). Only for a predicate of facts,
+    /// or an empty one, that the product already holds, with no source
+    /// clauses in a module and the user context: a rule's rewrite can mint
+    /// helpers the query link has to carry. False leaves the setup to a full
+    /// build.</summary>
+    private bool DeferStaleDynamicPredicates(CompiledProgramProduct product)
     {
-        var modeTable = Modes;
-        var stale = new List<(int Fid, int At, List<Clause>? Clauses)>(_productStaleDynamicFids.Count);
         foreach (int fid in _productStaleDynamicFids)
         {
             if (_staticRewriteHeadFids?.Contains(fid) == true
                 || _dynamicSeedModule.ContainsKey(fid)
-                || modeTable.AllModesDeterministic(fid)
-                || !_dynStore.IsDynamic(fid))
+                || !_dynStore.IsDynamic(fid)
+                || !_dynStore.HoldsOnlyFacts(fid)
+                || !product.DynamicFunctors.Contains(fid))
                 return false;
-            List<Clause>? clauses = null;
-            if (_dynStore.TryGetClauses(fid, out var cs) && cs.Count > 0)
-            {
-                foreach (var c in cs)
-                    if (c.Kind != ClauseKind.Fact) return false;
-                clauses = cs;
-            }
-            int at = product.DynamicPreds.FindIndex(p => p.FunctorId == fid);
-            if (at < 0) return false;
-            stale.Add((fid, at, clauses));
-        }
-        var ctx = new ModuleRewrite.Context(
-            DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel, _dynStore.Functors);
-        foreach (var (fid, at, clauses) in stale)
-        {
-            // An empty predicate compiles from its stub, unrewritten, as in a
-            // full build (EmitEmptyDynamicStubs).
-            List<Clause> source = clauses is null
-                ? new List<Clause> { EmptyDynamicStub(fid, pos) }
-                : RewriteDynamicPredicate(fid, clauses, ctx, modeTable).Clauses;
-            var compiled = new ModuleCompiler
-            {
-                EmitDebugInfo = _flags.EmitDebugInfo,
-                DebugCodegen = _flags.DebugCodegen,
-                DebugFileId = _debugFileId,
-                NonDebuggableFunctors = _nonDebuggableFunctors,
-                ElideRedundantCuts = false,
-            }.Compile(
-                source, null, unindexedFunctors, _literalPools,
-                dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
-            if (compiled.Predicates.Count != 1 || compiled.Predicates[0].FunctorId != fid)
-                return false;
-            var pred = compiled.Predicates[0];
-            _jitIndexProfile.RecordCompileDecision(fid, _jitIndexProfile.IsHot(fid));
-            if (ReferenceEquals(pred.PoolsRef, _literalPools)
-                || ModuleCompiler.IsCachedPredicateReusable(pred))
-            {
-                _dynamicPredicateCache[fid] = pred;
-                if (_skipCompileMergedCache is not null)
-                    _skipCompileMergedCache[fid] = pred;
-            }
-            product.DynamicPreds[at] = pred;
-            _snapshotStaleFids.Remove(fid);
         }
         _productStaleDynamicFids.Clear();
+        product.DynamicPredsDeferred = true;
         return true;
     }
+
+    /// <summary>The rewrite of a predicate the setup left as it was
+    /// (<see cref="DeferStaleDynamicPredicates"/>), for the snapshot that asks
+    /// for it: under the user context, as the full build does it. False for
+    /// an empty predicate, which has no snapshot.</summary>
+    private bool RewriteDeferredDynamicPredicate(int fid)
+    {
+        if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0) return false;
+        var ctx = new ModuleRewrite.Context(
+            DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel,
+            _dynStore.Functors, ImportsOf(DefaultModuleName));
+        RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        _snapshotStaleFids.Remove(fid);
+        DeferredDynamicRewrites++;
+        return true;
+    }
+
+    /// <summary>Rewrites done for a snapshot of a predicate the setup left as
+    /// it was (<see cref="RewriteDeferredDynamicPredicate"/>).</summary>
+    internal long DeferredDynamicRewrites;
 
     private (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
              Shumway.Core.Activation Engine,
@@ -877,10 +857,10 @@ public sealed partial class PrologEngine
                 || product.EmitDebugInfo != _flags.EmitDebugInfo
                 || product.DebugCodegen != _flags.DebugCodegen))
             product = null;
-        // Dynamic mutations alone: their predicates are brought up to date in
-        // the product one by one, or the product is built again.
+        // Dynamic mutations alone: their predicates' compiles wait in the
+        // product for the next full build, or the product is built again.
         if (product is not null && _productStaleDynamicFids.Count > 0
-            && !RefreshStaleDynamicPredicates(product, unindexedFunctors, failStubAddr, queryTerm.Position))
+            && !DeferStaleDynamicPredicates(product))
             product = null;
         if (product is null)
         {
@@ -1483,6 +1463,8 @@ public sealed partial class PrologEngine
         OrderStaticRegion(pStatic);
 
         ProgramProductBuilds++;
+        var dynamicFunctors = new HashSet<int>();
+        foreach (var p in pDynamic) dynamicFunctors.Add(p.FunctorId);
         product = _programProduct = new CompiledProgramProduct
         {
             DerivationGen = _derivationGen,
@@ -1492,6 +1474,7 @@ public sealed partial class PrologEngine
             StaticLinkRef = _staticLink,
             StaticPreds = pStatic,
             DynamicPreds = pDynamic,
+            DynamicFunctors = dynamicFunctors,
             ExtraQueryPreds = pExtraQuery,
             CacheableFunctors = cacheableFunctors,
         };
@@ -1626,6 +1609,13 @@ public sealed partial class PrologEngine
         bool builtPersistentNow = _persistentProgram is null || _dynamicLink is null;
         if (builtPersistentNow)
         {
+            // The product this links from is the one this setup built: the
+            // compile of a mutated predicate waits in a product only until a
+            // full build (DeferStaleDynamicPredicates), and InvalidatePersistent
+            // forces one.
+            if (product.DynamicPredsDeferred)
+                throw new InvalidOperationException(
+                    "the persistent buffer is linked from a product that holds the compile of a mutated dynamic predicate as it was");
             // The code appended after the dynamic region goes with the old
             // buffer, dynamic snapshots' shadow regions included (ADR-054).
             IlPromotion.Wasm?.OnPersistentRebuilt();

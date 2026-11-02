@@ -409,9 +409,13 @@ argument by argument (`put_blit`, `get_structure` in read mode,
 pattern cell by cell (`TermImage.DefinitelyDiffers`) and copy it to the heap
 for the trial unification; the materializer is not involved. The clause's
 term (`Clause.Term`) is built from the image when something reads it: a
-listing, a bundle, the compile of the predicate at a query setup. The
-interpreter reads the image pool itself, not a copy taken at the query's
-setup: a copy per image interned was a copy of the pool per assert.
+listing, a bundle, a snapshot for the IL tier, a full build of the program
+at a query setup. The setup after an assert or a retract of a fact does not
+compile the predicate: the persistent buffer holds the mutation, and the
+product's compile of a predicate of facts waits for the next full build,
+which a relink of that buffer always comes with. The interpreter reads the
+image pool itself, not a copy taken at the query's setup: a copy per image
+interned was a copy of the pool per assert.
 
 A fact takes the term path when its head is not a structure, when the
 clause is a rule or is qualified with a module, when the term holds a big

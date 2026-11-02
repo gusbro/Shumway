@@ -53,6 +53,11 @@ public sealed class Clause
     /// first time it is read, for a fact asserted at run time.</summary>
     public Term Term => _term ?? Materialize();
 
+    /// <summary>True once the term exists: from the start for a clause from
+    /// source, and for a fact kept as an image once something read
+    /// <see cref="Term"/>.</summary>
+    public bool HasTerm => _term is not null;
+
     public SourcePosition Position { get; }
 
     /// <summary>ADR-063: the image of the head of a fact asserted at run time,

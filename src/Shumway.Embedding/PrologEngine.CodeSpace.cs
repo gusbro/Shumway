@@ -380,7 +380,7 @@ public sealed partial class PrologEngine
         _persistentMutationsSinceCompact++;
         _snapshotStaleFids.Add(functorId);
         // The persistent buffer holds the mutation (ADR-015): the next setup
-        // brings this predicate up to date in the program product by itself.
+        // keeps the program product for a predicate of facts.
         DropDynamicCompiled(functorId);
         _productStaleDynamicFids.Add(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
@@ -455,10 +455,10 @@ public sealed partial class PrologEngine
         DropDynamicCompiled(functorId);
     }
 
-    /// <summary>Dynamic predicates mutated since the program product was
-    /// built. The persistent buffer already holds the mutation (ADR-015), so
-    /// the next setup brings only these up to date in the product
-    /// (<see cref="RefreshStaleDynamicPredicates"/>): rebuilding the whole
+    /// <summary>Dynamic predicates mutated since the last query setup. The
+    /// persistent buffer already holds the mutation (ADR-015), so the next
+    /// setup keeps the product when each is a predicate of facts
+    /// (<see cref="DeferStaleDynamicPredicates"/>): rebuilding the whole
     /// product after every assert cost O(program) per query.</summary>
     private readonly HashSet<int> _productStaleDynamicFids = new();
 
@@ -746,6 +746,13 @@ public sealed partial class PrologEngine
         public Shumway.Compiler.Wam.Linker.LinkResult? StaticLinkRef;
         public required List<Shumway.Compiler.Wam.CompiledPredicate> StaticPreds;
         public required List<Shumway.Compiler.Wam.CompiledPredicate> DynamicPreds;
+        /// <summary>The functors of <see cref="DynamicPreds"/>.</summary>
+        public required HashSet<int> DynamicFunctors;
+        /// <summary>True once a setup left the compile of a mutated dynamic
+        /// predicate in <see cref="DynamicPreds"/> as it was
+        /// (<see cref="DeferStaleDynamicPredicates"/>): the list serves no
+        /// link from then on, only the next full build replaces it.</summary>
+        public bool DynamicPredsDeferred;
         /// <summary>Static-classified predicates absent from the cached
         /// static link (fresh MetaTransform helpers of a recompiled dynamic
         /// predicate) — linked into every query's overlay instead.</summary>
