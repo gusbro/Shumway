@@ -40,6 +40,10 @@ public sealed class ImageFactTests
         "assertz(p(a, 1)), assertz(p(b, 2)), asserta(p(z, 0)), assertz(p(X, X)), assertz(p(f(Y), Y)).",
         @"assertz(p(""txt"", 2.5)), assertz(p([1, 2|T], T)), assertz(p(5000000000, [])), assertz(p(g(h(i)), j)).",
         "assertz(p(h(Z, Z), w)).",
+        "assertz(p(big, g(1, 2, 3, 4, 5, 6, 7, h(8, 9)))), assertz(p(sh(Q), t(Q, Q, a, b, c, d, e, f))), assertz(p(ho(R), t(S, R, S, a, b, c, d, e))).",
+        "p(big, G), G == g(1, 2, 3, 4, 5, 6, 7, h(8, 9)), p(big, g(1, 2, 3, 4, 5, 6, 7, h(8, X))), X == 9, \\+ p(big, g(1, 2, 3, 4, 5, 6, 7, h(9, _))).",
+        "p(sh(1), T), T == t(1, 1, a, b, c, d, e, f), p(sh(Z), t(2, W, a, b, c, d, e, f)), Z == 2, W == 2, p(ho(k), U), U = t(V1, k, V2, _, _, _, _, _), V1 == V2, var(V1).",
+        "set_prolog_flag(occurs_check, true), p(big, G), G == g(1, 2, 3, 4, 5, 6, 7, h(8, 9)), p(sh(1), T), T == t(1, 1, a, b, c, d, e, f), set_prolog_flag(occurs_check, false).",
         "p(h(1, 1), w).",
         "\\+ p(h(1, 2), w).",
         "p(h(V, 3), w), V == 3.",
@@ -120,6 +124,24 @@ public sealed class ImageFactTests
         Assert.False(e.Query("clause(p(_, g(_)), _).").Success);
         // Packed text may be the list: it is tried, and nothing else is.
         Assert.Equal(1, e.ClauseCandidatesTried - before);
+    }
+
+    // A compound argument at the head threshold has an image of its own in
+    // the pool, before its stream: the argument unbound, the copy builds it.
+    [Fact]
+    public void ALargeCompoundArgumentHasItsOwnImageBeforeItsStream()
+    {
+        // The query's own body images (its ground goal) are the same on both
+        // engines: the fact's argument adds one on the images engine.
+        var e = Engine(0, images: true);
+        var terms = Engine(0, images: false);
+        int images = e._literalPools.Images.Count, termImages = terms._literalPools.Images.Count;
+        const string facts = "assertz(p(k, f(1, 2, 3, 4, 5, 6, 7, 8))), assertz(p(s, f(1, 2))).";
+        Assert.True(e.Query(facts).Success);
+        Assert.True(terms.Query(facts).Success);
+        Assert.Equal(terms._literalPools.Images.Count - termImages + 1, e._literalPools.Images.Count - images);
+        Assert.True(e.Query("p(k, X), X == f(1, 2, 3, 4, 5, 6, 7, 8), p(k, f(1, 2, 3, 4, 5, 6, 7, 8)), \\+ p(k, f(1, 2, 3, 4, 5, 6, 7, 9)).").Success);
+        Assert.True(e.Query("p(k, f(A, 2, B, 4, 5, 6, 7, 8)), A == 1, B == 3, p(s, Y), Y == f(1, 2).").Success);
     }
 
     [Fact]

@@ -547,6 +547,18 @@ internal sealed class DynamicCodePatcher
         return 5;
     }
 
+    /// <summary>A clause's code placed at <paramref name="codeStart"/>: its
+    /// address operands (<see cref="Shumway.Compiler.Wam.CompiledClause.DispatchSites"/>,
+    /// relative to the clause; a <c>get_blit</c>'s skip is one) made absolute.</summary>
+    internal static void RelocateDispatchSites(byte[] prog, Shumway.Compiler.Wam.CompiledClause clause, int codeStart)
+    {
+        foreach (int siteRel in clause.DispatchSites)
+        {
+            int pos = codeStart + siteRel;
+            Shumway.Core.BytecodeIO.WriteInt32(prog, pos, codeStart + Shumway.Core.BytecodeIO.ReadInt32(prog, pos));
+        }
+    }
+
     /// <summary>given the predicate entry and the new
     /// clause's arg-0 classification, locate the bucket chain head
     /// the new clause should be appended to. Returns <c>-1</c> when
@@ -753,6 +765,7 @@ internal sealed class DynamicCodePatcher
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
         }
+        RelocateDispatchSites(prog, compiledClause, bodyAddr + bodyContentLocalStart);
 
         // Helper: append a non-head chain entry (retry_me_else
         // <fail_stub>; check_visible; execute <targetBody>).
@@ -1230,6 +1243,7 @@ internal sealed class DynamicCodePatcher
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
         }
+        RelocateDispatchSites(prog, compiledClause, bodyAddr + bodyContentLocalStart);
 
         // For new-key concrete: build a brand-new bucket chain
         // (new body first, then var-args), add to switch table.

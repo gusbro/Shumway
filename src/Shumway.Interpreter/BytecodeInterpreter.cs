@@ -2690,9 +2690,42 @@ public sealed partial class BytecodeInterpreter
                     // A bound argument is the stream's: nothing resolved for it.
                     if (_engine.GetRegister(arg).Tag is Tag.Ref or Tag.AttVar
                         && _engine.GetBlit(ResolveImage(ReadI32(code, codeArr, pc + 1)), arg))
+                    {
                         _engine.SetPc(ReadI32(code, codeArr, pc + 9));
-                    else
-                        _engine.SetPc(pc + 13);
+                        inClause = true;
+                        break;
+                    }
+                    // The stream starts with the argument's get_structure or
+                    // get_list: taken here, it costs no dispatch of its own, so
+                    // the prefix costs a bound argument nothing but its test.
+                    int next = pc + 13;
+                    if (next < codeLen && (Opcode)code[next] == Opcode.GetStructure)
+                    {
+                        if (!_engine.GetStructure(ReadI32(code, codeArr, next + 1), ReadI32(code, codeArr, next + 5)))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                        if (!RunUnifySequence(code, codeArr, codeLen, next + 9))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
+                        break;
+                    }
+                    if (next < codeLen && (Opcode)code[next] == Opcode.GetList)
+                    {
+                        if (!_engine.GetList(ReadI32(code, codeArr, next + 1)))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                        if (!RunUnifySequence(code, codeArr, codeLen, next + 5))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
+                        break;
+                    }
+                    _engine.SetPc(next);
                     inClause = true;
                     break;
                 }

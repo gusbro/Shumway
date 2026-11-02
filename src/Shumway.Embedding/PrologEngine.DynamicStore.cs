@@ -2929,6 +2929,7 @@ public sealed partial class PrologEngine
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
         }
+        DynamicCodePatcher.RelocateDispatchSites(program, compiledClause, chunkAddr + bodyStartLocal);
 
         // Link the new clause into the chain: previous tail's <next> now
         // points at our chunk's chain instruction. Tripwire: writing the
@@ -3128,6 +3129,7 @@ public sealed partial class PrologEngine
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
         }
+        DynamicCodePatcher.RelocateDispatchSites(program, compiledClause, chunkAddr + bodyStartLocal);
 
         // Demote the previous head's try_me_else (9 bytes) to
         // retry_me_else <same-next> (5 bytes) + 4 nops. The address

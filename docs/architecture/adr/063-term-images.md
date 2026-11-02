@@ -405,7 +405,11 @@ takes it from, after its parent's stream. A head the stream cannot express
 (an integer past the operand, packed text that does not end in `[]`) is
 copied whole from the image, interned in the image pool, and unified
 argument by argument (`put_blit`, `get_structure` in read mode,
-`unify_value_x`). retract/1 and clause/2 try a candidate's image against the
+`unify_value_x`). A compound argument at or past the head threshold has an
+image of its own and `get_blit` before its stream, as a source clause's head
+does: cut from the head's image, its variables holes the copy fills from the
+registers the streams use or points those registers at. retract/1 and
+clause/2 try a candidate's image against the
 pattern cell by cell (`TermImage.DefinitelyDiffers`) and copy it to the heap
 for the trial unification; the materializer is not involved. The clause's
 term (`Clause.Term`) is built from the image when something reads it: a

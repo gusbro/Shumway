@@ -6,8 +6,10 @@ namespace Shumway.Tests.Compiler.Wam;
 
 /// <summary>ADR-063: the code of a fact asserted at run time comes from the
 /// image of its head. Atoms, integers the operand holds and variables match
-/// in place; any other argument has the whole head copied from the image,
-/// interned in the pool, and unified argument by argument.</summary>
+/// in place; a compound through its stream, with an image of its own before
+/// it from the head threshold's cells; a head the streams cannot express has
+/// the whole head copied from the image, interned in the pool, and unified
+/// argument by argument.</summary>
 public sealed class FactImageCompilerTests
 {
     private static int Fid(string name, int arity)
@@ -142,19 +144,120 @@ public sealed class FactImageCompilerTests
     }
 
     [Fact]
-    public void AVariableFirstSeenInsideACompoundIsReadIntoATemporary()
+    public void AVariableThatIsAPlainArgumentIsMatchedFromItsRegisterInsideACompound()
     {
-        // p(f(X), X)
+        // p(f(X), X): the call's second argument is X wherever X sits.
         var nested = new TermImage(new[]
         {
             Cell.Functor(Fid("p", 2)), Cell.Str(3), Cell.Ref(4), Cell.Functor(Fid("f", 1)), Cell.Ref(4),
         }, Tag.Str);
         var rows = Disassemble(FactImageCompiler.Compile(nested, Fid("p", 2), new LiteralPools()).Bytecode);
-        Assert.Equal(4, rows.Count);
+        Assert.Equal(3, rows.Count);
+        Expect(rows[0], Opcode.GetStructure, Fid("f", 1), 0);
+        Expect(rows[1], Opcode.UnifyValueX, 1);
+        Expect(rows[2], Opcode.Proceed);
+    }
+
+    [Fact]
+    public void AVariableFirstSeenInsideACompoundIsReadIntoATemporary()
+    {
+        // p(f(X), g(X))
+        var nested = new TermImage(new[]
+        {
+            Cell.Functor(Fid("p", 2)), Cell.Str(3), Cell.Str(5),
+            Cell.Functor(Fid("f", 1)), Cell.Ref(4), Cell.Functor(Fid("g", 1)), Cell.Ref(4),
+        }, Tag.Str);
+        var rows = Disassemble(FactImageCompiler.Compile(nested, Fid("p", 2), new LiteralPools()).Bytecode);
+        Assert.Equal(5, rows.Count);
         Expect(rows[0], Opcode.GetStructure, Fid("f", 1), 0);
         Expect(rows[1], Opcode.UnifyVariableX, 2);
-        Expect(rows[2], Opcode.GetValueX, 2, 1);
-        Expect(rows[3], Opcode.Proceed);
+        Expect(rows[2], Opcode.GetStructure, Fid("g", 1), 1);
+        Expect(rows[3], Opcode.UnifyValueX, 2);
+        Expect(rows[4], Opcode.Proceed);
+    }
+
+    // The head threshold is the body's, 8 cells, unless the environment says
+    // otherwise: these heads are built at it.
+    private static int Threshold => ClauseCompiler.HeadThreshold;
+
+    [Fact]
+    public void ACompoundArgumentAtTheThresholdGetsItsImageBeforeItsStream()
+    {
+        Assert.Equal(8, Threshold);
+        // p(f(a, b, c, d, e, g, h), x): f/7 is eight cells.
+        var atoms = new[] { "a", "b", "c", "d", "e", "g", "h" };
+        var cells = new List<Cell> { Cell.Functor(Fid("p", 2)), Cell.Str(3), Cell.Atom(AtomId("x")), Cell.Functor(Fid("f", 7)) };
+        foreach (string a in atoms) cells.Add(Cell.Atom(AtomId(a)));
+        var pools = new LiteralPools();
+        var rows = Disassemble(FactImageCompiler.Compile(new TermImage(cells.ToArray(), Tag.Str), Fid("p", 2), pools).Bytecode);
+        var argument = new TermImage(cells.GetRange(3, 8).ToArray(), Tag.Str);
+        Assert.True(pools.Images.TryGetId(argument, out int id), "the argument's image is not in the pool");
+        Assert.Equal(11, rows.Count);
+        int streamEnd = OpcodeTable.Get(Opcode.GetBlit).Size + OpcodeTable.Get(Opcode.GetStructure).Size
+            + 7 * OpcodeTable.Get(Opcode.UnifyAtom).Size;
+        Expect(rows[0], Opcode.GetBlit, id, 0, streamEnd);
+        Expect(rows[1], Opcode.GetStructure, Fid("f", 7), 0);
+        for (int i = 0; i < 7; i++) Expect(rows[2 + i], Opcode.UnifyAtom, AtomId(atoms[i]));
+        Expect(rows[9], Opcode.GetAtom, AtomId("x"), 1);
+        Expect(rows[10], Opcode.Proceed);
+        // One cell short of the threshold: the stream alone.
+        var seven = new List<Cell> { Cell.Functor(Fid("p", 2)), Cell.Str(3), Cell.Atom(AtomId("x")), Cell.Functor(Fid("f", 6)) };
+        for (int i = 0; i < 6; i++) seven.Add(Cell.Atom(AtomId(atoms[i])));
+        rows = Disassemble(FactImageCompiler.Compile(new TermImage(seven.ToArray(), Tag.Str), Fid("p", 2), pools).Bytecode);
+        Assert.Equal(Opcode.GetStructure, rows[0].Opcode);
+    }
+
+    [Fact]
+    public void TheArgumentsImageHasAHoleForEachVariableReadOrWrittenAsTheStreamWould()
+    {
+        // p(X, f(X, W, W, a, b, c, d), Y): X comes from the call's first
+        // argument, W is this stream's own temporary, Y is no part of it.
+        var cells = new[]
+        {
+            Cell.Functor(Fid("p", 3)), Cell.Ref(1), Cell.Str(4), Cell.Ref(3),
+            Cell.Functor(Fid("f", 7)), Cell.Ref(1), Cell.Ref(6), Cell.Ref(6),
+            Cell.Atom(AtomId("a")), Cell.Atom(AtomId("b")), Cell.Atom(AtomId("c")), Cell.Atom(AtomId("d")),
+        };
+        var pools = new LiteralPools();
+        var rows = Disassemble(FactImageCompiler.Compile(new TermImage(cells, Tag.Str), Fid("p", 3), pools).Bytecode);
+        var argument = new TermImage(new[]
+            {
+                Cell.Functor(Fid("f", 7)), Cell.Ref(1), Cell.Ref(2), Cell.Ref(2),
+                Cell.Atom(AtomId("a")), Cell.Atom(AtomId("b")), Cell.Atom(AtomId("c")), Cell.Atom(AtomId("d")),
+            }, Tag.Str,
+            new[] { new ImageHole(1, ImageHole.In, 0), new ImageHole(2, ImageHole.Out, 3) });
+        Assert.True(pools.Images.TryGetId(argument, out int id), "the argument's image, holes included, is not in the pool");
+        Assert.Equal(10, rows.Count);
+        int streamEnd = OpcodeTable.Get(Opcode.GetBlit).Size + OpcodeTable.Get(Opcode.GetStructure).Size
+            + 2 * OpcodeTable.Get(Opcode.UnifyValueX).Size + OpcodeTable.Get(Opcode.UnifyVariableX).Size
+            + 4 * OpcodeTable.Get(Opcode.UnifyAtom).Size;
+        Expect(rows[0], Opcode.GetBlit, id, 1, streamEnd);
+        Expect(rows[1], Opcode.GetStructure, Fid("f", 7), 1);
+        Expect(rows[2], Opcode.UnifyValueX, 0);
+        Expect(rows[3], Opcode.UnifyVariableX, 3);
+        Expect(rows[4], Opcode.UnifyValueX, 3);
+        Expect(rows[9], Opcode.Proceed);
+    }
+
+    [Fact]
+    public void AnArgumentThatNamesABlockLaidElsewhereKeepsItsStream()
+    {
+        // p(f(a, b, c, d, e, g, h), g(f(...), b, c, d, e, g, h)) with one f
+        // block for both: the second argument is eight cells of its own, but
+        // its first cell refers into the first argument's run.
+        var atoms = new[] { "a", "b", "c", "d", "e", "g", "h" };
+        var cells = new List<Cell> { Cell.Functor(Fid("p", 2)), Cell.Str(3), Cell.Str(11), Cell.Functor(Fid("f", 7)) };
+        foreach (string a in atoms) cells.Add(Cell.Atom(AtomId(a)));
+        cells.Add(Cell.Functor(Fid("g", 7)));
+        cells.Add(Cell.Str(3));
+        for (int i = 1; i < 7; i++) cells.Add(Cell.Atom(AtomId(atoms[i])));
+        var pools = new LiteralPools();
+        var rows = Disassemble(FactImageCompiler.Compile(new TermImage(cells.ToArray(), Tag.Str), Fid("p", 2), pools).Bytecode);
+        Assert.Equal(Opcode.GetBlit, rows[0].Opcode);
+        Assert.Equal(1, pools.Images.Count);
+        // The second argument: get_structure g/7 straight away, after the
+        // first's prefix and stream.
+        Expect(rows[9], Opcode.GetStructure, Fid("g", 7), 1);
     }
 
     private record struct Row(Opcode Opcode, int[] Operands);
