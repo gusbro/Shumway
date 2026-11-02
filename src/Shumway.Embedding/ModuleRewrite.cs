@@ -258,24 +258,34 @@ public static class ModuleRewrite
                 return goal;   // control construct / unknown module → runtime ':'/2
             }
 
-            // Meta-predicate with a variable goal argument (a callable goal was
-            // already inlined + mangled by MetaTransform): tag the variable with
+            // Meta-predicate with a variable goal argument: tag the variable with
             // the compile-time module so a runtime meta-call (findall/call/…)
             // resolves the bare goal relative to this module's locals. The tag
             // travels with the goal term into the live-engine dispatch, where
             // DispatchCall / MetaCallInEngine unwrap it. Public / builtin goals
             // fall through the tag transparently (module$name lookup misses, then
             // the bare name resolves). See the module-local-meta-call fix.
+            // A callable goal argument is a goal of this module, rewritten as one.
+            // MetaTransform inlines most of them before this pass, but not
+            // aggregate_all/3's, and a clause rewritten before the pipeline (a
+            // multifile clause, stored pre-mangled) still has every one.
             if (MetaGoalPositions(c.Functor, c.Args.Length) is int[] positions)
             {
+                bool own = IsLocal(c.Functor, c.Args.Length, ctx);
                 Term[]? tagged = null;
                 foreach (int pos in positions)
                 {
-                    if (c.Args[pos] is not VarTerm) continue;
+                    Term arg = c.Args[pos];
+                    Term rewritten = arg is VarTerm
+                        ? new CompoundTerm(MqualFunctor,
+                            new[] { (Term)new AtomTerm(ctx.ModuleName), arg })
+                            { Position = c.Position }
+                        : own ? arg
+                        : RewriteMetaGoal(arg, ClosureExtraArgs(c.Functor, c.Args.Length),
+                            caretsBind: pos == 1 && c.Functor is "bagof" or "setof", ctx);
+                    if (ReferenceEquals(rewritten, arg)) continue;
                     tagged ??= (Term[])c.Args.Clone();
-                    tagged[pos] = new CompoundTerm(MqualFunctor,
-                        new[] { (Term)new AtomTerm(ctx.ModuleName), c.Args[pos] })
-                        { Position = c.Position };
+                    tagged[pos] = rewritten;
                 }
                 if (tagged is not null)
                     c = new CompoundTerm(c.Functor, tagged) { Position = c.Position };
@@ -345,6 +355,51 @@ public static class ModuleRewrite
     /// here: its clauses are the loading module's own.</summary>
     private static bool QualifiesMetaArgs(Context ctx)
         => ctx.ModuleName.Length > 0 && ctx.ModuleName != "$prelude";
+
+    /// <summary>The arguments call/N adds to its closure; 0 for a goal.</summary>
+    private static int ClosureExtraArgs(string functor, int arity)
+        => functor == "call" ? arity - 1 : 0;
+
+    /// <summary>A callable meta-argument rewritten as what it stands for: a goal
+    /// as a body goal, a closure as the goal it becomes with
+    /// <paramref name="extra"/> more arguments. Under bagof/setof the
+    /// <c>V^</c> prefixes stay and the goal under them is rewritten.</summary>
+    private static Term RewriteMetaGoal(Term arg, int extra, bool caretsBind, Context ctx)
+    {
+        if (caretsBind && arg is CompoundTerm { Functor: "^", Args.Length: 2 } caret)
+        {
+            Term inner = RewriteMetaGoal(caret.Args[1], extra, caretsBind, ctx);
+            return ReferenceEquals(inner, caret.Args[1])
+                ? arg
+                : new CompoundTerm("^", new[] { caret.Args[0], inner }) { Position = caret.Position };
+        }
+        if (arg is CompoundTerm { Functor: MqualFunctor, Args.Length: 2 }) return arg;
+        // A variable in it stays as written: the meta-call converts the term
+        // when it runs, so one bound to ! by then is a real cut (ISO 7.8.3.1),
+        // and call('$mqual'(M, V)) would make it local.
+        if (extra == 0)
+            return arg is AtomTerm or CompoundTerm
+                ? Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(arg,
+                    c => IsControlFlow(c.Functor, c.Args.Length),
+                    g => g is VarTerm ? g : RewritePlainGoal(g, ctx))
+                : arg;
+        string name;
+        int arity;
+        switch (arg)
+        {
+            case AtomTerm a: name = a.Name; arity = extra; break;
+            case CompoundTerm k when k.Functor != ":": name = k.Functor; arity = k.Args.Length + extra; break;
+            default: return arg;
+        }
+        if (IsControlFlow(name, arity) || IsDynamic(name, arity, ctx)) return arg;
+        string? renamed = IsLocal(name, arity, ctx) ? MangledName(name, ctx)
+            : TryResolveImport(name, arity, ctx, out string src) ? ImportedName(src, name)
+            : null;
+        if (renamed is null) return arg;
+        return arg is CompoundTerm closure
+            ? new CompoundTerm(renamed, closure.Args) { Position = closure.Position }
+            : new AtomTerm(renamed) { Position = arg.Position };
+    }
 
     /// <summary>ADR-056: <c>maplist(ok, L)</c> in module <c>m</c> becomes
     /// <c>maplist(m:ok, L)</c>. The closure is called from maplist's clauses,

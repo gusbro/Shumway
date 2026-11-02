@@ -69,19 +69,20 @@ public static class IncludeExpander
             List<Clause> sub;
             try
             {
+                // The included text's positions name its own file, so a
+                // diagnostic or a debug stop site there is not blamed on the
+                // including file's line of the same number.
                 sub = new ClauseReader(
                     new Lexer.Lexer(
                         Shumway.Core.TextFile.ReadAllText(full, flags.DefaultTextEncoding),
-                        flags.CharConversionEnabled ? flags.CharConversion : null),
+                        flags.CharConversionEnabled ? flags.CharConversion : null)
+                    { FileId = Shumway.Core.DebugSiteTable.InternFile(full) },
                     operators, flags).ReadAll().ToList();
             }
             catch (ParseException pe)
             {
-                // Re-frame so the caller's file:line diagnostics aren't
-                // silently attributed to the including file.
-                throw new ParseException(
-                    $"in included file '{full}': {pe.Message}", pe.Position)
-                    { RepresentationFlaw = pe.RepresentationFlaw };
+                throw new ParseException(pe.Detail, pe.Position)
+                    { RepresentationFlaw = pe.RepresentationFlaw, IncludedFile = full };
             }
             result.AddRange(Expand(sub, Path.GetDirectoryName(full), operators, flags, chain));
             chain.Remove(full);

@@ -2195,8 +2195,10 @@ public sealed partial class PrologEngine
             // a nested control construct → '$disj_N', ...) follow it.
             var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
             if (transformed.Count == 0) return null;
-            _assertDynCtx ??= new ModuleRewrite.Context(
-                DefaultModuleName, new HashSet<int>(), _dynStore.Functors);
+            var userImports = ImportsOf(DefaultModuleName);
+            if (_assertDynCtx is null || !ReferenceEquals(_assertDynCtx.Imports, userImports))
+                _assertDynCtx = new ModuleRewrite.Context(
+                    DefaultModuleName, new HashSet<int>(), _dynStore.Functors, userImports);
             toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
             // the helpers used to be dropped here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing

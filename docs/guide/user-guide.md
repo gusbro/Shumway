@@ -861,7 +861,14 @@ Two things to know going in:
   defines `term_expansion/2`, `goal_expansion/2` or a clause for another
   module (`M:Head :- Body`) is refused instead, by `shumway-compile` and
   `shumway-link` alike: compiled one file at a time, the hook would never
-  run and the clause would define a predicate named `:`.
+  run and the clause would define a predicate named `:`. A file that only
+  declares one of those hooks `multifile` or `dynamic`, with no clause, is
+  not refused: the declaration installs nothing.
+- **A file-at-a-time compile does not run directives.** An
+  `:- initialization(G)` and a goal directive (`:- assertz(...)`, anything
+  that is not a declaration) are dropped, and each one is reported as a
+  warning naming it. `--consult` runs them while compiling, and the object
+  carries the state they leave in its dynamic predicates.
 
 ### Step 2: `shumway-link` (linker)
 

@@ -135,12 +135,12 @@ internal static class LinkCli
                     var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
                     foreach (var w in res.Warnings)
                         Console.Error.WriteLine(
-                            $"{path}:{w.Line}:{w.Column}: warning: {w.Message}");
+                            $"{w.Where(path)}: warning: {w.Message}");
                     if (res.Object is null)
                     {
                         foreach (var e in res.Errors)
                             Console.Error.WriteLine(
-                                $"{path}:{e.Line}:{e.Column}: error: {e.Message}");
+                                $"{e.Where(path)}: error: {e.Message}");
                         MaybeHintConsult(path);
                         RemoveStaleOutputs(opts);
                         return ExitLinkError;

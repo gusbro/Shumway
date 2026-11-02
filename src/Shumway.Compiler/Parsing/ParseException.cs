@@ -18,9 +18,21 @@ public sealed class ParseException : Exception
     /// <c>syntax_error</c>.</summary>
     public string? RepresentationFlaw { get; init; }
 
+    /// <summary>What is wrong, without the place <see cref="Message"/> adds.</summary>
+    public string Detail { get; }
+
+    /// <summary>The full path of the file <see cref="Position"/> is in, when the
+    /// text was pulled in by <c>:- include/1</c>; null for the file being read.</summary>
+    public string? IncludedFile { get; init; }
+
+    public override string Message => IncludedFile is null
+        ? base.Message
+        : $"{Position.Line}:{Position.Column}: in included file '{IncludedFile}': {Detail}";
+
     public ParseException(string message, SourcePosition position)
         : base($"{position.Line}:{position.Column}: {message}")
     {
         Position = position;
+        Detail = message;
     }
 }

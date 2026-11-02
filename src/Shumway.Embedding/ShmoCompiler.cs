@@ -88,6 +88,26 @@ public static class ShmoCompiler
         "det", "at_halt", "$hide", "format_predicate", "encoding", "volatile",
     };
 
+    /// <summary>The indicator of a directive the consult runs and this pass
+    /// drops: <c>initialization/1</c>, or a goal (what the consult pipeline
+    /// runs as one, by the same test); null for a declaration.</summary>
+    private static string? GoalNotRun(Term directive)
+    {
+        (string name, int arity) = directive switch
+        {
+            AtomTerm a => (a.Name, 0),
+            CompoundTerm c => (c.Functor, c.Args.Length),
+            _ => ("", 0),
+        };
+        if (name.Length == 0) return null;
+        if (name == "initialization" && arity == 1) return "initialization/1";
+        // Atoms the consult reads as declarations before its goal test.
+        if (arity == 0 && name is "disable_debug" or "enable_debug") return null;
+        if (RecognizedDirectives.Contains(name) || SilentlyIgnoredDirectives.Contains(name))
+            return null;
+        return AstTermRenderer.RenderQuoted(new AtomTerm(name)) + "/" + arity;
+    }
+
     /// <summary>Compiles <paramref name="path"/> to a <see cref="ShmoObject"/>.
     /// The module name defaults to the file's bare name (without
     /// extension) when no <c>:- module(Name).</c> directive is
@@ -210,7 +230,10 @@ public static class ShmoCompiler
             catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
                                        or FileNotFoundException or InvalidOperationException)
             {
-                errors.Add(new ShmoCompileError(ex.Message, 0, 0));
+                errors.Add(ex is Shumway.Compiler.Parsing.ParseException
+                               { IncludedFile: { } included } pe
+                    ? new ShmoCompileError(pe.Detail, pe.Position.Line, pe.Position.Column, included)
+                    : new ShmoCompileError(ex.Message, 0, 0));
                 return new ShmoCompileResult(null, errors, warnings);
             }
         }
@@ -389,8 +412,7 @@ public static class ShmoCompiler
                 }
                 catch (InvalidOperationException ex)
                 {
-                    errors.Add(new ShmoCompileError(ex.Message,
-                        clause.Position.Line, clause.Position.Column));
+                    errors.Add(ShmoCompileError.At(ex.Message, clause.Position));
                 }
                 // arity_compat only: an unrecognised
                 // directive is a warning, not an error — Arity sources
@@ -408,10 +430,15 @@ public static class ShmoCompiler
                     if (dirName.Length > 0
                         && !RecognizedDirectives.Contains(dirName)
                         && !SilentlyIgnoredDirectives.Contains(dirName))
-                        warnings.Add(new ShmoCompileError(
+                        warnings.Add(ShmoCompileError.At(
                             $"unknown directive '{dirName}' ignored (arity_compat)",
-                            clause.Position.Line, clause.Position.Column));
+                            clause.Position));
                 }
+                else if (GoalNotRun(d.Args[0]) is { } notRun)
+                    warnings.Add(ShmoCompileError.At(
+                        $"directive {notRun} is not run by file-at-a-time compilation; "
+                        + "--consult runs it",
+                        clause.Position));
                 continue;
             }
             // prelude pruning: drop clauses whose head the
@@ -862,6 +889,25 @@ public static class ShmoCompiler
         // standard "consult from source" tooling stay intact.
         string persistedSource = buildMode == ShmoBuildMode.Release ? "" : source;
 
+        // A multifile clause the consult pipeline stored is already rewritten
+        // under its module (ConsultPipeline.StoreDynamicClause), so a call in it
+        // to this module's local reads Module$name, and to an import
+        // Source$name. Its edges name the predicate, as the source's would.
+        var rewrittenSpelling = RewrittenSpellings(moduleName, definedOrder, definedSet,
+            publicSet, dynamicSet, imports);
+        if (rewrittenSpelling.Count > 0)
+        {
+            foreach (var head in dynamicSet)
+                if (callGraph.TryGetValue(head, out var edges))
+                    foreach (var (spelled, own) in rewrittenSpelling)
+                        if (edges.Remove(spelled)) edges.Add(own);
+            foreach (var (spelled, own) in rewrittenSpelling)
+            {
+                if (metaRefs.Contains(spelled)) metaRefs.Add(own);
+                if (directRefs.Contains(spelled)) directRefs.Add(own);
+            }
+        }
+
         // stamp each edge with the module-wide
         // DIRECT-vs-META marker (meta-only targets get IsMeta=true).
         var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>();
@@ -945,7 +991,9 @@ public static class ShmoCompiler
     /// read as the term it is and defines a predicate for ':'/2.</para>
     ///
     /// <para>Read off the object, not the text: a file that merely calls
-    /// term_expansion/2, or names it in a comment, compiles fine.</para></summary>
+    /// term_expansion/2, names it in a comment, or declares it
+    /// <c>multifile</c> or <c>dynamic</c> with no clause of its own compiles
+    /// fine.</para></summary>
     public static string? WhatFileAtATimeLoses(ShmoObject obj)
     {
         foreach (var d in obj.Defined)
@@ -957,11 +1005,23 @@ public static class ShmoCompiler
             string name = d.Indicator.Name;
             int cut = name.LastIndexOf('$');
             if (cut >= 0) name = name[(cut + 1)..];
-            if ((name == "term_expansion" && d.Indicator.Arity is 2 or 6)
-                || (name == "goal_expansion" && d.Indicator.Arity == 2))
+            if (((name == "term_expansion" && d.Indicator.Arity is 2 or 6)
+                    || (name == "goal_expansion" && d.Indicator.Arity == 2))
+                && HasClauses(obj, d))
                 return $"defines {name}/{d.Indicator.Arity}, a load-time expansion hook.";
         }
         return null;
+    }
+
+    /// <summary>A static predicate is in <see cref="ShmoObject.Defined"/>
+    /// because it has clauses; a dynamic one (multifile included) also for
+    /// its declaration alone, its clauses being its seeds.</summary>
+    private static bool HasClauses(ShmoObject obj, ShmoDefinedPredicate d)
+    {
+        if (d.Visibility != PredicateVisibility.Dynamic) return true;
+        foreach (var seed in obj.DynamicSeeds)
+            if (seed.Indicator.Equals(d.Indicator)) return seed.EncodedClauses.Count > 0;
+        return false;
     }
 
     public static ShmoCompileResult TryCompileFile(string path,
@@ -1213,6 +1273,27 @@ public static class ShmoCompiler
     // Body walking — extract every call site
     // ------------------------------------------------------------------------
 
+    /// <summary>The spelling <see cref="ModuleRewrite"/> gives a call to each
+    /// local of <paramref name="moduleName"/> it renames (neither public nor
+    /// dynamic), <c>Module$name</c>, and to each import, <c>Source$name</c>,
+    /// mapped to the name the source calls. A spelling that is itself defined
+    /// here names itself and is left out.</summary>
+    private static Dictionary<PredicateRef, PredicateRef> RewrittenSpellings(
+        string moduleName, List<PredicateRef> defined, HashSet<PredicateRef> definedSet,
+        HashSet<PredicateRef> publicSet, HashSet<PredicateRef> dynamicSet,
+        IReadOnlyList<ShmoImportEntry>? imports)
+    {
+        var map = new Dictionary<PredicateRef, PredicateRef>();
+        if (imports is not null)
+            foreach (var imp in imports)
+                map[new PredicateRef(imp.Source + "$" + imp.Pred.Name, imp.Pred.Arity)] = imp.Pred;
+        foreach (var p in defined)
+            if (!publicSet.Contains(p) && !dynamicSet.Contains(p))
+                map[new PredicateRef(moduleName + "$" + p.Name, p.Arity)] = p;
+        foreach (var p in definedSet) map.Remove(p);
+        return map;
+    }
+
     private static void CollectCalls(Term body,
         HashSet<PredicateRef> edges,
         List<QualifiedPredicateRef> qualifiedRefs)
@@ -1250,6 +1331,21 @@ public static class ShmoCompiler
                     CollectCalls(c.Args[0], edges, qualifiedRefs);
                     return;
                 }
+                // call/N closure, as a raw (dynamic) body still has it: the
+                // target is the closure with the extra arguments, as in
+                // MarkCalls. A transformed body has it rewritten already.
+                if (c.Functor == "call" && c.Args.Length >= 2)
+                {
+                    edges.Add(new PredicateRef("call", c.Args.Length));
+                    int extra = c.Args.Length - 1;
+                    if (c.Args[0] is AtomTerm closA
+                        && !IsControlConstructName(closA.Name, extra))
+                        edges.Add(new PredicateRef(closA.Name, extra));
+                    else if (c.Args[0] is CompoundTerm closC && closC.Functor != ":"
+                        && !IsControlConstructName(closC.Functor, closC.Args.Length + extra))
+                        edges.Add(new PredicateRef(closC.Functor, closC.Args.Length + extra));
+                    return;
+                }
                 // Meta-builtins that take a Goal argument and run it.
                 // Without descending into the goal, the call graph
                 // misses every predicate that appears only inside
@@ -1266,11 +1362,21 @@ public static class ShmoCompiler
                     return;
                 }
                 if ((c.Functor == "findall" && c.Args.Length == 3)
-                    || (c.Functor == "bagof" && c.Args.Length == 3)
-                    || (c.Functor == "setof" && c.Args.Length == 3))
+                    || (c.Functor == "aggregate_all" && c.Args.Length == 3))
                 {
                     edges.Add(new PredicateRef(c.Functor, 3));
                     CollectCalls(c.Args[1], edges, qualifiedRefs);
+                    return;
+                }
+                // The V^ prefixes of a raw bagof/setof goal bind, they are
+                // not called.
+                if ((c.Functor == "bagof" || c.Functor == "setof") && c.Args.Length == 3)
+                {
+                    edges.Add(new PredicateRef(c.Functor, 3));
+                    Term goal = c.Args[1];
+                    while (goal is CompoundTerm { Functor: "^", Args.Length: 2 } caret)
+                        goal = caret.Args[1];
+                    CollectCalls(goal, edges, qualifiedRefs);
                     return;
                 }
                 if (c.Functor == "findall" && c.Args.Length == 4)
@@ -1387,7 +1493,8 @@ public static class ShmoCompiler
                     return;
                 }
                 if ((c.Functor == "findall" || c.Functor == "bagof"
-                     || c.Functor == "setof") && c.Args.Length == 3)
+                     || c.Functor == "setof" || c.Functor == "aggregate_all")
+                    && c.Args.Length == 3)
                 {
                     MarkCalls(c.Args[1], inMeta: true, metaRefs, directRefs);
                     return;

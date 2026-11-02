@@ -48,6 +48,33 @@ interpreter (the backend Logtalk uses on GProlog). Debugging works too: add
 `--debug` / `--dap <port>` and set breakpoints in the Logtalk-generated
 intermediate files, or in your `.lgt` sources' consulted forms.
 
+## A standalone executable
+
+Logtalk's embedding scripts for Shumway (`scripts/embedding/shumway/` in the
+Logtalk tree) write the Logtalk compiler and runtime to `logtalk.pl` and an
+application to `application.pl`. The two files share one namespace, as they
+do when both are consulted into `user`. The linker reads each file without a
+`:- module` directive as a module of its own, so include both from one file:
+
+```prolog
+% wumpus.pl
+:- include(logtalk).
+:- include(application).
+```
+
+and link it through the consult pipeline:
+
+```
+shumway-link --consult -o wumpus.shum --exe wumpus --goal "'::'(wumpus,main)" wumpus.pl
+```
+
+`--consult` runs the runtime's `initialization/1` goals while linking, and
+the executable starts from the state they leave in its dynamic predicates; a
+file-at-a-time link drops them, with a warning for each. `--goal` is the
+application's startup goal. The `loader.pl` the scripts write when asked is
+not needed: it consults the two files when the program starts, which the
+link has already done.
+
 ## The dialect
 
 Logtalk selects backend-specific code by `prolog_dialect`, and it does not
