@@ -172,6 +172,10 @@ public sealed partial class PrologEngine
     /// PC into it fails loudly.</summary>
     internal int _persistentLength;
 
+    /// <summary><see cref="_persistentLength"/> as the last link left it: the
+    /// auto-compaction compares the buffer's growth since with it.</summary>
+    internal int _persistentLengthAtLink;
+
     /// <summary>Cached link result for the dynamic predicates only —
     /// the address map a per-query link uses to resolve calls into
     /// the dynamic region without re-linking it.</summary>
@@ -342,14 +346,11 @@ public sealed partial class PrologEngine
     /// compaction trigger in <c>SetupQueryFromTerm</c>.</summary>
     private long _persistentMutationsSinceCompact;
 
-    /// <summary>how many dynamic-store mutations
-    /// the engine accumulates before automatically compacting the
-    /// persistent buffer at the next query's setup. Default 1000;
-    /// host code can raise it (large batch workloads where rebuild
-    /// cost dominates) or lower it (memory-tight environments
-    /// preferring smaller buffers) or set to <c>long.MaxValue</c>
-    /// to disable auto-compaction entirely. Compaction itself stays
-    /// callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
+    /// <summary>How many dynamic-store mutations the engine accumulates
+    /// between checks of the persistent buffer's growth, at a query's setup:
+    /// the buffer is compacted once it has grown to twice its length at the
+    /// last link. Default 1000; <c>long.MaxValue</c> disables the checks.
+    /// Compaction itself stays callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
     public long CompactWatermark { get; set; } =
         long.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_COMPACT_WATERMARK"), out long w) ? w : 1000;
 

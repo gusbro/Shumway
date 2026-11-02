@@ -722,11 +722,13 @@ public sealed partial class PrologEngine
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
     {
         long profPl0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-        // auto-compaction. When the accumulated
-        // mutation count crosses the watermark, invalidate the
-        // persistent buffer here at query setup (the safe point —
-        // no in-flight choice points hold addresses into it). The
-        // rebuild that follows below picks up the trim automatically.
+        // auto-compaction, at query setup (the safe point: no in-flight
+        // choice point holds an address into the buffer). Every CompactWatermark
+        // mutations the buffer's growth is checked: it is laid out again once it
+        // has grown to twice its length at the last link, so each link pays for
+        // the growth that caused it, and a churn the layouts recycle never pays
+        // one. Compacting every so many mutations instead laid the whole
+        // program out again at every query of a program that mutates a lot.
         //
         // ADR-035 D5 — except during a debug evaluation (an Immediate-window goal, a
         // breakpoint condition): that nested query's setup is not a safe point — the outer
@@ -738,10 +740,14 @@ public sealed partial class PrologEngine
             long free = 0;
             foreach (var (_, length) in DynChains.FreeChunks) free += length;
             ProfProductDrop("setup " + ProfSetupCalls + " buffer: length " + _persistentLength
-                + " free " + free + " mutations " + _persistentMutationsSinceCompact);
+                + " link " + _persistentLengthAtLink + " free " + free + " mutations " + _persistentMutationsSinceCompact);
         }
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
-            CompactDynamicCodeBuffer();
+        {
+            _persistentMutationsSinceCompact = 0;
+            if (_persistentLengthAtLink > 0 && _persistentLength >= 2 * _persistentLengthAtLink)
+                CompactDynamicCodeBuffer();
+        }
         // A queued jit_compile(off) returns the promoted predicates to their
         // bytecode. Here for the same reason as the compaction above: nothing
         // in flight holds a position inside the code being dropped. A debug
@@ -1648,6 +1654,7 @@ public sealed partial class PrologEngine
                 switchTableIdBase: staticLink.SwitchTables.Count);
             _persistentLength =
                 prefix.Length + staticLink.Bytecode.Length + _dynamicLink.Bytecode.Length;
+            _persistentLengthAtLink = _persistentLength;
             // Over-allocate so capacity-doubling AppendCode appends
             // cheaply mid-query without forcing immediate realloc.
             int initialCapacity = Math.Max(_persistentLength * 2, 1024);
