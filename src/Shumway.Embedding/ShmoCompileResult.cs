@@ -1,3 +1,6 @@
+using Shumway.Compiler.Lexer;
+using Shumway.Core;
+
 namespace Shumway.Embedding;
 
 /// <summary>One error produced by the
@@ -12,11 +15,38 @@ public sealed class ShmoCompileError
     public int Line { get; }
     public int Column { get; }
 
-    public ShmoCompileError(string message, int line, int column)
+    /// <summary>The file <see cref="Line"/> is in when it is not the one being
+    /// compiled: a file pulled in by <c>:- include/1</c>. Null otherwise.</summary>
+    public string? File { get; }
+
+    public ShmoCompileError(string message, int line, int column, string? file = null)
     {
         Message = message;
         Line = line;
         Column = column;
+        File = file;
+    }
+
+    /// <summary>A diagnostic at <paramref name="position"/>, in the included file
+    /// the position names, if any.</summary>
+    internal static ShmoCompileError At(string message, SourcePosition position)
+        => new(message, position.Line, position.Column,
+            position.FileId != 0 ? DebugSiteTable.FileName(position.FileId) : null);
+
+    /// <summary>Where the diagnostic is, <c>file:line:col</c>:
+    /// <paramref name="compiledFile"/> unless it is in an included file, which
+    /// is named relative to the working directory when it lies under it.</summary>
+    public string Where(string compiledFile)
+        => $"{(File is null ? compiledFile : DisplayPath(File))}:{Line}:{Column}";
+
+    private static string DisplayPath(string path)
+    {
+        string cwd = Directory.GetCurrentDirectory();
+        if (cwd.Length > 0 && cwd[cwd.Length - 1] != Path.DirectorySeparatorChar)
+            cwd += Path.DirectorySeparatorChar;
+        return path.StartsWith(cwd, StringComparison.OrdinalIgnoreCase)
+            ? path.Substring(cwd.Length)
+            : path;
     }
 
     public override string ToString() => $"{Line}:{Column}: {Message}";

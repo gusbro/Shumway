@@ -236,11 +236,11 @@ internal static class CompileCli
             // reported but never fail the compile.
             foreach (var warn in result.Warnings)
                 Console.Error.WriteLine(
-                    $"{input}:{warn.Line}:{warn.Column}: warning: {warn.Message}");
+                    $"{warn.Where(input)}: warning: {warn.Message}");
             if (!result.Success)
             {
                 foreach (var err in result.Errors)
-                    Console.Error.WriteLine($"{input}:{err.Line}:{err.Column}: error: {err.Message}");
+                    Console.Error.WriteLine($"{err.Where(input)}: error: {err.Message}");
                 Console.Error.WriteLine(
                     $"shumway-compile: {result.Errors.Count} error(s) in {input}.");
                 MaybeHintConsultMode(input);

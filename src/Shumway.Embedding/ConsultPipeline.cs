@@ -2128,7 +2128,8 @@ internal sealed class ConsultPipeline
                 => multifileCtx ??= new ModuleRewrite.Context(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    E._dynStore.Functors)
+                    E._dynStore.Functors,
+                    ConsultImports())
                 { MetaArgSpec = E.MetaArgSpec };
 
             // Reconsult: the predicates this source defines are replaced, not
@@ -2254,6 +2255,11 @@ internal sealed class ConsultPipeline
             }
             clauses = keptClauses;
         }
+
+        // A named module's import table is the one this consult builds: its
+        // manifest is replaced at the commit, not extended.
+        IReadOnlyDictionary<int, string> ConsultImports()
+            => pendingImports ?? (IReadOnlyDictionary<int, string>)new Dictionary<int, string>();
 
         // ADR-038 — record the predicates this consult imported from an
         // export-qualified module `src`: each imported bare functor id maps to
@@ -2587,7 +2593,8 @@ internal sealed class ConsultPipeline
                 pendingDiscontiguous, firstHookIndex, inFileGoalHooks,
                 moduleName, pendingMultifile,
                 () => new ModuleRewrite.Context(moduleName,
-                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors)
+                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors,
+                    ConsultImports())
                 { MetaArgSpec = E.MetaArgSpec });
 
         // ISO §7.4.2 general goal directives run now, after the batch commit

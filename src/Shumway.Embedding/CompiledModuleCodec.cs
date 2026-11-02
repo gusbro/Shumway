@@ -161,8 +161,9 @@ public static class CompiledModuleCodec
     /// <see cref="DebugStop.SiteId"/> is a global <see cref="DebugSiteTable"/> id, valid
     /// only in the process that interned it, so we serialize the resolved
     /// <c>(file, line, column)</c> and re-intern at decode — the same name-relative trick
-    /// the atom/functor operands use. A module is one source file, so a single file name
-    /// covers all of a predicate's stops.</summary>
+    /// the atom/functor operands use. One file name covers all of a predicate's stops:
+    /// a predicate whose clauses straddle an <c>:- include/1</c> has them all in the file
+    /// of its first stop.</summary>
     private static void WriteDebugInfo(BinaryWriter bw, CompiledPredicate pred)
     {
         bw.Write(pred.DebugStops.Count);
