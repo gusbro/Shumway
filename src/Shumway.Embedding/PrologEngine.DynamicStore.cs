@@ -447,7 +447,7 @@ public sealed partial class PrologEngine
         // this engine's buffer; the host's newer buffer would keep the
         // clause visible on cross-query reuse. Force a rebuild from the
         // (already-updated) store. Owner engines pay nothing.
-        if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent();
+        if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent("retract by a non-owner");
         // For the chain layout, PatchDiedFromChain walks
         // the predicate's single chain and patches entry[idx]'s
         // died slot. For the indexed layout, the chain
@@ -493,6 +493,11 @@ public sealed partial class PrologEngine
                     // so the retracted clause doesn't survive there.
                     RebuildEngineFidChainView(other, functorId);
             }
+        // A plain chain's patch above was the retract. Only the indexed layout
+        // falls back: a hot predicate on a plain chain (arity 0, one clause)
+        // dropped the buffer on every retract, and every mutation after it in
+        // the query dropped it again, a full build per query.
+        if (!isIndexed) return true;
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(
                 engine, functorId, retiredBodyAddr, clause, retiredVarEntryDied))
@@ -505,7 +510,7 @@ public sealed partial class PrologEngine
         }
         // Fallback: hot indexed predicate that we couldn't retract in
         // place → rebuild via persistent invalidation.
-        if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+        if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent("retract: no in-place patch of the indexed layout");
         return true;
     }
 

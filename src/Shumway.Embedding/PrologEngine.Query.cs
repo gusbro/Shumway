@@ -681,12 +681,16 @@ public sealed partial class PrologEngine
     {
         foreach (int fid in _productStaleDynamicFids)
         {
-            if (_staticRewriteHeadFids?.Contains(fid) == true
-                || _dynamicSeedModule.ContainsKey(fid)
-                || !_dynStore.IsDynamic(fid)
-                || !_dynStore.HoldsOnlyFacts(fid)
-                || !product.DynamicFunctors.Contains(fid))
-                return false;
+            string? why =
+                _staticRewriteHeadFids?.Contains(fid) == true ? "source clauses in a module"
+                : _dynamicSeedModule.ContainsKey(fid) ? "seed module"
+                : !_dynStore.IsDynamic(fid) ? "not dynamic"
+                : !_dynStore.HoldsOnlyFacts(fid) ? "rules"
+                : !product.DynamicFunctors.Contains(fid) ? "not in the product"
+                : null;
+            if (why is null) continue;
+            if (LoadProfEnabled) ProfProductDrop(why + ": " + FunctorDisplayName(fid));
+            return false;
         }
         _productStaleDynamicFids.Clear();
         product.DynamicPredsDeferred = true;
@@ -729,6 +733,13 @@ public sealed partial class PrologEngine
         // query is suspended mid-flight and everything it holds points into the current
         // buffers. Compaction is paused, not skipped: the counter keeps accumulating and
         // the next real query's setup does the deferred work.
+        if (LoadProfEnabled)
+        {
+            long free = 0;
+            foreach (var (_, length) in DynChains.FreeChunks) free += length;
+            ProfProductDrop("setup " + ProfSetupCalls + " buffer: length " + _persistentLength
+                + " free " + free + " mutations " + _persistentMutationsSinceCompact);
+        }
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
         // A queued jit_compile(off) returns the promoted predicates to their
@@ -812,6 +823,8 @@ public sealed partial class PrologEngine
                 // skip-compile cache stays in step.
                 DropDynamicPredicateCacheEntry(fid);
                 anyHotnessFlip = true;
+                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip: " + FunctorDisplayName(fid)
+                    + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid) + " was=" + _jitIndexProfile.CompileDecision(fid));
             }
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
@@ -822,6 +835,8 @@ public sealed partial class PrologEngine
             {
                 DropDynamicPredicateCacheEntry(fid);
                 anyHotnessFlip = true;
+                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip (clauses): " + FunctorDisplayName(fid)
+                    + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid) + " was=" + _jitIndexProfile.CompileDecision(fid));
             }
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
@@ -856,7 +871,13 @@ public sealed partial class PrologEngine
                 || !ReferenceEquals(product.StaticLinkRef, _staticLink)
                 || product.EmitDebugInfo != _flags.EmitDebugInfo
                 || product.DebugCodegen != _flags.DebugCodegen))
+        {
+            if (LoadProfEnabled)
+                ProfProductDrop(product.DerivationGen != _derivationGen ? "derivation"
+                    : product.ProgramStamp != _programStamp ? "stamp"
+                    : !ReferenceEquals(product.StaticLinkRef, _staticLink) ? "static link" : "debug flags");
             product = null;
+        }
         // Dynamic mutations alone: their predicates' compiles wait in the
         // product for the next full build, or the product is built again.
         if (product is not null && _productStaleDynamicFids.Count > 0

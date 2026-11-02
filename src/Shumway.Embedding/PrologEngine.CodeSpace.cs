@@ -283,11 +283,19 @@ public sealed partial class PrologEngine
         else DynamicCodePatcher.FreeBytes(table.FreeChunks, start, end - start);
     }
 
+    /// <summary>Times the persistent program was marked stale: each one is
+    /// a full build and a link of the buffer at the next setup, and the tests
+    /// that pin a mutation in place read it.</summary>
+    internal long PersistentInvalidations;
+
     /// <summary>Marks the persistent program as stale so the next query
     /// setup rebuilds it. Called on every consult and on every change
     /// to the dynamic-functor set.</summary>
-    internal void InvalidatePersistent()
+    internal void InvalidatePersistent([System.Runtime.CompilerServices.CallerMemberName] string caller = "")
     {
+        PersistentInvalidations++;
+        if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " persistent: " + caller);
+        bool dropped = _persistentProgram is null && _dynamicLink is null;
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
@@ -304,8 +312,9 @@ public sealed partial class PrologEngine
         // now-invalidated buffer; start a fresh table for the rebuild.
         // Live engines still running on the old buffer keep their own
         // table through _engineChainTables — invalidation never desyncs
-        // an in-flight query's in-place dispatch.
-        ResetDynChains();
+        // an in-flight query's in-place dispatch. Dropped already: the fresh
+        // table stands (each mutation of a query after the drop comes here).
+        if (!dropped) ResetDynChains();
     }
 
     /// <summary>user-facing entry point for
@@ -341,7 +350,8 @@ public sealed partial class PrologEngine
     /// preferring smaller buffers) or set to <c>long.MaxValue</c>
     /// to disable auto-compaction entirely. Compaction itself stays
     /// callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
-    public long CompactWatermark { get; set; } = 1000;
+    public long CompactWatermark { get; set; } =
+        long.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_COMPACT_WATERMARK"), out long w) ? w : 1000;
 
     /// <summary>diagnostic read of the mutation
     /// counter (mainly for tests that need to verify auto-compaction

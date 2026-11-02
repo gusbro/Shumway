@@ -2176,7 +2176,7 @@ internal sealed class DynamicCodePatcher
     internal void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
-        else E.InvalidatePersistent();
+        else E.InvalidatePersistent("mutation by a non-owner");
     }
 
     /// <summary>synchronises <see cref="E._persistentProgram"/>
