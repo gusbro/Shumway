@@ -456,6 +456,36 @@ internal sealed class DynamicCodePatcher
             chain.IndexedVarEntries[clause] = diedAddr;
     }
 
+    /// <summary>Places <paramref name="bytes"/> in a free chunk of the buffer
+    /// when one fits, else at its end; the address.</summary>
+    private static int PlaceChunk(Activation engine, DynChainTable table, byte[] bytes)
+    {
+        int at = TryReuseFreeChunk(table.FreeChunks, bytes.Length);
+        if (at < 0) return engine.AppendCode(bytes);
+        System.Array.Copy(bytes, 0, engine.CurrentProgram!, at, bytes.Length);
+        return at;
+    }
+
+    // A body chunk of the indexed layout placed in the buffer: its literals and
+    // atoms are the chunk's (NoteClauseChunk), released with it when the sweep
+    // finds no entry naming it.
+    private void NoteIndexedBody(DynChainTable table, int functorId, int bodyAddr, int length,
+        Shumway.Compiler.Wam.CompiledClause compiledClause)
+    {
+        NoteClauseChunk(table, bodyAddr, length, compiledClause.Bytecode,
+            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
+        if (table.Chains.TryGetValue(functorId, out var chain))
+            (chain.IndexedBodies ??= new())[bodyAddr] = length;
+    }
+
+    // A chain entry of the indexed layout placed in the buffer, for the sweep
+    // that unlinks it to drop.
+    private static void NoteIndexedEntry(DynChainTable table, int functorId, int addr, int length)
+    {
+        if (table.Chains.TryGetValue(functorId, out var chain))
+            (chain.IndexedEntries ??= new())[addr] = length;
+    }
+
     internal bool IsExtensibleIndexedLayout(Activation engine, int functorId)
     {
         var addrMap = engine.CurrentFunctorAddresses;
@@ -749,11 +779,9 @@ internal sealed class DynamicCodePatcher
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
-        int bodyAddr = engine.AppendCode(bodyChunk);
-        // The indexed layout unlinks its dead entries without a reclaim the
-        // chunk could be released at: a unit of the buffer.
-        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode,
-            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
+        var chainTable = GetOrCreateChainTable(engine);
+        int bodyAddr = PlaceChunk(engine, chainTable, bodyChunk);
+        NoteIndexedBody(chainTable, functorId, bodyAddr, bodyChunk.Length, compiledClause);
         prog = engine.CurrentProgram!;
 
         // Patch call sites inside the body to absolute targets.
@@ -775,7 +803,10 @@ internal sealed class DynamicCodePatcher
             em.EmitRetryMeElse(failStub);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(targetBody);
-            return engine.AppendCode(em.ToBytes());
+            byte[] entry = em.ToBytes();
+            int at = PlaceChunk(engine, chainTable, entry);
+            NoteIndexedEntry(chainTable, functorId, at, entry.Length);
+            return at;
         }
 
         // For the new-key concrete case, the new bucket itself is
@@ -796,7 +827,7 @@ internal sealed class DynamicCodePatcher
                 return true;   // the rebuild took the store, the new clause included
             }
             int newBucketHead = BuildAndAppendNewBucketChain(
-                engine, failStub, headArity: FunctorTable.Lookup(functorId).Arity,
+                engine, functorId, failStub, headArity: FunctorTable.Lookup(functorId).Arity,
                 varArgBodies, bodyAddr);
             prog = engine.CurrentProgram!;
             var oldTable = engine.GetSwitchTable(subSwitchTableId);
@@ -821,17 +852,15 @@ internal sealed class DynamicCodePatcher
             prog = engine.CurrentProgram!;
             if (tailNext == varTailNext)
                 varEntryDied = newEntry + ChainEntryHeaderSize(prog, newEntry) + 9;
-            // Tripwire: a fresh append always lands beyond every existing
-            // chain slot. newEntry at or below the slot being patched means
-            // the append position was stale and the write would splice the
-            // chain into itself. (The pre-append ProgramLength check above
-            // makes this unreachable; keep it as the last line of defense —
-            // the write below is the one that creates the dispatch cycle.)
-            if (newEntry <= tailNext)
+            // Tripwire: the new entry, in a hole or at the end, must not hold
+            // the slot being patched: the write below would splice the chain
+            // into itself. (The ProgramLength check above makes a stale append
+            // position unreachable; this is the last line of defense.)
+            if (tailNext >= newEntry && tailNext < newEntry + 27)
             {
                 ChainCorruptionRecover(
                     "assertz-indexed-patch", engine, functorId,
-                    $"new entry {newEntry} at/below tail slot {tailNext}");
+                    $"new entry {newEntry} holds the tail slot {tailNext}");
                 return true;
             }
             Shumway.Core.BytecodeIO.WriteInt32(prog, tailNext, newEntry);
@@ -1227,11 +1256,9 @@ internal sealed class DynamicCodePatcher
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
-        int bodyAddr = engine.AppendCode(bodyChunk);
-        // The indexed layout unlinks its dead entries without a reclaim the
-        // chunk could be released at: a unit of the buffer.
-        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode,
-            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
+        var chainTable = GetOrCreateChainTable(engine);
+        int bodyAddr = PlaceChunk(engine, chainTable, bodyChunk);
+        NoteIndexedBody(chainTable, functorId, bodyAddr, bodyChunk.Length, compiledClause);
         prog = engine.CurrentProgram!;
 
         // Patch call sites in the body to absolute targets.
@@ -1259,7 +1286,7 @@ internal sealed class DynamicCodePatcher
             }
             // Asserta-flavoured layout: new body first, var-args after.
             int newBucketHead = BuildAndAppendBucketChainAsserta(
-                engine, failStub, arity, bodyAddr, varArgBodies);
+                engine, functorId, failStub, arity, bodyAddr, varArgBodies);
             prog = engine.CurrentProgram!;
             var oldTable = engine.GetSwitchTable(subSwitchTableId);
             if (oldTable is null) return false;
@@ -1289,7 +1316,9 @@ internal sealed class DynamicCodePatcher
             em.EmitTryMeElse(oldHead, arity);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodyAddr);
-            int newHead = engine.AppendCode(em.ToBytes());
+            byte[] head = em.ToBytes();
+            int newHead = PlaceChunk(engine, chainTable, head);
+            NoteIndexedEntry(chainTable, functorId, newHead, head.Length);
             prog = engine.CurrentProgram!;
             redirectMap[oldHead] = newHead;
             if (oldHead == varChainHead)
@@ -1313,29 +1342,12 @@ internal sealed class DynamicCodePatcher
     /// arg bodies in source order. Returns the new bucket chain
     /// head address.</summary>
     private int BuildAndAppendBucketChainAsserta(
-        Activation engine, int failStub, int headArity,
+        Activation engine, int functorId, int failStub, int headArity,
         int newBodyAddr, IReadOnlyList<int> varArgBodies)
     {
         var bodies = new List<int> { newBodyAddr };
         bodies.AddRange(varArgBodies);
-        int count = bodies.Count;
-        const int HeadEntrySize = 9 + 17 + 5;
-        const int NonHeadEntrySize = 5 + 17 + 5;
-        int startAddr = engine.ProgramLength;
-        var em = new Shumway.Compiler.Wam.BytecodeEmitter();
-        for (int i = 0; i < count; i++)
-        {
-            int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
-            int nextAddr = (i == count - 1) ? failStub
-                                            : startAddr + em.Position + thisSize;
-            if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
-            else        em.EmitRetryMeElse(nextAddr);
-            em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
-            em.EmitExecute(bodies[i]);
-        }
-        int chunkAddr = engine.AppendCode(em.ToBytes());
-        System.Diagnostics.Debug.Assert(chunkAddr == startAddr);
-        return chunkAddr;
+        return PlaceBucketChain(engine, functorId, failStub, headArity, bodies);
     }
 
     /// <summary>Collects every chain head reachable
@@ -1670,9 +1682,13 @@ internal sealed class DynamicCodePatcher
         EnumerateChainHeadsRecursive(
             engine, engine.CurrentFunctorAddresses![functorId] + 1, heads, new HashSet<int>());
 
-        // Every chain is read whole before anything is written.
+        // Every chain is read whole before anything is written. An entry the
+        // relinked chains leave out is unlinked; a body only unlinked entries
+        // name is free once nothing runs it.
         var entries = new HashSet<int>();
         var links = new List<(int NextOperand, int Target)>();
+        var unlinked = new List<(int Addr, int Body)>();
+        var named = new HashSet<int>();
         foreach (int head in heads)
         {
             int cur = head, keptNext = -1;
@@ -1686,12 +1702,15 @@ internal sealed class DynamicCodePatcher
                     || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return false;
                 entries.Add(cur);
                 bool dead = Shumway.Core.BytecodeIO.ReadInt64(prog, cur + header + 9) != long.MaxValue;
+                int body = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + header + 18);
                 if (keptNext < 0 || !dead)
                 {
                     if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != cur)
                         links.Add((keptNext, cur));
                     keptNext = cur + 1;
+                    named.Add(body);
                 }
+                else unlinked.Add((cur, body));
                 cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
             }
             if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != failStub)
@@ -1706,6 +1725,19 @@ internal sealed class DynamicCodePatcher
         // append that falls back to it rebuilds the predicate instead.
         chain.TailNextAddr = -1;
         IndexedSweeps++;
+        // The entries placed in place and the bodies they alone named are
+        // dropped: their bytes go to the free list once no activation reaches
+        // them, for the asserts that follow. What the layout was built with
+        // goes with the buffer.
+        var table = GetOrCreateChainTable(engine);
+        foreach (var (addr, body) in unlinked)
+        {
+            if (chain.IndexedEntries is { } ents && ents.Remove(addr, out int length))
+                Drop(table, new DroppedCode(addr, addr + length, null, System.Array.Empty<int>(), recycle: true));
+            if (!named.Contains(body) && chain.IndexedBodies is { } bodies && bodies.Remove(body, out int bodyLength))
+                DropChunk(table, body, bodyLength, recycle: true);
+        }
+        ReleaseUnreached(table);
         return true;
     }
 
@@ -1794,45 +1826,56 @@ internal sealed class DynamicCodePatcher
     /// <c>retry_me_else</c> (5 bytes); the last entry's
     /// <c>&lt;next&gt;</c> is the fail stub.</summary>
     private int BuildAndAppendNewBucketChain(
-        Activation engine, int failStub, int headArity,
+        Activation engine, int functorId, int failStub, int headArity,
         IReadOnlyList<int> varArgBodies, int newBodyAddr)
     {
         // Chain bodies in source order: var-arg first, then new.
         var bodies = new List<int>(varArgBodies);
         bodies.Add(newBodyAddr);
-        int count = bodies.Count;
+        return PlaceBucketChain(engine, functorId, failStub, headArity, bodies);
+    }
 
-        // Plan the chunk: layout & size up front so we can compute
-        // each entry's address (each entry's <next> points at the
-        // following entry's absolute address).
+    /// <summary>A bucket chain of <paramref name="bodies"/> in that order: the
+    /// head a <c>try_me_else</c>, the rest <c>retry_me_else</c>, the last's next
+    /// the fail stub. Placed in a free chunk when one fits, else at the end of
+    /// the buffer, its entries on record for the sweep. The head's address.</summary>
+    private int PlaceBucketChain(Activation engine, int functorId, int failStub, int headArity, List<int> bodies)
+    {
         const int HeadEntrySize = 9 + 17 + 5;
         const int NonHeadEntrySize = 5 + 17 + 5;
-
-        // We don't know the chain's start address yet — depends on
-        // engine.ProgramLength. Probe AppendCode by appending a
-        // single empty buffer; instead, just compute offsets relative
-        // to ProgramLength now and then emit in one go.
-        int startAddr = engine.ProgramLength;
-        // Build the entire chain in one BytecodeEmitter so the
-        // offsets are right by construction, then AppendCode the
-        // result. Each entry's <next> is the absolute address of
-        // the next entry, or fail_stub for the last.
+        int count = bodies.Count;
+        int total = HeadEntrySize + (count - 1) * NonHeadEntrySize;
+        var table = GetOrCreateChainTable(engine);
+        int hole = TryReuseFreeChunk(table.FreeChunks, total);
+        int startAddr = hole >= 0 ? hole : engine.ProgramLength;
+        // Each entry's <next> is the absolute address of the next entry, or
+        // the fail stub for the last: known once the start is.
         var em = new Shumway.Compiler.Wam.BytecodeEmitter();
         for (int i = 0; i < count; i++)
         {
             int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
-            int nextAddr = (i == count - 1) ? failStub
-                                            : startAddr + em.Position + thisSize;
+            int nextAddr = i == count - 1 ? failStub : startAddr + em.Position + thisSize;
             if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
-            else        em.EmitRetryMeElse(nextAddr);
+            else em.EmitRetryMeElse(nextAddr);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodies[i]);
         }
-        int chunkAddr = engine.AppendCode(em.ToBytes());
-        // chunkAddr should equal startAddr (we computed offsets to
-        // match). Verify in debug builds.
+        byte[] chunk = em.ToBytes();
+        int chunkAddr;
+        if (hole >= 0)
+        {
+            System.Array.Copy(chunk, 0, engine.CurrentProgram!, hole, chunk.Length);
+            chunkAddr = hole;
+        }
+        else chunkAddr = engine.AppendCode(chunk);
         System.Diagnostics.Debug.Assert(chunkAddr == startAddr,
-            $"in-place assertz: new bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+            $"in-place assert: bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+        for (int i = 0, at = chunkAddr; i < count; i++)
+        {
+            int size = i == 0 ? HeadEntrySize : NonHeadEntrySize;
+            NoteIndexedEntry(table, functorId, at, size);
+            at += size;
+        }
         return chunkAddr;
     }
 
@@ -2279,6 +2322,12 @@ internal sealed class DynChainState
     // unlinked, and the count the next sweep waits for after one a goal in
     // flight blocked (DynamicCodePatcher.NoteIndexedRetract).
     public int IndexedDead, IndexedSweepAt;
+
+    // The indexed layout: the body chunks and the chain entries placed in the
+    // buffer by the in-place asserts, by address, with their lengths. The sweep
+    // drops the entries it unlinks and the bodies only those named; what the
+    // layout was built with goes with the buffer.
+    public Dictionary<int, int>? IndexedBodies, IndexedEntries;
 
     public void WidenBounds(int addr)
     {
