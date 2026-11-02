@@ -809,50 +809,39 @@ public sealed partial class PrologEngine
         ValidatePublicUniqueness();
         if (LoadProfEnabled) ProfUniqTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profUq0;
 
-        // JIT indexing: a dynamic predicate compiles
-        // unindexed until its runtime call count crosses the JIT
-        // threshold. A cold-but-now-hot predicate (or vice versa) has
-        // a stale cached compile at the wrong indexing level — drop it
-        // so ModuleCompiler rebuilds it (the drop bumps _programStamp,
-        // so the compiled program product below rebuilds too — which is
-        // why this loop runs before the product validity check). The
-        // unindexed set then names every dynamic functor still below
-        // the threshold.
+        // JIT indexing: a dynamic predicate compiles unindexed until its
+        // runtime call count crosses the JIT threshold. One called past it
+        // since its compile is laid out indexed in place; when one of them
+        // cannot be (TryFlipHotnessInPlace), its stale compile is dropped and
+        // the program laid out again, before the product validity check since
+        // the drop bumps _programStamp. The unindexed set then names every
+        // dynamic functor still below the threshold.
         long profHt0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var unindexedFunctors = new HashSet<int>();
-        bool anyHotnessFlip = false;
-        foreach (int fid in _dynStore.Functors)
+        var hotnessSeen = new HashSet<int>();
+        List<int>? hotnessFlipped = null;
+        foreach (int fid in _dynStore.Functors) NoteHotness(fid);
+        foreach (int fid in _dynStore.ClauseFunctors) NoteHotness(fid);
+        void NoteHotness(int fid)
         {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
-            {
-                // route through the drop helper so the merged
-                // skip-compile cache stays in step.
-                DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
-                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip: " + FunctorDisplayName(fid)
-                    + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid) + " was=" + _jitIndexProfile.CompileDecision(fid));
-            }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
+            if (!hotnessSeen.Add(fid)) return;
+            if (!_jitIndexProfile.IsHot(fid)) unindexedFunctors.Add(fid);
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)) (hotnessFlipped ??= new()).Add(fid);
         }
-        foreach (int fid in _dynStore.ClauseFunctors)
+        if (hotnessFlipped is not null && TryFlipHotnessInPlace(hotnessFlipped) is { } whyNotInPlace)
         {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            foreach (int fid in hotnessFlipped)
             {
+                // route through the drop helper so the merged skip-compile
+                // cache stays in step.
                 DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
-                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip (clauses): " + FunctorDisplayName(fid)
-                    + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid) + " was=" + _jitIndexProfile.CompileDecision(fid));
+                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip (" + whyNotInPlace + "): "
+                    + FunctorDisplayName(fid) + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid)
+                    + " was=" + _jitIndexProfile.CompileDecision(fid));
             }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
+            // The persistent buffer runs the chain the cold compile emitted.
+            InvalidatePersistent("hotness flip");
         }
-        // a cold→hot transition needs the persistent buffer
-        // rebuilt so the JIT-promoted indexed compilation actually
-        // takes effect at runtime — without this the cache holds the
-        // indexed form but the live dispatch still runs the chain
-        // emitted at predicate-cold time.
-        if (anyHotnessFlip) InvalidatePersistent();
         long profPc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (LoadProfEnabled) ProfHotnessTicks += profPc0 - profHt0;
 
@@ -1655,6 +1644,7 @@ public sealed partial class PrologEngine
             _persistentLength =
                 prefix.Length + staticLink.Bytecode.Length + _dynamicLink.Bytecode.Length;
             _persistentLengthAtLink = _persistentLength;
+            _persistentPrefixLength = prefix.Length;
             // Over-allocate so capacity-doubling AppendCode appends
             // cheaply mid-query without forcing immediate realloc.
             int initialCapacity = Math.Max(_persistentLength * 2, 1024);

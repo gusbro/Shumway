@@ -176,6 +176,10 @@ public sealed partial class PrologEngine
     /// auto-compaction compares the buffer's growth since with it.</summary>
     internal int _persistentLengthAtLink;
 
+    /// <summary>The launcher prefix's length: the static region's sites are at
+    /// this offset in the buffer (<see cref="TryFlipHotnessInPlace"/>).</summary>
+    internal int _persistentPrefixLength;
+
     /// <summary>Cached link result for the dynamic predicates only —
     /// the address map a per-query link uses to resolve calls into
     /// the dynamic region without re-linking it.</summary>

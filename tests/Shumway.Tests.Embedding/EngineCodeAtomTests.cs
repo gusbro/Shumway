@@ -127,6 +127,42 @@ public sealed class EngineCodeAtomTests
         });
     }
 
+    // The predicate laid out indexed in place once hot: the version claims the
+    // atoms the chain gave up.
+    [Fact]
+    public void AFactPredicateLaidOutIndexedInPlaceKeepsItsAtoms()
+    {
+        string s = Suffix();
+        Run(e =>
+        {
+            e.JitIndexing.Threshold = 2;
+            e.ConsultString(":- dynamic(fact/1).");
+            Assert.True(e.Query($"between(1, 6, I), number_codes(I, Cs), atom_codes(N, Cs), "
+                + $"atom_concat(a_{s}_, N, A), assertz(fact(A)), fail ; true.").Success);
+            int first = IdOf($"a_{s}_1");
+            Assert.True(e.Query($"fact(a_{s}_1).").Success);
+            Assert.True(e.Query($"fact(a_{s}_2).").Success);
+            long flips = e.HotnessFlipsInPlace;
+            Assert.True(e.Query($"fact(a_{s}_3).").Success);   // laid out at this setup
+            Assert.Equal(flips + 1, e.HotnessFlipsInPlace);
+
+            e._literalPools.Sweep();   // the images the chain's chunks referenced
+            AtomTable.RequestCollection();
+            Assert.True(Alive(first, $"a_{s}_1"));
+            Assert.True(e.Query($"fact(X), X == a_{s}_1.").Success);
+
+            // The clause gone from the store, the version's code still names the
+            // atom: what the layout was built with goes with the buffer.
+            Assert.True(e.Query($"retract(fact(a_{s}_1)).").Success);
+            e._literalPools.Sweep();
+            AtomTable.RequestCollection();
+            Assert.True(Alive(first, $"a_{s}_1"));
+            Assert.True(e.Query("compact_dynamic_buffer.").Success);
+            AtomTable.RequestCollection();
+            Assert.False(Alive(first, $"a_{s}_1"));
+        });
+    }
+
     [Fact]
     public void AnAssertedCompoundFactKeepsItsAtomsUntilItsChunkIsReclaimed()
     {

@@ -3390,26 +3390,30 @@ public sealed partial class PrologEngine
     private void NoteDynamicRegionAtoms(byte[] program, Shumway.Compiler.Wam.Linker.LinkResult link)
     {
         foreach (var pred in link.PredicatesByAddress.Values)
+            NoteDynamicPredicateAtoms(program, pred);
+    }
+
+    // One predicate's, once its chain state knows its chunks.
+    private void NoteDynamicPredicateAtoms(byte[] program, Shumway.Compiler.Wam.CompiledPredicate pred)
+    {
+        if (!DynChains.Chains.TryGetValue(pred.FunctorId, out var chain) || chain.Entries.Count == 0)
         {
-            if (!DynChains.Chains.TryGetValue(pred.FunctorId, out var chain) || chain.Entries.Count == 0)
-            {
-                ChainPatcher.NoteAtomUnit(DynChains, Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
-                continue;
-            }
-            var inChunks = new HashSet<int>();
-            foreach (var entry in chain.Entries)
-            {
-                if (entry.ChunkAddr < 0 || entry.ChunkLength <= 0) continue;
-                int[] atoms = Shumway.Compiler.Wam.CodeAtoms.OfRange(program, entry.ChunkAddr, entry.ChunkLength);
-                ChainPatcher.NoteChunkAtoms(DynChains, entry.ChunkAddr, entry.ChunkAddr + entry.ChunkLength, atoms);
-                inChunks.UnionWith(atoms);
-            }
-            // The code's operands outside the chunks; the switch keys are left out.
-            var rest = new List<int>();
-            foreach (int id in Shumway.Compiler.Wam.CodeAtoms.OfRange(pred.Bytecode, 0, pred.Bytecode.Length))
-                if (!inChunks.Contains(id)) rest.Add(id);
-            ChainPatcher.NoteAtomUnit(DynChains, rest.ToArray());
+            ChainPatcher.NoteAtomUnit(DynChains, Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids);
+            return;
         }
+        var inChunks = new HashSet<int>();
+        foreach (var entry in chain.Entries)
+        {
+            if (entry.ChunkAddr < 0 || entry.ChunkLength <= 0) continue;
+            int[] atoms = Shumway.Compiler.Wam.CodeAtoms.OfRange(program, entry.ChunkAddr, entry.ChunkLength);
+            ChainPatcher.NoteChunkAtoms(DynChains, entry.ChunkAddr, entry.ChunkAddr + entry.ChunkLength, atoms);
+            inChunks.UnionWith(atoms);
+        }
+        // The code's operands outside the chunks; the switch keys are left out.
+        var rest = new List<int>();
+        foreach (int id in Shumway.Compiler.Wam.CodeAtoms.OfRange(pred.Bytecode, 0, pred.Bytecode.Length))
+            if (!inChunks.Contains(id)) rest.Add(id);
+        ChainPatcher.NoteAtomUnit(DynChains, rest.ToArray());
     }
 
     private void PopulateDynChainViaAddressMap(
