@@ -462,10 +462,6 @@ public sealed partial class PrologEngine
     /// product after every assert cost O(program) per query.</summary>
     private readonly HashSet<int> _productStaleDynamicFids = new();
 
-    /// <summary>Full builds of the program product — counted, for the tests
-    /// that pin which mutations leave the product in place.</summary>
-    internal long ProgramProductBuilds;
-
     private void DropDynamicCompiled(int functorId)
     {
         _dynamicPredicateCache.Remove(functorId);

@@ -159,7 +159,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// succeeded, else <c>failed</c> or <c>raised(Ball)</c>.</summary>
     internal Term? ConsultGoalOutcome;
     /// <summary>Compiled-program products built so far: one per query setup
-    /// that found the program changed. A load's setup cost grows with it.</summary>
+    /// that found the program changed. A load's setup cost grows with it, and
+    /// the tests that pin which mutations leave the product in place read it.</summary>
     internal long ProgramProductBuilds;
     internal readonly OperatorTable _operators = OperatorTable.Default();
 

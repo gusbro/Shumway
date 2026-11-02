@@ -885,7 +885,6 @@ public sealed partial class PrologEngine
         if (product is null)
         {
         _productStaleDynamicFids.Clear();
-        ProgramProductBuilds++;
         if (LoadProfEnabled) ProfProductBuilds++;
         long profPb0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
