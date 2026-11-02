@@ -459,13 +459,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "use_module/1 requires the engine to be hosted by a PrologEngine.");
 
-        Term arg = MaterializeRegister(engine, 0);
-        if (arg is Shumway.Compiler.Ast.VarTerm)
-            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (arg is not (Shumway.Compiler.Ast.AtomTerm
-            or Shumway.Compiler.Ast.CompoundTerm { Functor: "library", Args.Length: 1 }))
-            throw new Shumway.Core.PrologRuntimeException(
-                "type_error", "atom_or_library", (object)arg);
+        Term arg = UseModuleSpec(engine);
 
         // Same resolution as the consult-time directive (file search path,
         // coroutining, compat libraries), returning the loaded export-qualified
@@ -482,6 +476,67 @@ public static partial class MetaBuiltins
         finally { host._liveConsultEngine = prevLive; }
         return true;
     }
+
+    /// <summary><c>use_module(+Spec, +Imports)</c>: the goal form of the
+    /// <c>:- use_module/2</c> directive. Loads Spec as <see cref="UseModule"/>
+    /// does and imports into <c>user</c> only the predicates Imports names
+    /// (<see cref="ConsultPipeline.ReadImportList"/>, as the directive reads
+    /// it). As in the directive (ADR-038), naming a predicate the module does
+    /// not export is an error; it is raised before anything is imported.</summary>
+    public static bool UseModule2(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "use_module/2 requires the engine to be hosted by a PrologEngine.");
+
+        Term spec = UseModuleSpec(engine);
+        // Read before the load, so a malformed list loads nothing.
+        List<(string Name, int Arity)> imports =
+            ConsultPipeline.ReadImportList(MaterializeRegister(engine, 1));
+
+        var prevLive = host._liveConsultEngine;
+        host._liveConsultEngine = engine;
+        try
+        {
+            string? src = host.ExecuteUseModuleDirective(spec, throwOnUnresolved: true);
+            // An engine library or a module without an export list has no
+            // import table to fill, as in the directive.
+            if (src is null) return true;
+            ModuleManifest manifest = host._modules[src];
+            var fids = new List<int>(imports.Count);
+            foreach (var (name, arity) in imports)
+            {
+                int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+                if (!manifest.ExportFunctors.Contains(fid))
+                    throw new ShumwayPrologException(IsoError.PermissionError(
+                        "access", "private_procedure",
+                        new CompoundTerm(":", new Term[]
+                        {
+                            new AtomTerm(src),
+                            new CompoundTerm("/", new Term[] { new AtomTerm(name), new IntTerm(arity) }),
+                        }),
+                        engine));
+                fids.Add(fid);
+            }
+            host.ImportExportsIntoUser(src, fids);
+        }
+        finally { host._liveConsultEngine = prevLive; }
+        return true;
+    }
+
+    /// <summary>The Spec of <c>use_module/1,2</c>: <c>library(Name)</c> or an
+    /// atom.</summary>
+    private static Term UseModuleSpec(Activation engine)
+    {
+        Term arg = MaterializeRegister(engine, 0);
+        if (arg is VarTerm)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (arg is not (AtomTerm or CompoundTerm { Functor: "library", Args.Length: 1 }))
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "atom_or_library", (object)arg);
+        return arg;
+    }
+
 
     /// <summary><c>save_state(+File)</c> — Arity-Prolog compatible
     /// builtin. Writes a snapshot of the engine's state (consult

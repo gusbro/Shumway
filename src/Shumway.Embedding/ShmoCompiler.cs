@@ -352,9 +352,24 @@ public static class ShmoCompiler
                     && umDir.Args.Length is 1 or 2
                     && TryReadLibrarySpec(umDir.Args[0], out string libName, out bool baked))
                 {
-                    IReadOnlyList<PredicateRef>? filter = null;
+                    List<PredicateRef>? filter = null;
                     if (umDir.Args.Length == 2)
-                        filter = new List<PredicateRef>(ReadPiListLenient(umDir.Args[1]));
+                    {
+                        List<(string Name, int Arity)> imports;
+                        try
+                        {
+                            imports = ConsultPipeline.DirectiveImportList("use_module/2", umDir.Args[1]);
+                        }
+                        catch (InvalidOperationException ex)
+                        {
+                            errors.Add(new ShmoCompileError(ex.Message,
+                                clause.Position.Line, clause.Position.Column));
+                            continue;
+                        }
+                        filter = new List<PredicateRef>(imports.Count);
+                        foreach (var (name, arity) in imports)
+                            filter.Add(new PredicateRef(name, arity));
+                    }
                     libraryDeps.Add(new ShmoLibraryDep(libName, filter, baked));
                     // /2 imports are resolved from the source alone (the filter is
                     // the list of imported indicators) — the compiler never needs
@@ -1066,8 +1081,9 @@ public static class ShmoCompiler
             + "or a comma-separated sequence).");
     }
 
-    // ADR-038 — walk a list of Name/Arity predicate indicators, yielding each and
-    // silently skipping non-PI entries (e.g. an op/3 spec in a module export list).
+    // ADR-038 — walk a module's export list, yielding each Name/Arity and
+    // skipping the rest (an op/3 spec). An import list is read strictly, by
+    // ConsultPipeline.ReadImportList.
     private static IEnumerable<PredicateRef> ReadPiListLenient(Term list)
     {
         Term cursor = list;
