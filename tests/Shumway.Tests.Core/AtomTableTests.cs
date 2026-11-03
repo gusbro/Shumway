@@ -427,11 +427,17 @@ public class AtomTableTests
     {
         AtomTable.PoisonDeadIds = poison;
         const int threads = 3, names = 64, perMark = 8, marks = 3_000;
+        var limit = TimeSpan.FromSeconds(30);
         var lastMark = new long[threads];
         for (int t = 0; t < threads; t++) lastMark[t] = AtomTable.BeginMark();
         using var stop = new CancellationTokenSource();
         int killed = 0;
-        var collector = Task.Run(() =>
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        // Threads of their own: on a runner with few cores the pool ran the
+        // interners to the end before the collector had a thread. And an atom
+        // dies only while every thread marks: a thread running alone stamps
+        // every name again, so the threads go on until the collector has killed.
+        var collector = Task.Factory.StartNew(() =>
         {
             while (!stop.IsCancellationRequested)
             {
@@ -439,11 +445,11 @@ public class AtomTableTests
                 for (int t = 0; t < threads; t++) min = Math.Min(min, Volatile.Read(ref lastMark[t]));
                 Interlocked.Add(ref killed, AtomTable.Collect(min));
             }
-        });
-        var interners = Enumerable.Range(0, threads).Select(t => Task.Run(() =>
+        }, TaskCreationOptions.LongRunning);
+        var interners = Enumerable.Range(0, threads).Select(t => Task.Factory.StartNew(() =>
         {
             var held = new List<Atom>(perMark);
-            for (int m = 0; m < marks; m++)
+            for (int m = 0; m < marks || (Volatile.Read(ref killed) == 0 && clock.Elapsed < limit); m++)
             {
                 foreach (var atom in held)
                 {
@@ -459,7 +465,7 @@ public class AtomTableTests
                 for (int k = 0; k < perMark; k++)
                     held.Add(AtomTable.Intern("race" + ((m * perMark + k + t) % names)));
             }
-        })).ToArray();
+        }, TaskCreationOptions.LongRunning)).ToArray();
         try
         {
             await Task.WhenAll(interners);
