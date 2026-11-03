@@ -113,6 +113,41 @@ public class LiveConsultLinkingTests
         finally { System.IO.File.Delete(v1); System.IO.File.Delete(v2); }
     }
 
+    // A library a running goal loads links its publics into that goal's code.
+    // A public whose name the program also defines in `user` (clpr's {}/1 and
+    // Logtalk's {File} shortcut) is the bare definition, as the full setup has
+    // it: the library's own qualified calls reach it, and user's calls still
+    // reach user's. The bare name was an alias of user's, and the load skipped
+    // the library's as if it were already linked.
+    [Fact]
+    public void ALibraryLoadedByARunningGoal_KeepsAPublicTheProgramAlsoDefines()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        e.ConsultString("{X} :- write(user_braces(X)), nl.");
+        Assert.True(e.Query("use_module(library(clpr), []), clpr:{X > 1, X < 3}, \\+ X = 0.").Success);
+        string file = WriteTemp(":- use_module(library(clpr), []).\np(X) :- clpr:{X > 1, X < 3}.\n").Replace('\\', '/');
+        var f = new PrologEngine { Out = new System.IO.StringWriter() };
+        f.ConsultString("{X} :- write(user_braces(X)), nl.");
+        Assert.True(f.Query($"consult('{file}'), p(X), \\+ X = 0.").Success);
+        Assert.DoesNotContain("user_braces", e.Out!.ToString() + f.Out!.ToString());
+        // user's own stays user's, in the query that loaded and after it.
+        Assert.True(f.Query("{same_query}, p(Y), \\+ Y = 0.").Success);
+        Assert.True(f.Query("{next_query}.").Success);
+        Assert.Contains("user_braces(same_query)", f.Out!.ToString());
+        Assert.Contains("user_braces(next_query)", f.Out!.ToString());
+    }
+
+    // The same within the one query that loads the library: user's {}/1 is
+    // not turned into a way to the library's.
+    [Fact]
+    public void ALibraryLoadedByARunningGoal_LeavesTheProgramsDefinitionItsOwn()
+    {
+        var e = new PrologEngine { Out = new System.IO.StringWriter() };
+        e.ConsultString("{X} :- write(user_braces(X)), nl.");
+        Assert.True(e.Query("use_module(library(clpr), []), {after_load}, clpr:{X > 1}, \\+ X = 0.").Success);
+        Assert.Contains("user_braces(after_load)", e.Out!.ToString());
+    }
+
     private static string RenderList(Term? t)
     {
         var sb = new System.Text.StringBuilder("[");
