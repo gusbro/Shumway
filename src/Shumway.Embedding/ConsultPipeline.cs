@@ -1600,6 +1600,7 @@ internal sealed class ConsultPipeline
                 "double_quotes" => E._flags.DoubleQuotes.ToString().ToLowerInvariant(),
                 "unknown" => E._flags.Unknown,
                 "occurs_check" => E._flags.OccursCheck,
+                "verbose" => E._flags.Verbose,
                 _ => null,   // unknown flag → the condition cannot hold
             };
             return actual is not null && valueTerm is AtomTerm v && v.Name == actual;

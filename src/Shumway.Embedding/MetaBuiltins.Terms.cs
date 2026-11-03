@@ -264,6 +264,14 @@ public static partial class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "verbose")
+        {
+            if (valueName != "normal" && valueName != "silent")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+            host.Flags.Verbose = valueName;
+            return true;
+        }
         if (flagName == "implicit_dynamic")
         {
             if (valueName != "true" && valueName != "false")
@@ -441,6 +449,9 @@ public static partial class MetaBuiltins
             case "occurs_check":
                 return UnifyAtom(engine, 1, host.Flags.OccursCheck);
 
+            case "verbose":
+                return UnifyAtom(engine, 1, host.Flags.Verbose);
+
             case "implicit_dynamic":
                 return UnifyAtom(engine, 1, host.Flags.ImplicitDynamic ? "true" : "false");
 
@@ -522,7 +533,7 @@ public static partial class MetaBuiltins
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat", "lenient_escapes", "encoding",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
-        "tabling",
+        "tabling", "verbose",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)

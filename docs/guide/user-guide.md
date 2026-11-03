@@ -117,9 +117,57 @@ Run `shumway --help` for the full flag list. Highlights: `--clpfd` / `--clpr`
 (enable a constraint library before parsing, so its operators are known),
 `--foreign-dll` / `--native-dll` (interop, same names as `shumway-link`),
 `-g goal` / `--goal goal` (run a goal after consulting, then stay at the
-prompt), `--debug` / `--debug-wait` (Visual Studio debugging), and
-`--dap <port>` / `--dap-wait <port>` (VS Code debugging: see
-[`debugger-vscode.md`](debugger-vscode.md)).
+prompt; repeatable, the goals run in order), `-t goal` / `--toplevel goal`
+(run a goal in place of the interactive loop and exit with its outcome),
+`-q` / `--quiet` (no banner and no load messages), `--debug` / `--debug-wait`
+(Visual Studio debugging), and `--dap <port>` / `--dap-wait <port>` (VS Code
+debugging: see [`debugger-vscode.md`](debugger-vscode.md)).
+
+```bash
+shumway -g main -t halt app.pl     # run main and exit, as a script
+shumway -q app.pl                  # start quiet
+```
+
+A `-t` goal ends the process with status 0 when it succeeds, 1 when it fails
+and 2 when it raises an exception; `halt/1` inside it sets the status itself.
+With a `-t` goal there is no interactive session, so no banner either.
+
+`-q` also sets the `verbose` flag to `silent` (it is `normal` otherwise), as
+SWI-Prolog's `-q` does. A program can read it to stay quiet as well, and
+while it is `silent`, `print_message/2` prints no `informational` message.
+
+### A saved top level
+
+`--save-toplevel exe` builds an executable that is this top level with
+compiled code already loaded: `.shum` bundles, `.shmo` objects, or both.
+
+```bash
+shumway --save-toplevel mytop -g "set_prolog_flag(double_quotes, codes)" -q lib.shum app.shmo
+```
+
+At every start `mytop` loads the bundles named here, in that order, and runs
+the `-g` goals given here once each, silently. A saved goal that fails or
+raises ends the start with status 1 or 2. A `-t` goal given here replaces the
+interactive loop, and `-q` given here makes the executable start quiet.
+
+The `.shmo` objects are linked when the executable is built, all of them into
+one bundle that loads where the first of them stands on the command line.
+They are linked as `shumway-link --library` links them: every predicate is
+kept, and a library they use is found on the same search path. A predicate
+they call without defining it is a warning, not an error, since a bundle
+named beside them or a file consulted at run time may define it. Such a call
+is resolved by name when it runs (see
+[How a goal resolves](#how-a-goal-resolves-the-name-lookup-algorithm)).
+
+At run time `mytop` reads its command line as `shumway` does: the files it
+names are consulted after the saved goals, its own `-g` goals run after
+those, its `-t` replaces the saved one, and what follows `--` is the `argv`
+flag. Source files cannot be saved: compile them first with
+`shumway-compile` (see
+[Separate compilation workflow](#separate-compilation-workflow)), which is
+also what makes the start fast. Building the executable needs the .NET SDK,
+as `shumway-link --exe` does; `--self-contained` bundles the .NET runtime
+too.
 
 ### Using it
 
@@ -1093,6 +1141,20 @@ with `--exe`.
 `--dll` and `--exe` are mutually exclusive (one bundle, one output shape).
 The same `LibraryEmitter.Emit(...)` is available as a plain .NET API for
 callers that drive the linker in-process.
+
+### Step 3c: A top level with the program loaded
+
+A program that is used by querying it, rather than by running one goal,
+ships as a top level with its objects loaded:
+
+```bash
+shumway --save-toplevel mytop lib.shmo app.shmo
+```
+
+`mytop` is the interactive top level, starting with `lib.shmo` and
+`app.shmo` linked into one bundle and loaded. It takes startup goals, a goal
+in place of the interactive loop and a quiet start, given when it is built
+or when it runs. See [A saved top level](#a-saved-top-level).
 
 ### In-process (no CLI)
 

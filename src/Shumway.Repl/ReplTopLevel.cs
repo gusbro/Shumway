@@ -20,16 +20,22 @@ namespace Shumway.Repl;
 /// </summary>
 internal static class ReplTopLevel
 {
-    private static int Main(string[] args)
+    private static int Main(string[] args) => Launch(args, null);
+
+    /// <summary>The top level, plain or saved (<see cref="SavedTopLevel"/>).</summary>
+    internal static int Launch(string[] args, SavedTopLevel? saved)
     {
         // On a stack deep enough for the programs people load: reading and
         // transforming a clause descend the term as written, and a default
         // 1 MB thread runs out of room a few hundred levels in.
-        try { return Shumway.Embedding.DeepStackHost.Run(() => MainCore(args)); }
+        try { return Shumway.Embedding.DeepStackHost.Run(() => MainCore(args, saved)); }
         finally { Shumway.Embedding.PrologEngine.PrintLoadProfile(); }
     }
 
-    private static int MainCore(string[] args)
+    // -q / --quiet: no banner and no load messages; the verbose flag says so.
+    private static bool _quiet;
+
+    private static int MainCore(string[] args, SavedTopLevel? saved)
     {
         // UTF-8 stdout/stderr (no BOM): Windows consoles default to the OEM
         // codepage (CP850 writes é as 0x82), so any non-ASCII text a
@@ -61,6 +67,12 @@ internal static class ReplTopLevel
             PrintUsage();
             return 0;
         }
+        _quiet = (saved?.Quiet ?? false)
+            || Array.IndexOf(ownArgs, "-q") >= 0 || Array.IndexOf(ownArgs, "--quiet") >= 0;
+        bool saving = Array.IndexOf(ownArgs, "--save-toplevel") >= 0;
+        // The banner opens an interactive session; a -t goal runs in its place.
+        bool banner = !_quiet && !saving && saved?.TopLevelGoal is null
+            && Array.IndexOf(ownArgs, "-t") < 0 && Array.IndexOf(ownArgs, "--toplevel") < 0;
 
         // Route all console output through a column tracker so the top-level can
         // start an answer on a fresh line when a goal left the cursor mid-line
@@ -88,18 +100,22 @@ internal static class ReplTopLevel
         // Name and version first, as every Prolog top level does — the
         // version reported here is the same one `current_prolog_flag(
         // version_data, V)` gives, both from PrologEngine's constants.
-        Console.WriteLine(PrologEngine.VersionBanner);
-        Console.WriteLine(
-            $"End a query with '.'  —  'halt.' or {eofKey} exits.");
+        if (banner)
+        {
+            Console.WriteLine(PrologEngine.VersionBanner);
+            Console.WriteLine(
+                $"End a query with '.'  —  'halt.' or {eofKey} exits.");
+        }
 #if DEBUG
         // A Debug build of the engine itself (unoptimised C#) is markedly
         // slower and is not what Prolog-level debugging needs: that is a
         // release build run with --debug / --debug-wait, which compiles the
         // consulted program debuggable while the engine keeps release speed.
-        Console.WriteLine(
-            "note: this is a Debug build of Shumway itself, markedly slower than Release."
-            + "\n      To debug Prolog programs, build with -c Release and run with --debug"
-            + "\n      (or --debug-wait) instead.");
+        if (banner)
+            Console.WriteLine(
+                "note: this is a Debug build of Shumway itself, markedly slower than Release."
+                + "\n      To debug Prolog programs, build with -c Release and run with --debug"
+                + "\n      (or --debug-wait) instead.");
 #endif
 
 
@@ -120,7 +136,9 @@ internal static class ReplTopLevel
         var nativeDlls = new List<string>();
         var libraryDirs = new List<string>();   // -L / --library-dir (ADR-038)
         var quadFiles = new List<string>();      // --quads: test transcripts to run
-        string? startupGoalArg = null;   // --goal / -g: run after consulting, then stay
+        var startupGoals = new List<string>();   // --goal / -g: run after consulting, then stay
+        string? topLevelArg = null;              // --toplevel / -t: in the interactive loop's place
+        string? saveTopLevelArg = null;          // --save-toplevel <exe>
         int? dapPortArg = null;          // --dap <port>: ADR-036 VS Code endpoint
         bool dapWait = false;            // --dap-wait: hold the start until configured
         var flagArgs = new HashSet<int>();
@@ -128,7 +146,8 @@ internal static class ReplTopLevel
         {
             string flag = consultFiles[i];
             if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g"
-                or "--dap" or "--dap-wait" or "--library-dir" or "-L" or "--quads"))
+                or "--dap" or "--dap-wait" or "--library-dir" or "-L" or "--quads"
+                or "--toplevel" or "-t" or "--save-toplevel"))
                 continue;
             flagArgs.Add(i);
             if (i + 1 >= consultFiles.Length)
@@ -154,7 +173,10 @@ internal static class ReplTopLevel
                     else
                         Console.Error.WriteLine($"% {flag} needs a port number (0 = pick one)");
                     break;
-                default: startupGoalArg = consultFiles[i + 1]; break;
+                case "--toplevel":
+                case "-t": topLevelArg = consultFiles[i + 1]; break;
+                case "--save-toplevel": saveTopLevelArg = consultFiles[i + 1]; break;
+                default: startupGoals.Add(consultFiles[i + 1]); break;
             }
             i++;
         }
@@ -162,8 +184,13 @@ internal static class ReplTopLevel
         // The files to consult: everything that is not a flag, and not a flag's value.
         string[] sourceFiles = consultFiles
             .Where((a, i) => !flagArgs.Contains(i)
-                && a is not ("--clpfd" or "--clpr" or "--debug" or "--debug-wait"))
+                && a is not ("--clpfd" or "--clpr" or "--debug" or "--debug-wait"
+                    or "-q" or "--quiet" or "--self-contained"))
             .ToArray();
+
+        if (saveTopLevelArg is not null)
+            return SaveTopLevel(saveTopLevelArg, sourceFiles, startupGoals, topLevelArg,
+                libraryDirs, Array.IndexOf(consultFiles, "--self-contained") >= 0, saved);
 
         var engine = new PrologEngine();
         // user_input reads the REPL's shared type-ahead buffer: what the typed
@@ -190,6 +217,7 @@ internal static class ReplTopLevel
         // RunQuery has the shared top-level logic to drive.
         _session = new TopLevelSession(engine);
         engine.Flags.Argv = programArgs;
+        engine.Flags.Verbose = _quiet ? "silent" : "normal";
         // SHUMWAY_IL_PROMOTE=N overrides the engine's promotion threshold; N <= 0
         // keeps every dispatch on the Tier-0 interpreter.
         string? promoteEnv = Environment.GetEnvironmentVariable("SHUMWAY_IL_PROMOTE");
@@ -275,6 +303,28 @@ internal static class ReplTopLevel
                     ? "% attached."
                     : "% attached (the debugger said nothing; running anyway).");
             }
+        }
+
+        // A saved top level's bundles and goals come before the command line's
+        // files: they are what the executable is (--save-toplevel).
+        if (saved is not null)
+        {
+            try
+            {
+                foreach (byte[] bundle in saved.Bundles)
+                {
+                    engine.LoadBundle(BundleReader.FromBytes(bundle));
+                    engine.PromoteBareBundleModulesToUser();
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintError(engine, ex);
+                return 2;
+            }
+            foreach (string goal in saved.Goals)
+                if (RunOnce(engine, goal, failureMessage: true) is int status && status != 0)
+                    return status;
         }
 
         foreach (string path in sourceFiles)
@@ -389,9 +439,10 @@ internal static class ReplTopLevel
         // the run-and-exit variant). Runs after every file is consulted, and under
         // --debug-wait after the debugger armed its breakpoints, so a program can be
         // launched and run under the debugger in one command line.
-        if (!string.IsNullOrWhiteSpace(startupGoalArg))
+        foreach (string startupGoalArg in startupGoals)
         {
-            string goalText = startupGoalArg!.Trim();
+            if (string.IsNullOrWhiteSpace(startupGoalArg)) continue;
+            string goalText = startupGoalArg.Trim();
             if (!goalText.EndsWith(".", StringComparison.Ordinal)) goalText += " .";
             Shumway.Core.Profiler.Reset();
             try { RunQuery(engine, goalText); }
@@ -403,6 +454,14 @@ internal static class ReplTopLevel
                 MaybeDumpProfile(engine);
                 return goalHalt;
             }
+        }
+
+        if ((topLevelArg ?? saved?.TopLevelGoal) is string topLevelGoal)
+        {
+            int status = RunOnce(engine, topLevelGoal, failureMessage: false) ?? 0;
+            MaybeDumpIlStats(engine);
+            MaybeDumpProfile(engine);
+            return status;
         }
 
         while (true)
@@ -527,6 +586,158 @@ internal static class ReplTopLevel
         foreach (var n in promoted) Console.Error.WriteLine($"    {n}");
     }
 
+    // A goal run once and silently: a saved top level's goal, or the -t goal.
+    // Null when it succeeded; otherwise the exit status: 1 when it failed, 2
+    // when it raised, halt's own when it halted. A -t goal that succeeds ends
+    // the process with 0, which the caller supplies.
+    private static int? RunOnce(PrologEngine engine, string goal, bool failureMessage)
+    {
+        string text = goal.Trim();
+        if (!text.EndsWith(".", StringComparison.Ordinal)) text += " .";
+        try
+        {
+            bool succeeded = engine.Query(text).Success;
+            if (engine.LastHaltExitCode is int halted) return halted;
+            if (succeeded) return null;
+            if (failureMessage) Console.Error.WriteLine($"% goal failed: {goal}");
+            return 1;
+        }
+        catch (Shumway.Core.PrologHaltException halted) { return halted.ExitCode; }
+        catch (Exception ex)
+        {
+            PrintError(engine, ex);
+            return engine.LastHaltExitCode ?? 2;
+        }
+    }
+
+    // --save-toplevel <exe>: an executable that is this top level with the given
+    // bundles and objects loaded and the -g goals run at every start, the -t goal
+    // in the interactive loop's place and -q for good. At run time it reads its
+    // command line as shumway does. Built as shumway-link --exe builds, with
+    // dotnet publish.
+    private static int SaveTopLevel(string output, string[] files, List<string> goals,
+        string? topLevelGoal, List<string> libraryDirs, bool selfContained,
+        SavedTopLevel? saved)
+    {
+        if (saved is not null)
+        {
+            Console.Error.WriteLine("% --save-toplevel: a saved top level cannot save another; use shumway.");
+            return 1;
+        }
+        var bundles = new List<byte[]>();
+        var objects = new List<ShmoObject>();
+        int objectsAt = -1;
+        foreach (string file in files)
+        {
+            bool isBundle = file.EndsWith(".shum", StringComparison.OrdinalIgnoreCase);
+            if (!isBundle && !file.EndsWith(".shmo", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"% --save-toplevel embeds .shum bundles and .shmo objects, "
+                    + $"and {file} is neither: compile it first (shumway-compile).");
+                return 1;
+            }
+            try
+            {
+                if (isBundle)
+                {
+                    byte[] bytes = System.IO.File.ReadAllBytes(file);
+                    BundleReader.FromBytes(bytes);
+                    bundles.Add(bytes);
+                }
+                else
+                {
+                    if (objectsAt < 0) objectsAt = bundles.Count;
+                    objects.Add(ShmoReader.ReadFromFile(file));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"% --save-toplevel: cannot read {file}: {ex.Message}");
+                return 1;
+            }
+        }
+        if (objects.Count > 0)
+        {
+            // The objects link together, as shumway-link --library links them, into
+            // one bundle loaded where the first of them stands. What they leave
+            // undefined is a warning: a bundle beside them, or a file consulted at
+            // run time, may define it.
+            LinkResult linked;
+            try
+            {
+                linked = ShmoLinker.Link(new LinkConfig
+                {
+                    Objects = objects,
+                    Library = true,
+                    AllowUndefined = true,
+                    LibraryDirs = LinkLibraryDirs(libraryDirs),
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.Error.WriteLine($"% --save-toplevel: {ex.Message}");
+                return 1;
+            }
+            foreach (var d in linked.Diagnostics)
+                if (d.Severity != LinkSeverity.Info)
+                    Console.Error.WriteLine($"% {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
+            if (!linked.Success || linked.Bytes is null) return 1;
+            bundles.Insert(objectsAt, linked.Bytes);
+        }
+        var toValidate = new List<string>(goals);
+        if (topLevelGoal is not null) toValidate.Add(topLevelGoal);
+        foreach (string goal in toValidate)
+            if (!ExecutableEmitter.TryValidateGoal(goal, out _, out _, out string? error))
+            {
+                Console.Error.WriteLine($"% --save-toplevel: {goal}: {error}");
+                return 1;
+            }
+        // The executable references this assembly: it runs this very top level.
+        string self = typeof(ReplTopLevel).Assembly.Location;
+        if (string.IsNullOrEmpty(self))
+        {
+            Console.Error.WriteLine("% --save-toplevel needs shumway's own assembly on disk "
+                + "(a framework-dependent build, not a single-file or native one).");
+            return 1;
+        }
+        var resources = new List<(string Name, byte[] Bytes)>(bundles.Count);
+        for (int i = 0; i < bundles.Count; i++)
+            resources.Add((SavedTopLevel.ResourceName(i), bundles[i]));
+        var result = ExecutableEmitter.EmitWrapper(
+            SavedTopLevel.GenerateProgram(bundles.Count, goals, topLevelGoal, _quiet),
+            resources, new[] { self }, output,
+            selfContained ? ExecutableDeploymentMode.SelfContained : ExecutableDeploymentMode.FrameworkDependent);
+        foreach (var d in result.Diagnostics)
+            Console.Error.WriteLine($"% {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
+        if (!result.Success) return 1;
+        if (!_quiet) Console.WriteLine($"% saved {result.OutputPath}");
+        return 0;
+    }
+
+    // Where the link of --save-toplevel's objects finds a library they use, as
+    // shumway-link does: -L's directories, SHUMWAY_LIBRARY_PATH's, then the
+    // shipped lib/ beside the executable and a lib/ under the current directory.
+    private static List<string> LinkLibraryDirs(List<string> flagged)
+    {
+        var dirs = new List<string>(flagged);
+        string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
+        if (!string.IsNullOrEmpty(env))
+            // Trimmed by hand: net48 has no StringSplitOptions.TrimEntries.
+            foreach (string entry in env.Split(System.IO.Path.PathSeparator,
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                string dir = entry.Trim();
+                if (dir.Length > 0) dirs.Add(dir);
+            }
+        foreach (string lib in new[]
+                 {
+                     System.IO.Path.Combine(AppContext.BaseDirectory, "lib"),
+                     System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "lib"),
+                 })
+            if (System.IO.Directory.Exists(lib) && !dirs.Contains(lib)) dirs.Add(lib);
+        return dirs;
+    }
+
     private static void ConsultFile(PrologEngine engine, string path)
     {
         try
@@ -538,7 +749,7 @@ internal static class ReplTopLevel
             if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
             {
                 engine.LoadBundle(path);
-                Console.WriteLine($"% loaded bundle {path}");
+                if (!_quiet) Console.WriteLine($"% loaded bundle {path}");
                 // REPL usability: standing in `user`, the bundle's module-local
                 // predicates would be invisible — unlike consulting the source.
                 // Alias each bare (non-library) module's locals into `user` so
@@ -557,7 +768,7 @@ internal static class ReplTopLevel
                     // Hide the compiler's internal `$`-helpers (aliased too, but
                     // noise); report only the module's user-facing predicates.
                     var preds = pm.Predicates.Where(p => !p.Name.StartsWith('$')).ToList();
-                    if (preds.Count > 0)
+                    if (preds.Count > 0 && !_quiet)
                         Console.WriteLine(
                             $"%   promoted '{pm.Module}' to user: {Indicators(preds)}");
                 }
@@ -577,7 +788,7 @@ internal static class ReplTopLevel
                 // path (so a later `:- use_module` of the same file is a
                 // no-op instead of a clause-doubling re-consult).
                 engine.ConsultFile(path);
-                Console.WriteLine($"% consulted {path}");
+                if (!_quiet) Console.WriteLine($"% consulted {path}");
             }
         }
         catch (Shumway.Core.PrologHaltException)
@@ -865,6 +1076,8 @@ internal static class ReplTopLevel
         string eof = OperatingSystem.IsWindows() ? "Ctrl-Z" : "Ctrl-D";
         Console.WriteLine(
             "Usage: shumway [options] [file.pl | bundle.shum ...] [-- arg ...]\n"
+            + "       shumway --save-toplevel <exe> [-g goal ...] [-t goal] [-q]\n"
+            + "               [bundle.shum | object.shmo ...]\n"
             + "\n"
             + "Interactive Shumway Prolog top-level. Consults each file named on the\n"
             + "command line (a .pl consults source; a .shum loads a linked bundle), then\n"
@@ -908,8 +1121,27 @@ internal static class ReplTopLevel
             + "                        VS Code launch uses — no goal can outrun them).\n"
             + "  -g, --goal <goal>     Run a goal after consulting, as if typed at the\n"
             + "                        prompt, then stay in the top level (end the goal\n"
-            + "                        with halt to exit instead). With --debug-wait it\n"
-            + "                        runs after the debugger has armed its breakpoints.\n"
+            + "                        with halt to exit instead). Repeatable: the goals\n"
+            + "                        run in order. With --debug-wait they run after the\n"
+            + "                        debugger has armed its breakpoints.\n"
+            + "  -t, --toplevel <goal> Run <goal> once instead of the interactive loop and\n"
+            + "                        exit: status 0 if it succeeded, 1 if it failed, 2\n"
+            + "                        if it raised (-t halt ends after the -g goals).\n"
+            + "  -q, --quiet           No banner and no load messages; the verbose flag is\n"
+            + "                        silent, so print_message/2 keeps informational\n"
+            + "                        messages quiet too.\n"
+            + "  --save-toplevel <exe> Build <exe>: this top level with the .shum bundles\n"
+            + "                        and .shmo objects named here loaded at every start\n"
+            + "                        (the objects linked together into one bundle, in\n"
+            + "                        the first one's place), then the -g goals\n"
+            + "                        given here, run once and silently (one that fails\n"
+            + "                        or raises ends the start with 1 or 2). -t and -q\n"
+            + "                        given here are saved too. At run time <exe> reads\n"
+            + "                        its command line as shumway does: its files, -g\n"
+            + "                        goals and -t come after the saved ones (a -t there\n"
+            + "                        replaces the saved one). Needs the .NET SDK, as\n"
+            + "                        shumway-link --exe does.\n"
+            + "  --self-contained      With --save-toplevel: bundle the .NET runtime too.\n"
             + "  -h, --help            Show this message.\n"
             + "\n"
             + "Environment:\n"
