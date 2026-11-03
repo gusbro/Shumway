@@ -192,4 +192,20 @@ public sealed class ImageFactTests
         Assert.True(d.Query("assertz(d(1)), assertz(d(2)), d(2), \\+ d(3).").Success);
         Assert.Equal(0, d.ImageFactsAsserted);
     }
+
+    // The image of a term whose arguments share a sub-term holds the block
+    // once; its block scan visits each block once too, or the scan's stack
+    // overflows on a term whose sharing multiplies the paths to a block.
+    [Fact]
+    public void AFactWhoseArgumentsShareSubTermsIsKeptAsAnImage()
+    {
+        var e = Engine(0, images: true);
+        Assert.True(e.Query("""
+            X1 = f(a, b, c), X2 = g(X1, X1, X1), X3 = g(X2, X2, X2), X4 = g(X3, X3, X3),
+            assertz(p(X4, X4)),
+            p(Z, W), Z == W, Z = g(A, B, C), A == B, B == C, A = g(D, E, F), D == E, E == F,
+            D = g(G, H, I), G == H, H == I, G == f(a, b, c).
+            """).Success);
+        Assert.Equal(1, e.ImageFactsAsserted);
+    }
 }

@@ -217,8 +217,11 @@ public sealed class TermImage : IEquatable<TermImage>, IAtomHolder
     }
 
     // Plain arrays, no delegate: the IL tier's helper analysis descends
-    // into this code. Each block is laid once, so a block count bounds the
-    // stack and the order.
+    // into this code. A block is visited once, whatever shares it (the copier
+    // lays a sub-term two arguments share once), so a block count bounds the
+    // stack; and a block is laid before its children, depth first by the
+    // compiler or breadth first by the copier, so from the last offset down
+    // the children's ends are known before their parent's.
     private int[] ComputeBlockEnds()
     {
         var cells = _cells;
@@ -226,16 +229,16 @@ public sealed class TermImage : IEquatable<TermImage>, IAtomHolder
         var ends = new int[n];
         var arity = new int[n];
         var boxed = new bool[n];
-        var order = new int[n];     // the blocks as found, a parent before its children
+        var isBlock = new bool[n];
         var isList = new bool[n];
         var stack = new int[n];
-        int count = 0, sp = 0;
+        int sp = 0;
         stack[sp++] = 0;
+        isBlock[0] = true;
         isList[0] = Root == Tag.Lis;
         while (sp > 0)
         {
             int bo = stack[--sp];
-            order[count++] = bo;
             int first = isList[bo] ? bo : bo + 1;
             int k = isList[bo] ? 2 : FunctorTable.Lookup(cells[bo].AsFunctorId).Arity;
             arity[bo] = k;
@@ -245,6 +248,8 @@ public sealed class TermImage : IEquatable<TermImage>, IAtomHolder
                 if (c.Tag is Tag.Str or Tag.Lis)
                 {
                     int sub = c.AsHeapIndex;
+                    if (isBlock[sub]) continue;
+                    isBlock[sub] = true;
                     isList[sub] = c.Tag == Tag.Lis;
                     stack[sp++] = sub;
                 }
@@ -254,9 +259,9 @@ public sealed class TermImage : IEquatable<TermImage>, IAtomHolder
                 }
             }
         }
-        for (int j = count - 1; j >= 0; j--)   // the children before their parent
+        for (int bo = n - 1; bo >= 0; bo--)
         {
-            int bo = order[j];
+            if (!isBlock[bo]) continue;
             int first = isList[bo] ? bo : bo + 1;
             int k = arity[bo];
             int end = first + k;
