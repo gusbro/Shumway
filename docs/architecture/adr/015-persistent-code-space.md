@@ -2,7 +2,8 @@
 
 ## Status
 
-Shipped ([Phase 8](../../history/phase-8-closure.md)).
+Shipped ([Phase 8](../../history/phase-8-closure.md)). Amended 2026-10-31:
+the query's code lives in the one buffer (see the end).
 
 Implemented in chunks 114–128 (the closure doc maps them):
 
@@ -586,6 +587,35 @@ Each is its own chunk, landing with the test suite green:
   points would be far harder. (Across queries there is no leak
   regardless — the per-query buffer is reclaimed by the GC when the
   query ends.)
+
+## Amendment (2026-10-31): a query's code lives in the buffer
+
+As shipped, a query's own code (the `__query__` clause and its helpers) was
+linked into a buffer of its own at an address above the persistent program,
+and the interpreter read a two-buffer view split at that address. The
+persistent program grew below the split while the query ran, and nothing
+stopped it from reaching it: a long query that reloaded files thousands of
+times grew its code into the split, where the view read the query's code
+instead, and ran it (#189). An interim fix moved the split just below the
+resume markers.
+
+The buffer is now one array, and the query's code is appended to it at
+setup, right after the persistent program, or into a hole an earlier query
+left. What the query appends while it runs (asserted clauses, consulted
+files) follows it. When the query ends its code is given back: the buffer
+shrinks to where the code began when nothing was appended after it, else
+the bytes join the free list, where the next clause, live link or query
+takes them. The view is a plain array again, so every read is one index,
+and nothing classifies an address by a split: a query's range is recorded
+with its program (`LinkedProgram.QueryStart`/`QueryEnd`), and a pc past the
+end of the nearest linked predicate is an appended clause wherever it lies.
+
+The buffer has one limit, `PrologEngine.CodeSpaceLimit`, at most the resume
+markers (1 GB), which is the default in a 64-bit process; a 32-bit process
+defaults to 256 MB, since its heap cannot hold an array near the markers.
+Growing past the limit, or failing to allocate the grown array, is
+`resource_error(code_space)`; an assert checks for room, at the end or in a
+hole, before it changes the database.
 
 ## Quick reference
 

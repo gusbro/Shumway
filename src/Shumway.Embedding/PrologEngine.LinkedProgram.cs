@@ -23,6 +23,10 @@ public sealed partial class PrologEngine
         public Activation? Engine;
         public string? QueryText;
 
+        /// <summary>Where the query's own code lies in the buffer, [Start, End);
+        /// End is 0 once the code was given back (ReleaseQueryCode).</summary>
+        public int QueryStart, QueryEnd;
+
         /// <summary>The predicates' entry addresses, sorted; built on first use.</summary>
         public int[]? SortedEntries;
 
@@ -55,6 +59,15 @@ public sealed partial class PrologEngine
         {
             if (Map is not LayeredIntMap<CompiledPredicate> map) return;
             foreach (var (addr, pred) in preds) map[addr] = pred;
+            SortedEntries = null;
+            FidMemoLo = FidMemoHi = int.MaxValue;
+        }
+
+        /// <summary>The predicate linked at <paramref name="addr"/> is gone: new
+        /// code may take its bytes.</summary>
+        public void ForgetLinked(int addr)
+        {
+            if (Map is not LayeredIntMap<CompiledPredicate> map || !map.Remove(addr)) return;
             SortedEntries = null;
             FidMemoLo = FidMemoHi = int.MaxValue;
         }
@@ -101,8 +114,17 @@ public sealed partial class PrologEngine
     /// an activation still on the old array keeps the old record.</summary>
     private void OnProgramMoved(Activation engine, int copied)
     {
-        byte[] program = engine.CurrentProgram!;
-        var old = (engine.HostProgram as LinkedProgram)?.Breakpoints;
+        var moved = MoveBreakpointRecord((engine.HostProgram as LinkedProgram)?.Breakpoints,
+            engine.CurrentProgram!, copied);
+        if (engine.HostProgram is LinkedProgram p) p.Breakpoints = moved;
+        if (engine.BreakpointOriginals is not null) engine.BreakpointOriginals = moved.Patches;
+    }
+
+    /// <summary>The program moved to <paramref name="program"/>, a copy of the
+    /// first <paramref name="copied"/> bytes of the array <paramref name="old"/>
+    /// describes: the patches and live code below the copy move with it.</summary>
+    private BreakpointRecord MoveBreakpointRecord(BreakpointRecord? old, byte[] program, int copied)
+    {
         var moved = new BreakpointRecord(program) { SitesVersion = old?.SitesVersion ?? 0 };
         if (old is not null)
         {
@@ -114,9 +136,12 @@ public sealed partial class PrologEngine
         }
         _breakpointRecords.Remove(program);
         _breakpointRecords.Add(program, moved);
-        if (engine.HostProgram is LinkedProgram p) p.Breakpoints = moved;
-        if (engine.BreakpointOriginals is not null) engine.BreakpointOriginals = moved.Patches;
+        return moved;
     }
+
+    private void MoveBreakpointRecord(byte[] old, byte[] program, int copied)
+        => MoveBreakpointRecord(_breakpointRecords.TryGetValue(old, out var record) ? record : null,
+            program, copied);
 
     /// <summary>Bumped whenever the armed breakpoint sites change, so a program whose
     /// buffer was last synced before knows it is behind.</summary>
@@ -127,19 +152,112 @@ public sealed partial class PrologEngine
     /// builtins.</summary>
     private readonly List<Activation> _running = new();
 
+    /// <summary>The innermost activation running on this thread's stack, of this engine
+    /// or of the engine whose builtin made this one (<see cref="CreateSubEngine"/>).</summary>
+    private Activation? RunningActivation()
+        => _running.Count > 0 ? _running[^1] : _madeBy?.RunningActivation();
+
+    // What this engine keeps beyond its activations claims atoms through this, from
+    // the first run or change with collection on (ADR-003).
+    private HostAtomClaim? _hostAtoms;
+
+    internal HostAtomClaim? HostAtoms
+        => _hostAtoms ?? (AtomTable.CollectionEnabled
+            ? _hostAtoms = new HostAtomClaim(new HeldAtoms(this))
+            : null);
+
+    // A change the host makes from outside a run holds the engine busy, as a run
+    // does: the code it compiles claims its atoms before a collection can mark the
+    // engine (ADR-003).
+    private T HostChange<T>(Func<T> change)
+    {
+        var claim = HostAtoms;
+        claim?.EnterHostChange();
+        bool completed = false;
+        try
+        {
+            T result = change();
+            completed = true;
+            return result;
+        }
+        finally { claim?.ExitHostChange(completed); }
+    }
+
+    private void HostChange(Action change) => HostChange(() => { change(); return 0; });
+
+    // The engine's code claims its atoms as it lands and gives them up as it
+    // dies, as its literals do (ADR-003): a count per atom in the claimant.
+    internal void RetainCode(int[] atomIds)
+    {
+        if (atomIds.Length > 0) HostAtoms?.Claimant.Retain(atomIds);
+    }
+
+    internal void DropCode(int[] atomIds)
+    {
+        if (atomIds.Length > 0) _hostAtoms?.Claimant.Drop(atomIds);
+    }
+
+    // The transient atoms an image's cells name, ascending.
+    internal static int[] ImageAtomIds(Shumway.Core.TermImage image) => image.TransientAtomIds;
+
+    /// <summary>The atoms a link's live predicates name, ascending: a dead
+    /// version laid out to keep the addresses after it is not among them.</summary>
+    internal static int[] LinkAtomIds(Shumway.Compiler.Wam.Linker.LinkResult link)
+    {
+        int[]? only = null;
+        List<int>? all = null;
+        foreach (var pred in link.PredicatesByAddress.Values)
+        {
+            int[] ids = Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids;
+            if (ids.Length == 0) continue;
+            if (only is null && all is null) { only = ids; continue; }
+            all ??= new List<int>(only!);
+            all.AddRange(ids);
+        }
+        if (all is null) return only ?? System.Array.Empty<int>();
+        all.Sort();
+        int n = 0;
+        for (int i = 0; i < all.Count; i++)
+            if (n == 0 || all[i] != all[n - 1]) all[n++] = all[i];
+        all.RemoveRange(n, all.Count - n);
+        return all.ToArray();
+    }
+
+    // Only builtins change these stores, inside a run, so an engine that does not
+    // run can be marked from another thread.
+    private sealed class HeldAtoms : IAtomHolder
+    {
+        private readonly PrologEngine _engine;
+        public HeldAtoms(PrologEngine engine) => _engine = engine;
+
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            _engine.GlobalVars.MarkAtoms(set);
+            _engine.FlagStore.MarkAtoms(set);
+            _engine._records?.MarkAtoms(set);
+        }
+    }
+
     /// <summary>An activation starts or resumes running: its program is the current
-    /// one until it stops (<see cref="LeaveRun"/>).</summary>
+    /// one until it stops (<see cref="LeaveRun"/>). Its first run joins the atom domain
+    /// of the activation it runs inside, if any (ADR-003): from there a collection
+    /// marks it, and its setup is done. Its runs are runs of the engine.</summary>
     private void EnterRun(Activation engine)
     {
+        if (AtomTable.CollectionEnabled && engine.AtomDomain is null)
+            engine.JoinAtomDomain(RunningActivation(), HostAtoms);
+        engine.EnterAtomRun();
         _running.Add(engine);
         if (engine.HostProgram is LinkedProgram p && !ReferenceEquals(p, _cur)) SwitchTo(p);
     }
 
-    /// <summary>The run <see cref="EnterRun"/> began has stopped: the activation it
-    /// ran inside of, if any, is current again. With none, the program last linked
-    /// stays current, as it always did between queries.</summary>
-    private void LeaveRun()
+    /// <summary>The run <see cref="EnterRun"/> began has stopped,
+    /// <paramref name="completed"/> unless by an exception: the activation it ran
+    /// inside of, if any, is current again. With none, the program last linked stays
+    /// current, as it always did between queries.</summary>
+    private void LeaveRun(bool completed)
     {
+        _running[^1].LeaveAtomRun(completed);
         _running.RemoveAt(_running.Count - 1);
         if (_running.Count > 0 && _running[^1].HostProgram is LinkedProgram p
             && !ReferenceEquals(p, _cur))

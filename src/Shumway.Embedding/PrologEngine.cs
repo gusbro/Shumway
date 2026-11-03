@@ -159,7 +159,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// succeeded, else <c>failed</c> or <c>raised(Ball)</c>.</summary>
     internal Term? ConsultGoalOutcome;
     /// <summary>Compiled-program products built so far: one per query setup
-    /// that found the program changed. A load's setup cost grows with it.</summary>
+    /// that found the program changed. A load's setup cost grows with it, and
+    /// the tests that pin which mutations leave the product in place read it.</summary>
     internal long ProgramProductBuilds;
     internal readonly OperatorTable _operators = OperatorTable.Default();
 
@@ -1049,6 +1050,12 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
         SeedControlMetaTemplates();
+        // An image's atoms live while code names its pool entry (ADR-003).
+        _literalPools.Images.OnNamed = image => RetainCode(ImageAtomIds(image));
+        _literalPools.Images.OnUnnamed = image => DropCode(ImageAtomIds(image));
+        // A fact kept as the image of its head claims its atoms while the store holds it.
+        _dynStore.ClaimAtoms = RetainCode;
+        _dynStore.ReleaseAtoms = DropCode;
 
         // Every operator defined (a `:- op` applies here at parse time) is
         // routed to the active consult's collection frame, so the
@@ -1062,7 +1069,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
-        IlPromotion.PromotabilityChanged = InvalidatePersistent;
+        IlPromotion.PromotabilityChanged = () => InvalidatePersistent("PromotabilityChanged");
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
@@ -1071,6 +1078,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
         IlPromotion.StringPoolProvider = StringPoolForFid;
         IlPromotion.OnDelegateEvicted = ClearLiveIlSlots;
+        // Compiled code claims its atoms while it can run (ADR-003).
+        IlPromotion.RetainAtoms = RetainCode;
+        IlPromotion.DropAtoms = DropCode;
+        IlPromotion.LiveActivations = () => ChainPatcher.LiveActivations();
 
         if (consultPrelude) InstallPrelude();
     }
@@ -1211,13 +1222,16 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         return engine;
     }
 
+    // The engine whose builtin made this one, for a query run inside it.
+    private PrologEngine? _madeBy;
+
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
     /// consulted modules and operator declarations. Used by meta-builtins like
     /// <c>findall/3</c> that need to enumerate every solution of a goal
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
-        var sub = new PrologEngine { Out = Out };
+        var sub = new PrologEngine { Out = Out, _madeBy = this };
         // Replace the sub-engine's default empty module set with deep copies
         // of ours so modifications in the sub-engine never bleed back.
         sub._modules.Clear();
@@ -1230,9 +1244,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;
         }
-        _dynStore.CopyInto(sub._dynStore);
-        foreach (var (fid, clauses) in _dynStore.Slots)
-            sub._dynStore[fid] = new List<Clause>(clauses);
+        // The copies of the facts kept as images claim their atoms in the
+        // sub-engine (ADR-003): a change of its store outside a run.
+        sub.HostChange(() =>
+        {
+            _dynStore.CopyInto(sub._dynStore);
+            foreach (var (fid, clauses) in _dynStore.Slots)
+                sub._dynStore[fid] = new List<Clause>(clauses);
+        });
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
         // The sub-engine shares the parent's static program, so the

@@ -15,7 +15,7 @@ namespace Shumway.Embedding;
 /// calls run the delegate. Predicates outside the IL subset are marked
 /// unpromotable once and never re-attempted.
 /// </summary>
-public sealed class IlPromotionStore
+public sealed partial class IlPromotionStore
 {
     private readonly Dictionary<int, int> _counters = new();
     private readonly Dictionary<int, PredicateDelegate> _delegates = new();
@@ -363,7 +363,8 @@ public sealed class IlPromotionStore
         var prepared = RunOnLargeStack(() => Prepare(offer));
         if (!offer.Wakes) _bound.Add(offer.FunctorId);
         InstallDelegate(offer.FunctorId,
-            offer.IsDynamic ? GuardDynamicSnapshot(offer.FunctorId, prepared.Delegate) : prepared.Delegate);
+            offer.IsDynamic ? GuardDynamicSnapshot(offer.FunctorId, prepared.Delegate) : prepared.Delegate,
+            ArtifactFor(offer.FunctorId, prepared.Delegate, null, null, prepared.Cps, permanent: true));
         if (prepared.Cps is { } cps) _cpsCode[offer.FunctorId] = cps;
         return true;
     }
@@ -383,6 +384,7 @@ public sealed class IlPromotionStore
                 continue;
             if (RunOnLargeStack(waiting.Bind) is not { } cps) continue;
             _cpsCode[functorId] = cps;
+            NoteCpsInstalled(functorId, cps);
             _dispatchWrappers.Remove(functorId);
             _resumeWrappers.Remove(functorId);
             OnPromotionInstalled?.Invoke(functorId, current);
@@ -411,8 +413,13 @@ public sealed class IlPromotionStore
         }
     }
 
-    private void InstallDelegate(int functorId, PredicateDelegate del)
+    private void InstallDelegate(int functorId, PredicateDelegate del, Tier1Artifact artifact)
     {
+        // A replaced delegate (an optimised form over the instrumented one) may
+        // still be resumed into, as an evicted one may.
+        RetireInstalled(functorId);
+        _artifacts[functorId] = artifact;
+        if (artifact.Atoms.Length > 0) RetainAtoms?.Invoke(artifact.Atoms);
         _delegates[functorId] = del;
         NoteCode(functorId, CodeInstalled);
         _dispatchWrappers.Remove(functorId);
@@ -722,8 +729,7 @@ public sealed class IlPromotionStore
         _mutationStamp[functorId] = stamp + 1;
         // Kept for resumes only: a call that began before the eviction
         // finishes on the delegate it began with (ADR-054).
-        if (_delegates.TryGetValue(functorId, out var retiring))
-            _retiredResume[functorId] = (engine, cursor) => retiring(engine, cursor);
+        RetireInstalled(functorId);
         _cpsCode.Remove(functorId);
         if (_offers.TryGetValue(functorId, out var withdrawn)) Withdraw(withdrawn);
         _bundleCode.Remove(functorId);
@@ -737,7 +743,11 @@ public sealed class IlPromotionStore
                 _aliasRoot.Remove(member);
                 EvictDelegate(member, mutation: false);
             }
-        if (!_delegates.Remove(functorId)) return;
+        if (!_delegates.Remove(functorId))
+        {
+            ReleaseRetiredUnreached();
+            return;
+        }
         ForgetCode(functorId, CodeInstalled);
         OnDelegateEvicted?.Invoke(functorId);
         _dispatchWrappers.Remove(functorId);
@@ -745,19 +755,19 @@ public sealed class IlPromotionStore
         _counters.Remove(functorId);
         _pgoProfileKeys.Remove(functorId);
         _pgoOptimized.Remove(functorId);
+        _deferred.Remove(functorId);
+        ReleaseRetiredUnreached();
         if (!mutation) return;
         _evictions.TryGetValue(functorId, out int e);
         _evictions[functorId] = e + 1;
     }
-
-    private readonly Dictionary<int, Func<Activation, int, bool>> _retiredResume = new();
 
     /// <summary>The delegate a functor had when it was last evicted, for a
     /// resume into a call that began before (ADR-054); null when none. The
     /// interpreter asks only for a cursor past the entry, and only when the
     /// functor has no delegate now.</summary>
     internal Func<Activation, int, bool>? TryGetRetiredResumeWrapper(int functorId)
-        => _retiredResume.TryGetValue(functorId, out var w) ? w : null;
+        => RetiredResume(functorId);
 
     /// <summary>ADR-023's churn pin, for any tier promoting a dynamic
     /// snapshot: true while a predicate evicted <see cref="EvictionChurnLimit"/>
@@ -822,7 +832,8 @@ public sealed class IlPromotionStore
     private readonly ConcurrentQueue<CompletedCompile> _completedCompiles = new();
     private sealed record CompletedCompile(
         int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error,
-        bool IsDynamicSnapshot, bool CpsOnly = false, CalleeRecorder? Callees = null, int Epoch = 0);
+        bool IsDynamicSnapshot, bool CpsOnly = false, CalleeRecorder? Callees = null, int Epoch = 0,
+        CompiledPredicate? Target = null);
 
     // Per-fid mutation stamp, bumped by EvictDelegate on every mutation: a background
     // compile whose snapshot was mutated while in flight must be discarded at drain
@@ -911,13 +922,17 @@ public sealed class IlPromotionStore
             int entry = cursor;
             // A resume (cursor > 0) by the member's id is a call that began on
             // code of its own, since retired; the root's cursors are its own.
-            var earlier = _retiredResume.GetValueOrDefault(member);
+            var earlier = RetiredResume(member);
             PredicateDelegate alias = (engine, c) => c == 0
                 ? rootDelegate(engine, entry)
                 : earlier is not null ? earlier(engine, c)
                 : throw new InvalidOperationException(
                     $"resume at cursor {c} of region member {member}, which has no code of its own");
-            InstallDelegate(member, alias);
+            // The alias runs the root's code, which claims the atoms.
+            var rootCodes = _artifacts.TryGetValue(root, out var rootArtifact)
+                ? rootArtifact.Codes : System.Array.Empty<IlArtifact>();
+            InstallDelegate(member, alias,
+                new Tier1Artifact(member, alias, rootCodes, System.Array.Empty<int>(), permanent: false));
             _aliasRoot[member] = root;
             if (!_aliasesOf.TryGetValue(root, out var aliased)) _aliasesOf[root] = aliased = new List<int>();
             aliased.Add(member);
@@ -942,6 +957,7 @@ public sealed class IlPromotionStore
                     RecordCopies(c.Fid, c.Callees);
                     _boundCps.Remove(c.Fid);
                     _cpsCode[c.Fid] = lateCps;
+                    NoteCpsInstalled(c.Fid, lateCps);
                     _dispatchWrappers.Remove(c.Fid);
                     _resumeWrappers.Remove(c.Fid);
                     OnPromotionInstalled?.Invoke(c.Fid, current);
@@ -980,16 +996,7 @@ public sealed class IlPromotionStore
                     _staleForView[c.Fid] = c.Epoch;
                     continue;
                 }
-                var drainDel = c.IsDynamicSnapshot
-                    ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
-                    : c.Result!.Value.Delegate;
-                InstallDelegate(c.Fid, drainDel);
-                RecordCopies(c.Fid, c.Callees);
-                if (c.Result.Value.Cps is { } drainCps) _cpsCode[c.Fid] = drainCps;
-                if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
-                OnPromotionInstalled?.Invoke(c.Fid, drainDel);
-                // A dynamic snapshot goes at its next mutation, and its aliases with it.
-                if (!c.IsDynamicSnapshot) InstallMemberAliases(c.Fid, drainDel, c.Callees);
+                InstallCompiled(c.Fid, c.Result.Value, c.Target!, c.Callees, c.IsDynamicSnapshot, c.Epoch, c.Stamp);
             }
             finally { ReconcileCode(c.Fid, c.Callees); }
         }
@@ -1192,6 +1199,7 @@ public sealed class IlPromotionStore
         if (!IlTierOn || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
+        if (_deferred.TryGetValue(functorId, out var waiting)) return ServeDeferred(functorId, waiting);
         // Mid-consult, no new promotions: the program is still growing — a
         // predicate promoted now (the expansion hooks are the hot case: one
         // term_expansion call per consulted clause) would snapshot a clause set
@@ -1328,7 +1336,8 @@ public sealed class IlPromotionStore
                 {
                     var r = (IlPredicateCompiler.PgoCompileResult?)result;
                     _completedCompiles.Enqueue(new CompletedCompile(
-                        functorId, r, stamp, error?.Message, isDynamic, Callees: callees, Epoch: epoch));
+                        functorId, r, stamp, error?.Message, isDynamic, Callees: callees, Epoch: epoch,
+                        Target: capturedTarget));
                     // ADR-061: the delegate is in use while its continuation
                     // methods compile, which takes several emissions.
                     if (!wantCps) return;
@@ -1367,23 +1376,19 @@ public sealed class IlPromotionStore
             settled = true;
             return null;
         }
-        var installedDel = isDynamic
-            ? GuardDynamicSnapshot(functorId, syncResult.Delegate)
-            : syncResult.Delegate;
-        InstallDelegate(functorId, installedDel);
-        RecordCopies(functorId, syncCallees);
+        _mutationStamp.TryGetValue(functorId, out int syncStamp);
+        if (!InstallCompiled(functorId, syncResult, target, syncCallees, isDynamic, viewEpoch, syncStamp))
+            return null;
+        var installedDel = _delegates[functorId];
         var syncCpsCallees = Recording(calleeMap);
         if (!isDynamic && syncResult.ProfileKey < 0 && RunOnLargeStack(() => WithPools(targetPools, () =>
                 WithNativeInline(() => WithRoots(syncRoots,
                     () => TryCompileCps(target, syncCpsCallees, syncResult.Delegate))))) is { } syncCps)
         {
             _cpsCode[functorId] = syncCps;
+            NoteCpsInstalled(functorId, syncCps);
             RecordCopies(functorId, syncCpsCallees);
         }
-        if (syncResult.ProfileKey >= 0)
-            _pgoProfileKeys[functorId] = syncResult.ProfileKey;
-        OnPromotionInstalled?.Invoke(functorId, installedDel);
-        if (!isDynamic) InstallMemberAliases(functorId, installedDel, syncCallees);
         return installedDel;
     }
 
@@ -1431,7 +1436,8 @@ public sealed class IlPromotionStore
     public bool HasPgoWork => (_pgoProfileKeys.Count > 0 || !_pgoReady.IsEmpty) && DynamicCodeSupported;
 
     // Optimised forms the worker finished, for the next query setup.
-    private readonly ConcurrentQueue<(int Fid, PredicateDelegate? Delegate, int Stamp)> _pgoReady = new();
+    private readonly ConcurrentQueue<(int Fid, PredicateDelegate? Delegate, int Stamp,
+        CompiledPredicate Predicate, CalleeRecorder? Callees)> _pgoReady = new();
 
     public void ConsiderPgoRecompiles(
         IReadOnlyDictionary<int, CompiledPredicate> predicateLookup,
@@ -1442,7 +1448,8 @@ public sealed class IlPromotionStore
         {
             _mutationStamp.TryGetValue(ready.Fid, out int now);
             if (ready.Delegate is null || now != ready.Stamp || !_delegates.ContainsKey(ready.Fid)) continue;
-            InstallDelegate(ready.Fid, ready.Delegate);
+            InstallDelegate(ready.Fid, ready.Delegate,
+                ArtifactFor(ready.Fid, ready.Delegate, ready.Predicate, ready.Callees, null));
             _pgoOptimized.Add(ready.Fid);
         }
         if (_pgoProfileKeys.Count == 0) return;
@@ -1483,6 +1490,7 @@ public sealed class IlPromotionStore
                 var pgoRoots = RootsFor(functorId);
                 _mutationStamp.TryGetValue(functorId, out int stamp);
                 _pgoProfileKeys.Remove(functorId);
+                var pgoCallees = Recording(calleeMap);
                 IlCompileWorker.RunAsync(
                     () =>
                     {
@@ -1491,7 +1499,7 @@ public sealed class IlPromotionStore
                         try
                         {
                             return WithRoots(pgoRoots,
-                                () => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap)));
+                                () => Compiled(Compiler.CompileOptimized(predicate, profileKey, pgoCallees)));
                         }
                         finally
                         {
@@ -1499,15 +1507,17 @@ public sealed class IlPromotionStore
                             LeavePools(prevPools);
                         }
                     },
-                    (result, _) => _pgoReady.Enqueue((functorId, result as PredicateDelegate, stamp)),
+                    (result, _) => _pgoReady.Enqueue(
+                        (functorId, result as PredicateDelegate, stamp, predicate, pgoCallees)),
                     lowPriority: true);
                 continue;
             }
             var syncPgoRoots = RootsFor(functorId);
+            var syncPgoCallees = Recording(calleeMap);
             var optimized = RunOnLargeStack(
                 () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
-                    () => Compiled(Compiler.CompileOptimized(predicate, profileKey, calleeMap))))));
-            InstallDelegate(functorId, optimized);
+                    () => Compiled(Compiler.CompileOptimized(predicate, profileKey, syncPgoCallees))))));
+            InstallDelegate(functorId, optimized, ArtifactFor(functorId, optimized, predicate, syncPgoCallees, null));
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
         }
@@ -1595,17 +1605,19 @@ public sealed class IlPromotionStore
                 using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
                 return Compiled(Compiler.Compile(predicate, warmCallees));
             }))));
-        InstallDelegate(functorId, del);
-        RecordCopies(functorId, warmCallees);
+        _mutationStamp.TryGetValue(functorId, out int warmStamp);
+        if (!InstallCompiled(functorId, new IlPredicateCompiler.PgoCompileResult(del, -1), predicate, warmCallees,
+                isDynamic: false, _staticEpoch, warmStamp))
+            return null;
         var warmCpsCallees = Recording(calleeMap);
         if (RunOnLargeStack(() => WithFloatPool(functorId, () =>
                 WithNativeInline(() => WithRoots(warmRoots,
                     () => TryCompileCps(predicate, warmCpsCallees, del))))) is { } warmCps)
         {
             _cpsCode[functorId] = warmCps;
+            NoteCpsInstalled(functorId, warmCps);
             RecordCopies(functorId, warmCpsCallees);
         }
-        InstallMemberAliases(functorId, del, warmCallees);
         return del;
     }
 
@@ -1626,13 +1638,16 @@ public sealed class IlPromotionStore
         return _delegates.ContainsKey(functorId);
     }
 
-    /// <summary>Binds a pre-built delegate (persisted-IL bundles). Idempotent — the
-    /// first delegate wins. <paramref name="wakes"/>: it was compiled with wake
-    /// points (ADR-049); else the engine wakes at its returns.
+    /// <summary>Binds a pre-built delegate (persisted-IL bundles, wasm modules).
+    /// Idempotent — the first delegate wins. <paramref name="wakes"/>: it was
+    /// compiled with wake points (ADR-049); else the engine wakes at its returns.
     /// <paramref name="fromBundle"/>: the code is a bundle's, which the regions
-    /// compiled at run time call instead of absorbing.</summary>
+    /// compiled at run time call instead of absorbing. <paramref name="compiledFrom"/>:
+    /// the predicate a module compiled at run time was built from, whose atoms
+    /// the module claims (ADR-003); null for a bundle's code, which claims
+    /// nothing.</summary>
     public void RegisterBoundDelegate(int functorId, PredicateDelegate del, bool wakes = false,
-        bool fromBundle = false)
+        bool fromBundle = false, CompiledPredicate? compiledFrom = null)
     {
         if (_delegates.ContainsKey(functorId)) return;
         if (fromBundle) _bundleCode.Add(functorId);
@@ -1642,7 +1657,8 @@ public sealed class IlPromotionStore
         // delegate bound by hand still has to be reached from them.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
             PromotabilityChanged?.Invoke();
-        InstallDelegate(functorId, del);
+        InstallDelegate(functorId, del,
+            ArtifactFor(functorId, del, compiledFrom, null, null, permanent: compiledFrom is null));
     }
 
     /// <summary>True when the functor was examined and rejected — no further compile

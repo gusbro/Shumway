@@ -40,10 +40,19 @@ public sealed partial class PrologEngine
         => ChainPatcher.TryPrependToIndexedDynamic(engine, functorId, clause);
     internal long IndexedSweeps => ChainPatcher.IndexedSweeps;
     internal long IndexedRetracts => ChainPatcher.IndexedRetracts;
-    internal bool TryPatchDiedInAllIndexedChains(Activation engine, int functorId, int bodyAddr)
-        => ChainPatcher.TryPatchDiedInAllIndexedChains(engine, functorId, bodyAddr);
-    internal int FindBodyAddrForClauseIndex(Activation engine, int functorId, int clauseIndex)
-        => ChainPatcher.FindBodyAddrForClauseIndex(engine, functorId, clauseIndex);
+    internal long IndexedPatchSteps => ChainPatcher.IndexedPatchSteps;
+    internal long IndexedVarEntryMisses => ChainPatcher.IndexedVarEntryMisses;
+    internal bool IndexedVarRecordOff
+    {
+        get => ChainPatcher.IndexedVarRecordOff;
+        set => ChainPatcher.IndexedVarRecordOff = value;
+    }
+    internal bool TryPatchDiedInAllIndexedChains(
+        Activation engine, int functorId, int bodyAddr, Clause clause, int varEntryDiedAddr)
+        => ChainPatcher.TryPatchDiedInAllIndexedChains(engine, functorId, bodyAddr, clause, varEntryDiedAddr);
+    internal int FindBodyAddrForClauseIndex(
+        Activation engine, int functorId, int clauseIndex, out int varEntryDiedAddr)
+        => ChainPatcher.FindBodyAddrForClauseIndex(engine, functorId, clauseIndex, out varEntryDiedAddr);
     internal void MirrorSwitchTableIntoDynamicLink(int mergedTableId, SwitchTable newTable)
         => ChainPatcher.MirrorSwitchTableIntoDynamicLink(mergedTableId, newTable);
     internal int? PeekDiedAddr(int functorId, int clauseIndex) => ChainPatcher.PeekDiedAddr(functorId, clauseIndex);

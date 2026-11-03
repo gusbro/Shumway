@@ -559,7 +559,7 @@ public sealed class PredicateCompiler
         {
             VarTerm => new ArgInfo(ArgKind.Var, 0),
             AtomTerm a => new ArgInfo(
-                ArgKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id),
+                ArgKind.Atom, AtomTable.Intern(a.Name).Id),
             IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue
                 => new ArgInfo(ArgKind.Int, (int)n.Value),
             CompoundTerm c when c.Functor == "." && c.Args.Length == 2
@@ -567,7 +567,7 @@ public sealed class PredicateCompiler
             CompoundTerm c => new ArgInfo(
                 ArgKind.Struct,
                 FunctorTable.Intern(
-                    AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length)),
+                    AtomTable.Intern(c.Functor).Id, c.Args.Length)),
             // FloatTerm / StringTerm / IntTerm out of int range / etc. behave
             // like a variable for indexing purposes — they fall through to the
             // full chain.
@@ -711,7 +711,7 @@ public sealed class PredicateCompiler
         switch (cur)
         {
             case AtomTerm a:
-                return (SubKeyKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id);
+                return (SubKeyKind.Atom, AtomTable.Intern(a.Name).Id);
             case IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue:
                 return (SubKeyKind.Int, (int)n.Value);
             case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
@@ -720,7 +720,7 @@ public sealed class PredicateCompiler
                     : (SubKeyKind.Var, 0);
             case CompoundTerm c:
                 return (SubKeyKind.Struct,
-                    FunctorTable.Intern(AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length));
+                    FunctorTable.Intern(AtomTable.Intern(c.Functor).Id, c.Args.Length));
             default:
                 return (SubKeyKind.Var, 0);   // var / float / string -> wildcard
         }

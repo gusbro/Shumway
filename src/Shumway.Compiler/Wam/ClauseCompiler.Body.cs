@@ -1108,7 +1108,7 @@ public sealed partial class ClauseCompiler
         }
         DrainPendingCompounds(s);
 
-        int functorId = InternFunctor(fName, gArgs.Length);
+        int functorId = InternPredicate(fName, gArgs.Length);
 
         // Builtin dispatch: if this functor is registered as a builtin, emit
         // call_builtin instead of call/execute. Builtins don't jump — they run
@@ -1631,11 +1631,18 @@ public sealed partial class ClauseCompiler
     private static bool FitsInt32(long value) =>
         value >= int.MinValue && value <= int.MaxValue;
 
-    private static int InternAtom(string name) =>
-        AtomTable.Intern(name, permanent: true).Id;
+    // The atoms a clause's code takes as data are transient: the engine claims them
+    // while the code can run (ADR-003). A predicate's name is permanent: the
+    // engine's tables are keyed by its functor id.
+    private static int InternAtom(string name) => AtomTable.Intern(name).Id;
 
     private static int InternFunctor(string name, int arity) =>
-        FunctorTable.Intern(InternAtom(name), arity);
+        FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: Shumway.Builtins.ArithFunctorTable.IsEvaluable(name, arity)).Id,
+            arity);
+
+    internal static int InternPredicate(string name, int arity) =>
+        FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
 
     /// <summary>
     /// Mutable state threaded through head + body compilation. Owns the byte

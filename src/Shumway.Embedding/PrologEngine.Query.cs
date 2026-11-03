@@ -83,7 +83,17 @@ public sealed partial class PrologEngine
                 // coming until somebody asks for another solution), and a debugger left
                 // waiting for it thinks the program is running.
                 host.DebugSession?.OnLeaveProlog(engine);
-                yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
+                // Built inside a run: it reads the activation, and may write to it.
+                Solution solution;
+                engine.EnterAtomRun();
+                bool built = false;
+                try
+                {
+                    solution = BuildSolution(varNames, varHeapIndices, engine, isLast, host);
+                    built = true;
+                }
+                finally { engine.LeaveAtomRun(built); }
+                yield return solution;
                 // A known-last solution: don't backtrack — there's nothing
                 // to find and re-running would just confirm failure.
                 if (isLast) break;
@@ -102,12 +112,17 @@ public sealed partial class PrologEngine
             // the SWI toplevel-cancel case). Runs before the heap buffer is
             // surrendered so the cleanup goal still has its heap.
             if (engine.HasCleanupHandlers || engine.HasPendingCleanups)
-                interp.RunTeardownCleanups(program);
+            {
+                engine.EnterAtomRun();
+                try { interp.RunTeardownCleanups(program); }
+                finally { engine.LeaveAtomRun(completed: false); }
+            }
             host.DebugSession?.OnLeaveProlog(engine);
             host.AccountGarbageCollection(engine);
             // Out of the dynamic-mutation broadcast: this activation cannot
             // resume, so a later mutation has nothing to tell it.
             host.UnregisterLiveEngine(engine);
+            engine.LeaveAtomDomain();
             host._heapPool.Return(engine);
         }
     }
@@ -132,11 +147,14 @@ public sealed partial class PrologEngine
     {
         Func<InterpreterResult> step = action;
         EnterRun(engine);
+        bool completed = false;
         try
         {
-            return RunSteps(interp, program, engine, step);
+            var result = RunSteps(interp, program, engine, step);
+            completed = true;
+            return result;
         }
-        finally { LeaveRun(); }
+        finally { LeaveRun(completed); }
     }
 
     private InterpreterResult RunSteps(
@@ -591,7 +609,7 @@ public sealed partial class PrologEngine
         // followed immediately by a query). Uncontended cost is a fenced check; the
         // watcher takes the same gate in AddBreakpoint/RemoveBreakpoint/ClearBreakpoints.
         lock (_debugArmGate)
-            return SetupQueryFromTermUnderGate(queryTerm);
+            return HostChange(() => SetupQueryFromTermUnderGate(queryTerm));
     }
 
     private (Shumway.Core.ProgramView Program,
@@ -627,24 +645,109 @@ public sealed partial class PrologEngine
         InitialStackSize = 16,
     };
 
+    /// <summary>The transformed and module-rewritten clauses of one dynamic
+    /// predicate, cached per functor (<see cref="_dynamicRewriteCache"/>).
+    /// Head fids include any MetaTransform helper clauses' heads.</summary>
+    private (List<Clause> Clauses, List<int> HeadFids, object LocalsRef, int ModesVersion)
+        RewriteDynamicPredicate(int fid, List<Clause> clauses, ModuleRewrite.Context fidCtx,
+            Shumway.Compiler.Modes.ModeTable modeTable)
+    {
+        var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var rewritten = new List<Clause>(transformed.Count);
+        foreach (var clause in transformed)
+            rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
+        var headFids = new List<int>(rewritten.Count);
+        foreach (var c in rewritten)
+            headFids.Add(HeadFunctorIdOf(c));
+        var entry = (rewritten, headFids, (object)fidCtx.LocalFunctors, modeTable.Version);
+        _dynamicRewriteCache[fid] = entry;
+        return entry;
+    }
+
+    /// <summary>Leaves the product's compile of each predicate a dynamic
+    /// mutation left stale (<see cref="_productStaleDynamicFids"/>) as it is.
+    /// Nothing reads it before the next full build: the persistent buffer
+    /// holds the mutation (ADR-015), a relink of that buffer comes with a
+    /// full build (<see cref="InvalidatePersistent"/> advances the derivation
+    /// generation), and a snapshot has the predicate rewritten when it asks
+    /// (<see cref="BuildDynamicSnapshot"/>). Compiling it here cost the
+    /// predicate's size per query after a mutation, and built the term of
+    /// every fact kept as an image (ADR-063). Only for a predicate of facts,
+    /// or an empty one, that the product already holds, with no source
+    /// clauses in a module and the user context: a rule's rewrite can mint
+    /// helpers the query link has to carry. False leaves the setup to a full
+    /// build.</summary>
+    private bool DeferStaleDynamicPredicates(CompiledProgramProduct product)
+    {
+        foreach (int fid in _productStaleDynamicFids)
+        {
+            string? why =
+                _staticRewriteHeadFids?.Contains(fid) == true ? "source clauses in a module"
+                : _dynamicSeedModule.ContainsKey(fid) ? "seed module"
+                : !_dynStore.IsDynamic(fid) ? "not dynamic"
+                : !_dynStore.HoldsOnlyFacts(fid) ? "rules"
+                : !product.DynamicFunctors.Contains(fid) ? "not in the product"
+                : null;
+            if (why is null) continue;
+            if (LoadProfEnabled) ProfProductDrop(why + ": " + FunctorDisplayName(fid));
+            return false;
+        }
+        _productStaleDynamicFids.Clear();
+        product.DynamicPredsDeferred = true;
+        return true;
+    }
+
+    /// <summary>The rewrite of a predicate the setup left as it was
+    /// (<see cref="DeferStaleDynamicPredicates"/>), for the snapshot that asks
+    /// for it: under the user context, as the full build does it. False for
+    /// an empty predicate, which has no snapshot.</summary>
+    private bool RewriteDeferredDynamicPredicate(int fid)
+    {
+        if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0) return false;
+        var ctx = new ModuleRewrite.Context(
+            DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel,
+            _dynStore.Functors, ImportsOf(DefaultModuleName));
+        RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        _snapshotStaleFids.Remove(fid);
+        DeferredDynamicRewrites++;
+        return true;
+    }
+
+    /// <summary>Rewrites done for a snapshot of a predicate the setup left as
+    /// it was (<see cref="RewriteDeferredDynamicPredicate"/>).</summary>
+    internal long DeferredDynamicRewrites;
+
     private (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
              Shumway.Core.Activation Engine,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
     {
         long profPl0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-        // auto-compaction. When the accumulated
-        // mutation count crosses the watermark, invalidate the
-        // persistent buffer here at query setup (the safe point —
-        // no in-flight choice points hold addresses into it). The
-        // rebuild that follows below picks up the trim automatically.
+        // auto-compaction, at query setup (the safe point: no in-flight
+        // choice point holds an address into the buffer). Every CompactWatermark
+        // mutations the buffer's growth is checked: it is laid out again once it
+        // has grown to twice its length at the last link, so each link pays for
+        // the growth that caused it, and a churn the layouts recycle never pays
+        // one. Compacting every so many mutations instead laid the whole
+        // program out again at every query of a program that mutates a lot.
         //
         // ADR-035 D5 — except during a debug evaluation (an Immediate-window goal, a
         // breakpoint condition): that nested query's setup is not a safe point — the outer
         // query is suspended mid-flight and everything it holds points into the current
         // buffers. Compaction is paused, not skipped: the counter keeps accumulating and
         // the next real query's setup does the deferred work.
+        if (LoadProfEnabled)
+        {
+            long free = 0;
+            foreach (var (_, length) in DynChains.FreeChunks) free += length;
+            ProfProductDrop("setup " + ProfSetupCalls + " buffer: length " + _persistentLength
+                + " link " + _persistentLengthAtLink + " free " + free + " mutations " + _persistentMutationsSinceCompact);
+        }
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
-            CompactDynamicCodeBuffer();
+        {
+            _persistentMutationsSinceCompact = 0;
+            if (_persistentLengthAtLink > 0 && _persistentLength >= 2 * _persistentLengthAtLink)
+                CompactDynamicCodeBuffer();
+        }
         // A queued jit_compile(off) returns the promoted predicates to their
         // bytecode. Here for the same reason as the compaction above: nothing
         // in flight holds a position inside the code being dropped. A debug
@@ -706,46 +809,39 @@ public sealed partial class PrologEngine
         ValidatePublicUniqueness();
         if (LoadProfEnabled) ProfUniqTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profUq0;
 
-        // JIT indexing: a dynamic predicate compiles
-        // unindexed until its runtime call count crosses the JIT
-        // threshold. A cold-but-now-hot predicate (or vice versa) has
-        // a stale cached compile at the wrong indexing level — drop it
-        // so ModuleCompiler rebuilds it (the drop bumps _programStamp,
-        // so the compiled program product below rebuilds too — which is
-        // why this loop runs before the product validity check). The
-        // unindexed set then names every dynamic functor still below
-        // the threshold.
+        // JIT indexing: a dynamic predicate compiles unindexed until its
+        // runtime call count crosses the JIT threshold. One called past it
+        // since its compile is laid out indexed in place; when one of them
+        // cannot be (TryFlipHotnessInPlace), its stale compile is dropped and
+        // the program laid out again, before the product validity check since
+        // the drop bumps _programStamp. The unindexed set then names every
+        // dynamic functor still below the threshold.
         long profHt0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var unindexedFunctors = new HashSet<int>();
-        bool anyHotnessFlip = false;
-        foreach (int fid in _dynStore.Functors)
+        var hotnessSeen = new HashSet<int>();
+        List<int>? hotnessFlipped = null;
+        foreach (int fid in _dynStore.Functors) NoteHotness(fid);
+        foreach (int fid in _dynStore.ClauseFunctors) NoteHotness(fid);
+        void NoteHotness(int fid)
         {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
-            {
-                // route through the drop helper so the merged
-                // skip-compile cache stays in step.
-                DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
-            }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
+            if (!hotnessSeen.Add(fid)) return;
+            if (!_jitIndexProfile.IsHot(fid)) unindexedFunctors.Add(fid);
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)) (hotnessFlipped ??= new()).Add(fid);
         }
-        foreach (int fid in _dynStore.ClauseFunctors)
+        if (hotnessFlipped is not null && TryFlipHotnessInPlace(hotnessFlipped) is { } whyNotInPlace)
         {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            foreach (int fid in hotnessFlipped)
             {
+                // route through the drop helper so the merged skip-compile
+                // cache stays in step.
                 DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
+                if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " hotness flip (" + whyNotInPlace + "): "
+                    + FunctorDisplayName(fid) + "#" + fid + " calls=" + _jitIndexProfile.CallCountFor(fid)
+                    + " was=" + _jitIndexProfile.CompileDecision(fid));
             }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
+            // The persistent buffer runs the chain the cold compile emitted.
+            InvalidatePersistent("hotness flip");
         }
-        // a cold→hot transition needs the persistent buffer
-        // rebuilt so the JIT-promoted indexed compilation actually
-        // takes effect at runtime — without this the cache holds the
-        // indexed form but the live dispatch still runs the chain
-        // emitted at predicate-cold time.
-        if (anyHotnessFlip) InvalidatePersistent();
         long profPc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (LoadProfEnabled) ProfHotnessTicks += profPc0 - profHt0;
 
@@ -770,9 +866,21 @@ public sealed partial class PrologEngine
                 || !ReferenceEquals(product.StaticLinkRef, _staticLink)
                 || product.EmitDebugInfo != _flags.EmitDebugInfo
                 || product.DebugCodegen != _flags.DebugCodegen))
+        {
+            if (LoadProfEnabled)
+                ProfProductDrop(product.DerivationGen != _derivationGen ? "derivation"
+                    : product.ProgramStamp != _programStamp ? "stamp"
+                    : !ReferenceEquals(product.StaticLinkRef, _staticLink) ? "static link" : "debug flags");
+            product = null;
+        }
+        // Dynamic mutations alone: their predicates' compiles wait in the
+        // product for the next full build, or the product is built again.
+        if (product is not null && _productStaleDynamicFids.Count > 0
+            && !DeferStaleDynamicPredicates(product))
             product = null;
         if (product is null)
         {
+        _productStaleDynamicFids.Clear();
         if (LoadProfEnabled) ProfProductBuilds++;
         long profPb0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
@@ -1079,18 +1187,7 @@ public sealed partial class PrologEngine
                         // old ones) must go with it.
                         DropDynamicPredicateCacheEntry(fid);
                     }
-                    var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
-                    var rewritten = new List<Clause>(transformed.Count);
-                    foreach (var clause in transformed)
-                        rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
-                    // Head fids include any MetaTransform helper clauses'
-                    // heads, mirroring what the per-clause HeadFunctorIdOf
-                    // walk over allRewritten used to collect.
-                    var headFids = new List<int>(rewritten.Count);
-                    foreach (var c in rewritten)
-                        headFids.Add(HeadFunctorIdOf(c));
-                    entry = (rewritten, headFids, fidCtx.LocalFunctors, modeTable.Version);
-                    _dynamicRewriteCache[fid] = entry;
+                    entry = RewriteDynamicPredicate(fid, clauses, fidCtx, modeTable);
                 }
                 allRewritten.AddRange(entry.Clauses);
                 foreach (int f in entry.HeadFids)
@@ -1382,6 +1479,8 @@ public sealed partial class PrologEngine
         OrderStaticRegion(pStatic);
 
         ProgramProductBuilds++;
+        var dynamicFunctors = new HashSet<int>();
+        foreach (var p in pDynamic) dynamicFunctors.Add(p.FunctorId);
         product = _programProduct = new CompiledProgramProduct
         {
             DerivationGen = _derivationGen,
@@ -1391,6 +1490,7 @@ public sealed partial class PrologEngine
             StaticLinkRef = _staticLink,
             StaticPreds = pStatic,
             DynamicPreds = pDynamic,
+            DynamicFunctors = dynamicFunctors,
             ExtraQueryPreds = pExtraQuery,
             CacheableFunctors = cacheableFunctors,
         };
@@ -1454,7 +1554,7 @@ public sealed partial class PrologEngine
             queryClauses, cache: null, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
         // The versions the query module's copies of the pools were taken at.
-        var poolVersions = new int[4];
+        var poolVersions = new int[3];
         RecordPoolVersions(poolVersions);
         RegisterLateHelpers(queryModule.Predicates);
 
@@ -1525,6 +1625,13 @@ public sealed partial class PrologEngine
         bool builtPersistentNow = _persistentProgram is null || _dynamicLink is null;
         if (builtPersistentNow)
         {
+            // The product this links from is the one this setup built: the
+            // compile of a mutated predicate waits in a product only until a
+            // full build (DeferStaleDynamicPredicates), and InvalidatePersistent
+            // forces one.
+            if (product.DynamicPredsDeferred)
+                throw new InvalidOperationException(
+                    "the persistent buffer is linked from a product that holds the compile of a mutated dynamic predicate as it was");
             // The code appended after the dynamic region goes with the old
             // buffer, dynamic snapshots' shadow regions included (ADR-054).
             IlPromotion.Wasm?.OnPersistentRebuilt();
@@ -1536,6 +1643,8 @@ public sealed partial class PrologEngine
                 switchTableIdBase: staticLink.SwitchTables.Count);
             _persistentLength =
                 prefix.Length + staticLink.Bytecode.Length + _dynamicLink.Bytecode.Length;
+            _persistentLengthAtLink = _persistentLength;
+            _persistentPrefixLength = prefix.Length;
             // Over-allocate so capacity-doubling AppendCode appends
             // cheaply mid-query without forcing immediate realloc.
             int initialCapacity = Math.Max(_persistentLength * 2, 1024);
@@ -1552,13 +1661,13 @@ public sealed partial class PrologEngine
                 if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
                     BytecodeIO.WriteInt32(_persistentProgram!, prefix.Length + offset + 1, dynAddr);
         }
-        // The per-query overlay sits just below the resume markers, leaving
-        // the persistent program room to grow mid-query.
-        _querySplit = TestQueryGrowthRoom is int room
-            ? _persistentLength + room
-            : Activation.ResumeMarkerBase - QueryOverlayReserve;
-        if (_persistentLength > _querySplit)
-            throw new PrologRuntimeException("resource_error", "code_space");
+        // The query's code goes right after the persistent program, or into a
+        // hole an earlier query left; what the query appends (asserted clauses,
+        // consulted files) follows the program. The link lays the predicates
+        // end to end, so their sizes say where it fits.
+        int querySize = 0;
+        foreach (var p in queryPreds) querySize += p.Bytecode.Length;
+        int queryStart = ReservePersistent(querySize);
 
         // Build the merged external-symbols table for the query
         // linker — it resolves calls into both the static and
@@ -1593,16 +1702,9 @@ public sealed partial class PrologEngine
         }
         var persistentAddresses = _persistentAddressesCache;
 
-        // The per-query region is appended in a separate buffer at a
-        // logical address well above the persistent buffer's end.
-        // The ProgramView built below routes addresses in [0, split)
-        // to the persistent buffer and [split, split+queryLen) to the
-        // per-query overlay; persistent growth between now and the
-        // query's end stays in [persistentLength, split) so the
-        // overlay's linked addresses remain stable.
         var queryLink = new Linker().Link(
             queryPreds,
-            loadOffset: _querySplit,
+            loadOffset: queryStart,
             externalSymbols: persistentAddresses,
             switchTableIdBase:
                 // _dynamicLink is non-null here (built in the
@@ -1611,9 +1713,7 @@ public sealed partial class PrologEngine
                 staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
 
         byte[] queryBytes = queryLink.Bytecode;
-        // Past the reserve the overlay's addresses would read as resume markers.
-        if ((long)_querySplit + queryBytes.Length > Activation.ResumeMarkerBase)
-            throw new PrologRuntimeException("resource_error", "code_space");
+        PlacePersistent(queryBytes, queryStart);
         if (LoadProfEnabled)
             ProfQueryCompileTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profQc0;
         long profMg0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
@@ -1647,9 +1747,9 @@ public sealed partial class PrologEngine
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
-        // persistent part pre-merged at rebuild time; query region layered
-        // on top (address spaces are disjoint — the query region lives above
-        // the split — but the layered lookup doesn't rely on that).
+        // persistent part pre-merged at rebuild time; the query's predicates
+        // layered on top (their addresses are disjoint from the program's,
+        // but the layered lookup doesn't rely on that).
         var mergedPredicatesByAddress =
             new Shumway.Core.LayeredIntMap<Shumway.Compiler.Wam.CompiledPredicate>(
                 CollectionsCompat.Copy(queryLink.PredicatesByAddress),
@@ -1675,13 +1775,11 @@ public sealed partial class PrologEngine
         BytecodeIO.WriteInt32(_persistentProgram!, callPos + 1, linkResult.Addresses[queryFunctorId]);
 
         // `program` is the persistent byte[] (used by all mutation
-        // paths: assertz/retract/abolish chain patching, AppendCode);
-        // `programView` is the two-buffer logical view passed to the
-        // interpreter and IL helpers — they read across the gap into
-        // the per-query overlay transparently.
+        // paths: assertz/retract/abolish chain patching, AppendCode), the
+        // query's code now in it; `programView` is the view the interpreter
+        // and IL helpers read.
         byte[] program = _persistentProgram!;
-        var programView = new Shumway.Core.ProgramView(
-            _persistentProgram!, queryBytes, _querySplit);
+        var programView = new Shumway.Core.ProgramView(program);
 
         // (Static-predicate caching runs at product build, inside the
         // compiled-program-product block above.)
@@ -1786,7 +1884,9 @@ public sealed partial class PrologEngine
             // and the linked program byte array for the
             // IL Call re-entry helper.
             CurrentStringLiterals = queryModule.StringLiterals,
-            CurrentImages = queryModule.ImageLiterals,   // ADR-063
+            // ADR-063: the pool itself, not a copy: a fact asserted at run
+            // time adds its image, and a copy per assert was O(pool) each.
+            CurrentImages = _literalPools.Images.Items,
             CurrentProgram = program,
             // ADR-015 — bytecode-level dynamic dispatch reads the
             // host's generation at every enter_dynamic opcode
@@ -1834,12 +1934,9 @@ public sealed partial class PrologEngine
         _heapPool.Adopt(engine);
         // the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
-        // raw byte[] capacity) for AppendCode's offset accounting. The
-        // overlay + split let the dispatch loop refresh the
-        // ProgramView correctly after a mid-query AppendCode.
+        // raw byte[] capacity) for AppendCode's offset accounting.
         engine.SetInitialProgramLength(_persistentLength);
-        engine.CurrentQueryOverlay = queryBytes;
-        engine.CurrentQuerySplit = _querySplit;
+        engine.CodeLimit = CodeSpaceLimit;
         // the dispatch loop caches its ProgramView and
         // refreshes only when this generation flips, so the per-
         // query rewire above has to advertise itself.
@@ -1903,7 +2000,8 @@ public sealed partial class PrologEngine
         // overwrite (target address → callee functor id).
         long profIn0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         InstallCallIlRewrites(
-            interp, mergedPredicatesByAddress, queryLink.PredicatesByAddress, queryBytes);
+            interp, mergedPredicatesByAddress, queryLink.PredicatesByAddress,
+            queryStart, queryStart + queryBytes.Length);
         if (LoadProfEnabled)
             ProfInstallTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profIn0;
 
@@ -1913,10 +2011,9 @@ public sealed partial class PrologEngine
         {
             interp.RefreshLiteralPools(s, f, b);
             engine.CurrentStringLiterals = s;
-            engine.CurrentImages = _literalPools.Images.Snapshot();   // ADR-063
         };
         // The versions the interpreter's copies were taken at, so the
-        // per-assert refresh (four Snapshot() copies) runs only when a pool
+        // per-assert refresh (three Snapshot() copies) runs only when a pool
         // changed since. Per activation (see _interpPoolVersions).
         _interpPoolVersions.AddOrUpdate(engine, poolVersions);
 
@@ -1990,7 +2087,7 @@ public sealed partial class PrologEngine
                 int entryAddr = sortedAddrs[idx];
                 if (!resolverMap.TryGetValue(entryAddr, out var pred))
                     return null;
-                if (PastPredicate(pred, entryAddr, addr, engine.CurrentQuerySplit))
+                if (PastPredicate(pred, entryAddr, addr))
                     return DynamicClauseFrame;
                 var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
                 string name = AtomTable.GetById(atomId)?.Name ?? "?";
@@ -2015,8 +2112,12 @@ public sealed partial class PrologEngine
             // (nested-query) engines still running on their buffers.
             ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
-            // The dynamic region: a unit of the new buffer.
-            ChainPatcher.NoteCodeUnit(DynChains, _dynamicLink!.Bytecode);
+            // The dynamic region: a unit of the new buffer for its literals, and
+            // clause by clause for its atoms; the static region's predicates claim
+            // theirs version by version, its literals being pinned.
+            ChainPatcher.NoteCodeUnit(DynChains, _dynamicLink!.Bytecode, System.Array.Empty<int>());
+            NoteDynamicRegionAtoms(program, _dynamicLink!);
+            ChainPatcher.NoteLinkedVersions(DynChains, _staticLink!);
         }
         // associate this engine with the table describing the
         // buffer it runs on: every in-place dynamic mutation this engine
@@ -2029,7 +2130,7 @@ public sealed partial class PrologEngine
         RegisterLiveEngine(engine);
         // The query's region: a unit of the query. Every unit of this setup
         // holds its references now, so what nothing names can go.
-        ChainPatcher.NoteQueryUnit(engine, queryBytes);
+        ChainPatcher.NoteQueryUnit(engine, queryBytes, LinkAtomIds(queryLink));
         _literalPools.SweepIfDue();
         // The precise GC register bound assumes the interpreter's caller-saved
         // discipline; promoted IL regions break it (see GcPreciseRegisterBounds).
@@ -2094,6 +2195,8 @@ public sealed partial class PrologEngine
             Map = linkResult.PredicatesByAddress,
             Engine = engine,
             QueryText = queryText,
+            QueryStart = queryStart,
+            QueryEnd = queryStart + queryBytes.Length,
         };
         engine.HostProgram = _cur;
         engine.ProgramMoved = _onProgramMoved ??= OnProgramMoved;
@@ -2269,16 +2372,23 @@ public sealed partial class PrologEngine
         foreach (int fid in _dynStore.Functors)
         {
             if (!seen.Add(fid)) continue;
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            Term head = arity == 0
-                ? (Term)new AtomTerm(name)
-                : new CompoundTerm(
-                    name,
-                    Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
-            Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
-            allRewritten.Add(new Clause(ClauseKind.Rule, stubTerm, pos));
+            allRewritten.Add(EmptyDynamicStub(fid, pos));
         }
+    }
+
+    /// <summary><c>Head :- fail.</c>, the clause an empty dynamic predicate
+    /// is compiled from.</summary>
+    private static Clause EmptyDynamicStub(int fid, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        Term head = arity == 0
+            ? (Term)new AtomTerm(name)
+            : new CompoundTerm(
+                name,
+                Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
+        Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
+        return new Clause(ClauseKind.Rule, stubTerm, pos);
     }
 
     /// <summary>the bare-functor alias computation,

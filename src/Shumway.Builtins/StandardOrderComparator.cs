@@ -62,12 +62,9 @@ public static class StandardOrderComparator
             {
                 if (depth >= RecursionLimit)
                     return CompareCompoundsIterative(engine, a, b);
-                var (aName, aArity) = DescribeCompound(engine, a);
-                var (bName, bArity) = DescribeCompound(engine, b);
-                if (aArity != bArity) return aArity.CompareTo(bArity);
-                int nameCmp = CompareNames(aName, bName);
-                if (nameCmp != 0) return nameCmp;
-                for (int i = 0; i < aArity; i++)
+                int functorCmp = CompareFunctors(engine, a, b, out int arity);
+                if (functorCmp != 0) return functorCmp;
+                for (int i = 0; i < arity; i++)
                 {
                     int c = CompareRec(engine,
                         ArgAt(engine, a, i), ArgAt(engine, b, i), depth + 1);
@@ -116,11 +113,8 @@ public static class StandardOrderComparator
                 case 2: { int c = CompareAtoms(a, b); if (c != 0) return c; break; }
                 case 3:
                 {
-                    var (aName, aArity) = DescribeCompound(engine, a);
-                    var (bName, bArity) = DescribeCompound(engine, b);
-                    if (aArity != bArity) return aArity.CompareTo(bArity);
-                    int nameCmp = CompareNames(aName, bName);
-                    if (nameCmp != 0) return nameCmp;
+                    int functorCmp = CompareFunctors(engine, a, b, out int arity);
+                    if (functorCmp != 0) return functorCmp;
 
                     if (++steps == CycleThreshold)
                         (visited = engine.CompareVisited ??= new HashSet<long>()).Clear();
@@ -129,7 +123,7 @@ public static class StandardOrderComparator
                         break;   // cycle: equal on this branch
 
                     // Push args in reverse so arg 0 is popped (compared) first.
-                    for (int i = aArity - 1; i >= 0; i--)
+                    for (int i = arity - 1; i >= 0; i--)
                     {
                         stack.Add(ArgAt(engine, a, i));
                         stack.Add(ArgAt(engine, b, i));
@@ -160,6 +154,7 @@ public static class StandardOrderComparator
 
     private static int CompareNumbers(Activation engine, Cell a, Cell b)
     {
+        if (a.Tag == Tag.Int && b.Tag == Tag.Int) return a.AsInt.CompareTo(b.AsInt);
         Number na = ToNumber(engine, a);
         Number nb = ToNumber(engine, b);
         // ISO §7.2.1: a Float always precedes an Integer, whatever the
@@ -191,6 +186,7 @@ public static class StandardOrderComparator
 
     private static int CompareAtoms(Cell a, Cell b)
     {
+        if (a.AsAtomId == b.AsAtomId) return 0;
         Atom? aAtom = AtomTable.GetById(a.AsAtomId);
         Atom? bAtom = AtomTable.GetById(b.AsAtomId);
         string aName = aAtom?.Name ?? "";
@@ -202,6 +198,26 @@ public static class StandardOrderComparator
         if (aAtom is { IsAllBmp: true } && bAtom is { IsAllBmp: true })
             return string.CompareOrdinal(aName, bName);
         return Utf16Text.CompareCodePointOrder(aName, bName);
+    }
+
+    /// <summary>Order of two compounds by arity, then functor name; with the
+    /// same functor, 0 and their arity without reading the names.</summary>
+    private static int CompareFunctors(Activation engine, Cell a, Cell b, out int arity)
+    {
+        if (a.Tag == Tag.Str && b.Tag == Tag.Str)
+        {
+            int functorId = engine.GetHeap(a.AsHeapIndex).AsFunctorId;
+            if (functorId == engine.GetHeap(b.AsHeapIndex).AsFunctorId)
+            {
+                arity = FunctorTable.Lookup(functorId).Arity;
+                return 0;
+            }
+        }
+        var (aName, aArity) = DescribeCompound(engine, a);
+        var (bName, bArity) = DescribeCompound(engine, b);
+        arity = aArity;
+        if (aArity != bArity) return aArity.CompareTo(bArity);
+        return CompareNames(aName, bName);
     }
 
     /// <summary>Returns (functor name, arity, base heap index for args[0]).

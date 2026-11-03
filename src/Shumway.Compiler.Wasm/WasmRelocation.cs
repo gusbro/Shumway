@@ -269,7 +269,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     private void Note(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-        int fid = FunctorTable.Intern(AtomTable.Intern(entry.Name).Id, entry.Arity);
+        int fid = FunctorTable.Intern(AtomTable.Intern(entry.Name, permanent: true).Id, entry.Arity);
         if (_evidence.ContainsKey(fid)) return;
         _evidence[fid] = EvidenceFor(entry.Name, entry.Arity, builtinId);
     }

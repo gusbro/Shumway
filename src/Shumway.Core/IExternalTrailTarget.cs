@@ -6,7 +6,9 @@ namespace Shumway.Core;
 /// host-level state (the global-variable store behind <c>b_setval/2</c> /
 /// Scryer's <c>bb_b_put/2</c>) records the previous value with
 /// <c>Activation.TrailExternal</c>; unwinding past the entry calls
-/// <see cref="RestoreExternal"/> to put the old value back.
+/// <see cref="RestoreExternal"/> to put the old value back. A key is an atom
+/// id: a mark of the activation claims it while the entry is on the trail
+/// (ADR-003).
 /// </summary>
 public interface IExternalTrailTarget
 {

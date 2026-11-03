@@ -53,11 +53,17 @@ public class Chunk75Tests
     public void ColdDynamicPredicate_CompilesUnindexed()
     {
         // Default threshold (16) — a predicate queried once stays cold.
-        // Its cached compile is a try_me_else chain: no switch_on_term.
+        // Its compile, built with the program at the first query, is a
+        // try_me_else chain: no switch_on_term. (A mutation leaves the compile
+        // of a predicate of facts to the next full build, so the clauses come
+        // from the source.)
         var engine = Tier0();
-        engine.ConsultString(":- dynamic color/1.");
-        foreach (var c in new[] { "red", "green", "blue" })
-            engine.Query($"assertz(color({c})).");
+        engine.ConsultString("""
+            :- dynamic color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         engine.Query("color(red).");
 
         Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("color", 1), out var cached));
@@ -127,9 +133,12 @@ public class Chunk75Tests
     {
         var engine = Tier0();
         engine.JitIndexing.Threshold = 5;
-        engine.ConsultString(":- dynamic d/1.");
-        foreach (var c in new[] { "a", "b", "c" })
-            engine.Query($"assertz(d({c})).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            d(b).
+            d(c).
+            """);
 
         // Four calls — still below threshold 5, still cold.
         for (int i = 0; i < 4; i++) engine.Query("d(a).");
@@ -179,20 +188,23 @@ public class Chunk75Tests
     [Fact]
     public void ChurningDynamicPredicate_StaysUnindexedWhileCold()
     {
-        // assertz between queries invalidates the cache (chunk 68).
-        // While the predicate is still cold each rebuild is the cheap
-        // unindexed compile — no switch tables built on the churn.
+        // assertz between queries invalidates the cache (chunk 68). While
+        // the predicate is cold its compile waits for the next full build,
+        // and no build runs on the churn: no switch tables are built on it.
         var engine = Tier0();
         engine.JitIndexing.Threshold = 100;   // never hot in this test
         engine.ConsultString(":- dynamic log/1.");
-        for (int i = 0; i < 10; i++)
+        engine.Query("assertz(log(e0)).");
+        engine.Query("log(e0).");
+        long builds = engine.ProgramProductBuilds;
+        for (int i = 1; i < 10; i++)
         {
             engine.Query($"assertz(log(e{i})).");
             engine.Query($"log(e{i}).");
         }
-        Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("log", 1), out var cached));
-        Assert.False(HasOpcode(cached!.Bytecode, Opcode.SwitchOnTerm),
-            "a churning, never-hot dynamic predicate stays unindexed.");
+        Assert.Equal(builds, engine.ProgramProductBuilds);
+        Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("log", 1)),
+            "a churning, never-hot dynamic predicate is not compiled on the churn.");
         // Still correct.
         Assert.True(engine.Query("log(e7).").Success);
         Assert.False(engine.Query("log(nope).").Success);
@@ -203,20 +215,25 @@ public class Chunk75Tests
     {
         // A predicate that's gone hot, then gets a new clause via
         // assertz: the cache invalidates, and since it's still hot the
-        // recompile stays indexed.
+        // recompile stays indexed. A clause under a kind of key the layout
+        // has (an atom among atoms) joins it in place and its compile waits
+        // for the next full build; one under a kind it has no switch for (an
+        // integer) makes the predicate compile again.
         var engine = Tier0();
         engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic d/1.");
-        engine.Query("assertz(d(a)).");
-        engine.Query("assertz(d(b)).");
+        engine.Query("assertz(d(a)), assertz(d(b)).");
         engine.Query("d(a).");          // count → 1, hot
         engine.Query("d(a).");          // recompiled indexed
-        engine.Query("assertz(d(c)).");  // invalidates the cache
-        engine.Query("d(c).");          // recompiled — still hot → indexed
+        engine.Query("assertz(d(c)).");  // invalidates the cache; in place
+        engine.Query("d(c).");
+        Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
+        engine.Query("assertz(d(1)).");  // a kind of key the layout has no switch for
+        engine.Query("d(1).");          // recompiled — still hot → indexed
 
         Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("d", 1), out var cached));
         Assert.True(HasOpcode(cached!.Bytecode, Opcode.SwitchOnTerm));
-        Assert.True(engine.Query("d(c).").Success);
+        Assert.True(engine.Query("d(c), d(1).").Success);
     }
 
     [Fact]

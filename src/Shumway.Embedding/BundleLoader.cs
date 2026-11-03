@@ -531,7 +531,7 @@ internal sealed class BundleLoader
         Shumway.Interpreter.BytecodeInterpreter interp,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> queryPredicatesByAddress,
-        byte[] queryBytes)
+        int queryStart, int queryEnd)
     {
         _diagCallIlCount = 0;
         _rewriteInterp = interp;
@@ -567,9 +567,9 @@ internal sealed class BundleLoader
             interp.IlByFunctorId = ilTable;
             InstallCpsTables(interp);
             DiagIlTable(ilTable);
-            // Only the query overlay's predicates need their sites classified —
-            // the persistent buffer's were rewritten in place on the cold walk.
-            RewriteCallSites(queryPredicatesByAddress, ilTable, predicateByFid, queryBytes);
+            // Only the query's predicates need their sites classified — the
+            // rest of the buffer's were rewritten in place on the cold walk.
+            RewriteCallSites(queryPredicatesByAddress, ilTable, predicateByFid, queryStart, queryEnd);
             DiagIlRewriteTotal();
             return;
         }
@@ -613,7 +613,7 @@ internal sealed class BundleLoader
         foreach (var (_, p) in predicatesByAddress)
             predicateByFid[p.FunctorId] = p;
 
-        RewriteCallSites(predicatesByAddress, interp.IlByFunctorId, predicateByFid, queryBytes);
+        RewriteCallSites(predicatesByAddress, interp.IlByFunctorId, predicateByFid, queryStart, queryEnd);
         _callSiteCache = new CallSiteRewriteCache
         {
             PersistentRef = E._persistentProgram,
@@ -632,7 +632,7 @@ internal sealed class BundleLoader
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         Func<Shumway.Core.Activation, int, bool>?[]? ilTable,
         Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicateByFid,
-        byte[] queryBytes)
+        int queryStart, int queryEnd)
     {
         // Rewrite every Call whose callee state is decided at link time.
         // Three opcodes today (B.3 will add ExecuteIl / ExecuteBytecode):
@@ -642,8 +642,8 @@ internal sealed class BundleLoader
         //     layout-excluded, oversized, or already rejected). Operand
         //     is the absolute target address, unchanged.
         //   - Call: callee may still earn IL via JIT promotion later.
-        // Walks both the persistent buffer (addresses < E._querySplit)
-        // and the per-query overlay. Execute is left alone for now.
+        // Walks the whole buffer, the query's code in it. Execute is left
+        // alone for now.
         foreach (var (predAddr, pred) in predicatesByAddress)
         {
             foreach (var site in pred.CallSites)
@@ -651,18 +651,8 @@ internal sealed class BundleLoader
                 int calleeFid = site.CalleeFunctorId;
 
                 int absAddr = predAddr + site.OpcodeOffset;
-                byte[] buf;
-                int bufOffset;
-                if (absAddr < E._querySplit)
-                {
-                    buf = E._persistentProgram!;
-                    bufOffset = absAddr;
-                }
-                else
-                {
-                    buf = queryBytes;
-                    bufOffset = absAddr - E._querySplit;
-                }
+                byte[] buf = E._persistentProgram!;
+                int bufOffset = absAddr;
                 // Idempotence + safety: only rewrite the original
                 // Call/Execute opcode. A previous query may have already
                 // rewritten this site in the persistent buffer.
@@ -730,11 +720,10 @@ internal sealed class BundleLoader
                 // because the callee may still earn IL mid-query. Record it (by
                 // callee fid) so the moment the callee's delegate installs, the
                 // site is patched to CallIl/ExecuteIl for the rest of the query.
-                // Persistent-buffer sites only: the query overlay is rebuilt at
-                // the next setup anyway, and its buffer may be replaced mid-query.
+                // Not the query's own code: it goes with the query.
                 // Skip dynamic callees — their dispatch must keep feeding the
                 // JitIndexProfile counter inside OnDispatch.
-                if (absAddr < E._querySplit
+                if ((absAddr < queryStart || absAddr >= queryEnd)
                     && (calleePred is null || !IsDynamicPredicate(calleePred)))
                 {
                     (_promotableCallSites ??= new()).TryGetValue(calleeFid, out var list);
@@ -906,7 +895,7 @@ internal sealed class BundleLoader
             var index = new PersistedIlIndex { Predicates = new() };
             foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(bytes))
             {
-                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name).Id, pe.Arity);
+                int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(pe.Name, permanent: true).Id, pe.Arity);
                 index.Predicates.Add((fid, pe.Wakes, pe.Cps is not null, pe.Cost, pe.SnapshotClauses));
                 if (pe.IndexGraph is { Length: > 0 } graph)
                     (index.IndexGraphs ??= new())[fid] = graph;
@@ -1106,7 +1095,7 @@ internal sealed class BundleLoader
             int functorId;
             if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
             {
-                int aid = Shumway.Core.AtomTable.Intern(info.Name).Id;
+                int aid = Shumway.Core.AtomTable.Intern(info.Name, permanent: true).Id;
                 functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
                 slot = info.Slot;
             }
@@ -1373,7 +1362,7 @@ internal sealed class BundleLoader
     /// kind exists to kill.</summary>
     private static int ResolveBuiltinPatch(string name, int arity)
     {
-        int aid = Shumway.Core.AtomTable.Intern(name).Id;
+        int aid = Shumway.Core.AtomTable.Intern(name, permanent: true).Id;
         int fid = Shumway.Core.FunctorTable.Intern(aid, arity);
         if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int builtinId))
             throw new InvalidDataException(
@@ -1396,7 +1385,7 @@ internal sealed class BundleLoader
 
     private static int ResolveMarkerRun(Shumway.Compiler.Il.IlPatchSite s)
     {
-        int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+        int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
         int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
         return Shumway.Core.Activation.ReserveResumeMarkerRange(fid, s.Cursor, s.Count);
     }
@@ -1413,17 +1402,17 @@ internal sealed class BundleLoader
             switch (s.Kind)
             {
                 case Shumway.Compiler.Il.IlPatchKind.Atom:
-                    runtimeValue = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    runtimeValue = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     break;
                 case Shumway.Compiler.Il.IlPatchKind.Functor:
                 {
-                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     runtimeValue = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
                     break;
                 }
                 case Shumway.Compiler.Il.IlPatchKind.ResumeMarker:
                 {
-                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name, permanent: true).Id;
                     int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
                     runtimeValue = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
                     break;

@@ -114,7 +114,10 @@ internal static class TermImageBuilder
             }
             else
             {
-                cells.Add(Cell.Functor(FunctorTable.Intern(InternAtom(c.Functor), c.Args.Length)));
+                cells.Add(Cell.Functor(FunctorTable.Intern(
+                    AtomTable.Intern(c.Functor,
+                        permanent: Shumway.Builtins.ArithFunctorTable.IsEvaluable(c.Functor, c.Args.Length)).Id,
+                    c.Args.Length)));
                 for (int i = 0; i < c.Args.Length; i++) cells.Add(default);
                 argBase = start + 1;
             }
@@ -260,5 +263,6 @@ internal static class TermImageBuilder
         return header;
     }
 
-    private static int InternAtom(string name) => AtomTable.Intern(name, permanent: true).Id;
+    // Transient: the image's pool entry claims them (ADR-003).
+    private static int InternAtom(string name) => AtomTable.Intern(name).Id;
 }

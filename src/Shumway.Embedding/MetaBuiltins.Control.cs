@@ -891,14 +891,20 @@ public static partial class MetaBuiltins
     private static (int Fid, Clause Clause) AssertCore(
         Activation engine, PrologEngine host, bool prepend)
     {
-        Term clauseTerm = MaterializeClauseRegister(engine, 0);
-        clauseTerm = StripAssertQualifiers(clauseTerm);
-        ValidateAssertClause(clauseTerm, engine);
+        Clause? clause = TryImageFact(engine, host);
+        if (clause is null)
+        {
+            Term clauseTerm = MaterializeClauseRegister(engine, 0);
+            clauseTerm = StripAssertQualifiers(clauseTerm);
+            ValidateAssertClause(clauseTerm, engine);
+            clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
+        }
         // Before the database changes: a clause whose code cannot be placed
-        // must leave nothing behind.
-        if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom)
+        // must leave nothing behind. A hole that size will do as well as room
+        // at the end: the chunk is placed in the first hole it fits.
+        if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom
+            && !host.HasFreeCodeChunk(engine, PrologEngine.AssertCodeHeadroom))
             throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
-        var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
         // string intern per assert).
@@ -1207,6 +1213,73 @@ public static partial class MetaBuiltins
 
     private static readonly int _ruleFunctorAtomId =
         AtomTable.Intern(":-", permanent: true).Id;
+    private static readonly int _ruleFunctorId = FunctorTable.Intern(_ruleFunctorAtomId, 2);
+    private static readonly int _colonAtomId = AtomTable.Intern(":", permanent: true).Id;
+
+    /// <summary>ADR-063: the fact in register 0 as the image of its head, or
+    /// null for a clause that takes the term path: a rule, a qualified clause,
+    /// a head that is no structure or one the term path refuses (a control
+    /// construct, too wide an arity), a term an image cannot carry, and an
+    /// engine compiling for the debugger or with deterministic modes declared,
+    /// whose clause compiler specialises the fact.</summary>
+    private static Clause? TryImageFact(Activation engine, PrologEngine host)
+    {
+        var flags = host.Flags;
+        if (!flags.ImageFacts || flags.EmitDebugInfo || flags.DebugCodegen) return null;
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag != Tag.Str) return null;
+        Cell f = engine.GetHeap(c.AsHeapIndex);
+        if (f.Tag != Tag.Functor) return null;
+        int fid = f.AsFunctorId;
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        if (arity > Shumway.Core.RuntimeCaps.MaxProcedureArity) return null;
+        if (atomId == _ruleFunctorAtomId || atomId == _colonAtomId) return null;
+        if (arity == 2 && AtomTable.GetById(atomId)?.Name is "," or ";" or "->" or "*->" or "-->")
+            return null;
+        if (host.Modes.AllModesDeterministic(fid)) return null;
+        var image = Shumway.Core.TermImageCopier.FromHeap(engine, c);
+        if (image is null) return null;
+        host.ImageFactsAsserted++;
+        return new Clause(image, fid);
+    }
+
+    /// <summary>The candidate's term on the heap for the trial unification:
+    /// built from its image (ADR-063) or from its AST, as <c>(Head :- true)</c>
+    /// when the pattern is a rule (ISO treats a fact as one).</summary>
+    private static Cell CandidateCell(Activation engine, Clause candidate, bool ruleForm)
+    {
+        if (candidate.HeadImage is not { } image)
+            return Materializer.MaterializeAsCell(engine, RuleFormCandidate(candidate.Term, ruleForm));
+        Cell head = engine.BuildImage(image);
+        if (!ruleForm) return head;
+        int s = engine.AllocateHeap(3);
+        engine.SetHeap(s, Cell.Functor(_ruleFunctorId));
+        engine.SetHeap(s + 1, head);
+        engine.SetHeap(s + 2, Cell.Atom(AtomTable.TrueId));
+        return Cell.Str(s);
+    }
+
+    /// <summary>True only when the pattern at <paramref name="patternHeap"/>
+    /// provably cannot unify with the candidate: its image against the
+    /// pattern's cells (ADR-063), else its AST (the overload below).</summary>
+    private static bool DefiniteMismatch(Activation engine, int patternHeap, Clause candidate, bool ruleForm)
+    {
+        if (candidate.HeadImage is not { } image)
+            return DefiniteMismatch(engine, patternHeap, RuleFormCandidate(candidate.Term, ruleForm), depth: 4);
+        if (!ruleForm) return image.DefinitelyDiffers(engine, patternHeap, 4);
+        // (Head :- Body) against (Image :- true).
+        Cell c = engine.GetHeap(engine.Deref(patternHeap));
+        if (c.Tag != Tag.Str) return false;
+        if (image.DefinitelyDiffers(engine, c.AsHeapIndex + 1, 4)) return true;
+        Cell body = engine.GetHeap(engine.Deref(c.AsHeapIndex + 2));
+        return body.Tag switch
+        {
+            Tag.Atom => body.AsAtomId != AtomTable.TrueId,
+            Tag.Int or Tag.Str or Tag.Lis or Tag.Pstr => true,
+            _ => false,
+        };
+    }
 
     /// <summary>Removes the first clause that unifies with the retract
     /// pattern — the entry step, scanning the live clause list
@@ -1279,8 +1352,7 @@ public static partial class MetaBuiltins
         Clause candidate = candidates[matchIndex];
         int savedHb = engine.Hb;
         engine.SetHb(engine.HeapTop);
-        Cell candidateCell = Materializer.MaterializeAsCell(engine,
-            RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
+        Cell candidateCell = CandidateCell(engine, candidate, IsRuleFormPattern(engine, patternHeap));
         int candSlot = engine.AllocateHeap(1);
         engine.SetHeap(candSlot, candidateCell);
 
@@ -1316,7 +1388,7 @@ public static partial class MetaBuiltins
     /// <para>Once copied out, <c>_snapCount</c> bounds the used range of
     /// <c>_snap</c>, which may be a pooled buffer longer than the snapshot it
     /// holds.</para></summary>
-    private sealed class RetractCursor : DynamicClauseStore.IClauseWindow
+    private sealed class RetractCursor : DynamicClauseStore.IClauseWindow, IAtomHolder
     {
         private readonly PrologEngine _host;
         private readonly int _patternFid;
@@ -1331,6 +1403,14 @@ public static partial class MetaBuiltins
         // Copied-out mode: [_start, _snapCount) of _snap.
         private Clause[]? _snap;
         private int _snapCount;
+
+        /// <summary>ADR-003: the atoms of the images of the clauses copied out,
+        /// which the store may no longer hold for this view.</summary>
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            if (_snap is null) return;
+            for (int i = _start; i < _snapCount; i++) _snap[i].HeadImage?.MarkAtoms(set);
+        }
 
         public readonly Func<Activation, int, bool> Resume;
         public readonly Action OnPrune;
@@ -1466,8 +1546,7 @@ public static partial class MetaBuiltins
 
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
-            Cell candidateCell = Materializer.MaterializeAsCell(engine,
-                RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
+            Cell candidateCell = CandidateCell(engine, candidate, IsRuleFormPattern(engine, patternHeap));
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
 
@@ -1547,8 +1626,8 @@ public static partial class MetaBuiltins
             if (ReferenceEquals(candidates[i], DynamicClauseStore.Tombstone))
                 continue;
             host.RetractCandidatesTried++;
-            Term candTerm = RuleFormCandidate(candidates[i].Term, ruleForm);
-            if (DefiniteMismatch(engine, patternHeap, candTerm, depth: 4))
+            Clause candidate = candidates[i];
+            if (DefiniteMismatch(engine, patternHeap, candidate, ruleForm))
                 continue;
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
@@ -1556,8 +1635,7 @@ public static partial class MetaBuiltins
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
 
-            Cell candidateCell =
-                Materializer.MaterializeAsCell(engine, candTerm);
+            Cell candidateCell = CandidateCell(engine, candidate, ruleForm);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
             bool matches = engine.Unify(patternHeap, candSlot);

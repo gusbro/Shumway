@@ -57,8 +57,8 @@ public static class ArithmeticBuiltins
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
 
     // Cached functor ids for the common arithmetic ops. FunctorTable
-    // is process-global and ids never recycle, so a per-process lazy
-    // cache is safe.
+    // is process-global and these names are permanent, so a per-process
+    // lazy cache is safe.
     private static int _addFid, _subFid, _mulFid, _intDivFid, _modFid;
     private static int _addAid, _subAid, _mulAid, _intDivAid, _modAid;
     private static bool _fidsInit;

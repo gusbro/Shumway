@@ -231,6 +231,16 @@ internal sealed class RecordedDatabase
         return @ref;
     }
 
+    /// <summary>Adds the atom keys and the atoms of the values (ADR-003).</summary>
+    public void MarkAtoms(AtomMarkSet set)
+    {
+        foreach (var entry in _byRef.Values)
+        {
+            if (entry.AtomId >= 0) set.Add(entry.AtomId);
+            entry.Value.MarkAtoms(set);
+        }
+    }
+
     /// <summary>Removes every entry. Used by tests + by future
     /// snapshot/save-state save_state(... clean_records ...) options.</summary>
     public void Clear()

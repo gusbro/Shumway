@@ -150,6 +150,14 @@ public sealed partial class Activation
     public AddressMap? SolutionCopyVars;
     public AddressMap? SolutionCopyBlocks;
     public List<(Cell Value, int Addr, int Dest)>? SolutionCopyWork;
+    // Pooled scratch for the image of a fact asserted at run time
+    // (TermImageCopier): the var and block maps, the blocks on the path from
+    // the root, the work stack and the cells; cleared on use.
+    public AddressMap? ImageCopyVars;
+    public AddressMap? ImageCopyBlocks;
+    public HashSet<int>? ImageCopyActive;
+    public List<(Cell Value, int Addr, int Dest)>? ImageCopyWork;
+    public Cell[]? ImageCopyCells;
     // And for bagof/setof's witness key, built before the copy.
     public HashSet<int>? SolutionKeyPath;
     public List<(Cell Cell, char Close, int PathAddr)>? SolutionKeyWork;

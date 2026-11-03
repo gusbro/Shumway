@@ -326,7 +326,9 @@ internal sealed class NativeRuntime
 
     internal NativeResolution ResolveNativeCall(string name, int arity)
     {
-        int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
+        // Permanent: the cache would answer for whatever name a dead atom's id
+        // went to (ADR-003).
+        int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
         if (_nativeCallCache.TryGetValue(fid, out var cached)) return cached;
         var r = BuildNativeResolution(name, arity);
         _nativeCallCache[fid] = r;

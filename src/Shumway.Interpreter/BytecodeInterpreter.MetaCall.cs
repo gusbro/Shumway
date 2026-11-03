@@ -150,7 +150,7 @@ public sealed partial class BytecodeInterpreter
         bool waits = false;
         for (int p = pc; ;)
         {
-            var op = (Opcode)(code.Overflow is null ? codeArr[p] : code[p]);
+            var op = (Opcode)codeArr[p];
             if (op == Opcode.AEvalPush)
             {
                 int kind = ReadI32(code, codeArr, p + 1), val = ReadI32(code, codeArr, p + 5);

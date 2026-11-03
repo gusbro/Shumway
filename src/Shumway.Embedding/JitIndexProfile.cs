@@ -78,6 +78,11 @@ public sealed class JitIndexProfile
     public void RecordCompileDecision(int functorId, bool indexed)
         => _compiledHot[functorId] = indexed;
 
+    /// <summary>The hotness the last compile of <paramref name="functorId"/>
+    /// assumed, or null when none was recorded.</summary>
+    public bool? CompileDecision(int functorId)
+        => _compiledHot.TryGetValue(functorId, out bool hot) ? hot : null;
+
     /// <summary>Copies this profile's state into <paramref name="other"/>
     /// — used by <see cref="PrologEngine.CreateSubEngine"/> so a forked
     /// engine starts from the parent's accumulated call history.</summary>

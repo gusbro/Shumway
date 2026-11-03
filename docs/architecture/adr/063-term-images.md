@@ -264,11 +264,12 @@ to the matcher, for measuring.
 
 A matcher in the wasm module, and the read-only form of the stream
 there, are later measurements. Big integers and rationals stay
-out of images while their payloads name a per-activation table. A clause
+out of images while their payloads name a per-activation table. A rule
 asserted at run time carries no images (its packed text, floats and big
-integers are its pool literals); the images of consulted clauses and of a dynamic
-predicate's snapshot are released with their code (ADR-015); the
-threshold keeps small terms out of the pool.
+integers are its pool literals); a fact asserted at run time is the image
+of its head (the amendment of 2026-10-31). The images of consulted clauses
+and of a dynamic predicate's snapshot are released with their code
+(ADR-015); the threshold keeps small terms out of the pool.
 
 ## Expected gain (before measuring)
 
@@ -388,3 +389,48 @@ its exact size when it is stored. recorded/3, instance/2 and the
 enumeration cursor copy it back by the delta, and a record whose cells
 cannot unify with the pattern (`SolutionBuffer.DefiniteMismatch`) is
 skipped before any trial unification.
+
+## Amendment (2026-10-31): a fact asserted at run time is the image of its head
+
+assertz/1 and asserta/1 of a fact copy the head from the heap into an image
+(`TermImageCopier`) and keep the clause as that image: no term is built from
+the heap and the clause compiler does not run. The code of the clause's
+chunk is the head's matching stream read off the cells (`FactImageCompiler`),
+as the clause compiler emits it from a term: an atom, a small integer, a
+float or closed packed text by its instruction (`get_atom`, `get_integer`,
+`get_float`, `get_pstr`, the literals in their pools), a variable by its
+register, a compound by `get_structure` or `get_list` and the stream of its
+arguments, a nested compound or boxed literal through a temporary the stream
+takes it from, after its parent's stream. A head the stream cannot express
+(an integer past the operand, packed text that does not end in `[]`) is
+copied whole from the image, interned in the image pool, and unified
+argument by argument (`put_blit`, `get_structure` in read mode,
+`unify_value_x`). A compound argument at or past the head threshold has an
+image of its own and `get_blit` before its stream, as a source clause's head
+does: cut from the head's image, its variables holes the copy fills from the
+registers the streams use or points those registers at. retract/1 and
+clause/2 try a candidate's image against the
+pattern cell by cell (`TermImage.DefinitelyDiffers`) and copy it to the heap
+for the trial unification; the materializer is not involved. The clause's
+term (`Clause.Term`) is built from the image when something reads it: a
+listing, a bundle, a snapshot for the IL tier, a full build of the program
+at a query setup. The setup after an assert or a retract of a fact does not
+compile the predicate: the persistent buffer holds the mutation, and the
+product's compile of a predicate of facts waits for the next full build,
+which a relink of that buffer always comes with. The interpreter reads the
+image pool itself, not a copy taken at the query's setup: a copy per image
+interned was a copy of the pool per assert.
+
+A fact takes the term path when its head is not a structure, when the
+clause is a rule or is qualified with a module, when the term holds a big
+integer, a rational or a foreign object (their cells name a table of the
+activation) or a cycle, when deterministic modes are declared for the
+predicate (the clause compiler specialises the fact), and when the engine
+compiles for the debugger. `SHUMWAY_IMAGE_FACTS=0` turns the image path
+off, for the measurement.
+
+The atoms an image names are claimed while the clause can be read: by the
+pool entry while a chunk names it, and marked from the clause store and
+from a retract or clause/2 enumeration that holds a clause the store has
+let go (ADR-003). Tests: `TermImageCopierTests`, `FactImageCompilerTests`,
+`ImageFactTests`.

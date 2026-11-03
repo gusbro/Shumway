@@ -311,6 +311,19 @@ public sealed partial class Activation
         if (_deadlineAt != 0) CheckDeadline();
     }
 
+    /// <summary><see cref="BacktrackSafePoint"/> at a retry the engine makes itself,
+    /// with the whole machine state in the activation: it also serves an atom
+    /// collection's mark. Not for compiled code: a guard loop keeps heap indices in
+    /// locals no trace reaches (ADR-031), and a region keeps registers in locals
+    /// (ADR-060).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
+    public void RetrySafePoint()
+    {
+        if (--_backtrackCancelCountdown > 0) return;
+        BacktrackSafePointDue();
+        if ((_safePointRequests & SafePointAtomMark) != 0) TakeAtomMarkRequest();
+    }
+
     // hot/cold split. The guard is AggressiveInlining so each
     // safe-point call site inlines to: a volatile _cancelRequested read +
     // one compare (the diag flag and the watermark, fused into a single
@@ -337,12 +350,12 @@ public sealed partial class Activation
         // read, predicted not-taken) whenever no deadline is active.
         if (_deadlineAt != 0)
             CheckDeadline();
-        // ADR-035 D5+ — a lazily-opened debug session arming itself mid-run (a
-        // debugger just attached): applied here, on the engine's own thread at a
-        // goal boundary, because the watcher thread that noticed the attach must
-        // never mutate a running activation. Same cost class as the cancel flag.
-        if (_debugArmPending)
-            ApplyDebugArm();
+        // Work other threads ask of this activation (RequestDebugArm, an atom
+        // collection's mark): done here, on its own thread at a goal boundary,
+        // because no other thread may touch a running activation. Same cost
+        // class as the cancel flag.
+        if (_safePointRequests != 0)
+            ApplySafePointRequests();
         if (!_gcDiagActive && _heapTop < _gcThreshold) return;
         MaybeCollectHeapSlow();
     }
@@ -377,7 +390,7 @@ public sealed partial class Activation
 #if SHUMWAY_DIAG
         true;
 #else
-        _cancelRequested || _deadlineAt != 0 || _debugArmPending
+        _cancelRequested || _deadlineAt != 0 || _safePointRequests != 0
         || _gcDiagActive || _heapTop >= _gcThreshold;
 #endif
     }
@@ -397,8 +410,8 @@ public sealed partial class Activation
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
             CheckDeadline();
-        if (_debugArmPending)
-            ApplyDebugArm();
+        if (_safePointRequests != 0)
+            ApplySafePointRequests();
         if (!_gcDiagActive && _heapTop < _gcThreshold) return;
         MaybeCollectHeapSlowAtCall(functorId);
     }
@@ -415,8 +428,8 @@ public sealed partial class Activation
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
             CheckDeadline();
-        if (_debugArmPending)
-            ApplyDebugArm();
+        if (_safePointRequests != 0)
+            ApplySafePointRequests();
         if (!_gcDiagActive && _heapTop < _gcThreshold) return;
         if (IsResumeMarker(target))
             MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
@@ -435,8 +448,8 @@ public sealed partial class Activation
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
             CheckDeadline();
-        if (_debugArmPending)
-            ApplyDebugArm();
+        if (_safePointRequests != 0)
+            ApplySafePointRequests();
         if (!_gcDiagActive && _heapTop < _gcThreshold) return;
         MaybeCollectHeapSlowBounded(0);
     }
@@ -465,9 +478,11 @@ public sealed partial class Activation
         finally { _gcLiveRegisterBound = -1; }
     }
 
-    // ADR-035 D5+ — the pending arm. Volatile: set from the session's watcher
-    // thread, read here every safe point.
-    private volatile bool _debugArmPending;
+    // Requests from other threads, one bit each, read at every safe point. One
+    // field, so every safe point pays one read whatever is asked of it.
+    private const int SafePointDebugArm = 1, SafePointAtomMark = 2;
+    private volatile int _safePointRequests;
+    // ADR-035 D5+ — the pending arm, set from the session's watcher thread.
     private System.Action<Activation>? _debugArmAction;
 
     /// <summary>Asks this activation to run <paramref name="arm"/> on its own thread at
@@ -477,17 +492,40 @@ public sealed partial class Activation
     public void RequestDebugArm(System.Action<Activation> arm)
     {
         _debugArmAction = arm;
-        _debugArmPending = true;
+        SetSafePointRequest(SafePointDebugArm);
+    }
+
+    private void SetSafePointRequest(int request)
+    {
+        int seen;
+        do seen = _safePointRequests;
+        while (Interlocked.CompareExchange(ref _safePointRequests, seen | request, seen) != seen);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private void ApplyDebugArm()
+    private void ApplySafePointRequests()
     {
-        _debugArmPending = false;
-        var arm = _debugArmAction;
-        _debugArmAction = null;
-        arm?.Invoke(this);
+        int requests = Interlocked.Exchange(ref _safePointRequests, 0);
+        if ((requests & SafePointDebugArm) != 0)
+        {
+            var arm = _debugArmAction;
+            _debugArmAction = null;
+            arm?.Invoke(this);
+        }
+        if ((requests & SafePointAtomMark) != 0) ServeAtomMarkRequest(heapCollectionFollows: true);
+    }
+
+    // At a backtrack safe point only the atom mark is served: a debug arm waits
+    // for a goal boundary.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void TakeAtomMarkRequest()
+    {
+        int seen;
+        do seen = _safePointRequests;
+        while (Interlocked.CompareExchange(ref _safePointRequests, seen & ~SafePointAtomMark, seen) != seen);
+        ServeAtomMarkRequest(heapCollectionFollows: false);
     }
 
     // Not NoInlining: see ThrowNoEnv.
@@ -594,6 +632,8 @@ public sealed partial class Activation
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
         ResetSideTableLiveSets();
+        // ADR-003: past the atom threshold this trace marks the atoms too.
+        long atomEpoch = BeginCollectionAtomMark();
 
         MarkRoots(oldTop);
         // The attribute trail log, the wakeup queue and the cleanup handlers
@@ -626,6 +666,7 @@ public sealed partial class Activation
         // table and should not be handed entries the collector disproved.
         ForeignSweepUnmarked(_gcForeignLive);
         NumericSweepUnmarked(_gcRationalLive);
+        EndCollectionAtomMark(atomEpoch);
 
         // ---- forwarding addresses (order-preserving slide): the count of
         // marked cells before each 64-cell word, one pass over the words; a
@@ -1103,6 +1144,12 @@ public sealed partial class Activation
                     && (uint)c.AsForeignId < (uint)fgn.Length)
                     fgn[c.AsForeignId] = true;
                 break;
+            case Tag.Atom:
+                _atomMarkSet?.Add(c.AsAtomId);
+                break;
+            case Tag.Functor:
+                _atomMarkSet?.AddFunctor(c.AsFunctorId);
+                break;
             case Tag.Pstr:
             {
                 int bufStart = c.AsPstrBufferIndex;
@@ -1114,8 +1161,9 @@ public sealed partial class Activation
                 GcMarkCell(bufStart + bufCount);   // logical tail cell
                 break;
             }
-            // Atom, Int, Functor, Rational, String, Foreign, PstrBuffer,
-            // RawInt (control words, big-integer headers and limbs): leaves.
+            // Int, PstrBuffer, RawInt (control words, big-integer headers and
+            // limbs): leaves. An atom and a functor's name are recorded only
+            // while an atom mark runs (ADR-003).
         }
     }
 

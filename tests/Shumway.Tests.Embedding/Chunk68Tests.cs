@@ -19,7 +19,9 @@ namespace Shumway.Tests.Embedding;
 /// invalidated on every <c>assertz</c> / <c>asserta</c> /
 /// <c>retract</c> / <c>abolish</c> that touches the functor. The
 /// indexing itself was already there; the cache makes its benefit
-/// observable across queries.</para>
+/// observable across queries. A mutation of a predicate of facts between
+/// queries leaves its compile to the next full build (the persistent
+/// buffer holds the mutation), so the entry is absent until then.</para>
 /// </summary>
 public class Chunk68Tests
 {
@@ -80,9 +82,9 @@ public class Chunk68Tests
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         engine.Query("assertz(d(b)).");
         Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
-        // Next query picks up the new clause and re-caches.
+        // Next query picks up the new clause; the compile waits for a build.
         Assert.True(engine.Query("d(b).").Success);
-        Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
+        Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
     }
 
     [Fact]
@@ -193,14 +195,17 @@ public class Chunk68Tests
         // After assertz, the next query must compile the new clause set
         // and the result must include the new clause.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic fact/1.");
-        engine.Query("assertz(fact(a)).");
+        engine.ConsultString("""
+            :- dynamic fact/1.
+            fact(a).
+            """);
         engine.Query("fact(a).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("fact", 1)));
         engine.Query("assertz(fact(b)).");
-        // Cache was invalidated; next query rebuilds.
+        // Cache was invalidated; the next query runs the clause in place and
+        // the compile waits for a build.
         Assert.True(engine.Query("fact(b).").Success);
-        Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("fact", 1)));
+        Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("fact", 1)));
     }
 
     [Fact]
@@ -209,10 +214,10 @@ public class Chunk68Tests
         // 100-fact dynamic predicate. The cache eliminates repeat
         // compilation; correctness is the test bar.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic big/1.");
-        for (int i = 0; i < 100; i++)
-            engine.Query($"assertz(big({i})).");
-        // Prime the cache.
+        var facts = new System.Text.StringBuilder(":- dynamic big/1.\n");
+        for (int i = 0; i < 100; i++) facts.Append($"big({i}).\n");
+        engine.ConsultString(facts.ToString());
+        // Prime the cache: the first query's build compiles the clauses.
         engine.Query("big(50).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("big", 1)));
         // Spot-check correctness across the range.

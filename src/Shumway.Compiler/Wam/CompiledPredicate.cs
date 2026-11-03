@@ -102,6 +102,10 @@ public sealed class CompiledPredicate
     /// shared across engines via the global caches.</summary>
     internal int PoolFreeMemo;
 
+    /// <summary>The transient atoms the code names (<see cref="CodeAtoms.Of"/>),
+    /// computed once: the bytecode and its switch tables are immutable.</summary>
+    internal CodeAtoms? AtomsMemo;
+
     /// <summary>The <see cref="LiteralPools"/> instance this predicate's
     /// bytecode was compiled against, when the caller supplied a persistent
     /// (engine-lifetime) pool set — a literal id is stable there while code

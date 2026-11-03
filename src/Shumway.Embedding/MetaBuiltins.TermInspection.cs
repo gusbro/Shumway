@@ -99,8 +99,6 @@ public static partial class MetaBuiltins
             Cell a = ResolveLocal(engine, engine.GetRegister(2));
             if (n.Tag is Tag.Ref or Tag.AttVar || a.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
-            Term nameTerm = MaterializeRegister(engine, 1);
-            Term arityTerm = MaterializeRegister(engine, 2);
             if (a.Tag == Tag.BigInt)
             {
                 // A bignum is an integer: negative is a domain error;
@@ -109,16 +107,16 @@ public static partial class MetaBuiltins
                 // (issue #106), not a flag-derived representation error.
                 throw new ShumwayPrologException(
                     engine.AsBigInt(a).Sign < 0
-                        ? IsoError.DomainError("not_less_than_zero", arityTerm)
+                        ? IsoError.DomainError("not_less_than_zero", MaterializeRegister(engine, 2))
                         : IsoError.ResourceError("finite_memory"));
             }
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", arityTerm));
+                    IsoError.TypeError("integer", MaterializeRegister(engine, 2)));
             long arity = a.AsInt;
             if (arity < 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("not_less_than_zero", arityTerm));
+                    IsoError.DomainError("not_less_than_zero", MaterializeRegister(engine, 2)));
             // Checked before any allocation: the probe one past capacity
             // must error, not thrash 4 GiB of heap into being (issue #106).
             if (arity > MaxArity)
@@ -129,13 +127,13 @@ public static partial class MetaBuiltins
                 // T becomes Name itself (atomic).
                 if (n.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", nameTerm));
+                        IsoError.TypeError("atomic", MaterializeRegister(engine, 1)));
                 return engine.UnifyRegisterWithCell(0, n);
             }
             if (n.Tag is Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
-                throw new ShumwayPrologException(IsoError.TypeError("atom", nameTerm));
+                throw new ShumwayPrologException(IsoError.TypeError("atom", MaterializeRegister(engine, 1)));
             if (n.Tag != Tag.Atom)
-                throw new ShumwayPrologException(IsoError.TypeError("atomic", nameTerm));
+                throw new ShumwayPrologException(IsoError.TypeError("atomic", MaterializeRegister(engine, 1)));
             // '.'/2 is the list constructor, and a cons lives in a Lis cell
             // everywhere else in the engine (ADR-017). Building a Str here
             // spelled a list that compared unequal to the list it spells:
@@ -466,10 +464,10 @@ public static partial class MetaBuiltins
             // build the STR. The list is on the heap so the walk is a
             // pointer chase, no allocation.
             Cell listC = ResolveLocal(engine, engine.GetRegister(1));
-            Term listTerm = MaterializeRegister(engine, 1);
             // §8.5.3.3 order: an unbound list (or tail) is an
             // instantiation_error; an improper one is type_error(list, L)
-            // with the whole list as culprit.
+            // with the whole list as culprit. The culprit is read only when
+            // thrown: reading it on every call copied the list each time.
             if (listC.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             int count = 0;
@@ -482,10 +480,11 @@ public static partial class MetaBuiltins
             if (cur.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-                throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("list", MaterializeRegister(engine, 1)));
             if (count == 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("non_empty_list", listTerm));
+                    IsoError.DomainError("non_empty_list", MaterializeRegister(engine, 1)));
 
             // Fetch the functor cell (the first element) — through the
             // list-like cursor: a packed list is a list (ADR-047), and
@@ -493,19 +492,18 @@ public static partial class MetaBuiltins
             engine.TryUnconsListLike(engine.NormalizeListCell(listC),
                 out Cell firstRaw, out Cell restAfterFirst);
             Cell first = ResolveLocal(engine, firstRaw);
-            Term firstTerm = engine.MaterializeCellToTerm is { } fmat
-                && fmat(first) is Term ft ? ft : new VarTerm("_");
             if (first.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (count == 1)
             {
                 if (first.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", firstTerm));
+                        IsoError.TypeError("atomic", CellCulprit(engine, first)));
                 return engine.UnifyRegisterWithCell(0, first);
             }
             if (first.Tag != Tag.Atom)
-                throw new ShumwayPrologException(IsoError.TypeError("atom", firstTerm));
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", CellCulprit(engine, first)));
             int arity = count - 1;
             // Past address-space capacity the term cannot be built; with
             // max_arity unbounded that is a resource error (issue #106).
@@ -541,6 +539,11 @@ public static partial class MetaBuiltins
         }
         return false;
     }
+
+    /// <summary>The culprit of an error raised on <paramref name="c"/>. Only
+    /// an error path calls it: reading a term is a copy.</summary>
+    private static Term CellCulprit(Activation engine, Cell c)
+        => engine.MaterializeCellToTerm is { } fmat && fmat(c) is Term t ? t : new VarTerm("_");
 
     /// <summary>Builds a fresh proper list whose head slots hold the given
     /// cell values. Same layout pattern as <c>SortBuiltins.BuildList</c>:
@@ -993,13 +996,40 @@ public static partial class MetaBuiltins
         // Drop the clauses whose head definitely cannot match the pattern, so
         // the cursor enumerates solutions rather than the whole predicate —
         // first-argument indexing's answer to the same question, at the AST
-        // level. `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
-        candidates.RemoveAll(c => !HeadCanMatch(headPattern, ClauseHead(c)));
+        // level, or against the image of a fact asserted at run time (ADR-063).
+        // `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
+        int headHeap = engine.MaterializeRegisterForTrace(0);
+        candidates.RemoveAll(c => c.HeadImage is { } image
+            ? image.DefinitelyDiffers(engine, headHeap, 4)
+            : !HeadCanMatch(headPattern, ClauseHead(c)));
 
         int returnPc = engine.BuiltinReturnPc;
         // arity 2 (clause/2): save the arg registers across backtracks.
-        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc,
-            (e, i) => ClauseEnumUnify(e, candidates[i]));
+        var steps = new ClauseEnumSteps(candidates, pairRegister: 1);
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc, steps.TryAt);
+    }
+
+    /// <summary>The candidates of a clause/2 enumeration and the register of
+    /// the query's pair. It holds the atoms of the images among them (ADR-003)
+    /// while the cursor can still try a clause the store has let go.</summary>
+    private sealed class ClauseEnumSteps : IAtomHolder
+    {
+        private readonly List<Clause> _candidates;
+        private readonly int _pairRegister;
+
+        public ClauseEnumSteps(List<Clause> candidates, int pairRegister)
+        {
+            _candidates = candidates;
+            _pairRegister = pairRegister;
+        }
+
+        public bool TryAt(Activation engine, int i)
+            => ClauseEnumUnify(engine, _candidates[i], _pairRegister);
+
+        public void MarkAtoms(AtomMarkSet set)
+        {
+            foreach (var c in _candidates) c.HeadImage?.MarkAtoms(set);
+        }
     }
 
     private static Term ClauseHead(Clause c) => c.Kind == ClauseKind.Rule
@@ -1040,11 +1070,22 @@ public static partial class MetaBuiltins
         _ => true,
     };
 
-    private static bool ClauseEnumUnify(Activation engine, Clause candidate)
-        => ClauseEnumUnify(engine, candidate, pairRegister: 1);
+    private static readonly int _pairFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("-", permanent: true).Id, 2);
 
     private static bool ClauseEnumUnify(Activation engine, Clause candidate, int pairRegister)
     {
+        if (engine.Host is PrologEngine host) host.ClauseCandidatesTried++;
+        if (candidate.HeadImage is { } image)
+        {
+            // ADR-063: the fact's head from its image, its body `true`.
+            Cell copied = engine.BuildImage(image);
+            int s = engine.AllocateHeap(3);
+            engine.SetHeap(s, Cell.Functor(_pairFunctorId));
+            engine.SetHeap(s + 1, copied);
+            engine.SetHeap(s + 2, Cell.Atom(AtomTable.TrueId));
+            return engine.UnifyRegisterWithCell(pairRegister, Cell.Str(s));
+        }
         Term head = candidate.Kind == ClauseKind.Rule
             ? ((CompoundTerm)candidate.Term).Args[0]
             : candidate.Term;
@@ -1194,8 +1235,8 @@ public static partial class MetaBuiltins
             candidates.AddRange(host.StaticClausesInModule(src, fid));
 
         int returnPc = engine.BuiltinReturnPc;
-        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 3, returnPc,
-            (e, i) => ClauseEnumUnify(e, candidates[i], pairRegister: 2));
+        var steps = new ClauseEnumSteps(candidates, pairRegister: 2);
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 3, returnPc, steps.TryAt);
     }
 
     /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module
@@ -1542,8 +1583,8 @@ public static partial class MetaBuiltins
     /// every dynamic predicate's chain and re-threads it through only
     /// the live entries, bypassing the retracted ones still sitting
     /// in the bytecode. The dispatch cost of subsequent calls then
-    /// drops from O(ever-asserted) back to O(live). The dead-clause
-    /// bytecode is left orphaned; the program buffer doesn't shrink.</summary>
+    /// drops from O(ever-asserted) back to O(live). A dead clause's bytes are
+    /// reused by later asserts once no goal can run them.</summary>
     public static bool GarbageCollectClauses0(Activation engine)
     {
         if (engine.Host is not PrologEngine host)

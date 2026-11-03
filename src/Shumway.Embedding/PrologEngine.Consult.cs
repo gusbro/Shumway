@@ -12,30 +12,30 @@ public sealed partial class PrologEngine
 
     /// <summary>Consults a file by path — <c>.shum</c> loads a bundle,
     /// anything else consults source.</summary>
-    public void ConsultFile(string path) => Consults.ConsultFile(path);
+    public void ConsultFile(string path) => HostChange(() => Consults.ConsultFile(path));
 
     internal void ConsultFileLive(string path, Shumway.Core.Activation liveEngine)
         => Consults.ConsultFileLive(path, liveEngine);
 
     /// <summary>Classical reconsult: abolishes the predicates the file
     /// defines, then consults it.</summary>
-    public void ReconsultFile(string path) => Consults.ReconsultFile(path);
+    public void ReconsultFile(string path) => HostChange(() => Consults.ReconsultFile(path));
 
     internal void ReconsultFileLive(string path, Shumway.Core.Activation liveEngine)
         => Consults.ReconsultFileLive(path, liveEngine);
 
     /// <summary>Consults Prolog source text into this engine.</summary>
-    public void ConsultString(string source) => Consults.ConsultString(source);
+    public void ConsultString(string source) => HostChange(() => Consults.ConsultString(source));
 
     /// <summary>Classical reconsult of source text: abolishes the predicates it
     /// defines, then consults it — so loading the same text twice defines it
     /// once. What an editor's "load this buffer" means.</summary>
-    public void ReconsultString(string source) => Consults.ReconsultString(source);
+    public void ReconsultString(string source) => HostChange(() => Consults.ReconsultString(source));
 
     internal void ConsultStringInner(string source, bool recordInHistory,
         string? moduleNameFallback = null, bool librarySource = false)
-        => Consults.ConsultStringInner(source, recordInHistory, moduleNameFallback,
-            librarySource: librarySource);
+        => HostChange(() => Consults.ConsultStringInner(source, recordInHistory, moduleNameFallback,
+            librarySource: librarySource));
 
     internal void MarkModuleNonDebuggable(string moduleName)
         => Consults.MarkModuleNonDebuggable(moduleName);

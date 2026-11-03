@@ -33,19 +33,15 @@ namespace Shumway.Builtins;
 ///
 /// <para>Keyed by atom id, not name string — the id is what the builtin
 /// already has in hand, and keying by string paid a name lookup plus a
-/// string hash per access on hot nb_getval loops. Atom ids are stable
-/// for the lifetime of the atom (ADR-003); the lifetime itself is
-/// guaranteed by <see cref="_retained"/>, which holds a strong reference
-/// to each key's <see cref="AtomTable"/> entry so a transient-tier name
-/// can't be collected (and its id reused) while a global var is keyed
-/// by it.</para>
+/// string hash per access on hot nb_getval loops. The hosting engine
+/// claims the keys and the atoms of the values (<see cref="MarkAtoms"/>,
+/// ADR-003), so a key's atom lives as long as its entry.</para>
 /// </summary>
 public sealed class GlobalVarStore : IExternalTrailTarget
 {
     private readonly Dictionary<int, Cell> _byAtomId = new();
     private readonly Dictionary<int, object> _payloads = new();
     private readonly Dictionary<int, int> _owner = new();
-    private readonly Dictionary<int, object> _retained = new();
 
     /// <summary>Bumped by every write, so a mirror of the store can tell a
     /// stale image from a current one without walking it.</summary>
@@ -89,7 +85,6 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     /// backtracks out of the assignment).</summary>
     public void Set(int atomId, Cell value, bool backtrackable, int ownerId = 0)
     {
-        Retain(atomId);
         _payloads.Remove(atomId);
         _byAtomId[atomId] = value;
         if (backtrackable) _owner[atomId] = ownerId;
@@ -114,7 +109,6 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     /// re-emits at read time.</summary>
     public void SetPayload(int atomId, object payload)
     {
-        Retain(atomId);
         _byAtomId.Remove(atomId);
         _owner.Remove(atomId);
         _payloads[atomId] = payload;
@@ -124,11 +118,21 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     public bool TryGetPayload(int atomId, out object payload) =>
         _payloads.TryGetValue(atomId, out payload!);
 
-    private void Retain(int atomId)
+    /// <summary>Adds the keys and the atoms of the values: a cell's own atom, and
+    /// those of a payload that holds any. A live cell into the heap is traced
+    /// with the activation that wrote it.</summary>
+    public void MarkAtoms(AtomMarkSet set)
     {
-        if (_retained.ContainsKey(atomId)) return;
-        object? entry = AtomTable.GetById(atomId);
-        if (entry is not null) _retained[atomId] = entry;
+        foreach (var (atomId, cell) in _byAtomId)
+        {
+            set.Add(atomId);
+            set.AddCell(cell);
+        }
+        foreach (var (atomId, payload) in _payloads)
+        {
+            set.Add(atomId);
+            if (payload is IAtomHolder holder) holder.MarkAtoms(set);
+        }
     }
 
     /// <summary>Backtracking undo for a trailed <c>b_setval</c> write. A

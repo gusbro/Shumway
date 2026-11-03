@@ -78,14 +78,10 @@ public sealed class AtomTerm : Term
 {
     public string Name { get; }
 
-    // Lazily-cached AtomTable id, stored as id+1 so the field's
-    // default (0) can mean "not yet resolved" — atom id 0 itself is valid
-    // (it's "[]"). Deliberately not part of Equals/GetHashCode: two
-    // AtomTerms with the same Name compare equal whether or not either
-    // has resolved its id. Atom ids are stable for the atom's lifetime
-    // (ADR-003), so a cached id never goes stale; racing writers from two
-    // engines store the same value (int writes are atomic).
-    private int _atomIdPlusOne;
+    // The atom last resolved, taken again on each use: a transient atom dies
+    // once nothing claims it and its id goes to another name (ADR-003), so a
+    // cached id alone goes stale. Not part of Equals/GetHashCode.
+    private Shumway.Core.Atom? _atom;
 
     public AtomTerm(string name) => Name = name;
 
@@ -95,21 +91,21 @@ public sealed class AtomTerm : Term
     public AtomTerm(string name, int atomId)
     {
         Name = name;
-        _atomIdPlusOne = atomId + 1;
+        _atom = Shumway.Core.AtomTable.GetById(atomId);
     }
 
     /// <summary>The atom's global <c>AtomTable</c> id, interned
-    /// (transient tier) on first use and cached on the node. Callers that
-    /// require the atom pinned permanent must still promote it themselves
-    /// via <c>AtomTable.Intern(name, permanent: true)</c> — promotion keeps
-    /// the id, so the cache stays valid across tier changes.</summary>
+    /// (transient tier) on first use and cached on the node, and interned
+    /// again once the cached atom died. Callers that require the atom pinned
+    /// permanent must still promote it themselves via
+    /// <c>AtomTable.Intern(name, permanent: true)</c>; promotion keeps the
+    /// atom, so the cache stays valid across tier changes.</summary>
     public int ResolveAtomId()
     {
-        int plusOne = _atomIdPlusOne;
-        if (plusOne != 0) return plusOne - 1;
-        int id = Shumway.Core.AtomTable.Intern(Name).Id;
-        _atomIdPlusOne = id + 1;
-        return id;
+        var atom = Volatile.Read(ref _atom);
+        if (atom is null || !Shumway.Core.AtomTable.Retake(atom))
+            Volatile.Write(ref _atom, atom = Shumway.Core.AtomTable.Intern(Name));
+        return atom.Id;
     }
 
     public override bool Equals(object? obj) => obj is AtomTerm o && Name == o.Name;
@@ -227,10 +223,12 @@ public sealed class CompoundTerm : Term
     public string Functor { get; }
     public Term[] Args { get; }
 
-    // Lazily-cached FunctorTable id (stored as id+1; functor
-    // id 0 is valid, so 0 means "not yet resolved"). Excluded from value
-    // equality, same rationale as AtomTerm's cached atom id.
-    private int _functorIdPlusOne;
+    // The name atom last resolved and its functor id, taken again on each use
+    // like AtomTerm's atom. The id is written before the atom: a reader that
+    // sees an atom sees its functor, or one resolved later for the same name
+    // and arity. Excluded from value equality.
+    private Shumway.Core.Atom? _name;
+    private int _functorId;
 
     public CompoundTerm(string functor, Term[] args)
     {
@@ -245,7 +243,14 @@ public sealed class CompoundTerm : Term
     {
         Functor = functor;
         Args = args;
-        _functorIdPlusOne = functorId + 1;
+        Seed(functorId);
+    }
+
+    private void Seed(int functorId)
+    {
+        if (!Shumway.Core.FunctorTable.TryLookup(functorId, out var entry)) return;
+        _functorId = functorId;
+        _name = Shumway.Core.AtomTable.GetById(entry.AtomId);
     }
 
     /// <summary>Set by <c>TermReader</c> on a compound that is the target of
@@ -261,21 +266,23 @@ public sealed class CompoundTerm : Term
     {
         Functor = functor;
         Args = args;
-        _functorIdPlusOne = functorId + 1;
+        Seed(functorId);
         CycleId = cycleId;
     }
 
     /// <summary>The compound's global <c>FunctorTable</c> id,
-    /// interned on first use (atom transient-tier) and cached on the node.
-    /// Functor ids are canonical — one id per (atom, arity) pair — so a
-    /// direct id comparison is equivalent to comparing name and arity.</summary>
+    /// interned on first use (atom transient-tier) and cached on the node,
+    /// and interned again once the cached name atom died. Functor ids are
+    /// canonical — one id per (atom, arity) pair — so a direct id comparison
+    /// is equivalent to comparing name and arity.</summary>
     public int ResolveFunctorId()
     {
-        int plusOne = _functorIdPlusOne;
-        if (plusOne != 0) return plusOne - 1;
-        int id = Shumway.Core.FunctorTable.Intern(
-            Shumway.Core.AtomTable.Intern(Functor).Id, Args.Length);
-        _functorIdPlusOne = id + 1;
+        var name = Volatile.Read(ref _name);
+        if (name is not null && Shumway.Core.AtomTable.Retake(name)) return _functorId;
+        name = Shumway.Core.AtomTable.Intern(Functor);
+        int id = Shumway.Core.FunctorTable.Intern(name.Id, Args.Length);
+        _functorId = id;
+        Volatile.Write(ref _name, name);
         return id;
     }
 

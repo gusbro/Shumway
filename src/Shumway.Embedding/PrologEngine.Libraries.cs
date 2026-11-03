@@ -180,12 +180,11 @@ public sealed partial class PrologEngine
     internal string? CallerDialect(Activation engine)
     {
         if (!_anyDialectedModule || PredicatesByAddressOf(engine) is not { } map) return null;
-        int split = engine.CurrentQuerySplit;
-        string? d = DialectAtAddress(map, engine.P, split);
+        string? d = DialectAtAddress(map, engine.P);
         if (d is not null) return d;
         foreach (int addr in engine.EnumerateCallReturnAddresses())
         {
-            d = DialectAtAddress(map, addr, split);
+            d = DialectAtAddress(map, addr);
             if (d is not null) return d;
         }
         return null;
@@ -195,7 +194,7 @@ public sealed partial class PrologEngine
     /// for none, and for a dynamic clause added while queries ran, whose module goes unsaid:
     /// its caller's decides (<see cref="PastPredicate"/>).</summary>
     private string? DialectAtAddress(
-        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr, int split)
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> map, int addr)
     {
         // A running query's map grows when code is linked into it (a consult in the query).
         if (!ReferenceEquals(_sortedPredAddrsFor, map) || _sortedPredAddrsCount != map.Count)
@@ -210,7 +209,7 @@ public sealed partial class PrologEngine
         if (idx < 0) idx = ~idx - 1;   // nearest entry at or below addr
         if (idx < 0) return null;
         var pred = map[keys[idx]];
-        if (PastPredicate(pred, keys[idx], addr, split)) return null;
+        if (PastPredicate(pred, keys[idx], addr)) return null;
         int fid = pred.FunctorId;
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
         string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
@@ -698,7 +697,7 @@ public sealed partial class PrologEngine
     // API/env/shipped dirs.
     private IEnumerable<string> EnumerateLibraryDirs()
     {
-        int fsp = FunctorTable.Intern(AtomTable.Intern("file_search_path").Id, 2);
+        int fsp = FunctorTable.Intern(AtomTable.Intern("file_search_path", permanent: true).Id, 2);
         if (_dynStore.TryGetClauses(fsp, out var fspClauses))
             foreach (Clause cl in fspClauses)
                 if (cl.Term is CompoundTerm { Functor: "file_search_path",
@@ -706,7 +705,7 @@ public sealed partial class PrologEngine
                     && TryDirText(d, out string dir))
                     yield return dir;
 
-        int ld = FunctorTable.Intern(AtomTable.Intern("library_directory").Id, 1);
+        int ld = FunctorTable.Intern(AtomTable.Intern("library_directory", permanent: true).Id, 1);
         if (_dynStore.TryGetClauses(ld, out var ldClauses))
             foreach (Clause cl in ldClauses)
                 if (cl.Term is CompoundTerm { Functor: "library_directory", Args: [var d] }

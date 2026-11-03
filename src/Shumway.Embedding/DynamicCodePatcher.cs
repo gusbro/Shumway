@@ -34,7 +34,7 @@ internal sealed class DynamicCodePatcher
         var old = _dynChainTable;
         old.Current = false;
         _dynChainTable = new DynChainTable();
-        if (old.Attached == 0) ReleaseTableLiterals(old);
+        if (old.Attached == 0) ReleaseTableUnits(old);
     }
 
     /// <summary>Associates <paramref name="engine"/> with the current chain
@@ -52,20 +52,24 @@ internal sealed class DynamicCodePatcher
         _engineChainTables.Add(engine, _dynChainTable);
     }
 
-    // ----- the literals a buffer's code names -----
+    // ----- the literals and atoms a buffer's code names -----
     //
     // A code unit appended to a buffer (the dynamic region linked at setup, a
     // clause chunk, an assert helper, a shadow snapshot) adds a reference per
-    // literal operand when it lands and releases them when it dies: a clause
-    // chunk when the chain reclaim bypasses it, the rest with the buffer, which
-    // dies when the host has replaced its table and no activation runs on it.
+    // literal operand, and claims the atoms it names (ADR-003), when it lands,
+    // and gives both back when it dies: a clause chunk when the chain reclaim
+    // bypasses it, the rest with the buffer, which dies when the host has
+    // replaced its table and no activation runs on it.
 
+    // An activation leaves the buffer: the code dropped from it that only this
+    // activation reached goes, or all of it with the buffer.
     private void Detach(DynChainTable table)
     {
-        if (--table.Attached == 0 && !table.Current) ReleaseTableLiterals(table);
+        if (--table.Attached == 0 && !table.Current) ReleaseTableUnits(table);
+        else ReleaseUnreached(table);
     }
 
-    private void ReleaseTableLiterals(DynChainTable table)
+    private void ReleaseTableUnits(DynChainTable table)
     {
         if (table.LiteralUnits is { } units)
         {
@@ -77,39 +81,334 @@ internal sealed class DynamicCodePatcher
             foreach (var code in chunks.Values) E._literalPools.Release(code);
             table.LiteralChunks = null;
         }
+        if (table.AtomUnits is { } atomUnits)
+        {
+            foreach (var atoms in atomUnits) E.DropCode(atoms);
+            table.AtomUnits = null;
+        }
+        if (table.AtomChunks is { } atomChunks)
+        {
+            foreach (var chunk in atomChunks.Values) E.DropCode(chunk.Atoms);
+            table.AtomChunks = null;
+        }
+        if (table.Versions is { } versions)
+        {
+            foreach (var version in versions.Values)
+            {
+                if (version.Literals is { } code) E._literalPools.Release(code);
+                E.DropCode(version.Atoms);
+            }
+            table.Versions = null;
+        }
+        if (table.Dropped is { } dropped)
+        {
+            foreach (var code in dropped) Release(table, code, recycle: false);
+            table.Dropped = null;
+        }
+    }
+
+    // ----- code dropped from a buffer -----
+    //
+    // A clause chunk the chain bypasses, or a version a later link replaces, has
+    // no way in: the chain no longer offers it, and the old entry redirects. Only
+    // an activation already running in it comes back to it, through a word of its
+    // control state copied there (a continuation, a choice point's alternative, a
+    // catch's recovery, the return of the builtin in progress). Once no activation
+    // on the buffer holds one, nothing will run it again: its literals and its
+    // atoms go, and a chunk's bytes are free for the next assert. Checked when code
+    // is dropped and when an activation leaves the buffer.
+
+    // The caller checks once after a batch: a pass walks every live
+    // activation's stack.
+    private static void Drop(DynChainTable table, DroppedCode code)
+        => (table.Dropped ??= new()).Add(code);
+
+    /// <summary>Releases the code dropped from <paramref name="table"/>'s buffer
+    /// that no activation on it reaches.</summary>
+    internal void ReleaseUnreached(DynChainTable table)
+    {
+        E.IlPromotion.ReleaseRetiredUnreached();
+        if (table.Dropped is not { Count: > 0 } dropped) return;
+        // A wasm module bakes pcs of the code it was compiled from and may return
+        // into it; until the tier says which, dropped code stays.
+        if (E.IlPromotion.Wasm is not null) return;
+        dropped.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+        int n = dropped.Count;
+        if (_reachStarts.Length < n)
+        {
+            int size = System.Math.Max(n, _reachStarts.Length * 2);
+            _reachStarts = new int[size];
+            _reachEnds = new int[size];
+            _reachFlags = new bool[size];
+        }
+        var starts = _reachStarts.AsSpan(0, n);
+        var ends = _reachEnds.AsSpan(0, n);
+        var reached = _reachFlags.AsSpan(0, n);
+        reached.Clear();
+        for (int i = 0; i < n; i++)
+        {
+            starts[i] = dropped[i].Start;
+            ends[i] = dropped[i].End;
+        }
+        byte[]? program = null;
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+            if (_liveEngines[i].TryGetTarget(out var engine)
+                && _engineChainTables.TryGetValue(engine, out var on) && ReferenceEquals(on, table))
+            {
+                engine.MarkReachedCode(starts, ends, reached);
+                program ??= engine.CurrentProgram;
+            }
+        if (program is not null) ReachThroughCode(program, starts, ends, reached);
+        int kept = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (reached[i]) dropped[kept++] = dropped[i];
+            else Release(table, dropped[i], recycle: true, program ?? E._persistentProgram);
+        }
+        dropped.RemoveRange(kept, n - kept);
+    }
+
+    // Dropped code an activation reaches reaches what it points into: a dead
+    // chunk's <next> leads to the dead chunk after it, which a choice point
+    // resuming into the first runs next. Followed to a fixpoint over the address
+    // operands of the reached code.
+    private static void ReachThroughCode(byte[] program, ReadOnlySpan<int> starts, ReadOnlySpan<int> ends,
+        Span<bool> reached)
+    {
+        Stack<int>? work = null;
+        for (int i = 0; i < reached.Length; i++)
+            if (reached[i]) (work ??= new()).Push(i);
+        while (work is { Count: > 0 })
+        {
+            int r = work.Pop();
+            int end = System.Math.Min(ends[r], program.Length);
+            for (int pc = starts[r]; pc < end;)
+            {
+                var info = Shumway.Core.OpcodeTable.Get(program[pc]);
+                if (!info.IsDefined || info.Size == 0) break;
+                if (info.OperandKinds is { } kinds)
+                {
+                    int at = pc + 1;
+                    foreach (var kind in kinds)
+                    {
+                        if (kind == Shumway.Core.OperandKind.Address)
+                        {
+                            int target = Shumway.Core.BytecodeIO.ReadInt32(program, at);
+                            int t = RangeAtOrBefore(starts, target);
+                            if (t >= 0 && target < ends[t] && !reached[t])
+                            {
+                                reached[t] = true;
+                                work.Push(t);
+                            }
+                        }
+                        at += kind == Shumway.Core.OperandKind.LongValue ? 8 : 4;
+                    }
+                }
+                pc += info.Size;
+            }
+        }
+    }
+
+    // The last range starting at or before target, -1 when none does.
+    private static int RangeAtOrBefore(ReadOnlySpan<int> starts, int target)
+    {
+        int lo = 0, hi = starts.Length - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (starts[mid] <= target) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        return hi;
+    }
+
+    // Reused across checks: a chain reclaim checks every few retracts.
+    private int[] _reachStarts = System.Array.Empty<int>();
+    private int[] _reachEnds = System.Array.Empty<int>();
+    private bool[] _reachFlags = System.Array.Empty<bool>();
+
+    // A breakpoint patched into recycled bytes would restore its old byte over
+    // new code: with a debug session, the bytes stay.
+    private void Release(DynChainTable table, in DroppedCode code, bool recycle, byte[]? program = null)
+    {
+        if (code.Literals is { } literals) E._literalPools.Release(literals);
+        E.DropCode(code.Atoms);
+        code.Forget?.Invoke();
+        if (recycle && code.Recycle && E.DebugSession is null && !NoRecycle)
+        {
+            // Under the trace, freed bytes hold the invalid opcode: whatever
+            // still runs them stops there, with the PC ring saying where from.
+            if (TraceFree && program is not null && code.End <= program.Length)
+                System.Array.Clear(program, code.Start, code.End - code.Start);
+            FreeBytes(table.FreeChunks, code.Start, code.End - code.Start);
+        }
+    }
+
+    // Triage of recycled code. SHUMWAY_FREE_TRACE=1 reports every free and
+    // reuse of bytes with the frames that made it, a range freed twice with the
+    // stack that frees it again, the free list's growth, and fills freed bytes
+    // with the invalid opcode so that whatever still runs them stops there (the
+    // PC ring, SHUMWAY_PC_RING=1, says where from). SHUMWAY_NO_RECYCLE=1 never
+    // hands dropped bytes out again: a corruption that goes with it is one.
+    private static readonly bool TraceFree = System.Environment.GetEnvironmentVariable("SHUMWAY_FREE_TRACE") == "1";
+    private static readonly bool NoRecycle = System.Environment.GetEnvironmentVariable("SHUMWAY_NO_RECYCLE") == "1";
+
+    /// <summary>Puts [<paramref name="addr"/>, + <paramref name="length"/>) on
+    /// the free list, merged with the free ranges next to it: kept ascending, so
+    /// the bytes of versions dropped together make one hole a whole link fits.</summary>
+    internal static void FreeBytes(List<(int Addr, int Length)> freeChunks, int addr, int length)
+    {
+        if (TraceFree)
+        {
+            foreach (var (fa, fl) in freeChunks)
+                if (addr < fa + fl && fa < addr + length)
+                    System.Console.Error.WriteLine($"[FREE-OVERLAP] freeing {addr}+{length} overlaps free {fa}+{fl}\n{System.Environment.StackTrace}");
+            System.Console.Error.WriteLine($"[FREE] 0x{addr:X}+{length}{TraceFrames()}");
+        }
+        int i = 0;
+        while (i < freeChunks.Count && freeChunks[i].Addr < addr) i++;
+        int end = addr + length;
+        if (i < freeChunks.Count && freeChunks[i].Addr == end)
+        {
+            end += freeChunks[i].Length;
+            freeChunks.RemoveAt(i);
+        }
+        if (i > 0 && freeChunks[i - 1].Addr + freeChunks[i - 1].Length == addr)
+        {
+            addr = freeChunks[i - 1].Addr;
+            freeChunks.RemoveAt(--i);
+        }
+        freeChunks.Insert(i, (addr, end - addr));
+        if (TraceFree && (freeChunks.Count & (freeChunks.Count - 1)) == 0 && freeChunks.Count >= 1024)
+            System.Console.Error.WriteLine($"[FREE-LIST] {freeChunks.Count} fragments");
     }
 
     /// <summary>A code unit appended to <paramref name="table"/>'s buffer for
-    /// the buffer's life.</summary>
-    internal void NoteCodeUnit(DynChainTable table, byte[] code)
+    /// the buffer's life, naming <paramref name="atoms"/>.</summary>
+    internal void NoteCodeUnit(DynChainTable table, byte[] code, int[] atoms)
     {
         if (E._literalPools.AddRefs(code)) (table.LiteralUnits ??= new()).Add(code);
+        if (atoms.Length == 0) return;
+        E.RetainCode(atoms);
+        (table.AtomUnits ??= new()).Add(atoms);
     }
 
-    /// <summary>A clause's chunk at <paramref name="chunkAddr"/>, whose body
-    /// is <paramref name="body"/>: released when the chain reclaim bypasses
-    /// it (<see cref="ReleaseChunk"/>), else with the buffer. A unit still
-    /// recorded at the address is dead code being overwritten.</summary>
-    internal void NoteClauseChunk(DynChainTable table, int chunkAddr, byte[] body)
+    /// <summary>The predicates of a link laid into <paramref name="table"/>'s
+    /// buffer whole (the static region at setup, a live link): each version claims
+    /// its atoms while it is the one the buffer runs, and a live link's version
+    /// its literals too (the static region's are pinned). A version a later link
+    /// replaces is dropped, but for the trampoline its entry became.</summary>
+    internal void NoteLinkedVersions(DynChainTable table, Shumway.Compiler.Wam.Linker.LinkResult link,
+        bool literals = false, List<Shumway.Core.SwitchTable>? tables = null, int tableBase = 0,
+        PrologEngine.LinkedProgram? host = null)
     {
-        ReleaseChunk(table, chunkAddr);
+        var versions = table.Versions ??= new();
+        var preds = new List<KeyValuePair<int, Shumway.Compiler.Wam.CompiledPredicate>>(link.PredicatesByAddress);
+        preds.Sort(static (a, b) => a.Key.CompareTo(b.Key));
+        int tableAt = tableBase;
+        foreach (var (addr, pred) in preds)
+        {
+            int[] atoms = Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids;
+            E.RetainCode(atoms);
+            byte[]? code = literals && E._literalPools.AddRefs(pred.Bytecode) ? pred.Bytecode : null;
+            if (versions.TryGetValue(pred.FunctorId, out var old))
+            {
+                bool trampoline = table.StableEntries is { } stable
+                    && stable.TryGetValue(pred.FunctorId, out int stub) && stub == old.Start;
+                // The version's forward references, pending by position in the
+                // buffer's list: patched once their callee links, they would write
+                // into whatever the bytes hold by then.
+                if (table.LiveConsultUnresolved is { Count: > 0 } pending)
+                    pending.RemoveAll(site => site.AbsPos >= old.Start && site.AbsPos < old.End);
+                Drop(table, new DroppedCode(trampoline ? old.Start + TrampolineSize : old.Start,
+                    old.End, old.Literals, old.Atoms, recycle: true, Forget(old, trampoline)));
+            }
+            versions[pred.FunctorId] = new LinkedVersion(addr, addr + pred.Bytecode.Length, atoms, code,
+                tables, tableAt, pred.SwitchTables.Count, host);
+            tableAt += pred.SwitchTables.Count;
+        }
+        ReleaseUnreached(table);
+    }
+
+    // What a dropped version leaves to forget once nothing runs it: its switch
+    // tables' slots, free for a later link, and its entry in the address map,
+    // unless the entry is the trampoline, which names the version it leads to.
+    private static Action? Forget(LinkedVersion old, bool trampoline)
+    {
+        if (old.Tables is null && (old.Host is null || trampoline)) return null;
+        return () =>
+        {
+            if (old.Tables is { } list)
+                for (int i = old.TableStart; i < old.TableStart + old.TableCount && i < list.Count; i++)
+                    list[i] = null!;
+            if (!trampoline) old.Host?.ForgetLinked(old.Start);
+        };
+    }
+
+    // `execute <address>`: what a reloaded predicate's first entry becomes.
+    private const int TrampolineSize = 5;
+
+    /// <summary>A clause's chunk the buffer was built with: its atoms, released
+    /// as an appended chunk's are.</summary>
+    internal void NoteChunkAtoms(DynChainTable table, int chunkAddr, int end, int[] atoms)
+    {
+        if (atoms.Length == 0) return;
+        E.RetainCode(atoms);
+        (table.AtomChunks ??= new())[chunkAddr] = (end, atoms);
+    }
+
+    /// <summary>Code of the buffer that claims its atoms for the buffer's life.</summary>
+    internal void NoteAtomUnit(DynChainTable table, int[] atoms)
+    {
+        if (atoms.Length == 0) return;
+        E.RetainCode(atoms);
+        (table.AtomUnits ??= new()).Add(atoms);
+    }
+
+    /// <summary>A clause's chunk of <paramref name="length"/> bytes at
+    /// <paramref name="chunkAddr"/>, whose body is <paramref name="body"/>:
+    /// released when the chain bypasses it and nothing runs it
+    /// (<see cref="DropChunk"/>), else with the buffer.</summary>
+    internal void NoteClauseChunk(DynChainTable table, int chunkAddr, int length, byte[] body, int[] atoms)
+    {
         if (E._literalPools.AddRefs(body)) (table.LiteralChunks ??= new())[chunkAddr] = body;
+        if (atoms.Length == 0) return;
+        E.RetainCode(atoms);
+        (table.AtomChunks ??= new())[chunkAddr] = (chunkAddr + length, atoms);
     }
 
-    internal void ReleaseChunk(DynChainTable table, int chunkAddr)
+    /// <summary>The chain bypasses the chunk of <paramref name="length"/> bytes at
+    /// <paramref name="chunkAddr"/>. Its bytes are recycled once nothing runs it,
+    /// unless <paramref name="recycle"/> is false: the chain's head, which the
+    /// trampoline enters. Released by the <see cref="ReleaseUnreached"/> that
+    /// follows the batch.</summary>
+    internal void DropChunk(DynChainTable table, int chunkAddr, int length, bool recycle)
     {
-        if (table.LiteralChunks is { } chunks && chunks.Remove(chunkAddr, out var body))
-            E._literalPools.Release(body);
+        byte[]? body = null;
+        if (table.LiteralChunks is { } chunks) chunks.Remove(chunkAddr, out body);
+        int[] atoms = System.Array.Empty<int>();
+        if (table.AtomChunks is { } atomChunks && atomChunks.Remove(chunkAddr, out var chunk))
+            atoms = chunk.Atoms;
+        Drop(table, new DroppedCode(chunkAddr, chunkAddr + length, body, atoms, recycle));
     }
 
     /// <summary>The code of each open query (its transient region), released
     /// when the query ends.</summary>
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, List<byte[]>>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, QueryUnits>
         _activationUnits = new();
 
-    internal void NoteQueryUnit(Activation engine, byte[] code)
+    private sealed class QueryUnits
     {
-        if (E._literalPools.AddRefs(code)) _activationUnits.GetValue(engine, static _ => new()).Add(code);
+        public readonly List<byte[]> Literals = new();
+        public readonly List<int[]> Atoms = new();
+    }
+
+    internal void NoteQueryUnit(Activation engine, byte[] code, int[] atoms)
+    {
+        if (E._literalPools.AddRefs(code)) _activationUnits.GetValue(engine, static _ => new()).Literals.Add(code);
+        if (atoms.Length == 0) return;
+        E.RetainCode(atoms);
+        _activationUnits.GetValue(engine, static _ => new()).Atoms.Add(atoms);
     }
     public DynamicCodePatcher(PrologEngine engine) => E = engine;
 
@@ -133,8 +432,10 @@ internal sealed class DynamicCodePatcher
     /// that enumerates every clause regardless of indexable args).
     /// Returns -1 if the layout doesn't match.</summary>
     internal int FindFinalVarChainHead(Activation engine, int predAddr)
+        => FindFinalVarChainHead(engine.CurrentProgram, predAddr);
+
+    internal static int FindFinalVarChainHead(byte[]? prog, int predAddr)
     {
-        var prog = engine.CurrentProgram;
         if (prog is null || predAddr + 18 > prog.Length) return -1;
         int p = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
         while (p > 0 && p + 1 <= prog.Length)
@@ -149,6 +450,69 @@ internal sealed class DynamicCodePatcher
             p = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 5);
         }
         return -1;
+    }
+
+    /// <summary>Records, for each clause of a predicate just laid out
+    /// indexed, the died slot of its entry in the chain of every clause: the
+    /// chain lists the clauses in store order, all alive at this point. Stops
+    /// at the first entry that is not of the chain's shape; a clause left out
+    /// takes the walk by index when retracted.</summary>
+    internal static void CollectIndexedVarEntries(
+        byte[] prog, int predAddr, IReadOnlyList<Clause> clauses, Dictionary<Clause, int> into)
+    {
+        into.Clear();
+        int cur = FindFinalVarChainHead(prog, predAddr);
+        for (int i = 0; i < clauses.Count && cur > 0 && cur + 27 <= prog.Length; i++)
+        {
+            if (prog[cur] != (byte)Shumway.Core.Opcode.TryMeElse
+                && prog[cur] != (byte)Shumway.Core.Opcode.RetryMeElse) return;
+            int header = ChainEntryHeaderSize(prog, cur);
+            if (cur + header + 22 > prog.Length
+                || prog[cur + header] != (byte)Shumway.Core.Opcode.CheckVisible
+                || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return;
+            into[clauses[i]] = cur + header + 9;
+            cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+        }
+    }
+
+    /// <summary>After an in-place assert added <paramref name="clause"/> to the
+    /// indexed layout: the died slot of its entry in the chain of every
+    /// clause, for the retract.</summary>
+    private void NoteIndexedVarEntry(Activation engine, int functorId, Clause clause, int diedAddr)
+    {
+        if (diedAddr <= 0 || IndexedVarRecordOff) return;
+        if (GetChainTable(engine) is { } table && table.Chains.TryGetValue(functorId, out var chain))
+            chain.IndexedVarEntries[clause] = diedAddr;
+    }
+
+    /// <summary>Places <paramref name="bytes"/> in a free chunk of the buffer
+    /// when one fits, else at its end; the address.</summary>
+    private static int PlaceChunk(Activation engine, DynChainTable table, byte[] bytes)
+    {
+        int at = TryReuseFreeChunk(table.FreeChunks, bytes.Length);
+        if (at < 0) return engine.AppendCode(bytes);
+        System.Array.Copy(bytes, 0, engine.CurrentProgram!, at, bytes.Length);
+        return at;
+    }
+
+    // A body chunk of the indexed layout placed in the buffer: its literals and
+    // atoms are the chunk's (NoteClauseChunk), released with it when the sweep
+    // finds no entry naming it.
+    private void NoteIndexedBody(DynChainTable table, int functorId, int bodyAddr, int length,
+        Shumway.Compiler.Wam.CompiledClause compiledClause)
+    {
+        NoteClauseChunk(table, bodyAddr, length, compiledClause.Bytecode,
+            Shumway.Compiler.Wam.CodeAtoms.Of(compiledClause).Ids);
+        if (table.Chains.TryGetValue(functorId, out var chain))
+            (chain.IndexedBodies ??= new())[bodyAddr] = length;
+    }
+
+    // A chain entry of the indexed layout placed in the buffer, for the sweep
+    // that unlinks it to drop.
+    private static void NoteIndexedEntry(DynChainTable table, int functorId, int addr, int length)
+    {
+        if (table.Chains.TryGetValue(functorId, out var chain))
+            (chain.IndexedEntries ??= new())[addr] = length;
     }
 
     internal bool IsExtensibleIndexedLayout(Activation engine, int functorId)
@@ -242,6 +606,18 @@ internal sealed class DynamicCodePatcher
         return 5;
     }
 
+    /// <summary>A clause's code placed at <paramref name="codeStart"/>: its
+    /// address operands (<see cref="Shumway.Compiler.Wam.CompiledClause.DispatchSites"/>,
+    /// relative to the clause; a <c>get_blit</c>'s skip is one) made absolute.</summary>
+    internal static void RelocateDispatchSites(byte[] prog, Shumway.Compiler.Wam.CompiledClause clause, int codeStart)
+    {
+        foreach (int siteRel in clause.DispatchSites)
+        {
+            int pos = codeStart + siteRel;
+            Shumway.Core.BytecodeIO.WriteInt32(prog, pos, codeStart + Shumway.Core.BytecodeIO.ReadInt32(prog, pos));
+        }
+    }
+
     /// <summary>given the predicate entry and the new
     /// clause's arg-0 classification, locate the bucket chain head
     /// the new clause should be appended to. Returns <c>-1</c> when
@@ -259,13 +635,8 @@ internal sealed class DynamicCodePatcher
         int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
 
-        // Pull arg-0 of the new clause's head.
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return -1;
-        var arg0 = headComp.Args[0];
+        var kind = Arg0Of(newClause, out int key);
+        if (kind == Arg0Kind.None) return -1;
 
         // Walk the const-label cascade for level 0 only. The cascade
         // is atom → integer → structure within one level; on multi-
@@ -300,26 +671,22 @@ internal sealed class DynamicCodePatcher
             return -1;
         }
 
-        switch (arg0)
+        switch (kind)
         {
-            case Shumway.Compiler.Ast.AtomTerm a:
-                int atomId = Shumway.Core.AtomTable.Intern(a.Name, permanent: true).Id;
-                return CascadeLookup(constLbl, atomId, Shumway.Core.Opcode.SwitchOnAtom);
-            case Shumway.Compiler.Ast.IntTerm n
-                when n.Value >= int.MinValue && n.Value <= int.MaxValue:
-                return CascadeLookup(constLbl, (int)n.Value, Shumway.Core.Opcode.SwitchOnInteger);
-            case Shumway.Compiler.Ast.CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
+            case Arg0Kind.Atom:
+                return CascadeLookup(constLbl, key, Shumway.Core.Opcode.SwitchOnAtom);
+            case Arg0Kind.Int:
+                return CascadeLookup(constLbl, key, Shumway.Core.Opcode.SwitchOnInteger);
+            case Arg0Kind.List:
                 return listLbl == varLbl ? -1 : listLbl;
-            case Shumway.Compiler.Ast.CompoundTerm c:
-                int functorId = Shumway.Core.FunctorTable.Intern(
-                    Shumway.Core.AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
+            case Arg0Kind.Struct:
                 // struct cascade: structLbl points at switch_on_structure.
                 if (structLbl <= 0 || structLbl == varLbl) return -1;
                 if (prog[structLbl] != (byte)Shumway.Core.Opcode.SwitchOnStructure) return -1;
                 int sTableId = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
                 var sTable = engine.GetSwitchTable(sTableId);
                 if (sTable is null) return -1;
-                int sTarget = sTable.Lookup(functorId);
+                int sTarget = sTable.Lookup(key);
                 return sTarget == sTable.DefaultAddress ? -1 : sTarget;
             default:
                 return -1;
@@ -354,15 +721,11 @@ internal sealed class DynamicCodePatcher
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
 
-        // Pull the new clause's head arg-0 — we classify it to decide
-        // the same-key vs new-key vs var-arg path.
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return false;
-        var arg0 = headComp.Args[0];
-        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
+        // The new clause's first argument decides the path: the same key,
+        // a new key, or a variable that extends every chain.
+        var arg0Kind = Arg0Of(newClause, out int arg0Key);
+        if (arg0Kind == Arg0Kind.None) return false;
+        bool isVarArg = arg0Kind == Arg0Kind.Var;
 
         // Plan which chain tails the new clause's body will be
         // linked into. var-arg-at-0 extends every
@@ -383,6 +746,8 @@ internal sealed class DynamicCodePatcher
         int newKeyValue = 0;
         int subSwitchTableId = -1;
 
+        int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
+        if (varTailNext < 0) return false;
         if (isVarArg)
         {
             // Collect every chain's tail-next operand. Includes the
@@ -392,8 +757,6 @@ internal sealed class DynamicCodePatcher
         }
         else
         {
-            int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
-            if (varTailNext < 0) return false;
             chainTailNexts.Add(varTailNext);
             bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
             isNewKey = bucketChainHead < 0;
@@ -409,7 +772,7 @@ internal sealed class DynamicCodePatcher
                 // bail to rebuild if the type's sub-switch doesn't
                 // exist yet (would be a layout change).
                 if (!TryLocateSubSwitchForArg(
-                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                        engine, predAddr, arg0Kind, arg0Key, out newKeyValue, out subSwitchTableId))
                     return false;
             }
         }
@@ -445,10 +808,9 @@ internal sealed class DynamicCodePatcher
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
-        int bodyAddr = engine.AppendCode(bodyChunk);
-        // The indexed layout unlinks its dead entries without a reclaim the
-        // chunk could be released at: a unit of the buffer.
-        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode);
+        var chainTable = GetOrCreateChainTable(engine);
+        int bodyAddr = PlaceChunk(engine, chainTable, bodyChunk);
+        NoteIndexedBody(chainTable, functorId, bodyAddr, bodyChunk.Length, compiledClause);
         prog = engine.CurrentProgram!;
 
         // Patch call sites inside the body to absolute targets.
@@ -460,6 +822,7 @@ internal sealed class DynamicCodePatcher
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
         }
+        RelocateDispatchSites(prog, compiledClause, bodyAddr + bodyContentLocalStart);
 
         // Helper: append a non-head chain entry (retry_me_else
         // <fail_stub>; check_visible; execute <targetBody>).
@@ -469,7 +832,10 @@ internal sealed class DynamicCodePatcher
             em.EmitRetryMeElse(failStub);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(targetBody);
-            return engine.AppendCode(em.ToBytes());
+            byte[] entry = em.ToBytes();
+            int at = PlaceChunk(engine, chainTable, entry);
+            NoteIndexedEntry(chainTable, functorId, at, entry.Length);
+            return at;
         }
 
         // For the new-key concrete case, the new bucket itself is
@@ -490,7 +856,7 @@ internal sealed class DynamicCodePatcher
                 return true;   // the rebuild took the store, the new clause included
             }
             int newBucketHead = BuildAndAppendNewBucketChain(
-                engine, failStub, headArity: headComp.Args.Length,
+                engine, functorId, failStub, headArity: FunctorTable.Lookup(functorId).Arity,
                 varArgBodies, bodyAddr);
             prog = engine.CurrentProgram!;
             var oldTable = engine.GetSwitchTable(subSwitchTableId);
@@ -508,25 +874,28 @@ internal sealed class DynamicCodePatcher
         //     the new clause as its tail).
         //   - every chain (var + list + every bucket
         //     across all sub-switches).
+        int varEntryDied = -1;
         foreach (int tailNext in chainTailNexts)
         {
             int newEntry = AppendNonHeadEntry(bodyAddr);
             prog = engine.CurrentProgram!;
-            // Tripwire: a fresh append always lands beyond every existing
-            // chain slot. newEntry at or below the slot being patched means
-            // the append position was stale and the write would splice the
-            // chain into itself. (The pre-append ProgramLength check above
-            // makes this unreachable; keep it as the last line of defense —
-            // the write below is the one that creates the dispatch cycle.)
-            if (newEntry <= tailNext)
+            if (tailNext == varTailNext)
+                varEntryDied = newEntry + ChainEntryHeaderSize(prog, newEntry) + 9;
+            // Tripwire: the new entry, in a hole or at the end, must not hold
+            // the slot being patched: the write below would splice the chain
+            // into itself. (The ProgramLength check above makes a stale append
+            // position unreachable; this is the last line of defense.)
+            if (tailNext >= newEntry && tailNext < newEntry + 27)
             {
                 ChainCorruptionRecover(
                     "assertz-indexed-patch", engine, functorId,
-                    $"new entry {newEntry} at/below tail slot {tailNext}");
+                    $"new entry {newEntry} holds the tail slot {tailNext}");
                 return true;
             }
             Shumway.Core.BytecodeIO.WriteInt32(prog, tailNext, newEntry);
         }
+
+        NoteIndexedVarEntry(engine, functorId, newClause, varEntryDied);
 
         // The new chunks may have grown the persistent buffer (chunk
         // 151b) — keep PrologEngine's cached reference current (owner),
@@ -548,31 +917,20 @@ internal sealed class DynamicCodePatcher
     /// have a sub-switch of that type — adding one would be a layout
     /// change beyond scope.</summary>
     private static bool TryLocateSubSwitchForArg(
-        Activation engine, int predAddr, Shumway.Compiler.Ast.Term arg0,
+        Activation engine, int predAddr, Arg0Kind arg0Kind, int arg0Key,
         out int keyValue, out int tableId)
     {
-        keyValue = 0; tableId = -1;
+        keyValue = arg0Key; tableId = -1;
         var prog = engine.CurrentProgram!;
         int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
 
         Shumway.Core.Opcode wantedOp;
-        switch (arg0)
+        switch (arg0Kind)
         {
-            case Shumway.Compiler.Ast.AtomTerm a:
-                wantedOp = Shumway.Core.Opcode.SwitchOnAtom;
-                keyValue = Shumway.Core.AtomTable.Intern(a.Name, permanent: true).Id;
-                break;
-            case Shumway.Compiler.Ast.IntTerm n
-                when n.Value >= int.MinValue && n.Value <= int.MaxValue:
-                wantedOp = Shumway.Core.Opcode.SwitchOnInteger;
-                keyValue = (int)n.Value;
-                break;
-            case Shumway.Compiler.Ast.CompoundTerm c when c.Functor != "." || c.Args.Length != 2:
-                wantedOp = Shumway.Core.Opcode.SwitchOnStructure;
-                keyValue = Shumway.Core.FunctorTable.Intern(
-                    Shumway.Core.AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
-                break;
+            case Arg0Kind.Atom: wantedOp = Shumway.Core.Opcode.SwitchOnAtom; break;
+            case Arg0Kind.Int: wantedOp = Shumway.Core.Opcode.SwitchOnInteger; break;
+            case Arg0Kind.Struct: wantedOp = Shumway.Core.Opcode.SwitchOnStructure; break;
             default:
                 return false;  // list (handled by listLbl, not a sub-switch) or unsupported
         }
@@ -647,13 +1005,73 @@ internal sealed class DynamicCodePatcher
     }
 
     private static bool IsVarArgAt0(Shumway.Compiler.Ast.Clause c)
+        => Arg0Of(c, out _) == Arg0Kind.Var;
+
+    /// <summary>What the layout keys a clause's first argument by: the cases
+    /// of the compiler's indexing (PredicateCompiler.ClassifyTerm), with
+    /// <see cref="Other"/> for what it keys as a variable (a float, packed
+    /// text, an integer past the operand) and <see cref="None"/> for a head
+    /// without arguments.</summary>
+    private enum Arg0Kind : byte { None, Var, Atom, Int, List, Struct, Other }
+
+    /// <summary>The kind of a clause's first argument and its key: an atom id,
+    /// an integer, a functor id. Read off the image of a fact kept as one
+    /// (ADR-063), so the in-place paths never build its term; off the term
+    /// otherwise.</summary>
+    private static Arg0Kind Arg0Of(Shumway.Compiler.Ast.Clause c, out int key)
     {
+        key = 0;
+        if (c.HeadImage is { } image)
+        {
+            var cells = image.Cells;
+            if (cells.Length < 2 || FunctorTable.Lookup(cells[0].AsFunctorId).Arity == 0)
+                return Arg0Kind.None;
+            Cell a = cells[1];
+            switch (a.Tag)
+            {
+                case Tag.Atom:
+                    key = a.AsAtomId;
+                    return Arg0Kind.Atom;
+                case Tag.Int when a.AsInt >= int.MinValue && a.AsInt <= int.MaxValue:
+                    key = (int)a.AsInt;
+                    return Arg0Kind.Int;
+                case Tag.Lis:
+                    return Arg0Kind.List;
+                case Tag.Str:
+                    key = cells[a.AsHeapIndex].AsFunctorId;
+                    return Arg0Kind.Struct;
+                case Tag.Ref:
+                    // A variable is a reference to a reference (its own cell,
+                    // or that of its first occurrence); a float or packed text
+                    // is reached through a reference to its cells.
+                    return cells[a.AsHeapIndex].Tag == Tag.Ref ? Arg0Kind.Var : Arg0Kind.Other;
+                default:
+                    return Arg0Kind.Other;
+            }
+        }
         Shumway.Compiler.Ast.Term head = c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
             ? ((Shumway.Compiler.Ast.CompoundTerm)c.Term).Args[0]
             : c.Term;
         if (head is not Shumway.Compiler.Ast.CompoundTerm hc || hc.Args.Length == 0)
-            return false;
-        return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
+            return Arg0Kind.None;
+        switch (hc.Args[0])
+        {
+            case VarTerm:
+                return Arg0Kind.Var;
+            case AtomTerm atom:
+                key = AtomTable.Intern(atom.Name).Id;
+                return Arg0Kind.Atom;
+            case IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue:
+                key = (int)n.Value;
+                return Arg0Kind.Int;
+            case CompoundTerm { Functor: ".", Args.Length: 2 }:
+                return Arg0Kind.List;
+            case CompoundTerm cc:
+                key = FunctorTable.Intern(AtomTable.Intern(cc.Functor).Id, cc.Args.Length);
+                return Arg0Kind.Struct;
+            default:
+                return Arg0Kind.Other;
+        }
     }
 
     /// <summary>recursively enumerates every chain head
@@ -797,14 +1215,10 @@ internal sealed class DynamicCodePatcher
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
 
-        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
-            : newClause.Term;
-        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
-            return false;
-        var arg0 = headComp.Args[0];
-        int arity = headComp.Args.Length;
-        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
+        var arg0Kind = Arg0Of(newClause, out int arg0Key);
+        if (arg0Kind == Arg0Kind.None) return false;
+        int arity = FunctorTable.Lookup(functorId).Arity;
+        bool isVarArg = arg0Kind == Arg0Kind.Var;
 
         // for multi-arg, the var slot at predAddr+2
         // cascades through switch_on_arg before reaching a chain
@@ -840,7 +1254,7 @@ internal sealed class DynamicCodePatcher
             else
             {
                 if (!TryLocateSubSwitchForArg(
-                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                        engine, predAddr, arg0Kind, arg0Key, out newKeyValue, out subSwitchTableId))
                     return false;
             }
         }
@@ -871,10 +1285,9 @@ internal sealed class DynamicCodePatcher
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
-        int bodyAddr = engine.AppendCode(bodyChunk);
-        // The indexed layout unlinks its dead entries without a reclaim the
-        // chunk could be released at: a unit of the buffer.
-        NoteCodeUnit(GetOrCreateChainTable(engine), compiledClause.Bytecode);
+        var chainTable = GetOrCreateChainTable(engine);
+        int bodyAddr = PlaceChunk(engine, chainTable, bodyChunk);
+        NoteIndexedBody(chainTable, functorId, bodyAddr, bodyChunk.Length, compiledClause);
         prog = engine.CurrentProgram!;
 
         // Patch call sites in the body to absolute targets.
@@ -886,6 +1299,7 @@ internal sealed class DynamicCodePatcher
                 : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
             Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
         }
+        RelocateDispatchSites(prog, compiledClause, bodyAddr + bodyContentLocalStart);
 
         // For new-key concrete: build a brand-new bucket chain
         // (new body first, then var-args), add to switch table.
@@ -901,7 +1315,7 @@ internal sealed class DynamicCodePatcher
             }
             // Asserta-flavoured layout: new body first, var-args after.
             int newBucketHead = BuildAndAppendBucketChainAsserta(
-                engine, failStub, arity, bodyAddr, varArgBodies);
+                engine, functorId, failStub, arity, bodyAddr, varArgBodies);
             prog = engine.CurrentProgram!;
             var oldTable = engine.GetSwitchTable(subSwitchTableId);
             if (oldTable is null) return false;
@@ -913,6 +1327,7 @@ internal sealed class DynamicCodePatcher
         // Demote each chain to demote, build new head chunk, record
         // the old → new redirect.
         var redirectMap = new Dictionary<int, int>();
+        int varEntryDied = -1;
         foreach (int oldHead in chainsToDemote)
         {
             // Demote try_me_else (9 bytes) to retry_me_else (5
@@ -930,10 +1345,15 @@ internal sealed class DynamicCodePatcher
             em.EmitTryMeElse(oldHead, arity);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodyAddr);
-            int newHead = engine.AppendCode(em.ToBytes());
+            byte[] head = em.ToBytes();
+            int newHead = PlaceChunk(engine, chainTable, head);
+            NoteIndexedEntry(chainTable, functorId, newHead, head.Length);
             prog = engine.CurrentProgram!;
             redirectMap[oldHead] = newHead;
+            if (oldHead == varChainHead)
+                varEntryDied = newHead + ChainEntryHeaderSize(prog, newHead) + 9;
         }
+        NoteIndexedVarEntry(engine, functorId, newClause, varEntryDied);
 
         // Walk every pointer slot that could reference a chain head
         // and redirect any that match.
@@ -951,29 +1371,12 @@ internal sealed class DynamicCodePatcher
     /// arg bodies in source order. Returns the new bucket chain
     /// head address.</summary>
     private int BuildAndAppendBucketChainAsserta(
-        Activation engine, int failStub, int headArity,
+        Activation engine, int functorId, int failStub, int headArity,
         int newBodyAddr, IReadOnlyList<int> varArgBodies)
     {
         var bodies = new List<int> { newBodyAddr };
         bodies.AddRange(varArgBodies);
-        int count = bodies.Count;
-        const int HeadEntrySize = 9 + 17 + 5;
-        const int NonHeadEntrySize = 5 + 17 + 5;
-        int startAddr = engine.ProgramLength;
-        var em = new Shumway.Compiler.Wam.BytecodeEmitter();
-        for (int i = 0; i < count; i++)
-        {
-            int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
-            int nextAddr = (i == count - 1) ? failStub
-                                            : startAddr + em.Position + thisSize;
-            if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
-            else        em.EmitRetryMeElse(nextAddr);
-            em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
-            em.EmitExecute(bodies[i]);
-        }
-        int chunkAddr = engine.AppendCode(em.ToBytes());
-        System.Diagnostics.Debug.Assert(chunkAddr == startAddr);
-        return chunkAddr;
+        return PlaceBucketChain(engine, functorId, failStub, headArity, bodies);
     }
 
     /// <summary>Collects every chain head reachable
@@ -1137,8 +1540,10 @@ internal sealed class DynamicCodePatcher
     /// <paramref name="clauseIndex"/> is the position in the
     /// pre-removal list. Returns <c>-1</c> on layout mismatch or
     /// when the index runs off the chain.</summary>
-    internal int FindBodyAddrForClauseIndex(Activation engine, int functorId, int clauseIndex)
+    internal int FindBodyAddrForClauseIndex(
+        Activation engine, int functorId, int clauseIndex, out int varEntryDiedAddr)
     {
+        varEntryDiedAddr = -1;
         if (!IsExtensibleIndexedLayout(engine, functorId)) return -1;
         var addrMap = engine.CurrentFunctorAddresses;
         if (addrMap is null || !addrMap.TryGetValue(functorId, out int predAddr)) return -1;
@@ -1160,7 +1565,11 @@ internal sealed class DynamicCodePatcher
             if (died == long.MaxValue)
             {
                 if (aliveIdx == clauseIndex)
+                {
+                    // The entry itself, so the retract need not find it again.
+                    varEntryDiedAddr = diedAddr;
                     return Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
+                }
                 aliveIdx++;
             }
             int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
@@ -1169,24 +1578,38 @@ internal sealed class DynamicCodePatcher
         }
     }
 
-    /// <summary>Walks every chain in the extensible-
-    /// indexed predicate (each bucket chain reached through a switch
-    /// table value, the list chain head, and the var-fallthrough
-    /// chain), and patches the died slot of every entry whose
-    /// <c>execute</c> targets <paramref name="bodyAddr"/>. The died
-    /// slot is the second 8-byte field of the entry's
-    /// <c>check_visible</c>, located at chain-header-size + 1 + 8
-    /// from the entry's start. Returns <c>true</c> when at least one
-    /// entry was patched (the chain actually held a reference to the
-    /// body); <c>false</c> when the predicate isn't using the chunk-
-    /// 155a layout or no chain referenced the retired body.</summary>
-    internal bool TryPatchDiedInAllIndexedChains(Activation engine, int functorId, int bodyAddr)
+    /// <summary>Patches the died slot of every entry of the extensible-indexed
+    /// predicate whose <c>execute</c> targets <paramref name="bodyAddr"/>, the
+    /// retired clause's body. The died slot is the second 8-byte field of the
+    /// entry's <c>check_visible</c>, at chain-header-size + 1 + 8 from the
+    /// entry's start. A clause with a concrete first argument is in two chains,
+    /// the one of every clause (its entry is <paramref name="varEntryDiedAddr"/>,
+    /// found by the index walk) and its key's, reached through the switch
+    /// table: those two are patched without enumerating the heads, which made a
+    /// drain O(clauses) per retract. A clause with a variable first argument is
+    /// in every chain, and a layout the bucket lookup does not know (a cascade
+    /// over several arguments) is walked whole. Returns <c>true</c> when at
+    /// least one entry was patched; <c>false</c> when the predicate isn't using
+    /// the layout or no chain referenced the retired body.</summary>
+    internal bool TryPatchDiedInAllIndexedChains(
+        Activation engine, int functorId, int bodyAddr, Clause clause, int varEntryDiedAddr)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
         int predAddr = addrMap[functorId];
         int failStub = engine.DynamicFailStubAddr;
+        long gen = E._dbGeneration.Value;
+
+        if (varEntryDiedAddr > 0)
+        {
+            int bucketHead = FindBucketChainHead(engine, predAddr, clause);
+            if (bucketHead > 0 && PatchDiedInChain(prog, bucketHead, failStub, bodyAddr, gen))
+            {
+                Shumway.Core.BytecodeIO.WriteInt64(prog, varEntryDiedAddr, gen);
+                return true;
+            }
+        }
 
         // enumerate every chain head reachable from the
         // top-level switch, including multi-level cascades through
@@ -1197,27 +1620,34 @@ internal sealed class DynamicCodePatcher
 
         bool anyPatched = false;
         foreach (int head in heads)
-        {
-            int cur = head;
-            while (cur > 0 && cur + 27 <= prog.Length)
-            {
-                int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
-                int execOpPos = cur + chainHeaderSize + 17;
-                if (execOpPos + 5 > prog.Length) break;
-                if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
-                int target = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
-                if (target == bodyAddr)
-                {
-                    int diedAddr = cur + chainHeaderSize + 9;
-                    Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, E._dbGeneration.Value);
-                    anyPatched = true;
-                }
-                int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
-                if (next == failStub) break;
-                cur = next;
-            }
-        }
+            if (PatchDiedInChain(prog, head, failStub, bodyAddr, gen)) anyPatched = true;
         return anyPatched;
+    }
+
+    /// <summary>Walks one chain and patches the died slot of the entry whose
+    /// <c>execute</c> targets <paramref name="bodyAddr"/>; a chain holds a
+    /// clause at most once, so the walk ends there. False when the chain has no
+    /// such entry.</summary>
+    private bool PatchDiedInChain(byte[] prog, int head, int failStub, int bodyAddr, long gen)
+    {
+        int cur = head;
+        while (cur > 0 && cur + 27 <= prog.Length)
+        {
+            IndexedPatchSteps++;
+            int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
+            int execOpPos = cur + chainHeaderSize + 17;
+            if (execOpPos + 5 > prog.Length) break;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
+            if (Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1) == bodyAddr)
+            {
+                Shumway.Core.BytecodeIO.WriteInt64(prog, cur + chainHeaderSize + 9, gen);
+                return true;
+            }
+            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            if (next == failStub) break;
+            cur = next;
+        }
+        return false;
     }
 
     // A retract kills the clause's entry in each chain that holds it and
@@ -1231,6 +1661,19 @@ internal sealed class DynamicCodePatcher
     /// <summary>Retracts from a predicate in the indexed layout, and the
     /// sweeps that unlinked entries.</summary>
     internal long IndexedRetracts, IndexedSweeps;
+
+    /// <summary>Chain entries visited while those retracts patched their
+    /// clause's entries: a test pins that a drain visits O(clauses) of them.</summary>
+    internal long IndexedPatchSteps;
+
+    /// <summary>Retracts whose clause had no entry on record
+    /// (<see cref="DynChainState.IndexedVarEntries"/>) and walked the chain of
+    /// every clause by index instead; a test pins it at zero.</summary>
+    internal long IndexedVarEntryMisses;
+
+    /// <summary>For a test: keeps the record empty, so every retract takes the
+    /// walk by index and the test can pin what that fallback costs.</summary>
+    internal bool IndexedVarRecordOff;
 
     /// <summary>After a retract killed a clause's entries in the indexed layout.</summary>
     internal void NoteIndexedRetract(Activation engine, int functorId)
@@ -1268,9 +1711,13 @@ internal sealed class DynamicCodePatcher
         EnumerateChainHeadsRecursive(
             engine, engine.CurrentFunctorAddresses![functorId] + 1, heads, new HashSet<int>());
 
-        // Every chain is read whole before anything is written.
+        // Every chain is read whole before anything is written. An entry the
+        // relinked chains leave out is unlinked; a body only unlinked entries
+        // name is free once nothing runs it.
         var entries = new HashSet<int>();
         var links = new List<(int NextOperand, int Target)>();
+        var unlinked = new List<(int Addr, int Body)>();
+        var named = new HashSet<int>();
         foreach (int head in heads)
         {
             int cur = head, keptNext = -1;
@@ -1284,12 +1731,15 @@ internal sealed class DynamicCodePatcher
                     || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return false;
                 entries.Add(cur);
                 bool dead = Shumway.Core.BytecodeIO.ReadInt64(prog, cur + header + 9) != long.MaxValue;
+                int body = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + header + 18);
                 if (keptNext < 0 || !dead)
                 {
                     if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != cur)
                         links.Add((keptNext, cur));
                     keptNext = cur + 1;
+                    named.Add(body);
                 }
+                else unlinked.Add((cur, body));
                 cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
             }
             if (keptNext >= 0 && Shumway.Core.BytecodeIO.ReadInt32(prog, keptNext) != failStub)
@@ -1304,6 +1754,19 @@ internal sealed class DynamicCodePatcher
         // append that falls back to it rebuilds the predicate instead.
         chain.TailNextAddr = -1;
         IndexedSweeps++;
+        // The entries placed in place and the bodies they alone named are
+        // dropped: their bytes go to the free list once no activation reaches
+        // them, for the asserts that follow. What the layout was built with
+        // goes with the buffer.
+        var table = GetOrCreateChainTable(engine);
+        foreach (var (addr, body) in unlinked)
+        {
+            if (chain.IndexedEntries is { } ents && ents.Remove(addr, out int length))
+                Drop(table, new DroppedCode(addr, addr + length, null, System.Array.Empty<int>(), recycle: true));
+            if (!named.Contains(body) && chain.IndexedBodies is { } bodies && bodies.Remove(body, out int bodyLength))
+                DropChunk(table, body, bodyLength, recycle: true);
+        }
+        ReleaseUnreached(table);
         return true;
     }
 
@@ -1392,45 +1855,56 @@ internal sealed class DynamicCodePatcher
     /// <c>retry_me_else</c> (5 bytes); the last entry's
     /// <c>&lt;next&gt;</c> is the fail stub.</summary>
     private int BuildAndAppendNewBucketChain(
-        Activation engine, int failStub, int headArity,
+        Activation engine, int functorId, int failStub, int headArity,
         IReadOnlyList<int> varArgBodies, int newBodyAddr)
     {
         // Chain bodies in source order: var-arg first, then new.
         var bodies = new List<int>(varArgBodies);
         bodies.Add(newBodyAddr);
-        int count = bodies.Count;
+        return PlaceBucketChain(engine, functorId, failStub, headArity, bodies);
+    }
 
-        // Plan the chunk: layout & size up front so we can compute
-        // each entry's address (each entry's <next> points at the
-        // following entry's absolute address).
+    /// <summary>A bucket chain of <paramref name="bodies"/> in that order: the
+    /// head a <c>try_me_else</c>, the rest <c>retry_me_else</c>, the last's next
+    /// the fail stub. Placed in a free chunk when one fits, else at the end of
+    /// the buffer, its entries on record for the sweep. The head's address.</summary>
+    private int PlaceBucketChain(Activation engine, int functorId, int failStub, int headArity, List<int> bodies)
+    {
         const int HeadEntrySize = 9 + 17 + 5;
         const int NonHeadEntrySize = 5 + 17 + 5;
-
-        // We don't know the chain's start address yet — depends on
-        // engine.ProgramLength. Probe AppendCode by appending a
-        // single empty buffer; instead, just compute offsets relative
-        // to ProgramLength now and then emit in one go.
-        int startAddr = engine.ProgramLength;
-        // Build the entire chain in one BytecodeEmitter so the
-        // offsets are right by construction, then AppendCode the
-        // result. Each entry's <next> is the absolute address of
-        // the next entry, or fail_stub for the last.
+        int count = bodies.Count;
+        int total = HeadEntrySize + (count - 1) * NonHeadEntrySize;
+        var table = GetOrCreateChainTable(engine);
+        int hole = TryReuseFreeChunk(table.FreeChunks, total);
+        int startAddr = hole >= 0 ? hole : engine.ProgramLength;
+        // Each entry's <next> is the absolute address of the next entry, or
+        // the fail stub for the last: known once the start is.
         var em = new Shumway.Compiler.Wam.BytecodeEmitter();
         for (int i = 0; i < count; i++)
         {
             int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
-            int nextAddr = (i == count - 1) ? failStub
-                                            : startAddr + em.Position + thisSize;
+            int nextAddr = i == count - 1 ? failStub : startAddr + em.Position + thisSize;
             if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
-            else        em.EmitRetryMeElse(nextAddr);
+            else em.EmitRetryMeElse(nextAddr);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodies[i]);
         }
-        int chunkAddr = engine.AppendCode(em.ToBytes());
-        // chunkAddr should equal startAddr (we computed offsets to
-        // match). Verify in debug builds.
+        byte[] chunk = em.ToBytes();
+        int chunkAddr;
+        if (hole >= 0)
+        {
+            System.Array.Copy(chunk, 0, engine.CurrentProgram!, hole, chunk.Length);
+            chunkAddr = hole;
+        }
+        else chunkAddr = engine.AppendCode(chunk);
         System.Diagnostics.Debug.Assert(chunkAddr == startAddr,
-            $"in-place assertz: new bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+            $"in-place assert: bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+        for (int i = 0, at = chunkAddr; i < count; i++)
+        {
+            int size = i == 0 ? HeadEntrySize : NonHeadEntrySize;
+            NoteIndexedEntry(table, functorId, at, size);
+            at += size;
+        }
         return chunkAddr;
     }
 
@@ -1443,6 +1917,16 @@ internal sealed class DynamicCodePatcher
     /// per-buffer <see cref="DynChainTable"/> (its addresses
     /// are buffer-relative), so chunks freed in one query are reusable
     /// by the next while that buffer is reused.</summary>
+    private static string TraceFrames()
+    {
+        var sb = new System.Text.StringBuilder();
+        int n = 0;
+        foreach (string line in System.Environment.StackTrace.Split('\n'))
+            if (line.Contains("Shumway.") && !line.Contains("TraceFrames()") && !line.Contains("FreeBytes") && !line.Contains("TryReuseFreeChunk") && n++ < 7)
+                sb.Append(" <- ").Append(line.Trim().Replace("at Shumway.Embedding.", "").Split(" in ")[0]);
+        return sb.ToString();
+    }
+
     internal static int TryReuseFreeChunk(
         List<(int Addr, int Length)> freeChunks, int needed)
     {
@@ -1450,10 +1934,10 @@ internal sealed class DynamicCodePatcher
         {
             var (addr, length) = freeChunks[i];
             if (length < needed) continue;
-            freeChunks.RemoveAt(i);
+            if (TraceFree) System.Console.Error.WriteLine($"[REUSE] 0x{addr:X}+{needed}{TraceFrames()}");
             int leftover = length - needed;
-            if (leftover > 0)
-                freeChunks.Add((addr + needed, leftover));
+            if (leftover > 0) freeChunks[i] = (addr + needed, leftover);
+            else freeChunks.RemoveAt(i);
             return addr;
         }
         return -1;
@@ -1653,7 +2137,9 @@ internal sealed class DynamicCodePatcher
     }
 
     internal DynChainTable GetOrCreateChainTable(Activation engine)
-        => _engineChainTables.GetValue(engine, static _ => new DynChainTable { Current = false, Attached = 1 });
+    {
+        return _engineChainTables.GetValue(engine, static _ => new DynChainTable { Current = false, Attached = 1 });
+    }
 
     /// <summary>every engine born via SetupQueryFromTerm, weakly
     /// held (in birth order). Backs the dynamic-mutation broadcast: with
@@ -1683,6 +2169,14 @@ internal sealed class DynamicCodePatcher
         _liveEngines.Add(new WeakReference<Activation>(engine));
     }
 
+    /// <summary>The open activations of this engine: what may still resume
+    /// into code the engine dropped or retired.</summary>
+    internal IEnumerable<Activation> LiveActivations()
+    {
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+            if (_liveEngines[i].TryGetTarget(out var engine)) yield return engine;
+    }
+
     /// <summary>Drops <paramref name="engine"/> when its query ends, so the
     /// list holds only open activations — and therefore, minus whichever one
     /// is running, exactly the suspended ones the broadcast is for.
@@ -1700,12 +2194,17 @@ internal sealed class DynamicCodePatcher
             if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
                 _liveEngines.RemoveAt(i);
         }
+        // Compiled code only this activation could resume into goes with it,
+        // and so does the query's own code.
+        E.IlPromotion.ReleaseRetiredUnreached();
+        E.ReleaseQueryCode(engine);
         // Its code is dead: the query's region, and the buffer when it was
         // the last activation on a table the host has replaced.
         if (_activationUnits.TryGetValue(engine, out var units))
         {
             _activationUnits.Remove(engine);
-            foreach (var code in units) E._literalPools.Release(code);
+            foreach (var code in units.Literals) E._literalPools.Release(code);
+            foreach (var atoms in units.Atoms) E.DropCode(atoms);
         }
         if (_engineChainTables.TryGetValue(engine, out var table))
         {
@@ -1760,7 +2259,7 @@ internal sealed class DynamicCodePatcher
     internal void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
-        else E.InvalidatePersistent();
+        else E.InvalidatePersistent("mutation by a non-owner");
     }
 
     /// <summary>synchronises <see cref="E._persistentProgram"/>
@@ -1864,6 +2363,12 @@ internal sealed class DynChainState
     // flight blocked (DynamicCodePatcher.NoteIndexedRetract).
     public int IndexedDead, IndexedSweepAt;
 
+    // The indexed layout: the body chunks and the chain entries placed in the
+    // buffer by the in-place asserts, by address, with their lengths. The sweep
+    // drops the entries it unlinks and the bodies only those named; what the
+    // layout was built with goes with the buffer.
+    public Dictionary<int, int>? IndexedBodies, IndexedEntries;
+
     public void WidenBounds(int addr)
     {
         if (addr < 0) return;
@@ -1891,6 +2396,13 @@ internal sealed class DynChainState
     public int LiveCount;
     public int RetiredCount;
     public readonly List<(int PrevAddr, int NextAddr)> PendingBypass = new();
+
+    /// <summary>The indexed layout: each live clause's entry in the chain of
+    /// every clause, as the address of its died slot (the execute that names
+    /// the body follows it). Filled when the predicate is laid out and by the
+    /// in-place asserts; a retract takes its clause out. The positional
+    /// <see cref="Entries"/> do not describe that layout.</summary>
+    public readonly Dictionary<Clause, int> IndexedVarEntries = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The single live entry holding a clause, or nothing while the
     /// clause has none or has ever had more than one -- the walk decides
@@ -2031,6 +2543,7 @@ internal sealed class DynChainState
         Entries.Clear();
         _entriesPerClause.Clear();
         _byClause.Clear();
+        IndexedVarEntries.Clear();
         SourceBlockEntries = 0;
         FirstLive = LastLive = null;
         LiveCount = 0;
@@ -2156,6 +2669,22 @@ internal sealed class DynChainTable
     public List<byte[]>? LiteralUnits;
     public Dictionary<int, byte[]>? LiteralChunks;
 
+    /// <summary>The atoms the code units of this buffer claim (ADR-003), the
+    /// clause chunks by address with their end.</summary>
+    public List<int[]>? AtomUnits;
+    public Dictionary<int, (int End, int[] Atoms)>? AtomChunks;
+
+    /// <summary>The version of each predicate laid in whole (NoteLinkedVersions).</summary>
+    public Dictionary<int, LinkedVersion>? Versions;
+
+    /// <summary>The trampoline each predicate reloaded while the buffer runs
+    /// enters through: its first entry, retargeted at every reload.</summary>
+    public Dictionary<int, int>? StableEntries;
+
+    /// <summary>Code dropped from this buffer that an activation on it may still
+    /// run (DynamicCodePatcher.ReleaseUnreached).</summary>
+    public List<DroppedCode>? Dropped;
+
     /// <summary>Activations running on this buffer, and whether the host
     /// still starts queries on it: with neither, the buffer is dead.</summary>
     public int Attached;
@@ -2171,6 +2700,55 @@ internal sealed class DynChainTable
 /// <c>check_visible</c> sees the new value and skips the clause.
 /// Populated after every query setup / dynamic-predicate
 /// recompile.</summary>
+/// <summary>Code dropped from a buffer: its range, the code whose literals it
+/// references, the atoms it claims, whether its bytes go to the free list, and
+/// what else it leaves to forget.</summary>
+internal readonly struct DroppedCode
+{
+    public readonly int Start, End;
+    public readonly byte[]? Literals;
+    public readonly int[] Atoms;
+    public readonly bool Recycle;
+    public readonly Action? Forget;
+
+    public DroppedCode(int start, int end, byte[]? literals, int[] atoms, bool recycle, Action? forget = null)
+    {
+        Start = start;
+        End = end;
+        Literals = literals;
+        Atoms = atoms;
+        Recycle = recycle;
+        Forget = forget;
+    }
+}
+
+/// <summary>A version of a predicate laid into a buffer whole: its range, the
+/// atoms it claims, the code whose literals it references (a live link's), and
+/// the switch-table slots and address-map entry it holds in the activation that
+/// linked it.</summary>
+internal sealed class LinkedVersion
+{
+    public readonly int Start, End;
+    public readonly int[] Atoms;
+    public readonly byte[]? Literals;
+    public readonly List<Shumway.Core.SwitchTable>? Tables;
+    public readonly int TableStart, TableCount;
+    public readonly PrologEngine.LinkedProgram? Host;
+
+    public LinkedVersion(int start, int end, int[] atoms, byte[]? literals,
+        List<Shumway.Core.SwitchTable>? tables, int tableStart, int tableCount, PrologEngine.LinkedProgram? host)
+    {
+        Start = start;
+        End = end;
+        Atoms = atoms;
+        Literals = literals;
+        Tables = tables;
+        TableStart = tableStart;
+        TableCount = tableCount;
+        Host = host;
+    }
+}
+
 internal sealed class DynChainEntry
 {
     public readonly Clause Clause;
@@ -2247,13 +2825,14 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
     /// solution that never runs.</remarks>
     public static DynFirstArgKey Of(Clause c)
     {
+        if (c.HeadImage is { } image) return OfImage(image);
         Term head = c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
             ? h : c.Term;
         if (head is not CompoundTerm hc || hc.Args.Length == 0) return Anything;
         switch (hc.Args[0])
         {
             case AtomTerm a:
-                return new(AtomKind, AtomTable.Intern(a.Name, permanent: true).Id);
+                return new(AtomKind, AtomTable.Intern(a.Name).Id);
             case IntTerm i:
                 return new(IntKind, i.Value);
             case CompoundTerm { Functor: ".", Args.Length: 2 }:
@@ -2264,10 +2843,39 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
                 // templates (precision(_), order(_), ...), and keying them
                 // together would leave the whole chain multi-candidate.
                 return new(StructKind,
-                    ((long)AtomTable.Intern(cc.Functor, permanent: true).Id << 32)
+                    ((long)AtomTable.Intern(cc.Functor).Id << 32)
                     | (uint)cc.Args.Length);
             default:
                 return Anything;    // var / float / bigint / unkeyed head shapes
+        }
+    }
+
+    /// <summary>The key of a fact kept as the image of its head (ADR-063), from
+    /// the cell of its first argument: the cases of <see cref="OfCall"/>, a
+    /// packed string keyed as the list it is.</summary>
+    private static DynFirstArgKey OfImage(Shumway.Core.TermImage image)
+    {
+        var cells = image.Cells;
+        if (cells.Length < 2 || FunctorTable.Lookup(cells[0].AsFunctorId).Arity == 0) return Anything;
+        Cell a = cells[1];
+        switch (a.Tag)
+        {
+            case Tag.Atom:
+                return new(AtomKind, a.AsAtomId);
+            case Tag.Int:
+                return new(IntKind, a.AsInt);
+            case Tag.Lis:
+                return new(ListKind, 0);
+            case Tag.Str:
+            {
+                var (aid, ar) = FunctorTable.Lookup(cells[a.AsHeapIndex].AsFunctorId);
+                return new(StructKind, ((long)aid << 32) | (uint)ar);
+            }
+            case Tag.Ref:
+                // A variable or a float keys nothing; a packed string is a list.
+                return cells[a.AsHeapIndex].Tag == Tag.Pstr ? new(ListKind, 0) : Anything;
+            default:
+                return Anything;
         }
     }
 

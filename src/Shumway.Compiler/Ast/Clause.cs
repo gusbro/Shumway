@@ -46,8 +46,23 @@ public enum ClauseKind
 public sealed class Clause
 {
     public ClauseKind Kind { get; }
-    public Term Term { get; }
+
+    private Term? _term;
+
+    /// <summary>The clause as a term: built from <see cref="HeadImage"/> the
+    /// first time it is read, for a fact asserted at run time.</summary>
+    public Term Term => _term ?? Materialize();
+
+    /// <summary>True once the term exists: from the start for a clause from
+    /// source, and for a fact kept as an image once something read
+    /// <see cref="Term"/>.</summary>
+    public bool HasTerm => _term is not null;
+
     public SourcePosition Position { get; }
+
+    /// <summary>ADR-063: the image of the head of a fact asserted at run time,
+    /// which is what the clause is kept as; null for a clause from source.</summary>
+    public Shumway.Core.TermImage? HeadImage { get; }
 
     /// <summary>Head-functor-id memo (+1, so 0 means unset). A pure function
     /// of the immutable term and the global atom/functor tables (ids are
@@ -60,8 +75,23 @@ public sealed class Clause
     public Clause(ClauseKind kind, Term term, SourcePosition position)
     {
         Kind = kind;
-        Term = term;
+        _term = term;
         Position = position;
+    }
+
+    /// <summary>A fact asserted at run time, kept as the image of its head
+    /// (ADR-063), whose functor is <paramref name="headFunctorId"/>.</summary>
+    public Clause(Shumway.Core.TermImage head, int headFunctorId)
+    {
+        Kind = ClauseKind.Fact;
+        HeadImage = head;
+        HeadFidMemo = headFunctorId + 1;
+    }
+
+    private Term Materialize()
+    {
+        Term built = TermImageReader.ToTerm(HeadImage!);
+        return Interlocked.CompareExchange(ref _term, built, null) ?? built;
     }
 
     /// <summary>Wraps <paramref name="term"/> with its inferred <see cref="ClauseKind"/>

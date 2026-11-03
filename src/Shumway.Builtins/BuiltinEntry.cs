@@ -63,6 +63,14 @@ public sealed class BuiltinEntry
     /// under Native AOT.</para></summary>
     public bool IsBacktrackable => BacktrackableDetector.IsBacktrackable(Impl);
 
+    /// <summary>True for a builtin that can replace or drop compiled code while
+    /// it runs (assert, retract, abolish, the consult family, the clause
+    /// collectors, the tier switch), or run another activation (a sub-engine, a
+    /// foreign predicate). Compiled code names itself to its activation before
+    /// calling one, so the code stays claimed while its method is on the stack
+    /// (ADR-003); every other call needs no such store.</summary>
+    public bool MayChangeCode { get; internal set; }
+
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
         string? category = null, string? template = null, string? summary = null,
         PredicateKind kind = PredicateKind.Engine)

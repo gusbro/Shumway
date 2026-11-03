@@ -415,6 +415,20 @@ public sealed partial class PrologEngine
     internal static long ProfTeTicks, ProfTeCalls;
     internal static long ProfGeTicks, ProfGeCalls;
     internal static long ProfSetupTicks, ProfSetupCalls, ProfProductBuilds;
+    // Why a setup dropped the product (a full build followed), by reason, with
+    // the predicate when one decided it.
+    internal static Dictionary<string, int>? ProfProductDrops;
+    internal static void ProfProductDrop(string reason)
+    {
+        var drops = ProfProductDrops ??= new Dictionary<string, int>();
+        drops.TryGetValue(reason, out int n);
+        drops[reason] = n + 1;
+    }
+    private static string FunctorDisplayName(int fid)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        return (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity;
+    }
     internal static long ProfReExpandTicks, ProfReExpandCalls;
     // Warm-setup sub-phases.
     internal static long ProfMergeTicks, ProfQueryCompileTicks, ProfUniqTicks, ProfActivationTicks;
@@ -440,6 +454,15 @@ public sealed partial class PrologEngine
             $"[PROF]   pb-elide: {Ms(ProfPbElideTicks):F0} ms | pb-modcompile: {Ms(ProfPbModCompileTicks):F0} ms | pb-latehelpers: {Ms(ProfPbLateHelpersTicks):F0} ms\n" +
             $"[PROF]   product-compiled: {ProfPbCompiledPreds} | compile-calls: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompileCalls} | grouping: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfGroupTicks):F0} ms | pool-snapshots: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfSnapshotTicks):F0} ms\n" +
             $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms");
+        if (ProfProductDrops is { } drops)
+        {
+            var ordered = new List<KeyValuePair<string, int>>(drops);
+            ordered.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            var sb = new System.Text.StringBuilder("[PROF] product drops:");
+            foreach (var (reason, n) in ordered)
+                sb.Append('\n').Append("[PROF]   ").Append(reason).Append('\u00d7').Append(n);
+            System.Console.Error.WriteLine(sb.ToString());
+        }
         if (Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledByFid is { } pcf)
         {
             var top = new List<KeyValuePair<int, int>>(pcf);

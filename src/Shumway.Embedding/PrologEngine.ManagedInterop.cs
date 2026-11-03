@@ -420,8 +420,11 @@ public sealed partial class PrologEngine
                     continue;
                 }
 
-                _foreignBuiltinIds[Shumway.Builtins.BuiltinsRegistry.Register(
-                    name, arity, del, attr.Category, attr.Template, attr.Summary)] = 0;
+                int foreignId = Shumway.Builtins.BuiltinsRegistry.Register(
+                    name, arity, del, attr.Category, attr.Template, attr.Summary);
+                // Somebody's C#: it may run a query of its own (ADR-003).
+                Shumway.Builtins.BuiltinsRegistry.MarkMayChangeCode(foreignId);
+                _foreignBuiltinIds[foreignId] = 0;
             }
         }
     }

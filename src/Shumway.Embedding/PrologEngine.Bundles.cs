@@ -61,7 +61,7 @@ public sealed partial class PrologEngine
         Shumway.Interpreter.BytecodeInterpreter interp,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> queryPredicatesByAddress,
-        byte[] queryBytes)
+        int queryStart, int queryEnd)
         => Bundles.InstallCallIlRewrites(
-            interp, predicatesByAddress, queryPredicatesByAddress, queryBytes);
+            interp, predicatesByAddress, queryPredicatesByAddress, queryStart, queryEnd);
 }

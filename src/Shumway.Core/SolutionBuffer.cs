@@ -28,7 +28,7 @@ namespace Shumway.Core;
 /// a global variable) starts with its root value and is copied back on its
 /// own.</para>
 /// </summary>
-public sealed class SolutionBuffer
+public sealed class SolutionBuffer : IAtomHolder
 {
     private const int ChunkBits = 12;
     private const int ChunkSize = 1 << ChunkBits;
@@ -380,6 +380,23 @@ public sealed class SolutionBuffer
         if (_count == 0) return tail;
         engine.SetHeap(b + _lastPair + 1, tail);
         return Cell.Lis(b);
+    }
+
+    /// <summary>Adds the atoms the solutions name (ADR-003): an atom cell, a
+    /// functor's name, and those of a foreign value that holds any.</summary>
+    public void MarkAtoms(AtomMarkSet set)
+    {
+        int inFirst = System.Math.Min(_length, ChunkSize);
+        for (int i = 0; i < inFirst; i++) set.AddCell(_first[i]);
+        if (_chunks is { } chunks)
+            for (int i = ChunkSize; i < _length; i++)
+            {
+                int j = i - ChunkSize;
+                set.AddCell(chunks[j >> ChunkBits][j & (ChunkSize - 1)]);
+            }
+        if (_payloads is { } payloads)
+            foreach (object? payload in payloads)
+                if (payload is IAtomHolder holder) holder.MarkAtoms(set);
     }
 
     private ref Cell At(int i)

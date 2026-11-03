@@ -122,14 +122,21 @@ public sealed partial class DebugService : IDebugSession
     }
 
     // Whether a functor is one of the engine's own helpers ($-prefixed once demangled),
-    // and what it is called if it is not — decided once per functor. Functor ids are
-    // stable for the life of the process, and the answer is a property of the name, so
-    // the second call port on the same predicate costs a dictionary probe and nothing
-    // else. (Null = internal: raise no port for it.)
+    // and what it is called if it is not — decided once per functor. The answer is a
+    // property of the name, so the second call port on the same predicate costs a
+    // dictionary probe and nothing else. A dead atom's id goes to another name
+    // (ADR-003): the answers last until the next atom collection. (Null = internal:
+    // raise no port for it.)
     private readonly Dictionary<int, string?> _functorGoalNames = new();
+    private int _functorGoalNamesSweep;
 
     private string? FunctorGoalName(int functorId)
     {
+        if (_functorGoalNamesSweep != AtomTable.SweepCount)
+        {
+            _functorGoalNames.Clear();
+            _functorGoalNamesSweep = AtomTable.SweepCount;
+        }
         if (_functorGoalNames.TryGetValue(functorId, out string? cached)) return cached;
 
         var (atomId, arity) = FunctorTable.Lookup(functorId);

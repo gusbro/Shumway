@@ -13,6 +13,9 @@ public sealed class CompiledClause
 {
     public byte[] Bytecode { get; }
 
+    /// <summary>The transient atoms the code names (<see cref="CodeAtoms.Of(CompiledClause)"/>).</summary>
+    internal CodeAtoms? AtomsMemo;
+
     /// <summary>The functor id (interned in <see cref="Shumway.Core.FunctorTable"/>)
     /// identifying the head's name and arity.</summary>
     public int FunctorId { get; }

@@ -49,6 +49,13 @@ public sealed class FlagStore
         _flags.TryGetValue(key, out var v) ? v : FlagValue.Zero;
 
     public void Set(string key, FlagValue value) => _flags[key] = value;
+
+    /// <summary>Adds the atoms the values name (ADR-003); a key is its text.</summary>
+    public void MarkAtoms(AtomMarkSet set)
+    {
+        foreach (var value in _flags.Values)
+            if (value.IsAtom) set.Add(value.AtomId);
+    }
 }
 
 /// <summary>Host-side interface so <see cref="FlagBuiltins"/> can reach the

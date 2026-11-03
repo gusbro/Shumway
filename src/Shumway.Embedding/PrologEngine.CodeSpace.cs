@@ -157,16 +157,12 @@ public sealed partial class PrologEngine
         StaticDeadIndices = deadIndices;
     }
 
-    /// <summary>the persistent program buffer —
-    /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
-    /// queries; <c>assertz</c> / <c>asserta</c> extend it in-place
-    /// (capacity-doubled). Each query's
-    /// <see cref="Activation.CurrentProgram"/> is a two-buffer
-    /// <see cref="ProgramView"/> with this as <c>Primary</c> and the
-    /// per-query bytecode as <c>Overflow</c>, with a reserved address
-    /// gap between them so mid-query persistent growth doesn't collide
-    /// with the query region's linked offsets. Null until the first
-    /// query builds it; nulled by <see cref="InvalidatePersistent"/>
+    /// <summary>The persistent program buffer: <c>prefix + static + dynamic</c>,
+    /// then each query's own code and whatever the query appends (asserted
+    /// clauses, consulted files). Owned by PrologEngine across queries and
+    /// grown in place up to <see cref="CodeSpaceLimit"/>; a query's
+    /// <see cref="Activation.CurrentProgram"/> is this array. Null until the
+    /// first query builds it; nulled by <see cref="InvalidatePersistent"/>
     /// when the dynamic-functor set changes (consult, declaration).</summary>
     internal byte[]? _persistentProgram;
 
@@ -176,40 +172,138 @@ public sealed partial class PrologEngine
     /// PC into it fails loudly.</summary>
     internal int _persistentLength;
 
+    /// <summary><see cref="_persistentLength"/> as the last link left it: the
+    /// auto-compaction compares the buffer's growth since with it.</summary>
+    internal int _persistentLengthAtLink;
+
+    /// <summary>The launcher prefix's length: the static region's sites are at
+    /// this offset in the buffer (<see cref="TryFlipHotnessInPlace"/>).</summary>
+    internal int _persistentPrefixLength;
+
     /// <summary>Cached link result for the dynamic predicates only —
     /// the address map a per-query link uses to resolve calls into
     /// the dynamic region without re-linking it.</summary>
     internal Shumway.Compiler.Wam.Linker.LinkResult? _dynamicLink;
 
 
-    /// <summary>when a query is in flight, the address at
-    /// which the per-query overlay begins (the
-    /// <see cref="ProgramView"/>'s <c>Split</c>). Persistent growth
-    /// mid-query stays below it: <c>AppendCode</c> raises
-    /// <c>resource_error(code_space)</c> rather than cross it.</summary>
-    internal int _querySplit = -1;
+    /// <summary>The most bytes the code buffer may hold: the persistent program,
+    /// what queries add to it (asserted clauses, consulted files) and the running
+    /// queries' own code. Growing past it is <c>resource_error(code_space)</c>.
+    /// Addresses stay below the resume markers, so at most
+    /// <see cref="Activation.ResumeMarkerBase"/> (1 GB); the default is that
+    /// in a 64-bit process and 256 MB in a 32-bit one, whose heap cannot hold
+    /// an array near the markers.</summary>
+    public int CodeSpaceLimit
+    {
+        get => _codeSpaceLimit;
+        set
+        {
+            if (value <= 0 || value > Activation.ResumeMarkerBase)
+                throw new ArgumentOutOfRangeException(nameof(value),
+                    $"CodeSpaceLimit must be in (0, {Activation.ResumeMarkerBase}].");
+            _codeSpaceLimit = value;
+        }
+    }
 
-    /// <summary>The address space reserved for the per-query overlay, just
-    /// below <see cref="Activation.ResumeMarkerBase"/>. The overlay starts
-    /// there whatever the persistent length, so a query can grow the
-    /// persistent program by nearly a gigabyte; only the bytes it uses are
-    /// allocated.</summary>
-    private const int QueryOverlayReserve = 64 * 1024 * 1024;
+    private int _codeSpaceLimit = DefaultCodeSpaceLimit;
 
-    /// <summary>Tests only: places the overlay this many bytes past the
-    /// persistent program's end, so the code-space limit is reachable.</summary>
-    internal int? TestQueryGrowthRoom { get; set; }
+    /// <summary>What <see cref="CodeSpaceLimit"/> starts at: the resume markers
+    /// in a 64-bit process, 256 MB in a 32-bit one.</summary>
+    public static int DefaultCodeSpaceLimit
+        => Environment.Is64BitProcess ? Activation.ResumeMarkerBase : 256 * 1024 * 1024;
 
-    /// <summary>What an assert needs left before the overlay: it checks before
+    /// <summary>What an assert needs left before the limit: it checks before
     /// changing the database, so a clause it cannot place leaves nothing behind.
     /// A single clause's code is far smaller.</summary>
     internal const int AssertCodeHeadroom = 64 * 1024;
 
+    /// <summary>Where code of <paramref name="size"/> bytes goes in the persistent
+    /// buffer (a query's code, before it is linked for that address): the first
+    /// hole it fits, so a loop of queries that each leave one does not move the
+    /// end of the buffer, else the end.</summary>
+    internal int ReservePersistent(int size)
+    {
+        int hole = DynamicCodePatcher.TryReuseFreeChunk(DynChains.FreeChunks, size);
+        return hole >= 0 ? hole : _persistentLength;
+    }
+
+    /// <summary>Puts <paramref name="code"/> at <paramref name="at"/>, the address
+    /// <see cref="ReservePersistent"/> gave for its size: into the hole, or at the
+    /// end of the buffer, grown as <see cref="Activation.AppendCode"/> grows it,
+    /// the breakpoint record moving with it. <c>resource_error(code_space)</c> at
+    /// <see cref="CodeSpaceLimit"/>, or when the process cannot allocate the
+    /// grown array.</summary>
+    internal void PlacePersistent(byte[] code, int at)
+    {
+        if (at != _persistentLength)
+        {
+            Array.Copy(code, 0, _persistentProgram!, at, code.Length);
+            return;
+        }
+        int start = _persistentLength;
+        long needed = (long)start + code.Length;
+        if (needed > CodeSpaceLimit)
+            throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
+        byte[] program = _persistentProgram!;
+        if (needed > program.Length)
+        {
+            byte[] grown;
+            try
+            {
+                grown = new byte[(int)Math.Max(needed, Math.Min(program.Length * 2L, CodeSpaceLimit))];
+            }
+            catch (OutOfMemoryException)
+            {
+                throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
+            }
+            Array.Copy(program, grown, start);
+            MoveBreakpointRecord(program, grown, start);
+            _persistentProgram = grown;
+        }
+        Array.Copy(code, 0, _persistentProgram!, start, code.Length);
+        _persistentLength = (int)needed;
+    }
+
+    /// <summary>Whether the buffer <paramref name="engine"/> runs on has a hole
+    /// of at least <paramref name="bytes"/>: room for a clause when the end has
+    /// none left.</summary>
+    internal bool HasFreeCodeChunk(Activation engine, int bytes)
+    {
+        if (GetChainTable(engine) is not { } table) return false;
+        foreach (var (_, length) in table.FreeChunks)
+            if (length >= bytes) return true;
+        return false;
+    }
+
+    /// <summary>The query <paramref name="engine"/> ran is over: its code goes.
+    /// At the end of the buffer (nothing was appended after it) the buffer
+    /// shrinks back to where the code began; otherwise its bytes are a hole
+    /// the next clause or live link fills. Nothing while a debug session may
+    /// hold breakpoints in it, or once the buffer was rebuilt under it.</summary>
+    internal void ReleaseQueryCode(Activation engine)
+    {
+        if (engine.HostProgram is not LinkedProgram { QueryEnd: > 0 } linked) return;
+        int start = linked.QueryStart, end = linked.QueryEnd;
+        linked.QueryEnd = 0;
+        var table = GetChainTable(engine);
+        if (table is null || !table.Current || DebugSession is not null) return;
+        if (end == _persistentLength) _persistentLength = start;
+        else DynamicCodePatcher.FreeBytes(table.FreeChunks, start, end - start);
+    }
+
+    /// <summary>Times the persistent program was marked stale: each one is
+    /// a full build and a link of the buffer at the next setup, and the tests
+    /// that pin a mutation in place read it.</summary>
+    internal long PersistentInvalidations;
+
     /// <summary>Marks the persistent program as stale so the next query
     /// setup rebuilds it. Called on every consult and on every change
     /// to the dynamic-functor set.</summary>
-    internal void InvalidatePersistent()
+    internal void InvalidatePersistent([System.Runtime.CompilerServices.CallerMemberName] string caller = "")
     {
+        PersistentInvalidations++;
+        if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " persistent: " + caller);
+        bool dropped = _persistentProgram is null && _dynamicLink is null;
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
@@ -226,8 +320,9 @@ public sealed partial class PrologEngine
         // now-invalidated buffer; start a fresh table for the rebuild.
         // Live engines still running on the old buffer keep their own
         // table through _engineChainTables — invalidation never desyncs
-        // an in-flight query's in-place dispatch.
-        ResetDynChains();
+        // an in-flight query's in-place dispatch. Dropped already: the fresh
+        // table stands (each mutation of a query after the drop comes here).
+        if (!dropped) ResetDynChains();
     }
 
     /// <summary>user-facing entry point for
@@ -255,15 +350,13 @@ public sealed partial class PrologEngine
     /// compaction trigger in <c>SetupQueryFromTerm</c>.</summary>
     private long _persistentMutationsSinceCompact;
 
-    /// <summary>how many dynamic-store mutations
-    /// the engine accumulates before automatically compacting the
-    /// persistent buffer at the next query's setup. Default 1000;
-    /// host code can raise it (large batch workloads where rebuild
-    /// cost dominates) or lower it (memory-tight environments
-    /// preferring smaller buffers) or set to <c>long.MaxValue</c>
-    /// to disable auto-compaction entirely. Compaction itself stays
-    /// callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
-    public long CompactWatermark { get; set; } = 1000;
+    /// <summary>How many dynamic-store mutations the engine accumulates
+    /// between checks of the persistent buffer's growth, at a query's setup:
+    /// the buffer is compacted once it has grown to twice its length at the
+    /// last link. Default 1000; <c>long.MaxValue</c> disables the checks.
+    /// Compaction itself stays callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
+    public long CompactWatermark { get; set; } =
+        long.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_COMPACT_WATERMARK"), out long w) ? w : 1000;
 
     /// <summary>diagnostic read of the mutation
     /// counter (mainly for tests that need to verify auto-compaction
@@ -301,7 +394,10 @@ public sealed partial class PrologEngine
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         _snapshotStaleFids.Add(functorId);
-        DropDynamicPredicateCacheEntry(functorId);
+        // The persistent buffer holds the mutation (ADR-015): the next setup
+        // keeps the program product for a predicate of facts.
+        DropDynamicCompiled(functorId);
+        _productStaleDynamicFids.Add(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
         // is stale: evict it, and clear every live query interpreter's direct
         // fid-table slot so the very next dispatch re-resolves live (falling
@@ -371,6 +467,18 @@ public sealed partial class PrologEngine
     {
         // The compiled program product embeds this functor's compile.
         _programStamp++;
+        DropDynamicCompiled(functorId);
+    }
+
+    /// <summary>Dynamic predicates mutated since the last query setup. The
+    /// persistent buffer already holds the mutation (ADR-015), so the next
+    /// setup keeps the product when each is a predicate of facts
+    /// (<see cref="DeferStaleDynamicPredicates"/>): rebuilding the whole
+    /// product after every assert cost O(program) per query.</summary>
+    private readonly HashSet<int> _productStaleDynamicFids = new();
+
+    private void DropDynamicCompiled(int functorId)
+    {
         _dynamicPredicateCache.Remove(functorId);
         var merged = _skipCompileMergedCache;
         if (merged is null) return;
@@ -653,6 +761,13 @@ public sealed partial class PrologEngine
         public Shumway.Compiler.Wam.Linker.LinkResult? StaticLinkRef;
         public required List<Shumway.Compiler.Wam.CompiledPredicate> StaticPreds;
         public required List<Shumway.Compiler.Wam.CompiledPredicate> DynamicPreds;
+        /// <summary>The functors of <see cref="DynamicPreds"/>.</summary>
+        public required HashSet<int> DynamicFunctors;
+        /// <summary>True once a setup left the compile of a mutated dynamic
+        /// predicate in <see cref="DynamicPreds"/> as it was
+        /// (<see cref="DeferStaleDynamicPredicates"/>): the list serves no
+        /// link from then on, only the next full build replaces it.</summary>
+        public bool DynamicPredsDeferred;
         /// <summary>Static-classified predicates absent from the cached
         /// static link (fresh MetaTransform helpers of a recompiled dynamic
         /// predicate) — linked into every query's overlay instead.</summary>

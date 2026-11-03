@@ -204,17 +204,23 @@ internal sealed class DynamicClauseStore
         set
         {
             NotifyReplaced(fid);
+            if (_clauses.TryGetValue(fid, out var old)) ReleaseAll(fid, old);
             _indexes.Remove(fid);
             _tombstones.Remove(fid);
             _tombRank.Remove(fid);
             _clauses[fid] = value;
+            foreach (var c in value) Claim(fid, c);
         }
     }
 
     /// <summary>Get-or-create: the live clause list for
     /// <paramref name="fid"/>, creating an empty slot (and the dynamic mark)
     /// on first use.</summary>
-    public List<Clause> Slot(int fid)
+    public List<Clause> Slot(int fid) => Dense(fid, PhysicalSlot(fid));
+
+    /// <summary><see cref="Slot"/> without the compaction: for a mutator that
+    /// moves no position, which a tombstone does not disturb.</summary>
+    private List<Clause> PhysicalSlot(int fid)
     {
         if (!_clauses.TryGetValue(fid, out var list))
         {
@@ -222,12 +228,13 @@ internal sealed class DynamicClauseStore
             _clauses[fid] = list;
             _functors.Add(fid);
         }
-        return Dense(fid, list);
+        return list;
     }
 
     public bool RemoveSlot(int fid)
     {
         NotifyReplaced(fid);
+        if (_clauses.TryGetValue(fid, out var old)) ReleaseAll(fid, old);
         _indexes.Remove(fid);
         _tombstones.Remove(fid);
         _tombRank.Remove(fid);
@@ -237,7 +244,9 @@ internal sealed class DynamicClauseStore
     public void ClearAllSlots()
     {
         foreach (int fid in _clauses.Keys) NotifyReplaced(fid);
+        foreach (var (fid, list) in _clauses) ReleaseAll(fid, list);
         _clauses.Clear();
+        _notFacts.Clear();
         _indexes.Clear();
         _tombstones.Clear();
         _tombRank.Clear();
@@ -254,14 +263,66 @@ internal sealed class DynamicClauseStore
         }
     }
 
+    // ----- the atoms of the facts kept as images -----
+    //
+    // ADR-003: a fact kept as the image of its head (ADR-063) names atoms by
+    // id, which nothing re-interns by name. The store claims them while it
+    // holds the clause, through the engine's claimant, and releases them when
+    // the clause leaves; an enumeration that still holds the clause marks them
+    // itself.
+
+    internal Action<int[]>? ClaimAtoms, ReleaseAtoms;
+
+    private void Claim(int fid, Clause c)
+    {
+        if (c.HeadImage is { } image && ClaimAtoms is { } claim) claim(image.TransientAtomIds);
+        if (c.Kind != ClauseKind.Fact)
+        {
+            _notFacts.TryGetValue(fid, out int n);
+            _notFacts[fid] = n + 1;
+        }
+    }
+
+    private void Release(int fid, Clause c)
+    {
+        if (c.HeadImage is { } image && ReleaseAtoms is { } release) release(image.TransientAtomIds);
+        if (c.Kind != ClauseKind.Fact && _notFacts.TryGetValue(fid, out int n))
+        {
+            if (n > 1) _notFacts[fid] = n - 1;
+            else _notFacts.Remove(fid);
+        }
+    }
+
+    private void ReleaseAll(int fid, List<Clause> list)
+    {
+        for (int i = 0; i < list.Count; i++) Release(fid, list[i]);
+    }
+
+    // ----- the clauses that are not facts -----
+    //
+    // A predicate of facts alone is handled without its terms (ADR-063): the
+    // setup after a mutation leaves its compile to the next full build, and
+    // reading every clause to know that would cost the predicate's size per
+    // query. The mutators keep the count, through Claim and Release.
+
+    private readonly Dictionary<int, int> _notFacts = new();
+
+    /// <summary>True when every clause of <paramref name="fid"/> is a fact,
+    /// an empty slot included.</summary>
+    public bool HoldsOnlyFacts(int fid) => !_notFacts.ContainsKey(fid);
+
     /// <summary>Deep-copies this store's contents into
     /// <paramref name="target"/> (fresh clause lists; shared Clause objects —
-    /// clauses are immutable ASTs). Used by sub-engine creation.</summary>
+    /// clauses are immutable ASTs or images). Used by sub-engine creation.</summary>
     public void CopyInto(DynamicClauseStore target)
     {
         target._functors.UnionWith(_functors);
         foreach (var (fid, clauses) in _clauses)
-            target._clauses[fid] = new List<Clause>(Dense(fid, clauses));
+        {
+            var copy = new List<Clause>(Dense(fid, clauses));
+            target._clauses[fid] = copy;
+            foreach (var c in copy) target.Claim(fid, c);
+        }
     }
 
     // ----- open retract enumerations -----
@@ -366,9 +427,14 @@ internal sealed class DynamicClauseStore
 
     public void AppendClause(int fid, Clause c)
     {
-        var list = Slot(fid);
+        // Physical: an append lands past every position, so the tombstones
+        // wait for RemoveClauseAt's half-dead rule. A dense list here
+        // compacted the slot and rebuilt its index on every assert that
+        // followed a retract.
+        var list = PhysicalSlot(fid);
         NotifyInsertAt(fid, list.Count);
         list.Add(c);
+        Claim(fid, c);
         if (_indexes.TryGetValue(fid, out var ix)) ix.Append(c);
     }
 
@@ -380,6 +446,7 @@ internal sealed class DynamicClauseStore
         var slot = Slot(fid);
         NotifyInsertAt(fid, 0);
         slot.Insert(0, c);
+        Claim(fid, c);
         if (_indexes.TryGetValue(fid, out var ix)) ix.Prepend(c);
     }
 
@@ -392,6 +459,7 @@ internal sealed class DynamicClauseStore
         var slot = Slot(fid);
         NotifyInsertAt(fid, index);
         slot.Insert(index, c);
+        Claim(fid, c);
         _indexes.Remove(fid);
     }
     /// <summary>Retires the clause at <paramref name="index"/> (a physical
@@ -405,6 +473,7 @@ internal sealed class DynamicClauseStore
         var list = _clauses[fid];
         Clause c = list[index];
         list[index] = Tombstone;
+        Release(fid, c);
         int tombs = TombstoneCount(fid) + 1;
         _tombstones[fid] = tombs;
         RankAdd(fid, index, list.Count);
@@ -416,6 +485,7 @@ internal sealed class DynamicClauseStore
     {
         if (!_clauses.TryGetValue(fid, out var list)) return;
         NotifyReplaced(fid);
+        ReleaseAll(fid, list);
         list.Clear();
         _indexes.Remove(fid);
         _tombstones.Remove(fid);
@@ -431,7 +501,9 @@ internal sealed class DynamicClauseStore
         // The caller's position is dense (it read the slot to get it), so the
         // slot must be dense before the write lands.
         CompactSlot(fid);
+        Release(fid, _clauses[fid][index]);
         _clauses[fid][index] = c;
+        Claim(fid, c);
         // A clause swapped in place can carry a different key; rebuilding is
         // cheaper to be sure of than patching, and this is consult-time only.
         _indexes.Remove(fid);
@@ -442,7 +514,10 @@ internal sealed class DynamicClauseStore
     public void AppendClauseRange(int fid, IEnumerable<Clause> cs)
     {
         NotifyReplaced(fid);
-        Slot(fid).AddRange(cs);
+        var slot = Slot(fid);
+        int from = slot.Count;
+        slot.AddRange(cs);
+        for (int i = from; i < slot.Count; i++) Claim(fid, slot[i]);
         _indexes.Remove(fid);
     }
 

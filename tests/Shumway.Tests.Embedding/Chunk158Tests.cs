@@ -5,12 +5,13 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Phase 12 chunk 158: auto-compaction watermark and per-predicate
-/// <c>compact_dynamic_buffer/1</c>. The watermark on
-/// <see cref="PrologEngine.CompactWatermark"/> triggers a buffer
-/// rebuild at the next query setup once accumulated mutations
-/// cross the threshold; <c>compact_dynamic_buffer/1</c> validates
-/// a predicate indicator and then delegates to the same full
+/// Phase 12 chunk 158: auto-compaction and per-predicate
+/// <c>compact_dynamic_buffer/1</c>. Every <see cref="PrologEngine.CompactWatermark"/>
+/// mutations a query's setup checks the buffer's growth, and rebuilds it
+/// once it has grown to twice its length at the last link: proportional,
+/// so a churn the layouts recycle never pays a rebuild, and a buffer
+/// that grows pays one per doubling. <c>compact_dynamic_buffer/1</c>
+/// validates a predicate indicator and then delegates to the same full
 /// rebuild (the persistent buffer holds every dynamic predicate
 /// interleaved, so independent per-predicate compaction isn't
 /// feasible without partial-relink support).
@@ -35,24 +36,59 @@ public class Chunk158Tests
         Assert.Equal(4, e.PersistentMutationsSinceCompact);
     }
 
+    // Grows the buffer past twice its length at the last link, a query of
+    // twenty facts of the cold predicate at a time, and returns how many went in.
+    private static int GrowToTheDouble(PrologEngine e, string pred = "d")
+    {
+        int linked = e._persistentLengthAtLink;
+        Assert.True(linked > 0, "the buffer was never linked");
+        int facts = 0;
+        while (e._persistentLength < 2 * linked)
+        {
+            Assert.True(e.Query($"between(1, 20, I), assertz({pred}(f(I, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o))), fail ; true.").Success);
+            facts += 20;
+            Assert.True(facts < 200_000, "the buffer never doubled");
+        }
+        return facts;
+    }
+
     [Fact]
-    public void Watermark_AutoCompacts_AtNextQuery()
+    public void ABufferThatDoubledSinceItsLinkCompactsAtTheNextCheck()
     {
         var e = new PrologEngine();
         e.CompactWatermark = 3;
         e.ConsultString(":- dynamic d/1.");
-        e.Query("assertz(d(1)).");
-        e.Query("assertz(d(2)).");
-        e.Query("assertz(d(3)).");
-        // Counter now at 3, threshold met. The next query's setup
-        // triggers the auto-compaction → counter resets.
-        Assert.Equal(3, e.PersistentMutationsSinceCompact);
-        // d(_) query is the trigger; its setup compacts.
-        Assert.True(e.Query("d(1).").Success);
+        Assert.True(e.Query("d(_) ; true.").Success);
+        long drops = e.PersistentInvalidations;
+        int facts = GrowToTheDouble(e);
+        // Checked at every query's setup on the way (twenty mutations each):
+        // below the double, no compaction.
+        Assert.Equal(drops, e.PersistentInvalidations);
+        // The next setup's check compacts: the buffer is linked again, its
+        // length at the link the new measure.
+        Assert.True(e.Query("d(_) ; true.").Success);
+        Assert.Equal(drops + 1, e.PersistentInvalidations);
         Assert.Equal(0, e.PersistentMutationsSinceCompact);
-        // Dispatch correctness across the auto-compaction.
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
-        Assert.Equal(new long[] { 1, 2, 3 }, xs);
+        Assert.True(e._persistentLengthAtLink > 0 && e._persistentLength < 2 * e._persistentLengthAtLink);
+        // Dispatch correctness across the compaction: every fact is there.
+        Assert.Equal(facts, e.QueryAll("d(_).").Count());
+    }
+
+    [Fact]
+    public void ABufferThatDidNotDoubleIsNotCompactedAtTheChecks()
+    {
+        var e = new PrologEngine();
+        e.CompactWatermark = 3;
+        e.ConsultString(":- dynamic d/1.");
+        Assert.True(e.Query("d(_) ; true.").Success);
+        long drops = e.PersistentInvalidations;
+        for (int i = 0; i < 10; i++)
+            Assert.True(e.Query($"assertz(d({i})), assertz(d({i})), retract(d({i})).").Success);
+        Assert.True(e.Query("d(_) ; true.").Success);
+        Assert.Equal(drops, e.PersistentInvalidations);
+        // The checks ran: the count is back to zero after each.
+        Assert.Equal(0, e.PersistentMutationsSinceCompact);
+        Assert.Equal(10, e.QueryAll("d(_).").Count());
     }
 
     [Fact]
@@ -128,12 +164,18 @@ public class Chunk158Tests
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
         e.CompactWatermark = 2;
-        e.ConsultString(":- dynamic d/1.");
+        e.ConsultString(":- dynamic d/1, g/1.");
         e.Query("assertz(d(a)).");
         e.Query("assertz(d(b)).");
-        // Crosses watermark (count=2). Next query triggers
-        // auto-compaction.
-        e.Query("d(a).");
+        Assert.True(e.Query("d(a).").Success);   // hot
+        Assert.True(e.Query("d(a).").Success);   // laid out indexed at this setup
+        long drops = e.PersistentInvalidations;
+        // The growth goes to a cold predicate of its own: a key of a kind the
+        // hot one's layout has no switch for would lay it out again instead.
+        GrowToTheDouble(e, "g");
+        // The next check compacts.
+        Assert.True(e.Query("d(a).").Success);
+        Assert.Equal(drops + 1, e.PersistentInvalidations);
         Assert.Equal(0, e.PersistentMutationsSinceCompact);
         // Mutate further — in-place paths resume.
         e.Query("assertz(d(c)).");
