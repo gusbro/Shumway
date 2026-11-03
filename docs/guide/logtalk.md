@@ -77,22 +77,23 @@ link has already done.
 
 ## A Logtalk top level
 
-Run without an application, the embedding scripts link the compiler and
-runtime alone into `logtalk.shum`. Passed to `shumway`, it is a Logtalk top
-level that starts without compiling Logtalk's core files:
+When the embedding scripts run without an application, they link only the
+compiler and the runtime into `logtalk.shum`. Loading that bundle gives a
+Logtalk top level that starts without compiling Logtalk's core files:
 
 ```
 shumway logtalk.shum
 ```
 
-and saved, it is an executable that works as the integration script does:
+The same bundle can be saved as an executable to use in place of the
+integration script:
 
 ```
 shumway --save-toplevel shumwaylgt-fast logtalk.shum
 ```
 
-The executable accepts the same arguments as `shumway`, among them the `-g`
-goals the test scripts pass, and `-q` for a quiet start. See
+The executable takes the same arguments as `shumway`, including the `-g`
+goals the test scripts pass and `-q` for a quiet start. See
 [A saved top level](user-guide.md#a-saved-top-level).
 
 ## The dialect
