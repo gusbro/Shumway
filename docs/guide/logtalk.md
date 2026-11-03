@@ -75,6 +75,27 @@ application's startup goal. The `loader.pl` the scripts write when asked is
 not needed: it consults the two files when the program starts, which the
 link has already done.
 
+## A Logtalk top level
+
+When the embedding scripts run without an application, they link only the
+compiler and the runtime into `logtalk.shum`. Loading that bundle gives a
+Logtalk top level that starts without compiling Logtalk's core files:
+
+```
+shumway logtalk.shum
+```
+
+The same bundle can be saved as an executable to use in place of the
+integration script:
+
+```
+shumway --save-toplevel shumwaylgt-fast logtalk.shum
+```
+
+The executable takes the same arguments as `shumway`, including the `-g`
+goals the test scripts pass and `-q` for a quiet start. See
+[A saved top level](user-guide.md#a-saved-top-level).
+
 ## The dialect
 
 Logtalk selects backend-specific code by `prolog_dialect`, and it does not

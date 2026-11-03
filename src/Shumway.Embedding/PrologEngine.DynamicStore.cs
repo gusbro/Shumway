@@ -2119,6 +2119,10 @@ public sealed partial class PrologEngine
                 if (valueName == "false" || valueName == "true" || valueName == "error")
                     _flags.OccursCheck = valueName;
                 break;
+            case "verbose":
+                if (valueName == "normal" || valueName == "silent")
+                    _flags.Verbose = valueName;
+                break;
             case "compile_mode":
                 // Takes effect for predicates compiled later in this consult.
                 if (valueName == "debug") _flags.EmitDebugInfo = _flags.DebugCodegen = true;

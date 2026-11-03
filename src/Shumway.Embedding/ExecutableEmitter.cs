@@ -132,6 +132,77 @@ public static partial class ExecutableEmitter
             }
         }
 
+        var wrapped = EmitWrapper(
+            GenerateProgramSource(normalisedGoal, debug, debugWait, dapPort),
+            new[] { ("bundle.shum", bundleBytes) }, Array.Empty<string>(),
+            outputPath, mode, verboseOut, diagnostics);
+        if (!wrapped.Success) return wrapped;
+        try
+        {
+            string? outputDir = Path.GetDirectoryName(wrapped.OutputPath);
+            // copy each --foreign-dll next to the
+            // produced executable. The runtime's LoadBundle path
+            // (called from the generated Program.Main) probes the
+            // executable's AppContext.BaseDirectory for the names
+            // recorded in Bundle.ForeignAssemblies, so a sibling
+            // layout is exactly what it expects.
+            if (foreignDllPaths is not null && foreignDllPaths.Count > 0)
+            {
+                string sideDir = string.IsNullOrEmpty(outputDir)
+                    ? Directory.GetCurrentDirectory() : outputDir;
+                foreach (var src in foreignDllPaths)
+                {
+                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
+                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
+                    {
+                        File.Copy(src, dst, overwrite: true);
+                        verboseOut?.WriteLine($"shumway-exe: copied foreign dll '{Path.GetFileName(src)}'");
+                    }
+                }
+            }
+            // ADR-024: copy each --native-dll next to the executable too, so the
+            // LoadBundle native-library auto-load (Bundle.NativeLibraries) finds them
+            // in the executable's directory.
+            if (nativeDllPaths is not null && nativeDllPaths.Count > 0)
+            {
+                string sideDir = string.IsNullOrEmpty(outputDir)
+                    ? Directory.GetCurrentDirectory() : outputDir;
+                foreach (var src in nativeDllPaths)
+                {
+                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
+                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
+                    {
+                        File.Copy(src, dst, overwrite: true);
+                        verboseOut?.WriteLine($"shumway-exe: copied native dll '{Path.GetFileName(src)}'");
+                    }
+                }
+            }
+            return wrapped;
+        }
+        catch (Exception ex)
+        {
+            diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                "exe_emit_error", ex.Message));
+            return new ExecutableEmitResult(false, null, diagnostics);
+        }
+    }
+
+    /// <summary>Builds the single-file executable of a generated wrapper:
+    /// <paramref name="programSource"/> as its Program.cs, each of
+    /// <paramref name="resources"/> embedded under its name, referencing the
+    /// engine assemblies beside this one plus <paramref name="extraReferences"/>
+    /// (full paths). <c>shumway-link --exe</c> and the top level's
+    /// <c>--save-toplevel</c> both build through it.</summary>
+    internal static ExecutableEmitResult EmitWrapper(
+        string programSource,
+        IReadOnlyList<(string Name, byte[] Bytes)> resources,
+        IReadOnlyList<string> extraReferences,
+        string outputPath,
+        ExecutableDeploymentMode mode = ExecutableDeploymentMode.FrameworkDependent,
+        TextWriter? verboseOut = null,
+        List<LinkDiagnostic>? diagnostics = null)
+    {
+        diagnostics ??= new List<LinkDiagnostic>();
         string finalPath = AdjustExecutableSuffix(outputPath);
         string tempDir = Path.Combine(Path.GetTempPath(),
             $"shumway-exe-{Guid.NewGuid():N}");
@@ -140,6 +211,13 @@ public static partial class ExecutableEmitter
         {
             string assemblyName = SanitiseAssemblyName(
                 Path.GetFileNameWithoutExtension(finalPath));
+            // The wrapper may not share a name with an assembly it references
+            // (a top level saved as shumway.exe references shumway.dll); the
+            // produced file is copied to finalPath under its own name anyway.
+            foreach (string reference in extraReferences)
+                if (string.Equals(Path.GetFileNameWithoutExtension(reference), assemblyName,
+                        StringComparison.OrdinalIgnoreCase))
+                    assemblyName += "_app";
 #if NETFRAMEWORK
             // No RID on the Framework path (and net48 has no
             // RuntimeInformation.RuntimeIdentifier anyway): the stub is an
@@ -156,11 +234,15 @@ public static partial class ExecutableEmitter
 #endif
 
             // Write wrapper sources.
-            File.WriteAllText(Path.Combine(tempDir, "Program.cs"),
-                GenerateProgramSource(normalisedGoal, debug, debugWait, dapPort));
-            File.WriteAllBytes(Path.Combine(tempDir, "bundle.shum"), bundleBytes);
+            File.WriteAllText(Path.Combine(tempDir, "Program.cs"), programSource);
+            var resourceNames = new List<string>(resources.Count);
+            foreach (var (name, bytes) in resources)
+            {
+                File.WriteAllBytes(Path.Combine(tempDir, name), bytes);
+                resourceNames.Add(name);
+            }
             File.WriteAllText(Path.Combine(tempDir, $"{assemblyName}.csproj"),
-                GenerateProjectFile(assemblyName, rid, mode));
+                GenerateProjectFile(assemblyName, rid, mode, resourceNames, extraReferences));
             // Drop a repo-local nuget.config that clears any inherited
             // sources (corporate proxies, HTTP sources NuGet 6+
             // rejects, etc.) and only uses nuget.org. Otherwise a
@@ -270,43 +352,6 @@ public static partial class ExecutableEmitter
                 + $"({new FileInfo(finalPath).Length:N0} bytes).");
 #endif
 
-            // copy each --foreign-dll next to the
-            // produced executable. The runtime's LoadBundle path
-            // (called from the generated Program.Main) probes the
-            // executable's AppContext.BaseDirectory for the names
-            // recorded in Bundle.ForeignAssemblies, so a sibling
-            // layout is exactly what it expects.
-            if (foreignDllPaths is not null && foreignDllPaths.Count > 0)
-            {
-                string sideDir = string.IsNullOrEmpty(outputDir)
-                    ? Directory.GetCurrentDirectory() : outputDir;
-                foreach (var src in foreignDllPaths)
-                {
-                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
-                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
-                    {
-                        File.Copy(src, dst, overwrite: true);
-                        verboseOut?.WriteLine($"shumway-exe: copied foreign dll '{Path.GetFileName(src)}'");
-                    }
-                }
-            }
-            // ADR-024: copy each --native-dll next to the executable too, so the
-            // LoadBundle native-library auto-load (Bundle.NativeLibraries) finds them
-            // in the executable's directory.
-            if (nativeDllPaths is not null && nativeDllPaths.Count > 0)
-            {
-                string sideDir = string.IsNullOrEmpty(outputDir)
-                    ? Directory.GetCurrentDirectory() : outputDir;
-                foreach (var src in nativeDllPaths)
-                {
-                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
-                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
-                    {
-                        File.Copy(src, dst, overwrite: true);
-                        verboseOut?.WriteLine($"shumway-exe: copied native dll '{Path.GetFileName(src)}'");
-                    }
-                }
-            }
             return new ExecutableEmitResult(true, finalPath, diagnostics);
         }
         catch (Exception ex)
@@ -438,7 +483,8 @@ internal static class Program
     }
 
     private static string GenerateProjectFile(string assemblyName, string rid,
-        ExecutableDeploymentMode mode)
+        ExecutableDeploymentMode mode, IReadOnlyList<string> resourceNames,
+        IReadOnlyList<string> extraReferences)
     {
         // Locate the engine assemblies next to the running shumway-link
         // process. They are shipped alongside it; the temp project
@@ -448,7 +494,9 @@ internal static class Program
         string linkerDir = Path.GetDirectoryName(
             Assembly.GetExecutingAssembly().Location) ?? "";
         var references = new StringBuilder();
-        foreach (string dll in EnumerateRequiredAssemblies(linkerDir))
+        var dlls = new List<string>(EnumerateRequiredAssemblies(linkerDir));
+        dlls.AddRange(extraReferences);
+        foreach (string dll in dlls)
         {
             string asmName = Path.GetFileNameWithoutExtension(dll);
             references.AppendLine($"    <Reference Include=\"{asmName}\">");
@@ -456,6 +504,9 @@ internal static class Program
             references.AppendLine($"      <Private>true</Private>");
             references.AppendLine($"    </Reference>");
         }
+        var resourceItems = new StringBuilder();
+        foreach (string name in resourceNames)
+            resourceItems.AppendLine($"    <EmbeddedResource Include=\"{name}\" />");
 #if NETFRAMEWORK
         // Framework stub: no RID / single-file / self-contained — the output
         // is a folder app (exe + DLLs + config). LangVersion latest because
@@ -475,8 +526,7 @@ internal static class Program
 {references}
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include=""bundle.shum"" />
-  </ItemGroup>
+{resourceItems}  </ItemGroup>
 </Project>
 ";
 #else
@@ -503,8 +553,7 @@ internal static class Program
 {references}
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include=""bundle.shum"" />
-  </ItemGroup>
+{resourceItems}  </ItemGroup>
 </Project>
 ";
 #endif

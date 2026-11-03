@@ -145,6 +145,12 @@ public sealed class PrologFlags
     /// would unify-with-error. Informational for now.</summary>
     public string OccursCheck { get; set; } = "false";
 
+    /// <summary><c>verbose</c> flag: <c>normal</c>, the default, or
+    /// <c>silent</c>, which the top level's <c>-q</c> sets. While silent,
+    /// <c>print_message/2</c> of kind <c>informational</c> prints nothing,
+    /// as in SWI-Prolog; a program can read it to stay quiet too.</summary>
+    public string Verbose { get; set; } = "normal";
+
     /// <summary>Shumway-specific flag <c>implicit_dynamic</c>. When
     /// <c>true</c> (the default), <c>assertz/1</c> and <c>asserta/1</c>
     /// on a predicate that has no clauses and no <c>:- dynamic</c>

@@ -1391,9 +1391,11 @@ internal static class Prelude
         '$partial_list_'([H|T], [H|Ps]) :- '$partial_list_'(T, Ps).
 
         :- public print_message/2.
-        %! print_message(+Kind, +Message) | Messages | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks).
+        %! print_message(+Kind, +Message) | Messages | Prints Kind: Message to user_error, and the text of format(F, A) when the message is one. A silent message prints nothing, and an informational one prints nothing while the verbose flag is silent.
         print_message(silent, _) :- !.
-        print_message(Kind, format(F, A)) :- !,
+        print_message(informational, _) :- current_prolog_flag(verbose, silent), !.
+        % nonvar: an unbound message would bind to format(F, A) here.
+        print_message(Kind, Message) :- nonvar(Message), Message = format(F, A), !,
             format(user_error, '~w: ', [Kind]), format(user_error, F, A), nl(user_error).
         print_message(Kind, Message) :- format(user_error, '~w: ~q~n', [Kind, Message]).
 

@@ -527,7 +527,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 
 | Predicate | Kind | Description |
 | --- | --- | --- |
-| `print_message(+Kind, +Message)` | engine | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
+| `print_message(+Kind, +Message)` | engine | Prints Kind: Message to user_error, and the text of format(F, A) when the message is one. A silent message prints nothing, and an informational one prints nothing while the verbose flag is silent. |
 
 ## Time
 
