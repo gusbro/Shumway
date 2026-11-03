@@ -23,6 +23,20 @@ public sealed class DroppedCodeTests
             && a.UnifyRegisterWithCell(1, Shumway.Core.Cell.Int(a.SwitchTables?.Count ?? 0))
             && a.UnifyRegisterWithCell(2, Shumway.Core.Cell.Int(
                 (a.HostProgram as PrologEngine.LinkedProgram)?.Map?.Count ?? 0)));
+        // t/1's chain after an abolish: the head chunk's <next> operand, the
+        // tail slot's offset from the head, the free list's length, the stub.
+        BuiltinsRegistry.Register("$abolished_chain", 4, a =>
+        {
+            var host = (PrologEngine)a.Host!;
+            int fid = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern("t", permanent: true).Id, 1);
+            var table = host.GetChainTable(a)!;
+            var chain = table.Chains[fid];
+            int next = Shumway.Core.BytecodeIO.ReadInt32(a.CurrentProgram!, chain.HeadClauseAddr + 1);
+            return a.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(next))
+                && a.UnifyRegisterWithCell(1, Shumway.Core.Cell.Int(chain.TailNextAddr - chain.HeadClauseAddr))
+                && a.UnifyRegisterWithCell(2, Shumway.Core.Cell.Int(table.FreeChunks.Count))
+                && a.UnifyRegisterWithCell(3, Shumway.Core.Cell.Int(a.DynamicFailStubAddr));
+        });
     }
 
     private static PrologEngine Engine(string program)
@@ -246,6 +260,57 @@ public sealed class DroppedCodeTests
                             garbage_collect_clauses, assertz(p(6)), assertz(p(7))
                          ;  true ) ), L),
             L == [1, 2, 3, 4, 5].
+            """).Success);
+    }
+
+    // The live link re-patches the forward references of every batch linked so
+    // far once their callee links: those of a version a later consult replaced
+    // go with it, or the patch would land in whatever its bytes hold by then.
+    [Fact]
+    public void AReplacedVersionsForwardReferencesGoWithIt() => InTempDir(dir =>
+    {
+        string a1 = WriteFile(dir, "a1.pl", "p :- q, q, q, q, q, q, q, q, q, q, q, q.");
+        string a2 = WriteFile(dir, "a2.pl", "p :- r.\nr.");
+        string b = WriteFile(dir, "b.pl", "q.");
+        var e = Engine(":- dynamic(d/2).");
+        // The asserted facts take the replaced version's bytes; q's definition
+        // patches the sites still listed.
+        Assert.True(e.Query($"""
+            consult('{a1}'), consult('{a2}'),
+            assertz(d(1, one)), assertz(d(2, two)), assertz(d(3, three)),
+            consult('{b}'),
+            d(1, X), X == one, d(2, Y), Y == two, d(3, Z), Z == three, p, q.
+            """).Success);
+    });
+
+    // An abolish stages the chunks of the live entries for reclamation. A
+    // retired entry's chunk is dead already, staged or freed by a retract's
+    // sweep: staged again, the free list would hand its bytes out twice.
+    [Fact]
+    public void AnAbolishAfterRetractsFreesEachChunkOnce()
+    {
+        var e = Engine(":- dynamic(t/2).\n:- dynamic(u/2).");
+        Assert.True(e.Query("""
+            ( between(1, 12, I), assertz(t(I, x)), fail ; true ),
+            ( between(1, 4, I), retract(t(I, _)), fail ; true ),
+            abolish(t/2),
+            ( between(1, 8, I), assertz(u(I, y)), fail ; true ),
+            findall(X, u(X, y), L), L == [1, 2, 3, 4, 5, 6, 7, 8].
+            """).Success);
+    }
+
+    // After an abolish the head chunk stays as the chain's anchor, and its link
+    // led to the dead chunks the sweep frees: cut, so that no path runs them
+    // (a prepend links its clause to the head, whatever the head links to).
+    [Fact]
+    public void AnAbolishCutsTheChainsHeadFromTheChunksItFrees()
+    {
+        var e = Engine(":- dynamic(t/1).");
+        Assert.True(e.Query("""
+            ( between(1, 8, I), assertz(t(I)), fail ; true ),
+            abolish(t/1),
+            '$abolished_chain'(Next, TailOffset, Free, Stub),
+            Next =:= Stub, TailOffset =:= 1, Free > 0.
             """).Success);
     }
 }

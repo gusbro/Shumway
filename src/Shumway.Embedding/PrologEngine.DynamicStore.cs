@@ -706,11 +706,22 @@ public sealed partial class PrologEngine
                 && entry.DiedOperandAddr + sizeof(long) <= program.Length)
                 Shumway.Core.BytecodeIO.WriteInt64(
                     program, entry.DiedOperandAddr, _dbGeneration.Value);
-            // stage incremental chunks for GC reclamation.
-            if (entry.ChunkAddr >= 0)
+            // Stage the chunks of the live entries for reclamation. A retired
+            // entry's chunk is dead already, staged or freed by a retract's
+            // sweep: staged again, the free list would hand its bytes out twice.
+            if (!entry.Retired && entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         }
         chain.ClearEntries();
+        // The head chunk stays as the chain's anchor, and its link led to the
+        // dead chunks: cut it, so that once they are freed no path runs them.
+        // A goal already in the chain holds its own way in (a choice point's
+        // alternative), which keeps what it reaches.
+        if (chain.HeadClauseAddr >= 0 && chain.HeadClauseAddr + 5 <= program.Length)
+        {
+            Shumway.Core.BytecodeIO.WriteInt32(program, chain.HeadClauseAddr + 1, engine.DynamicFailStubAddr);
+            chain.TailNextAddr = chain.HeadClauseAddr + 1;
+        }
         // No retract follows to sweep them: a loop that abolishes and consults
         // would otherwise lay every file's clauses after the last.
         TryReclaimDeadDynamicChain(engine, functorId);

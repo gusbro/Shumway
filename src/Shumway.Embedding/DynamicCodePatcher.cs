@@ -163,7 +163,7 @@ internal sealed class DynamicCodePatcher
         for (int i = 0; i < n; i++)
         {
             if (reached[i]) dropped[kept++] = dropped[i];
-            else Release(table, dropped[i], recycle: true);
+            else Release(table, dropped[i], recycle: true, program ?? E._persistentProgram);
         }
         dropped.RemoveRange(kept, n - kept);
     }
@@ -229,20 +229,42 @@ internal sealed class DynamicCodePatcher
 
     // A breakpoint patched into recycled bytes would restore its old byte over
     // new code: with a debug session, the bytes stay.
-    private void Release(DynChainTable table, in DroppedCode code, bool recycle)
+    private void Release(DynChainTable table, in DroppedCode code, bool recycle, byte[]? program = null)
     {
         if (code.Literals is { } literals) E._literalPools.Release(literals);
         E.DropCode(code.Atoms);
         code.Forget?.Invoke();
-        if (recycle && code.Recycle && E.DebugSession is null)
+        if (recycle && code.Recycle && E.DebugSession is null && !NoRecycle)
+        {
+            // Under the trace, freed bytes hold the invalid opcode: whatever
+            // still runs them stops there, with the PC ring saying where from.
+            if (TraceFree && program is not null && code.End <= program.Length)
+                System.Array.Clear(program, code.Start, code.End - code.Start);
             FreeBytes(table.FreeChunks, code.Start, code.End - code.Start);
+        }
     }
+
+    // Triage of recycled code. SHUMWAY_FREE_TRACE=1 reports every free and
+    // reuse of bytes with the frames that made it, a range freed twice with the
+    // stack that frees it again, the free list's growth, and fills freed bytes
+    // with the invalid opcode so that whatever still runs them stops there (the
+    // PC ring, SHUMWAY_PC_RING=1, says where from). SHUMWAY_NO_RECYCLE=1 never
+    // hands dropped bytes out again: a corruption that goes with it is one.
+    private static readonly bool TraceFree = System.Environment.GetEnvironmentVariable("SHUMWAY_FREE_TRACE") == "1";
+    private static readonly bool NoRecycle = System.Environment.GetEnvironmentVariable("SHUMWAY_NO_RECYCLE") == "1";
 
     /// <summary>Puts [<paramref name="addr"/>, + <paramref name="length"/>) on
     /// the free list, merged with the free ranges next to it: kept ascending, so
     /// the bytes of versions dropped together make one hole a whole link fits.</summary>
     internal static void FreeBytes(List<(int Addr, int Length)> freeChunks, int addr, int length)
     {
+        if (TraceFree)
+        {
+            foreach (var (fa, fl) in freeChunks)
+                if (addr < fa + fl && fa < addr + length)
+                    System.Console.Error.WriteLine($"[FREE-OVERLAP] freeing {addr}+{length} overlaps free {fa}+{fl}\n{System.Environment.StackTrace}");
+            System.Console.Error.WriteLine($"[FREE] 0x{addr:X}+{length}{TraceFrames()}");
+        }
         int i = 0;
         while (i < freeChunks.Count && freeChunks[i].Addr < addr) i++;
         int end = addr + length;
@@ -257,6 +279,8 @@ internal sealed class DynamicCodePatcher
             freeChunks.RemoveAt(--i);
         }
         freeChunks.Insert(i, (addr, end - addr));
+        if (TraceFree && (freeChunks.Count & (freeChunks.Count - 1)) == 0 && freeChunks.Count >= 1024)
+            System.Console.Error.WriteLine($"[FREE-LIST] {freeChunks.Count} fragments");
     }
 
     /// <summary>A code unit appended to <paramref name="table"/>'s buffer for
@@ -291,6 +315,11 @@ internal sealed class DynamicCodePatcher
             {
                 bool trampoline = table.StableEntries is { } stable
                     && stable.TryGetValue(pred.FunctorId, out int stub) && stub == old.Start;
+                // The version's forward references, pending by position in the
+                // buffer's list: patched once their callee links, they would write
+                // into whatever the bytes hold by then.
+                if (table.LiveConsultUnresolved is { Count: > 0 } pending)
+                    pending.RemoveAll(site => site.AbsPos >= old.Start && site.AbsPos < old.End);
                 Drop(table, new DroppedCode(trampoline ? old.Start + TrampolineSize : old.Start,
                     old.End, old.Literals, old.Atoms, recycle: true, Forget(old, trampoline)));
             }
@@ -1888,6 +1917,16 @@ internal sealed class DynamicCodePatcher
     /// per-buffer <see cref="DynChainTable"/> (its addresses
     /// are buffer-relative), so chunks freed in one query are reusable
     /// by the next while that buffer is reused.</summary>
+    private static string TraceFrames()
+    {
+        var sb = new System.Text.StringBuilder();
+        int n = 0;
+        foreach (string line in System.Environment.StackTrace.Split('\n'))
+            if (line.Contains("Shumway.") && !line.Contains("TraceFrames()") && !line.Contains("FreeBytes") && !line.Contains("TryReuseFreeChunk") && n++ < 7)
+                sb.Append(" <- ").Append(line.Trim().Replace("at Shumway.Embedding.", "").Split(" in ")[0]);
+        return sb.ToString();
+    }
+
     internal static int TryReuseFreeChunk(
         List<(int Addr, int Length)> freeChunks, int needed)
     {
@@ -1895,6 +1934,7 @@ internal sealed class DynamicCodePatcher
         {
             var (addr, length) = freeChunks[i];
             if (length < needed) continue;
+            if (TraceFree) System.Console.Error.WriteLine($"[REUSE] 0x{addr:X}+{needed}{TraceFrames()}");
             int leftover = length - needed;
             if (leftover > 0) freeChunks[i] = (addr + needed, leftover);
             else freeChunks.RemoveAt(i);
