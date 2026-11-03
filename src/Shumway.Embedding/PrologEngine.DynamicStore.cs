@@ -1797,7 +1797,8 @@ public sealed partial class PrologEngine
         {
             if (_dynStore.IsDynamic(pred.FunctorId)) continue;
             if (addrMap.TryGetValue(pred.FunctorId, out int a)
-                && !Shumway.Core.CallTarget.IsUnresolved(a))
+                && !Shumway.Core.CallTarget.IsUnresolved(a)
+                && !IsBareAliasOfUserLocal(addrMap, pred.FunctorId, a))
                 continue;
             preds.Add(pred);
         }
@@ -1889,6 +1890,18 @@ public sealed partial class PrologEngine
         return tables.Count;
     }
 
+    // The bare name of a predicate `user` defines is an alias of user$name
+    // (AddBareLocalAliases), not a definition: a library public of that name is
+    // the bare definition, as the full setup links it, and the alias's entry is
+    // user's code, which must not become a trampoline to the library's.
+    private static bool IsBareAliasOfUserLocal(Shumway.Core.LayeredIntMap<int> addrMap, int fid, int addr)
+    {
+        var (nameId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        int user = Shumway.Core.AtomTable.Intern(DefaultModuleName, permanent: true).Id;
+        return addrMap.TryGetValue(Shumway.Core.ModuleQualify.Mangle(user, nameId, arity), out int own)
+            && own == addr;
+    }
+
     private void ReturnPlace(Activation engine, int offset, int reserved)
     {
         if (reserved > 0)
@@ -1934,7 +1947,8 @@ public sealed partial class PrologEngine
                 && oldAddr >= 0
                 && !Shumway.Core.CallTarget.IsUnresolved(oldAddr)
                 && !Activation.IsResumeMarker(oldAddr)
-                && oldAddr + 5 <= prog.Length)
+                && oldAddr + 5 <= prog.Length
+                && !IsBareAliasOfUserLocal(addrMap, fid, oldAddr))
             {
                 prog[oldAddr] = (byte)Opcode.Execute;
                 Shumway.Core.BytecodeIO.WriteInt32(prog, oldAddr + 1, a);
