@@ -48,10 +48,23 @@ public sealed class StreamHandle
     /// stream; null for the user-terminal defaults.</summary>
     public string? Filename { get; }
 
-    /// <summary>The optional alias set via <c>open/4</c>'s
-    /// <c>alias(Name)</c> option. A handle can be referred to by its
-    /// alias atom anywhere a stream is required.</summary>
-    public string? Alias { get; internal set; }
+    private readonly List<string> _aliases = new(1);
+
+    /// <summary>The aliases that name this stream: the one <c>open/4</c>'s
+    /// <c>alias(Name)</c> option gave it and those <c>set_stream/2</c> added.
+    /// A handle can be referred to by any of them anywhere a stream is
+    /// required. An alias names one stream at a time.</summary>
+    public IReadOnlyList<string> Aliases => _aliases;
+
+    /// <summary>The first of <see cref="Aliases"/>, or null.</summary>
+    public string? Alias => _aliases.Count > 0 ? _aliases[0] : null;
+
+    internal void AddAlias(string alias)
+    {
+        if (!_aliases.Contains(alias)) _aliases.Add(alias);
+    }
+
+    internal void RemoveAlias(string alias) => _aliases.Remove(alias);
 
     /// <summary>Engine encoding name of a text stream (utf8, iso_latin_1,
     /// ascii, utf16le/be, utf32le/be) — what stream_property/2 reports.
@@ -112,7 +125,7 @@ public sealed class StreamHandle
         Reader = reader as PositionTrackingReader ?? new PositionTrackingReader(reader);
         Mode = mode;
         Filename = filename;
-        Alias = alias;
+        if (alias is not null) _aliases.Add(alias);
     }
 
     public StreamHandle(int id, TextWriter writer, string mode, string? filename = null, string? alias = null)
@@ -121,7 +134,7 @@ public sealed class StreamHandle
         Writer = writer;
         Mode = mode;
         Filename = filename;
-        Alias = alias;
+        if (alias is not null) _aliases.Add(alias);
     }
 
     /// <summary>Binary-stream constructor. <paramref name="binaryStream"/>
@@ -134,7 +147,7 @@ public sealed class StreamHandle
         BinaryStream = binaryStream;
         Mode = mode;
         Filename = filename;
-        Alias = alias;
+        if (alias is not null) _aliases.Add(alias);
     }
 }
 

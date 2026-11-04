@@ -245,6 +245,8 @@ public static class StandardBuiltins
             Io, "set_input(+Stream)", "Sets the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_output", 1, StreamBuiltins.SetOutput,
             Io, "set_output(+Stream)", "Sets the current output stream.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("set_stream", 2, StreamBuiltins.SetStream,
+            Io, "set_stream(+Stream, +Property)", "Sets a property of an open stream; alias(A) is the one supported. A names the stream from then on. user_input, user_output and user_error name it until it is closed, then name their terminal streams again. current_input and current_output make it the current input or output.");
         BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
             Io, "flush_output", "Flushes the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,

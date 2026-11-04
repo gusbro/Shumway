@@ -22,7 +22,10 @@ namespace Shumway.Core;
 ///   <c>user_input</c> / <c>user_output</c>.</item>
 /// <item>An alias map so <c>open/4</c>'s <c>alias(Name)</c> option can
 ///   reject duplicates (ISO permission_error) and so a stream-arg
-///   atom can be resolved back to its handle.</item>
+///   atom can be resolved back to its handle. <c>set_stream/2</c> can move
+///   <c>user_input</c>, <c>user_output</c> and <c>user_error</c> to another
+///   stream; each comes back to its terminal handle when that stream
+///   closes.</item>
 /// </list>
 /// </summary>
 public sealed class StreamRegistry
@@ -49,21 +52,26 @@ public sealed class StreamRegistry
     public StreamHandle CurrentInput { get; private set; }
     public StreamHandle CurrentOutput { get; private set; }
 
-    /// <summary>The handle representing <c>user_input</c> — the
+    /// <summary>The terminal handle of <c>user_input</c>, the
     /// terminal-default reader. Always registered; its underlying
-    /// reader is <see cref="System.Console.In"/>.</summary>
+    /// reader is <see cref="System.Console.In"/>. While
+    /// <c>set_stream/2</c> has moved the alias to another stream, this
+    /// handle has no alias.</summary>
     public StreamHandle UserInput { get; }
 
-    /// <summary>The handle representing <c>user_output</c> — the
+    /// <summary>The terminal handle of <c>user_output</c>, the
     /// terminal-default writer. Always registered; its underlying
-    /// writer starts as the engine's <see cref="Activation.Out"/>.</summary>
+    /// writer starts as the engine's <see cref="Activation.Out"/>. While
+    /// <c>set_stream/2</c> has moved the alias to another stream, this
+    /// handle has no alias.</summary>
     public StreamHandle UserOutput { get; }
 
-    /// <summary>The handle representing <c>user_error</c> — the ISO
+    /// <summary>The terminal handle of <c>user_error</c>, the ISO
     /// standard-error writer (`write(user_error,
     /// …)` / `display(user_error, …)` are the conventional diagnostics
     /// channel). Always registered; writes to
-    /// <see cref="System.Console.Error"/>.</summary>
+    /// <see cref="System.Console.Error"/>. While <c>set_stream/2</c> has
+    /// moved the alias to another stream, this handle has no alias.</summary>
     public StreamHandle UserError { get; }
 
     public StreamRegistry(TextWriter defaultOut, TextReader? defaultIn = null)
@@ -116,7 +124,7 @@ public sealed class StreamRegistry
     private void Register(StreamHandle h)
     {
         _byId[h.Id] = h;
-        if (h.Alias is not null) _byAlias[h.Alias] = h;
+        foreach (string alias in h.Aliases) _byAlias[alias] = h;
     }
 
     /// <summary>Registers a freshly-built handle, returning the same
@@ -142,14 +150,44 @@ public sealed class StreamRegistry
     /// longer registered, so the very next <c>current_output/1</c> hands the
     /// program a stream term that resolves to nothing — a dangling reference
     /// it can only discover by failing to use it. Done here rather than in
-    /// each caller so no future one can forget.</para></summary>
+    /// each caller so no future one can forget.</para>
+    ///
+    /// <para>A standard alias the stream held goes back to its terminal handle,
+    /// not to a stream that held it before: there is no stack of
+    /// redirections. A cursor on the closed stream moves to the stream the
+    /// standard alias names then.</para></summary>
     public void Remove(StreamHandle h)
     {
         h.Closed = true;
         _byId.Remove(h.Id);
-        if (h.Alias is not null) _byAlias.Remove(h.Alias);
-        if (ReferenceEquals(CurrentInput, h)) CurrentInput = UserInput;
-        if (ReferenceEquals(CurrentOutput, h)) CurrentOutput = UserOutput;
+        foreach (string alias in h.Aliases) _byAlias.Remove(alias);
+        Reclaim("user_input", UserInput);
+        Reclaim("user_output", UserOutput);
+        Reclaim("user_error", UserError);
+        if (ReferenceEquals(CurrentInput, h)) CurrentInput = _byAlias["user_input"];
+        if (ReferenceEquals(CurrentOutput, h)) CurrentOutput = _byAlias["user_output"];
+    }
+
+    private void Reclaim(string alias, StreamHandle terminal)
+    {
+        if (_byAlias.ContainsKey(alias)) return;
+        _byAlias[alias] = terminal;
+        terminal.AddAlias(alias);
+    }
+
+    /// <summary>Makes <paramref name="alias"/> name <paramref name="h"/>,
+    /// taking it from the stream it named before (<c>set_stream/2</c>'s
+    /// <c>alias(A)</c>). The caller checks that a standard alias gets a
+    /// stream of its direction.</summary>
+    public void SetAlias(StreamHandle h, string alias)
+    {
+        if (_byAlias.TryGetValue(alias, out var holder))
+        {
+            if (ReferenceEquals(holder, h)) return;
+            holder.RemoveAlias(alias);
+        }
+        _byAlias[alias] = h;
+        h.AddAlias(alias);
     }
 
     /// <summary>Looks up a handle by its alias; returns null when
