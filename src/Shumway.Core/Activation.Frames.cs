@@ -477,6 +477,7 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
         NeuterCatchRecord(rec);
+        PopReclaimedRecordsDownTo(rec);
         _catchFrames.RemoveAt(i);
         // What the guarded goal trailed only because the frame raised the
         // boundary is undone by nothing now: the trail keeps what a choice
@@ -507,9 +508,13 @@ public sealed partial class Activation
                 || !IsCatchRecord(f.DeactivateRecord, i, CatchTrailDeactivate)) return;
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] reclaim-dead idx={i} xTop={_extraTrailTop}");
-            // The later record first, so the trail can shrink past both.
+            // Neutered in place, never popped: see NeuterCatchRecord. A cut
+            // walked past them alive, so they may lie below the compaction
+            // watermark; the next walk starts at the push record again, or
+            // a loop keeps two entries a call for good.
             NeuterCatchRecord(f.DeactivateRecord);
             NeuterCatchRecord(f.PushRecord);
+            LowerCompactWatermarkTo(f.PushRecord);
             _catchFrames.RemoveAt(i);
             if (_catchScanFrom >= _catchFrames.Count) _catchScanFrom = _catchFrames.Count - 1;
         }
@@ -521,18 +526,41 @@ public sealed partial class Activation
         && _extraTrail[rec].OldValue.Data == kind
         && _extraTrail[rec].HeapIdx == frame;
 
-    // A record of a frame that is gone. On top of the trail it goes, with
-    // any neutered records below it; elsewhere it stays as a record that
-    // undoes nothing, the entries after it being live, until a compaction.
+    // A record of a frame that is gone: it stays where it is, as a record
+    // that undoes nothing, until a compaction drops it or an unwind passes
+    // it. The trail itself shrinks only in TryReclaimCatchFrame, and only
+    // over the frame's own records (PopReclaimedRecordsDownTo): a mark
+    // taken before the frame -- by a choice point, by a CP-free guard in
+    // its IL locals (ADR-031), by a C# caller around a trial unification --
+    // lies at or below its push record. Records of a frame that died earlier
+    // may lie below such a mark: `_b <= SnapB` says the goal's choice
+    // points are gone, not that none was pushed since (a cut frees their
+    // addresses), and a guard leaves no choice point at all. Popping them
+    // would set the top below a live mark, whose restore then unwinds to
+    // a trail position that no longer exists.
     private void NeuterCatchRecord(int rec)
     {
         ExtraTrailEntry e = _extraTrail[rec];
         e.OldValue = new Cell(CatchTrailReclaimed);
         _extraTrail[rec] = e;
-        while (_extraTrailTop > 0
+    }
+
+    private void PopReclaimedRecordsDownTo(int rec)
+    {
+        while (_extraTrailTop > rec
                && _extraTrail[_extraTrailTop - 1].Type == TrailType.CatchFrame
                && _extraTrail[_extraTrailTop - 1].OldValue.Data == CatchTrailReclaimed)
             _extraTrailTop--;
+    }
+
+    // Both cursors move together: the record's marker is a position of the
+    // compacted binding trail, where the walk's interleaving resumes.
+    private void LowerCompactWatermarkTo(int rec)
+    {
+        if (_compactBarrier == -2 || rec >= _compactedExtra) return;
+        _compactedExtra = rec;
+        int marker = _extraTrail[rec].BindingTrailMarker;
+        if (marker < _compactedBinding) _compactedBinding = marker;
     }
 
     // The heap top of the newest choice point, 0 with none.

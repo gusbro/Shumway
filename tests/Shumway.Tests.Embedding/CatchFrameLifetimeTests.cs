@@ -157,4 +157,43 @@ public sealed class CatchFrameLifetimeTests
         Assert.True(e.Query("deepd(40000).").Success);
         Assert.True(sw.Elapsed.TotalSeconds < 8, $"deepd(40000) took {sw.Elapsed.TotalSeconds:F1} s");
     }
+
+    // A frame given back late (its goal left a choice point, a cut took it)
+    // is given back at the next catch, inside the next if-then-else: that
+    // one's choice point sits at an address the cut freed, with a trail mark
+    // above the dead frame's records, or, compiled, its guard's marks are in
+    // IL locals. Popping the records off the trail put its top below that
+    // mark, and the restore on the guard's failure or the choice point's
+    // retry asked to unwind to a position past the top: an
+    // ArgumentOutOfRangeException, which no catch/3 sees, and an engine that
+    // cannot run its next goal. The audit's finder was clause/2 raising on a
+    // bad qualifier through a catch-in-if-then-else wrapper; the shape needs
+    // no clause/2 at all.
+    private const string Late = """
+        q(1). q(2).
+        show(G) :- ( catch(G, _, fail) -> true ; true ).
+        t5 :- ( catch(q(_), _, fail) -> true ; true ), ( catch(fail, _, fail) -> true ; true ).
+        """;
+
+    [Theory]
+    [InlineData("t5")]
+    [InlineData("show(q(_)), show(fail)")]
+    [InlineData("show(q(_)), show(throw(x))")]
+    [InlineData("show(clause(user:q(_), _)), show(clause(_:q(_), _))")]
+    [InlineData("show(clause(user:q(_), _)), show(clause(1:q(_), _))")]
+    public void AFrameGivenBackLate_LeavesTheTrailWhereALaterMarkPoints(string goal)
+    {
+        foreach (bool compiled in new[] { false, true })
+        {
+            var e = new PrologEngine();
+            e.ConsultString(Late);
+            e.IlPromotion.Threshold = compiled ? 1 : 0;
+            e.IlPromotion.BackgroundCompilation = false;
+            // Twice: the second run is the compiled one, when there is one.
+            for (int run = 0; run < 2; run++)
+                Assert.True(e.Query(goal + ".").Success, $"{goal} (compiled: {compiled}, run {run})");
+            // The engine goes on: a goal that backtracks, and a catch.
+            Assert.True(e.Query("findall(X, q(X), [1, 2]), catch(throw(t), t, true).").Success);
+        }
+    }
 }
