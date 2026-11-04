@@ -17,6 +17,13 @@ because they are outside the item being fixed. All reproduce on `main`
    clause/2 / predsort goals before it). Reproduced 2/10 runs on `main`,
    2/5 on the branch base; never with `SHUMWAY_IL_PROMOTE=0`, so it is in
    the Tier-1 path, not in `clause/2`'s candidate copy.
+   Re-run with the full probe script (each goal wrapped in
+   `catch(G, _, fail) -> ...`), 10 runs each: `main` 7536c3c 3/10 wrong;
+   538b202 (index commit, before the catch-frame fix 25ea400) 0/10;
+   branch head 0/10. So the catch-frame fix is not what hides it; the most
+   likely change is 34b0fbb (clause/2 through indexes), which rebuilt the
+   path the failing goal takes. Not yet known whether 34b0fbb fixes the
+   cause or only shifts the timing.
 
 2. **Uncatchable crash on a non-atom module qualifier in `clause/2`.**
    `clause(1:q(_), _)` — and the next goal after
