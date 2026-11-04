@@ -33,8 +33,21 @@ because they are outside the item being fixed. All reproduce on `main`
    promotion itself. Both clause/2 versions copy the candidate list before
    enumerating with the same `IndexEnumCursor`, so the likely loss is the
    cursor's choice point after the `retract`, not the candidate snapshot.
-   A minimal script (the goal alone, 200 rounds) does not reproduce it; the
-   preceding goals of the probe script are needed (to be narrowed).
+   **Deterministic synthetic repro: `repro/luv-min.pl`** — answers `[1]`
+   every run on both `main` and the branch with
+   `SHUMWAY_IL_PROMOTE=1000000 shumway luv-min.pl -g "main, halt"`, and the
+   correct `[1,2,k,[x],f(1),_]` with `=0` or `=1`. Bisection found that it
+   needs all of: one long straight-line clause body of `show/1` calls,
+   where `show(G) :- ( catch(G, E, (write(caught(E)), nl, fail)) ->
+   write(yes(G)), nl ; write(no(G)), nl )` (the plain
+   `( catch(G, _, fail) -> true ; true )` does NOT reproduce); about 33
+   `findall` enumerations over `clause/2`; about 33 caught exceptions
+   (`show(clause(_, _))`); a `d(_, anything)` clause with a variable first
+   argument; and the failing `findall` itself inside `show/1`. A recursive
+   loop of the same calls does not reproduce it. The quantity matters more
+   than the exact goals (any one block removed → correct), which suggests a
+   threshold-triggered event in the catch-frame, trail-compaction or
+   cursor-choice-point machinery; not yet traced.
 
 2. **Uncatchable crash on a non-atom module qualifier in `clause/2`.**
    `clause(1:q(_), _)` — and the next goal after
