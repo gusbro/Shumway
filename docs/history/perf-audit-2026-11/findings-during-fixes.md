@@ -48,6 +48,23 @@ because they are outside the item being fixed. All reproduce on `main`
    than the exact goals (any one block removed → correct), which suggests a
    threshold-triggered event in the catch-frame, trail-compaction or
    cursor-choice-point machinery; not yet traced.
+   First trace (branch head, `SHUMWAY_CATCH_DIAG=1`):
+   - The `findall(B, clause(q(_), B), _)` block is itself 33 caught
+     exceptions (q/1 is a private static: permission_error), so the trigger
+     is ~66 caught exceptions in one clause body, not clause/2 enumeration.
+     Catch diag over the run: 103 push, 66 unwindTo + undo-push (the
+     exception path, `[CATCH-RESUME]`), 37 reclaim; the final `show/1`
+     pushes its frame at extra-trail top 0.
+   - Not controlled by `SHUMWAY_COMPACT_WATERMARK` (1e9 or 10),
+     `SHUMWAY_GC_THRESHOLD=1e9` or `SHUMWAY_GC_STRESS=1`.
+   - Stable repro: with `DOTNET_TieredCompilation=0` (or
+     `DOTNET_GCgen0size` 64 KB or 1 GB) it fails 4/4; with default settings
+     about 3/4. So the .NET GC does not drive it.
+   Next step: find the exception count N at which it starts failing, then
+   trace the `IndexEnumCursor` choice point of the final `clause/2` across
+   the `retract` (is it still on the CP stack when `findall` backtracks?)
+   and the state the `[CATCH-RESUME]` path leaves behind (B, HB, trail
+   tops, catch-frame stack) compared with a non-exception run.
 
 2. **Uncatchable crash on a non-atom module qualifier in `clause/2`.**
    `clause(1:q(_), _)` — and the next goal after
