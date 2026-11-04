@@ -1421,7 +1421,7 @@ public static partial class MetaBuiltins
                 matchingFids.Add(fid);
         }
 
-        var output = engine.Out;
+        var output = Shumway.Builtins.IOBuiltins.CurrentWriter(engine);
         int printed = 0;
         foreach (int fid in matchingFids)
         {
@@ -1470,7 +1470,7 @@ public static partial class MetaBuiltins
     public static bool PortrayClause1(Activation engine)
     {
         Term term = MaterializeRegister(engine, 0);
-        ClausePortrayer.Print(engine.Out, term);
+        ClausePortrayer.Print(Shumway.Builtins.IOBuiltins.CurrentWriter(engine), term);
         return true;
     }
 

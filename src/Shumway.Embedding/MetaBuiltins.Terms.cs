@@ -832,7 +832,7 @@ public static partial class MetaBuiltins
 
         // The current output, so with_output_to/2 and set_output/1 capture
         // the report — which is also what the doc line always promised.
-        engine.Out.Write(report.ToString());
+        Shumway.Builtins.IOBuiltins.CurrentWriter(engine).Write(report.ToString());
         return true;
 
         static string Seconds(long ms) => (ms / 1000.0).ToString("0.000",

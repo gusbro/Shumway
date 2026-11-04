@@ -114,7 +114,7 @@ public static class ControlBuiltins
         long dInf = inf - inf0;
         long dCells = cells - cells0;
         double lips = dInf / (secs > 1e-9 ? secs : 1e-9);
-        var w = engine.Out;
+        var w = IOBuiltins.CurrentWriter(engine);
         // Start the report on a fresh line if the goal left the cursor mid-line
         // (e.g. time((write(x), true))) — same rule the top-level uses. AtLineStart
         // is tracked on the bytes written, so this is correct under redirection.

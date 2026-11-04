@@ -165,7 +165,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `repeat` | iso | Succeeds, and succeeds again on every backtrack: an unbounded choice point. |
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | engine | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. An exception Cleanup raises propagates, unless another one is already in flight, which wins. |
 | `throw(+Exception)` | control | Throws an exception term, unwinding to the nearest catch/3. |
-| `time(:Goal)` | engine | Calls Goal like call/1 and prints a per-answer resource report: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. |
+| `time(:Goal)` | engine | Calls Goal like call/1 and prints a per-answer resource report to the current output: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. |
 | `time_out(:Goal, +MilliSeconds, -Result)` | engine | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
 | `trace` | engine | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | control | Always succeeds. |
@@ -212,7 +212,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `key_count(+Key, -Count)` | engine | Unifies Count with the number of recorded entries stored under Key. |
 | `keys(?Key)` | engine | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
 | `listing` | engine | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates. |
-| `listing(+Spec)` | engine | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
+| `listing(+Spec)` | engine | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec) to the current output. |
 | `nref(+Ref, -Next)` | engine | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
 | `pref(+Ref, -Prev)` | engine | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
 | `reconsult(+File)` | engine | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched. |
