@@ -755,4 +755,37 @@ public class PstrTests
         Assert.False(engine.Unify(odd, chain));
         Assert.False(engine.Unify(chain, CodeList(engine, text[..^1] + "b", out _)));
     }
+
+    /// <summary>A packed list whose tail is itself: the cyclic shape a cons
+    /// list takes as <c>L = [a,b|L]</c>.</summary>
+    private static int CyclicPstr(Activation e, string text)
+    {
+        int p = e.MakePstrOpen(text, TextKind.Codes);
+        e.SetHeap(e.GetPstrTailIndex(p), Cell.Ref(p));
+        return p;
+    }
+
+    private static int CyclicCodeList(Activation e, string text)
+    {
+        int lis = CodeList(e, text, out int tailIdx);
+        e.SetHeap(tailIdx, Cell.Lis(lis + 1));
+        return lis;
+    }
+
+    [Fact]
+    public void Unify_CyclicPackedAndConsLists_StopAsTheConsConsWalkDoes()
+    {
+        // The same equation over and over, in either representation: the
+        // spine guard answers rational-tree true, as it does for two cyclic
+        // cons lists, and a mismatch still fails.
+        var engine = new Activation();
+        int p = CyclicPstr(engine, "ab");
+        int q = CyclicPstr(engine, "ab");
+        int lis = CyclicCodeList(engine, "ab");
+        Assert.True(engine.Unify(p, lis));
+        Assert.True(engine.Unify(lis, p));
+        Assert.True(engine.Unify(p, q));
+        Assert.False(engine.Unify(p, CyclicCodeList(engine, "ac")));
+        Assert.False(engine.Unify(p, CyclicPstr(engine, "ac")));
+    }
 }

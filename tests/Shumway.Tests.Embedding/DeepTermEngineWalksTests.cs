@@ -216,7 +216,8 @@ public sealed class DeepTermEngineWalksTests
     [Fact]
     public void AnAttributedElementStillWakesItsHook()
     {
-        var e = Engine();
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.ConsultString(":- use_module(library(coroutining)).");
         Assert.True(e.Query(
             "length(Pre, 1000), length(Post, 1000), maplist(=(a), Pre), maplist(=(a), Post), "
             + "append(Pre, [X|Post], L), freeze(X, F = fired), "
@@ -238,6 +239,22 @@ public sealed class DeepTermEngineWalksTests
             + "atom_chars(Az, Lz), atom_chars(Az, Fz), C = Fz, Fz = C, "
             + "append(L, [y], Ly), \\+ C = Ly, atom_chars(Ay, Ly), atom_chars(Ay, Fy), \\+ Fy = C.")
             .Success);
+    }
+
+    /// <summary>The cyclic case, as for two cons lists: a packed list that is
+    /// its own tail against a cons list that is its own tail is one equation
+    /// repeated, rational-tree true, and a mismatch still fails. Under double
+    /// negation so no cyclic answer is exported.</summary>
+    [Fact]
+    public void ACyclicPackedListAgainstACyclicConsList_Terminates()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            "\\+ \\+ (partial_string([a,b], P, P), L = [a,b|L], P = L, L = P).").Success);
+        Assert.True(e.Query(
+            "\\+ \\+ (partial_string([a,b], P, P), partial_string([a,b], Q, Q), P = Q).").Success);
+        Assert.True(e.Query(
+            "\\+ \\+ (partial_string([a,b], P, P), L = [a,c|L], \\+ P = L).").Success);
     }
 
     /// <summary>Links in the lazy chain: string_concat/3 measures the chain it

@@ -2425,8 +2425,19 @@ public sealed partial class Activation
     {
         Cell aHdr = _heap[aAddr];
         Cell bHdr = _heap[bAddr];
+        // Two cyclic chains loop here without growing the C# stack, so past
+        // UnifySpineGuardLimit iterations the pair guard engages, as in
+        // UnifyLis: a revisited pair of segments is an equation already in
+        // the system — rational-tree true.
+        int spineIters = 0;
+        HashSet<long>? seen = null;
         while (true)
         {
+            if (seen is not null)
+            {
+                if (!seen.Add((PstrPosition(aHdr) << 32) | PstrPosition(bHdr))) return true;
+            }
+            else if (++spineIters >= UnifySpineGuardLimit) seen = new HashSet<long>();
             Profiler.Unify();   // the Unify per segment the recursion used to count
             int aLen = aHdr.AsPstrLength;
             int bLen = bHdr.AsPstrLength;
@@ -2502,8 +2513,19 @@ public sealed partial class Activation
     {
         Cell hdr = _heap[pstrAddr];
         int headIdx = _heap[lisAddr].AsHeapIndex;
+        // A cyclic chain against a cyclic cons list loops here without growing
+        // the C# stack, so past UnifySpineGuardLimit iterations the pair guard
+        // engages, as in UnifyLis: a revisited (element, cons cell) pair is an
+        // equation already in the system — rational-tree true.
+        int spineIters = 0;
+        HashSet<long>? seen = null;
         while (true)
         {
+            if (seen is not null)
+            {
+                if (!seen.Add((PstrPosition(hdr) << 32) | (uint)headIdx)) return true;
+            }
+            else if (++spineIters >= UnifySpineGuardLimit) seen = new HashSet<long>();
             Profiler.Unify();   // the Unify per element the recursion used to count
             int cp = PstrHeadCodePoint(hdr, out int span);
             Cell element = PstrHeadCell(hdr.AsPstrKind, cp);
@@ -2552,6 +2574,12 @@ public sealed partial class Activation
             return Unify(MaterializeCell(hdr), consTail);
         }
     }
+
+    /// <summary>A packed element's identity for the spine guards: its code-unit
+    /// position in the heap. A buffer index is a heap index, so positions in
+    /// different segments never coincide; below 2^32, so two pack into a key.</summary>
+    private static long PstrPosition(Cell hdr)
+        => hdr.AsPstrBufferIndex * (long)Cell.PstrCodeUnitsPerBuffer + hdr.AsPstrOffset;
 
     /// <summary>Young-to-old binding of two unbound variables (ADR-004). The variable with the
     /// higher heap index is bound to a REF pointing at the older one, so the bound cell will
