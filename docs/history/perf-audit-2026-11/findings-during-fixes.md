@@ -24,12 +24,12 @@ because they are outside the item being fixed. All reproduce on `main`
    `ArgumentOutOfRangeException` (`extraTarget`) instead of raising a
    type/instantiation error.
 
-3. **`AssertHelperReuseTests` (added on this branch, item W5) are
-   order-dependent.** They pass alone and fail 1–3 tests when run together
-   with other classes; their permanent-atom growth figure varies run to run
-   because other tests intern atoms concurrently in the same process. The
-   fix itself is sound; the tests need to measure in isolation (e.g. the
-   exclusive collection the atom tests use, or a difference of two runs).
+3. **`AssertHelperReuseTests` (added on this branch, item W5) were
+   order-dependent.** They passed alone and failed 1–3 tests when run together
+   with other classes: their permanent-atom growth figure varied run to run
+   because other tests intern atoms concurrently in the same process. Fixed
+   on this branch: the tests read the engine's own helper-id sequence and
+   helper registry, which no other test touches.
 
 ## Residual of item W5 (needs an ADR before fixing)
 

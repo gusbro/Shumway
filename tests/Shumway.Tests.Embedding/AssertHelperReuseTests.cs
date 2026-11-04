@@ -1,6 +1,5 @@
 using System.IO;
 using System.Reflection;
-using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
@@ -13,7 +12,11 @@ namespace Shumway.Tests.Embedding;
 /// derived again at a query's setup, takes the helpers its earlier variant took,
 /// so the atom table, the functor table and the registry stay bounded by the
 /// distinct rules — and the rule behaves as it always did: on both tiers, under
-/// the logical update view, in clause/2 and listing/1.</summary>
+/// the logical update view, in clause/2 and listing/1.
+/// <para>Measured on the engine, not on the global tables: every helper name is
+/// <c>$kind_N</c> for an N the engine's sequence handed out, so a sequence that
+/// does not advance is a helper name, atom and functor not minted — and the
+/// tables other tests intern into meanwhile say nothing about this engine.</para></summary>
 public sealed class AssertHelperReuseTests
 {
     // Every kind of construct the transform lowers to a helper.
@@ -36,19 +39,25 @@ public sealed class AssertHelperReuseTests
         return ((System.Collections.ICollection)field.GetValue(e)!).Count;
     }
 
-    private static (int Permanent, int Functors, int Helpers) Counts(PrologEngine e)
-        => (AtomTable.PermanentCount, FunctorTable.Count, RegisteredHelpers(e));
+    // The engine's helper-id sequence (NextMetaHelperId): the names of the
+    // helpers it has minted so far.
+    private static int HelperIds(PrologEngine e)
+    {
+        var field = typeof(PrologEngine).GetField(
+            "_metaHelperSeq", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        return (int)field.GetValue(e)!;
+    }
 
-    private static void AssertBounded((int Permanent, int Functors, int Helpers) before, PrologEngine e)
+    private static (int HelperIds, int Helpers) Counts(PrologEngine e)
+        => (HelperIds(e), RegisteredHelpers(e));
+
+    private static void AssertBounded((int HelperIds, int Helpers) before, PrologEngine e)
     {
         var after = Counts(e);
-        Assert.Equal(before.Helpers, after.Helpers);
-        // Global tables: another lazily interned name may land meanwhile, never
-        // one per round.
-        Assert.True(after.Permanent <= before.Permanent + 2,
-            $"permanent atoms grew from {before.Permanent} to {after.Permanent}");
-        Assert.True(after.Functors <= before.Functors + 2,
-            $"functors grew from {before.Functors} to {after.Functors}");
+        Assert.True(before.HelperIds == after.HelperIds,
+            $"helper names minted: the id sequence advanced from {before.HelperIds} to {after.HelperIds}");
+        Assert.True(before.Helpers == after.Helpers,
+            $"registered helpers grew from {before.Helpers} to {after.Helpers}");
     }
 
     [Fact]
