@@ -63,11 +63,19 @@ public static class MultiSolutionHelpers
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
     }
 
+    /// <summary>Calls of <c>'$cyclic_spine'/1</c>: the spine walks the
+    /// prelude spends on the cycle check. length/2 over a proper list must
+    /// not add to it — that walk is the fast path's alone.</summary>
+    public static long CyclicSpineCalls;
+
     /// <summary><c>'$cyclic_spine'(L)</c> — true when L's list spine loops
-    /// (heads are not entered). The prelude's length/2 fails such lists
+    /// (heads are not entered). The prelude's length/2 refuses such lists
     /// outright: walking them, in C# or in Prolog, never ends.</summary>
     public static bool CyclicSpine(Activation engine)
-        => ListCursor.IsCyclic(engine, engine.GetRegister(0));
+    {
+        CyclicSpineCalls++;
+        return ListCursor.IsCyclic(engine, engine.GetRegister(0));
+    }
 
     /// <summary><c>'$make_var_list'(N, List)</c> — builds a fresh list
     /// of <c>N</c> unbound variables and unifies it with <c>List</c>.

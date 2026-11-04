@@ -610,11 +610,14 @@ internal static class Prelude
             throw(error(type_error(predicate_indicator, Spec), _)).
 
         %! length(?List, ?Length) | Lists | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails.
-        % Proper lists take the native '$list_length' fast path (cycle-safe:
-        % it fails a looping spine rather than spinning). A cyclic list has no
-        % finite length; what that MEANS depends on the second argument
-        % (issue #108, Neumerkel's length#26): with N unconstrained the
-        % classical definition loops forever, so the conforming shortcut is
+        % Proper lists take the native '$list_length' fast path, one spine
+        % walk (cycle-safe: it fails a looping spine rather than spinning).
+        % Only after it fails is the spine walked again to tell a cyclic
+        % list from a partial or improper one — the common call must not
+        % pay the cycle check up front. A cyclic list has no finite length;
+        % what that MEANS depends on the second argument (issue #108,
+        % Neumerkel's length#26): with N unconstrained the classical
+        % definition loops forever, so the conforming shortcut is
         % resource_error(finite_memory) — the same refusal length(L, L) gives,
         % because no amount of memory produces the answer. With N a concrete
         % integer the classical walk FAILS after N steps (uniform across
@@ -626,16 +629,16 @@ internal static class Prelude
             integer(N), N < 0, !,
             throw(error(domain_error(not_less_than_zero, N), length/2)).
         length(L, N) :-
+            nonvar(L), '$list_length'(L, M), !,
+            (   integer(N) -> N = M
+            ;   var(N) -> N = M
+            ;   throw(error(type_error(integer, N), length/2))
+            ).
+        length(L, N) :-
             nonvar(L), '$cyclic_spine'(L), !,
             (   integer(N) -> fail
             ;   var(N) ->
                 throw(error(resource_error(finite_memory), length/2))
-            ;   throw(error(type_error(integer, N), length/2))
-            ).
-        length(L, N) :-
-            nonvar(L), '$list_length'(L, M), !,
-            (   integer(N) -> N = M
-            ;   var(N) -> N = M
             ;   throw(error(type_error(integer, N), length/2))
             ).
         length(L, N) :- '$length_walk'(L, N, 0).
