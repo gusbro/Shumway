@@ -69,6 +69,14 @@ ADR-003 addendum.
 - .NET SDK from Ubuntu packages: `apt-get install dotnet-sdk-10.0` (10.0.114).
 - `Adr036ProxyTests.Launch_RunInTerminalHandshake_ThenDebugs` hangs (no
   terminal); exclude `Adr036ProxyTests`.
+- Fail on the branch base (25ea400) too, under the diag build the Wasm suite
+  runs with (seen while gating item I1, lever on and off alike, and on a
+  worktree at the base): `TierBudgetTests.TheTierSpendsExactlyThis` ×3 (the
+  tier's entries 4 → 3 for the two `length(_, N)` goals and 1604 → 1603 for
+  the findall one, deopts and foreign exits unchanged — one re-entry fewer
+  per goal) and
+  `WasmRelinkEvictionTests.AConsultAfterALibraryLoadCompactsAndTheTierTranslates`
+  (its line 181). Whether `main` shows them was not checked.
 - Fail on clean `main` here too: Core
   `DebugSiteTableTests.AFileIsIdentifiedByItsName_NotByThePathItWasReachedThrough`;
   Embedding `QualifiedGoalsInBundlesTests` ×3 (`cells_allocated/1` builtin
