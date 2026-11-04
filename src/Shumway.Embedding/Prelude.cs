@@ -1534,19 +1534,38 @@ internal static class Prelude
         pairs_values(Pairs, Values) :- pairs_keys_values(Pairs, _, Values).
 
         %! predsort(:Pred, +List, -Sorted) | Lists | library | Sorts List by a three-way comparison predicate, dropping elements compared equal.
+        % A merge sort (O(n log n) comparator calls), the length-driven
+        % split of SWI's. The comparator is called as Pred(Ord, Later,
+        % Earlier) with the element that came later in List first, and an
+        % Ord other than < or = puts Later after Earlier: with = the earlier
+        % element is kept, and a comparator that answers nothing sensible
+        % leaves the list in its order (an insertion sort did the same, and
+        % a non-deterministic comparator is still backtracked into).
         predsort(P, List, Sorted) :-
             '$not_cyclic_list'(List, predsort/3),
-            '$predsort_all'(List, P, [], Sorted).
-        '$predsort_all'([], _, Acc, Acc).
-        '$predsort_all'([H|T], P, Acc, Sorted) :-
-            '$predsort_ins'(Acc, P, H, Acc1),
-            '$predsort_all'(T, P, Acc1, Sorted).
-        '$predsort_ins'([], _, X, [X]).
-        '$predsort_ins'([Y|Ys], P, X, Out) :-
-            call(P, Ord, X, Y),
-            ( Ord == ('<') -> Out = [X, Y|Ys]
-            ; Ord == ('=') -> Out = [Y|Ys]
-            ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
+            length(List, N),
+            '$predsort'(N, P, List, _, Sorted).
+        '$predsort'(2, P, [X1, X2|L], L, R) :- !,
+            call(P, Ord, X2, X1),
+            (   Ord == (<) -> R = [X2, X1]
+            ;   Ord == (=) -> R = [X1]
+            ;   R = [X1, X2]
+            ).
+        '$predsort'(1, _, [X|L], L, [X]) :- !.
+        '$predsort'(0, _, L, L, []) :- !.
+        '$predsort'(N, P, L1, L3, R) :-
+            N1 is N // 2,
+            N2 is N - N1,
+            '$predsort'(N1, P, L1, L2, R1),
+            '$predsort'(N2, P, L2, L3, R2),
+            '$predmerge'(P, R1, R2, R).
+        '$predmerge'(_, [], R, R) :- !.
+        '$predmerge'(_, R, [], R) :- !.
+        '$predmerge'(P, [H1|T1], [H2|T2], Result) :-
+            call(P, Ord, H2, H1),
+            (   Ord == (<) -> Result = [H2|R], '$predmerge'(P, [H1|T1], T2, R)
+            ;   Ord == (=) -> Result = [H1|R], '$predmerge'(P, T1, T2, R)
+            ;   Result = [H1|R], '$predmerge'(P, T1, [H2|T2], R)
             ).
 
         %! sort(+Key, +Order, +List, -Sorted) | Lists | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
