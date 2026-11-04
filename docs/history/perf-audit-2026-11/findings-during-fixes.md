@@ -59,4 +59,13 @@ ADR-003 addendum.
   `EngineCodeAtomTests`, `EngineAtomClaimTests`, `TermAtomMemoTests`,
   `Chunk217Tests`, `IlCompileWorkerTests`, `PreludeIlBakeTests`,
   `QuadsSuccessiveOutputsTests`, `RegionMemberEntryTests`,
-  `RegionPruneCrossEntryTests`, `BigIntHeapTests`, `CpsHotPathTests`.
+  `RegionPruneCrossEntryTests`, `BigIntHeapTests`, `CpsHotPathTests`,
+  `SubArgIndexingTests`, `BucketIndexingTests`, `Adr029FusionTests`,
+  `IlInlineTableTests`, `QuadsInputTests`. Two mechanisms seen in the logs: a
+  plain `dotnet test` run lets the exclusive classes run beside everyone
+  else, so `BundlePromotionPolicyTests`' static
+  `IlPromotionStore.DefaultPersistedThreshold` reaches every bundle-IL engine
+  built meanwhile ("p/2 must be Tier-1 IL" in a cluster), and the atom tests'
+  process-wide collection with poisoned ids kills atoms other engines name
+  ("Atom id N is not registered"). The script gate runs the exclusive
+  classes in their own pass and sees neither.
