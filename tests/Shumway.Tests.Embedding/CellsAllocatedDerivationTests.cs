@@ -17,6 +17,11 @@ namespace Shumway.Tests.Embedding;
 /// that forgets to account shows as a lower count. A change that means to add
 /// or remove heap allocations updates them, as it would a <c>--alloc</c>
 /// baseline.</summary>
+// Exclusive: the atom tests switch on collection with poisoned dead ids for
+// the whole process, and a ball thrown here named a consulted atom that died
+// under one of their collections.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class CellsAllocatedDerivationTests
 {
     static CellsAllocatedDerivationTests()
