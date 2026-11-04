@@ -507,7 +507,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// engine that never touches streams pays nothing.</summary>
     private StreamRegistry? _streams;
     internal StreamRegistry Streams =>
-        _streams ??= new StreamRegistry(Out, In);
+        _streams ??= new StreamRegistry(new FollowingWriter(() => Out), In);
 
     /// <summary>Activation-wide mutable flag state. Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read

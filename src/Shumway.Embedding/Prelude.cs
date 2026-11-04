@@ -1785,7 +1785,7 @@ internal static class Prelude
             call(Goal),
             '$attv_new_since'(S, Vars).
 
-        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing.
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report to the current output: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing.
         time(Goal) :-
             '$time_start'(Mark),
             (   call(Goal) *->
@@ -2136,7 +2136,7 @@ internal static class Prelude
             '$listable_predicates'(All),
             '$listing_all'(All).
 
-        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec).
+        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec) to the current output.
         % when no predicate matches, print a comment so
         % the user sees feedback instead of a silent `true.`
         % The qualified form M:Spec must come first: M:Name/Arity parses as

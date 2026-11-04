@@ -77,7 +77,8 @@ public sealed class StreamHandle
     public bool? HadBom { get; set; }
 
     /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
-    /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
+    /// (a handle's default; open/3,4 set <c>StreamRegistry.DefaultEofAction</c>.
+    /// Reads at/past eof keep yielding <c>end_of_file</c>),
     /// <c>error</c> (a read past eof raises
     /// <c>permission_error(input, past_end_of_stream, S)</c>), or
     /// <c>reset</c>.</summary>

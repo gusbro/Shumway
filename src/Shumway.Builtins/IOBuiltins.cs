@@ -27,7 +27,11 @@ public static class IOBuiltins
     /// falls back to <see cref="Activation.Out"/> for engines without a
     /// registry. Refuses a binary stream — text I/O on a binary
     /// stream is permission_error(output, binary_stream, _).</summary>
-    private static System.IO.TextWriter CurrentWriter(Activation engine)
+    /// <summary>The writer of the current output stream, where every output
+    /// predicate writes; the engine's own writer only without a stream
+    /// registry. A binary current output is permission_error(output,
+    /// binary_stream).</summary>
+    public static System.IO.TextWriter CurrentWriter(Activation engine)
     {
         if (engine.Streams is { } reg)
         {

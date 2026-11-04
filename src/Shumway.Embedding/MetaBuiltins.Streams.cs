@@ -436,7 +436,7 @@ public static partial class MetaBuiltins
     /// <summary>The §8.11 past-end discipline for the term readers, mirroring
     /// what get_char and friends already do: a read on a stream that is
     /// already past end-of-stream raises permission_error(input,
-    /// past_end_of_stream, S) under eof_action(error) — the ISO default for
+    /// past_end_of_stream, S) under eof_action(error), the default for
     /// opened streams.</summary>
     private static void CheckPastEofByReader(Activation engine, System.IO.TextReader reader)
     {
@@ -956,9 +956,8 @@ public static partial class MetaBuiltins
         var stack = WotStackOf(engine);
         stack.Push((reg.CurrentOutput, handle, sw, engine.Out));
         reg.SetCurrentOutput(handle);
-        // Also swap Activation.Out: listing/1, portray_clause/1 and friends
-        // write through it directly (registry-less fallback path), and their
-        // output must be captured too.
+        // Also swap Activation.Out, so what still writes to it directly, such
+        // as a trace switched on inside the goal, is captured too.
         engine.Out = sw;
         return true;
     }

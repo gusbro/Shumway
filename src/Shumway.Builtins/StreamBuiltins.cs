@@ -301,7 +301,7 @@ public static class StreamBuiltins
         }
 
         // open/3 = open/4 with an empty options list: the eof_action
-        // default (ISO error; arity_compat eof_code) applies here too.
+        // default (error; arity_compat eof_code) applies here too.
         handle.EofAction = registry.DefaultEofAction;
         registry.Add(handle);
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
@@ -350,8 +350,8 @@ public static class StreamBuiltins
     /// stream for the §8.13 byte I/O builtins),
     /// <c>encoding(utf8|iso_latin_1|ascii)</c> (SWI-style text
     /// encoding; default UTF-8) and
-    /// <c>eof_action(error|eof_code|reset)</c> (accepted; reads at EOF
-    /// follow the default end_of_file handling). Any other option
+    /// <c>eof_action(error|eof_code|reset)</c> (what a read past the end
+    /// does; default <c>StreamRegistry.DefaultEofAction</c>). Any other option
     /// raises <c>domain_error(stream_option, _)</c>.
     /// </summary>
     public static bool OpenWithOptions(Activation engine)
@@ -378,8 +378,8 @@ public static class StreamBuiltins
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
         string? alias = null;
-        // ISO default is eof_action(error); arity_compat flips the
-        // registry default to eof_code (see StreamRegistry.DefaultEofAction).
+        // Default eof_action(error), eof_code under arity_compat
+        // (see StreamRegistry.DefaultEofAction).
         string eofAction = engine.Streams?.DefaultEofAction ?? "error";
         bool repositionable = true;
         bool binary = false;
@@ -911,11 +911,6 @@ public static class StreamBuiltins
 
     // ---------- character / code helpers ----------
 
-    /// <summary>The §8.12 pre-read gate: touching a stream whose position
-    /// is already past-end-of-stream under <c>eof_action(error)</c> raises
-    /// <c>permission_error(input, past_end_of_stream, S)</c>. All other
-    /// combinations read normally (eof keeps yielding <c>end_of_file</c> —
-    /// GNU's default behaviour).</summary>
     /// <summary>§8.12.1.3.c: a bound output argument that could never be a
     /// read result is a type error up front — get_char(S, 1) raises
     /// type_error(in_character, 1), it does not just fail. in_character =
@@ -1003,9 +998,10 @@ public static class StreamBuiltins
         }
     }
 
-    // Public: the term-reading paths (read/1,2, read_term/2,3 — in the
-    // embedding layer) share the same §8.11 past-end discipline as the
-    // character/byte readers here.
+    /// <summary>The pre-read gate: a read on a stream already past
+    /// end-of-stream raises <c>permission_error(input, past_end_of_stream, S)</c>
+    /// under <c>eof_action(error)</c>, and under <c>reset</c> tries the source
+    /// again. Public: the term readers of the embedding layer share it.</summary>
     public static void CheckPastEof(Activation engine, StreamHandle h)
     {
         if (h.PastEof && h.EofAction == "error")

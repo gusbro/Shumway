@@ -208,9 +208,8 @@ internal static class ReplTopLevel
         foreach (string dir in libraryDirs)
             engine.AddLibraryDirectorySpec(dir);   // dir or dir:dialect (ADR-040)
         // Point the engine's Out directly at the column tracker (Console.Out is the
-        // synchronized wrapper SetOut installed, which hides ILineStartAware). Set
-        // before the stream registry is built so user_output writes and time/1's
-        // report share the tracker and can query the column. Must precede any query.
+        // synchronized wrapper SetOut installed, which hides ILineStartAware), so
+        // user_output writes and time/1's report share it and can query the column.
         engine.Out = _outputTracker!;
         // Stash the session so the line editor's Tab completer (constructed
         // lazily on first ReadLine) can query for predicate names, and so
