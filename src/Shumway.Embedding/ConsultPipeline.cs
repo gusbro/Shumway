@@ -484,7 +484,7 @@ internal sealed class ConsultPipeline
         if (!changed) return;
         E._skipCompileMergedCache = null;
         E._staticLink = null;
-        E._staticHeadFunctorsCache = null;
+        E.DropStaticClauseCaches();
         E._hookIndexValid = false;
         if (E._liveConsultEngine is null) E.InvalidatePersistent();
     }
@@ -991,7 +991,7 @@ internal sealed class ConsultPipeline
         // static link do describe the superseded program, so they drop.
         E._skipCompileMergedCache = null;
         E._staticLink = null;
-        E._staticHeadFunctorsCache = null;
+        E.DropStaticClauseCaches();
         E._hookIndexValid = false;   // hook discriminator index reads the same clauses
         if (E._liveConsultEngine is null) E.InvalidatePersistent();
     }
@@ -1679,7 +1679,7 @@ internal sealed class ConsultPipeline
                     foreach (var (ifid, isrc) in pendingImports)
                         earlyManifest.Imports[ifid] = isrc;
                 E._modules[earlyHookModuleName] = earlyManifest;
-                E._staticHeadFunctorsCache = null;
+                E.DropStaticClauseCaches();
                 E._hookIndexValid = false;
                 E.InvalidatePersistent();
             }
@@ -2486,7 +2486,7 @@ internal sealed class ConsultPipeline
         if (earlyHooksActive && earlyHookModuleName is not null)
         {
             E._modules.Remove(earlyHookModuleName);
-            E._staticHeadFunctorsCache = null;
+            E.DropStaticClauseCaches();
             E._hookIndexValid = false;
             E.InvalidatePersistent();
         }
@@ -2497,7 +2497,7 @@ internal sealed class ConsultPipeline
         // dynamic-cache clear needed.
         // New static clauses just landed in E._modules — drop the head-functor
         // cache so HasPredicate / predicate_property/2 sees them.
-        E._staticHeadFunctorsCache = null;
+        E.DropStaticClauseCaches();
         E._hookIndexValid = false;   // hook discriminator index reads the same clauses
 
         // Consult-cache invalidation. A directive that runs as a goal (an

@@ -1670,7 +1670,7 @@ internal sealed class BundleLoader
 
         // The precompiled set is about to grow; StaticHeadFunctors folds it
         // in, so its cache must not survive this load.
-        E._staticHeadFunctorsCache = null;
+        E.DropStaticClauseCaches();
 
         // Resolve the manifest under the entry's module name. The
         // contract here mirrors ConsultString's "explicit module"

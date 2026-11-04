@@ -148,6 +148,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // Built by the same scan, invalidated with it: the head functors a
     // grammar rule defines (predicate_property(H, non_terminal)).
     internal HashSet<int>? _nonTerminalFunctorsCache;
+    // The static clauses by the head functor they define, for clause/2 —
+    // dropped with _staticHeadFunctorsCache (DropStaticClauseCaches) and by
+    // a derivation bump, the two signals that the module manifests changed.
+    internal Dictionary<int, List<Clause>>? _staticClausesByFid;
+    internal int _staticClausesByFidGen = -1;
     // Set for the duration of a runtime consult (consult/1 called from within a
     // live query). When set, source-declared dynamic clauses are also pushed
     // into the live dispatch (AppendDynamicClauseIncremental) so a call later in
