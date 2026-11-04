@@ -17,13 +17,24 @@ because they are outside the item being fixed. All reproduce on `main`
    clause/2 / predsort goals before it). Reproduced 2/10 runs on `main`,
    2/5 on the branch base; never with `SHUMWAY_IL_PROMOTE=0`, so it is in
    the Tier-1 path, not in `clause/2`'s candidate copy.
-   Re-run with the full probe script (each goal wrapped in
+   Re-run with the full probe script (`repro/luv-probe.pl`, run as `shumway luv-probe.pl -g "main, halt"`) (each goal wrapped in
    `catch(G, _, fail) -> ...`), 10 runs each: `main` 7536c3c 3/10 wrong;
    538b202 (index commit, before the catch-frame fix 25ea400) 0/10;
    branch head 0/10. So the catch-frame fix is not what hides it; the most
    likely change is 34b0fbb (clause/2 through indexes), which rebuilt the
    path the failing goal takes. Not yet known whether 34b0fbb fixes the
    cause or only shifts the timing.
+   **It only shifts the timing: the bug is still there.** With
+   `SHUMWAY_IL_PROMOTE=1000000` (user code effectively never promoted, the
+   prelude's baked IL still running) the probe script answers `[1]` 6/6 on
+   `main` and 4/6 on the branch head; `SHUMWAY_IL_PROMOTE=1` answers
+   correctly 6/6 on both, and `=0` (everything on Tier-0) is always correct.
+   So the failing mix is Tier-0 user code with Tier-1 library code, not
+   promotion itself. Both clause/2 versions copy the candidate list before
+   enumerating with the same `IndexEnumCursor`, so the likely loss is the
+   cursor's choice point after the `retract`, not the candidate snapshot.
+   A minimal script (the goal alone, 200 rounds) does not reproduce it; the
+   preceding goals of the probe script are needed (to be narrowed).
 
 2. **Uncatchable crash on a non-atom module qualifier in `clause/2`.**
    `clause(1:q(_), _)` — and the next goal after
