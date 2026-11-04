@@ -82,10 +82,12 @@ public sealed class OneMemberRegionTests
         Assert.True(e.Query("omra_single(1, _).").Success);
         foreach (var (name, arity) in new[] { ("omra_mem", 2), ("omra_color", 1), ("omra_pair", 2), ("omra_single", 2) })
             Assert.True(e.IlPromotion.IsPromoted(Fid(name, arity)), name);
-        // A self-recursive chain, a fact table and an indexed table: each a region of one.
+        // A self-recursive chain and an indexed table: each a region of one.
         Assert.True(EmittedARegionOfOneRootedAt(Fid("omra_mem", 2)));
-        Assert.True(EmittedARegionOfOneRootedAt(Fid("omra_color", 1)));
         Assert.True(EmittedARegionOfOneRootedAt(Fid("omra_pair", 2)));
+        // An atom fact table is the IndexedAtomPredicate shape, which the
+        // region emit does not take as a member: a method, as before.
+        Assert.DoesNotContain(IlRegionCost.Emissions, em => em.RootFid == Fid("omra_color", 1));
         // A single-clause root alone stays a method: no region emission at all.
         Assert.DoesNotContain(IlRegionCost.Emissions, em => em.RootFid == Fid("omra_single", 2));
     }
@@ -101,7 +103,7 @@ public sealed class OneMemberRegionTests
             Assert.True(e.Query("omrb_mem(2, [1, 2, 3]).").Success);
             Assert.True(e.IlPromotion.IsPromoted(Fid("omrb_mem", 2)));
             Assert.DoesNotContain(IlRegionCost.Emissions, em => em.RootFid == Fid("omrb_mem", 2));
-            Assert.Equal("[1,2,3]", Answers(e, "omrb_mem(A, [1, 2, 3])"));
+            Assert.Equal(Answers(Engine("omrb", 0), "omrb_mem(A, [1, 2, 3])"), Answers(e, "omrb_mem(A, [1, 2, 3])"));
         }
         finally { IlPredicateCompiler.OneMemberRegions = saved; }
     }
@@ -139,8 +141,13 @@ public sealed class OneMemberRegionTests
         // Every predicate compiles at its first call: the oracle run comes
         // after a run on the same engine that promoted them.
         Answers(tier1, goal);
-        Assert.True(tier1.IlPromotion.IsPromoted(Fid("omrc_mem", 2)));
-        Assert.True(EmittedARegionOfOneRootedAt(Fid("omrc_mem", 2)));
+        // Whatever the goal called among the program's multi-clause
+        // predicates became a region of one (loop/1 owns find/2: a region of two).
+        var called = new[] { ("omrc_mem", 2), ("omrc_pair", 2), ("omrc_thrower", 1), ("omrc_find", 2) }
+            .Where(f => goal.Contains(f.Item1 + "(", System.StringComparison.Ordinal))
+            .Select(f => Fid(f.Item1, f.Item2)).ToHashSet();
+        if (called.Count > 0)
+            Assert.Contains(IlRegionCost.Emissions, em => em.Members == 1 && called.Contains(em.RootFid));
         Assert.Equal(Answers(tier0, goal), Answers(tier1, goal));
     }
 
