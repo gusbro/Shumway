@@ -240,6 +240,35 @@ public class Chunk174Tests
         Assert.Contains("hello", runStdout);
     }
 
+    // The argv flag is the executable's arguments without its path, as in
+    // the top level; a -- is an argument. Opt-in like the test above.
+    [Fact]
+    public void Cli_ExeArgv_IsTheArgumentsWithoutTheProgramPath()
+    {
+        if (Environment.GetEnvironmentVariable("SHUMWAY_RUN_EXE_TESTS") != "1") return;
+        if (!File.Exists(LinkExe) || !File.Exists(CompileExe)) return;
+
+        using var dir = new TempDir();
+        string pl = Path.Combine(dir.Path, "app.pl");
+        File.WriteAllText(pl, @":- module(app).
+:- public main/0.
+main :- current_prolog_flag(argv, A), writeq(A), nl.
+");
+        string shmo = Path.Combine(dir.Path, "app.shmo");
+        string shum = Path.Combine(dir.Path, "app.shum");
+        string exe = Path.Combine(dir.Path, "app");
+
+        Assert.Equal(0, RunCli(CompileExe, out _, out _, 30_000, "-o", shmo, pl));
+        int linkExit = RunCli(LinkExe, out _, out string linkStderr, 120_000,
+            "-o", shum, "--goal", "main", "--exe", exe, shmo);
+        Assert.True(linkExit == 0, "linker failed: " + linkStderr);
+
+        string producedExe = OperatingSystem.IsWindows() ? exe + ".exe" : exe;
+        Assert.Equal(0, RunCli(producedExe, out string runStdout, out _, 10_000,
+            "foo", "--", "bar baz"));
+        Assert.Contains("[foo,--,'bar baz']", runStdout);
+    }
+
     // abort/0 with no top level to return to: the cleanups run and the
     // executable exits with status 1. Opt-in like the test above.
     [Fact]

@@ -1052,6 +1052,10 @@ embedded bundle, runs the goal, and exits with:
 - `1`) goal failed
 - `2`: uncaught Prolog exception or unexpected host error
 
+The executable's arguments reach the program as the `argv` flag,
+without the executable's path: `./myapp foo bar` gives `[foo, bar]`. A
+`--` among them is an argument like the others.
+
 The `--goal` accepts both `main` and `main.` (the trailing
 clause-terminator dot is optional). The argument is parsed and
 validated syntactically at link time, so typos surface immediately.

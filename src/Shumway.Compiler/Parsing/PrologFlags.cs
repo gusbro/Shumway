@@ -122,10 +122,10 @@ public sealed class PrologFlags
     public Dictionary<char, char> CharConversion { get; } = new();
 
     /// <summary>Command-line argument list, surfaced as the
-    /// <c>argv</c> Prolog flag. The host (REPL or embedding caller)
-    /// is responsible for populating this; the engine itself doesn't
-    /// touch it. Defaults to an empty list. Each entry is materialised
-    /// as a Prolog atom — matching SWI / SICStus / GNU.</summary>
+    /// <c>argv</c> Prolog flag: the program's arguments, without the
+    /// program path. The host (REPL or embedding caller) is responsible
+    /// for populating this; the engine itself doesn't touch it. Defaults
+    /// to an empty list. Each entry is materialised as a Prolog atom.</summary>
     public IReadOnlyList<string> Argv { get; set; } = Array.Empty<string>();
 
     /// <summary>ISO <c>unknown</c> flag. Controls the engine's
