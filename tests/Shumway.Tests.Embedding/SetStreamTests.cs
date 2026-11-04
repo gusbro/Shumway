@@ -194,8 +194,11 @@ public sealed class SetStreamTests : IDisposable
     [InlineData("set_stream(user_output, alias(_))", "instantiation_error")]
     [InlineData("set_stream(user_output, alias(1))", "type_error(atom, 1)")]
     [InlineData("set_stream(user_output, foo)", "domain_error(stream_property, foo)")]
-    [InlineData("set_stream(user_output, eof_action(eof_code))",
-        "domain_error(stream_property, eof_action(eof_code))")]
+    [InlineData("set_stream(user_output, buffer(full))", "domain_error(stream_property, buffer(full))")]
+    [InlineData("set_stream(user_input, eof_action(_))", "instantiation_error")]
+    [InlineData("set_stream(user_input, eof_action(never))",
+        "domain_error(stream_property, eof_action(never))")]
+    [InlineData("set_stream(user_input, eof_action(1))", "domain_error(stream_property, eof_action(1))")]
     [InlineData("set_stream(nosuchstream, alias(a))", "existence_error(stream, nosuchstream)")]
     [InlineData("set_stream(42, alias(a))", "domain_error(stream_or_alias, 42)")]
     [InlineData("set_stream(user_input, alias(user_output))", "permission_error(output, stream, user_input)")]
@@ -211,6 +214,29 @@ public sealed class SetStreamTests : IDisposable
         True("stream_property(O, alias(user_output)), current_output(O), "
              + "stream_property(I, alias(user_input)), current_input(I), "
              + "stream_property(E, alias(user_error)), E \\== O, E \\== I.");
+    }
+
+    // A file opened with open/3 raises on a second read past its end
+    // (eof_action(error)); eof_code makes that read give end_of_file again,
+    // and error brings the raise back.
+    [Fact]
+    public void EofActionSetsWhatAReadPastTheEndDoes()
+    {
+        File.WriteAllText(Path.Combine(_dir, "empty.txt"), "");
+        True($@"
+            open('{P("empty.txt")}', read, S),
+            stream_property(S, eof_action(error)),
+            set_stream(S, eof_action(eof_code)),
+            stream_property(S, eof_action(eof_code)),
+            get_char(S, end_of_file), get_char(S, end_of_file),
+            set_stream(S, eof_action(error)),
+            catch((get_char(S, _), Raised = no),
+                  error(permission_error(input, past_end_of_stream, _), _), Raised = yes),
+            Raised == yes,
+            set_stream(S, eof_action(reset)),
+            stream_property(S, eof_action(reset)),
+            get_char(S, end_of_file),
+            close(S).");
     }
 
     [Fact]
