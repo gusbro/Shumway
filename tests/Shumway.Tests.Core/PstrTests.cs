@@ -554,4 +554,205 @@ public class PstrTests
         Assert.False(engine.AreStructurallyEqual(
             engine.GetHeap(chars), engine.GetHeap(codes)));
     }
+
+    // ---------- Long lists: lockstep, no frame and no cell per element ----------
+
+    /// <summary>Far past what any C# stack held at four frames per element,
+    /// which is what unifying a packed list against a cons list cost when
+    /// each element re-entered the public Unify (no depth guard saw it, and
+    /// each element also left two cells on the heap).</summary>
+    private const int Long = 1_000_000;
+
+    /// <summary>A cons list of the codes of <paramref name="text"/>, one
+    /// block: the returned slot holds the list, the i-th head is at
+    /// <c>slot + 1 + 2 * i</c>, and <paramref name="lastTailIdx"/> is the
+    /// final tail cell (<c>[]</c>), there to be overwritten.</summary>
+    private static int CodeList(Activation e, string text, out int lastTailIdx)
+    {
+        int n = text.Length;
+        int slot = e.AllocateHeap(2 * n + 1);
+        int pairs = slot + 1;
+        for (int i = 0; i < n; i++)
+        {
+            e.SetHeap(pairs + 2 * i, Cell.Int(text[i]));
+            e.SetHeap(pairs + 2 * i + 1,
+                i + 1 < n ? Cell.Lis(pairs + 2 * (i + 1)) : Cell.Atom(AtomTable.EmptyListId));
+        }
+        e.SetHeap(slot, Cell.Lis(pairs));
+        lastTailIdx = pairs + 2 * n - 1;
+        return slot;
+    }
+
+    /// <summary>A lazy-concatenation chain of one-character segments spelling
+    /// <paramref name="text"/>, each tail cell holding the next header as
+    /// MakePstrConcat lays it out. Built by hand: MakePstrConcat measures the
+    /// chain it extends, so building one link at a time is quadratic.</summary>
+    private static int Chain(Activation e, string text, TextKind kind)
+    {
+        int n = text.Length;
+        int b = e.AllocateHeap(3 * n);
+        for (int i = n - 1; i >= 0; i--)
+        {
+            int h = b + 3 * i;
+            e.SetHeap(h, Cell.Pstr(1, h + 1, 0, kind, astral: false));
+            e.SetHeap(h + 1, Cell.PstrBuffer(text[i], 0, 0));
+            e.SetHeap(h + 2, i + 1 < n ? e.GetHeap(h + 3) : Cell.Atom(AtomTable.EmptyListId));
+        }
+        return b;
+    }
+
+    [Fact]
+    public void Unify_PstrWithAConsListLongerThanTheStack_AllocatesNothing()
+    {
+        var engine = new Activation();
+        string text = new string('a', Long);
+        int pstr = engine.MakePstr(text, TextKind.Codes);
+        int lis = CodeList(engine, text, out _);
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top, engine.HeapTop);
+        Assert.True(engine.Unify(lis, pstr));
+        Assert.Equal(top, engine.HeapTop);
+    }
+
+    [Fact]
+    public void Unify_PstrWithALongConsListDifferingAtTheEnd_Fails()
+    {
+        var engine = new Activation();
+        string text = new string('a', Long);
+        int pstr = engine.MakePstr(text, TextKind.Codes);
+        int lis = CodeList(engine, text[..^1] + "b", out _);
+        int top = engine.HeapTop;
+
+        Assert.False(engine.Unify(pstr, lis));
+        Assert.False(engine.Unify(lis, pstr));
+        Assert.Equal(top, engine.HeapTop);
+    }
+
+    [Fact]
+    public void Unify_PstrWithALongListOfVariables_BindsEachAndTrailsThoseBelowHb()
+    {
+        var engine = new Activation();
+        int pstr = engine.MakePstr(new string('a', Long), TextKind.Codes);
+        int lis = CodeList(engine, new string('a', Long), out _);
+        for (int i = 0; i < Long; i++)
+        {
+            int head = lis + 1 + 2 * i;
+            engine.SetHeap(head, Cell.UnboundVar(head));
+        }
+        engine.SetHbForTesting(engine.HeapTop);     // every head is older than HB
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top, engine.HeapTop);
+        Assert.Equal(Long, engine.BindingTrailTop);
+        Assert.Equal((long)'a', engine.GetHeap(lis + 1).AsInt);
+        Assert.Equal((long)'a', engine.GetHeap(lis + 1 + 2 * (Long - 1)).AsInt);
+    }
+
+    [Fact]
+    public void Unify_PstrWithAShorterOpenConsList_BindsTheTailToOneSlice()
+    {
+        var engine = new Activation();
+        int pstr = engine.MakePstr(new string('a', Long), TextKind.Codes);
+        int lis = CodeList(engine, new string('a', Long - 7), out int tailIdx);
+        engine.SetHeap(tailIdx, Cell.UnboundVar(tailIdx));
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top + 1, engine.HeapTop);      // the one materialised slice
+        int slice = engine.Deref(tailIdx);
+        Assert.Equal(Tag.Pstr, engine.GetHeap(slice).Tag);
+        Assert.Equal("aaaaaaa", engine.AsPstrString(slice));
+    }
+
+    [Fact]
+    public void Unify_OpenPstrWithALongerConsList_BindsItsTailToTheRest()
+    {
+        var engine = new Activation();
+        int pstr = engine.MakePstrOpen(new string('a', Long - 7), TextKind.Codes);
+        int pstrTail = engine.GetPstrTailIndex(pstr);
+        int lis = CodeList(engine, new string('a', Long - 7) + "bcdefgh", out _);
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top, engine.HeapTop);
+        Cell rest = engine.GetHeap(engine.Deref(pstrTail));
+        Assert.Equal(Tag.Lis, rest.Tag);
+        Assert.Equal((long)'b', engine.GetHeap(rest.AsHeapIndex).AsInt);
+    }
+
+    [Fact]
+    public void Unify_PstrWithAConsListHoldingAnAttributedHead_QueuesItsWakeup()
+    {
+        // The wakeup names the value by heap index, so this one element is
+        // materialised and takes the general path; the others still cost nothing.
+        var engine = new Activation();
+        int pstr = engine.MakePstr("abc", TextKind.Codes);
+        int lis = CodeList(engine, "abc", out _);
+        int bHead = lis + 1 + 2;
+        engine.SetHeap(bHead, Cell.UnboundVar(bHead));
+        int value = engine.AllocateHeap(1);
+        engine.SetHeap(value, Cell.Atom(AtomTable.TrueId));
+        engine.PutAttr(bHead, 1, value);
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top + 1, engine.HeapTop);
+        Assert.Equal((long)'b', engine.GetHeap(bHead).AsInt);
+        Assert.Equal(1, engine.PendingWakeupCount);
+    }
+
+    [Fact]
+    public void Unify_PstrWithAConsListWhoseTailIsPacked_MeetsTheTailsOnce()
+    {
+        var engine = new Activation();
+        int pstr = engine.MakePstr("abc", TextKind.Codes);
+        int rest = engine.MakePstr("bc", TextKind.Codes);
+        int lis = CodeList(engine, "a", out int tailIdx);
+        engine.SetHeap(tailIdx, engine.GetHeap(rest));
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(pstr, lis));
+        Assert.Equal(top + 1, engine.HeapTop);      // the slice the tails meet through
+        Assert.False(engine.Unify(engine.MakePstr("abd", TextKind.Codes), lis));
+    }
+
+    [Fact]
+    public void Unify_PstrWithAConsList_CountsASupplementaryCharacterAsOneElement()
+    {
+        var engine = new Activation();
+        int pstr = engine.MakePstr("a😀b", TextKind.Codes);
+        Assert.True(engine.Unify(pstr,
+            ConsList(engine, Cell.Int('a'), Cell.Int(0x1F600), Cell.Int('b'))));
+        Assert.False(engine.Unify(pstr,
+            ConsList(engine, Cell.Int('a'), Cell.Int(0xD83D), Cell.Int(0xDE00), Cell.Int('b'))));
+    }
+
+    [Fact]
+    public void Unify_ALongLazyChain_WalksItsSegmentsInPlace()
+    {
+        // Each link used to be a recursion through the public Unify, against
+        // a cons list and against a flat packed list alike.
+        var engine = new Activation();
+        string text = new string('a', Long);
+        int chain = Chain(engine, text, TextKind.Codes);
+        int other = Chain(engine, text, TextKind.Codes);
+        int flat = engine.MakePstr(text, TextKind.Codes);
+        int lis = CodeList(engine, text, out _);
+        int top = engine.HeapTop;
+
+        Assert.True(engine.Unify(chain, lis));
+        Assert.True(engine.Unify(lis, chain));
+        Assert.True(engine.Unify(chain, flat));
+        Assert.True(engine.Unify(flat, chain));
+        Assert.True(engine.Unify(chain, other));
+        Assert.Equal(top, engine.HeapTop);
+
+        int odd = engine.MakePstr(text[..^1] + "b", TextKind.Codes);
+        Assert.False(engine.Unify(chain, odd));
+        Assert.False(engine.Unify(odd, chain));
+        Assert.False(engine.Unify(chain, CodeList(engine, text[..^1] + "b", out _)));
+    }
 }

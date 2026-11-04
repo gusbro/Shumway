@@ -27,6 +27,8 @@ public sealed class DeepTermEngineWalksTests
         e.ConsultString("""
             nest(0, x) :- !.
             nest(N, f(T)) :- M is N - 1, nest(M, T).
+            chain(0, S, S) :- !.
+            chain(N, S0, S) :- string_concat("a", S0, S1), M is N - 1, chain(M, S1, S).
             """);
         return e;
     }
@@ -153,4 +155,93 @@ public sealed class DeepTermEngineWalksTests
             + "catch(W = f(W), error(E, _), true), E == representation_error(term).")
             .Success);
     }
+
+    /// <summary>A packed list against a cons list of the same text walks the
+    /// two spines in lockstep: no C# frame and no heap cell per element. It
+    /// used to re-enter the public entry point once per element, four frames
+    /// that no depth guard saw, and a hundred thousand characters took the
+    /// process down.</summary>
+    [Fact]
+    public void APackedListAgainstAConsListFarLongerThanTheStack_Unifies()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"length(L, {Deep}), maplist(=(a), L), atom_chars(A, L), "
+            + "atom_chars(A, P), P = L, L = P.").Success);
+    }
+
+    /// <summary>Anti-vacuity: the last element still decides.</summary>
+    [Fact]
+    public void APackedListThatDiffersAtItsLastElement_StillFails()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"length(L0, {Deep - 1}), maplist(=(a), L0), append(L0, [b], L), "
+            + "atom_chars(A0, L0), atom_concat(A0, a, A), atom_chars(A, P), "
+            + "\\+ P = L, \\+ L = P.").Success);
+    }
+
+    /// <summary>It binds through, and the trail undoes it: a long list of
+    /// variables takes the characters, and is a list of variables again
+    /// after the double negation.</summary>
+    [Fact]
+    public void APackedListBindsALongListOfVariables_AndTheTrailUndoesIt()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"length(L0, {Deep}), maplist(=(a), L0), atom_chars(A, L0), atom_chars(A, P), "
+            + $"length(L, {Deep}), \\+ \\+ (P = L, last(L, X), X == a), "
+            + "L = [V|_], var(V), last(L, W), var(W).").Success);
+    }
+
+    /// <summary>The open ends: a cons list that runs out first binds its tail
+    /// to the rest of the text, a packed list that runs out first binds its
+    /// tail to the rest of the cons list.</summary>
+    [Fact]
+    public void AnOpenTailOnEitherSideTakesTheRest()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"length(L0, {Deep}), maplist(=(a), L0), atom_chars(A0, L0), "
+            + "atom_concat(A0, b, A), atom_chars(A, P), "
+            + "append(L0, T, Open), P = Open, T == [b].").Success);
+        Assert.True(e.Query(
+            $"length(L0, {Deep}), maplist(=(a), L0), partial_string(L0, P, T), "
+            + "append(L0, [b], L), P = L, T == [b].").Success);
+    }
+
+    /// <summary>An attributed variable among the elements takes the general
+    /// path for that one element: its hook still fires, in either direction,
+    /// and backtracking still undoes the binding.</summary>
+    [Fact]
+    public void AnAttributedElementStillWakesItsHook()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            "length(Pre, 1000), length(Post, 1000), maplist(=(a), Pre), maplist(=(a), Post), "
+            + "append(Pre, [X|Post], L), freeze(X, F = fired), "
+            + "length(All, 2001), maplist(=(a), All), atom_chars(A, All), atom_chars(A, P), "
+            + "\\+ \\+ (P = L, X == a, F == fired), var(X), var(F), "
+            + "L = P, X == a, F == fired.").Success);
+    }
+
+    /// <summary>A lazy concatenation is a chain of packed segments. The walk
+    /// continues into the next segment in place, against a cons list and
+    /// against a flat packed list alike; it used to recurse once per link.</summary>
+    [Fact]
+    public void ALongLazyConcatenationChain_UnifiesWithEitherShape()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"chain({Links}, \"z\", C), length(L, {Links}), maplist(=(a), L), "
+            + "append(L, [z], Lz), C = Lz, Lz = C, "
+            + "atom_chars(Az, Lz), atom_chars(Az, Fz), C = Fz, Fz = C, "
+            + "append(L, [y], Ly), \\+ C = Ly, atom_chars(Ay, Ly), atom_chars(Ay, Fy), \\+ Fy = C.")
+            .Success);
+    }
+
+    /// <summary>Links in the lazy chain: string_concat/3 measures the chain it
+    /// extends, so building one is quadratic, and this is enough to have
+    /// overflowed a test thread's stack at a frame per link.</summary>
+    private const int Links = 20_000;
 }
