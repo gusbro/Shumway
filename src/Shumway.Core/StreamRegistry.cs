@@ -40,9 +40,10 @@ public sealed class StreamRegistry
     public string DefaultEncodingName { get; set; } = "utf8";
 
     /// <summary>Default <c>eof_action</c> for streams opened without the
-    /// option. ISO §7.10.2.11: <c>error</c> — a second read on a stream
-    /// already past end-of-stream raises
-    /// <c>permission_error(input, past_end_of_stream, S)</c>. The
+    /// option: <c>error</c>, so a read on a stream already past
+    /// end-of-stream raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>. ISO §7.10.2.11
+    /// leaves the default to the implementation. The
     /// <c>arity_compat</c> flag flips this to <c>eof_code</c>: Arity has no
     /// exceptions, and its programs retry reads past eof expecting
     /// <c>end_of_file</c> forever. The standard streams are unaffected

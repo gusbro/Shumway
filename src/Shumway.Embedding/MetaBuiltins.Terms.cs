@@ -236,7 +236,7 @@ public static partial class MetaBuiltins
                     Shumway.Compiler.Parsing.DoubleQuotesMode.Codes;
                 // Arity has no exceptions: programs retry reads past eof and
                 // expect end_of_file forever, so streams opened under the
-                // dialect default to eof_action(eof_code) instead of the ISO
+                // dialect default to eof_action(eof_code) instead of
                 // eof_action(error). Set on the HOST's registry — it outlives
                 // this query.
                 host.Streams.DefaultEofAction = "eof_code";

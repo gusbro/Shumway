@@ -436,7 +436,7 @@ public static partial class MetaBuiltins
     /// <summary>The §8.11 past-end discipline for the term readers, mirroring
     /// what get_char and friends already do: a read on a stream that is
     /// already past end-of-stream raises permission_error(input,
-    /// past_end_of_stream, S) under eof_action(error) — the ISO default for
+    /// past_end_of_stream, S) under eof_action(error), the default for
     /// opened streams.</summary>
     private static void CheckPastEofByReader(Activation engine, System.IO.TextReader reader)
     {

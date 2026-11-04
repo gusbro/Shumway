@@ -1370,6 +1370,29 @@ are accepted, so code written for other systems runs, and have no effect.
 `line_count(Stream, Line)` gives the line the next character of a text
 input stream will come from.
 
+### Reading past the end of a stream
+
+When nothing is left to read, the first read gives the end of the stream:
+`end_of_file` from `read_term/3` and `get_char/2`, and `-1` from
+`get_code/2` and `get_byte/2`. The stream is then past its end. What the
+next read does depends on the stream's `eof_action`:
+
+| `eof_action` | The next read |
+|---|---|
+| `error` | Raises `permission_error(input, past_end_of_stream, S)`. |
+| `eof_code` | Gives the end again. |
+| `reset` | Tries the source again, for a terminal where more input can come. |
+
+A file opened with `open/3`, or with `open/4` without the option, has
+`eof_action(error)`, and `user_input` has `reset`. Under the
+`arity_compat` flag files open with `eof_code`. The standard leaves the
+default to each system, and some use `eof_code`. A program that reads
+again after it got the end should open the file with
+`eof_action(eof_code)`, or stop reading at the end.
+
+A peek at the end, such as `peek_code/2`, gives the end and does not move
+the stream past it. `at_end_of_stream/1` never raises.
+
 ### `set_stream/2`
 
 `set_stream(Stream, Property)` sets one of two properties of an open
@@ -1378,7 +1401,7 @@ stream:
 | Property | Effect |
 |---|---|
 | `alias(A)` | `A` names the stream from then on, and no longer names the stream it named before. A stream can have several aliases. |
-| `eof_action(Action)` | What a read past the end of the stream does: `error`, `eof_code` or `reset`, as with the option of `open/4`. |
+| `eof_action(Action)` | What a read past the end of the stream does: `error`, `eof_code` or `reset`. See [Reading past the end of a stream](#reading-past-the-end-of-a-stream). |
 
 Any other property raises `domain_error(stream_property, Property)`.
 
