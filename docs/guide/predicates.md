@@ -449,7 +449,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `seen` | engine | Closes the current input stream (if not user_input) and reverts current input to user_input. |
 | `set_input(+Stream)` | iso | Sets the current input stream. |
 | `set_output(+Stream)` | iso | Sets the current output stream. |
-| `set_stream(+Stream, +Property)` | engine | Sets a property of an open stream: alias(A) or eof_action(Action). A names the stream from then on. user_input, user_output and user_error name it until it is closed, then name their terminal streams again. current_input and current_output make it the current input or output. Action is error, eof_code or reset, as in open/4. |
+| `set_stream(+Stream, +Property)` | engine | Sets a property of an open stream: alias(A) or eof_action(Action). |
 | `set_stream_position(+Stream, +Position)` | iso | Seeks the stream to the given byte position. |
 | `shell(+Command)` | engine | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
 | `shell(+Command, -Status)` | engine | Runs Command through the platform shell and unifies Status with its exit code. |
