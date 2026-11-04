@@ -64,6 +64,16 @@ needs transient predicate-name atoms plus a helper-retire protocol across the
 registry, every activation's address map and the IL/wasm artifacts — an
 ADR-003 addendum.
 
+Proposed as [ADR-065](../../architecture/adr/065-reclaiming-asserted-rule-helpers.md)
+(design only): what one distinct rule keeps today, verified item by item
+(the registry entry, its pinned literals and claimed data atoms, the memo,
+the promoted artifacts, and per assert rather than per rule under the
+debugger), four options plus a fifth, and a staged plan — retire the
+registry entry with the owner's last chunk first (no ADR-003 change), inline
+`\+`/`once`/`ignore`/if-then-else on the assert path second, transient
+helper names third and only once the atom collection runs in a shipped
+engine (`AtomTable.CollectionEnabled` is off outside the tests).
+
 ## Test environment notes (Linux cloud container, 4 cores)
 
 - .NET SDK from Ubuntu packages: `apt-get install dotnet-sdk-10.0` (10.0.114).
