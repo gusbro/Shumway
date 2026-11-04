@@ -1048,9 +1048,15 @@ This produces `./myapp` (or `./myapp.exe` on Windows): a single-file
 native executable for the current platform. On launch it loads the
 embedded bundle, runs the goal, and exits with:
 
-- `0` (goal succeeded
-- `1`) goal failed
-- `2`: uncaught Prolog exception or unexpected host error
+- `0`: the goal succeeded
+- `1`: the goal failed, or called `abort/0`
+- `2`: an uncaught Prolog exception or an unexpected host error
+
+A `halt/1` in the goal ends the executable with the status it gives.
+
+The executable's arguments reach the program as the `argv` flag,
+without the executable's path: `./myapp foo bar` gives `[foo, bar]`. A
+`--` among them is an argument like the others.
 
 The `--goal` accepts both `main` and `main.` (the trailing
 clause-terminator dot is optional). The argument is parsed and

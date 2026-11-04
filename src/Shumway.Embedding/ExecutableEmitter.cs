@@ -426,15 +426,9 @@ internal static class Program
                 Shumway.Compiler.Il.IlPredicateCompiler.DebugMode = true;
             if (System.Environment.GetEnvironmentVariable(""SHUMWAY_CP_TRACE"") == ""1"")
                 Shumway.Core.Activation.TraceCpStack = true;
-            // Surface the executable's CLI args to the Prolog program
-            // as the `argv` Prolog flag. Match SWI / GNU / SICStus
-            // semantics: argv[0] is the program path / name, args
-            // proper start at argv[1]. (.NET's Main(args) drops the
-            // program name; we reconstruct it via
-            // GetCommandLineArgs which keeps it.) Programs that
-            // strip argv[0] before reading their own args — the
-            // SWI / SICStus idiom — work as-is.
-            engine.Flags.Argv = System.Environment.GetCommandLineArgs();
+            // The argv flag is the arguments without the program path, as
+            // the top level gives what follows --; a -- here is an argument.
+            engine.Flags.Argv = args;
             var sol = engine.Query(@""{escaped}"");
             // halt/1 inside the goal is captured by the engine into
             // LastHaltExitCode; honour it as the process exit code,

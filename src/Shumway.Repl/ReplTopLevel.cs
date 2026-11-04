@@ -121,8 +121,8 @@ internal static class ReplTopLevel
 
         // Split args at "--": everything before is a file to consult,
         // everything after is exposed to the program as the argv
-        // Prolog flag (current_prolog_flag(argv, Argv)). Matches
-        // SWI / GNU / SICStus convention.
+        // Prolog flag (current_prolog_flag(argv, Argv)), without the
+        // program path.
         int sep = Array.IndexOf(args, "--");
         string[] consultFiles = sep < 0 ? args : args.Take(sep).ToArray();   // not args[..n]: net48 lacks GetSubArray
         string[] programArgs = sep < 0 ? Array.Empty<string>() : args.Skip(sep + 1).ToArray();
@@ -1086,7 +1086,7 @@ internal static class ReplTopLevel
             + $"'h' the list; ESC cancels a running query; 'halt.' or {eof} exits.\n"
             + "\n"
             + "Arguments after `--` are not consulted: they reach the program as the argv\n"
-            + "Prolog flag (current_prolog_flag(argv, Argv)) — SWI/GNU convention.\n"
+            + "Prolog flag (current_prolog_flag(argv, Argv)).\n"
             + "\n"
             + "Options:\n"
             + "  --clpfd               Enable the CLP(FD) library before consulting, so its\n"
