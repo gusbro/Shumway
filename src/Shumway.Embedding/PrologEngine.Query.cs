@@ -652,7 +652,7 @@ public sealed partial class PrologEngine
         RewriteDynamicPredicate(int fid, List<Clause> clauses, ModuleRewrite.Context fidCtx,
             Shumway.Compiler.Modes.ModeTable modeTable)
     {
-        var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var transformed = TransformClauses(clauses, fidCtx.ModuleName, EnableInlineIte);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var clause in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
@@ -1025,7 +1025,9 @@ public sealed partial class PrologEngine
                 var unfolded = (_flags.DebugCodegen && !opaqueModule)
                     ? manifest.Clauses
                     : MetaWrapperUnfold.Apply(manifest.Clauses);
-                var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+                var usedTransforms = new HashSet<string>();
+                var transformed = TransformClauses(unfolded, name, EnableInlineIte, usedTransforms);
+                PruneRuleTransforms(name, usedTransforms);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
                 // fold in the bare local fids contributed by a
