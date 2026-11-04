@@ -84,7 +84,8 @@ ADR-003 addendum.
   `QuadsSuccessiveOutputsTests`, `RegionMemberEntryTests`,
   `RegionPruneCrossEntryTests`, `BigIntHeapTests`, `CpsHotPathTests`,
   `SubArgIndexingTests`, `BucketIndexingTests`, `Adr029FusionTests`,
-  `IlInlineTableTests`, `QuadsInputTests`. Two mechanisms seen in the logs: a
+  `IlInlineTableTests`, `QuadsInputTests`, `Adr037IndexedIlTests` ("must
+  bake to IL in a persisted bundle"). Two mechanisms seen in the logs: a
   plain `dotnet test` run lets the exclusive classes run beside everyone
   else, so `BundlePromotionPolicyTests`' static
   `IlPromotionStore.DefaultPersistedThreshold` reaches every bundle-IL engine
