@@ -927,10 +927,11 @@ public sealed partial class PrologEngine
         }
         else
         {
-            // the derivation is being regenerated: MetaTransform
-            // helper names ('$disj_N', '$catchgoal_N', ...) come from the
-            // global NextMetaHelperId counter, so the fresh ASTs reference
-            // fresh helper ids. Any compiled artifact from the previous
+            // the derivation is being regenerated: a clause whose transform
+            // TransformClauses does not hand back from its memo (changed,
+            // under new modes, under debug codegen) takes fresh MetaTransform
+            // helper names ('$disj_N', '$catchgoal_N', ...) from the engine's
+            // NextMetaHelperId counter. Any compiled artifact from the previous
             // derivation still calls the old helper ids — helpers that no
             // longer exist in the new clause set, so the link bakes an
             // undefined sentinel and the call raises existence_error
