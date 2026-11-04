@@ -63,20 +63,19 @@ public sealed partial class Activation
         int cap = limbs.Length + 1;
         int idx = AllocateHeap(cap + 1);
         int n = Limbs.MulLimb(limbs, scale, _heap.AsSpan(idx + 1, cap));
+        // The cells given back leave CellsAllocated too: lowering the top
+        // without crediting _cellsReclaimed is what un-allocates them.
         if (Limbs.TryToLong(_heap.AsSpan(idx + 1, n), negative, out long v))
         {
             _heapTop = idx;
-            _cellsAllocated -= cap + 1;
             return Cell.Int(v);
         }
         if (Limbs.BitLength(_heap.AsSpan(idx + 1, n)) > Limbs.MaxBits)
         {
             _heapTop = idx;
-            _cellsAllocated -= cap + 1;
             throw TooBig();
         }
         _heapTop = idx + 1 + n;
-        _cellsAllocated -= cap - n;
         _heap[idx] = Limbs.Header(n, negative);
         return Cell.BigInt(idx);
     }
@@ -126,7 +125,7 @@ public sealed partial class Activation
         int id = _rationalTable.Count;
         _rationalTable.Add(value);
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.RationalAlloc, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -161,7 +160,7 @@ public sealed partial class Activation
         int idx = _externalTrailLog.Count;
         _externalTrailLog.Add((target, key, oldValue, hadOldValue));
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.MutableSet, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -1302,7 +1301,7 @@ public sealed partial class Activation
         _attrTrailLog.Add((homeAddr, moduleId, oldValue));
         AttrLogMirrorAppend(logIndex, homeAddr);
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.AttrModify, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -1339,10 +1338,10 @@ public sealed partial class Activation
     public void TrailValueChange(int heapIdx, Cell oldValue)
     {
         if (oldValue.Tag == Tag.AttVar)
-            Diagnostics.AttVarCellTrace.Note(_cellsAllocated, heapIdx,
+            Diagnostics.AttVarCellTrace.Note(CellsAllocated, heapIdx,
                 Diagnostics.AttVarCellTrace.Kind.Overwritten);
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.ValueChange, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -1364,7 +1363,7 @@ public sealed partial class Activation
     /// </summary>
     public void UnwindTrails(int bindingTarget, int extraTarget)
     {
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Unwind, _extraTrailTop, extraTarget);
         if (bindingTarget < 0 || bindingTarget > _bindingTrailTop)
             throw new ArgumentOutOfRangeException(nameof(bindingTarget));
@@ -1441,7 +1440,7 @@ public sealed partial class Activation
             case TrailType.ValueChange:
                 _heap[entry.HeapIdx] = entry.OldValue;
                 if (entry.OldValue.Tag == Tag.AttVar)
-                    Diagnostics.AttVarCellTrace.Note(_cellsAllocated, entry.HeapIdx,
+                    Diagnostics.AttVarCellTrace.Note(CellsAllocated, entry.HeapIdx,
                         Diagnostics.AttVarCellTrace.Kind.Restored);
                 break;
             case TrailType.BigIntAlloc:

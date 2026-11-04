@@ -42,7 +42,7 @@ public sealed partial class Activation
                 AttrMirrorDelete(home, moduleId);
         _attrStore[home] = new Dictionary<int, int>();
         AttrMirrorSetRowCount(home, 0);
-        Diagnostics.AttVarCellTrace.Note(_cellsAllocated, home,
+        Diagnostics.AttVarCellTrace.Note(CellsAllocated, home,
             Diagnostics.AttVarCellTrace.Kind.Created);
     }
 
@@ -55,7 +55,7 @@ public sealed partial class Activation
         rec[moduleId] = valueHeapIdx;
         AttrMirrorPut(home, moduleId, valueHeapIdx);
         if (isNew) AttrMirrorSetRowCount(home, rec.Count);
-        Diagnostics.AttrTrace.Note(_cellsAllocated, moduleId, AttrValueShape(valueHeapIdx));
+        Diagnostics.AttrTrace.Note(CellsAllocated, moduleId, AttrValueShape(valueHeapIdx));
     }
 
     /// <summary>The written value's functor arity, or a negative tag code.

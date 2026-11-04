@@ -49,7 +49,11 @@ ADR-003 addendum.
 - Fail on clean `main` here too: Core
   `DebugSiteTableTests.AFileIsIdentifiedByItsName_NotByThePathItWasReachedThrough`;
   Embedding `QualifiedGoalsInBundlesTests` ×3 (`cells_allocated/1` builtin
-  collision), `StreamNewlineTests.Consult_AndRead_AgreeOnACrLfSource`.
+  collision), `StreamNewlineTests.Consult_AndRead_AgreeOnACrLfSource`; Wasm
+  `WasmPhaseGateTests.TheCompiledCounterStaysAheadOfTier0` (wall clock: the
+  desktop wasm world runs at 0.8× Tier-0 in this container) and
+  `RelinkMovesPromotedCodeTests.AConsultThatMovesPromotedCode_LeavesItRunnable`
+  (its own anti-vacuity check: "the consult no longer moves code").
 - Order-dependent / load-sensitive in a full Embedding run (pass alone, on
   base and branch alike): `Tier1ArtifactAtomTests`, `NestedConditionTests`,
   `EngineCodeAtomTests`, `EngineAtomClaimTests`, `TermAtomMemoTests`,

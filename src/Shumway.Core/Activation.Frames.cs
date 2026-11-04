@@ -156,7 +156,7 @@ public sealed partial class Activation
     /// <summary>Monotonic count of WAM heap cells reserved over this engine's
     /// lifetime (never decremented by backtracking). A deterministic,
     /// wall-clock-independent metric for allocation-affecting changes.</summary>
-    public long CellsAllocated => _cellsAllocated;
+    public long CellsAllocated => _cellsReclaimed + _heapTop;
 
     public Cell GetHeap(int idx) => _heap[idx];
 
@@ -178,7 +178,6 @@ public sealed partial class Activation
         if (newTop > _heap.Length) EnsureHeapCapacity(count);
         int start = _heapTop;
         _heapTop = newTop;
-        _cellsAllocated += count;
         return start;
     }
 
@@ -196,7 +195,6 @@ public sealed partial class Activation
         if (idx + 1 > _heap.Length) EnsureHeapCapacity(1);
         _heap[idx] = Cell.UnboundVar(idx);
         _heapTop = idx + 1;
-        _cellsAllocated++;
         return idx;
     }
 
@@ -333,7 +331,7 @@ public sealed partial class Activation
             EnsureExtraTrailCapacity(1);
             f.DeactivateRecord = _extraTrailTop;
             _catchFrames[i] = f;
-            Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Note(CellsAllocated,
                 Diagnostics.CommitTrace.Kind.Trail,
                 (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -389,7 +387,7 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.CatchFrame, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -430,7 +428,7 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
-            Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Note(CellsAllocated,
                 Diagnostics.CommitTrace.Kind.Trail,
                 (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -598,6 +596,7 @@ public sealed partial class Activation
                 + $" attrLogCount={_attrTrailLog.Count}");
         }
         UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
+        _cellsReclaimed += _heapTop - f.SnapHeapTop;
         _heapTop = f.SnapHeapTop;
         AssignHb(f.SnapHb);
         if (AttrSweepEnabled) DebugSweepAttrTable("catch_unwind");
@@ -908,7 +907,7 @@ public sealed partial class Activation
 
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Push, _b, _stackTop);
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
@@ -1034,7 +1033,9 @@ public sealed partial class Activation
         int extraTarget = (int)ctl[5].Data;        // CpExtraTrailOffset
         UnwindTrails(bindingTarget, extraTarget);
 
-        _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
+        int heapTop = (int)ctl[6].Data;            // CpHeapTopOffset
+        _cellsReclaimed += _heapTop - heapTop;
+        _heapTop = heapTop;
         if (_pendingWakeups.Count != 0) DropDeadWakeups();
         if (AttrSweepEnabled) DebugSweepAttrTable("cp_restore");
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
@@ -1064,7 +1065,7 @@ public sealed partial class Activation
     /// </summary>
     public void Cut(int barrier)
     {
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Cut, _b, barrier);
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));

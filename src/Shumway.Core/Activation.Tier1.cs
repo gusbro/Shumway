@@ -1194,6 +1194,7 @@ public sealed partial class Activation
     public bool TryFailIlGuardQuick()
     {
         if (_bindingTrailTop != _cpsGuardBt || _extraTrailTop != _cpsGuardXt) return false;
+        _cellsReclaimed += _heapTop - _cpsGuardH;
         _heapTop = _cpsGuardH;
         AssignHb(_cpsGuardHb);
         // An attributed variable younger than HB binds untrailed, so a guard
@@ -1677,6 +1678,7 @@ public sealed partial class Activation
         // A guard that bound nothing has nothing to undo: the common case.
         if (_bindingTrailTop != bindingTop || _extraTrailTop != extraTop)
             UnwindTrails(bindingTop, extraTop);
+        _cellsReclaimed += _heapTop - heapTop;
         _heapTop = heapTop;
         AssignHb(savedHb);
         // Not cleared: a wake belonging to an older surviving binding must

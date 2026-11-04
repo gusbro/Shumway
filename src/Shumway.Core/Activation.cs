@@ -41,17 +41,12 @@ public sealed partial class Activation
     [EditorBrowsable(EditorBrowsableState.Never)] public int _heapTop;
     [EditorBrowsable(EditorBrowsableState.Never)] public int _hb;
 
-    // Monotonic count of cells reserved on the WAM heap over the engine's
-    // lifetime. Backtracking rewinds _heapTop but never this counter — it
-    // is a cumulative "cells ever allocated" tally, not the current high
-    // watermark. Bumped once per allocation primitive (AllocateHeap /
-    // AllocateHeapUnbound). Purpose: a *deterministic* benchmark metric
-    // (independent of wall-clock noise) for changes that add or remove
-    // heap allocations — e.g. the read-mode atomic-literal fast path in
-    // UnifyHeapWithCell, whose whole effect is skipping one cell per
-    // matched literal. Present in every build, so it cancels exactly when
-    // comparing two builds. See the harness --alloc mode.
-    [EditorBrowsable(EditorBrowsableState.Never)] public long _cellsAllocated;
+    // Cells the heap top was lowered past and the count keeps: CellsAllocated,
+    // the deterministic metric, is this plus _heapTop. Every site that lowers
+    // _heapTop adds the span it drops — except one giving back cells it just
+    // took (MakeBigIntProduct), which the metric must not count. Allocation
+    // itself only raises _heapTop, so the hot path keeps no counter.
+    [EditorBrowsable(EditorBrowsableState.Never)] public long _cellsReclaimed;
 
     // ----- Stack (storage only in this phase; no frame operations yet) -----
     [EditorBrowsable(EditorBrowsableState.Never)] public Cell[] _stack;
@@ -463,6 +458,7 @@ public sealed partial class Activation
         if (newTop < 0 || newTop > _heapTop)
             throw new ArgumentOutOfRangeException(nameof(newTop),
                 $"newTop {newTop} must be in [0, {_heapTop}].");
+        _cellsReclaimed += _heapTop - newTop;
         _heapTop = newTop;
         // A trial unification that queued wakes and was rolled back.
         if (_pendingWakeups.Count != 0) DropDeadWakeups();

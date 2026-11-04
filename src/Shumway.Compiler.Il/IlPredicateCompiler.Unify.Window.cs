@@ -194,12 +194,6 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(2);
         emit.Add();
         EmitStoreEngineField(emit, EngHeapTop);
-        emit.LoadArgument(0);
-        emit.LoadArgument(0);
-        emit.LoadField(EngCellsAllocated);
-        emit.LoadConstant(2L);
-        emit.Add();
-        emit.StoreField(EngCellsAllocated);
         for (int k = 0; k < 2; k++)
         {
             var a = args[k];
