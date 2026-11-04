@@ -24,6 +24,29 @@ because they are outside the item being fixed. All reproduce on `main`
    `ArgumentOutOfRangeException` (`extraTarget`) instead of raising a
    type/instantiation error.
 
+   **Fixed on this branch** (commit "Core: a catch frame given back late
+   leaves the trail where a later mark points"). Not a `clause/2` bug: the
+   probe ran the goals through `show(G) :- ( catch(G, _, fail) -> ... )`,
+   and any catch whose goal leaves a choice point, cut by `->`, followed by
+   any catch whose goal fails or throws, crashed the same way on both
+   tiers (`t5 :- ( catch(q(_), _, fail) -> true ; true ),
+   ( catch(fail, _, fail) -> true ; true ).`). `ReclaimDeadCatchFrames`
+   popped the dead frame's two trail records off the extra trail while a
+   choice point pushed since (at an address the cut had freed) or a CP-free
+   guard (ADR-031, marks in IL locals) held a mark above them; their
+   restore then unwound to a position past the trail top. The records are
+   now neutered in place and dropped by the next compaction (the watermark
+   is lowered to them); only a frame's own records go at its deterministic
+   exit. The qualified `clause/2` also checks every qualifier layer and the
+   head/body as `call/1` and the unqualified form do (`a:1:q(_)` →
+   `type_error(atom, 1)`, `user:_` → `instantiation_error`,
+   `user:q(_), 1` → `type_error(callable, 1)`), where it peeled or failed
+   quietly before. Pinned by `CatchFrameLifetimeTests` and
+   `QualifiedReflectionTests`. Seen on the way, not fixed: `retract/1` and
+   `assertz/1` report `type_error(atom, _)` with an unbound culprit for
+   `1:q(_)` (a C# path of its own); a `$`-helper's name reaches error
+   contexts (`$clause_enum/2`, `$module_clause_enum/3`).
+
 3. **`AssertHelperReuseTests` (added on this branch, item W5) were
    order-dependent.** They passed alone and failed 1–3 tests when run together
    with other classes: their permanent-atom growth figure varied run to run
