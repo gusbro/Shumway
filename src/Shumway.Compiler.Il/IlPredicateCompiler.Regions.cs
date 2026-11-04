@@ -246,12 +246,63 @@ public sealed partial class IlPredicateCompiler
         out string? reason)
     {
         reason = null;
-        if (region.MemberCount < 2) { reason = "members<2 (no local closure)"; return false; }
+        if (region.MemberCount < 2 && !OneMemberRegionWorthwhile(region.Root, calleeMap, out reason))
+            return false;
         foreach (var m in region.Members)
             if (!RegionMemberOk(m, calleeMap, out var r))
             { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: {r}"; return false; }
         return true;
     }
+
+    /// <summary>A root with nothing to absorb is a region of one member when it
+    /// has clause alternatives (ADR-057 amendment): the region pushes their
+    /// choice points on the inline ladder and resumes them by a branch, where
+    /// the method alone pushes through the helper and the IL side stack and is
+    /// resumed by the interpreter through its delegate. A single-clause root
+    /// alone would pay the region's tail for nothing. The root's cost, measured
+    /// or estimated, must fit the plan budget: a method past the JIT's limits
+    /// gains nothing from a tail on top. <see cref="OneMemberRegions"/> is the
+    /// A/B lever.</summary>
+    private static bool OneMemberRegionWorthwhile(
+        CompiledPredicate root, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out string? reason)
+    {
+        reason = null;
+        if (!(OneMemberRegionsOverride ?? OneMemberRegions))
+        { reason = "members<2 (one-member regions off)"; return false; }
+        if (root.ClauseCount < 2) { reason = "members<2 (single-clause root alone)"; return false; }
+        if (IlRegionCost.Target > 0)
+        {
+            int cost = TryDescribeIndexed(root, calleeMap, out var ii)
+                ? IlRegionCost.MemberCost(root, ii!.Clauses, ii.Nodes.Count)
+                : IlRegionCost.MemberCost(root, null, root.ClauseCount - 1);
+            if (cost > IlRegionCost.PlanBudget)
+            { reason = $"members<2 (root alone costs {cost} > budget {IlRegionCost.PlanBudget})"; return false; }
+        }
+        return true;
+    }
+
+    /// <summary>A multi-clause root with no local closure compiles as a region
+    /// of one member (see <see cref="OneMemberRegionWorthwhile"/>). Set
+    /// <c>SHUMWAY_REGION_SINGLE=0</c> to keep such roots as methods of their
+    /// own (A/B lever).</summary>
+    public static bool OneMemberRegions { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_REGION_SINGLE") != "0";
+
+    /// <summary>The persisted build's own default for one-member regions, off:
+    /// a region of one carries the region's tail, two to four times the IL of
+    /// the method alone (the prelude's bundle grew 41% with no measured gain,
+    /// its utilities being failed into from their callers). Set
+    /// <c>SHUMWAY_REGION_SINGLE_PERSIST=1</c> to bake them.</summary>
+    public static bool OneMemberRegionsPersisted { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_REGION_SINGLE_PERSIST") == "1";
+
+    /// <summary>A bundle build's per-thread override of <see cref="OneMemberRegions"/>,
+    /// set with <see cref="RegionMemberScopeFids"/> for the same reason: the
+    /// analysis and the emit of one build must agree, and a concurrently
+    /// promoting engine must keep the runtime policy. Null = no override.</summary>
+    [System.ThreadStatic]
+    public static bool? OneMemberRegionsOverride;
 
     /// <summary>The per-member validation shared by <see cref="IsRegionEmittable(IlRegion,
     /// IReadOnlyDictionary{int, CompiledPredicate}, out string)"/> (which members of a
@@ -656,6 +707,13 @@ public sealed partial class IlPredicateCompiler
             {
                 _regionTrace = null;
                 continue;
+            }
+            // A root alone past a limit: its own method is the same code
+            // without the region's tail, so it is never the larger of the two.
+            if (region.MemberCount == 1 && (IlJitLimits.Exceeded(emit, out _) || overLocals))
+            {
+                finalPlan = plan;
+                return null;
             }
             if (IlRegionCost.Target > 0 && attempt < 3 && calleeMap is not null
                 && (IlJitLimits.Exceeded(emit, out _) || overLocals))

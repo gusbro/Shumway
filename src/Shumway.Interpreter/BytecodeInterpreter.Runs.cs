@@ -464,6 +464,7 @@ public sealed partial class BytecodeInterpreter
                 // still names the CP being resumed here.
                 _engine.Debug?.OnRedo(_engine, -1);
                 var (del, cursor) = _engine.RetryOrPopIlChoicePoint();
+                Activation.CountInterpreterIlResume(0);
                 bool resumed = del(_engine, cursor);
                 _engine._ilArtifact = 0;   // no compiled method is on the stack
                 if (resumed)
@@ -525,6 +526,7 @@ public sealed partial class BytecodeInterpreter
                     if (Activation.CpPushRing is { } r4)
                         r4[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
                             = ((long)-7 << 32) | (uint)bp;
+                    Activation.CountInterpreterIlResume(1);
                     if (resume(_engine, cursor))
                     {
                         if (_engine.IlTailCallPending)

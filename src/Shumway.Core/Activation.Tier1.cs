@@ -1435,6 +1435,7 @@ public sealed partial class Activation
         Func<Activation, int, bool> del, int nextCursor, int arity, Action? onPrune)
     {
         ArgumentNullException.ThrowIfNull(del);
+        CountIlCpPush();
         PushChoicePoint(arity, IlChoicePointSentinelBp);
         if (_ilCpTop == _ilCpStack.Length)
             System.Array.Resize(ref _ilCpStack, _ilCpStack.Length * 2);
@@ -1521,6 +1522,23 @@ public sealed partial class Activation
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountBuiltinCpPush() => DiagBuiltinCpPushes++;
+
+    /// <summary>IL choice points pushed through the helper (a frame and an IL
+    /// side-stack entry), process-wide, builtins' included; a region's own
+    /// are pushed inline with a marker BP and are not counted. Diagnostic.</summary>
+    public static long DiagIlCpPushes;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountIlCpPush() => DiagIlCpPushes++;
+
+    /// <summary>Compiled choice points the interpreter's backtrack resumed by
+    /// invoking their code, process-wide: [0] through the IL side stack,
+    /// [1] through a marker BP (ADR-058 item 4). What a region resumes on its
+    /// own is in <see cref="DiagLocalResumes"/>. Diagnostic.</summary>
+    public static readonly long[] DiagInterpreterIlResumes = new long[2];
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void CountInterpreterIlResume(int path) => DiagInterpreterIlResumes[path]++;
 
     /// <summary>A builtin's choice point that is retried in place, as a WAM
     /// retry is: the first call pushes it when more solutions are to come

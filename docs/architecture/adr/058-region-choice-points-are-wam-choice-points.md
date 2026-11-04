@@ -78,7 +78,10 @@ index nodes:
 5. **Everything else keeps the IL side stack**: choice points of standalone
    methods, of backtrackable builtins, of `IlIteHelper`, an ADR-031 choice
    point materialised at a guard's commit, and an ADR-034 dynamic fallback's.
-   `rfail` resumes those of the region as ADR-057 does.
+   `rfail` resumes those of the region as ADR-057 does. *Since the ADR-057
+   amendment of 2026-11 a multi-clause predicate promoted alone at run time
+   is a region of one member; a persisted bundle still bakes it as a method
+   with these side-stack choice points.*
 
 6. **The region emits the push and the restore inline**, as the wasm tier does
    (`EmitPushChoicePoint`, `EmitRestoreCommon`):

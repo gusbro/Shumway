@@ -96,11 +96,77 @@ store.
 
 4. **Regions only.** A predicate compiled alone (outside region compilation,
    which is the default) keeps returning `false` on failure. The same helper
-   applies to it when there is a reason to.
+   applies to it when there is a reason to. *Amended below: a multi-clause
+   predicate with no local closure is now a region of one member.*
 
 5. **A diagnostic counter** (`Activation.DiagLocalResumes`, `SHUMWAY_DIAG`)
    counts the local resumptions and the ones declined by reason (at the floor
    or no IL choice point, another code's choice point, a debug session).
+
+## Amendment (2026-11): a root alone is a region of one member
+
+A region was formed as a root plus its local closure, and a root with
+nothing to absorb (`IsRegionEmittable`: "members<2") compiled as a method of
+its own. That gate dates from the first region stage, when a region's only
+gain was the intra-method branch between members; it was never a correctness
+or JIT-limit condition. Since then the gain moved into the region's own
+tail: this ADR, [ADR-058](058-region-choice-points-are-wam-choice-points.md)
+and [ADR-060](060-region-registers-in-locals.md) all require being a region,
+so a hot predicate that nobody owns — a library utility such as `member/2`,
+`append/3`, `select/3`, `nth1/3`; a fact table called from several places; a
+walker reached through `findall/3` or `call/N` — kept the earlier protocol:
+a helper push with an IL side-stack entry per clause alternative, a failure
+returned to the dispatch loop and resumed through the side stack and the
+delegate, no registers held.
+
+A multi-clause root with no local closure now compiles as a region of one
+member when it is promoted at run time. A single-clause root alone stays a
+method: it pushes no clause choice point, and the region's tail would cost
+it something for nothing. A root alone whose cost, measured or estimated,
+would not fit the planner's budget stays a method too, and so does one that
+an emission finds past a JIT limit (`CompileRegionUnlocked` gives the
+region up instead of emitting it past the limit): a method alone is the
+same code without the tail, so it is never the larger of the two.
+`SHUMWAY_REGION_SINGLE=0` keeps every root alone as a method, for A/B.
+
+The persisted path keeps a root alone as a method (`OneMemberRegionsPersisted`,
+`SHUMWAY_REGION_SINGLE_PERSIST=1` to bake regions of one). A region of one
+carries the region's tail — the push ladder, the common restore, a resume
+entry per alternative, the return and fail handlers, the wake dispatch —
+and holds the registers, which spill around every call: `select/3` alone is
+718 IL instructions as a method and 1,629 as a region (293 of its 646 local
+references are the tail). Baking the prelude with regions of one turned 250
+predicates into them, grew their IL from 98k to 352k instructions, the
+bundle's IL by half and `prelude.shum` from 1.81 to 2.55 MB, for no gain
+that four interleaved rounds could see: the prelude's utilities are failed
+into from their callers, so their alternatives are resumed through the
+interpreter either way (ADR-058 item 4's marker path instead of the side
+stack). A new engine's first query took the same time with either prelude.
+
+Measured on the runtime path (this container, 4 cores, noisy; diagnostic
+counters per process, wall clock as the minimum and median of four
+interleaved rounds of three runs). Where the region of one applies, the
+clause pushes through the helper and the interpreter's side-stack
+resumptions go to zero. A utility too big to copy and called from two
+roots, whose guards fail inside it (`shared_big`): 4.65 M helper pushes and
+4.19 M side-stack resumptions become 4.19 M local resumptions, 335 to 232
+ms (−31% minimum, −30% median). A walker reached through `call/1` whose
+first clause tests and fails (`meta_user_find_local`): 1.01 M pushes and
+side-stack resumptions become 0.96 M local and 60 k marker resumptions, 77
+to 59 ms (−23%, −18%). A walker enumerated by `findall/3` (`meta_user_mem`):
+2 M pushes go, 1.98 M side-stack resumptions become marker resumptions, the
+time does not move (0.99, 1.00). The Van Roy programs do not change: their
+hot code was one owned region already, and `select_/2` of queens is a
+member of it, not a method alone as ADR-060 once found.
+
+What the policy does not reach: a predicate the region emit cannot take as
+a member — an atom fact table of the `IndexedAtomPredicate` shape among
+them — keeps the helper push and the side stack, as before.
+
+[ADR-061](061-tier1-as-continuation-methods.md) tried a region of one
+predicate in its continuation-method form and rejected it there because the
+cold method cannot resume inside a region; that constraint is the
+continuation form's, not the region form's.
 
 ## Why this is sound
 
