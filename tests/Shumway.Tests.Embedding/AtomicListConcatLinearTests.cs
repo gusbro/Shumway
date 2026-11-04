@@ -17,17 +17,26 @@ public class AtomicListConcatLinearTests
     [Fact]
     public void AJoinInternsOneAtom_NotOnePerElement()
     {
-        // 2,000 numbers joined: the folds interned the text of each number
-        // and two intermediates per element; now the result is the only
-        // new atom. The atom GC can only lower the count in between.
+        // The folds interned the text of each number and two intermediates
+        // per element; now the result is the only new atom. Measured as the
+        // difference between a 2,000-element join and a 20-element one in
+        // the same engine, after a first join has paid whatever a first
+        // call interns; the atom GC can only lower a count in between.
+        var e = new PrologEngine();
+        long Interned(int n, string join) => e.Query(
+            $"numlist(1, {n}, L), statistics(atoms, [A0, _]), {join}, "
+            + "statistics(atoms, [A1, _]), D is A1 - A0.").Get<long>("D");
+        Interned(20, "atomic_list_concat(L, '-', _)");
+        long small = Interned(20, "atomic_list_concat(L, '-', _)");
+        long big = Interned(2000, "atomic_list_concat(L, '-', _)");
+        Assert.True(big - small <= 2, $"a 2,000-element join interned {big} atoms, a 20-element one {small}");
+        Interned(20, "atomic_list_concat(L, _)");
+        small = Interned(20, "atomic_list_concat(L, _)");
+        big = Interned(2000, "atomic_list_concat(L, _)");
+        Assert.True(big - small <= 2, $"a 2,000-element join interned {big} atoms, a 20-element one {small}");
         Assert.True(Holds(
-            "numlist(1, 2000, L), statistics(atoms, [A0, _]), "
-            + "atomic_list_concat(L, '-', R), statistics(atoms, [A1, _]), "
-            + "D is A1 - A0, D =< 2, atom_length(R, Len), Len == 8892."));
-        Assert.True(Holds(
-            "numlist(1, 2000, L), statistics(atoms, [A0, _]), "
-            + "atomic_list_concat(L, R), statistics(atoms, [A1, _]), "
-            + "D is A1 - A0, D =< 2, atom_length(R, Len), Len == 6893."));
+            "numlist(1, 2000, L), atomic_list_concat(L, '-', R), atom_length(R, Len), Len == 8892, "
+            + "atomic_list_concat(L, R2), atom_length(R2, Len2), Len2 == 6893."));
     }
 
     [Fact]
