@@ -1612,19 +1612,16 @@ internal static class Prelude
         '$atomic_to_atom'(X, A) :- atom_string(A, X).
 
         %! atomic_list_concat(+List, -Atom) | Atoms & strings | Concatenates a list of atomic terms into a single atom.
+        % The list is checked here (every error names the argument) and
+        % joined by the '$alc_join' builtin in one pass: one atom interned,
+        % not one per element.
         atomic_list_concat(List, Atom) :-
             '$alc_check_list'(List),
             (   var(Atom) -> true
             ;   atom(Atom) -> true
             ;   throw(error(type_error(atom, Atom), atomic_list_concat/2))
             ),
-            '$alc_concat'(List, Atom).
-
-        '$alc_concat'([], '').
-        '$alc_concat'([X|Xs], Atom) :-
-            '$atomic_to_atom'(X, AX),
-            '$alc_concat'(Xs, Rest),
-            atom_concat(AX, Rest, Atom).
+            '$alc_join'(List, '', Atom).
 
         %! atomic_concat(+Atomic1, +Atomic2, ?Atom) | Atoms & strings | Concatenates two atomic terms into an atom.
         atomic_concat(A, B, Atom) :-
@@ -1659,8 +1656,7 @@ internal static class Prelude
             ;   atom(Atom) -> true
             ;   throw(error(type_error(atom, Atom), atomic_list_concat/3))
             ),
-            '$atomic_to_atom'(Sep, SepAtom),
-            '$alc_join'(List, SepAtom, Atom).
+            '$alc_join'(List, Sep, Atom).
 
         '$alc_check_list'(L) :-
             (   var(L) -> throw(error(instantiation_error, atomic_list_concat/3))
@@ -1673,30 +1669,6 @@ internal static class Prelude
                 '$alc_check_list'(Xs)
             ;   throw(error(type_error(list, L), atomic_list_concat/3))
             ).
-
-        '$alc_join'([], _, '').
-        '$alc_join'([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
-        '$alc_join'([X, Y|Xs], Sep, Atom) :-
-            '$atomic_to_atom'(X, AX),
-            '$alc_join'([Y|Xs], Sep, Rest),
-            atom_concat(AX, Sep, P),
-            atom_concat(P, Rest, Atom).
-
-        % split Atom at each occurrence of the separator Sep.
-        '$alc_split'(Atom, Sep, Parts) :-
-            ( '$alc_first_sep'(Atom, Sep, B, A) ->
-                sub_atom(Atom, 0, B, _, Head),
-                sub_atom(Atom, _, A, 0, Tail),
-                Parts = [Head|Rest],
-                '$alc_split'(Tail, Sep, Rest)
-            ; Parts = [Atom]
-            ).
-        % Before / After of the leftmost occurrence of Sep in Atom.
-        '$alc_first_sep'(Atom, Sep, B, A) :-
-            findall(B0, sub_atom(Atom, B0, _, _, Sep), Bs),
-            Bs = [_|_],
-            min_list(Bs, B),
-            sub_atom(Atom, B, _, A, Sep).
 
         %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
         char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).

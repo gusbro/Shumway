@@ -304,6 +304,8 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$is_evaluable",             2, ControlBuiltins.IsEvaluable);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
+        BuiltinsRegistry.Register("$alc_join",                 3, AtomListBuiltins.AlcJoin);
+        BuiltinsRegistry.Register("$alc_split",                3, AtomListBuiltins.AlcSplit);
         // Branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
         // The wasm tier's retry/trust asks for this when its choice point's
