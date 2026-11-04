@@ -245,6 +245,8 @@ public static class StandardBuiltins
             Io, "set_input(+Stream)", "Sets the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_output", 1, StreamBuiltins.SetOutput,
             Io, "set_output(+Stream)", "Sets the current output stream.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("set_stream", 2, StreamBuiltins.SetStream,
+            Io, "set_stream(+Stream, +Property)", "Sets a property of an open stream: alias(A) or eof_action(Action).");
         BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
             Io, "flush_output", "Flushes the current output stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,

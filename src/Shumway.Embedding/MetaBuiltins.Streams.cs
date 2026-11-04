@@ -114,8 +114,9 @@ public static partial class MetaBuiltins
                     new Term[] { new AtomTerm(Shumway.Core.PrologPath.ToCanonical(fn)) })));
             if (Want("mode"))
                 pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
-            if (Want("alias") && h.Alias is string al)
-                pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
+            if (Want("alias"))
+                foreach (string al in h.Aliases)
+                    pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
             if (Want("encoding") && h.EncodingName is string en)
                 pairs.Add((h, new CompoundTerm("encoding", new Term[] { new AtomTerm(en) })));
             if (Want("bom") && h.HadBom is bool hb)

@@ -1364,6 +1364,42 @@ are accepted, so code written for other systems runs, and have no effect.
 `line_count(Stream, Line)` gives the line the next character of a text
 input stream will come from.
 
+### `set_stream/2`
+
+`set_stream(Stream, Property)` sets one of two properties of an open
+stream:
+
+| Property | Effect |
+|---|---|
+| `alias(A)` | `A` names the stream from then on, and no longer names the stream it named before. A stream can have several aliases. |
+| `eof_action(Action)` | What a read past the end of the stream does: `error`, `eof_code` or `reset`, as with the option of `open/4`. |
+
+Any other property raises `domain_error(stream_property, Property)`.
+
+`user_input`, `user_output` and `user_error` can be given to another
+stream of the same direction, input or output, and name it until it is
+closed. Then each one names its terminal stream again, not a stream that
+had it before. This sends everything a goal writes to a file:
+
+```prolog
+redirect(File, Goal) :-
+    setup_call_cleanup(
+        ( open(File, write, S),
+          set_stream(S, alias(current_output)),
+          set_stream(S, alias(user_output)),
+          set_stream(S, alias(user_error)) ),
+        Goal,
+        close(S)).
+```
+
+`print_message/2` writes to `user_error`, so its messages go to the file
+too. `set_stream(S, alias(current_output))` is the same as
+`set_output(S)`, and `alias(current_input)` the same as `set_input(S)`:
+neither one is an alias. When the current input or output is closed, it
+becomes the stream that `user_input` or `user_output` names.
+`close(user_output)` closes the stream the alias names, and closing a
+terminal stream does nothing.
+
 ### Operator atoms as operands
 
 An atom that is an operator cannot be the bare operand of another

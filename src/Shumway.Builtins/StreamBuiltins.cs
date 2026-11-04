@@ -1315,6 +1315,68 @@ public static class StreamBuiltins
         return true;
     }
 
+    /// <summary><c>set_stream(+Stream, +Property)</c>, for <c>alias(A)</c>
+    /// and <c>eof_action(Action)</c>. With <c>alias(A)</c>, A names the stream
+    /// from then on, and no longer the stream it named before.
+    /// <c>user_input</c>, <c>user_output</c> and <c>user_error</c> come back
+    /// to their terminal streams when the stream is closed.
+    /// <c>current_input</c> and <c>current_output</c> are not aliases: they
+    /// make the stream the current input or output, as <c>set_input/1</c> and
+    /// <c>set_output/1</c> do. A standard alias needs a stream of its
+    /// direction: permission_error(input|output, stream, S).
+    /// <c>eof_action(Action)</c> sets what <c>open/4</c>'s option of that
+    /// name sets: error, eof_code or reset.</summary>
+    public static bool SetStream(Activation engine)
+    {
+        Cell streamArg = engine.GetRegister(0);
+        var h = ResolveStream(engine, streamArg);
+        Cell p = Resolve(engine, engine.GetRegister(1));
+        if (p.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (IsUnaryProperty(engine, p, "eof_action", out Cell action))
+        {
+            if (action.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            string? name = action.Tag == Tag.Atom ? AtomTable.GetById(action.AsAtomId)?.Name : null;
+            if (name is not ("error" or "eof_code" or "reset"))
+                throw new PrologRuntimeException("domain_error", "stream_property", engine, p);
+            h.EofAction = name;
+            return true;
+        }
+        if (!IsUnaryProperty(engine, p, "alias", out Cell a))
+            throw new PrologRuntimeException("domain_error", "stream_property", engine, p);
+        if (a.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (a.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom", engine, a);
+        string alias = AtomTable.GetById(a.AsAtomId)?.Name ?? "";
+        if (alias is ("user_input" or "current_input") && !h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream",
+                engine, Resolve(engine, streamArg));
+        if (alias is ("user_output" or "user_error" or "current_output") && !h.IsWriter)
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, Resolve(engine, streamArg));
+        var registry = engine.Streams!;
+        switch (alias)
+        {
+            case "current_input": registry.SetCurrentInput(h); break;
+            case "current_output": registry.SetCurrentOutput(h); break;
+            default: registry.SetAlias(h, alias); break;
+        }
+        return true;
+    }
+
+    private static bool IsUnaryProperty(Activation engine, Cell p, string name, out Cell arg)
+    {
+        arg = default;
+        if (p.Tag != Tag.Str) return false;
+        int fIdx = p.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+        if (arity != 1 || (AtomTable.GetById(atomId)?.Name ?? "") != name) return false;
+        arg = Resolve(engine, engine.GetHeap(fIdx + 1));
+        return true;
+    }
+
     // ---------- flush_output ----------
 
     /// <summary><c>flush_output/0</c> — ISO §8.11.7. Flushes the
