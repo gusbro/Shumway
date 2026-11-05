@@ -8,6 +8,12 @@ namespace Shumway.Core;
 /// the spelling.</summary>
 public static class TextEncodings
 {
+    /// <summary>What <see cref="DecodeLenient"/> leaves where bytes are not valid in
+    /// the encoding. A Unicode noncharacter, reserved for a program's internal use, so
+    /// it does not stand for text a source file means: U+FFFD can be written on purpose.
+    /// The lexer rejects it anywhere but in a comment.</summary>
+    public const char IllFormedMark = '\uFDD0';
+
     /// <summary>Resolves an engine encoding name (<c>utf8</c>,
     /// <c>iso_latin_1</c>, <c>ascii</c>, <c>utf16le</c>, <c>utf16be</c>,
     /// <c>utf32le</c>, <c>utf32be</c>). The instances never emit a BOM —
@@ -63,14 +69,14 @@ public static class TextEncodings
     }
 
     /// <summary>Decodes without ever throwing: ill-formed input becomes
-    /// U+FFFD. The tolerant mode source sniffing depends on — a file whose
+    /// <see cref="IllFormedMark"/>. The tolerant mode source sniffing depends on — a file whose
     /// real encoding differs from the attempted one must still yield a
     /// string to look for the <c>:- encoding/1</c> directive in.</summary>
     public static string DecodeLenient(string name, byte[] bytes, int offset, int count)
     {
         Encoding enc = (ByName(name) ?? new UTF8Encoding(false));
         enc = (Encoding)enc.Clone();
-        enc.DecoderFallback = DecoderFallback.ReplacementFallback;
+        enc.DecoderFallback = new DecoderReplacementFallback(IllFormedMark.ToString());
         return enc.GetString(bytes, offset, count);
     }
 }

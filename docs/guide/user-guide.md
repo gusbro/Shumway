@@ -1370,6 +1370,20 @@ are accepted, so code written for other systems runs, and have no effect.
 `line_count(Stream, Line)` gives the line the next character of a text
 input stream will come from.
 
+### Source file encoding
+
+A source file is read as UTF-8, or as the `encoding` flag says. A byte order
+mark says otherwise, and so does a leading directive. The names are `utf8`,
+`iso_latin_1`, `ascii`, `utf16le`, `utf16be`, `utf32le` and `utf32be`.
+
+```prolog
+:- encoding(iso_latin_1).
+```
+
+Bytes that are not valid in the file's encoding are a syntax error, reported
+with their line, and the clause they are in is skipped. In a comment they do
+no harm and are not reported.
+
 ### Reading past the end of a stream
 
 When nothing is left to read, the first read gives the end of the stream:

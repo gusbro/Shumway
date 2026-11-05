@@ -78,6 +78,77 @@ public sealed class EncodingDirectiveTests : IDisposable
         Assert.DoesNotContain("caf\u00e9", decoded);
     }
 
+    private (PrologEngine Engine, string Warnings) ConsultLatin1(string text)
+    {
+        var warnings = new StringWriter();
+        var e = new PrologEngine { Warnings = warnings };
+        e.ConsultFile(Write("bytes.pl", Latin1(text)));
+        return (e, warnings.ToString());
+    }
+
+    [Theory]
+    [InlineData("first.\np('caf\u00e9').\nlast.\n")]
+    [InlineData("first.\np(\"caf\u00e9\").\nlast.\n")]
+    [InlineData("first.\np(caf\u00e9).\nlast.\n")]
+    [InlineData("first.\np(0'\u00e9).\nlast.\n")]
+    public void BytesNotValidInATerm_AreReported_AndOnlyThatClauseIsSkipped(string text)
+    {
+        var (e, warnings) = ConsultLatin1(text);
+        Assert.Contains("Bytes not valid in the file's encoding", warnings);
+        Assert.Contains("bytes.pl:2:", warnings);
+        Assert.True(e.Query("first, last.").Success);
+        Assert.False(e.Query("catch(p(_), _, fail).").Success);
+    }
+
+    [Theory]
+    [InlineData("p('caf\u00e9').")]
+    [InlineData("p($caf\u00e9$).")]
+    [InlineData("p(`\u00e9).")]
+    public void BytesNotValid_AreReportedInAritysTokensToo(string clause)
+    {
+        var (e, warnings) = ConsultLatin1(
+            ":- set_prolog_flag(arity_compat, true).\nfirst.\n" + clause + "\nlast.\n");
+        Assert.Contains("Bytes not valid in the file's encoding", warnings);
+        Assert.Contains("bytes.pl:3:", warnings);
+        Assert.True(e.Query("first, last.").Success);
+    }
+
+    [Theory]
+    [InlineData("% caf\u00e9\np(a).\n")]
+    [InlineData("/* caf\u00e9 */\np(a).\n")]
+    [InlineData("p(a). % caf\u00e9\n")]
+    public void BytesNotValidInAComment_DoNoHarm(string text)
+    {
+        var (e, warnings) = ConsultLatin1(text);
+        Assert.Equal("", warnings);
+        Assert.True(e.Query("p(a).").Success);
+    }
+
+    [Fact]
+    public void AReplacementCharacterWrittenOnPurpose_IsText()
+    {
+        var warnings = new StringWriter();
+        var e = new PrologEngine { Warnings = warnings };
+        e.ConsultFile(Write("fffd.pl", Encoding.UTF8.GetBytes("p('\uFFFD').\n")));
+        Assert.Equal("", warnings.ToString());
+        Assert.True(e.Query("p(X), atom_codes(X, [65533]).").Success);
+    }
+
+    [Fact]
+    public void ADeclaredEncoding_MakesTheBytesValid()
+    {
+        var (e, warnings) = ConsultLatin1(":- encoding(iso_latin_1).\np('caf\u00e9').\n");
+        Assert.Equal("", warnings);
+        Assert.True(e.Query("p(X), atom_codes(X, [99, 97, 102, 233]).").Success);
+    }
+
+    [Fact]
+    public void AByteAboveAsciiInADeclaredAsciiFile_IsReported()
+    {
+        var (_, warnings) = ConsultLatin1(":- encoding(ascii).\np('caf\u00e9').\n");
+        Assert.Contains("Bytes not valid in the file's encoding", warnings);
+    }
+
     [Fact]
     public void BomWins_AndDirectiveIsThenANoOp()
     {
