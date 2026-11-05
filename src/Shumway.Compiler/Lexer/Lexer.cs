@@ -210,10 +210,18 @@ public sealed class Lexer
 
         if (IsSymbolChar(c)) return ParseSymbolAtom(pos);
 
+        if (c == TextEncodings.IllFormedMark) throw IllFormedBytes(pos);
+
         throw new LexerException(
             $"Unexpected character '{c}' (U+{(int)c:X4}) at {pos}.",
             pos);
     }
+
+    /// <summary>The source had bytes here that are not valid in its encoding. What they
+    /// were is gone, so they cannot become part of a term.</summary>
+    private static LexerException IllFormedBytes(SourcePosition pos) => new(
+        $"Bytes not valid in the file's encoding at {pos}. "
+        + "A leading :- encoding/1 directive can name the encoding.", pos);
 
     /// <summary>Error-recovery escape hatch. When
     /// <see cref="NextToken"/> throws a <see cref="LexerException"/>
@@ -782,6 +790,7 @@ public sealed class Lexer
         if (c == '\n' || c == '\r')
             throw new LexerException(
                 $"` character-code literal followed by a line break at {pos}.", pos);
+        if (c == TextEncodings.IllFormedMark) throw IllFormedBytes(pos);
         Advance();
         return new Token(TokenKind.Integer, pos, _source[start.._offset])
             { IntValue = c };
@@ -816,6 +825,7 @@ public sealed class Lexer
             if (LenientQuoteCharLiteral) { Advance(); return '\''; }
             return NotACharCode;
         }
+        if (c == TextEncodings.IllFormedMark) throw IllFormedBytes(pos);
         if ((c < ' ' || c == '\x7f') && !ArityCompat)
         {
             // ISO 6.3.7: only space (0' ) is a valid layout char after 0';
@@ -988,6 +998,9 @@ public sealed class Lexer
     {
         Advance();   // opening quote
         var sb = new StringBuilder();
+        // Reported at the closing quote: the resync that follows an error must
+        // start after the token, or it takes the rest of it for a new one.
+        bool illFormed = false;
         while (true)
         {
             if (_offset >= _source.Length)
@@ -1004,6 +1017,7 @@ public sealed class Lexer
                 else
                 {
                     Advance();
+                    if (illFormed) throw IllFormedBytes(pos);
                     return new Token(TokenKind.Atom, pos, sb.ToString())
                         { WasQuoted = true };
                 }
@@ -1027,6 +1041,11 @@ public sealed class Lexer
                         $"Character escape 0x{e:X} is not a Unicode character at {pos}.",
                         pos);
                 if (e != EscapeContinuation) Utf16Text.AppendCodePoint(sb, e);
+            }
+            else if (c == TextEncodings.IllFormedMark)
+            {
+                illFormed = true;
+                Advance();
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {
@@ -1057,6 +1076,7 @@ public sealed class Lexer
     {
         Advance();   // opening $
         var sb = new StringBuilder();
+        bool illFormed = false;
         while (true)
         {
             if (_offset >= _source.Length)
@@ -1073,9 +1093,15 @@ public sealed class Lexer
                 else
                 {
                     Advance();
+                    if (illFormed) throw IllFormedBytes(pos);
                     return new Token(TokenKind.Atom, pos, sb.ToString())
                         { WasQuoted = true };
                 }
+            }
+            else if (c == TextEncodings.IllFormedMark)
+            {
+                illFormed = true;
+                Advance();
             }
             else
             {
@@ -1089,6 +1115,7 @@ public sealed class Lexer
     {
         Advance();   // opening "
         var sb = new StringBuilder();
+        bool illFormed = false;
         while (true)
         {
             if (_offset >= _source.Length)
@@ -1105,6 +1132,7 @@ public sealed class Lexer
                 else
                 {
                     Advance();
+                    if (illFormed) throw IllFormedBytes(pos);
                     return new Token(TokenKind.String, pos, sb.ToString());
                 }
             }
@@ -1121,6 +1149,11 @@ public sealed class Lexer
                         $"Character escape 0x{e:X} is not a Unicode character at {pos}.",
                         pos);
                 if (e != EscapeContinuation) Utf16Text.AppendCodePoint(sb, e);
+            }
+            else if (c == TextEncodings.IllFormedMark)
+            {
+                illFormed = true;
+                Advance();
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {
