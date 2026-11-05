@@ -42,6 +42,7 @@ public sealed class DapProxy
     private readonly object _clientWriteLock = new object();
     private readonly object _backendWriteLock = new object();
     private readonly Action<string> _log;
+    private readonly bool _logging;
 
     private TcpClient? _backendTcp;
     private Stream? _backend;
@@ -58,6 +59,7 @@ public sealed class DapProxy
         _clientIn = clientIn ?? throw new ArgumentNullException(nameof(clientIn));
         _clientOut = clientOut ?? throw new ArgumentNullException(nameof(clientOut));
         _log = log ?? (_ => { });
+        _logging = log is not null;
     }
 
     /// <summary>The adapter's life: read the client until it leaves. Returns when the
@@ -171,6 +173,7 @@ public sealed class DapProxy
             string? goal = StringArg(args, "goal");
             string? cwd = StringArg(args, "cwd");
             int port = IntArg(args, "port") ?? PickFreePort();
+            _log("launch: the debuggee will listen on port " + port);
 
             // --dap-wait, not --dap: a program launched to be debugged holds its prompt
             // until the client's breakpoints are armed (configurationDone) — otherwise a
@@ -254,6 +257,7 @@ public sealed class DapProxy
             catch (Exception ex)
             {
                 last = ex;
+                _log("could not reach port " + port + ": " + ex.Message);
                 Thread.Sleep(250);
             }
         }
@@ -270,6 +274,7 @@ public sealed class DapProxy
             w.WriteString("adapterID", "shumway");
             w.WriteEndObject();
         }, InternalSeqBase);
+        _log("sent initialize to the debuggee");
 
         _backendReader = new Thread(BackendPump)
         {
@@ -290,9 +295,14 @@ public sealed class DapProxy
             while (!_closing)
             {
                 byte[]? raw = DapWire.ReadMessageBytes(backend);
-                if (raw is null) break;
+                if (raw is null)
+                {
+                    _log("backend pump ended: the debuggee closed the connection");
+                    break;
+                }
                 using JsonDocument doc = JsonDocument.Parse(raw);
                 JsonElement root = doc.RootElement;
+                if (_logging) _log("the debuggee sent " + Summary(root));
                 if (root.TryGetProperty("type", out JsonElement t)
                     && t.GetString() == "response"
                     && root.TryGetProperty("request_seq", out JsonElement rs)
@@ -394,6 +404,20 @@ public sealed class DapProxy
             && args.TryGetProperty(name, out JsonElement v)
             && v.ValueKind == JsonValueKind.Number
             ? v.GetInt32() : null;
+
+    private static string Summary(JsonElement message)
+    {
+        string kind = message.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "?" : "?";
+        string name = message.TryGetProperty("event", out JsonElement e) ? e.GetString() ?? "?"
+            : message.TryGetProperty("command", out JsonElement c) ? c.GetString() ?? "?" : "?";
+        // The response to the adapter's own initialize goes nowhere else: a refusal
+        // from a debuggee shows only here.
+        string outcome = message.TryGetProperty("success", out JsonElement s)
+            && s.ValueKind == JsonValueKind.False
+            ? " failed: " + (message.TryGetProperty("message", out JsonElement m) ? m.GetString() : "?")
+            : "";
+        return kind + ":" + name + outcome;
+    }
 
     private static int PickFreePort()
     {
