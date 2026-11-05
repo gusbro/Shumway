@@ -86,7 +86,10 @@ public sealed class StreamRegistry
         UserInput = new StreamHandle(
             id: AllocateId(),
             reader: new PositionTrackingReader(
-                defaultIn ?? HostInput(), translateNewlines: false),
+                defaultIn ?? HostInput(), translateNewlines: false)
+            {
+                ReadsHostInput = defaultIn is null
+            },
             mode: "read", filename: null, alias: "user_input");
         // ISO §7.10.2.4: the standard streams report eof_action(reset)
         // (a tty read past eof may succeed again).

@@ -197,7 +197,7 @@ internal static class ReplTopLevel
         // line left unconsumed feeds the next query — or an in-query read/1
         // (`?- read(X). write(b).` binds X = write(b)). Must be set before the
         // first query: the stream registry snapshots it at query setup.
-        _pendingInput = new ReplPendingReader(AcquireEngineInputLine);
+        _pendingInput = new ReplPendingReader(AcquireEngineInputLine, AcquireEngineKey);
         engine.In = _pendingInput;
         // ADR-038 — the shipped lib/ (beside the executable) is on the library
         // search path by default, so use_module(library(X)) finds a bundled
@@ -828,7 +828,8 @@ internal static class ReplTopLevel
     /// <summary>Set while a goal is blocked reading a fresh console line for
     /// <c>user_input</c>; parks the ESC watcher, which otherwise intercepts
     /// (and drops) the keys the user types for <c>read/1</c>.</summary>
-    private static volatile bool _engineReadingInput;
+    private static readonly QueryKeyboard _keyboard = new(
+        () => Console.KeyAvailable, () => Console.ReadKey(intercept: true));
 
     /// <summary>More input for a goal reading <c>user_input</c> once the
     /// type-ahead is dry: prompt SWI-style <c>|: </c> and read a fresh
@@ -836,14 +837,25 @@ internal static class ReplTopLevel
     private static string? AcquireEngineInputLine()
     {
         if (Console.IsInputRedirected) return Console.In.ReadLine();
-        _engineReadingInput = true;
+        bool complete = _keyboard.BeginLineRead(out string typed);
         try
         {
-            Console.Write("|: ");
-            return Console.ReadLine();
+            Console.Write("|: " + typed);
+            if (complete)
+            {
+                Console.WriteLine();
+                return typed;
+            }
+            string? rest = Console.ReadLine();
+            return rest is null && typed.Length == 0 ? null : typed + rest;
         }
-        finally { _engineReadingInput = false; }
+        finally { _keyboard.EndRead(); }
     }
+
+    /// <summary>A key for a goal that asks for one: one pressed while it was
+    /// working, or else the next of the console.</summary>
+    private static bool AcquireEngineKey(out int codePoint) =>
+        Shumway.Core.TerminalKeys.TryRead(_keyboard.NextKey, out codePoint);
 
     /// <summary>Reads one query — one sentence — from the type-ahead buffer,
     /// prompting for (and joining) more lines until the buffer holds a
@@ -907,6 +919,7 @@ internal static class ReplTopLevel
     /// how to print.</summary>
     private static void RunQuery(PrologEngine engine, string query)
     {
+        _keyboard.Clear();
         using QueryRun run = _session!.StartQuery(query);
         if (!run.Parsed)
         {
@@ -1018,8 +1031,8 @@ internal static class ReplTopLevel
     }
 
     /// <summary>Polls the console for keystrokes while a query runs. ESC fires
-    /// the cancellation source; any other key typed mid-search is dropped (the
-    /// REPL doesn't queue type-ahead). Exits when <paramref name="stop"/> is
+    /// the cancellation source; any other key waits for the goal's next read
+    /// (see <see cref="QueryKeyboard"/>). Exits when <paramref name="stop"/> is
     /// signalled or the console becomes unavailable.</summary>
     private static void WatchForEsc(QueryRun run, ManualResetEventSlim stop)
     {
@@ -1027,16 +1040,8 @@ internal static class ReplTopLevel
         {
             try
             {
-                // A goal is reading user_input from the console: the keys
-                // belong to it, not to us.
-                if (_engineReadingInput)
+                if (_keyboard.Watch() is { } k)
                 {
-                    stop.Wait(25);
-                    continue;
-                }
-                if (Console.KeyAvailable)
-                {
-                    ConsoleKeyInfo k = Console.ReadKey(intercept: true);
                     if (k.Key == ConsoleKey.Escape)
                     {
                         run.Cancel();
@@ -1044,19 +1049,11 @@ internal static class ReplTopLevel
                     }
                     // Ctrl+C arriving as a keystroke (post-debugger console-mode skew —
                     // see LineEditor.ReadLine): behave as the signal — terminate.
-                    if (k.Key == ConsoleKey.C
-                        && (k.Modifiers & ConsoleModifiers.Control) != 0)
-                    {
-                        Console.WriteLine();
-                        Environment.Exit(0);
-                    }
-                    // Any other key during execution → ignore.
+                    Console.WriteLine();
+                    Environment.Exit(0);
                 }
-                else
-                {
-                    // Sleep until the next poll or until told to stop — no busy-spin.
-                    stop.Wait(25);
-                }
+                // Sleep until the next poll or until told to stop — no busy-spin.
+                stop.Wait(25);
             }
             catch
             {

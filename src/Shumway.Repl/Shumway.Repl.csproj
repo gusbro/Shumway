@@ -45,4 +45,8 @@
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
+  </ItemGroup>
+
 </Project>

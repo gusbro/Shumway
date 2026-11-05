@@ -7,13 +7,35 @@ namespace Shumway.Repl;
 /// buffer — <c>?- read(X). write(b).</c> binds <c>X = write(b)</c>, the
 /// stream-fed top-level behaviour (SWI). When the buffer runs dry mid-goal,
 /// more input is acquired from the console via the callback.</summary>
-internal sealed class ReplPendingReader : System.IO.TextReader
+internal sealed class ReplPendingReader : System.IO.TextReader, Shumway.Core.IKeyReader
 {
+    /// <summary>Waits for a key of the console; false when there is none to
+    /// wait for.</summary>
+    internal delegate bool KeySource(out int codePoint);
+
     private readonly System.Text.StringBuilder _buf = new();
     private int _head;
     private readonly Func<string?> _acquire;
+    private readonly KeySource _acquireKey;
 
-    public ReplPendingReader(Func<string?> acquire) => _acquire = acquire;
+    public ReplPendingReader(Func<string?> acquire, KeySource acquireKey)
+    {
+        _acquire = acquire;
+        _acquireKey = acquireKey;
+    }
+
+    /// <summary>A key for a goal that asks for one. Text typed after the query
+    /// on the same line is read first. The end of that line does not count:
+    /// after <c>?- get_unbuffered_char(C).</c> only its newline is left, and the
+    /// goal must wait for a key instead of getting that newline.</summary>
+    public bool TryReadKey(out int codePoint)
+    {
+        codePoint = -1;
+        if (Buffered.AsSpan().Trim().Length > 0) return false;
+        if (!_acquireKey(out codePoint)) return false;
+        Clear();
+        return true;
+    }
 
     /// <summary>Appends typed text to the buffer (include the newline).</summary>
     public void Push(string text) => _buf.Append(text);

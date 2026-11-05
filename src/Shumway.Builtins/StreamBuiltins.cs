@@ -761,6 +761,53 @@ public static class StreamBuiltins
         return ReadCodeInto(engine, h, regOut: 0);
     }
 
+    /// <summary><c>get_unbuffered_char/1</c>: one character of the current
+    /// input; on a terminal, one key with no Enter and no echo.</summary>
+    public static bool GetUnbufferedChar(Activation engine)
+    {
+        var h = UnbufferedInput(engine);
+        CheckOutArgIsInCharacter(engine, 0);
+        CheckPastEof(engine, h);
+        int c = ReadUnbuffered(engine, h);
+        int atomId = c < 0 ? _eofAtomId : AtomTable.GetSingleCharAtomId(c);
+        if (atomId < 0)
+            atomId = AtomTable.Intern(Utf16Text.FromCodePoint(c), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
+    }
+
+    /// <summary><c>get_unbuffered_code/1</c>: as
+    /// <see cref="GetUnbufferedChar"/>, for the character code (-1 at the
+    /// end).</summary>
+    public static bool GetUnbufferedCode(Activation engine)
+    {
+        var h = UnbufferedInput(engine);
+        CheckOutArgIsInCharacterCode(engine, 0);
+        CheckPastEof(engine, h);
+        return engine.UnifyRegisterWithCell(0, Cell.Int(ReadUnbuffered(engine, h)));
+    }
+
+    private static StreamHandle UnbufferedInput(Activation engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        return h;
+    }
+
+    private static int ReadUnbuffered(Activation engine, StreamHandle h)
+    {
+        // What was written before is usually the prompt for this key: it has
+        // to be on the screen before the wait.
+        var streams = engine.Streams!;
+        Flush(streams.CurrentOutput);
+        Flush(streams.UserOutput);
+        Flush(streams.UserError);
+        int c = h.Reader!.ReadKeyOrCodePoint();
+        if (c < 0) h.PastEof = true;
+        return c;
+    }
+
     /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.1.</summary>
     public static bool GetCode2(Activation engine)
     {

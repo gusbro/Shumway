@@ -322,6 +322,33 @@ public sealed class PositionTrackingReader : TextReader
         return c;
     }
 
+    /// <summary>True when the wrapped reader is the host's standard input,
+    /// the case where a key can be read from its console.</summary>
+    internal bool ReadsHostInput { get; set; }
+
+    /// <summary>Reads one code point for <c>get_unbuffered_char/1</c> and
+    /// <c>get_unbuffered_code/1</c>: a key when this reader is a terminal,
+    /// otherwise as <see cref="ReadCodePoint"/>. What an earlier peek pushed
+    /// back was already consumed from the source, so it comes first.</summary>
+    public int ReadKeyOrCodePoint()
+    {
+        if (_buffered != Empty || !TryReadKey(out int key)) return ReadCodePoint();
+        if (key >= 0)
+        {
+            CharsConsumed += key > 0xFFFF ? 2 : 1;
+            if (key == '\n') Line++;
+        }
+        return key;
+    }
+
+    private bool TryReadKey(out int key)
+    {
+        if (Inner is IKeyReader keys) return keys.TryReadKey(out key);
+        if (ReadsHostInput) return TerminalKeys.TryRead(out key);
+        key = -1;
+        return false;
+    }
+
     /// <summary>Peeks one code point without consuming it. Seeing an astral
     /// character's low half forces consuming the high half; both units are
     /// pushed back and the consumed count restored, so the operation is a
