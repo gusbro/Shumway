@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -45,6 +46,18 @@ public class Adr036ProxyTests
         private readonly Thread _thread;
         public readonly DapTestClient Client;
 
+        // A session that fails on CI has to say what happened: the adapter and the
+        // server are in this process, and their lines would go nowhere else.
+        private const int TranscriptLines = 200;
+        private readonly ConcurrentQueue<string> _transcript = new();
+        private readonly long _started = Environment.TickCount64;
+
+        private void Note(string who, string line)
+        {
+            _transcript.Enqueue((Environment.TickCount64 - _started) + "ms " + who + ": " + line);
+            while (_transcript.Count > TranscriptLines) _transcript.TryDequeue(out _);
+        }
+
         public ProxyHarness()
         {
             _toProxyWrite = new AnonymousPipeServerStream(PipeDirection.Out);
@@ -54,15 +67,20 @@ public class Adr036ProxyTests
             _fromProxyRead = new AnonymousPipeClientStream(
                 PipeDirection.In, _fromProxyWrite.ClientSafePipeHandle);
 
-            var proxy = new DapProxy(_toProxyRead, _fromProxyWrite);
+            ShumwayDebugHelper.DiagSink = line => Note("server", line);
+            var proxy = new DapProxy(_toProxyRead, _fromProxyWrite, line => Note("adapter", line));
             _thread = new Thread(proxy.Run) { IsBackground = true, Name = "dap-test-proxy" };
             _thread.Start();
 
-            Client = new DapTestClient(_fromProxyRead, _toProxyWrite);
+            Client = new DapTestClient(_fromProxyRead, _toProxyWrite)
+            {
+                Transcript = () => "transcript:\n" + string.Join("\n", _transcript),
+            };
         }
 
         public void Dispose()
         {
+            ShumwayDebugHelper.DiagSink = null;
             Client.Dispose();
             _thread.Join(2000);
             foreach (IDisposable d in new IDisposable[]
@@ -108,6 +126,30 @@ public class Adr036ProxyTests
             client.Request("continue", "{\"threadId\":1}");
             Assert.True(query.Join(20_000), "query must complete");
             Assert.Single(query.Solutions!);
+        }
+    }
+
+    [Fact]
+    public void ATimeout_SaysWhatTheAdapterAndTheServerDid()
+    {
+        var (_, session, server) = StartDebuggee();
+        using (session)
+        using (server)
+        using (var harness = new ProxyHarness())
+        {
+            DapTestClient client = harness.Client;
+            client.Request("initialize");
+            client.Request("attach", "{\"port\":" + server.Port + "}");
+            client.WaitEvent("initialized");
+
+            var timeout = Assert.Throws<TimeoutException>(
+                () => client.WaitEvent("never_sent", 200));
+            Assert.Contains("adapter: connected to debuggee on port " + server.Port, timeout.Message);
+            Assert.Contains("adapter: sent initialize to the debuggee", timeout.Message);
+            Assert.Contains("adapter: the debuggee sent response:initialize", timeout.Message);
+            Assert.Contains("adapter: the debuggee sent event:initialized", timeout.Message);
+            Assert.Contains("server: dap: client connected", timeout.Message);
+            Assert.Contains("server: dap: initialize answered, initialized sent", timeout.Message);
         }
     }
 

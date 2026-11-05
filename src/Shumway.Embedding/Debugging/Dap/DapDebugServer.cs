@@ -246,6 +246,7 @@ internal sealed class DapConnection
     /// <summary>Arbitration's loser: answer its initialize honestly, then close.</summary>
     internal void RefuseAndClose(string reason)
     {
+        ShumwayDebugHelper.DiagLine("dap: client refused: " + reason);
         try
         {
             using JsonDocument? doc = DapWire.ReadMessage(_stream);
@@ -365,6 +366,7 @@ internal sealed class DapConnection
                         w.WriteBoolean("supportsLogPoints", true);
                     });
                     SendEvent("initialized");
+                    ShumwayDebugHelper.DiagLine("dap: initialize answered, initialized sent");
                     break;
 
                 // V1: the program is driven by the host (launch integration is V2/V5);

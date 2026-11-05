@@ -115,6 +115,9 @@ internal sealed class DapTestClient : IDisposable
         return seq;
     }
 
+    /// <summary>What the other side of the session did, for the message of a timeout.</summary>
+    public Func<string>? Transcript { get; set; }
+
     public JsonElement WaitResponse(int requestSeq, int timeoutMs = 30000)
         => Take(
             d => d.RootElement.GetProperty("type").GetString() == "response"
@@ -174,7 +177,8 @@ internal sealed class DapTestClient : IDisposable
                     + (_stashed.Count == 0
                         ? "nothing else arrived either"
                         : "meanwhile received: " + string.Join(", ",
-                            _stashed.Select(Describe))));
+                            _stashed.Select(Describe)))
+                    + (Transcript is null ? "" : "\n" + Transcript()));
             if (match(doc)) return doc;
             _stashed.Add(doc);
         }

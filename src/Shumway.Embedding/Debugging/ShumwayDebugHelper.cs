@@ -93,8 +93,13 @@ public static class ShumwayDebugHelper
     public static bool DiagEnabled { get; } =
         Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1";
 
+    /// <summary>Receives every diagnostic line, with the switch on or off: what a test
+    /// shows when a debug session fails.</summary>
+    internal static Action<string>? DiagSink { get; set; }
+
     public static void DiagLine(string message)
     {
+        DiagSink?.Invoke(message);
         if (!DiagEnabled) return;
         try { Console.Error.WriteLine("shumway-debug: " + message); } catch (Exception) { }
     }
