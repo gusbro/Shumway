@@ -116,7 +116,7 @@ public static class TextFile
             if (i >= text.Length || text[i] != ')') return null;
             i++;
         }
-        return TextEncodings.DirectiveNameToEngineName(name);
+        return TextEncodings.NameToEngineName(name);
     }
 
     private static void SkipSpaces(string text, ref int i)

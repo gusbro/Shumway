@@ -181,10 +181,9 @@ public static partial class MetaBuiltins
         }
         if (flagName == "encoding")
         {
-            // Default text encoding for source reads and new streams. The
-            // charset alias spellings normalize to the engine name, which
-            // is what current_prolog_flag/2 reports.
-            string? norm = Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName);
+            // Default text encoding for source reads and new streams, kept by
+            // its engine name. current_prolog_flag/2 chooses the name to show.
+            string? norm = Shumway.Core.TextEncodings.NameToEngineName(valueName);
             if (norm is null)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", FlagValuePair(), engine));
@@ -469,7 +468,11 @@ public static partial class MetaBuiltins
                     host.Flags.LenientEscapes ? "true" : "false");
 
             case "encoding":
-                return UnifyAtom(engine, 1, host.Flags.DefaultTextEncoding);
+            {
+                Cell value = ResolveLocal(engine, engine.GetRegister(1));
+                return UnifyAtom(engine, 1, EncodingNameFor(engine, host.Flags.DefaultTextEncoding,
+                    value.Tag == Tag.Atom ? AtomTable.GetById(value.AsAtomId)?.Name : null));
+            }
 
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
@@ -1483,10 +1486,11 @@ public static partial class MetaBuiltins
         {
             Cell head = ResolveLocal(engine, rawHead);
             if (head.Tag == Tag.Atom
-                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } ch)
+                && AtomTable.GetById(head.AsAtomId)?.Name is { } ch
+                && Shumway.Core.Utf16Text.IsOneCodePoint(ch))
                 sb.Append(ch);
-            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
-                sb.Append((char)head.AsInt);
+            else if (head.Tag == Tag.Int && Shumway.Core.Utf16Text.IsScalarValue(head.AsInt))
+                Shumway.Core.Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             else return null;
             cur = engine.NormalizeListCell(ResolveLocal(engine, tail));
         }
@@ -1622,11 +1626,10 @@ public static partial class MetaBuiltins
             Cell head = ResolveLocal(engine, rawHead);
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
-            // BMP-only, as char_code/2 (truncating builds another char).
-            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+            if (!Shumway.Core.Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
-            sb.Append((char)head.AsInt);
+            Shumway.Core.Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cur = engine.NormalizeListCell(ResolveLocal(engine, cTail));
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)

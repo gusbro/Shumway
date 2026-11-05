@@ -15,8 +15,8 @@ public static class TextEncodings
     public const char IllFormedMark = '\uFDD0';
 
     /// <summary>Resolves an engine encoding name (<c>utf8</c>,
-    /// <c>iso_latin_1</c>, <c>ascii</c>, <c>utf16le</c>, <c>utf16be</c>,
-    /// <c>utf32le</c>, <c>utf32be</c>). The instances never emit a BOM —
+    /// <c>iso_latin_1</c>, <c>ascii</c>, <c>utf16</c>, <c>utf16le</c>, <c>utf16be</c>,
+    /// <c>utf32</c>, <c>utf32le</c>, <c>utf32be</c>). The instances never emit a BOM —
     /// BOM writing is the caller's explicit decision.</summary>
     public static Encoding? ByName(string name) => name switch
     {
@@ -24,28 +24,76 @@ public static class TextEncodings
         "iso_latin_1" => Encoding.Latin1,
         "ascii" => Encoding.ASCII,
         "utf16le" => new UnicodeEncoding(bigEndian: false, byteOrderMark: false),
-        "utf16be" => new UnicodeEncoding(bigEndian: true, byteOrderMark: false),
+        "utf16" or "utf16be" => new UnicodeEncoding(bigEndian: true, byteOrderMark: false),
         "utf32le" => new UTF32Encoding(bigEndian: false, byteOrderMark: false),
-        "utf32be" => new UTF32Encoding(bigEndian: true, byteOrderMark: false),
+        "utf32" or "utf32be" => new UTF32Encoding(bigEndian: true, byteOrderMark: false),
         _ => null,
     };
 
-    /// <summary>Maps a <c>:- encoding/1</c> directive argument to the engine
-    /// name: engine names pass through; the quoted charset spellings other
-    /// systems write in sources (Logtalk's <c>'UTF-8'</c>, SWI's legacy
-    /// <c>unicode_le</c>) are accepted as aliases.</summary>
-    public static string? DirectiveNameToEngineName(string name) => name switch
+    /// <summary>The name of a .NET encoding: its engine name when the engine has one,
+    /// otherwise the one .NET knows it by, such as <c>windows-1252</c>.</summary>
+    public static string NameOf(Encoding encoding) => encoding.CodePage switch
     {
-        "utf8" or "iso_latin_1" or "ascii" or "utf16le" or "utf16be"
-            or "utf32le" or "utf32be" => name,
+        65001 => "utf8",
+        28591 => "iso_latin_1",
+        20127 => "ascii",
+        1200 => "utf16le",
+        1201 => "utf16be",
+        12000 => "utf32le",
+        12001 => "utf32be",
+        _ => encoding.WebName,
+    };
+
+    /// <summary>The official name of an encoding, the one IANA registers: what
+    /// <c>stream_property/2</c> and the <c>encoding</c> flag report.</summary>
+    public static string OfficialName(string engineName) => engineName switch
+    {
+        "utf8" => "UTF-8",
+        "iso_latin_1" => "ISO-8859-1",
+        "ascii" => "US-ASCII",
+        "utf16" => "UTF-16",
+        "utf16le" => "UTF-16LE",
+        "utf16be" => "UTF-16BE",
+        "utf32" => "UTF-32",
+        "utf32le" => "UTF-32LE",
+        "utf32be" => "UTF-32BE",
+        _ => engineName,
+    };
+
+    /// <summary>The engine name of an encoding, from any of its names: the official
+    /// one, an alias or the engine name itself. Null for a name of no encoding.</summary>
+    public static string? NameToEngineName(string name) => name switch
+    {
+        "utf8" or "iso_latin_1" or "ascii" or "utf16" or "utf16le" or "utf16be"
+            or "utf32" or "utf32le" or "utf32be" => name,
         "UTF-8" => "utf8",
         "ISO-8859-1" => "iso_latin_1",
         "US-ASCII" => "ascii",
         "UTF-16LE" or "UCS-2LE" or "unicode_le" => "utf16le",
         "UTF-16BE" or "UCS-2BE" or "unicode_be" => "utf16be",
+        "UTF-16" or "UCS-2" => "utf16",
         "UTF-32LE" => "utf32le",
         "UTF-32BE" => "utf32be",
+        "UTF-32" => "utf32",
         _ => null,
+    };
+
+    /// <summary>Whether the encoding leaves the byte order to a byte order mark: a file
+    /// with none is big-endian, and one written from the start gets one.</summary>
+    public static bool LeavesByteOrderToMark(string engineName) => engineName is "utf16" or "utf32";
+
+    /// <summary>Whether the encoding can write a byte order mark at all.</summary>
+    public static bool IsUnicode(string engineName) => engineName is not ("iso_latin_1" or "ascii");
+
+    /// <summary>Whether two engine names give the same bytes: <c>utf16</c> reads and
+    /// writes as <c>utf16be</c> does, and <c>utf32</c> as <c>utf32be</c>.</summary>
+    public static bool SameBytes(string a, string b) => a == b || BigEndianForm(a) == BigEndianForm(b);
+
+    private static string BigEndianForm(string engineName) => engineName switch
+    {
+        "utf16" => "utf16be",
+        "utf32" => "utf32be",
+        _ => engineName,
     };
 
     /// <summary>Byte-order-mark sniff. Returns the engine encoding name and

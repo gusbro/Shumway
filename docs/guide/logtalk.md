@@ -141,14 +141,12 @@ Shumway; only that one selector borrows SWI's name.
   `at_end_of_stream_1` and the 27 testers whose cyclic-term cases run once
   `coinduction` is announced again 2026-10;
   baseline before the 2026-08 campaign: 2,096 / 933).
-  The five `unicode/` testers run with no skips: `directives/encoding_1`
-  3/3, `escape_sequences` 12/12, `case_variables` 12/12, `builtins` 131/6,
-  `encodings` 41/8, above the SWI oracle on every tester (SWI: 2/1, 11/1,
-  12/12, 127/10, 25/5 with 19 skips). Those 14 failures are one accepted
-  divergence: the tests expect `stream_property/2` /
-  `current_prolog_flag(encoding, _)` to answer in Logtalk's charset
-  spellings (`'UTF-8'`); Shumway reports its own encoding names (`utf8`),
-  exactly as SWI does, which fails the same tests.
+  The total predates the official encoding names and counts 14 failures in
+  the `unicode/` testers. Those testers now pass in full (measured 2026-11):
+  `directives/encoding_1` 3/3, `escape_sequences` 12/12, `case_variables`
+  12/12, `builtins` 138/138, `encodings` 49/49. The `encodings` tester and
+  `tests/logtalk/directives/encoding_1` (5/5) need `shumway` added to the
+  list of systems in their `tester.lgt`.
 
   Two more divergences are deliberate and closed. The six single-test
   failures in `functions/` are the float-conversion functions: the

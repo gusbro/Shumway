@@ -7,8 +7,15 @@ namespace Shumway.Repl;
 /// buffer — <c>?- read(X). write(b).</c> binds <c>X = write(b)</c>, the
 /// stream-fed top-level behaviour (SWI). When the buffer runs dry mid-goal,
 /// more input is acquired from the console via the callback.</summary>
-internal sealed class ReplPendingReader : System.IO.TextReader, Shumway.Core.IKeyReader
+internal sealed class ReplPendingReader
+    : System.IO.TextReader, Shumway.Core.IKeyReader, Shumway.Core.IEncodedReader
 {
+    /// <summary>What the top level reads: UTF-8 when redirected (see ReplTopLevel), the
+    /// console's otherwise.</summary>
+    public System.Text.Encoding Encoding => Console.IsInputRedirected
+        ? new System.Text.UTF8Encoding(false)
+        : Console.InputEncoding;
+
     /// <summary>Waits for a key of the console; false when there is none to
     /// wait for.</summary>
     internal delegate bool KeySource(out int codePoint);

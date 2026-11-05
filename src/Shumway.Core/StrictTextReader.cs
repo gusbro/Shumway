@@ -4,9 +4,9 @@ using System.IO;
 namespace Shumway.Core;
 
 /// <summary>
-/// Strict UTF-8 text reader for Prolog text streams. Unlike
-/// <see cref="StreamReader"/> — whose decoder silently replaces an
-/// ill-formed byte sequence with U+FFFD, indistinguishable from a genuine
+/// Strict text reader for Prolog text streams, for every encoding the engine
+/// names. Unlike <see cref="StreamReader"/> — whose decoder silently replaces
+/// an ill-formed byte sequence with U+FFFD, indistinguishable from a genuine
 /// U+FFFD in the input — this reader raises
 /// <c>representation_error(character)</c> (WG17; Trealla/Scryer agree), with
 /// the peek/read asymmetry the ISO stream model needs:
@@ -15,41 +15,67 @@ namespace Shumway.Core;
 /// <item><see cref="Peek"/> on an ill-formed sequence throws without
 ///   consuming — the peek stays repeatable and a later read sees the same
 ///   bytes.</item>
-/// <item><see cref="Read"/> on an ill-formed sequence consumes exactly one
-///   byte (the offending lead) before throwing, so a reader that catches the
-///   error can resynchronise byte-by-byte.</item>
+/// <item><see cref="Read"/> on an ill-formed sequence consumes one code unit of
+///   the encoding (the offending lead byte in UTF-8) before throwing, so a
+///   reader that catches the error can resynchronise.</item>
 /// </list>
 ///
 /// <para>An astral code point decodes to its surrogate pair, delivered as
 /// two consecutive UTF-16 units — the <see cref="StreamReader"/> behaviour
-/// the rest of the engine already expects. A leading UTF-8 BOM is skipped;
-/// UTF-16 inputs never reach this class (the open path sniffs their BOM and
-/// keeps the auto-detecting <see cref="StreamReader"/> for them).</para>
+/// the rest of the engine already expects. The text starts where the stream
+/// stands when the reader is made: the open path has skipped a byte order mark
+/// it detected, and one it did not look for reads as the character U+FEFF.</para>
 /// </summary>
-public sealed class Utf8TextReader : TextReader
+public sealed class StrictTextReader : TextReader
 {
+    private enum Form { Utf8, Latin1, Ascii, Utf16Le, Utf16Be, Utf32Le, Utf32Be }
+
     private readonly Stream _stream;
     private readonly byte[] _buf = new byte[4096];
     private int _bufPos;
     private int _bufLen;
     private int _pendingLow = -1;
-    private bool _bomChecked;
+    private readonly long _start;
+    private readonly Form _form;
+    private readonly int _unit;
 
-    public Utf8TextReader(Stream stream) => _stream = stream;
+    /// <param name="stream">The file, positioned where the text starts.</param>
+    /// <param name="encodingName">The engine name of the encoding.</param>
+    public StrictTextReader(Stream stream, string encodingName)
+    {
+        _stream = stream;
+        _start = stream.CanSeek ? stream.Position : 0;
+        _form = encodingName switch
+        {
+            "utf8" => Form.Utf8,
+            "iso_latin_1" => Form.Latin1,
+            "ascii" => Form.Ascii,
+            "utf16le" => Form.Utf16Le,
+            "utf16" or "utf16be" => Form.Utf16Be,
+            "utf32le" => Form.Utf32Le,
+            "utf32" or "utf32be" => Form.Utf32Be,
+            _ => throw new ArgumentException(encodingName, nameof(encodingName)),
+        };
+        _unit = _form switch
+        {
+            Form.Utf16Le or Form.Utf16Be => 2,
+            Form.Utf32Le or Form.Utf32Be => 4,
+            _ => 1,
+        };
+    }
 
     /// <summary>The underlying stream — the reposition machinery seeks it
     /// (see <c>set_stream_position/2</c>).</summary>
     public Stream BaseStream => _stream;
 
-    /// <summary>Rewinds to the start of the stream, discarding every
-    /// buffered byte and any pending surrogate half.</summary>
+    /// <summary>Rewinds to the start of the text, past a byte order mark that was
+    /// detected, discarding every buffered byte and any pending surrogate half.</summary>
     public void Rewind()
     {
-        _stream.Position = 0;
+        _stream.Position = _start;
         _bufPos = 0;
         _bufLen = 0;
         _pendingLow = -1;
-        _bomChecked = false;
     }
 
     // Ensures at least `n` unread bytes are buffered (best effort — fewer
@@ -72,16 +98,6 @@ public sealed class Utf8TextReader : TextReader
         return _bufLen - _bufPos;
     }
 
-    private void SkipBomOnce()
-    {
-        if (_bomChecked) return;
-        _bomChecked = true;
-        if (Available(3) >= 3
-            && _buf[_bufPos] == 0xEF && _buf[_bufPos + 1] == 0xBB
-            && _buf[_bufPos + 2] == 0xBF)
-            _bufPos += 3;
-    }
-
     private static PrologRuntimeException IllFormed()
         => new("representation_error", "character");
 
@@ -91,8 +107,8 @@ public sealed class Utf8TextReader : TextReader
     /// nothing) on an ill-formed sequence.</summary>
     private int DecodeNext(out int length)
     {
-        SkipBomOnce();
         if (Available(1) < 1) { length = 0; return -1; }
+        if (_form != Form.Utf8) return DecodeOther(out length);
         int b0 = _buf[_bufPos];
         if (b0 < 0x80) { length = 1; return b0; }
 
@@ -125,6 +141,45 @@ public sealed class Utf8TextReader : TextReader
         return cp;
     }
 
+    private int DecodeOther(out int length)
+    {
+        int b0 = _buf[_bufPos];
+        switch (_form)
+        {
+            case Form.Latin1:
+                length = 1;
+                return b0;
+            case Form.Ascii:
+                if (b0 >= 0x80) throw IllFormed();
+                length = 1;
+                return b0;
+            case Form.Utf16Le:
+            case Form.Utf16Be:
+                if (Available(2) < 2) throw IllFormed();
+                int unit = Unit16(0);
+                length = 2;
+                if (unit is < 0xD800 or > 0xDFFF) return unit;
+                if (unit >= 0xDC00 || Available(4) < 4) throw IllFormed();
+                int low = Unit16(2);
+                if (low is < 0xDC00 or > 0xDFFF) throw IllFormed();
+                length = 4;
+                return 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+            default:
+                if (Available(4) < 4) throw IllFormed();
+                int p = _bufPos;
+                uint cp = _form == Form.Utf32Le
+                    ? (uint)_buf[p] | ((uint)_buf[p + 1] << 8) | ((uint)_buf[p + 2] << 16) | ((uint)_buf[p + 3] << 24)
+                    : ((uint)_buf[p] << 24) | ((uint)_buf[p + 1] << 16) | ((uint)_buf[p + 2] << 8) | _buf[p + 3];
+                if (cp > 0x10FFFF || cp is >= 0xD800 and <= 0xDFFF) throw IllFormed();
+                length = 4;
+                return (int)cp;
+        }
+    }
+
+    private int Unit16(int offset) => _form == Form.Utf16Le
+        ? _buf[_bufPos + offset] | (_buf[_bufPos + offset + 1] << 8)
+        : (_buf[_bufPos + offset] << 8) | _buf[_bufPos + offset + 1];
+
     public override int Peek()
     {
         if (_pendingLow >= 0) return _pendingLow;
@@ -147,9 +202,8 @@ public sealed class Utf8TextReader : TextReader
         // Not a failure of the file under it (system_error): no byte was read.
         catch (PrologRuntimeException ex) when (ex.Kind == "representation_error")
         {
-            // A read consumes the offending lead byte — byte-wise resync —
-            // where a peek left it in place.
-            _bufPos++;
+            // A read consumes the offending code unit, where a peek left it in place.
+            _bufPos += Math.Min(_unit, _bufLen - _bufPos);
             throw;
         }
         if (cp < 0) return -1;

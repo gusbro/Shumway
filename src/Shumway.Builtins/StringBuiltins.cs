@@ -30,7 +30,7 @@ public static class StringBuiltins
     public static bool StringLength(Activation engine)
     {
         string s = ReadStringOrAtom(engine, 0, "string_length/2");
-        return engine.UnifyRegisterWithCell(1, Cell.Int(s.Length));
+        return engine.UnifyRegisterWithCell(1, Cell.Int(Utf16Text.CodePointLength(s)));
     }
 
     /// <summary><c>string_concat(A, B, AB)</c>. Supported modes:
@@ -105,6 +105,29 @@ public static class StringBuiltins
         return new StringConcatSplitCursor(ab, returnPc).Start(engine);
     }
 
+    /// <summary>Removes the characters of <paramref name="pads"/> from both ends. A
+    /// unit trim would cut an astral character that shares a surrogate with a pad.</summary>
+    private static string TrimCodePoints(string s, string pads)
+    {
+        int start = 0;
+        while (start < s.Length)
+        {
+            int i = start;
+            if (!Utf16Text.ContainsCodePoint(pads, Utf16Text.CodePointAt(s, ref i))) break;
+            start = i;
+        }
+        int end = s.Length;
+        while (end > start)
+        {
+            int i = end - 1;
+            if (i > start && char.IsLowSurrogate(s[i]) && char.IsHighSurrogate(s[i - 1])) i--;
+            int at = i;
+            if (!Utf16Text.ContainsCodePoint(pads, Utf16Text.CodePointAt(s, ref at))) break;
+            end = i;
+        }
+        return s.Substring(start, end - start);
+    }
+
     /// <summary>Resume state for the non-deterministic <c>string_concat/3</c>
     /// split: the string being split and the running split index, plus a
     /// cached resume delegate — allocated once per call, re-pushed unchanged
@@ -130,7 +153,12 @@ public static class StringBuiltins
         {
             int splitIdx = _splitIdx;
             bool more = splitIdx < _ab.Length;
-            if (more) _splitIdx = splitIdx + 1;
+            if (more)
+            {
+                int next = splitIdx;
+                Utf16Text.CodePointAt(_ab, ref next);
+                _splitIdx = next;
+            }
             // arity 3: the retry restores string_concat/3's args.
             engine.ArmBuiltinChoicePoint(Resume, arity: 3, more, isResume);
             if (splitIdx > _ab.Length) return false;
@@ -210,12 +238,13 @@ public static class StringBuiltins
         else
         {
             int start = 0;
-            for (int i = 0; i < s.Length; i++)
+            for (int i = 0; i < s.Length; )
             {
-                if (seps.IndexOf(s[i]) >= 0)
+                int at = i;
+                if (Utf16Text.ContainsCodePoint(seps, Utf16Text.CodePointAt(s, ref i)))
                 {
-                    pieces.Add(s.Substring(start, i - start));
-                    start = i + 1;
+                    pieces.Add(s.Substring(start, at - start));
+                    start = i;
                 }
             }
             pieces.Add(s.Substring(start));
@@ -223,9 +252,8 @@ public static class StringBuiltins
 
         if (pads.Length > 0)
         {
-            char[] padArr = pads.ToCharArray();
             for (int i = 0; i < pieces.Count; i++)
-                pieces[i] = pieces[i].Trim(padArr);
+                pieces[i] = TrimCodePoints(pieces[i], pads);
         }
 
         int listIdx = BuildPstrList(engine, pieces);
@@ -287,10 +315,11 @@ public static class StringBuiltins
             {
                 Cell h = Resolve(engine, rawHead);
                 if (h.Tag == Tag.Atom
-                    && AtomTable.GetById(h.AsAtomId)?.Name is { Length: 1 } n1)
+                    && AtomTable.GetById(h.AsAtomId)?.Name is { } n1
+                    && Utf16Text.IsOneCodePoint(n1))
                     sb.Append(n1);
-                else if (h.Tag == Tag.Int && h.AsInt >= 0 && h.AsInt <= char.MaxValue)
-                    sb.Append((char)h.AsInt);
+                else if (h.Tag == Tag.Int && Utf16Text.IsScalarValue(h.AsInt))
+                    Utf16Text.AppendCodePoint(sb, (int)h.AsInt);
                 else
                     throw new PrologRuntimeException(
                         "type_error", $"{builtinName}: string or atom");
@@ -370,10 +399,10 @@ public static class StringBuiltins
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be a single-character atom");
             string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-            if (name.Length != 1)
+            if (!Utf16Text.IsOneCodePoint(name))
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be exactly one character");
-            sb.Append(name[0]);
+            sb.Append(name);
             cursor = ListCursor.Resolve(engine, tail);
             if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }
@@ -395,11 +424,10 @@ public static class StringBuiltins
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be a character code");
-            // BMP-only, as char_code/2 (truncating builds another char).
-            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+            if (!Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
-            sb.Append((char)head.AsInt);
+            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, tail);
             if (guard.Loops(cursor)) throw ListCursor.CyclicList(engine, listStart);
         }

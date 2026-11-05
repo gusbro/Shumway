@@ -38,9 +38,8 @@ public static partial class MetaBuiltins
         StreamHandle h;
         try
         {
-            h = new StreamHandle(streams.NextId(),
-                new StreamReader(HostFileStream.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)),
-                "read", path);
+            h = Shumway.Builtins.StreamBuiltins.OpenTextReader(streams.NextId(), path, alias: null,
+                encodingName: null, bomOpt: null, streams.DefaultEncodingName);
         }
         catch (FileNotFoundException)
         {
@@ -106,10 +105,8 @@ public static partial class MetaBuiltins
         StreamHandle h;
         try
         {
-            h = new StreamHandle(streams.NextId(),
-                new StreamWriter(HostFileStream.Open(path, FileMode.Create, FileAccess.Write, FileShare.Read))
-                    { NewLine = "\n" },
-                "write", path);
+            h = Shumway.Builtins.StreamBuiltins.OpenTextWriter(streams.NextId(), path, alias: null,
+                "write", encodingName: null, bomOpt: null, streams.DefaultEncodingName);
         }
         catch (DirectoryNotFoundException)
         {

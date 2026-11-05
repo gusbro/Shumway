@@ -117,8 +117,12 @@ public static partial class MetaBuiltins
             if (Want("alias"))
                 foreach (string al in h.Aliases)
                     pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
-            if (Want("encoding") && h.EncodingName is string en)
-                pairs.Add((h, new CompoundTerm("encoding", new Term[] { new AtomTerm(en) })));
+            if (Want("encoding") && engine.Streams!.EncodingOf(h) is string en)
+                pairs.Add((h, new CompoundTerm("encoding", new Term[]
+                {
+                    new AtomTerm(EncodingNameFor(engine, en,
+                        pArg is CompoundTerm { Args: [AtomTerm asked] } ? asked.Name : null)),
+                })));
             if (Want("bom") && h.HadBom is bool hb)
                 pairs.Add((h, new CompoundTerm("bom",
                     new Term[] { new AtomTerm(hb ? "true" : "false") })));
@@ -242,7 +246,7 @@ public static partial class MetaBuiltins
                 return bs.CanSeek ? bs.Position : null;
             if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
                 return (ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek)
-                    || (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
+                    || (ptr.Inner is Shumway.Core.StrictTextReader ur && ur.BaseStream.CanSeek)
                     ? ptr.CharsConsumed
                     : null;
             if (h.Writer is System.IO.StreamWriter sw)
@@ -297,7 +301,7 @@ public static partial class MetaBuiltins
                 sr.DiscardBufferedData();
                 rewound = true;
             }
-            else if (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
+            else if (ptr.Inner is Shumway.Core.StrictTextReader ur && ur.BaseStream.CanSeek)
             {
                 ur.Rewind();
                 rewound = true;
@@ -431,6 +435,22 @@ public static partial class MetaBuiltins
         if (engine.Streams is not { } reg) return;
         foreach (var h in reg.All())
             if (ReferenceEquals(h.Reader, reader)) { h.PastEof = true; return; }
+    }
+
+    /// <summary>The name an encoding goes by for this caller. The one it asked about,
+    /// when that names the same encoding, so any alias passes. Otherwise the official
+    /// name, or the engine's own for a module loaded as an SWI library, since those
+    /// compare what they read against that system's names.</summary>
+    internal static string EncodingNameFor(Activation engine, string engineName, string? asked)
+    {
+        if (asked is not null
+            && Shumway.Core.TextEncodings.NameToEngineName(asked) is string askedName
+            && Shumway.Core.TextEncodings.SameBytes(askedName, engineName))
+            return asked;
+        return engine.Host is Shumway.Builtins.IDialectAwareHost host
+            && host.CallerModuleHasDialect(engine, "swi")
+                ? engineName
+                : Shumway.Core.TextEncodings.OfficialName(engineName);
     }
 
     /// <summary>The §8.11 past-end discipline for the term readers, mirroring

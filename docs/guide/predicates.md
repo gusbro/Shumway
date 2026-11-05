@@ -415,7 +415,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `nl` | iso | Writes a newline to the current output stream. |
 | `nl(+Stream)` | iso | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | iso | Opens a file as a stream handle. |
-| `open(+File, +Mode, -Stream, +Options)` | iso | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action). |
+| `open(+File, +Mode, -Stream, +Options)` | iso | Opens a file with options (alias, type, encoding, bom, eof_action). |
 | `partial_string(+Text, ?Ls, ?Ls0)` | engine | Ls is the packed list of Text's characters with Ls0 as its tail. |
 | `peek_byte(-Byte)` | iso | Peeks one byte from the current input binary stream. |
 | `peek_byte(+Stream, -Byte)` | iso | Peeks one byte from a binary stream. |
@@ -452,7 +452,7 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `set_input(+Stream)` | iso | Sets the current input stream. |
 | `set_output(+Stream)` | iso | Sets the current output stream. |
 | `set_stream(+Stream, +Property)` | engine | Sets a property of an open stream: alias(A) or eof_action(Action). |
-| `set_stream_position(+Stream, +Position)` | iso | Seeks the stream to the given byte position. |
+| `set_stream_position(+Stream, +Position)` | iso | Moves the stream to a position that stream_property/2 gave. |
 | `shell(+Command)` | engine | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
 | `shell(+Command, -Status)` | engine | Runs Command through the platform shell and unifies Status with its exit code. |
 | `skip(+Code)` | engine | Reads from the current input stream, discarding characters until the code Code is read. |

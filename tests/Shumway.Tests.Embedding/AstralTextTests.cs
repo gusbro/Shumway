@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -165,5 +166,181 @@ public sealed class AstralTextTests
                 + $"get_char(R, P), P == '{Emoji}', close(R).").Success);
         }
         finally { File.Delete(tmp); }
+    }
+
+    // Shares its high surrogate with Emoji: a search by unit would find half of it.
+    private const string Near = "😁";
+
+    [Fact]
+    public void StringLength_CountsCodePoints()
+    {
+        var sol = new PrologEngine().Query($"atom_string('{Emoji}ok', S), string_length(S, L).");
+        Assert.True(sol.Success);
+        Assert.Equal(3L, ((IntTerm)sol["L"]!).Value);
+    }
+
+    [Fact]
+    public void StringConcat_EnumeratesCodePointSplits()
+    {
+        Assert.True(new PrologEngine().Query($@"
+            atom_string('{Emoji}a', S),
+            findall(N, (string_concat(A, _, S), string_length(A, N)), Ns),
+            Ns == [0, 1, 2].").Success);
+    }
+
+    [Fact]
+    public void AString_MayHoldAstralCharacters()
+    {
+        Assert.True(new PrologEngine().Query($@"
+            atom_string('a{Emoji}', S), string(S),
+            string([a, '{Emoji}']),
+            string([97, 0x1F600]).").Success);
+    }
+
+    [Fact]
+    public void SubString_SlicesOnCodePointBoundaries()
+    {
+        var sol = new PrologEngine().Query($@"
+            atom_string('a{Emoji}b', S),
+            sub_string(S, 1, 1, After, Sub),
+            atom_string(A, Sub).");
+        Assert.True(sol.Success);
+        Assert.Equal(Emoji, ((AtomTerm)sol["A"]!).Name);
+        Assert.Equal(1L, ((IntTerm)sol["After"]!).Value);
+    }
+
+    [Fact]
+    public void SplitString_SplitsOnTheAstralSeparatorOnly()
+    {
+        Assert.True(new PrologEngine().Query($@"
+            atom_string('{Near}x{Emoji}y{Near}', S),
+            atom_string('{Emoji}', Sep),
+            split_string(S, Sep, [], [P1, P2]),
+            atom_string(A1, P1), atom_string(A2, P2),
+            A1 == '{Near}x', A2 == 'y{Near}'.").Success);
+    }
+
+    [Fact]
+    public void SplitString_TrimsTheAstralPadOnly()
+    {
+        Assert.True(new PrologEngine().Query($@"
+            atom_string('{Emoji}{Near}x{Near}{Emoji}', S),
+            atom_string('{Emoji}', Pad),
+            split_string(S, [], Pad, [P]),
+            atom_string(A, P),
+            A == '{Near}x{Near}'.").Success);
+    }
+
+    [Theory]
+    [InlineData(@"format('~c', [0x1F600])", "😀")]
+    [InlineData(@"format('~2c', [0x1F600])", "😀😀")]
+    [InlineData(@"format('~s', [[0x1F600, 0x62]])", "😀b")]
+    [InlineData(@"format('~s', [['😀', b]])", "😀b")]
+    [InlineData(@"format('~2s', [['😀', b, c]])", "😀b")]
+    [InlineData(@"format('~3s|', [['😀']])", "😀  |")]
+    [InlineData(@"format('~a~t~4|x', ['😀'])", "😀   x")]
+    [InlineData(@"format('~t~a~4|x', ['😀'])", "   😀x")]
+    [InlineData(@"format('~a~4+x', ['😀'])", "😀   x")]
+    [InlineData(@"format('~a~a~t~4|x', ['😀', '😀'])", "😀😀  x")]
+    [InlineData(@"format('~`😀t~a~3|', [b])", "😀😀b")]
+    [InlineData(@"format('~a~`😀t~3|x', [b])", "b😀😀x")]
+    public void Format_CountsACharacterAsOne(string goal, string expected)
+    {
+        var sol = new PrologEngine().Query($"with_output_to(atom(A), {goal}).");
+        Assert.True(sol.Success, goal);
+        Assert.Equal(expected, ((AtomTerm)sol["A"]!).Name);
+    }
+
+    [Theory]
+    [InlineData(@"format('~c', [0xD800])")]
+    [InlineData(@"format('~c', [0x110000])")]
+    [InlineData(@"format('~s', [[0xD800]])")]
+    public void Format_RejectsWhatIsNoCharacter(string goal)
+    {
+        Assert.True(new PrologEngine().Query(
+            $"catch(({goal}, fail), error(representation_error(character_code), _), true).").Success);
+    }
+
+    [Fact]
+    public void AListOfChars_CrossesToCSharp_ByCharacter()
+    {
+        var sol = new PrologEngine().Query($"atom_string('{Emoji}a', L).");
+        Assert.True(sol.Success);
+        var cons = Assert.IsType<CompoundTerm>(sol["L"]);
+        Assert.Equal(Emoji, ((AtomTerm)cons.Args[0]).Name);
+        var rest = Assert.IsType<CompoundTerm>(cons.Args[1]);
+        Assert.Equal("a", ((AtomTerm)rest.Args[0]).Name);
+        Assert.True(sol["L"]!.TryAsText(out string text));
+        Assert.Equal(Emoji + "a", text);
+    }
+
+    [Fact]
+    public void AListOfCodes_CrossesToCSharp_ByCharacter()
+    {
+        var sol = new PrologEngine().Query($"atom_codes('{Emoji}a', L).");
+        Assert.True(sol.Success);
+        var cons = Assert.IsType<CompoundTerm>(sol["L"]);
+        Assert.Equal(0x1F600L, ((IntTerm)cons.Args[0]).Value);
+        Assert.True(sol["L"]!.TryAsText(out string text));
+        Assert.Equal(Emoji + "a", text);
+    }
+
+    [Fact]
+    public void AnErrorNamingAListOfText_ShowsTheCharacters()
+    {
+        var sol = new PrologEngine().Query($@"
+            atom_string('a{Emoji}', S),
+            catch(sub_atom(S, _, _, _, _), error(type_error(_, Culprit), _), true),
+            length(Culprit, N).");
+        Assert.True(sol.Success);
+        Assert.Equal(2L, ((IntTerm)sol["N"]!).Value);
+    }
+
+    [Theory]
+    [InlineData(@"string_chars(S, ['😀', a]), string_length(S, 2)")]
+    [InlineData(@"string_codes(S, [0x1F600, 97]), string_length(S, 2)")]
+    [InlineData(@"string_length(['😀', a], 2)")]
+    [InlineData(@"string_length([0x1F600, 97], 2)")]
+    [InlineData(@"name(A, [0x1F600, 97]), A == '😀a'")]
+    [InlineData(@"term_string(T, ['''', '😀', '''']), T == '😀'")]
+    [InlineData(@"term_string(T, [0x27, 0x1F600, 0x27]), T == '😀'")]
+    [InlineData(@"read_term_from_atom(['''', '😀', ''''], T), T == '😀'")]
+    [InlineData(@"read_term_from_atom([0x27, 0x1F600, 0x27], T), T == '😀'")]
+    [InlineData(@"'$is_char'('😀')")]
+    [InlineData(@"'$is_char_list'(['😀', a], 2)")]
+    [InlineData(@"partial_string(['😀'], L, []), L == ['😀']")]
+    [InlineData(@"partial_string([0x1F600], L, []), L == [0x1F600]")]
+    public void ABuiltinTakingAListOfText_TakesAstralCharacters(string goal)
+    {
+        Assert.True(new PrologEngine().Query(goal + ".").Success, goal);
+    }
+
+    [Fact]
+    public void AFileName_MayBeAListOfAstralCharacters()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-astral-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // Written out as a list: atom_chars/2 would give packed text, which takes
+            // another path.
+            string d = dir.Replace('\\', '/');
+            string chars = string.Join(",", (d + "/").Select(c => $"'{c}'"));
+            Assert.True(new PrologEngine().Query($@"
+                open([{chars},'{Emoji}','.',t,x,t], write, S), close(S).").Success);
+            Assert.True(File.Exists(Path.Combine(dir, Emoji + ".txt")));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(@"[0x1F600, 97]")]
+    [InlineData(@"['😀', a]")]
+    public void PortrayText_ShowsAstralCharactersAsText(string list)
+    {
+        var sol = new PrologEngine().Query(
+            $"with_output_to(atom(A), write_term({list}, [portray_text(true)])).");
+        Assert.True(sol.Success);
+        Assert.Equal("\"😀a\"", ((AtomTerm)sol["A"]!).Name);
     }
 }

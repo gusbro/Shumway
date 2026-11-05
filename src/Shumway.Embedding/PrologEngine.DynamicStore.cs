@@ -2095,7 +2095,7 @@ public sealed partial class PrologEngine
                 else if (valueName == "false") _flags.LenientEscapes = false;
                 break;
             case "encoding":
-                if (Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName)
+                if (Shumway.Core.TextEncodings.NameToEngineName(valueName)
                     is string encNorm)
                 {
                     _flags.DefaultTextEncoding = encNorm;
