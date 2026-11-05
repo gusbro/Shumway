@@ -64,7 +64,9 @@ public static class TextFile
     /// deliberately not the lexer (the surrounding text may be garbage under
     /// the attempted decoding; only the directive itself must be legible).
     /// Leading whitespace and %-comments may precede it, matching the "first
-    /// term" rule loosely. Returns the engine encoding name, or null.</summary>
+    /// term" rule loosely. Its body may be in parentheses, as a canonical writer
+    /// leaves it: <c>:-(encoding(Name)).</c> Returns the engine encoding name,
+    /// or null.</summary>
     internal static string? SniffEncodingDirective(string text)
     {
         int i = 0, n = text.Length;
@@ -81,6 +83,13 @@ public static class TextFile
         }
         if (!MatchLiteral(text, ref i, ":-")) return null;
         SkipSpaces(text, ref i);
+        int parens = 0;
+        while (i < text.Length && text[i] == '(')
+        {
+            parens++;
+            i++;
+            SkipSpaces(text, ref i);
+        }
         if (!MatchLiteral(text, ref i, "encoding")) return null;
         SkipSpaces(text, ref i);
         if (i >= text.Length || text[i] != '(') return null;
@@ -100,6 +109,13 @@ public static class TextFile
         }
         SkipSpaces(text, ref i);
         if (i >= text.Length || text[i] != ')') return null;
+        i++;
+        for (; parens > 0; parens--)
+        {
+            SkipSpaces(text, ref i);
+            if (i >= text.Length || text[i] != ')') return null;
+            i++;
+        }
         return TextEncodings.DirectiveNameToEngineName(name);
     }
 

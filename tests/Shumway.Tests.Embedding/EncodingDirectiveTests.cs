@@ -55,6 +55,29 @@ public sealed class EncodingDirectiveTests : IDisposable
         Assert.True(e.Query("q(ancho).").Success);
     }
 
+    private static byte[] Latin1(string s) => Encoding.GetEncoding(28591).GetBytes(s);
+
+    [Theory]
+    [InlineData(@":- encoding(iso_latin_1).")]
+    [InlineData(@":-(encoding(iso_latin_1)).")]
+    [InlineData(@":- (encoding(iso_latin_1)).")]
+    [InlineData(@":-( ( encoding( 'ISO-8859-1' ) ) ) .")]
+    public void TheDirective_IsFoundInEveryWritingOfIt(string directive)
+    {
+        var e = new PrologEngine();
+        string f = Write("latin.pl", Latin1(directive + "\np('caf\u00e9').\n"));
+        e.ConsultFile(f);
+        Assert.True(e.Query("p(X), atom_codes(X, [99, 97, 102, 233]).").Success);
+    }
+
+    [Fact]
+    public void AParenthesisLeftOpen_IsNotTheDirective()
+    {
+        string decoded = Shumway.Core.TextFile.DecodeSource(
+            Latin1(":-(encoding(iso_latin_1).\np('caf\u00e9').\n"));
+        Assert.DoesNotContain("caf\u00e9", decoded);
+    }
+
     [Fact]
     public void BomWins_AndDirectiveIsThenANoOp()
     {
