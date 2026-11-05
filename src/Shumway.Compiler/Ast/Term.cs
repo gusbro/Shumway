@@ -49,14 +49,13 @@ public abstract class Term
         {
             switch (cons.Args[0])
             {
-                case AtomTerm { Name.Length: 1 } c when chars != false:
+                case AtomTerm c when chars != false && Shumway.Core.Utf16Text.IsOneCodePoint(c.Name):
                     chars = true;
                     sb.Append(c.Name);
                     break;
-                case IntTerm n when chars != true
-                                    && n.Value >= 0 && n.Value <= char.MaxValue:
+                case IntTerm n when chars != true && Shumway.Core.Utf16Text.IsScalarValue((long)n.Value):
                     chars = false;
-                    sb.Append((char)n.Value);
+                    Shumway.Core.Utf16Text.AppendCodePoint(sb, (int)n.Value);
                     break;
                 default:
                     text = "";

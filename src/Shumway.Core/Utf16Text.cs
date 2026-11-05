@@ -148,6 +148,13 @@ public static class Utf16Text
     public static int SingleCodePoint(string s)
         => s.Length == 1 ? s[0] : char.ConvertToUtf32(s[0], s[1]);
 
+    /// <summary>Whether the code point is among the characters of <paramref name="set"/>.
+    /// A unit search would find half of an astral character.</summary>
+    public static bool ContainsCodePoint(string set, int cp)
+        => cp <= 0xFFFF
+            ? set.IndexOf((char)cp) >= 0
+            : set.IndexOf(char.ConvertFromUtf32(cp), System.StringComparison.Ordinal) >= 0;
+
     /// <summary>The string of one code point.</summary>
     public static string FromCodePoint(int cp)
         => cp <= 0xFFFF ? ((char)cp).ToString() : char.ConvertFromUtf32(cp);

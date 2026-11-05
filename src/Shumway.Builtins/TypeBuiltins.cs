@@ -87,7 +87,8 @@ public static class TypeBuiltins
             if (!engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail)) return false;
             Cell head = ListCursor.Resolve(engine, rawHead);
             if (head.Tag == Tag.Atom
-                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 })
+                && AtomTable.GetById(head.AsAtomId)?.Name is { } name
+                && Utf16Text.IsOneCodePoint(name))
             {
                 if (chars == false) return false;
                 chars = true;
@@ -255,7 +256,8 @@ public static class TypeBuiltins
     public static bool IsCharAtom(Activation engine)
     {
         Cell d = Resolve(engine, engine.GetRegister(0));
-        return d.Tag == Tag.Atom && (AtomTable.GetById(d.AsAtomId)?.Name?.Length == 1);
+        return d.Tag == Tag.Atom && AtomTable.GetById(d.AsAtomId)?.Name is { } name
+            && Utf16Text.IsOneCodePoint(name);
     }
 
     /// <summary><c>'$is_char_code'(X)</c> — X is a character code (an integer in
@@ -302,7 +304,8 @@ public static class TypeBuiltins
             if (!engine.TryUnconsListLike(cell, out Cell rawHead, out Cell tail)) return false;
             Cell head = Resolve(engine, rawHead);
             bool ok = chars
-                ? head.Tag == Tag.Atom && (AtomTable.GetById(head.AsAtomId)?.Name?.Length == 1)
+                ? head.Tag == Tag.Atom && AtomTable.GetById(head.AsAtomId)?.Name is { } name
+                    && Utf16Text.IsOneCodePoint(name)
                 : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
             if (!ok) return false;
             len++;

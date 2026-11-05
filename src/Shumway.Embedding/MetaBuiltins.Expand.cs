@@ -118,7 +118,8 @@ public static partial class MetaBuiltins
 
     private static void WritePredicatesToFile(PrologEngine host, string path, IList<int> fids)
     {
-        using var sw = new System.IO.StreamWriter(path, append: false);
+        // A consult reads it back in the default encoding.
+        using var sw = Shumway.Builtins.StreamBuiltins.WholeFileWriter(path, host.Flags.DefaultTextEncoding);
         // Emit `:- dynamic Name/Arity.` for any dynamic predicate in the
         // list so a re-consult preserves the declaration (under
         // implicit_dynamic=true the directive isn't strictly required,

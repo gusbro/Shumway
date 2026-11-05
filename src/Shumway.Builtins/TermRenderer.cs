@@ -122,7 +122,7 @@ public static partial class TermRenderer
             {
                 if (chars == false) return false;
                 string n = NameOfAtom(head.AsAtomId);
-                if (n.Length != 1) return false;
+                if (!Utf16Text.IsOneCodePoint(n)) return false;
                 chars = true;
                 sb.Append(n);
             }
@@ -132,9 +132,9 @@ public static partial class TermRenderer
                 long c = head.AsInt;
                 // Printable, plus the three layout codes. Without this a list
                 // of small integers would portray as control characters.
-                if (c > char.MaxValue || !(c >= 32 || c is 9 or 10 or 13)) return false;
+                if (!Utf16Text.IsScalarValue(c) || !(c >= 32 || c is 9 or 10 or 13)) return false;
                 chars = false;
-                sb.Append((char)c);
+                Utf16Text.AppendCodePoint(sb, (int)c);
             }
             else return false;
             cur = rest;

@@ -67,7 +67,8 @@ public sealed class StreamHandle
     internal void RemoveAlias(string alias) => _aliases.Remove(alias);
 
     /// <summary>Engine encoding name of a text stream (utf8, iso_latin_1,
-    /// ascii, utf16le/be, utf32le/be) — what stream_property/2 reports.
+    /// ascii, utf16, utf16le/be, utf32, utf32le/be), from which stream_property/2
+    /// reports the official name.
     /// Null on binary streams.</summary>
     public string? EncodingName { get; set; }
 

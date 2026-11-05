@@ -192,7 +192,7 @@ internal static class CompileCli
     private static void MaybeHintConsultMode(string input, bool onlyIfHooks = false)
     {
         string text;
-        try { text = System.IO.File.ReadAllText(input); } catch { return; }
+        try { text = Shumway.Core.TextFile.ReadAllText(input); } catch { return; }
         bool hasHooks = text.Contains("term_expansion(")
             || text.Contains("goal_expansion(")
             || text.Contains(":- attribute");
@@ -352,7 +352,7 @@ internal static class CompileCli
         try
         {
             var m = System.Text.RegularExpressions.Regex.Match(
-                File.ReadAllText(input),
+                Shumway.Core.TextFile.ReadAllText(input),
                 @"(^|\n)\s*:-\s*module\(\s*'?([A-Za-z_][A-Za-z0-9_]*)'?");
             return m.Success ? m.Groups[2].Value : null;
         }

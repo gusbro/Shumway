@@ -170,14 +170,14 @@ public sealed class EncodingDirectiveTests : IDisposable
             $"open('{f}', read, S), stream_property(S, encoding(E)), "
             + "stream_property(S, bom(B)), close(S).");
         Assert.True(sol.Success);
-        Assert.Equal("utf16le", ((AtomTerm)sol["E"]!).Name);
+        Assert.Equal("UTF-16LE", ((AtomTerm)sol["E"]!).Name);
         Assert.Equal("true", ((AtomTerm)sol["B"]!).Name);
         // encoding(utf8) requested, but the BOM takes precedence.
         var sol2 = e.Query(
             $"open('{f}', read, S, [encoding(utf8)]), "
             + "stream_property(S, encoding(E)), get_char(S, C), close(S).");
         Assert.True(sol2.Success);
-        Assert.Equal("utf16le", ((AtomTerm)sol2["E"]!).Name);
+        Assert.Equal("UTF-16LE", ((AtomTerm)sol2["E"]!).Name);
         Assert.Equal("a", ((AtomTerm)sol2["C"]!).Name);
     }
 

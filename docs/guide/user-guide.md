@@ -1370,14 +1370,80 @@ are accepted, so code written for other systems runs, and have no effect.
 `line_count(Stream, Line)` gives the line the next character of a text
 input stream will come from.
 
+### Text encodings
+
+Each encoding has an official name, the one IANA registers, and aliases:
+
+| Official name | Aliases |
+|---|---|
+| `'UTF-8'` | `utf8` |
+| `'ISO-8859-1'` | `iso_latin_1` |
+| `'US-ASCII'` | `ascii` |
+| `'UTF-16'` | `utf16`, `'UCS-2'` |
+| `'UTF-16LE'` | `utf16le`, `'UCS-2LE'`, `unicode_le` |
+| `'UTF-16BE'` | `utf16be`, `'UCS-2BE'`, `unicode_be` |
+| `'UTF-32'` | `utf32` |
+| `'UTF-32LE'` | `utf32le` |
+| `'UTF-32BE'` | `utf32be` |
+
+Any of these names works in the `encoding/1` option of `open/4`, in the
+`encoding` flag and in the `:- encoding/1` directive.
+
+`stream_property/2` and `current_prolog_flag/2` give the official name. Asked
+about a specific name, they accept any name of the encoding, so on a UTF-8
+stream both of these succeed:
+
+```prolog
+stream_property(S, encoding('UTF-8')).
+stream_property(S, encoding(utf8)).
+```
+
+The default encoding is the value of the `encoding` flag, which starts as
+`'UTF-8'`. Setting the flag changes it for the streams opened after that and for
+the source files loaded after that.
+
+This is what `open/3` and `open/4` do when nothing else is specified. `open/3`
+behaves as `open/4` with no options.
+
+| Mode | Encoding | Byte order mark |
+|---|---|---|
+| `read` | The one the mark says. With no mark, `encoding/1`, or else the default encoding. | Detected. With `bom(false)` there is no detection, and a mark reads as the character U+FEFF. |
+| `write` | `encoding/1`, or else the default encoding. | Written only for `'UTF-16'` and `'UTF-32'`. `bom(true)` and `bom(false)` decide otherwise. |
+| `append` | `encoding/1`, or else the default encoding. | Never written. `bom/1` is ignored. |
+
+`'UTF-16'` and `'UTF-32'` are big-endian when written, and when read from a file
+with no mark. Reading a file with a mark, the stream reports the encoding the mark
+says, such as `'UTF-16LE'`.
+
+`'ISO-8859-1'` and `'US-ASCII'` have no mark, so `bom(true)` writes none. A stream
+with `type(binary)` ignores both `encoding/1` and `bom/1`.
+
+`stream_property/2` gives both choices as `encoding(Name)` and `bom(Boolean)`.
+`user_input`, `user_output` and `user_error` report the encoding of the console, or
+of the reader or writer the host gave them, and no `bom/1`. It can be a name `open/4`
+does not take, such as `windows-1252`. A host that gives `user_input` a reader of
+plain text, with no bytes behind it, leaves it with no `encoding/1`.
+
+Text that does not fit the encoding raises `representation_error(character)`:
+
+- Writing a character the encoding cannot hold, such as `あ` to an `'ISO-8859-1'`
+  stream. The stream stays usable.
+- Reading bytes that are not valid in the encoding. A peek leaves them in place,
+  and a read moves past them.
+
+A module loaded as an SWI library, from a directory given as `-L swi:dir`, gets
+the first alias of each row in place of the official name, which is what
+libraries written for that system compare against. The rest of the program
+still gets the official names.
+
 ### Source file encoding
 
 A source file is read as UTF-8, or as the `encoding` flag says. A byte order
-mark says otherwise, and so does a leading directive. The names are `utf8`,
-`iso_latin_1`, `ascii`, `utf16le`, `utf16be`, `utf32le` and `utf32be`.
+mark says otherwise, and so does a leading directive with any name from
+[Text encodings](#text-encodings):
 
 ```prolog
-:- encoding(iso_latin_1).
+:- encoding('ISO-8859-1').
 ```
 
 Bytes that are not valid in the file's encoding are a syntax error, reported

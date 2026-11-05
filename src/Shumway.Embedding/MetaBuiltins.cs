@@ -471,7 +471,7 @@ public static partial class MetaBuiltins
             "Enumerates (Stream, Property) pairs for every open stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("set_stream_position", 2, SetStreamPosition,
             Io, "set_stream_position(+Stream, +Position)",
-            "Seeks the stream to the given byte position.", kind: PredicateKind.Iso);
+            "Moves the stream to a position that stream_property/2 gave.", kind: PredicateKind.Iso);
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. delegate to the existing
         // stream-aware reader so the builtin set covers both names.

@@ -224,9 +224,23 @@ public static class TermReader
                         bool chars = kind == TextKind.Chars;
                         for (int i = run.Length - 1; i >= 0; i--)
                         {
-                            Term head = chars
-                                ? new AtomTerm(run[i].ToString())
-                                : new IntTerm(run[i]);
+                            // A surrogate pair is one element of the list (ADR-048).
+                            bool pair = i > 0 && char.IsLowSurrogate(run[i])
+                                && char.IsHighSurrogate(run[i - 1]);
+                            Term head;
+                            if (pair)
+                            {
+                                i--;
+                                head = chars
+                                    ? new AtomTerm(run.Substring(i, 2))
+                                    : new IntTerm(char.ConvertToUtf32(run[i], run[i + 1]));
+                            }
+                            else
+                            {
+                                head = chars
+                                    ? new AtomTerm(run[i].ToString())
+                                    : new IntTerm(run[i]);
+                            }
                             tail = new CompoundTerm(".", new[] { head, tail }, f.FunctorId);
                         }
                         active.Remove(f.A);

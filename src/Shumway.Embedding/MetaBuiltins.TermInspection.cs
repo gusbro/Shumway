@@ -628,10 +628,11 @@ public static partial class MetaBuiltins
         {
             Cell head = ResolveLocal(engine, rawHead);
             if (head.Tag == Tag.Atom
-                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } n1)
+                && AtomTable.GetById(head.AsAtomId)?.Name is { } n1
+                && Shumway.Core.Utf16Text.IsOneCodePoint(n1))
                 sb.Append(n1);
-            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
-                sb.Append((char)head.AsInt);
+            else if (head.Tag == Tag.Int && Shumway.Core.Utf16Text.IsScalarValue(head.AsInt))
+                Shumway.Core.Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             else
                 throw new ShumwayPrologException(IsoError.TypeError("text",
                     MaterializeRegister(engine, 1)));

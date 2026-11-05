@@ -135,7 +135,7 @@ scans the name while copying, so the flag is free to compute.
 Surface to convert (inventory): `atom_length`, `atom_chars`/`atom_codes`
 (both directions), `char_code`, `sub_atom` (its *offsets* change meaning —
 code points, not units), `get_char`/`peek_char`/`put_char` (the strict
-`Utf8TextReader` already decodes full code points and splits them into a
+`StrictTextReader` already decodes full code points and splits them into a
 surrogate pair — the stream char layer would re-join them, so the decode
 work is conveniently already done), the lexer (`0'c`, quoted atoms), PSTR
 (packs UTF-16 units; the chars-presentation uncons must yield one CHAR per

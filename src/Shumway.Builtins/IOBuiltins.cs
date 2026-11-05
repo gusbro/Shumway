@@ -520,8 +520,8 @@ public static class IOBuiltins
             }
             else if (fmt[i] == '`' && i + 1 < fmt.Length)
             {
-                num = fmt[i + 1];
-                i += 2;
+                i++;
+                num = Utf16Text.CodePointAt(fmt, ref i);
             }
             else
             {
@@ -643,18 +643,17 @@ public static class IOBuiltins
                         if (head.Tag == Tag.Atom)
                         {
                             string cn = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-                            if (cn.Length != 1)
+                            if (!Utf16Text.IsOneCodePoint(cn))
                                 throw new PrologRuntimeException(
                                     "type_error", "character", engine, head);
                             sb.Append(cn);
                         }
                         else if (head.Tag == Tag.Int)
                         {
-                            // BMP-only, as char_code/2 (truncating builds another char).
-                            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                            if (!Utf16Text.IsScalarValue(head.AsInt))
                                 throw new PrologRuntimeException(
                                     "representation_error", "character_code");
-                            sb.Append((char)head.AsInt);
+                            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
                         }
                         else
                         {
@@ -670,7 +669,12 @@ public static class IOBuiltins
                     // text is padded out to N with spaces.
                     string sv = sb.ToString();
                     if (num is int swidth)
-                        sv = swidth < sv.Length ? sv[..swidth] : sv.PadRight(swidth);
+                    {
+                        int have = Utf16Text.CodePointLength(sv);
+                        sv = swidth < have
+                            ? sv[..Utf16Text.UnitIndexOf(sv, swidth)]
+                            : sv + new string(' ', swidth - have);
+                    }
                     output.Write(sv);
                     break;
                 }
@@ -771,17 +775,18 @@ public static class IOBuiltins
                     // `~c` of the atom `a` is type_error(evaluable, a/0).
                     System.Numerics.BigInteger cv =
                         FormatIntegerArg(engine, ConsumeArg(args, ref argIdx, name));
-                    if (cv < 0 || cv > char.MaxValue)
+                    if (cv < 0 || cv > 0x10FFFF || !Utf16Text.IsScalarValue((long)cv))
                         throw new PrologRuntimeException(
                             "representation_error", "character_code");
+                    string cch = Utf16Text.FromCodePoint((int)cv);
                     int reps = num ?? 1;
-                    for (int r = 0; r < reps; r++) output.Write((char)cv);
+                    for (int r = 0; r < reps; r++) output.Write(cch);
                     break;
                 }
                 case 't':
                     // Fill point: ~t pads with spaces, ~`ct (or ~Nt) with
                     // the given character, when a later stop needs padding.
-                    column.AddFillPoint(num.HasValue ? (char)num.Value : ' ');
+                    column.AddFillPoint(num ?? ' ');
                     break;
                 case '|':
                     // Absolute column stop; bare ~| means "here".
@@ -817,8 +822,9 @@ public static class IOBuiltins
     {
         private readonly System.IO.TextWriter _out;
         private readonly System.Text.StringBuilder _seg = new();
-        private readonly List<(int Pos, char Fill)> _fills = new();
+        private readonly List<(int Pos, string Fill)> _fills = new();
         private int _lineColumn;      // column where the pending segment starts
+        private int _segColumns;      // characters in the segment: a surrogate pair is one
 
         public ColumnWriter(System.IO.TextWriter output) => _out = output;
 
@@ -836,18 +842,20 @@ public static class IOBuiltins
                 return;
             }
             _seg.Append(value);
+            if (!char.IsLowSurrogate(value)) _segColumns++;
         }
 
         /// <summary>Records a <c>~t</c> fill point at the current position.</summary>
-        public void AddFillPoint(char fill) => _fills.Add((_seg.Length, fill));
+        public void AddFillPoint(int fill) => _fills.Add((_seg.Length, Utf16Text.FromCodePoint(fill)));
 
         /// <summary>Closes the segment at column <paramref name="target"/>
         /// (absolute for <c>~|</c>; the caller resolves <c>~+</c> to one).</summary>
         public void ColumnStop(int target)
         {
-            int pad = target - (_lineColumn + _seg.Length);
+            int pad = target - (_lineColumn + _segColumns);
             if (pad > 0)
             {
+                _segColumns += pad;
                 if (_fills.Count == 0)
                 {
                     _seg.Append(' ', pad);       // no ~t: pad on the right
@@ -861,7 +869,7 @@ public static class IOBuiltins
                     for (int k = _fills.Count - 1; k >= 0; k--)
                     {
                         int n = each + (k >= _fills.Count - extra ? 1 : 0);
-                        if (n > 0) _seg.Insert(_fills[k].Pos, new string(_fills[k].Fill, n));
+                        if (n > 0) _seg.Insert(_fills[k].Pos, _fills[k].Fill, n);
                     }
                 }
             }
@@ -871,7 +879,7 @@ public static class IOBuiltins
         }
 
         /// <summary>The column the next character would land in.</summary>
-        public int CurrentColumn => _lineColumn + _seg.Length;
+        public int CurrentColumn => _lineColumn + _segColumns;
 
         /// <summary>The column this pending segment started at — the origin
         /// a relative <c>~N+</c> stop measures from.</summary>
@@ -881,7 +889,8 @@ public static class IOBuiltins
         {
             if (_seg.Length > 0)
             {
-                _lineColumn += _seg.Length;
+                _lineColumn += _segColumns;
+                _segColumns = 0;
                 _out.Write(_seg.ToString());
                 _seg.Clear();
             }

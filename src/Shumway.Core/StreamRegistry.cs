@@ -111,6 +111,35 @@ public sealed class StreamRegistry
         CurrentOutput = UserOutput;
     }
 
+    /// <summary>The engine name of a stream's encoding: the one it was opened with, or
+    /// for a standard stream the one of what stands behind it, which a host or the console
+    /// can change at any time. Null when there is none, as behind a reader of text that
+    /// never was bytes.</summary>
+    public string? EncodingOf(StreamHandle h)
+    {
+        if (h.EncodingName is string name) return name;
+        try
+        {
+            System.Text.Encoding? encoding = null;
+            if (ReferenceEquals(h, UserOutput) || ReferenceEquals(h, UserError))
+                encoding = h.Writer?.Encoding;
+            else if (ReferenceEquals(h, UserInput) && h.Reader is PositionTrackingReader reader)
+                encoding = reader.Inner switch
+                {
+                    IEncodedReader known => known.Encoding,
+                    StreamReader file => file.CurrentEncoding,
+                    _ => reader.ReadsHostInput ? System.Console.InputEncoding : null,
+                };
+            return encoding is null ? null : TextEncodings.NameOf(encoding);
+        }
+        // A host with no console, or a writer that names no encoding.
+        catch (Exception ex) when (ex is PlatformNotSupportedException or NotSupportedException
+            or NotImplementedException or IOException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The host's standard input, or an empty reader when it has none.
     /// A browser-wasm host has no stdin at all: <c>Console.In</c> does not return
     /// an exhausted reader there, it throws — which would take down the first

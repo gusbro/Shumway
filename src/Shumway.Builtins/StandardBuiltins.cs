@@ -185,8 +185,8 @@ public static class StandardBuiltins
             Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
-            "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
-            + "eof_action).", kind: PredicateKind.Iso);
+            "Opens a file with options (alias, type, encoding, bom, eof_action).",
+            kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,
