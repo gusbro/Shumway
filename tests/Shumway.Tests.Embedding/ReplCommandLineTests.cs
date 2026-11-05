@@ -95,6 +95,201 @@ public sealed class ReplCommandLineTests
     }
 
     [Fact]
+    public void PipedInput_GivesTheUnbufferedReadsItsText()
+    {
+        using var dir = new TempDir();
+        // The first read takes the newline that ends the query's line, and the
+        // second the next line's first character.
+        int code = Run(ReplExe, dir.Path,
+            "get_unbuffered_char(C), get_unbuffered_code(D), write(got(C, D)), nl.\nx\nhalt.\n",
+            out string output, "-q");
+        Assert.Equal(0, code);
+        Assert.Contains("got(\n,120)", output.Replace("\r\n", "\n"));
+    }
+
+    private static Shumway.Repl.ReplPendingReader PendingWithKey(int key, System.Collections.Generic.List<int> asked, bool terminal = true) =>
+        new(() => null, (out int codePoint) =>
+        {
+            asked.Add(key);
+            codePoint = key;
+            return terminal;
+        });
+
+    [Fact]
+    public void AfterAQuery_TheEndOfItsLineDoesNotHideTheKey()
+    {
+        var asked = new System.Collections.Generic.List<int>();
+        var reader = PendingWithKey('k', asked);
+        reader.Push("\n");
+        Assert.True(reader.TryReadKey(out int key));
+        Assert.Equal('k', key);
+        Assert.Equal("", reader.Buffered);
+    }
+
+    [Fact]
+    public void TextTypedAfterAQuery_IsReadBeforeAnyKey()
+    {
+        var asked = new System.Collections.Generic.List<int>();
+        var reader = PendingWithKey('k', asked);
+        reader.Push("ab\n");
+        Assert.False(reader.TryReadKey(out _));
+        Assert.Empty(asked);
+        Assert.Equal("ab\n", reader.Buffered);
+    }
+
+    [Fact]
+    public void WithNoTerminal_TheEndOfTheLineStaysToBeRead()
+    {
+        var asked = new System.Collections.Generic.List<int>();
+        var reader = PendingWithKey('k', asked, terminal: false);
+        reader.Push("\n");
+        Assert.False(reader.TryReadKey(out _));
+        Assert.Equal("\n", reader.Buffered);
+    }
+
+    private sealed class FakeConsole
+    {
+        public readonly System.Collections.Generic.Queue<ConsoleKeyInfo> Keys = new();
+        public Action? WhileWaiting;
+
+        public Shumway.Repl.QueryKeyboard Keyboard() => new(() => Keys.Count > 0, () =>
+        {
+            WhileWaiting?.Invoke();
+            return Keys.Dequeue();
+        });
+
+        public void Press(string text)
+        {
+            foreach (char c in text) Keys.Enqueue(Key(c));
+        }
+    }
+
+    private static ConsoleKeyInfo Key(char c) => c switch
+    {
+        '\r' => new(c, ConsoleKey.Enter, false, false, false),
+        '\b' => new(c, ConsoleKey.Backspace, false, false, false),
+        '\u001B' => new(c, ConsoleKey.Escape, false, false, false),
+        '\u0003' => new(c, ConsoleKey.C, false, false, true),
+        _ => new(c, ConsoleKey.A, false, false, false),
+    };
+
+    [Fact]
+    public void KeysPressedWhileTheGoalWorks_WaitForItsNextRead()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("ab");
+        Assert.Null(keyboard.Watch());
+        Assert.Empty(console.Keys);
+        console.Press("c");
+        Assert.Equal('a', keyboard.NextKey().KeyChar);
+        Assert.Equal('b', keyboard.NextKey().KeyChar);
+        Assert.Equal('c', keyboard.NextKey().KeyChar);
+    }
+
+    [Theory]
+    [InlineData('\u001B')]
+    [InlineData('\u0003')]
+    public void EscAndCtrlC_GoToTheWatcher_AndTheKeysBeforeThemStay(char special)
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("a" + special);
+        Assert.Equal(special, keyboard.Watch()?.KeyChar);
+        Assert.Equal('a', keyboard.NextKey().KeyChar);
+    }
+
+    [Fact]
+    public void WhileAReadWaits_TheWatcherLeavesTheKeysToIt()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("\u001B");
+        ConsoleKeyInfo? seenByWatcher = null;
+        int left = -1;
+        console.WhileWaiting = () =>
+        {
+            console.WhileWaiting = null;
+            seenByWatcher = keyboard.Watch();
+            left = console.Keys.Count;
+        };
+        Assert.Equal('\u001B', keyboard.NextKey().KeyChar);
+        Assert.Null(seenByWatcher);
+        Assert.Equal(1, left);
+
+        // The read is over: the watcher takes keys again.
+        console.Press("x");
+        Assert.Null(keyboard.Watch());
+        Assert.Empty(console.Keys);
+    }
+
+    [Fact]
+    public void ALineTypedAhead_IsComplete_AndTheKeysAfterItStay()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("xy\rz");
+        keyboard.Watch();
+        Assert.True(keyboard.BeginLineRead(out string typed));
+        Assert.Equal("xy", typed);
+        keyboard.EndRead();
+        Assert.Equal('z', keyboard.NextKey().KeyChar);
+    }
+
+    [Fact]
+    public void APartOfALineTypedAhead_IsGiven_WithBackspaceApplied()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("fox\b");
+        console.Keys.Enqueue(new ConsoleKeyInfo('\0', ConsoleKey.UpArrow, false, false, false));
+        keyboard.Watch();
+        Assert.False(keyboard.BeginLineRead(out string typed));
+        Assert.Equal("fo", typed);
+    }
+
+    [Fact]
+    public void DuringALineRead_TheWatcherLeavesTheKeys()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        keyboard.BeginLineRead(out _);
+        console.Press("x");
+        Assert.Null(keyboard.Watch());
+        Assert.Single(console.Keys);
+        keyboard.EndRead();
+        keyboard.Watch();
+        Assert.Empty(console.Keys);
+    }
+
+    [Fact]
+    public void ClearingDropsTheKeysNoReadTook()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("ab");
+        keyboard.Watch();
+        keyboard.Clear();
+        console.Press("c");
+        Assert.Equal('c', keyboard.NextKey().KeyChar);
+    }
+
+    [Fact]
+    public void TheKeysKept_HaveALimit()
+    {
+        var console = new FakeConsole();
+        var keyboard = console.Keyboard();
+        console.Press("k" + new string('x', Shumway.Repl.QueryKeyboard.MaxKeysAhead));
+        keyboard.Watch();
+        Assert.Empty(console.Keys);
+        console.Press("z");
+        Assert.Equal('k', keyboard.NextKey().KeyChar);
+        for (int i = 1; i < Shumway.Repl.QueryKeyboard.MaxKeysAhead; i++)
+            Assert.Equal('x', keyboard.NextKey().KeyChar);
+        Assert.Equal('z', keyboard.NextKey().KeyChar);
+    }
+
+    [Fact]
     public void GoalsRunInTheOrderGiven_ThenTheTopLevelGoalEndsTheRun()
     {
         using var dir = new TempDir();

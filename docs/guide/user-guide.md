@@ -1393,6 +1393,36 @@ again after it got the end should open the file with
 A peek at the end, such as `peek_code/2`, gives the end and does not move
 the stream past it. `at_end_of_stream/1` never raises.
 
+### Reading one key
+
+`get_unbuffered_char(Char)` and `get_unbuffered_code(Code)` read from the
+current input stream. On a terminal they wait for one key and return at
+once: no Enter is needed and the key is not shown. What was written before
+is flushed first, so a prompt is on the screen.
+
+```prolog
+confirm(Question) :-
+    write(Question), write(' (y/n) '),
+    get_unbuffered_char(Answer),
+    nl,
+    Answer == y.
+```
+
+Enter gives a newline. Keys with no character, such as the arrows, are
+skipped. Ctrl+D gives the end of input, and so does Ctrl+Z on Windows:
+`end_of_file` for the character and `-1` for the code.
+
+At the top level, text typed after the query on the same line is read first.
+Keys pressed while a goal is working wait for its next read, so a program can
+be typed at while it works. `Esc` is the exception: unless a read is waiting
+for a key, it cancels the query. Keys that no read took are dropped when the
+query ends.
+
+On any other stream, such as a file, a pipe or the reader of an embedding
+host, they read one character, as `get_char/1` and `get_code/1` do. That
+includes line ends. A host with its own keyboard implements `IKeyReader` on
+the reader it gives to `PrologEngine.In`.
+
 ### `set_stream/2`
 
 `set_stream(Stream, Property)` sets one of two properties of an open

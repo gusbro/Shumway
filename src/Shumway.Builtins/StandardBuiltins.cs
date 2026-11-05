@@ -217,6 +217,12 @@ public static class StandardBuiltins
             Io, "get_code(-Code)", "Reads one character code from the current input stream.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("get_code",  2, StreamBuiltins.GetCode2,
             Io, "get_code(+Stream, -Code)", "Reads one character code from a stream.", kind: PredicateKind.Iso);
+        BuiltinsRegistry.Register("get_unbuffered_char", 1, StreamBuiltins.GetUnbufferedChar,
+            Io, "get_unbuffered_char(-Char)",
+            "Reads one character from the current input stream.");
+        BuiltinsRegistry.Register("get_unbuffered_code", 1, StreamBuiltins.GetUnbufferedCode,
+            Io, "get_unbuffered_code(-Code)",
+            "Reads one character code from the current input stream.");
         BuiltinsRegistry.Register("peek_code", 1, StreamBuiltins.PeekCode0,
             Io, "peek_code(-Code)", "Peeks one character code from current input.", kind: PredicateKind.Iso);
         BuiltinsRegistry.Register("peek_code", 2, StreamBuiltins.PeekCode2,

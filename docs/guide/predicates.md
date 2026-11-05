@@ -406,6 +406,8 @@ Load with `:- use_module(library(reif)).` (embedding: `engine.UseReif()`).
 | `get_char(+Stream, -Char)` | iso | Reads and consumes one character from a stream. |
 | `get_code(-Code)` | iso | Reads one character code from the current input stream. |
 | `get_code(+Stream, -Code)` | iso | Reads one character code from a stream. |
+| `get_unbuffered_char(-Char)` | engine | Reads one character from the current input stream. |
+| `get_unbuffered_code(-Code)` | engine | Reads one character code from the current input stream. |
 | `getenv(+Name, -Value)` | engine | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
 | `http_download(+URL, +File)` | engine | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
 | `line_count(+Stream, -Line)` | engine | The line the next character read from a text input stream comes from, counting from 1. |
