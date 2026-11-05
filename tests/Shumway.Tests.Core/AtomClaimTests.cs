@@ -265,5 +265,7 @@ public class AtomClaimTests
 
         Assert.NotNull(AtomTable.GetById(held));
         Assert.Equal(1, AtomTable.ClaimsOf(held));
+        // Or a .NET GC can take it before the collection, which then releases its claims.
+        GC.KeepAlive(holder);
     }
 }
