@@ -38,8 +38,9 @@ close(S),
 socket_server_close(Server).
 ```
 
-One stream goes both ways. Writes stay in a buffer until `flush_output/1` or
-`close/1`.
+One stream goes both ways. Bytes go out as they are written. Text goes out when
+`flush_output/1` or `close/1` asks, or when a buffer of about 1 KB fills, so a short
+message needs a flush before the program waits for its answer.
 
 ### Addresses
 

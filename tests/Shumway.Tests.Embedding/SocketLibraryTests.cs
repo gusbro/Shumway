@@ -111,6 +111,39 @@ caught(Goal, Error) :- catch((Goal, fail), error(Error, _), true).
     }
 
     [Fact]
+    public void Bytes_GoOutAsTheyAreWritten()
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query(@"
+            pair([timeout(5)], C, A),
+            put_byte(C, 97),
+            get_byte(A, 97),
+            close(C), close(A).")).Success);
+    }
+
+    [Fact]
+    public void AShortText_WaitsForAFlush()
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query(@"
+            pair([type(text), timeout(5)], C, A),
+            put_char(C, x),
+            socket_select([], [], [A], [], [], [], 0.2),
+            flush_output(C),
+            get_char(A, x),
+            close(C), close(A).")).Success);
+    }
+
+    [Fact]
+    public void ALongText_GoesOutWithoutAFlush()
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query(@"
+            pair([type(text), timeout(5)], C, A),
+            length(L, 5000), maplist(=(x), L), atom_chars(Text, L),
+            write(C, Text),
+            get_char(A, x),
+            close(C), close(A).")).Success);
+    }
+
+    [Fact]
     public void Shutdown_SendsWhatTheStreamHolds()
     {
         Assert.True(WithinSeconds(30, () => Engine().Query(@"
